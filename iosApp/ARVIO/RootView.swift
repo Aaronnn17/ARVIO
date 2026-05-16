@@ -27,29 +27,37 @@ struct RootView: View {
             .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                TopNavigation(selectedTab: $selectedTab)
-
-                Group {
-                    switch selectedTab {
-                    case .home:
-                        HomeView()
-                    case .movies:
-                        CatalogView(title: "Movies", subtitle: "Curated cinema and recent releases.", items: featuredItems.filter { $0.kind == .movie })
-                    case .series:
-                        CatalogView(title: "Series", subtitle: "Continue seasons and discover premium TV.", items: featuredItems.filter { $0.kind == .series })
-                    case .liveTV:
-                        CatalogView(title: "Live TV", subtitle: "IPTV guide and channels are next in the iOS parity queue.", items: featuredItems)
-                    case .watchlist:
-                        WatchlistView()
-                    case .search:
-                        SearchView()
-                    case .addons:
-                        AddonsView()
-                    case .settings:
-                        SettingsView()
-                    }
+                if appState.selectedStream == nil && appState.selectedMedia == nil {
+                    TopNavigation(selectedTab: $selectedTab)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if let stream = appState.selectedStream {
+                    PlayerView(stream: stream)
+                } else if let media = appState.selectedMedia {
+                    DetailsView(item: media)
+                } else {
+                    Group {
+                        switch selectedTab {
+                        case .home:
+                            HomeView()
+                        case .movies:
+                            CatalogView(title: "Movies", subtitle: "Curated cinema and recent releases.", items: appState.tmdb.trendingMovies)
+                        case .series:
+                            CatalogView(title: "Series", subtitle: "Continue seasons and discover premium TV.", items: appState.tmdb.trendingSeries)
+                        case .liveTV:
+                            CatalogView(title: "Live TV", subtitle: "IPTV guide and channels are next in the iOS parity queue.", items: featuredItems)
+                        case .watchlist:
+                            WatchlistView()
+                        case .search:
+                            SearchView()
+                        case .addons:
+                            AddonsView()
+                        case .settings:
+                            SettingsView()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
     }

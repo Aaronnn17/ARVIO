@@ -7,17 +7,27 @@ final class AppState: ObservableObject {
     let cloud: CloudSyncService
     let addons: AddonService
     let trakt: TraktService
+    let tmdb: TmdbService
+    let streams: StreamResolver
+    @Published var selectedMedia: MediaItem?
+    @Published var selectedStream: ResolvedStream?
     private var cancellables: Set<AnyCancellable> = []
 
     init() {
         let auth = AuthService()
         let cloud = CloudSyncService(auth: auth)
+        let addons = AddonService(cloud: cloud)
+        let trakt = TraktService()
+        let tmdb = TmdbService()
+        let streams = StreamResolver(tmdb: tmdb, addons: addons)
         self.auth = auth
         self.cloud = cloud
-        self.addons = AddonService(cloud: cloud)
-        self.trakt = TraktService()
+        self.addons = addons
+        self.trakt = trakt
+        self.tmdb = tmdb
+        self.streams = streams
 
-        [auth.objectWillChange, cloud.objectWillChange, addons.objectWillChange, trakt.objectWillChange]
+        [auth.objectWillChange, cloud.objectWillChange, addons.objectWillChange, trakt.objectWillChange, tmdb.objectWillChange, streams.objectWillChange]
             .forEach { publisher in
                 publisher
                     .sink { [weak self] _ in self?.objectWillChange.send() }
@@ -32,5 +42,6 @@ final class AppState: ObservableObject {
         if trakt.isConnected {
             await trakt.loadWatchlist()
         }
+        await tmdb.loadHome()
     }
 }

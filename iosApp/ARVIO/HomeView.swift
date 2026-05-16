@@ -1,12 +1,15 @@
 import SwiftUI
 
 struct HomeView: View {
+    @EnvironmentObject private var appState: AppState
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                HeroSection(item: featuredItems[0])
+                HeroSection(item: appState.tmdb.trendingMovies.first ?? featuredItems[0])
                 MediaRail(title: "Continue Watching", items: continueWatchingItems)
-                MediaRail(title: "Featured", items: featuredItems)
+                MediaRail(title: "Trending Movies", items: appState.tmdb.trendingMovies.isEmpty ? featuredItems : appState.tmdb.trendingMovies)
+                MediaRail(title: "Trending Series", items: appState.tmdb.trendingSeries.isEmpty ? featuredItems : appState.tmdb.trendingSeries)
             }
             .padding(.horizontal, 28)
             .padding(.bottom, 36)
@@ -61,6 +64,7 @@ struct HeroSection: View {
 }
 
 struct MediaRail: View {
+    @EnvironmentObject private var appState: AppState
     let title: String
     let items: [MediaItem]
 
@@ -73,7 +77,9 @@ struct MediaRail: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 14) {
                     ForEach(items) { item in
-                        MediaCard(item: item)
+                        MediaCard(item: item) { selected in
+                            appState.selectedMedia = selected
+                        }
                     }
                 }
             }
@@ -82,6 +88,7 @@ struct MediaRail: View {
 }
 
 struct CatalogView: View {
+    @EnvironmentObject private var appState: AppState
     let title: String
     let subtitle: String
     let items: [MediaItem]
@@ -98,7 +105,9 @@ struct CatalogView: View {
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
                     ForEach(items.isEmpty ? featuredItems : items) { item in
-                        MediaCard(item: item)
+                        MediaCard(item: item) { selected in
+                            appState.selectedMedia = selected
+                        }
                     }
                 }
                 .padding(.top, 8)
