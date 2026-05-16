@@ -6,6 +6,7 @@ struct PlayerView: View {
     let stream: ResolvedStream
     @State private var player: AVPlayer?
     @State private var didSeek = false
+    @State private var didSaveProgress = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -15,7 +16,7 @@ struct PlayerView: View {
                     .ignoresSafeArea()
             }
             Button("Close") {
-                appState.selectedStream = nil
+                Task { await closePlayer() }
             }
             .buttonStyle(.borderedProminent)
             .tint(ArvioTheme.gold)
@@ -32,8 +33,30 @@ struct PlayerView: View {
             created.play()
         }
         .onDisappear {
+            Task { await saveProgressIfNeeded() }
             player?.pause()
             player = nil
         }
+    }
+
+    private func closePlayer() async {
+        await saveProgressIfNeeded()
+        appState.selectedStream = nil
+    }
+
+    private func saveProgressIfNeeded() async {
+        guard !didSaveProgress, let media = appState.selectedMedia, let player else { return }
+        let current = player.currentTime().seconds
+        let rawDuration = player.currentItem?.duration.seconds ?? 0
+        let fallbackDuration = Double(media.durationSeconds ?? 0)
+        let duration = rawDuration.isFinite && rawDuration > 0 ? rawDuration : fallbackDuration
+        guard current.isFinite, current > 5, duration > 30 else { return }
+        didSaveProgress = true
+        await appState.watchHistory.saveProgress(
+            item: media,
+            stream: stream,
+            positionSeconds: Int(current.rounded()),
+            durationSeconds: Int(duration.rounded())
+        )
     }
 }

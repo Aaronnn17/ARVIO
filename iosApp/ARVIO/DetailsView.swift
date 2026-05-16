@@ -36,6 +36,12 @@ struct DetailsView: View {
                                         season: item.season ?? selectedSeason,
                                         episode: item.episode ?? 1
                                     )
+                                    let playable = appState.streams.streams.filter {
+                                        $0.isPlayable && meetsMinimumQuality($0.quality, minimum: appState.settings.profileSettings.autoPlayMinQuality)
+                                    }
+                                    if appState.settings.profileSettings.autoPlaySingleSource, playable.count == 1 {
+                                        appState.selectedStream = playable[0]
+                                    }
                                 }
                             }
                             .buttonStyle(.borderedProminent)
@@ -83,6 +89,18 @@ struct DetailsView: View {
             details?.episodeRunTime?.first.map { "\($0)m" } ??
             item.duration
         return [String(year), rating.isEmpty ? nil : "TMDB \(rating)", runtime.isEmpty ? nil : runtime, genres].compactMap { $0 }.joined(separator: " - ")
+    }
+
+    private func meetsMinimumQuality(_ quality: String, minimum: String) -> Bool {
+        qualityRank(quality) >= qualityRank(minimum)
+    }
+
+    private func qualityRank(_ value: String) -> Int {
+        if value.localizedCaseInsensitiveContains("4K") || value.contains("2160") { return 4 }
+        if value.contains("1080") { return 3 }
+        if value.contains("720") { return 2 }
+        if value == "Any" || value == "Unknown" { return 0 }
+        return 1
     }
 }
 

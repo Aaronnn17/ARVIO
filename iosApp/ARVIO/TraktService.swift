@@ -80,6 +80,41 @@ private struct DeviceTokenResponse: Decodable {
     }
 }
 
+private struct TraktScrobbleMedia: Encodable {
+    let ids: TraktScrobbleIds
+}
+
+private struct TraktScrobbleEpisode: Encodable {
+    let season: Int
+    let number: Int
+}
+
+private struct TraktScrobbleIds: Encodable {
+    let tmdb: Int
+}
+
+private struct TraktScrobbleBody: Encodable {
+    let movie: TraktScrobbleMedia?
+    let show: TraktScrobbleMedia?
+    let episode: TraktScrobbleEpisode?
+    let progress: Double
+
+    enum CodingKeys: String, CodingKey {
+        case movie
+        case show
+        case episode
+        case progress
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(movie, forKey: .movie)
+        try container.encodeIfPresent(show, forKey: .show)
+        try container.encodeIfPresent(episode, forKey: .episode)
+        try container.encode(progress, forKey: .progress)
+    }
+}
+
 @MainActor
 final class TraktService: ObservableObject {
     @Published private(set) var token: TraktToken?
@@ -177,6 +212,35 @@ final class TraktService: ObservableObject {
         return try await client.request(
             url,
             headers: proxyHeaders(userToken: token.accessToken)
+        )
+    }
+
+    func scrobblePause(item: MediaItem, progressPercent: Double) async throws {
+        guard let token, let tmdbId = item.tmdbId else { return }
+        guard let url = proxyURL(path: "/scrobble/pause", method: "POST") else { return }
+        let progress = min(max(progressPercent, 0), 100)
+        let body: TraktScrobbleBody
+        if item.kind == .movie {
+            body = TraktScrobbleBody(
+                movie: TraktScrobbleMedia(ids: TraktScrobbleIds(tmdb: tmdbId)),
+                show: nil,
+                episode: nil,
+                progress: progress
+            )
+        } else {
+            guard let season = item.season, let episode = item.episode else { return }
+            body = TraktScrobbleBody(
+                movie: nil,
+                show: TraktScrobbleMedia(ids: TraktScrobbleIds(tmdb: tmdbId)),
+                episode: TraktScrobbleEpisode(season: season, number: episode),
+                progress: progress
+            )
+        }
+        let _: EmptyResponse = try await client.request(
+            url,
+            method: "POST",
+            headers: proxyHeaders(userToken: token.accessToken),
+            body: body
         )
     }
 

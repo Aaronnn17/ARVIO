@@ -154,6 +154,50 @@ struct TraktIds: Decodable, Hashable {
     let imdb: String?
 }
 
+private struct WatchHistoryUpsert: Encodable {
+    let userId: String
+    let profileId: String
+    let mediaType: String
+    let showTmdbId: Int?
+    let season: Int?
+    let episode: Int?
+    let progress: Double
+    let positionSeconds: Int
+    let durationSeconds: Int
+    let pausedAt: String
+    let updatedAt: String
+    let source: String
+    let title: String
+    let episodeTitle: String?
+    let backdropPath: String?
+    let posterPath: String?
+    let streamKey: String?
+    let streamAddonId: String?
+    let streamTitle: String?
+
+    enum CodingKeys: String, CodingKey {
+        case userId = "user_id"
+        case profileId = "profile_id"
+        case mediaType = "media_type"
+        case showTmdbId = "show_tmdb_id"
+        case season
+        case episode
+        case progress
+        case positionSeconds = "position_seconds"
+        case durationSeconds = "duration_seconds"
+        case pausedAt = "paused_at"
+        case updatedAt = "updated_at"
+        case source
+        case title
+        case episodeTitle = "episode_title"
+        case backdropPath = "backdrop_path"
+        case posterPath = "poster_path"
+        case streamKey = "stream_key"
+        case streamAddonId = "stream_addon_id"
+        case streamTitle = "stream_title"
+    }
+}
+
 @MainActor
 final class WatchHistoryService: ObservableObject {
     @Published private(set) var cloudContinueWatching: [MediaItem] = []
@@ -218,6 +262,48 @@ final class WatchHistoryService: ObservableObject {
         do {
             let items = try await trakt.loadPlaybackProgress()
             traktContinueWatching = items.compactMap { $0.asMediaItem() }
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func saveProgress(item: MediaItem, stream: ResolvedStream, positionSeconds: Int, durationSeconds: Int) async {
+        guard let session = auth.session, durationSeconds > 0, positionSeconds > 0 else { return }
+        let progress = min(max(Double(positionSeconds) / Double(durationSeconds), 0), 1)
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let record = WatchHistoryUpsert(
+            userId: session.userId,
+            profileId: activeProfileId,
+            mediaType: item.kind == .movie ? "movie" : "tv",
+            showTmdbId: item.tmdbId,
+            season: item.kind == .series ? item.season : nil,
+            episode: item.kind == .series ? item.episode : nil,
+            progress: progress,
+            positionSeconds: positionSeconds,
+            durationSeconds: durationSeconds,
+            pausedAt: timestamp,
+            updatedAt: timestamp,
+            source: "arvio",
+            title: item.title,
+            episodeTitle: item.episodeTitle,
+            backdropPath: item.backdropPath,
+            posterPath: item.posterPath,
+            streamKey: stream.url?.absoluteString,
+            streamAddonId: stream.addonId,
+            streamTitle: stream.title
+        )
+        do {
+            let token = try await auth.accessToken()
+            let _: EmptyResponse = try await auth.supabaseRequest(
+                "/rest/v1/watch_history",
+                method: "POST",
+                token: token,
+                prefer: "return=minimal,resolution=merge-duplicates",
+                body: record
+            )
+            try? await trakt.scrobblePause(item: item, progressPercent: progress * 100)
+            await load()
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

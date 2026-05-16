@@ -12,6 +12,7 @@ final class AppState: ObservableObject {
     let iptv: IptvService
     let profiles: ProfileService
     let watchHistory: WatchHistoryService
+    let settings: SettingsService
     @Published var selectedMedia: MediaItem?
     @Published var selectedStream: ResolvedStream?
     private var cancellables: Set<AnyCancellable> = []
@@ -26,6 +27,7 @@ final class AppState: ObservableObject {
         let iptv = IptvService(cloud: cloud)
         let profiles = ProfileService(cloud: cloud)
         let watchHistory = WatchHistoryService(auth: auth, trakt: trakt)
+        let settings = SettingsService(cloud: cloud)
         self.auth = auth
         self.cloud = cloud
         self.addons = addons
@@ -35,14 +37,16 @@ final class AppState: ObservableObject {
         self.iptv = iptv
         self.profiles = profiles
         self.watchHistory = watchHistory
+        self.settings = settings
         profiles.onActiveProfileChanged = { profileId in
             addons.setActiveProfileId(profileId)
             iptv.setActiveProfileId(profileId)
             watchHistory.setActiveProfileId(profileId)
+            settings.setActiveProfileId(profileId)
             Task { await watchHistory.load() }
         }
 
-        [auth.objectWillChange, cloud.objectWillChange, addons.objectWillChange, trakt.objectWillChange, tmdb.objectWillChange, streams.objectWillChange, iptv.objectWillChange, profiles.objectWillChange, watchHistory.objectWillChange]
+        [auth.objectWillChange, cloud.objectWillChange, addons.objectWillChange, trakt.objectWillChange, tmdb.objectWillChange, streams.objectWillChange, iptv.objectWillChange, profiles.objectWillChange, watchHistory.objectWillChange, settings.objectWillChange]
             .forEach { publisher in
                 publisher
                     .sink { [weak self] _ in self?.objectWillChange.send() }
@@ -52,17 +56,22 @@ final class AppState: ObservableObject {
 
     func bootstrap() async {
         await auth.restore()
-        await cloud.pull()
-        addons.loadFromCloud()
-        profiles.loadFromCloud()
-        profiles.ensureDefault(email: auth.session?.email)
-        addons.setActiveProfileId(profiles.activeProfile?.id)
-        iptv.setActiveProfileId(profiles.activeProfile?.id)
-        watchHistory.setActiveProfileId(profiles.activeProfile?.id)
+        await reloadCloudState()
         if trakt.isConnected {
             await trakt.loadWatchlist()
         }
         await watchHistory.load()
         await tmdb.loadHome()
+    }
+
+    func reloadCloudState() async {
+        await cloud.pull()
+        profiles.loadFromCloud()
+        profiles.ensureDefault(email: auth.session?.email)
+        let profileId = profiles.activeProfile?.id
+        addons.setActiveProfileId(profileId)
+        iptv.setActiveProfileId(profileId)
+        watchHistory.setActiveProfileId(profileId)
+        settings.setActiveProfileId(profileId)
     }
 }

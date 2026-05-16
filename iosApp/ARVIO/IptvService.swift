@@ -37,10 +37,25 @@ struct IptvChannel: Identifiable, Codable, Hashable {
     let rawTitle: String
 }
 
+struct IptvProgram: Identifiable, Hashable {
+    let id: String
+    let channelKey: String
+    let title: String
+    let description: String
+    let start: Date
+    let stop: Date
+}
+
+struct IptvNowNext: Hashable {
+    let now: IptvProgram?
+    let next: IptvProgram?
+}
+
 @MainActor
 final class IptvService: ObservableObject {
     @Published private(set) var state = IptvCloudProfileState()
     @Published private(set) var channels: [IptvChannel] = []
+    @Published private(set) var nowNextByChannelId: [String: IptvNowNext] = [:]
     @Published private(set) var selectedGroup = "All"
     @Published private(set) var isLoading = false
     @Published private(set) var progressMessage = ""
@@ -126,6 +141,7 @@ final class IptvService: ObservableObject {
                 loaded.append(contentsOf: try await fetchPlaylist(playlist))
             }
             channels = deduplicate(loaded)
+            nowNextByChannelId = try await loadGuide(for: channels, playlists: playlists)
             if !groups.contains(selectedGroup) {
                 selectedGroup = "All"
             }
@@ -174,6 +190,46 @@ final class IptvService: ObservableObject {
         }
         progressMessage = "Parsing channels..."
         return parseM3U(text)
+    }
+
+    private func loadGuide(for channels: [IptvChannel], playlists: [IptvPlaylistEntry]) async throws -> [String: IptvNowNext] {
+        let epgUrls = Array(Set(playlists.map(\.epgUrl).filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }))
+        guard !epgUrls.isEmpty, !channels.isEmpty else { return [:] }
+        progressMessage = "Loading guide..."
+
+        var programs: [IptvProgram] = []
+        for rawUrl in epgUrls {
+            guard let url = URL(string: rawUrl) else { continue }
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { continue }
+            programs.append(contentsOf: XMLTVParser.parse(data: data))
+        }
+
+        let now = Date()
+        var channelLookup: [String: String] = [:]
+        for channel in channels {
+            channelLookup[channel.name.normalizedGuideKey] = channel.id
+            if let epgId = channel.epgId?.nilIfBlank {
+                channelLookup[epgId.normalizedGuideKey] = channel.id
+            }
+        }
+
+        var grouped: [String: [IptvProgram]] = [:]
+        for program in programs {
+            guard let channelId = channelLookup[program.channelKey.normalizedGuideKey] else { continue }
+            grouped[channelId, default: []].append(program)
+        }
+
+        var result: [String: IptvNowNext] = [:]
+        for (channelId, values) in grouped {
+            let sorted = values.sorted { $0.start < $1.start }
+            let current = sorted.last { $0.start <= now && $0.stop > now }
+            let next = sorted.first { $0.start > now }
+            if current != nil || next != nil {
+                result[channelId] = IptvNowNext(now: current, next: next)
+            }
+        }
+        return result
     }
 
     private func parseM3U(_ text: String) -> [IptvChannel] {
@@ -281,5 +337,93 @@ private extension String {
     var nilIfBlank: String? {
         let value = trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+
+    var normalizedGuideKey: String {
+        trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
+private final class XMLTVParser: NSObject, XMLParserDelegate {
+    private var programs: [IptvProgram] = []
+    private var currentChannel = ""
+    private var currentStart: Date?
+    private var currentStop: Date?
+    private var currentTitle = ""
+    private var currentDescription = ""
+    private var activeElement = ""
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMddHHmmss Z"
+        return formatter
+    }()
+
+    static func parse(data: Data) -> [IptvProgram] {
+        let delegate = XMLTVParser()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        parser.parse()
+        return delegate.programs
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
+        activeElement = elementName
+        if elementName == "programme" {
+            currentChannel = attributeDict["channel"] ?? ""
+            currentStart = Self.parseDate(attributeDict["start"])
+            currentStop = Self.parseDate(attributeDict["stop"])
+            currentTitle = ""
+            currentDescription = ""
+        }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if activeElement == "title" {
+            currentTitle += string
+        } else if activeElement == "desc" {
+            currentDescription += string
+        }
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didEndElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?
+    ) {
+        if elementName == "programme",
+           let start = currentStart,
+           let stop = currentStop,
+           !currentChannel.isEmpty,
+           !currentTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            programs.append(
+                IptvProgram(
+                    id: "\(currentChannel)-\(start.timeIntervalSince1970)",
+                    channelKey: currentChannel,
+                    title: currentTitle.trimmingCharacters(in: .whitespacesAndNewlines),
+                    description: currentDescription.trimmingCharacters(in: .whitespacesAndNewlines),
+                    start: start,
+                    stop: stop
+                )
+            )
+        }
+        activeElement = ""
+    }
+
+    private static func parseDate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let date = formatter.date(from: normalized) {
+            return date
+        }
+        let compact = String(normalized.prefix(14)) + " +0000"
+        return formatter.date(from: compact)
     }
 }

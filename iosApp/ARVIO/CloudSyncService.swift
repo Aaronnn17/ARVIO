@@ -3,14 +3,32 @@ import Foundation
 struct CloudPayload: Codable {
     var version: Int
     var addons: [InstalledAddon]
-    var addonsByProfile: [String: [InstalledAddon]]?
-    var activeProfileId: String?
-    var profiles: [ArvioProfile]?
-    var iptvByProfile: [String: IptvCloudProfileState]?
-    var iptvM3uUrl: String?
-    var iptvEpgUrl: String?
-    var iptvFavoriteGroups: [String]?
-    var iptvFavoriteChannels: [String]?
+    var addonsByProfile: [String: [InstalledAddon]]? = nil
+    var activeProfileId: String? = nil
+    var profiles: [ArvioProfile]? = nil
+    var profileSettingsById: [String: CloudProfileSettings]? = nil
+    var defaultSubtitle: String? = nil
+    var defaultAudioLanguage: String? = nil
+    var cardLayoutMode: String? = nil
+    var frameRateMatchingMode: String? = nil
+    var autoPlayNext: Bool? = nil
+    var autoPlaySingleSource: Bool? = nil
+    var autoPlayMinQuality: String? = nil
+    var includeSpecials: Bool? = nil
+    var dnsProvider: String? = nil
+    var subtitleUsageJson: String? = nil
+    var subtitleSettingsUpdatedAt: Int? = nil
+    var skipProfileSelection: Bool? = nil
+    var subtitleAiEnabled: Bool? = nil
+    var subtitleAiAutoSelect: Bool? = nil
+    var subtitleAiApiKey: String? = nil
+    var subtitleAiModel: String? = nil
+    var subtitleRemoveHearingImpaired: Bool? = nil
+    var iptvByProfile: [String: IptvCloudProfileState]? = nil
+    var iptvM3uUrl: String? = nil
+    var iptvEpgUrl: String? = nil
+    var iptvFavoriteGroups: [String]? = nil
+    var iptvFavoriteChannels: [String]? = nil
     var updatedAt: TimeInterval
 
     static let empty = CloudPayload(version: 1, addons: [], updatedAt: Date().timeIntervalSince1970)
@@ -21,6 +39,24 @@ struct CloudPayload: Codable {
         case addonsByProfile
         case activeProfileId
         case profiles
+        case profileSettingsById
+        case defaultSubtitle
+        case defaultAudioLanguage
+        case cardLayoutMode
+        case frameRateMatchingMode
+        case autoPlayNext
+        case autoPlaySingleSource
+        case autoPlayMinQuality
+        case includeSpecials
+        case dnsProvider
+        case subtitleUsageJson
+        case subtitleSettingsUpdatedAt
+        case skipProfileSelection
+        case subtitleAiEnabled
+        case subtitleAiAutoSelect
+        case subtitleAiApiKey
+        case subtitleAiModel
+        case subtitleRemoveHearingImpaired
         case iptvByProfile
         case iptvM3uUrl
         case iptvEpgUrl
@@ -35,6 +71,7 @@ struct CloudPayload: Codable {
         addonsByProfile: [String: [InstalledAddon]]? = nil,
         activeProfileId: String? = nil,
         profiles: [ArvioProfile]? = nil,
+        profileSettingsById: [String: CloudProfileSettings]? = nil,
         iptvByProfile: [String: IptvCloudProfileState]? = nil,
         iptvM3uUrl: String? = nil,
         iptvEpgUrl: String? = nil,
@@ -47,6 +84,7 @@ struct CloudPayload: Codable {
         self.addonsByProfile = addonsByProfile
         self.activeProfileId = activeProfileId
         self.profiles = profiles
+        self.profileSettingsById = profileSettingsById
         self.iptvByProfile = iptvByProfile
         self.iptvM3uUrl = iptvM3uUrl
         self.iptvEpgUrl = iptvEpgUrl
@@ -62,6 +100,24 @@ struct CloudPayload: Codable {
         addonsByProfile = try? container.decode([String: [InstalledAddon]].self, forKey: .addonsByProfile)
         activeProfileId = try? container.decode(String.self, forKey: .activeProfileId)
         profiles = try? container.decode([ArvioProfile].self, forKey: .profiles)
+        profileSettingsById = try? container.decode([String: CloudProfileSettings].self, forKey: .profileSettingsById)
+        defaultSubtitle = try? container.decode(String.self, forKey: .defaultSubtitle)
+        defaultAudioLanguage = try? container.decode(String.self, forKey: .defaultAudioLanguage)
+        cardLayoutMode = try? container.decode(String.self, forKey: .cardLayoutMode)
+        frameRateMatchingMode = try? container.decode(String.self, forKey: .frameRateMatchingMode)
+        autoPlayNext = try? container.decode(Bool.self, forKey: .autoPlayNext)
+        autoPlaySingleSource = try? container.decode(Bool.self, forKey: .autoPlaySingleSource)
+        autoPlayMinQuality = try? container.decode(String.self, forKey: .autoPlayMinQuality)
+        includeSpecials = try? container.decode(Bool.self, forKey: .includeSpecials)
+        dnsProvider = try? container.decode(String.self, forKey: .dnsProvider)
+        subtitleUsageJson = try? container.decode(String.self, forKey: .subtitleUsageJson)
+        subtitleSettingsUpdatedAt = try? container.decode(Int.self, forKey: .subtitleSettingsUpdatedAt)
+        skipProfileSelection = try? container.decode(Bool.self, forKey: .skipProfileSelection)
+        subtitleAiEnabled = try? container.decode(Bool.self, forKey: .subtitleAiEnabled)
+        subtitleAiAutoSelect = try? container.decode(Bool.self, forKey: .subtitleAiAutoSelect)
+        subtitleAiApiKey = try? container.decode(String.self, forKey: .subtitleAiApiKey)
+        subtitleAiModel = try? container.decode(String.self, forKey: .subtitleAiModel)
+        subtitleRemoveHearingImpaired = try? container.decode(Bool.self, forKey: .subtitleRemoveHearingImpaired)
         iptvByProfile = try? container.decode([String: IptvCloudProfileState].self, forKey: .iptvByProfile)
         iptvM3uUrl = try? container.decode(String.self, forKey: .iptvM3uUrl)
         iptvEpgUrl = try? container.decode(String.self, forKey: .iptvEpgUrl)
@@ -144,13 +200,20 @@ final class CloudSyncService: ObservableObject {
         await save(addons: nil, iptv: nil, profiles: profiles, activeProfileId: activeProfileId)
     }
 
+    func save(settings: CloudProfileSettings, globalSettings: GlobalCloudSettings, profileId: String) async {
+        await save(addons: nil, iptv: nil, settings: settings, globalSettings: globalSettings, settingsProfileId: profileId)
+    }
+
     private func save(
         addons: [InstalledAddon]?,
         addonProfileId: String? = nil,
         iptv: IptvCloudProfileState?,
         iptvProfileId: String? = nil,
         profiles: [ArvioProfile]? = nil,
-        activeProfileId: String? = nil
+        activeProfileId: String? = nil,
+        settings: CloudProfileSettings? = nil,
+        globalSettings: GlobalCloudSettings? = nil,
+        settingsProfileId: String? = nil
     ) async {
         guard let session = auth.session else { return }
         isSyncing = true
@@ -184,6 +247,31 @@ final class CloudSyncService: ObservableObject {
                 } else {
                     object["activeProfileId"] = NSNull()
                 }
+            }
+            if let settings {
+                let profileId = settingsProfileId ?? session.userId
+                var byProfile = object["profileSettingsById"] as? [String: Any] ?? [:]
+                byProfile[profileId] = try jsonObject(settings)
+                object["profileSettingsById"] = byProfile
+                object["defaultSubtitle"] = settings.defaultSubtitle
+                object["defaultAudioLanguage"] = settings.defaultAudioLanguage
+                object["cardLayoutMode"] = settings.cardLayoutMode
+                object["frameRateMatchingMode"] = settings.frameRateMatchingMode
+                object["autoPlayNext"] = settings.autoPlayNext
+                object["autoPlaySingleSource"] = settings.autoPlaySingleSource
+                object["autoPlayMinQuality"] = settings.autoPlayMinQuality
+                object["includeSpecials"] = settings.includeSpecials
+                object["dnsProvider"] = settings.dnsProvider
+                object["subtitleUsageJson"] = settings.subtitleUsageJson
+                object["subtitleSettingsUpdatedAt"] = settings.subtitleSettingsUpdatedAt
+            }
+            if let globalSettings {
+                object["subtitleAiEnabled"] = globalSettings.subtitleAiEnabled
+                object["subtitleAiAutoSelect"] = globalSettings.subtitleAiAutoSelect
+                object["subtitleAiApiKey"] = globalSettings.subtitleAiApiKey
+                object["subtitleAiModel"] = globalSettings.subtitleAiModel
+                object["subtitleRemoveHearingImpaired"] = globalSettings.subtitleRemoveHearingImpaired
+                object["skipProfileSelection"] = globalSettings.skipProfileSelection
             }
             let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
             let raw = String(data: data, encoding: .utf8) ?? "{}"

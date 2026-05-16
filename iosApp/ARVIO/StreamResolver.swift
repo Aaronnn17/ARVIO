@@ -2,6 +2,7 @@ import Foundation
 
 struct ResolvedStream: Identifiable, Hashable {
     let id = UUID()
+    let addonId: String?
     let addonName: String
     let sourceName: String
     let title: String
@@ -75,6 +76,7 @@ final class StreamResolver: ObservableObject {
             }
             streams = resolved.map { stream in
                 ResolvedStream(
+                    addonId: stream.addonId,
                     addonName: stream.addonName,
                     sourceName: stream.sourceName,
                     title: stream.title,
@@ -113,6 +115,7 @@ final class StreamResolver: ObservableObject {
                 let playableURL = rawURL.flatMap(URL.init(string:))
                 let title = stream.title ?? stream.name ?? addon.name
                 return ResolvedStream(
+                    addonId: addon.id,
                     addonName: addon.name,
                     sourceName: stream.name ?? addon.name,
                     title: title,

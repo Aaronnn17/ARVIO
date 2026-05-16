@@ -12,10 +12,10 @@ struct LiveTVView: View {
 
             VStack(alignment: .leading, spacing: 18) {
                 header
-                if appState.iptv.channels.isEmpty {
-                    setupPanel
-                } else {
-                    channelGrid
+            if appState.iptv.channels.isEmpty {
+                setupPanel
+            } else {
+                channelGrid
                 }
             }
             .padding(28)
@@ -148,7 +148,7 @@ struct LiveTVView: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 14)], spacing: 14) {
                 ForEach(appState.iptv.visibleChannels) { channel in
-                    ChannelTile(channel: channel)
+                    ChannelTile(channel: channel, guide: appState.iptv.nowNextByChannelId[channel.id])
                 }
             }
             .padding(.bottom, 36)
@@ -174,6 +174,7 @@ struct LiveTVView: View {
 private struct ChannelTile: View {
     @EnvironmentObject private var appState: AppState
     let channel: IptvChannel
+    let guide: IptvNowNext?
 
     var body: some View {
         Button {
@@ -201,6 +202,12 @@ private struct ChannelTile: View {
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(ArvioTheme.textTertiary)
                             .lineLimit(1)
+                        if let title = guide?.now?.title {
+                            Text(title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(ArvioTheme.gold)
+                                .lineLimit(1)
+                        }
                     }
                     Spacer()
                 }
@@ -221,6 +228,12 @@ private struct ChannelTile: View {
                     }
                     .buttonStyle(.bordered)
                 }
+                if let next = guide?.next {
+                    Text("Next: \(next.title)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(ArvioTheme.textTertiary)
+                        .lineLimit(1)
+                }
             }
             .padding(14)
             .frame(minHeight: 132, alignment: .topLeading)
@@ -233,6 +246,7 @@ private struct ChannelTile: View {
     private func play() {
         appState.iptv.markOpened(channel)
         appState.selectedStream = ResolvedStream(
+            addonId: nil,
             addonName: "Live TV",
             sourceName: channel.group,
             title: channel.name,
