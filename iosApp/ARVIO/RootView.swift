@@ -45,7 +45,7 @@ struct RootView: View {
                         case .series:
                             CatalogView(title: "Series", subtitle: "Continue seasons and discover premium TV.", items: appState.tmdb.trendingSeries)
                         case .liveTV:
-                            CatalogView(title: "Live TV", subtitle: "IPTV guide and channels are next in the iOS parity queue.", items: featuredItems)
+                            LiveTVView()
                         case .watchlist:
                             WatchlistView()
                         case .search:
@@ -59,16 +59,30 @@ struct RootView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+
+            if appState.profiles.isSwitcherVisible {
+                ProfileSelectionView()
+                    .transition(.opacity)
+            }
         }
     }
 }
 
 struct TopNavigation: View {
+    @EnvironmentObject private var appState: AppState
     @Binding var selectedTab: ArvioTab
 
     var body: some View {
         HStack(spacing: 20) {
-            BrandMark()
+            Button {
+                appState.profiles.isSwitcherVisible = true
+            } label: {
+                HStack(spacing: 10) {
+                    ProfileDot(profile: appState.profiles.activeProfile)
+                    BrandMark()
+                }
+            }
+            .buttonStyle(.plain)
 
             ForEach(ArvioTab.allCases, id: \.self) { tab in
                 Button {
@@ -110,5 +124,21 @@ struct BrandMark: View {
             .scaledToFit()
             .frame(width: 42, height: 42)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct ProfileDot: View {
+    let profile: ArvioProfile?
+
+    var body: some View {
+        Circle()
+            .fill(Color(hex: profile?.swiftUIColorHex ?? "#3B82F6"))
+            .frame(width: 34, height: 34)
+            .overlay {
+                Text(String((profile?.name ?? "A").prefix(1)).uppercased())
+                    .font(.system(size: 14, weight: .black))
+                    .foregroundStyle(Color.white)
+            }
+            .overlay(Circle().stroke(ArvioTheme.gold.opacity(0.85), lineWidth: 1))
     }
 }

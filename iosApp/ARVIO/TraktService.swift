@@ -62,21 +62,10 @@ struct TraktWatchlistItem: Identifiable, Decodable, Hashable {
 }
 
 private struct DeviceCodeRequest: Encodable {
-    let clientId: String
-
-    enum CodingKeys: String, CodingKey {
-        case clientId = "client_id"
-    }
 }
 
 private struct DeviceTokenRequest: Encodable {
     let code: String
-    let clientId: String
-
-    enum CodingKeys: String, CodingKey {
-        case code
-        case clientId = "client_id"
-    }
 }
 
 private struct DeviceTokenResponse: Decodable {
@@ -102,7 +91,6 @@ final class TraktService: ObservableObject {
     private let client = JSONClient()
     private let keychain = KeychainStore()
     private let tokenAccount = "trakt-token"
-    private let baseURL = "https://api.trakt.tv"
 
     init() {
         token = keychain.load(TraktToken.self, account: tokenAccount)
@@ -120,12 +108,12 @@ final class TraktService: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
-            guard let url = URL(string: "\(baseURL)/oauth/device/code") else { return }
+            guard let url = proxyURL(path: "/oauth/device/code", method: "POST") else { return }
             deviceCode = try await client.request(
                 url,
                 method: "POST",
-                headers: ["trakt-api-version": "2", "trakt-api-key": AppConfig.traktClientID],
-                body: DeviceCodeRequest(clientId: AppConfig.traktClientID)
+                headers: proxyHeaders(),
+                body: DeviceCodeRequest()
             )
             errorMessage = nil
         } catch {
@@ -138,12 +126,12 @@ final class TraktService: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
-            guard let url = URL(string: "\(baseURL)/oauth/device/token") else { return }
+            guard let url = proxyURL(path: "/oauth/device/token", method: "POST") else { return }
             let response: DeviceTokenResponse = try await client.request(
                 url,
                 method: "POST",
-                headers: ["trakt-api-version": "2", "trakt-api-key": AppConfig.traktClientID],
-                body: DeviceTokenRequest(code: code, clientId: AppConfig.traktClientID)
+                headers: proxyHeaders(),
+                body: DeviceTokenRequest(code: code)
             )
             let newToken = TraktToken(
                 accessToken: response.accessToken,
@@ -172,18 +160,34 @@ final class TraktService: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
-            guard let url = URL(string: "\(baseURL)/sync/watchlist") else { return }
+            guard let url = proxyURL(path: "/sync/watchlist") else { return }
             watchlist = try await client.request(
                 url,
-                headers: [
-                    "trakt-api-version": "2",
-                    "trakt-api-key": AppConfig.traktClientID,
-                    "Authorization": "Bearer \(token.accessToken)"
-                ]
+                headers: proxyHeaders(userToken: token.accessToken)
             )
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func proxyURL(path: String, method: String = "GET") -> URL? {
+        var components = URLComponents(string: AppConfig.traktProxyURL)
+        components?.queryItems = [
+            URLQueryItem(name: "path", value: path),
+            URLQueryItem(name: "method", value: method)
+        ]
+        return components?.url
+    }
+
+    private func proxyHeaders(userToken: String? = nil) -> [String: String] {
+        var headers = [
+            "apikey": AppConfig.supabaseAnonKey,
+            "Authorization": "Bearer \(AppConfig.supabaseAnonKey)"
+        ]
+        if let userToken {
+            headers["x-user-token"] = userToken
+        }
+        return headers
     }
 }

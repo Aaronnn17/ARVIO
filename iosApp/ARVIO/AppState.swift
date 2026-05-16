@@ -9,6 +9,8 @@ final class AppState: ObservableObject {
     let trakt: TraktService
     let tmdb: TmdbService
     let streams: StreamResolver
+    let iptv: IptvService
+    let profiles: ProfileService
     @Published var selectedMedia: MediaItem?
     @Published var selectedStream: ResolvedStream?
     private var cancellables: Set<AnyCancellable> = []
@@ -20,14 +22,21 @@ final class AppState: ObservableObject {
         let trakt = TraktService()
         let tmdb = TmdbService()
         let streams = StreamResolver(tmdb: tmdb, addons: addons)
+        let iptv = IptvService(cloud: cloud)
+        let profiles = ProfileService(cloud: cloud)
         self.auth = auth
         self.cloud = cloud
         self.addons = addons
         self.trakt = trakt
         self.tmdb = tmdb
         self.streams = streams
+        self.iptv = iptv
+        self.profiles = profiles
+        profiles.onActiveProfileChanged = { profileId in
+            iptv.setActiveProfileId(profileId)
+        }
 
-        [auth.objectWillChange, cloud.objectWillChange, addons.objectWillChange, trakt.objectWillChange, tmdb.objectWillChange, streams.objectWillChange]
+        [auth.objectWillChange, cloud.objectWillChange, addons.objectWillChange, trakt.objectWillChange, tmdb.objectWillChange, streams.objectWillChange, iptv.objectWillChange, profiles.objectWillChange]
             .forEach { publisher in
                 publisher
                     .sink { [weak self] _ in self?.objectWillChange.send() }
@@ -39,6 +48,9 @@ final class AppState: ObservableObject {
         await auth.restore()
         await cloud.pull()
         addons.loadFromCloud()
+        profiles.loadFromCloud()
+        profiles.ensureDefault(email: auth.session?.email)
+        iptv.setActiveProfileId(profiles.activeProfile?.id)
         if trakt.isConnected {
             await trakt.loadWatchlist()
         }

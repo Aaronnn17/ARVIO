@@ -14,9 +14,11 @@ struct SettingsView: View {
 
                 cloudPanel
                 traktPanel
+                profilePanel
                 SettingsRow(title: "Cloud sync", value: appState.cloud.isSyncing ? "Syncing" : (appState.auth.isAuthenticated ? "Connected" : "Disconnected"))
                 SettingsRow(title: "Addons", value: "\(appState.addons.addons.count) installed")
-                SettingsRow(title: "Playback", value: "AVPlayer parity work pending")
+                SettingsRow(title: "Live TV", value: appState.iptv.channels.isEmpty ? "No channels loaded" : "\(appState.iptv.channels.count) channels")
+                SettingsRow(title: "Playback", value: "Direct AVPlayer, stream source picker")
             }
             .padding(28)
         }
@@ -117,6 +119,27 @@ struct SettingsView: View {
         }
         .settingsPanel()
     }
+
+    private var profilePanel: some View {
+        HStack(spacing: 14) {
+            ProfileDot(profile: appState.profiles.activeProfile)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Profiles")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(ArvioTheme.textPrimary)
+                Text(appState.profiles.activeProfile?.name ?? "Default")
+                    .font(.system(size: 14))
+                    .foregroundStyle(ArvioTheme.textSecondary)
+            }
+            Spacer()
+            Button("Switch") {
+                appState.profiles.isSwitcherVisible = true
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(ArvioTheme.gold)
+        }
+        .settingsPanel()
+    }
 }
 
 struct SettingsRow: View {
@@ -139,7 +162,7 @@ struct SettingsRow: View {
     }
 }
 
-private extension View {
+extension View {
     func settingsPanel() -> some View {
         padding(18)
             .background(RoundedRectangle(cornerRadius: 8).fill(ArvioTheme.panel))

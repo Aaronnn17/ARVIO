@@ -20,6 +20,6 @@ enum AppConfig {
     }
 
     static var isTraktConfigured: Bool {
-        !traktClientID.isEmpty && !traktClientID.hasPrefix("__")
+        isCloudConfigured
     }
 }
