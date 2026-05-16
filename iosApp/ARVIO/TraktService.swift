@@ -33,6 +33,7 @@ struct TraktWatchlistItem: Identifiable, Decodable, Hashable {
     let type: String
     let title: String
     let year: Int?
+    let tmdbId: Int?
 
     enum RootKeys: String, CodingKey {
         case type
@@ -43,6 +44,7 @@ struct TraktWatchlistItem: Identifiable, Decodable, Hashable {
     enum MediaKeys: String, CodingKey {
         case title
         case year
+        case ids
     }
 
     init(from decoder: Decoder) throws {
@@ -51,14 +53,36 @@ struct TraktWatchlistItem: Identifiable, Decodable, Hashable {
         if let movie = try? root.nestedContainer(keyedBy: MediaKeys.self, forKey: .movie) {
             title = (try? movie.decode(String.self, forKey: .title)) ?? "Untitled"
             year = try? movie.decode(Int.self, forKey: .year)
+            tmdbId = (try? movie.decode(TraktWatchlistIds.self, forKey: .ids))?.tmdb
         } else if let show = try? root.nestedContainer(keyedBy: MediaKeys.self, forKey: .show) {
             title = (try? show.decode(String.self, forKey: .title)) ?? "Untitled"
             year = try? show.decode(Int.self, forKey: .year)
+            tmdbId = (try? show.decode(TraktWatchlistIds.self, forKey: .ids))?.tmdb
         } else {
             title = "Untitled"
             year = nil
+            tmdbId = nil
         }
     }
+
+    func asMediaItem() -> MediaItem {
+        MediaItem(
+            id: "\(type)-\(tmdbId ?? 0)-\(title)",
+            tmdbId: tmdbId,
+            title: title,
+            subtitle: type.capitalized,
+            year: year.map(String.init) ?? "",
+            duration: "Trakt",
+            rating: "",
+            kind: type == "movie" ? .movie : .series,
+            progress: 0,
+            palette: ["#10202a", "#071017"]
+        )
+    }
+}
+
+private struct TraktWatchlistIds: Decodable {
+    let tmdb: Int?
 }
 
 private struct DeviceCodeRequest: Encodable {
@@ -112,6 +136,22 @@ private struct TraktScrobbleBody: Encodable {
         try container.encodeIfPresent(show, forKey: .show)
         try container.encodeIfPresent(episode, forKey: .episode)
         try container.encode(progress, forKey: .progress)
+    }
+}
+
+private struct TraktWatchlistMutationBody: Encodable {
+    let movies: [TraktScrobbleMedia]?
+    let shows: [TraktScrobbleMedia]?
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(movies, forKey: .movies)
+        try container.encodeIfPresent(shows, forKey: .shows)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case movies
+        case shows
     }
 }
 
@@ -213,6 +253,30 @@ final class TraktService: ObservableObject {
             url,
             headers: proxyHeaders(userToken: token.accessToken)
         )
+    }
+
+    func addToWatchlist(item: MediaItem) async {
+        guard let token, let tmdbId = item.tmdbId else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            guard let url = proxyURL(path: "/sync/watchlist", method: "POST") else { return }
+            let media = TraktScrobbleMedia(ids: TraktScrobbleIds(tmdb: tmdbId))
+            let body = TraktWatchlistMutationBody(
+                movies: item.kind == .movie ? [media] : nil,
+                shows: item.kind == .series ? [media] : nil
+            )
+            let _: EmptyResponse = try await client.request(
+                url,
+                method: "POST",
+                headers: proxyHeaders(userToken: token.accessToken),
+                body: body
+            )
+            await loadWatchlist()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func scrobblePause(item: MediaItem, progressPercent: Double) async throws {

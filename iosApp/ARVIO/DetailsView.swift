@@ -47,7 +47,9 @@ struct DetailsView: View {
                             .buttonStyle(.borderedProminent)
                             .tint(ArvioTheme.gold)
 
-                            Button("Watchlist") { }
+                            Button("Watchlist") {
+                                Task { await appState.trakt.addToWatchlist(item: item) }
+                            }
                                 .buttonStyle(.bordered)
                         }
                     }
@@ -143,7 +145,7 @@ struct SourceSelector: View {
                                     Text(stream.sourceName)
                                         .font(.system(size: 16, weight: .bold))
                                         .foregroundStyle(ArvioTheme.textPrimary)
-                                    Text([stream.addonName, stream.quality, stream.size, stream.isPlayable ? "Playable" : "Unsupported on iOS"].filter { !$0.isEmpty }.joined(separator: " - "))
+                                    Text([stream.addonName, stream.quality, stream.size, stream.isPlayable ? "Playable" : "Needs direct stream"].filter { !$0.isEmpty }.joined(separator: " - "))
                                         .font(.system(size: 13))
                                         .foregroundStyle(ArvioTheme.textSecondary)
                                         .lineLimit(1)

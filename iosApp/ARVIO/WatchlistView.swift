@@ -31,28 +31,24 @@ struct WatchlistView: View {
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
                         ForEach(appState.trakt.watchlist) { item in
-                            VStack(alignment: .leading, spacing: 10) {
-                                PosterBackdrop(item: MediaItem(
-                                    title: item.title,
-                                    subtitle: item.type.capitalized,
-                                    year: item.year.map(String.init) ?? "",
-                                    duration: "Trakt",
-                                    rating: "",
-                                    kind: item.type == "movie" ? .movie : .series,
-                                    progress: 0,
-                                    palette: ["#10202a", "#071017"]
-                                ))
-                                .frame(width: 210, height: 118)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                Text(item.title)
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(ArvioTheme.textPrimary)
-                                    .lineLimit(1)
-                                Text(([item.type.capitalized] + (item.year.map { [String($0)] } ?? [])).joined(separator: " - "))
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(ArvioTheme.textTertiary)
+                            Button {
+                                appState.selectedMedia = item.asMediaItem()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    PosterBackdrop(item: item.asMediaItem())
+                                        .frame(width: 210, height: 118)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    Text(item.title)
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundStyle(ArvioTheme.textPrimary)
+                                        .lineLimit(1)
+                                    Text(([item.type.capitalized] + (item.year.map { [String($0)] } ?? [])).joined(separator: " - "))
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(ArvioTheme.textTertiary)
+                                }
+                                .frame(width: 210, alignment: .leading)
                             }
-                            .frame(width: 210, alignment: .leading)
+                            .buttonStyle(.plain)
                         }
                     }
                 }
