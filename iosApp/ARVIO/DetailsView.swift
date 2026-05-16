@@ -31,7 +31,11 @@ struct DetailsView: View {
                         HStack(spacing: 12) {
                             Button("Play") {
                                 Task {
-                                    await appState.streams.resolve(item: item, season: selectedSeason, episode: 1)
+                                    await appState.streams.resolve(
+                                        item: item,
+                                        season: item.season ?? selectedSeason,
+                                        episode: item.episode ?? 1
+                                    )
                                 }
                             }
                             .buttonStyle(.borderedProminent)
@@ -63,6 +67,7 @@ struct DetailsView: View {
             .padding(28)
         }
         .task {
+            selectedSeason = item.season ?? selectedSeason
             async let loadedDetails = try? appState.tmdb.details(for: item)
             async let loadedRecommendations = try? appState.tmdb.recommendations(for: item)
             details = await loadedDetails ?? details

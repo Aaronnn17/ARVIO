@@ -23,7 +23,10 @@ struct SearchView: View {
                     Task { await appState.tmdb.search(value) }
                 }
 
-            MediaRail(title: query.isEmpty ? "Suggested" : "Results", items: query.isEmpty ? featuredItems : appState.tmdb.searchResults)
+            MediaRail(
+                title: query.isEmpty ? "Suggested" : "Results",
+                items: query.isEmpty ? appState.tmdb.trendingMovies + appState.tmdb.trendingSeries : appState.tmdb.searchResults
+            )
 
             Spacer()
         }

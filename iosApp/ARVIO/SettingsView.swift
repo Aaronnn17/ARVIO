@@ -105,7 +105,10 @@ struct SettingsView: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(ArvioTheme.textSecondary)
                     Button("I approved it") {
-                        Task { await appState.trakt.pollForToken() }
+                        Task {
+                            await appState.trakt.pollForToken()
+                            await appState.watchHistory.load()
+                        }
                     }
                     .buttonStyle(.bordered)
                 }

@@ -8,6 +8,80 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
     let description: String?
     let catalogs: [String]
     let resources: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case version
+        case manifestURL
+        case description
+        case catalogs
+        case resources
+        case url
+        case transportUrl
+        case manifest
+    }
+
+    init(
+        id: String,
+        name: String,
+        version: String,
+        manifestURL: String,
+        description: String?,
+        catalogs: [String],
+        resources: [String]
+    ) {
+        self.id = id
+        self.name = name
+        self.version = version
+        self.manifestURL = manifestURL
+        self.description = description
+        self.catalogs = catalogs
+        self.resources = resources
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? container.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        name = (try? container.decode(String.self, forKey: .name)) ?? "Addon"
+        version = (try? container.decode(String.self, forKey: .version)) ?? "1.0.0"
+        description = try? container.decode(String.self, forKey: .description)
+        let rawManifestURL = try? container.decode(String.self, forKey: .manifestURL)
+        let url = try? container.decode(String.self, forKey: .url)
+        let transportURL = try? container.decode(String.self, forKey: .transportUrl)
+        manifestURL = Self.normalizedManifestURL(rawManifestURL ?? url ?? transportURL ?? "")
+
+        if let androidManifest = try? container.decode(AddonManifest.self, forKey: .manifest) {
+            catalogs = androidManifest.catalogs?.compactMap { $0.name ?? $0.id ?? $0.type } ?? []
+            resources = androidManifest.resources?.map(\.displayName) ?? []
+        } else {
+            catalogs = (try? container.decode([String].self, forKey: .catalogs)) ?? []
+            resources = (try? container.decode([String].self, forKey: .resources)) ?? []
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(version, forKey: .version)
+        try container.encode(manifestURL, forKey: .manifestURL)
+        try container.encode(description, forKey: .description)
+        try container.encode(catalogs, forKey: .catalogs)
+        try container.encode(resources, forKey: .resources)
+        try container.encode(manifestBaseURL(manifestURL), forKey: .url)
+        try container.encode(manifestBaseURL(manifestURL), forKey: .transportUrl)
+    }
+
+    private static func normalizedManifestURL(_ rawURL: String) -> String {
+        guard !rawURL.isEmpty else { return "" }
+        if rawURL.hasSuffix("/manifest.json") { return rawURL }
+        return rawURL.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/manifest.json"
+    }
+
+    private func manifestBaseURL(_ rawURL: String) -> String {
+        rawURL.replacingOccurrences(of: "/manifest.json", with: "")
+    }
 }
 
 private struct AddonManifest: Codable {
@@ -71,6 +145,7 @@ final class AddonService: ObservableObject {
 
     private let cloud: CloudSyncService
     private let storageKey = "arvio.ios.installedAddons"
+    private var activeProfileId: String?
 
     init(cloud: CloudSyncService) {
         self.cloud = cloud
@@ -78,10 +153,19 @@ final class AddonService: ObservableObject {
     }
 
     func loadFromCloud() {
-        if !cloud.payload.addons.isEmpty {
-            addons = cloud.payload.addons
+        let profileAddons = activeProfileId.flatMap { cloud.payload.addonsByProfile?[$0] }
+        let mergedByProfile = cloud.payload.addonsByProfile?.values.flatMap { $0 } ?? []
+        let resolved = profileAddons ?? (!mergedByProfile.isEmpty ? mergedByProfile : cloud.payload.addons)
+        let valid = deduplicate(resolved).filter { !$0.manifestURL.isEmpty }
+        if !valid.isEmpty {
+            addons = valid
             saveLocal()
         }
+    }
+
+    func setActiveProfileId(_ profileId: String?) {
+        activeProfileId = profileId
+        loadFromCloud()
     }
 
     func install() async {
@@ -97,7 +181,7 @@ final class AddonService: ObservableObject {
             installURL = ""
             errorMessage = nil
             saveLocal()
-            await cloud.save(addons: addons)
+            await cloud.save(addons: addons, profileId: activeProfileId)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -106,7 +190,7 @@ final class AddonService: ObservableObject {
     func remove(_ addon: InstalledAddon) async {
         addons.removeAll { $0.id == addon.id }
         saveLocal()
-        await cloud.save(addons: addons)
+        await cloud.save(addons: addons, profileId: activeProfileId)
     }
 
     private func fetchAddon(from rawURL: String) async throws -> InstalledAddon {
@@ -150,5 +234,15 @@ final class AddonService: ObservableObject {
     private func saveLocal() {
         guard let data = try? JSONEncoder().encode(addons) else { return }
         UserDefaults.standard.set(data, forKey: storageKey)
+    }
+
+    private func deduplicate(_ values: [InstalledAddon]) -> [InstalledAddon] {
+        var seen = Set<String>()
+        return values.filter { addon in
+            let key = addon.id + "|" + addon.manifestURL
+            if seen.contains(key) { return false }
+            seen.insert(key)
+            return true
+        }
     }
 }

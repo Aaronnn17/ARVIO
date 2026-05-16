@@ -3,6 +3,7 @@ import Foundation
 struct CloudPayload: Codable {
     var version: Int
     var addons: [InstalledAddon]
+    var addonsByProfile: [String: [InstalledAddon]]?
     var activeProfileId: String?
     var profiles: [ArvioProfile]?
     var iptvByProfile: [String: IptvCloudProfileState]?
@@ -17,6 +18,7 @@ struct CloudPayload: Codable {
     enum CodingKeys: String, CodingKey {
         case version
         case addons
+        case addonsByProfile
         case activeProfileId
         case profiles
         case iptvByProfile
@@ -30,6 +32,7 @@ struct CloudPayload: Codable {
     init(
         version: Int,
         addons: [InstalledAddon],
+        addonsByProfile: [String: [InstalledAddon]]? = nil,
         activeProfileId: String? = nil,
         profiles: [ArvioProfile]? = nil,
         iptvByProfile: [String: IptvCloudProfileState]? = nil,
@@ -41,6 +44,7 @@ struct CloudPayload: Codable {
     ) {
         self.version = version
         self.addons = addons
+        self.addonsByProfile = addonsByProfile
         self.activeProfileId = activeProfileId
         self.profiles = profiles
         self.iptvByProfile = iptvByProfile
@@ -55,6 +59,7 @@ struct CloudPayload: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         version = (try? container.decode(Int.self, forKey: .version)) ?? 1
         addons = (try? container.decode([InstalledAddon].self, forKey: .addons)) ?? []
+        addonsByProfile = try? container.decode([String: [InstalledAddon]].self, forKey: .addonsByProfile)
         activeProfileId = try? container.decode(String.self, forKey: .activeProfileId)
         profiles = try? container.decode([ArvioProfile].self, forKey: .profiles)
         iptvByProfile = try? container.decode([String: IptvCloudProfileState].self, forKey: .iptvByProfile)
@@ -127,8 +132,8 @@ final class CloudSyncService: ObservableObject {
         }
     }
 
-    func save(addons: [InstalledAddon]) async {
-        await save(addons: addons, iptv: nil)
+    func save(addons: [InstalledAddon], profileId: String?) async {
+        await save(addons: addons, addonProfileId: profileId, iptv: nil)
     }
 
     func save(iptv: IptvCloudProfileState, profileId: String) async {
@@ -141,6 +146,7 @@ final class CloudSyncService: ObservableObject {
 
     private func save(
         addons: [InstalledAddon]?,
+        addonProfileId: String? = nil,
         iptv: IptvCloudProfileState?,
         iptvProfileId: String? = nil,
         profiles: [ArvioProfile]? = nil,
@@ -156,6 +162,11 @@ final class CloudSyncService: ObservableObject {
             object["updatedAt"] = Date().timeIntervalSince1970
             if let addons {
                 object["addons"] = try jsonObject(addons)
+                if let addonProfileId {
+                    var byProfile = object["addonsByProfile"] as? [String: Any] ?? [:]
+                    byProfile[addonProfileId] = try jsonObject(addons)
+                    object["addonsByProfile"] = byProfile
+                }
             }
             if let iptv {
                 object["iptvM3uUrl"] = iptv.m3uUrl

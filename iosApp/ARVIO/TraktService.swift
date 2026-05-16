@@ -171,6 +171,15 @@ final class TraktService: ObservableObject {
         }
     }
 
+    func loadPlaybackProgress() async throws -> [TraktPlaybackItem] {
+        guard let token else { return [] }
+        guard let url = proxyURL(path: "/sync/playback") else { return [] }
+        return try await client.request(
+            url,
+            headers: proxyHeaders(userToken: token.accessToken)
+        )
+    }
+
     private func proxyURL(path: String, method: String = "GET") -> URL? {
         var components = URLComponents(string: AppConfig.traktProxyURL)
         components?.queryItems = [

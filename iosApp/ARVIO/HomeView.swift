@@ -6,13 +6,45 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                HeroSection(item: appState.tmdb.trendingMovies.first ?? featuredItems[0])
-                MediaRail(title: "Continue Watching", items: continueWatchingItems)
-                MediaRail(title: "Trending Movies", items: appState.tmdb.trendingMovies.isEmpty ? featuredItems : appState.tmdb.trendingMovies)
-                MediaRail(title: "Trending Series", items: appState.tmdb.trendingSeries.isEmpty ? featuredItems : appState.tmdb.trendingSeries)
+                if let hero = appState.tmdb.trendingMovies.first ?? appState.watchHistory.continueWatching.first {
+                    HeroSection(item: hero)
+                } else {
+                    BrandHeroSection()
+                }
+                if !appState.watchHistory.continueWatching.isEmpty {
+                    MediaRail(title: "Continue Watching", items: appState.watchHistory.continueWatching)
+                }
+                MediaRail(title: "Trending Movies", items: appState.tmdb.trendingMovies)
+                MediaRail(title: "Trending Series", items: appState.tmdb.trendingSeries)
             }
             .padding(.horizontal, 28)
             .padding(.bottom, 36)
+        }
+    }
+}
+
+struct BrandHeroSection: View {
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Image("ARVIOTVBanner")
+                .resizable()
+                .scaledToFill()
+                .frame(height: 360)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            LinearGradient(colors: [Color.black.opacity(0.05), Color.black.opacity(0.86)], startPoint: .center, endPoint: .bottom)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 12) {
+                Image("ARVIOFeatureGraphic")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 260)
+                Text("ARVIO")
+                    .font(.system(size: 42, weight: .bold))
+                    .foregroundStyle(ArvioTheme.textPrimary)
+            }
+            .padding(28)
         }
     }
 }
@@ -76,6 +108,9 @@ struct MediaRail: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 14) {
+                    if items.isEmpty {
+                        EmptyStatePanel(title: "Nothing here yet", message: "Content will appear here after sync finishes.")
+                    }
                     ForEach(items) { item in
                         MediaCard(item: item) { selected in
                             appState.selectedMedia = selected
@@ -104,7 +139,10 @@ struct CatalogView: View {
                     .foregroundStyle(ArvioTheme.textSecondary)
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
-                    ForEach(items.isEmpty ? featuredItems : items) { item in
+                    if items.isEmpty {
+                        EmptyStatePanel(title: "Nothing here yet", message: "Refresh or check your cloud connection.")
+                    }
+                    ForEach(items) { item in
                         MediaCard(item: item) { selected in
                             appState.selectedMedia = selected
                         }

@@ -9,6 +9,7 @@ struct ResolvedStream: Identifiable, Hashable {
     let size: String
     let url: URL?
     let isPlayable: Bool
+    let resumePositionSeconds: Int?
 }
 
 private struct StremioStreamResponse: Decodable {
@@ -72,7 +73,19 @@ final class StreamResolver: ObservableObject {
                 }
                 return all
             }
-            streams = resolved.sorted { left, right in
+            streams = resolved.map { stream in
+                ResolvedStream(
+                    addonName: stream.addonName,
+                    sourceName: stream.sourceName,
+                    title: stream.title,
+                    quality: stream.quality,
+                    size: stream.size,
+                    url: stream.url,
+                    isPlayable: stream.isPlayable,
+                    resumePositionSeconds: item.positionSeconds
+                )
+            }
+            .sorted { left, right in
                 score(left) > score(right)
             }
             errorMessage = nil
@@ -106,7 +119,8 @@ final class StreamResolver: ObservableObject {
                     quality: quality(from: [title, stream.description].compactMap { $0 }.joined(separator: " ")),
                     size: size(from: [title, stream.description].compactMap { $0 }.joined(separator: " ")),
                     url: playableURL,
-                    isPlayable: playableURL.map(isDirectPlayable(url:)) ?? false
+                    isPlayable: playableURL.map(isDirectPlayable(url:)) ?? false,
+                    resumePositionSeconds: nil
                 )
             } ?? []
         } catch {

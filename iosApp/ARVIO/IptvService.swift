@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 struct IptvPlaylistEntry: Codable, Identifiable, Hashable {
     let id: String
@@ -190,7 +191,7 @@ final class IptvService: ObservableObject {
                 let meta = pending ?? ("Channel \(result.count + 1)", "Uncategorized", nil, nil, "")
                 result.append(
                     IptvChannel(
-                        id: stableChannelId(name: meta.name, epgId: meta.epgId, streamUrl: line, index: result.count),
+                        id: stableChannelId(epgId: meta.epgId, streamUrl: line),
                         name: meta.name,
                         streamUrl: line,
                         group: meta.group,
@@ -205,10 +206,19 @@ final class IptvService: ObservableObject {
         return result
     }
 
-    private func stableChannelId(name: String, epgId: String?, streamUrl: String, index: Int) -> String {
-        let source = (epgId?.nilIfBlank ?? name + streamUrl).lowercased()
-        let cleaned = source.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "-" }
-        return String(cleaned).replacingOccurrences(of: "--", with: "-") + "-\(index)"
+    private func stableChannelId(epgId: String?, streamUrl: String) -> String {
+        let normalizedEpg = epgId?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let streamKey = stableStreamKey(streamUrl)
+        return normalizedEpg.isEmpty ? "m3u:\(streamKey)" : "m3u:\(normalizedEpg):\(streamKey)"
+    }
+
+    private func stableStreamKey(_ streamUrl: String) -> String {
+        let normalized = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "empty" }
+        let digest = Insecure.SHA1.hash(data: Data(normalized.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "\(normalized.count)-\(String(digest.prefix(16)))"
     }
 
     private func deduplicate(_ values: [IptvChannel]) -> [IptvChannel] {

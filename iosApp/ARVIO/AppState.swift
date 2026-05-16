@@ -11,6 +11,7 @@ final class AppState: ObservableObject {
     let streams: StreamResolver
     let iptv: IptvService
     let profiles: ProfileService
+    let watchHistory: WatchHistoryService
     @Published var selectedMedia: MediaItem?
     @Published var selectedStream: ResolvedStream?
     private var cancellables: Set<AnyCancellable> = []
@@ -24,6 +25,7 @@ final class AppState: ObservableObject {
         let streams = StreamResolver(tmdb: tmdb, addons: addons)
         let iptv = IptvService(cloud: cloud)
         let profiles = ProfileService(cloud: cloud)
+        let watchHistory = WatchHistoryService(auth: auth, trakt: trakt)
         self.auth = auth
         self.cloud = cloud
         self.addons = addons
@@ -32,11 +34,15 @@ final class AppState: ObservableObject {
         self.streams = streams
         self.iptv = iptv
         self.profiles = profiles
+        self.watchHistory = watchHistory
         profiles.onActiveProfileChanged = { profileId in
+            addons.setActiveProfileId(profileId)
             iptv.setActiveProfileId(profileId)
+            watchHistory.setActiveProfileId(profileId)
+            Task { await watchHistory.load() }
         }
 
-        [auth.objectWillChange, cloud.objectWillChange, addons.objectWillChange, trakt.objectWillChange, tmdb.objectWillChange, streams.objectWillChange, iptv.objectWillChange, profiles.objectWillChange]
+        [auth.objectWillChange, cloud.objectWillChange, addons.objectWillChange, trakt.objectWillChange, tmdb.objectWillChange, streams.objectWillChange, iptv.objectWillChange, profiles.objectWillChange, watchHistory.objectWillChange]
             .forEach { publisher in
                 publisher
                     .sink { [weak self] _ in self?.objectWillChange.send() }
@@ -50,10 +56,13 @@ final class AppState: ObservableObject {
         addons.loadFromCloud()
         profiles.loadFromCloud()
         profiles.ensureDefault(email: auth.session?.email)
+        addons.setActiveProfileId(profiles.activeProfile?.id)
         iptv.setActiveProfileId(profiles.activeProfile?.id)
+        watchHistory.setActiveProfileId(profiles.activeProfile?.id)
         if trakt.isConnected {
             await trakt.loadWatchlist()
         }
+        await watchHistory.load()
         await tmdb.loadHome()
     }
 }
