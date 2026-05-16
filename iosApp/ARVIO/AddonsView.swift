@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AddonsView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var installURL = ""
 
     var body: some View {
         ScrollView {
@@ -16,7 +17,7 @@ struct AddonsView: View {
                 }
 
                 HStack(spacing: 12) {
-                    TextField("https://example.com/manifest.json", text: $appState.addons.installURL)
+                    TextField("https://example.com/manifest.json", text: $installURL)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                         .padding(16)
@@ -25,7 +26,11 @@ struct AddonsView: View {
                         .foregroundStyle(ArvioTheme.textPrimary)
 
                     Button("Install") {
-                        Task { await appState.addons.install() }
+                        appState.addons.installURL = installURL
+                        Task {
+                            await appState.addons.install()
+                            installURL = appState.addons.installURL
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(ArvioTheme.gold)
