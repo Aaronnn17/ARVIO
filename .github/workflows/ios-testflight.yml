@@ -156,3 +156,11 @@ jobs:
           name: ARVIO-iOS-IPA
           path: ${{ runner.temp }}/export/*.ipa
           if-no-files-found: ignore
+
+      - name: Clean up temporary signing assets
+        if: always()
+        env:
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
+        run: node iosApp/ci/cleanup-signing.mjs
