@@ -99,6 +99,7 @@ data class SettingsUiState(
     val autoPlayMinQuality: String = "Any",
     val dnsProvider: String = "System DNS",
     val dnsProviderOptions: List<String> = listOf("System DNS", "Cloudflare", "Google", "AdGuard"),
+    val customUserAgent: String = "",
     val subtitleSize: String = "Medium",
     val subtitleColor: String = "White",
     val subtitleStyle: String = "Bold",
@@ -269,6 +270,7 @@ class SettingsViewModel @Inject constructor(
     private fun filterSubtitlesByLanguageKey() = profileManager.profileBooleanKey("filter_subtitles_by_lang")
     private fun secondarySubtitleKey() = profileManager.profileStringKey("secondary_subtitle")
     private val dnsProviderKey = stringPreferencesKey(OkHttpProvider.DNS_PROVIDER_PREF_KEY)
+    private val customUserAgentKey = stringPreferencesKey(OkHttpProvider.USER_AGENT_PREF_KEY)
     private fun includeSpecialsKey() = profileManager.profileBooleanKey("include_specials")
     private val qualityFiltersKey = stringPreferencesKey("quality_filters")
 
@@ -429,6 +431,8 @@ class SettingsViewModel @Inject constructor(
             val filterSubtitlesByLanguage = prefs[filterSubtitlesByLanguageKey()] ?: true
             val secondarySubtitle = prefs[secondarySubtitleKey()]?.trim()?.takeIf { it.isNotBlank() } ?: "Off"
             val dnsProviderValue = normalizeDnsProviderValue(prefs[dnsProviderKey])
+            val customUserAgent = prefs[customUserAgentKey].orEmpty().trim()
+            OkHttpProvider.setCustomUserAgent(customUserAgent)
             val includeSpecials = prefs[includeSpecialsKey()] ?: false
             val qualityFilters = runCatching {
                 val json = prefs[qualityFiltersKey].orEmpty()
@@ -494,6 +498,7 @@ class SettingsViewModel @Inject constructor(
                 filterSubtitlesByLanguage = filterSubtitlesByLanguage,
                 secondarySubtitle = secondarySubtitle,
                 dnsProvider = dnsProviderLabel(dnsProviderValue),
+                customUserAgent = customUserAgent,
                 includeSpecials = includeSpecials,
                 spoilerBlurEnabled = spoilerBlurEnabled,
                 isLoggedIn = isLoggedIn,
@@ -1273,6 +1278,23 @@ class SettingsViewModel @Inject constructor(
                 OkHttpProvider.createCoilImageLoader(context)
             }
             Coil.setImageLoader(imageLoader)
+        }
+    }
+
+    fun setCustomUserAgent(value: String) {
+        val trimmed = value.trim()
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                if (trimmed.isBlank()) {
+                    prefs.remove(customUserAgentKey)
+                } else {
+                    prefs[customUserAgentKey] = trimmed
+                }
+            }
+            OkHttpProvider.setCustomUserAgent(trimmed)
+            _uiState.value = _uiState.value.copy(
+                customUserAgent = trimmed
+            )
         }
     }
 

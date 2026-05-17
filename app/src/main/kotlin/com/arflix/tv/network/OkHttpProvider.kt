@@ -51,6 +51,8 @@ object OkHttpProvider {
     private const val ADGUARD_DOH_URL = "https://dns.adguard-dns.com/dns-query"
 
     const val DNS_PROVIDER_PREF_KEY = "dns_provider_global"
+    const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    const val USER_AGENT_PREF_KEY = "custom_user_agent_global"
 
     enum class AppDnsProvider {
         SYSTEM,
@@ -72,6 +74,20 @@ object OkHttpProvider {
 
     @Volatile
     private var selectedDnsProvider: AppDnsProvider = AppDnsProvider.SYSTEM
+
+    @Volatile
+    private var _customUserAgent: String = ""
+
+    val customUserAgent: String get() = _customUserAgent
+    val userAgent: String get() = userAgentOr(DEFAULT_USER_AGENT)
+
+    fun setCustomUserAgent(value: String) {
+        _customUserAgent = value.trim()
+    }
+
+    fun userAgentOr(defaultUserAgent: String): String {
+        return _customUserAgent.ifBlank { defaultUserAgent }
+    }
 
     private val dnsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val clientLock = Any()
@@ -184,6 +200,7 @@ object OkHttpProvider {
         }
 
         val builder = OkHttpClient.Builder()
+            .addInterceptor(customUserAgentInterceptor)
             // TMDB/Trakt calls are proxied when Supabase proxy config is present.
             // Contributors can still use direct calls with their own local keys.
             .addInterceptor(ApiProxyInterceptor())
@@ -208,6 +225,7 @@ object OkHttpProvider {
 
     private fun buildPlaybackClient(): OkHttpClient {
         return OkHttpClient.Builder()
+            .addInterceptor(customUserAgentInterceptor)
             .connectionPool(playbackConnectionPool)
             .followRedirects(true)
             .followSslRedirects(true)
@@ -218,6 +236,16 @@ object OkHttpProvider {
             .writeTimeout(20, TimeUnit.SECONDS)
             .cache(null)
             .build()
+    }
+
+    private val customUserAgentInterceptor = Interceptor { chain ->
+        val request = chain.request()
+        val customUserAgent = _customUserAgent
+        if (customUserAgent.isBlank() || request.header("User-Agent") != null) {
+            chain.proceed(request)
+        } else {
+            chain.proceed(request.newBuilder().header("User-Agent", customUserAgent).build())
+        }
     }
 
     private fun getOrCreateHttpCache(context: Context): Cache {

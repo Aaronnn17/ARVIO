@@ -4029,7 +4029,7 @@ class IptvRepository @Inject constructor(
     ): T? = suspendCancellableCoroutine { continuation ->
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "VLC/3.0.20 LibVLC/3.0.20")
+            .header("User-Agent", OkHttpProvider.userAgentOr(IPTV_USER_AGENT))
             .header("Accept", "application/json,*/*")
             .get()
             .build()
@@ -4073,7 +4073,7 @@ class IptvRepository @Inject constructor(
     ): List<IptvChannel> {
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "VLC/3.0.20 LibVLC/3.0.20")
+            .header("User-Agent", OkHttpProvider.userAgentOr(IPTV_USER_AGENT))
             .header("Accept", "*/*")
             .get()
             .build()
@@ -4126,15 +4126,13 @@ class IptvRepository @Inject constructor(
                 .build()
         }
 
-        var response = iptvHttpClient.newCall(epgRequest(url, "VLC/3.0.20 LibVLC/3.0.20")).execute()
+        val primaryUserAgent = OkHttpProvider.userAgentOr(IPTV_USER_AGENT)
+        val fallbackUserAgent = OkHttpProvider.userAgentOr(BROWSER_USER_AGENT)
+        var response = iptvHttpClient.newCall(epgRequest(url, primaryUserAgent)).execute()
         if (!response.isSuccessful && response.code in setOf(511, 403, 401)) {
             response.close()
             response = iptvHttpClient.newCall(
-                epgRequest(
-                    url,
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                )
+                epgRequest(url, fallbackUserAgent)
             ).execute()
         }
         response.use { safeResponse ->
@@ -4159,7 +4157,7 @@ class IptvRepository @Inject constructor(
                 try {
                     // Re-download
                     val retryResponse = iptvHttpClient.newCall(
-                        epgRequest(url, "VLC/3.0.20 LibVLC/3.0.20")
+                        epgRequest(url, primaryUserAgent)
                     ).execute()
                     retryResponse.use { rr ->
                         val retryStream = rr.body?.byteStream()
@@ -6059,6 +6057,8 @@ class IptvRepository @Inject constructor(
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val CONFIG_KEY_ALIAS = "arvio_iptv_config_v1"
         const val MAX_IPTV_CACHE_BYTES = 25L * 1024L * 1024L
+        const val IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
+        const val BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
         val BRACKET_CONTENT_REGEX = Regex("""\[[^\]]*]""")
         val PAREN_CONTENT_REGEX = Regex("""\([^\)]*\)""")
