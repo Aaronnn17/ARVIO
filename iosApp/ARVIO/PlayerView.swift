@@ -37,6 +37,9 @@ struct PlayerView: View {
     @State private var playbackErrorMessage = ""
     @State private var currentSeconds = 0.0
     @State private var durationSeconds = 0.0
+    @State private var lastProgressSaveSeconds = 0.0
+    @State private var isSavingProgress = false
+    @State private var didMarkWatched = false
     @State private var skipIntervals: [SkipInterval] = []
     @State private var dismissedSkipIntervalIds: Set<String> = []
     private let progressTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -121,6 +124,9 @@ struct PlayerView: View {
             didSaveProgress = false
             currentSeconds = 0
             durationSeconds = 0
+            lastProgressSaveSeconds = 0
+            isSavingProgress = false
+            didMarkWatched = false
             externalSubtitleCues = []
             selectedExternalSubtitleId = "off"
             currentCaption = ""
@@ -140,9 +146,13 @@ struct PlayerView: View {
             created.play()
             isPlaying = true
             loadTrackOptions(from: created.currentItem)
+            await autoSelectExternalSubtitleIfNeeded()
             await loadSkipIntervalsIfNeeded()
         }
-        .onReceive(progressTimer) { _ in updateProgress() }
+        .onReceive(progressTimer) { _ in
+            updateProgress()
+            Task { await savePeriodicProgressIfNeeded() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
             guard let item = notification.object as? AVPlayerItem,
                   item == player?.currentItem else { return }
@@ -512,7 +522,12 @@ struct PlayerView: View {
                 PlayerTrackOption(id: "subtitle-\(index)-\(option.displayName)", title: option.displayName, option: option)
             }
             subtitleOptions = [PlayerTrackOption(id: "off", title: "Off", option: nil)] + options
-            if let selected = item.currentMediaSelection.selectedMediaOption(in: group),
+            if let preferred = preferredEmbeddedSubtitle(in: group) {
+                item.select(preferred, in: group)
+                if let selectedIndex = group.options.firstIndex(where: { $0 === preferred }) {
+                    selectedSubtitleId = "subtitle-\(selectedIndex)-\(preferred.displayName)"
+                }
+            } else if let selected = item.currentMediaSelection.selectedMediaOption(in: group),
                let selectedIndex = group.options.firstIndex(where: { $0 === selected }) {
                 selectedSubtitleId = "subtitle-\(selectedIndex)-\(selected.displayName)"
             } else {
@@ -558,6 +573,12 @@ struct PlayerView: View {
                 return
             }
             externalSubtitleCues = Self.parseSubtitleCues(text)
+            if appState.settings.globalSettings.subtitleRemoveHearingImpaired {
+                externalSubtitleCues = externalSubtitleCues.compactMap { cue in
+                    let cleaned = Self.cleanHearingImpairedText(cue.text)
+                    return cleaned.isEmpty ? nil : ExternalSubtitleCue(start: cue.start, end: cue.end, text: cleaned)
+                }
+            }
             subtitleStatus = externalSubtitleCues.isEmpty ? "No cues found" : "\(externalSubtitleCues.count) cues loaded"
             if appState.settings.globalSettings.subtitleAiAutoSelect && appState.settings.globalSettings.subtitleAiEnabled {
                 await translateLoadedSubtitles()
@@ -644,7 +665,18 @@ struct PlayerView: View {
     }
 
     private func saveProgressIfNeeded() async {
-        guard !didSaveProgress, let media = appState.selectedMedia, let player else { return }
+        guard !didSaveProgress else { return }
+        didSaveProgress = true
+        await persistProgress(force: true)
+    }
+
+    private func savePeriodicProgressIfNeeded() async {
+        guard currentSeconds - lastProgressSaveSeconds >= 20 else { return }
+        await persistProgress(force: false)
+    }
+
+    private func persistProgress(force: Bool) async {
+        guard !isSavingProgress, let media = appState.selectedMedia, let player else { return }
         let current = player.currentTime().seconds
         let rawDuration = player.currentItem?.duration.seconds ?? 0
         let fallbackDuration = Double(media.durationSeconds ?? 0)
@@ -653,19 +685,54 @@ struct PlayerView: View {
         let positionSeconds = Int(current.rounded())
         let durationSeconds = Int(duration.rounded())
         guard SharedCoreBridge.shouldSaveProgress(positionSeconds: positionSeconds, durationSeconds: durationSeconds) else { return }
-        didSaveProgress = true
+        guard force || abs(Double(positionSeconds) - lastProgressSaveSeconds) >= 15 else { return }
+        lastProgressSaveSeconds = Double(positionSeconds)
+        isSavingProgress = true
+        defer { isSavingProgress = false }
         await appState.watchHistory.saveProgress(
             item: media,
             stream: stream,
             positionSeconds: positionSeconds,
             durationSeconds: durationSeconds
         )
-        let progress = SharedCoreBridge.progressFraction(positionSeconds: positionSeconds, durationSeconds: durationSeconds)
-        if SharedCoreBridge.shouldMarkWatched(positionSeconds: positionSeconds, durationSeconds: durationSeconds) {
+        if !didMarkWatched && SharedCoreBridge.shouldMarkWatched(positionSeconds: positionSeconds, durationSeconds: durationSeconds) {
+            didMarkWatched = true
             await appState.trakt.markWatched(item: media)
-        } else {
-            try? await appState.trakt.scrobblePause(item: media, progressPercent: progress * 100)
         }
+    }
+
+    private var preferredSubtitleLanguages: [String] {
+        [
+            appState.settings.profileSettings.defaultSubtitle,
+            appState.settings.profileSettings.secondarySubtitle
+        ].filter { value in
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return !normalized.isEmpty && normalized != "off" && normalized != "auto"
+        }
+    }
+
+    private func preferredEmbeddedSubtitle(in group: AVMediaSelectionGroup) -> AVMediaSelectionOption? {
+        let languages = preferredSubtitleLanguages
+        guard !languages.isEmpty else { return nil }
+        return group.options.first { option in
+            languages.contains { preferred in
+                Self.languageMatches(candidate: option.extendedLanguageTag ?? option.displayName, preferred: preferred) ||
+                    Self.languageMatches(candidate: option.displayName, preferred: preferred)
+            }
+        }
+    }
+
+    private func autoSelectExternalSubtitleIfNeeded() async {
+        guard selectedExternalSubtitleId == "off", externalSubtitleCues.isEmpty else { return }
+        let languages = preferredSubtitleLanguages
+        guard !languages.isEmpty else { return }
+        guard let subtitle = stream.subtitles.first(where: { subtitle in
+            languages.contains { preferred in
+                Self.languageMatches(candidate: subtitle.language, preferred: preferred) ||
+                    Self.languageMatches(candidate: subtitle.label, preferred: preferred)
+            }
+        }) else { return }
+        await selectExternalSubtitle(subtitle)
     }
 
     private func timeLabel(_ seconds: Double) -> String {
@@ -752,5 +819,49 @@ struct PlayerView: View {
         let minutes = Double(pieces.dropLast().last ?? "") ?? 0
         let hours = pieces.count == 3 ? (Double(pieces.first ?? "") ?? 0) : 0
         return hours * 3600 + minutes * 60 + seconds
+    }
+
+    private static func languageMatches(candidate: String, preferred: String) -> Bool {
+        let left = normalizeLanguage(candidate)
+        let right = normalizeLanguage(preferred)
+        guard !left.isEmpty, !right.isEmpty else { return false }
+        return left == right || left.hasPrefix("\(right)-") || right.hasPrefix("\(left)-")
+    }
+
+    private static func normalizeLanguage(_ raw: String) -> String {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let mapped = [
+            "english": "en",
+            "eng": "en",
+            "dutch": "nl",
+            "nederlands": "nl",
+            "spanish": "es",
+            "espanol": "es",
+            "french": "fr",
+            "german": "de",
+            "italian": "it",
+            "portuguese": "pt",
+            "arabic": "ar",
+            "turkish": "tr",
+            "hindi": "hi",
+            "japanese": "ja",
+            "korean": "ko",
+            "chinese": "zh"
+        ]
+        return mapped[value] ?? value
+            .replacingOccurrences(of: "_", with: "-")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .first ?? ""
+    }
+
+    private static func cleanHearingImpairedText(_ raw: String) -> String {
+        raw
+            .components(separatedBy: "\n")
+            .map {
+                $0.replacingOccurrences(of: #"\[[^\]]+\]|\([^\)]+\)"#, with: "", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 }

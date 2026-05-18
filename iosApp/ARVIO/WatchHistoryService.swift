@@ -280,9 +280,13 @@ final class WatchHistoryService: ObservableObject {
     }
 
     func saveProgress(item: MediaItem, stream: ResolvedStream, positionSeconds: Int, durationSeconds: Int) async {
-        guard let session = auth.session,
-              SharedCoreBridge.shouldSaveProgress(positionSeconds: positionSeconds, durationSeconds: durationSeconds) else { return }
+        guard SharedCoreBridge.shouldSaveProgress(positionSeconds: positionSeconds, durationSeconds: durationSeconds) else { return }
         let progress = SharedCoreBridge.progressFraction(positionSeconds: positionSeconds, durationSeconds: durationSeconds)
+        try? await trakt.scrobblePause(item: item, progressPercent: progress * 100)
+        guard let session = auth.session else {
+            await loadTraktContinueWatching()
+            return
+        }
         let timestamp = ISO8601DateFormatter().string(from: Date())
         let record = WatchHistoryUpsert(
             userId: session.userId,
@@ -314,7 +318,6 @@ final class WatchHistoryService: ObservableObject {
                 prefer: "return=minimal,resolution=merge-duplicates",
                 body: record
             )
-            try? await trakt.scrobblePause(item: item, progressPercent: progress * 100)
             await load()
             errorMessage = nil
         } catch {

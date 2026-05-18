@@ -316,14 +316,15 @@ final class CatalogService: ObservableObject {
     }
 
     static let defaultCatalogs: [CatalogConfig] = [
-        CatalogConfig(id: "trending_movies", title: "Trending Movies", isPreinstalled: true),
-        CatalogConfig(id: "trending_series", title: "Trending Series", isPreinstalled: true),
-        CatalogConfig(id: "popular_movies", title: "Popular Movies", isPreinstalled: true),
-        CatalogConfig(id: "popular_series", title: "Popular Series", isPreinstalled: true),
-        CatalogConfig(id: "top_rated_movies", title: "Top Rated Movies", isPreinstalled: true),
-        CatalogConfig(id: "top_rated_series", title: "Top Rated Series", isPreinstalled: true),
-        CatalogConfig(id: "now_playing_movies", title: "Now Playing", isPreinstalled: true),
-        CatalogConfig(id: "airing_today_series", title: "Airing Today", isPreinstalled: true)
+        CatalogConfig(id: "trending_movies", title: "Trending in Movies", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/trending-movies", sourceRef: "mdblist:https://mdblist.com/lists/snoak/trending-movies", isPreinstalled: true),
+        CatalogConfig(id: "trending_tv", title: "Trending in Shows", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/trakt-s-trending-shows", sourceRef: "mdblist:https://mdblist.com/lists/snoak/trakt-s-trending-shows", isPreinstalled: true),
+        CatalogConfig(id: "trending_anime", title: "Trending in Anime", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/trending-anime-shows", sourceRef: "mdblist:https://mdblist.com/lists/snoak/trending-anime-shows", isPreinstalled: true),
+        CatalogConfig(id: "top10_movies_today", title: "Top 10 Movies Today", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/top-10-movies-of-the-day", sourceRef: "mdblist:https://mdblist.com/lists/snoak/top-10-movies-of-the-day", isPreinstalled: true),
+        CatalogConfig(id: "top10_shows_today", title: "Top 10 Shows Today", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/top-10-shows-of-the-day", sourceRef: "mdblist:https://mdblist.com/lists/snoak/top-10-shows-of-the-day", isPreinstalled: true),
+        CatalogConfig(id: "just_added", title: "Just Added", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/latest-movies-digital-release", sourceRef: "mdblist:https://mdblist.com/lists/snoak/latest-movies-digital-release", isPreinstalled: true),
+        CatalogConfig(id: "top_movies_week", title: "Top Movies This Week", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/linaspurinis/top-watched-movies-of-the-week", sourceRef: "mdblist:https://mdblist.com/lists/linaspurinis/top-watched-movies-of-the-week", isPreinstalled: true),
+        CatalogConfig(id: "new_kdramas", title: "New in K-Dramas", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/latest-kdrama-shows", sourceRef: "mdblist:https://mdblist.com/lists/snoak/latest-kdrama-shows", isPreinstalled: true),
+        CatalogConfig(id: "coming_soon", title: "Coming Soon", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/upcoming-movies", sourceRef: "mdblist:https://mdblist.com/lists/snoak/upcoming-movies", isPreinstalled: true)
     ]
 }
 
