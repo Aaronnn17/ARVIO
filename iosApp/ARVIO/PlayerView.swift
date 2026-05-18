@@ -32,6 +32,8 @@ struct PlayerView: View {
     @State private var externalSubtitleCues: [ExternalSubtitleCue] = []
     @State private var selectedExternalSubtitleId = "off"
     @State private var currentCaption = ""
+    @State private var isTranslatingSubtitles = false
+    @State private var subtitleStatus = ""
     @State private var currentSeconds = 0.0
     @State private var durationSeconds = 0.0
     private let progressTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -85,6 +87,7 @@ struct PlayerView: View {
             externalSubtitleCues = []
             selectedExternalSubtitleId = "off"
             currentCaption = ""
+            subtitleStatus = ""
             let asset = stream.requestHeaders.isEmpty
                 ? AVURLAsset(url: url)
                 : AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": stream.requestHeaders])
@@ -269,6 +272,19 @@ struct PlayerView: View {
                     .buttonStyle(.plain)
                 }
             }
+            if appState.settings.globalSettings.subtitleAiEnabled {
+                Button(isTranslatingSubtitles ? "Translating..." : "AI Translate Loaded") {
+                    Task { await translateLoadedSubtitles() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(ArvioTheme.gold)
+                .disabled(externalSubtitleCues.isEmpty || isTranslatingSubtitles || appState.settings.globalSettings.subtitleAiApiKey.isEmpty)
+                if !subtitleStatus.isEmpty {
+                    Text(subtitleStatus)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(subtitleStatus.localizedCaseInsensitiveContains("failed") ? Color.red.opacity(0.9) : ArvioTheme.textTertiary)
+                }
+            }
         }
     }
 
@@ -395,6 +411,7 @@ struct PlayerView: View {
             selectedExternalSubtitleId = "off"
             externalSubtitleCues = []
             currentCaption = ""
+            subtitleStatus = ""
             return
         }
         selectedSubtitleId = "off"
@@ -407,10 +424,56 @@ struct PlayerView: View {
                 return
             }
             externalSubtitleCues = Self.parseSubtitleCues(text)
+            subtitleStatus = externalSubtitleCues.isEmpty ? "No cues found" : "\(externalSubtitleCues.count) cues loaded"
+            if appState.settings.globalSettings.subtitleAiAutoSelect && appState.settings.globalSettings.subtitleAiEnabled {
+                await translateLoadedSubtitles()
+            }
         } catch {
             externalSubtitleCues = []
             currentCaption = ""
+            subtitleStatus = "Subtitle load failed"
         }
+    }
+
+    private func translateLoadedSubtitles() async {
+        guard !externalSubtitleCues.isEmpty, !isTranslatingSubtitles else { return }
+        let target = aiTargetLanguage
+        let apiKey = appState.settings.globalSettings.subtitleAiApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty, !apiKey.isEmpty else {
+            subtitleStatus = "AI subtitle settings incomplete"
+            return
+        }
+        isTranslatingSubtitles = true
+        subtitleStatus = "Translating to \(target)..."
+        defer { isTranslatingSubtitles = false }
+
+        var translatedTexts: [String] = []
+        let texts = externalSubtitleCues.map(\.text)
+        let chunkSize = 40
+        for start in stride(from: 0, to: texts.count, by: chunkSize) {
+            let end = min(start + chunkSize, texts.count)
+            let chunk = Array(texts[start..<end])
+            let result = await SubtitleTranslationService.translateBatch(
+                lines: chunk,
+                targetLanguage: target,
+                apiKey: apiKey,
+                model: appState.settings.globalSettings.subtitleAiModel
+            )
+            guard result.success else {
+                subtitleStatus = "AI translation failed: \(result.errorMessage ?? "unknown error")"
+                return
+            }
+            translatedTexts.append(contentsOf: result.lines)
+            subtitleStatus = "Translated \(translatedTexts.count)/\(texts.count)"
+        }
+        guard translatedTexts.count == externalSubtitleCues.count else {
+            subtitleStatus = "AI translation failed: line mismatch"
+            return
+        }
+        externalSubtitleCues = zip(externalSubtitleCues, translatedTexts).map { cue, text in
+            ExternalSubtitleCue(start: cue.start, end: cue.end, text: text)
+        }
+        subtitleStatus = "AI subtitles active: \(target)"
     }
 
     private func handlePlaybackEnded() async {
@@ -505,6 +568,14 @@ struct PlayerView: View {
         case "Medium": return 100
         default: return 58
         }
+    }
+
+    private var aiTargetLanguage: String {
+        let preferred = appState.settings.profileSettings.secondarySubtitle != "Off"
+            ? appState.settings.profileSettings.secondarySubtitle
+            : appState.settings.profileSettings.defaultSubtitle
+        if preferred == "Off" || preferred == "Auto" { return "English" }
+        return preferred
     }
 
     private static func parseSubtitleCues(_ raw: String) -> [ExternalSubtitleCue] {

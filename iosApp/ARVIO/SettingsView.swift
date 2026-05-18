@@ -454,7 +454,7 @@ struct SettingsView: View {
             panelHeader("AI Subtitles", "The same cloud keys Android uses for AI subtitle generation.")
             SettingsToggle("Enable AI subtitles", isOn: globalBinding(\.subtitleAiEnabled))
             SettingsToggle("Auto-select AI subtitles", isOn: globalBinding(\.subtitleAiAutoSelect))
-            SettingsPicker(title: "AI model", selection: globalBinding(\.subtitleAiModel), values: ["GROQ_LLAMA_70B", "OPENAI_GPT_4O_MINI", "OPENAI_GPT_4O"])
+            SettingsPicker(title: "AI model", selection: globalBinding(\.subtitleAiModel), values: ["GROQ_LLAMA_70B", "GEMINI_FLASH_25", "OPENAI_GPT_4O_MINI", "OPENAI_GPT_4O"])
             SecureField("API key", text: globalBinding(\.subtitleAiApiKey))
                 .settingsField()
         }

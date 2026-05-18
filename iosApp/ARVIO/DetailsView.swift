@@ -8,12 +8,14 @@ struct DetailsView: View {
     @State private var episodes: [TmdbEpisode] = []
     @State private var cast: [TmdbCastMember] = []
     @State private var trailerURL: URL?
+    @State private var showTrailerPlayer = false
     @State private var selectedSeason = 1
     @State private var selectedEpisode = 1
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        ZStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
                 ZStack(alignment: .bottomLeading) {
                     PosterBackdrop(item: item)
                         .frame(height: 420)
@@ -47,9 +49,11 @@ struct DetailsView: View {
                                 Task { await appState.trakt.markWatched(item: currentPlaybackItem) }
                             }
                             .buttonStyle(.bordered)
-                            if let trailerURL {
-                                Link("Trailer", destination: trailerURL)
-                                    .buttonStyle(.bordered)
+                            if trailerURL != nil {
+                                Button("Trailer") {
+                                    showTrailerPlayer = true
+                                }
+                                .buttonStyle(.bordered)
                             }
                         }
                     }
@@ -82,7 +86,15 @@ struct DetailsView: View {
                     MediaRail(title: "More Like This", items: recommendations)
                 }
             }
-            .padding(28)
+                .padding(28)
+            }
+            if showTrailerPlayer, let trailerURL {
+                TrailerPlayerView(url: trailerURL) {
+                    showTrailerPlayer = false
+                }
+                .transition(.opacity)
+                .zIndex(10)
+            }
         }
         .task {
             selectedSeason = item.season ?? selectedSeason

@@ -14,6 +14,9 @@ struct HomeView: View {
                 if !appState.watchHistory.continueWatching.isEmpty {
                     MediaRail(title: "Continue Watching", items: appState.watchHistory.continueWatching)
                 }
+                if !favoriteChannels.isEmpty {
+                    LiveChannelRail(title: "Favorite Channels", channels: favoriteChannels)
+                }
                 if appState.catalogs.isLoading && appState.catalogs.rows.isEmpty {
                     EmptyStatePanel(title: "Loading catalogs", message: "Syncing your Android catalog rows from ARVIO cloud.")
                 }
@@ -30,8 +33,27 @@ struct HomeView: View {
         }
         .refreshable {
             await appState.watchHistory.load()
+            await loadLiveTVIfNeeded()
             await appState.catalogs.reloadRows()
         }
+        .task {
+            await loadLiveTVIfNeeded()
+        }
+    }
+
+    private var favoriteChannels: [IptvChannel] {
+        appState.iptv.channels.filter { channel in
+            appState.iptv.state.favoriteChannels.contains(channel.id) ||
+                appState.iptv.state.favoriteGroups.contains(channel.group)
+        }
+    }
+
+    private func loadLiveTVIfNeeded() async {
+        guard appState.iptv.channels.isEmpty else { return }
+        guard !appState.iptv.state.m3uUrl.isEmpty ||
+            !appState.iptv.state.stalkerPortalUrl.isEmpty ||
+            !appState.iptv.state.playlists.isEmpty else { return }
+        await appState.iptv.reload()
     }
 }
 
@@ -159,6 +181,78 @@ struct MediaRail: View {
         guard let catalog else { return appState.settings.profileSettings.cardLayoutMode }
         return appState.settings.profileSettings.catalogueRowLayoutModes[catalog.id]
             ?? (catalog.collectionTileShape == .poster ? "Portrait" : appState.settings.profileSettings.cardLayoutMode)
+    }
+}
+
+struct LiveChannelRail: View {
+    @EnvironmentObject private var appState: AppState
+    let title: String
+    let channels: [IptvChannel]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(ArvioTheme.textPrimary)
+                Spacer()
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(channels.prefix(24)) { channel in
+                        Button {
+                            play(channel)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 10) {
+                                AsyncImage(url: channel.logo.flatMap(URL.init(string:))) { phase in
+                                    if let image = phase.image {
+                                        image.resizable().scaledToFit()
+                                    } else {
+                                        Image("ARVIOAppIcon").resizable().scaledToFit().opacity(0.8)
+                                    }
+                                }
+                                .frame(width: 54, height: 54)
+                                Text(channel.name)
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(ArvioTheme.textPrimary)
+                                    .lineLimit(2)
+                                Text(channel.group)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(ArvioTheme.textTertiary)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(appState.iptv.nowNextByChannelId[channel.id]?.now?.title ?? "LIVE")
+                                    .font(.system(size: 11, weight: .black))
+                                    .foregroundStyle(ArvioTheme.gold)
+                                    .lineLimit(1)
+                            }
+                            .padding(14)
+                            .frame(width: 210, height: 150, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(ArvioTheme.panel))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(ArvioTheme.border, lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func play(_ channel: IptvChannel) {
+        appState.iptv.markOpened(channel)
+        appState.selectedStream = ResolvedStream(
+            addonId: nil,
+            addonName: "Live TV",
+            sourceName: channel.group,
+            title: channel.name,
+            quality: "Live",
+            size: "",
+            url: URL(string: channel.streamUrl),
+            requestHeaders: [:],
+            subtitles: [],
+            isPlayable: true,
+            resumePositionSeconds: nil
+        )
     }
 }
 
