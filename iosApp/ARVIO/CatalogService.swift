@@ -380,6 +380,35 @@ final class CatalogService: ObservableObject {
         await reloadRows()
     }
 
+    func syncAddonCatalogs() async {
+        let addonIds = Set(addons.addons.map(\.id))
+        catalogs.removeAll { config in
+            config.sourceType == .addon &&
+                config.id.hasPrefix("addon_") &&
+                !(config.addonId.map { addonIds.contains($0) } ?? false)
+        }
+
+        for addon in addons.addons {
+            for ref in addon.catalogRefs {
+                let configId = addonCatalogConfigId(addon: addon, ref: ref)
+                guard !catalogs.contains(where: { $0.id == configId }) else { continue }
+                catalogs.append(CatalogConfig(
+                    id: configId,
+                    title: addonCatalogTitle(addon: addon, ref: ref),
+                    sourceType: .addon,
+                    sourceRef: "\(ref.type)/\(ref.id)",
+                    isPreinstalled: false,
+                    addonId: addon.id,
+                    addonCatalogType: ref.type,
+                    addonCatalogId: ref.id,
+                    addonName: addon.name
+                ))
+            }
+        }
+        await saveCatalogState(hiddenIds: Array(hiddenCatalogIds))
+        await reloadRows()
+    }
+
     func addCatalog(title: String, sourceType: CatalogSourceType, sourceUrl: String) async {
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanUrl = sourceUrl.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -532,6 +561,26 @@ final class CatalogService: ObservableObject {
         let value = [config.sourceUrl, config.sourceRef, config.title].compactMap { $0 }.joined(separator: " ").lowercased()
         if value.contains("show") || value.contains("series") || value.contains("/tv") { return .series }
         return .movie
+    }
+
+    private func addonCatalogConfigId(addon: InstalledAddon, ref: AddonCatalogRef) -> String {
+        "addon_\(stableId(addon.id))_\(stableId(ref.type))_\(stableId(ref.id))"
+    }
+
+    private func addonCatalogTitle(addon: InstalledAddon, ref: AddonCatalogRef) -> String {
+        let name = ref.name?.nilIfBlank ?? ref.id
+        if name.localizedCaseInsensitiveContains(addon.name) {
+            return name
+        }
+        return "\(addon.name): \(name)"
+    }
+
+    private func stableId(_ raw: String) -> String {
+        raw.lowercased()
+            .map { character in
+                character.isLetter || character.isNumber ? character : "_"
+            }
+            .reduce(into: "") { $0.append($1) }
     }
 
     private func mediaKind(from raw: String?) -> MediaKind? {

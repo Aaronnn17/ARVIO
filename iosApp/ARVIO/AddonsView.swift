@@ -29,6 +29,7 @@ struct AddonsView: View {
                         appState.addons.installURL = installURL
                         Task {
                             await appState.addons.install()
+                            await appState.catalogs.syncAddonCatalogs()
                             installURL = appState.addons.installURL
                         }
                     }
@@ -51,9 +52,15 @@ struct AddonsView: View {
                     LazyVStack(spacing: 12) {
                         ForEach(appState.addons.addons) { addon in
                             AddonRow(addon: addon) {
-                                Task { await appState.addons.toggleEnabled(addon) }
+                                Task {
+                                    await appState.addons.toggleEnabled(addon)
+                                    await appState.catalogs.syncAddonCatalogs()
+                                }
                             } onRemove: {
-                                Task { await appState.addons.remove(addon) }
+                                Task {
+                                    await appState.addons.remove(addon)
+                                    await appState.catalogs.syncAddonCatalogs()
+                                }
                             }
                         }
                     }

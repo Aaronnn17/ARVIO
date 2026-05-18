@@ -82,5 +82,6 @@ final class AppState: ObservableObject {
         iptv.setActiveProfileId(profileId)
         watchHistory.setActiveProfileId(profileId)
         settings.setActiveProfileId(profileId)
+        await catalogs.syncAddonCatalogs()
     }
 }

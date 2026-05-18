@@ -1,5 +1,11 @@
 import Foundation
 
+struct AddonCatalogRef: Codable, Hashable {
+    let type: String
+    let id: String
+    let name: String?
+}
+
 struct InstalledAddon: Codable, Identifiable, Hashable {
     let id: String
     let name: String
@@ -7,6 +13,7 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
     let manifestURL: String
     let description: String?
     let catalogs: [String]
+    let catalogRefs: [AddonCatalogRef]
     let resources: [String]
     var isEnabled: Bool
 
@@ -17,6 +24,7 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
         case manifestURL
         case description
         case catalogs
+        case catalogRefs
         case resources
         case isEnabled
         case enabled
@@ -32,6 +40,7 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
         manifestURL: String,
         description: String?,
         catalogs: [String],
+        catalogRefs: [AddonCatalogRef] = [],
         resources: [String],
         isEnabled: Bool = true
     ) {
@@ -41,6 +50,7 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
         self.manifestURL = manifestURL
         self.description = description
         self.catalogs = catalogs
+        self.catalogRefs = catalogRefs
         self.resources = resources
         self.isEnabled = isEnabled
     }
@@ -57,10 +67,13 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
         manifestURL = Self.normalizedManifestURL(rawManifestURL ?? url ?? transportURL ?? "")
 
         if let androidManifest = try? container.decode(AddonManifest.self, forKey: .manifest) {
-            catalogs = androidManifest.catalogs?.compactMap { $0.name ?? $0.id ?? $0.type } ?? []
+            let refs = androidManifest.catalogRefs
+            catalogRefs = refs
+            catalogs = refs.compactMap { $0.name ?? $0.id.nilIfBlank ?? $0.type.nilIfBlank }
             resources = androidManifest.resources?.map(\.displayName) ?? []
         } else {
             catalogs = (try? container.decode([String].self, forKey: .catalogs)) ?? []
+            catalogRefs = (try? container.decode([AddonCatalogRef].self, forKey: .catalogRefs)) ?? []
             resources = (try? container.decode([String].self, forKey: .resources)) ?? []
         }
         isEnabled = (try? container.decode(Bool.self, forKey: .isEnabled)) ??
@@ -76,6 +89,7 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
         try container.encode(manifestURL, forKey: .manifestURL)
         try container.encode(description, forKey: .description)
         try container.encode(catalogs, forKey: .catalogs)
+        try container.encode(catalogRefs, forKey: .catalogRefs)
         try container.encode(resources, forKey: .resources)
         try container.encode(isEnabled, forKey: .isEnabled)
         try container.encode(isEnabled, forKey: .enabled)
@@ -101,6 +115,14 @@ private struct AddonManifest: Codable {
     let description: String?
     let catalogs: [AddonCatalog]?
     let resources: [AddonResourceValue]?
+
+    var catalogRefs: [AddonCatalogRef] {
+        (catalogs ?? []).compactMap { catalog in
+            guard let type = catalog.type?.nilIfBlank,
+                  let id = catalog.id?.nilIfBlank else { return nil }
+            return AddonCatalogRef(type: type, id: id, name: catalog.name?.nilIfBlank)
+        }
+    }
 }
 
 private struct AddonCatalog: Codable {
@@ -220,9 +242,8 @@ final class AddonService: ObservableObject {
             throw ArvioError.requestFailed("Addon manifest failed to load")
         }
         let manifest = try JSONDecoder().decode(AddonManifest.self, from: data)
-        let catalogs = manifest.catalogs?.compactMap { catalog in
-            catalog.name ?? catalog.id ?? catalog.type
-        } ?? []
+        let catalogRefs = manifest.catalogRefs
+        let catalogs = catalogRefs.compactMap { $0.name ?? $0.id.nilIfBlank ?? $0.type.nilIfBlank }
         let resources = manifest.resources?.map(\.displayName) ?? []
         return InstalledAddon(
             id: manifest.id ?? manifestURL,
@@ -231,6 +252,7 @@ final class AddonService: ObservableObject {
             manifestURL: manifestURL,
             description: manifest.description,
             catalogs: catalogs,
+            catalogRefs: catalogRefs,
             resources: resources
         )
     }
@@ -261,5 +283,12 @@ final class AddonService: ObservableObject {
             seen.insert(key)
             return true
         }
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 }
