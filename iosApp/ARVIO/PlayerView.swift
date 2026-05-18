@@ -34,6 +34,7 @@ struct PlayerView: View {
     @State private var currentCaption = ""
     @State private var isTranslatingSubtitles = false
     @State private var subtitleStatus = ""
+    @State private var playbackErrorMessage = ""
     @State private var currentSeconds = 0.0
     @State private var durationSeconds = 0.0
     @State private var skipIntervals: [SkipInterval] = []
@@ -67,6 +68,35 @@ struct PlayerView: View {
                 .allowsHitTesting(false)
             }
 
+            if !playbackErrorMessage.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 34, weight: .bold))
+                        .foregroundStyle(ArvioTheme.gold)
+                    Text("Playback failed")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(ArvioTheme.textPrimary)
+                    Text(playbackErrorMessage)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(ArvioTheme.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(4)
+                    if !appState.streams.streams.filter(\.isPlayable).isEmpty {
+                        Button("Try Another Source") {
+                            Task { await switchToNextPlayableSource() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(ArvioTheme.gold)
+                    }
+                }
+                .padding(24)
+                .frame(width: 430)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.78)))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(ArvioTheme.border, lineWidth: 1))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity)
+            }
+
             Color.black.opacity(showControls ? 0.24 : 0.001)
                 .ignoresSafeArea()
                 .onTapGesture {
@@ -95,6 +125,7 @@ struct PlayerView: View {
             selectedExternalSubtitleId = "off"
             currentCaption = ""
             subtitleStatus = ""
+            playbackErrorMessage = ""
             skipIntervals = []
             dismissedSkipIntervalIds = []
             let asset = stream.requestHeaders.isEmpty
@@ -116,6 +147,12 @@ struct PlayerView: View {
             guard let item = notification.object as? AVPlayerItem,
                   item == player?.currentItem else { return }
             Task { await handlePlaybackEnded() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime)) { notification in
+            guard let item = notification.object as? AVPlayerItem,
+                  item == player?.currentItem else { return }
+            let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
+            playbackErrorMessage = error?.localizedDescription ?? item.error?.localizedDescription ?? "This source is not playable on iOS."
         }
         .onDisappear {
             Task { await saveProgressIfNeeded() }
@@ -384,6 +421,15 @@ struct PlayerView: View {
         appState.selectedStream = candidate
     }
 
+    private func switchToNextPlayableSource() async {
+        let playable = appState.streams.streams.filter(\.isPlayable)
+        guard !playable.isEmpty else { return }
+        let currentIndex = playable.firstIndex(where: { $0.id == stream.id }) ?? -1
+        let next = playable.dropFirst(currentIndex + 1).first ?? playable.first
+        guard let next, next.id != stream.id else { return }
+        await switchSource(next)
+    }
+
     private func togglePlayback() {
         guard let player else { return }
         if isPlaying {
@@ -410,6 +456,10 @@ struct PlayerView: View {
 
     private func updateProgress() {
         guard let player else { return }
+        if let item = player.currentItem, item.status == .failed {
+            playbackErrorMessage = item.error?.localizedDescription ?? "This source is not playable on iOS."
+            isPlaying = false
+        }
         let current = player.currentTime().seconds
         let duration = player.currentItem?.duration.seconds ?? 0
         if current.isFinite { currentSeconds = current }

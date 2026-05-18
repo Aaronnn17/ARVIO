@@ -60,6 +60,13 @@ private struct StremioSubtitle: Decodable {
 
 private struct StremioBehaviorHints: Decodable {
     let filename: String?
+    let notWebReady: Bool?
+    let proxyHeaders: StremioProxyHeaders?
+}
+
+private struct StremioProxyHeaders: Decodable {
+    let request: [String: String]?
+    let response: [String: String]?
 }
 
 @MainActor
@@ -180,7 +187,11 @@ final class StreamResolver: ObservableObject {
             for stream in decoded.streams ?? [] {
                 let rawURL = stream.url ?? stream.externalUrl
                 let split = rawURL.map(splitUrlAndHeaders) ?? (nil, [:])
-                var playableURL = split.0.flatMap(URL.init(string:))
+                let hintHeaders = stream.behaviorHints?.proxyHeaders?.request ?? [:]
+                let requestHeaders = playbackHeaders(extra: mergeRequestHeaders(base: hintHeaders, extra: split.1))
+                let normalizedRawURL = split.0.flatMap(normalizePlaybackUrl)
+                let resolvedRawURL = await resolveRedirectIfNeeded(rawUrl: normalizedRawURL, headers: requestHeaders)
+                var playableURL = resolvedRawURL.flatMap(URL.init(string:))
                 let title = stream.title ?? stream.name ?? addon.name
                 let text = [title, stream.description].compactMap { $0 }.joined(separator: " ")
                 if playableURL == nil,
@@ -192,7 +203,9 @@ final class StreamResolver: ObservableObject {
                    ) {
                     playableURL = torrServerURL
                 }
-                let isPlayable = playableURL.map(isDirectPlayable(url:)) ?? false
+                let isPlayable = playableURL.map { url in
+                    isDirectPlayable(url: url, behaviorHints: stream.behaviorHints)
+                } ?? false
                 let subtitles = (stream.subtitles ?? []).compactMap { subtitle -> ResolvedSubtitle? in
                     guard let rawUrl = subtitle.url,
                           let url = URL(string: rawUrl) else { return nil }
@@ -212,7 +225,7 @@ final class StreamResolver: ObservableObject {
                     quality: quality(from: text),
                     size: size(from: text),
                     url: playableURL,
-                    requestHeaders: split.1,
+                    requestHeaders: requestHeaders,
                     subtitles: subtitles,
                     isPlayable: isPlayable,
                     resumePositionSeconds: nil
@@ -249,18 +262,12 @@ final class StreamResolver: ObservableObject {
         return String(text[match])
     }
 
-    private static func isDirectPlayable(url: URL) -> Bool {
+    private static func isDirectPlayable(url: URL, behaviorHints: StremioBehaviorHints?) -> Bool {
+        if behaviorHints?.notWebReady == true { return false }
         let value = url.absoluteString.lowercased()
-        return value.hasPrefix("http") &&
-            (value.contains(".m3u8") ||
-             value.contains(".mp4") ||
-             value.contains(".mov") ||
-             value.contains(".m4v") ||
-             value.contains("googlevideo.com") ||
-             value.contains("cloudflare") ||
-             value.contains("akamaized") ||
-             value.contains("/stream?") ||
-             value.contains("/torrent/play?"))
+        guard value.hasPrefix("http://") || value.hasPrefix("https://") else { return false }
+        if value.contains("youtube.com/watch") || value.contains("youtu.be/") { return false }
+        return true
     }
 
     private static func splitUrlAndHeaders(_ rawUrl: String) -> (String?, [String: String]) {
@@ -285,6 +292,108 @@ final class StreamResolver: ObservableObject {
             headers[key] = value
         }
         return (baseUrl, headers)
+    }
+
+    private static func normalizePlaybackUrl(_ rawUrl: String) -> String? {
+        let value = rawUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        if value.lowercased().hasPrefix("magnet:") { return nil }
+        if value.lowercased().hasPrefix("http://") || value.lowercased().hasPrefix("https://") {
+            return value
+        }
+        if value.hasPrefix("//") {
+            return "https:\(value)"
+        }
+        if !value.contains("://"), value.contains(".") {
+            return "https://\(value)"
+        }
+        return value
+    }
+
+    private static func playbackHeaders(extra: [String: String]) -> [String: String] {
+        var headers: [String: String] = [
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Encoding": "identity"
+        ]
+        for (key, value) in extra where isSafeHeader(key: key, value: value) {
+            headers[key] = value
+        }
+        if headers.keys.contains(where: { $0.caseInsensitiveCompare("Referer") == .orderedSame }),
+           !headers.keys.contains(where: { $0.caseInsensitiveCompare("Origin") == .orderedSame }),
+           let referer = headers.first(where: { $0.key.caseInsensitiveCompare("Referer") == .orderedSame })?.value,
+           let origin = deriveOrigin(from: referer) {
+            headers["Origin"] = origin
+        }
+        return headers
+    }
+
+    private static func mergeRequestHeaders(base: [String: String], extra: [String: String]) -> [String: String] {
+        var output: [String: String] = [:]
+        for (key, value) in base where isSafeHeader(key: key, value: value) {
+            output[key] = value
+        }
+        for (key, value) in extra where isSafeHeader(key: key, value: value) {
+            output[key] = value
+        }
+        return output
+    }
+
+    private static func isSafeHeader(key: String, value: String) -> Bool {
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !key.isEmpty &&
+            !value.isEmpty &&
+            !key.contains("\n") &&
+            !key.contains("\r") &&
+            !value.contains("\n") &&
+            !value.contains("\r")
+    }
+
+    private static func deriveOrigin(from referer: String) -> String? {
+        guard let url = URL(string: referer),
+              let scheme = url.scheme,
+              let host = url.host else { return nil }
+        if let port = url.port {
+            let defaultPort = (scheme == "http" && port == 80) || (scheme == "https" && port == 443)
+            return defaultPort ? "\(scheme)://\(host)" : "\(scheme)://\(host):\(port)"
+        }
+        return "\(scheme)://\(host)"
+    }
+
+    private static func shouldResolveRedirectBeforePlayback(_ rawUrl: String?) -> Bool {
+        guard let rawUrl,
+              let host = URL(string: rawUrl)?.host?.lowercased() else { return false }
+        if rawUrl.localizedCaseInsensitiveContains(".m3u8") || rawUrl.localizedCaseInsensitiveContains(".mpd") {
+            return false
+        }
+        return host.contains("torrentio") ||
+            host.contains("strem") ||
+            host.contains("comet") ||
+            host.contains("mediafusion") ||
+            host.contains("stremthru") ||
+            host.contains("jackettio")
+    }
+
+    private static func resolveRedirectIfNeeded(rawUrl: String?, headers: [String: String]) async -> String? {
+        guard let rawUrl, shouldResolveRedirectBeforePlayback(rawUrl) else { return rawUrl }
+        guard let url = URL(string: rawUrl) else { return rawUrl }
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 1.8
+        config.timeoutIntervalForResource = 2.2
+        let session = URLSession(configuration: config)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("bytes=0-1", forHTTPHeaderField: "Range")
+        for (key, value) in headers where key.caseInsensitiveCompare("Range") != .orderedSame {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        do {
+            let (_, response) = try await session.data(for: request)
+            return response.url?.absoluteString.nilIfBlank ?? rawUrl
+        } catch {
+            return rawUrl
+        }
     }
 
     private static func buildMagnet(for stream: StremioStream, title: String) -> String? {
@@ -327,8 +436,9 @@ final class StreamResolver: ObservableObject {
 
     private static func resolveTorrentViaTorrServer(baseUrl: String, stream: StremioStream, magnet: String) async -> URL? {
         let configured = normalizeTorrServerBaseUrl(baseUrl)
-        guard !configured.isEmpty else { return nil }
-        let candidates = [configured].uniqued()
+        let candidates = [configured, "http://127.0.0.1:8090", "http://localhost:8090"]
+            .filter { !$0.isEmpty }
+            .uniqued()
         let endpointTemplates = [
             "/stream?m3u&link=%@",
             "/torrent/play?m3u=true&link=%@"
