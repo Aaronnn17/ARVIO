@@ -421,7 +421,14 @@ final class IptvService: ObservableObject {
             return candidates.compactMap { candidate in
                 guard let streamId = candidate.stream.streamId else { return nil }
                 let ext = candidate.stream.containerExtension?.nilIfBlank ?? "mp4"
-                let url = URL(string: "\(credentials.baseUrl)/movie/\(credentials.username.xtreamPathComponent)/\(credentials.password.xtreamPathComponent)/\(streamId).\(ext.xtreamPathComponent)")
+                let rawUrl = SharedCoreBridge.xtreamMovieUrl(
+                    baseUrl: credentials.baseUrl,
+                    username: credentials.username,
+                    password: credentials.password,
+                    streamId: streamId,
+                    fileExtension: ext
+                )
+                let url = URL(string: rawUrl)
                 return ResolvedStream(
                     addonId: "iptv_xtream_vod",
                     addonName: "Xtream VOD",
@@ -484,7 +491,14 @@ final class IptvService: ObservableObject {
                     guard let episodeId = value.id?.nilIfBlank else { continue }
                     let ext = value.containerExtension?.nilIfBlank ?? "mp4"
                     let title = value.title?.nilIfBlank ?? "\(candidate.series.name) S\(season) E\(episode)"
-                    let url = URL(string: "\(credentials.baseUrl)/series/\(credentials.username.xtreamPathComponent)/\(credentials.password.xtreamPathComponent)/\(episodeId.xtreamPathComponent).\(ext.xtreamPathComponent)")
+                    let rawUrl = SharedCoreBridge.xtreamSeriesUrl(
+                        baseUrl: credentials.baseUrl,
+                        username: credentials.username,
+                        password: credentials.password,
+                        episodeId: episodeId,
+                        fileExtension: ext
+                    )
+                    let url = URL(string: rawUrl)
                     output.append(ResolvedStream(
                         addonId: "iptv_xtream_vod",
                         addonName: "Xtream VOD",
@@ -684,7 +698,12 @@ final class IptvService: ObservableObject {
         let streams = try JSONDecoder().decode([XtreamLiveStream].self, from: data)
         return streams.compactMap { stream -> IptvChannel? in
             guard let streamId = stream.streamId else { return nil }
-            let streamUrl = "\(credentials.baseUrl)/live/\(credentials.username.xtreamPathComponent)/\(credentials.password.xtreamPathComponent)/\(streamId).ts"
+            let streamUrl = SharedCoreBridge.xtreamLiveUrl(
+                baseUrl: credentials.baseUrl,
+                username: credentials.username,
+                password: credentials.password,
+                streamId: streamId
+            )
             return IptvChannel(
                 id: stableChannelId(epgId: stream.epgChannelId, streamUrl: streamUrl),
                 name: stream.name.nilIfBlank ?? "Channel \(streamId)",
@@ -750,11 +769,11 @@ final class IptvService: ObservableObject {
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
             if line.hasPrefix("#EXTINF") {
-                let attributes = Self.attributes(from: line)
-                let commaName = line.split(separator: ",", maxSplits: 1).last.map(String.init) ?? "Channel"
-                let name = attributes["tvg-name"]?.nilIfBlank ?? commaName.nilIfBlank ?? "Channel"
-                let group = attributes["group-title"]?.nilIfBlank ?? "Uncategorized"
-                pending = (name, group, attributes["tvg-logo"]?.nilIfBlank, attributes["tvg-id"]?.nilIfBlank, line)
+                let name = SharedCoreBridge.m3uDisplayName(line: line).nilIfBlank ?? "Channel"
+                let group = SharedCoreBridge.m3uAttribute(line: line, key: "group-title")?.nilIfBlank ?? "Uncategorized"
+                let logo = SharedCoreBridge.m3uAttribute(line: line, key: "tvg-logo")?.nilIfBlank
+                let epgId = SharedCoreBridge.m3uAttribute(line: line, key: "tvg-id")?.nilIfBlank
+                pending = (name, group, logo, epgId, line)
             } else if line.hasPrefix("http") {
                 let meta = pending ?? ("Channel \(result.count + 1)", "Uncategorized", nil, nil, "")
                 result.append(

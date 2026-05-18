@@ -69,6 +69,16 @@ object CoreTitleMatcher {
 }
 
 object CoreStreamRanker {
+    fun qualityLabel(text: String): String {
+        return when (qualityRank(text)) {
+            4 -> "4K"
+            3 -> "1080p"
+            2 -> "720p"
+            1 -> "480p"
+            else -> "Direct"
+        }
+    }
+
     fun qualityRank(quality: String): Int {
         val value = quality.lowercase()
         return when {
@@ -78,6 +88,39 @@ object CoreStreamRanker {
             "480" in value || "sd" in value -> 1
             else -> 0
         }
+    }
+
+    fun parseSizeBytes(text: String): Long {
+        val match = Regex("""(?i)(\d+(?:\.\d+)?)\s*(TB|GB|MB|KB)""").find(text) ?: return 0
+        val amount = match.groupValues.getOrNull(1)?.toDoubleOrNull() ?: return 0
+        val unit = match.groupValues.getOrNull(2)?.uppercase().orEmpty()
+        val multiplier = when (unit) {
+            "TB" -> 1_099_511_627_776.0
+            "GB" -> 1_073_741_824.0
+            "MB" -> 1_048_576.0
+            "KB" -> 1024.0
+            else -> 1.0
+        }
+        return (amount * multiplier).toLong()
+    }
+
+    fun sourceScore(
+        quality: String,
+        size: String,
+        addonName: String,
+        sourceName: String,
+        title: String,
+        isPlayable: Boolean,
+        preferredLanguage: String = "",
+        cached: Boolean = false,
+    ): Int {
+        val text = listOf(addonName, sourceName, title).joinToString(" ")
+        val languageScore = languageScore(text, preferredLanguage)
+        return (if (isPlayable) 100_000 else 0) +
+            (qualityRank(quality) * 10_000) +
+            ((parseSizeBytes(size) / 1_073_741_824L).coerceAtMost(99) * 100).toInt() +
+            (languageScore * 40) +
+            if (cached) 20 else 0
     }
 
     fun sort(streams: List<CoreResolvedStream>, preferredLanguage: String = ""): List<CoreResolvedStream> {
@@ -90,6 +133,43 @@ object CoreStreamRanker {
                 .thenByDescending { it.cached }
         )
     }
+
+    private fun languageScore(text: String, preferredLanguage: String): Int {
+        val preferred = normalizeLanguage(preferredLanguage).ifBlank { return 0 }
+        val codes = extractLanguageCodes(text)
+        val lower = text.lowercase()
+        return when {
+            preferred in codes -> 2
+            codes.isEmpty() || "multi" in lower || "dual" in lower -> 1
+            else -> 0
+        }
+    }
+
+    private fun normalizeLanguage(value: String): String {
+        return when (value.trim().lowercase()) {
+            "english", "eng" -> "en"
+            "dutch", "nederlands", "nl" -> "nl"
+            "spanish", "espanol", "español" -> "es"
+            "french", "francais", "français" -> "fr"
+            "german", "deutsch" -> "de"
+            else -> value.trim().lowercase().take(2)
+        }
+    }
+
+    private fun extractLanguageCodes(text: String): Set<String> {
+        val lower = text.lowercase()
+        val direct = setOf("en", "nl", "es", "fr", "de", "it", "pt", "ja", "ko")
+            .filter { Regex("""(^|[^a-z])$it([^a-z]|$)""").containsMatchIn(lower) }
+            .toSet()
+        val names = buildSet {
+            if ("english" in lower || " eng " in " $lower ") add("en")
+            if ("dutch" in lower || "nederlands" in lower) add("nl")
+            if ("spanish" in lower || "espanol" in lower || "español" in lower) add("es")
+            if ("french" in lower || "francais" in lower || "français" in lower) add("fr")
+            if ("german" in lower || "deutsch" in lower) add("de")
+        }
+        return direct + names
+    }
 }
 
 object CoreXtreamPaths {
@@ -97,12 +177,32 @@ object CoreXtreamPaths {
         return "${baseUrl.trimEnd('/')}/live/${username.pathSegment()}/${password.pathSegment()}/$streamId.ts"
     }
 
-    fun movie(baseUrl: String, username: String, password: String, streamId: Int, extension: String): String {
-        return "${baseUrl.trimEnd('/')}/movie/${username.pathSegment()}/${password.pathSegment()}/$streamId.${extension.pathSegment()}"
+    fun movie(baseUrl: String, username: String, password: String, streamId: Int, fileExtension: String): String {
+        return "${baseUrl.trimEnd('/')}/movie/${username.pathSegment()}/${password.pathSegment()}/$streamId.${fileExtension.pathSegment()}"
     }
 
-    fun series(baseUrl: String, username: String, password: String, episodeId: String, extension: String): String {
-        return "${baseUrl.trimEnd('/')}/series/${username.pathSegment()}/${password.pathSegment()}/${episodeId.pathSegment()}.${extension.pathSegment()}"
+    fun series(baseUrl: String, username: String, password: String, episodeId: String, fileExtension: String): String {
+        return "${baseUrl.trimEnd('/')}/series/${username.pathSegment()}/${password.pathSegment()}/${episodeId.pathSegment()}.${fileExtension.pathSegment()}"
+    }
+}
+
+object CoreM3uParser {
+    fun attribute(line: String, key: String): String? {
+        val pattern = Regex("""([A-Za-z0-9_-]+)="([^"]*)"""")
+        return pattern.findAll(line)
+            .firstOrNull { it.groupValues.getOrNull(1)?.equals(key, ignoreCase = true) == true }
+            ?.groupValues
+            ?.getOrNull(2)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+    }
+
+    fun displayName(line: String): String {
+        return attribute(line, "tvg-name")
+            ?: line.substringAfter(',', missingDelimiterValue = "")
+                .trim()
+                .takeIf { it.isNotBlank() }
+            ?: "Channel"
     }
 }
 

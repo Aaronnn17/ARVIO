@@ -143,7 +143,8 @@ final class StreamResolver: ObservableObject {
                 )
             }
             .sorted { left, right in
-                score(left) > score(right)
+                score(left, preferredLanguage: profileSettings.defaultAudioLanguage) >
+                    score(right, preferredLanguage: profileSettings.defaultAudioLanguage)
             }
             errorMessage = nil
         } catch {
@@ -151,12 +152,17 @@ final class StreamResolver: ObservableObject {
         }
     }
 
-    private func score(_ stream: ResolvedStream) -> Int {
-        var value = stream.isPlayable ? 100 : 0
-        if stream.quality.contains("4K") || stream.quality.contains("2160") { value += 40 }
-        if stream.quality.contains("1080") { value += 25 }
-        if stream.quality.contains("720") { value += 10 }
-        return value
+    private func score(_ stream: ResolvedStream, preferredLanguage: String) -> Int {
+        SharedCoreBridge.streamScore(
+            quality: stream.quality,
+            size: stream.size,
+            addonName: stream.addonName,
+            sourceName: stream.sourceName,
+            title: stream.title,
+            isPlayable: stream.isPlayable,
+            preferredLanguage: preferredLanguage,
+            cached: false
+        )
     }
 
     private static func fetchStreams(
@@ -231,11 +237,8 @@ final class StreamResolver: ObservableObject {
     }
 
     private static func quality(from text: String) -> String {
-        if text.range(of: "2160p|4K", options: [.regularExpression, .caseInsensitive]) != nil { return "4K" }
-        if text.range(of: "1080p", options: [.regularExpression, .caseInsensitive]) != nil { return "1080p" }
-        if text.range(of: "720p", options: [.regularExpression, .caseInsensitive]) != nil { return "720p" }
-        if text.range(of: "480p", options: [.regularExpression, .caseInsensitive]) != nil { return "480p" }
-        return "Unknown"
+        let label = SharedCoreBridge.qualityLabel(from: text)
+        return label == "Direct" ? "Unknown" : label
     }
 
     private static func size(from text: String) -> String {
