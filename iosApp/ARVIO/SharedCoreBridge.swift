@@ -127,6 +127,137 @@ enum SharedCoreBridge {
         #endif
     }
 
+    static func vodMatchScore(
+        candidateTitle: String,
+        candidateYear: String?,
+        candidateTmdb: String?,
+        candidateImdb: String?,
+        itemTmdb: Int?,
+        itemImdb: String?,
+        itemTitle: String,
+        itemYear: String
+    ) -> Int {
+        #if canImport(ArvioShared)
+        return Int(CoreVodMatcher.shared.scoreValue(
+            candidateTitle: candidateTitle,
+            candidateYear: candidateYear ?? "",
+            candidateTmdb: candidateTmdb ?? "",
+            candidateImdb: candidateImdb ?? "",
+            itemTmdb: Int32(itemTmdb ?? 0),
+            itemImdb: itemImdb ?? "",
+            itemTitle: itemTitle,
+            itemYear: itemYear
+        ))
+        #else
+        var score = 0
+        if let itemTmdb, candidateTmdb?.onlyDigits == String(itemTmdb) {
+            score += 140
+        }
+        if let itemImdb = itemImdb?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           let candidateImdb = candidateImdb?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           !itemImdb.isEmpty,
+           itemImdb == candidateImdb {
+            score += 140
+        }
+        let normalizedCandidate = normalizeTitle(candidateTitle)
+        let normalizedItem = normalizeTitle(itemTitle)
+        if normalizedCandidate == normalizedItem {
+            score += 90
+        } else if normalizedCandidate.contains(normalizedItem) || normalizedItem.contains(normalizedCandidate) {
+            score += 55
+        } else {
+            let itemTokens = Set(normalizedItem.split(separator: " ").map(String.init)).filter { $0.count > 2 }
+            let candidateTokens = Set(normalizedCandidate.split(separator: " ").map(String.init)).filter { $0.count > 2 }
+            score += min(45, itemTokens.intersection(candidateTokens).count * 15)
+        }
+        let itemYearDigits = itemYear.onlyDigits
+        let candidateYearDigits = candidateYear?.onlyDigits ?? ""
+        if !itemYearDigits.isEmpty && candidateYearDigits == itemYearDigits {
+            score += 25
+        } else if !itemYearDigits.isEmpty && candidateTitle.contains(itemYearDigits) {
+            score += 15
+        }
+        return score
+        #endif
+    }
+
+    static func isUsableVodMatch(_ score: Int) -> Bool {
+        #if canImport(ArvioShared)
+        return CoreVodMatcher.shared.isUsableMatch(score: Int32(score))
+        #else
+        return score >= 70
+        #endif
+    }
+
+    static func episodeSeasonKeys(_ season: Int) -> [String] {
+        #if canImport(ArvioShared)
+        return [
+            CoreVodMatcher.shared.seasonKey(season: Int32(season)),
+            CoreVodMatcher.shared.paddedSeasonKey(season: Int32(season))
+        ].reduce(into: []) { result, value in
+            if !result.contains(value) { result.append(value) }
+        }
+        #else
+        return [String(season), String(format: "%02d", season)].reduce(into: []) { result, value in
+            if !result.contains(value) { result.append(value) }
+        }
+        #endif
+    }
+
+    static func progressFraction(positionSeconds: Int, durationSeconds: Int) -> Double {
+        #if canImport(ArvioShared)
+        return CorePlaybackProgress.shared.fraction(positionSeconds: Int32(positionSeconds), durationSeconds: Int32(durationSeconds))
+        #else
+        guard positionSeconds > 0, durationSeconds > 0 else { return 0 }
+        return min(max(Double(positionSeconds) / Double(durationSeconds), 0), 1)
+        #endif
+    }
+
+    static func progressFraction(percent: Double) -> Double {
+        #if canImport(ArvioShared)
+        return CorePlaybackProgress.shared.percentFraction(percent: percent)
+        #else
+        return min(max(percent / 100, 0), 1)
+        #endif
+    }
+
+    static func shouldSaveProgress(positionSeconds: Int, durationSeconds: Int) -> Bool {
+        #if canImport(ArvioShared)
+        return CorePlaybackProgress.shared.shouldSave(positionSeconds: Int32(positionSeconds), durationSeconds: Int32(durationSeconds))
+        #else
+        return positionSeconds > 5 && durationSeconds > 30
+        #endif
+    }
+
+    static func shouldMarkWatched(positionSeconds: Int, durationSeconds: Int) -> Bool {
+        #if canImport(ArvioShared)
+        return CorePlaybackProgress.shared.shouldMarkWatched(positionSeconds: Int32(positionSeconds), durationSeconds: Int32(durationSeconds))
+        #else
+        return progressFraction(positionSeconds: positionSeconds, durationSeconds: durationSeconds) >= 0.9
+        #endif
+    }
+
+    static func shouldShowContinueWatching(progress: Double) -> Bool {
+        #if canImport(ArvioShared)
+        return CorePlaybackProgress.shared.shouldShowContinueWatching(progressFraction: progress)
+        #else
+        return progress > 0 && progress < 0.9
+        #endif
+    }
+
+    static func historyKey(mediaType: String, tmdbId: Int, season: Int?, episode: Int?) -> String {
+        #if canImport(ArvioShared)
+        return CorePlaybackProgress.shared.historyKeyValue(
+            mediaType: mediaType,
+            tmdbId: Int32(tmdbId),
+            season: Int32(season ?? 0),
+            episode: Int32(episode ?? 0)
+        )
+        #else
+        return "\(mediaType.lowercased())-\(tmdbId)-\(season ?? 0)-\(episode ?? 0)"
+        #endif
+    }
+
     static func m3uAttribute(line: String, key: String) -> String? {
         #if canImport(ArvioShared)
         return CoreM3uParser.shared.attribute(line: line, key: key)
@@ -165,5 +296,9 @@ private extension String {
     var nilIfBlank: String? {
         let value = trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+
+    var onlyDigits: String {
+        filter(\.isNumber)
     }
 }

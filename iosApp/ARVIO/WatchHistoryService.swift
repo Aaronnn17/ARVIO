@@ -40,7 +40,7 @@ struct WatchHistoryEntry: Decodable, Identifiable, Hashable {
     }
 
     var stableId: String {
-        id ?? "\(mediaType)-\(showTmdbId)-\(season ?? 0)-\(episode ?? 0)-\(updatedAt ?? "")"
+        id ?? "\(SharedCoreBridge.historyKey(mediaType: mediaType, tmdbId: showTmdbId, season: season, episode: episode))-\(updatedAt ?? "")"
     }
 
     func asMediaItem() -> MediaItem {
@@ -95,11 +95,17 @@ struct TraktPlaybackItem: Decodable, Identifiable, Hashable {
     }
 
     var stableId: String {
-        "\(type)-\(movie?.ids.tmdb ?? show?.ids.tmdb ?? 0)-\(episode?.season ?? 0)-\(episode?.number ?? 0)"
+        SharedCoreBridge.historyKey(
+            mediaType: type == "movie" ? "movie" : "tv",
+            tmdbId: movie?.ids.tmdb ?? show?.ids.tmdb ?? 0,
+            season: episode?.season,
+            episode: episode?.number
+        )
     }
 
     func asMediaItem() -> MediaItem? {
-        let normalizedProgress = min(max(progress / 100.0, 0), 1)
+        let normalizedProgress = SharedCoreBridge.progressFraction(percent: progress)
+        guard SharedCoreBridge.shouldShowContinueWatching(progress: normalizedProgress) else { return nil }
         if type == "movie", let movie, let tmdb = movie.ids.tmdb {
             return MediaItem(
                 id: stableId,
@@ -217,7 +223,12 @@ final class WatchHistoryService: ObservableObject {
     var continueWatching: [MediaItem] {
         var seen = Set<String>()
         return (traktContinueWatching + cloudContinueWatching).filter { item in
-            let key = "\(item.kind.rawValue)-\(item.tmdbId ?? 0)-\(item.season ?? 0)-\(item.episode ?? 0)"
+            let key = SharedCoreBridge.historyKey(
+                mediaType: item.kind.tmdbPath,
+                tmdbId: item.tmdbId ?? 0,
+                season: item.season,
+                episode: item.episode
+            )
             if seen.contains(key) { return false }
             seen.insert(key)
             return true
@@ -246,7 +257,7 @@ final class WatchHistoryService: ObservableObject {
             )
             cloudContinueWatching = rows
                 .filter { isInActiveProfile($0) }
-                .filter { $0.progress > 0 && $0.progress < 0.9 }
+                .filter { SharedCoreBridge.shouldShowContinueWatching(progress: $0.progress) }
                 .map { $0.asMediaItem() }
             errorMessage = nil
         } catch {
@@ -269,13 +280,14 @@ final class WatchHistoryService: ObservableObject {
     }
 
     func saveProgress(item: MediaItem, stream: ResolvedStream, positionSeconds: Int, durationSeconds: Int) async {
-        guard let session = auth.session, durationSeconds > 0, positionSeconds > 0 else { return }
-        let progress = min(max(Double(positionSeconds) / Double(durationSeconds), 0), 1)
+        guard let session = auth.session,
+              SharedCoreBridge.shouldSaveProgress(positionSeconds: positionSeconds, durationSeconds: durationSeconds) else { return }
+        let progress = SharedCoreBridge.progressFraction(positionSeconds: positionSeconds, durationSeconds: durationSeconds)
         let timestamp = ISO8601DateFormatter().string(from: Date())
         let record = WatchHistoryUpsert(
             userId: session.userId,
             profileId: activeProfileId,
-            mediaType: item.kind == .movie ? "movie" : "tv",
+            mediaType: item.kind.tmdbPath,
             showTmdbId: item.tmdbId,
             season: item.kind == .series ? item.season : nil,
             episode: item.kind == .series ? item.episode : nil,

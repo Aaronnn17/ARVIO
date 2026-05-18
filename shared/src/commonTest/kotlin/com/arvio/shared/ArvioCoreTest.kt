@@ -57,6 +57,43 @@ class ArvioCoreTest {
     }
 
     @Test
+    fun vodMatcherUsesExternalIdsAndTitleFallback() {
+        val exact = CoreVodMatcher.score(
+            candidateTitle = "Different Name",
+            candidateYear = "2023",
+            candidateTmdb = "100",
+            candidateImdb = "tt123",
+            itemTmdb = 100,
+            itemImdb = "tt123",
+            itemTitle = "Expected",
+            itemYear = "2023",
+        )
+        val title = CoreVodMatcher.score(
+            candidateTitle = "Expected 2023 1080p",
+            candidateYear = "2023",
+            candidateTmdb = null,
+            candidateImdb = null,
+            itemTmdb = 100,
+            itemImdb = "tt123",
+            itemTitle = "Expected",
+            itemYear = "2023",
+        )
+        assertTrue(exact > title)
+        assertTrue(CoreVodMatcher.isUsableMatch(title))
+        assertEquals(listOf("1", "01"), CoreVodMatcher.episodeSeasonKeys(1))
+    }
+
+    @Test
+    fun playbackProgressRulesMatchAppThresholds() {
+        assertEquals(0.5, CorePlaybackProgress.fraction(50, 100))
+        assertEquals(0.5, CorePlaybackProgress.percentFraction(50.0))
+        assertTrue(CorePlaybackProgress.shouldSave(6, 31))
+        assertTrue(CorePlaybackProgress.shouldMarkWatched(90, 100))
+        assertTrue(CorePlaybackProgress.shouldShowContinueWatching(0.5))
+        assertEquals("tv-123-1-2", CorePlaybackProgress.historyKey("tv", 123, 1, 2))
+    }
+
+    @Test
     fun xtreamPathsEncodeCredentials() {
         val path = CoreXtreamPaths.movie("https://example.test/", "user name", "p@ss", 42, "mp4")
         assertEquals("https://example.test/movie/user%20name/p%40ss/42.mp4", path)

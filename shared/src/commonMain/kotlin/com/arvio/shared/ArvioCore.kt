@@ -186,6 +186,103 @@ object CoreXtreamPaths {
     }
 }
 
+object CoreVodMatcher {
+    fun scoreValue(
+        candidateTitle: String,
+        candidateYear: String,
+        candidateTmdb: String,
+        candidateImdb: String,
+        itemTmdb: Int,
+        itemImdb: String,
+        itemTitle: String,
+        itemYear: String,
+    ): Int {
+        return score(
+            candidateTitle = candidateTitle,
+            candidateYear = candidateYear.takeIf { it.isNotBlank() },
+            candidateTmdb = candidateTmdb.takeIf { it.isNotBlank() },
+            candidateImdb = candidateImdb.takeIf { it.isNotBlank() },
+            itemTmdb = itemTmdb.takeIf { it > 0 },
+            itemImdb = itemImdb.takeIf { it.isNotBlank() },
+            itemTitle = itemTitle,
+            itemYear = itemYear,
+        )
+    }
+
+    fun score(
+        candidateTitle: String,
+        candidateYear: String?,
+        candidateTmdb: String?,
+        candidateImdb: String?,
+        itemTmdb: Int?,
+        itemImdb: String?,
+        itemTitle: String,
+        itemYear: String,
+    ): Int {
+        var score = 0
+        if (itemTmdb != null && candidateTmdb?.onlyDigits().orEmpty() == itemTmdb.toString()) {
+            score += 140
+        }
+        val normalizedCandidateImdb = candidateImdb?.trim()?.lowercase().orEmpty()
+        val normalizedItemImdb = itemImdb?.trim()?.lowercase().orEmpty()
+        if (normalizedItemImdb.isNotBlank() && normalizedCandidateImdb == normalizedItemImdb) {
+            score += 140
+        }
+        score += CoreTitleMatcher.score(
+            candidateTitle = candidateTitle,
+            candidateYear = candidateYear,
+            item = CoreMediaItem(
+                tmdbId = itemTmdb,
+                imdbId = itemImdb,
+                title = itemTitle,
+                year = itemYear,
+            )
+        )
+        return score
+    }
+
+    fun isUsableMatch(score: Int): Boolean = score >= 70
+
+    fun seasonKey(season: Int): String = season.toString()
+
+    fun paddedSeasonKey(season: Int): String = season.toString().padStart(2, '0')
+
+    fun episodeSeasonKeys(season: Int): List<String> {
+        return listOf(seasonKey(season), paddedSeasonKey(season)).distinct()
+    }
+}
+
+object CorePlaybackProgress {
+    fun fraction(positionSeconds: Int, durationSeconds: Int): Double {
+        if (positionSeconds <= 0 || durationSeconds <= 0) return 0.0
+        return (positionSeconds.toDouble() / durationSeconds.toDouble()).coerceIn(0.0, 1.0)
+    }
+
+    fun percentFraction(percent: Double): Double {
+        return (percent / 100.0).coerceIn(0.0, 1.0)
+    }
+
+    fun shouldSave(positionSeconds: Int, durationSeconds: Int): Boolean {
+        return positionSeconds > 5 && durationSeconds > 30
+    }
+
+    fun shouldMarkWatched(positionSeconds: Int, durationSeconds: Int): Boolean {
+        return fraction(positionSeconds, durationSeconds) >= 0.9
+    }
+
+    fun shouldShowContinueWatching(progressFraction: Double): Boolean {
+        return progressFraction > 0.0 && progressFraction < 0.9
+    }
+
+    fun historyKey(mediaType: String, tmdbId: Int, season: Int?, episode: Int?): String {
+        return "${mediaType.lowercase()}-$tmdbId-${season ?: 0}-${episode ?: 0}"
+    }
+
+    fun historyKeyValue(mediaType: String, tmdbId: Int, season: Int, episode: Int): String {
+        return historyKey(mediaType, tmdbId, season.takeIf { it > 0 }, episode.takeIf { it > 0 })
+    }
+}
+
 object CoreM3uParser {
     fun attribute(line: String, key: String): String? {
         val pattern = Regex("""([A-Za-z0-9_-]+)="([^"]*)"""")

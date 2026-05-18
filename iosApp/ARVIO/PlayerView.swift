@@ -599,18 +599,22 @@ struct PlayerView: View {
         let rawDuration = player.currentItem?.duration.seconds ?? 0
         let fallbackDuration = Double(media.durationSeconds ?? 0)
         let duration = rawDuration.isFinite && rawDuration > 0 ? rawDuration : fallbackDuration
-        guard current.isFinite, current > 5, duration > 30 else { return }
+        guard current.isFinite else { return }
+        let positionSeconds = Int(current.rounded())
+        let durationSeconds = Int(duration.rounded())
+        guard SharedCoreBridge.shouldSaveProgress(positionSeconds: positionSeconds, durationSeconds: durationSeconds) else { return }
         didSaveProgress = true
         await appState.watchHistory.saveProgress(
             item: media,
             stream: stream,
-            positionSeconds: Int(current.rounded()),
-            durationSeconds: Int(duration.rounded())
+            positionSeconds: positionSeconds,
+            durationSeconds: durationSeconds
         )
-        if current / duration >= 0.9 {
+        let progress = SharedCoreBridge.progressFraction(positionSeconds: positionSeconds, durationSeconds: durationSeconds)
+        if SharedCoreBridge.shouldMarkWatched(positionSeconds: positionSeconds, durationSeconds: durationSeconds) {
             await appState.trakt.markWatched(item: media)
         } else {
-            try? await appState.trakt.scrobblePause(item: media, progressPercent: (current / duration) * 100)
+            try? await appState.trakt.scrobblePause(item: media, progressPercent: progress * 100)
         }
     }
 

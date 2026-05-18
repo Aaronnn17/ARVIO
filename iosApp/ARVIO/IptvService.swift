@@ -410,7 +410,7 @@ final class IptvService: ObservableObject {
                         item: item,
                         externalIds: externalIds
                     )
-                    return score >= 70 ? (stream, score) : nil
+                    return SharedCoreBridge.isUsableVodMatch(score) ? (stream, score) : nil
                 }
                 .sorted { left, right in
                     if left.score != right.score { return left.score > right.score }
@@ -467,7 +467,7 @@ final class IptvService: ObservableObject {
                         item: item,
                         externalIds: externalIds
                     )
-                    return score >= 70 ? (value, score) : nil
+                    return SharedCoreBridge.isUsableVodMatch(score) ? (value, score) : nil
                 }
                 .sorted { $0.score > $1.score }
                 .prefix(4)
@@ -480,9 +480,9 @@ final class IptvService: ObservableObject {
                     credentials: credentials,
                     extra: [URLQueryItem(name: "series_id", value: String(seriesId))]
                 )
-                let key = String(season)
-                let fallbackKey = String(format: "%02d", season)
-                let episodes = info.episodes?[key] ?? info.episodes?[fallbackKey] ?? []
+                let episodes = SharedCoreBridge.episodeSeasonKeys(season)
+                    .compactMap { info.episodes?[$0] }
+                    .first { !$0.isEmpty } ?? []
                 let matches = episodes
                     .filter { $0.episodeNumber == episode }
                     .sorted { sourceQualityScore($0.title ?? candidate.series.name) > sourceQualityScore($1.title ?? candidate.series.name) }
@@ -549,42 +549,16 @@ final class IptvService: ObservableObject {
         item: MediaItem,
         externalIds: TmdbExternalIds
     ) -> Int {
-        var score = 0
-        if let itemTmdb = item.tmdbId,
-           let value = tmdb?.nilIfBlank,
-           value.onlyDigits == String(itemTmdb) {
-            score += 140
-        }
-        if let itemImdb = externalIds.imdbId?.nilIfBlank?.lowercased(),
-           let value = imdb?.nilIfBlank?.lowercased(),
-           value == itemImdb {
-            score += 140
-        }
-
-        let normalizedCandidate = SharedCoreBridge.normalizeTitle(title)
-        let normalizedItem = SharedCoreBridge.normalizeTitle(item.title)
-        if normalizedCandidate == normalizedItem {
-            score += 90
-        } else if normalizedCandidate.contains(normalizedItem) || normalizedItem.contains(normalizedCandidate) {
-            score += 55
-        } else {
-            let itemTokens = Set(normalizedItem.split(separator: " ").map(String.init)).filter { $0.count > 2 }
-            let candidateTokens = Set(normalizedCandidate.split(separator: " ").map(String.init)).filter { $0.count > 2 }
-            let overlap = itemTokens.intersection(candidateTokens).count
-            if overlap > 0 {
-                score += min(45, overlap * 15)
-            }
-        }
-
-        if let itemYear = item.year.nilIfBlank?.onlyDigits.nilIfBlank,
-           let candidateYear = year?.nilIfBlank?.onlyDigits.nilIfBlank,
-           candidateYear == itemYear {
-            score += 25
-        } else if let itemYear = item.year.nilIfBlank?.onlyDigits.nilIfBlank,
-                  title.contains(itemYear) {
-            score += 15
-        }
-        return score
+        SharedCoreBridge.vodMatchScore(
+            candidateTitle: title,
+            candidateYear: year,
+            candidateTmdb: tmdb,
+            candidateImdb: imdb,
+            itemTmdb: item.tmdbId,
+            itemImdb: externalIds.imdbId,
+            itemTitle: item.title,
+            itemYear: item.year
+        )
     }
 
     private func quality(from text: String) -> String {
