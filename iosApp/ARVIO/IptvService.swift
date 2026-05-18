@@ -289,7 +289,7 @@ final class IptvService: ObservableObject {
                 id: stableChannelId(epgId: stream.epgChannelId, streamUrl: streamUrl),
                 name: stream.name.nilIfBlank ?? "Channel \(streamId)",
                 streamUrl: streamUrl,
-                group: stream.categoryName?.nilIfBlank ?? stream.categoryId?.map { "Category \($0)" } ?? "Xtream",
+                group: stream.categoryName?.nilIfBlank ?? stream.categoryId.map { "Category \($0)" } ?? "Xtream",
                 logo: stream.streamIcon?.nilIfBlank,
                 epgId: stream.epgChannelId?.nilIfBlank,
                 rawTitle: stream.name
