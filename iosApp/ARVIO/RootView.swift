@@ -9,6 +9,19 @@ enum ArvioTab: String, CaseIterable {
     case search = "Search"
     case addons = "Addons"
     case settings = "Settings"
+
+    var keyboardShortcut: KeyEquivalent {
+        switch self {
+        case .home: return "1"
+        case .movies: return "2"
+        case .series: return "3"
+        case .liveTV: return "4"
+        case .watchlist: return "5"
+        case .search: return "6"
+        case .addons: return "7"
+        case .settings: return "8"
+        }
+    }
 }
 
 struct RootView: View {
@@ -85,6 +98,8 @@ struct TopNavigation: View {
                 }
             }
             .buttonStyle(.plain)
+            .focusable(true)
+            .hoverEffect(.highlight)
 
             ForEach(ArvioTab.allCases, id: \.self) { tab in
                 Button {
@@ -105,6 +120,9 @@ struct TopNavigation: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .focusable(true)
+                .hoverEffect(.highlight)
+                .keyboardShortcut(tab.keyboardShortcut, modifiers: [.command])
             }
 
             Spacer()

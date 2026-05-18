@@ -132,6 +132,7 @@ struct PlayerView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(ArvioTheme.gold)
+                .keyboardShortcut(.escape, modifiers: [])
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(appState.selectedMedia?.title ?? stream.title)
@@ -148,10 +149,13 @@ struct PlayerView: View {
 
                 Button(isPlaying ? "Pause" : "Play") { togglePlayback() }
                     .buttonStyle(.bordered)
+                    .keyboardShortcut(.space, modifiers: [])
                 Button(showSources ? "Hide Sources" : "Sources") { showSources.toggle() }
                     .buttonStyle(.bordered)
+                    .keyboardShortcut("s", modifiers: [])
                 Button(showTracks ? "Hide Tracks" : "Tracks") { showTracks.toggle() }
                     .buttonStyle(.bordered)
+                    .keyboardShortcut("t", modifiers: [])
             }
             .padding(24)
 
@@ -215,6 +219,7 @@ struct PlayerView: View {
                     .shadow(color: ArvioTheme.gold.opacity(0.35), radius: 16)
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.return, modifiers: [])
             }
             .padding(.trailing, 42)
             .padding(.bottom, 92)

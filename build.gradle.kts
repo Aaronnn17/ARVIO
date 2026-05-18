@@ -5,6 +5,7 @@ plugins {
     id("com.android.test") version "8.5.2" apply false
     id("androidx.baselineprofile") version "1.3.1" apply false
     id("org.jetbrains.kotlin.android") version "2.1.0" apply false
+    id("org.jetbrains.kotlin.multiplatform") version "2.1.0" apply false
     id("org.jetbrains.kotlin.plugin.serialization") version "2.1.0" apply false
     // Kotlin 2.0+: Compose compiler is a dedicated Gradle plugin; version
     // must track Kotlin.

@@ -106,6 +106,14 @@ struct IptvNowNext: Hashable {
     let next: IptvProgram?
 }
 
+struct IptvProviderDiagnostic: Identifiable, Hashable {
+    let id = UUID()
+    let name: String
+    let status: String
+    let detail: String
+    let isSuccess: Bool
+}
+
 @MainActor
 final class IptvService: ObservableObject {
     @Published private(set) var state = IptvCloudProfileState()
@@ -296,6 +304,49 @@ final class IptvService: ObservableObject {
         state.tvSession.lastFocusedZone = "PLAYER"
         state.tvSession.lastOpenedAt = Int64(Date().timeIntervalSince1970 * 1000)
         saveLocal()
+    }
+
+    func runProviderDiagnostics(
+        m3uUrl: String,
+        epgUrl: String,
+        stalkerPortalUrl: String,
+        stalkerMacAddress: String
+    ) async -> [IptvProviderDiagnostic] {
+        var results: [IptvProviderDiagnostic] = []
+        let trimmedM3u = m3uUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedEpg = epgUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPortal = stalkerPortalUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedMac = stalkerMacAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let credentials = XtreamCredentials.from(urlString: trimmedM3u) {
+            results.append(await xtreamDiagnostic(credentials: credentials, action: nil, name: "Xtream login"))
+            results.append(await xtreamDiagnostic(credentials: credentials, action: "get_live_categories", name: "Xtream live"))
+            results.append(await xtreamDiagnostic(credentials: credentials, action: "get_vod_categories", name: "Xtream movies"))
+            results.append(await xtreamDiagnostic(credentials: credentials, action: "get_series_categories", name: "Xtream series"))
+        } else if !trimmedM3u.isEmpty {
+            results.append(await urlDiagnostic(urlString: trimmedM3u, name: "M3U playlist"))
+        } else {
+            results.append(IptvProviderDiagnostic(name: "M3U/Xtream", status: "Skipped", detail: "No playlist URL entered", isSuccess: false))
+        }
+
+        if !trimmedEpg.isEmpty {
+            results.append(await urlDiagnostic(urlString: trimmedEpg, name: "EPG/XMLTV"))
+        }
+
+        if !trimmedPortal.isEmpty || !trimmedMac.isEmpty {
+            guard !trimmedPortal.isEmpty, !trimmedMac.isEmpty else {
+                results.append(IptvProviderDiagnostic(name: "Stalker portal", status: "Incomplete", detail: "Portal URL and MAC are both required", isSuccess: false))
+                return results
+            }
+            do {
+                let message = try await StalkerClient(portalUrl: trimmedPortal, macAddress: trimmedMac).testConnection()
+                results.append(IptvProviderDiagnostic(name: "Stalker portal", status: "OK", detail: message, isSuccess: true))
+            } catch {
+                results.append(IptvProviderDiagnostic(name: "Stalker portal", status: "Failed", detail: error.localizedDescription, isSuccess: false))
+            }
+        }
+
+        return results
     }
 
     func resolveVodSources(item: MediaItem, externalIds: TmdbExternalIds, season: Int, episode: Int) async -> [ResolvedStream] {
@@ -537,6 +588,66 @@ final class IptvService: ObservableObject {
         case "720p": return 20
         case "480p": return 10
         default: return 0
+        }
+    }
+
+    private func xtreamDiagnostic(credentials: XtreamCredentials, action: String?, name: String) async -> IptvProviderDiagnostic {
+        do {
+            guard var components = URLComponents(string: credentials.baseUrl + "/player_api.php") else {
+                throw ArvioError.invalidURL(credentials.baseUrl)
+            }
+            var items = [
+                URLQueryItem(name: "username", value: credentials.username),
+                URLQueryItem(name: "password", value: credentials.password)
+            ]
+            if let action {
+                items.append(URLQueryItem(name: "action", value: action))
+            }
+            components.queryItems = items
+            guard let url = components.url else { throw ArvioError.invalidURL(credentials.baseUrl) }
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw ArvioError.requestFailed("HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            }
+            let object = try JSONSerialization.jsonObject(with: data)
+            if let array = object as? [Any] {
+                return IptvProviderDiagnostic(name: name, status: "OK", detail: "\(array.count) entries available", isSuccess: true)
+            }
+            if let dictionary = object as? [String: Any] {
+                let auth = ((dictionary["user_info"] as? [String: Any])?["auth"] as? Int) ?? 1
+                let status = ((dictionary["user_info"] as? [String: Any])?["status"] as? String) ?? "available"
+                if auth == 0 {
+                    return IptvProviderDiagnostic(name: name, status: "Failed", detail: "Provider rejected the Xtream credentials", isSuccess: false)
+                }
+                return IptvProviderDiagnostic(name: name, status: "OK", detail: "Account \(status)", isSuccess: true)
+            }
+            return IptvProviderDiagnostic(name: name, status: "OK", detail: "Provider returned data", isSuccess: true)
+        } catch {
+            return IptvProviderDiagnostic(name: name, status: "Failed", detail: error.localizedDescription, isSuccess: false)
+        }
+    }
+
+    private func urlDiagnostic(urlString: String, name: String) async -> IptvProviderDiagnostic {
+        guard let url = URL(string: urlString) else {
+            return IptvProviderDiagnostic(name: name, status: "Invalid", detail: "URL is not valid", isSuccess: false)
+        }
+        var request = URLRequest(url: url)
+        request.setValue("bytes=0-4095", forHTTPHeaderField: "Range")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<400).contains(http.statusCode) else {
+                return IptvProviderDiagnostic(name: name, status: "Failed", detail: "HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)", isSuccess: false)
+            }
+            let sample = String(data: data.prefix(4096), encoding: .utf8) ?? String(data: data.prefix(4096), encoding: .isoLatin1) ?? ""
+            let looksValid = sample.contains("#EXTM3U") || sample.contains("<tv") || sample.contains("<programme") || sample.contains("xml")
+            return IptvProviderDiagnostic(
+                name: name,
+                status: looksValid ? "OK" : "Reachable",
+                detail: looksValid ? "Provider returned expected data" : "Provider responded, but format could not be confirmed",
+                isSuccess: true
+            )
+        } catch {
+            return IptvProviderDiagnostic(name: name, status: "Failed", detail: error.localizedDescription, isSuccess: false)
         }
     }
 
@@ -986,6 +1097,11 @@ private final class StalkerClient {
                 rawTitle: name
             )
         }
+    }
+
+    func testConnection() async throws -> String {
+        token = try await handshake()
+        return "Handshake succeeded"
     }
 
     private func handshake() async throws -> String {

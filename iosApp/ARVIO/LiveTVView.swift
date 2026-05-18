@@ -8,6 +8,8 @@ struct LiveTVView: View {
     @State private var stalkerMacAddress = ""
     @State private var showProviderSettings = false
     @State private var showGuide = false
+    @State private var providerDiagnostics: [IptvProviderDiagnostic] = []
+    @State private var isRunningProviderCheck = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -185,12 +187,47 @@ struct LiveTVView: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(ArvioTheme.textSecondary)
                 }
+
+                Button {
+                    Task { await runProviderCheck() }
+                } label: {
+                    SecondaryButton(title: isRunningProviderCheck ? "Checking" : "Run Provider Check")
+                }
+                .buttonStyle(.plain)
+                .disabled(isRunningProviderCheck)
             }
 
             if let error = appState.iptv.errorMessage {
                 Text(error)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Color.red.opacity(0.9))
+            }
+
+            if !providerDiagnostics.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(providerDiagnostics) { result in
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(result.isSuccess ? Color.green : Color.orange)
+                                .frame(width: 8, height: 8)
+                            Text(result.name)
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(ArvioTheme.textPrimary)
+                                .frame(width: 130, alignment: .leading)
+                            Text(result.status)
+                                .font(.system(size: 12, weight: .black))
+                                .foregroundStyle(result.isSuccess ? Color.green.opacity(0.95) : Color.orange.opacity(0.95))
+                                .frame(width: 72, alignment: .leading)
+                            Text(result.detail)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(ArvioTheme.textSecondary)
+                                .lineLimit(2)
+                            Spacer()
+                        }
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.045)))
+                    }
+                }
             }
         }
         .padding(22)
@@ -275,6 +312,17 @@ struct LiveTVView: View {
     private func play(_ channel: IptvChannel) {
         appState.iptv.markOpened(channel)
         appState.selectedStream = liveStream(for: channel)
+    }
+
+    private func runProviderCheck() async {
+        isRunningProviderCheck = true
+        defer { isRunningProviderCheck = false }
+        providerDiagnostics = await appState.iptv.runProviderDiagnostics(
+            m3uUrl: m3uUrl,
+            epgUrl: epgUrl,
+            stalkerPortalUrl: stalkerPortalUrl,
+            stalkerMacAddress: stalkerMacAddress
+        )
     }
 
     private func liveStream(for channel: IptvChannel) -> ResolvedStream {
