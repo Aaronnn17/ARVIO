@@ -3,12 +3,13 @@ import WebKit
 
 struct TrailerPlayerView: View {
     let url: URL
+    var soundEnabled: Bool = true
     let onClose: () -> Void
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
-            if let embedURL = Self.embedURL(from: url) {
+            if let embedURL = Self.embedURL(from: url, soundEnabled: soundEnabled) {
                 TrailerWebView(url: embedURL)
                     .ignoresSafeArea()
             } else {
@@ -28,7 +29,7 @@ struct TrailerPlayerView: View {
         }
     }
 
-    private static func embedURL(from url: URL) -> URL? {
+    private static func embedURL(from url: URL, soundEnabled: Bool) -> URL? {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
         let host = components.host?.lowercased() ?? ""
         let id: String?
@@ -40,7 +41,8 @@ struct TrailerPlayerView: View {
             id = nil
         }
         guard let id, !id.isEmpty else { return url }
-        return URL(string: "https://www.youtube.com/embed/\(id)?autoplay=1&playsinline=1&rel=0")
+        let muted = soundEnabled ? "0" : "1"
+        return URL(string: "https://www.youtube.com/embed/\(id)?autoplay=1&playsinline=1&rel=0&mute=\(muted)")
     }
 }
 

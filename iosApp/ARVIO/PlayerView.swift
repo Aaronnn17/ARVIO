@@ -40,6 +40,7 @@ struct PlayerView: View {
     @State private var lastProgressSaveSeconds = 0.0
     @State private var isSavingProgress = false
     @State private var didMarkWatched = false
+    @State private var didAutoFallback = false
     @State private var skipIntervals: [SkipInterval] = []
     @State private var dismissedSkipIntervalIds: Set<String> = []
     private let progressTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -127,6 +128,7 @@ struct PlayerView: View {
             lastProgressSaveSeconds = 0
             isSavingProgress = false
             didMarkWatched = false
+            didAutoFallback = false
             externalSubtitleCues = []
             selectedExternalSubtitleId = "off"
             currentCaption = ""
@@ -162,7 +164,13 @@ struct PlayerView: View {
             guard let item = notification.object as? AVPlayerItem,
                   item == player?.currentItem else { return }
             let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
-            playbackErrorMessage = error?.localizedDescription ?? item.error?.localizedDescription ?? "This source is not playable on iOS."
+            if !didAutoFallback, hasAlternatePlayableSource {
+                didAutoFallback = true
+                playbackErrorMessage = "Source failed. Trying another source..."
+                Task { await switchToNextPlayableSource() }
+            } else {
+                playbackErrorMessage = error?.localizedDescription ?? item.error?.localizedDescription ?? "This source is not playable on iOS."
+            }
         }
         .onDisappear {
             Task { await saveProgressIfNeeded() }
@@ -243,6 +251,10 @@ struct PlayerView: View {
                 currentSeconds < interval.endSeconds &&
                 !dismissedSkipIntervalIds.contains(interval.id)
         }
+    }
+
+    private var hasAlternatePlayableSource: Bool {
+        appState.streams.streams.filter(\.isPlayable).contains { $0.id != stream.id }
     }
 
     private func skipButton(_ interval: SkipInterval) -> some View {
@@ -467,8 +479,14 @@ struct PlayerView: View {
     private func updateProgress() {
         guard let player else { return }
         if let item = player.currentItem, item.status == .failed {
-            playbackErrorMessage = item.error?.localizedDescription ?? "This source is not playable on iOS."
-            isPlaying = false
+            if !didAutoFallback, hasAlternatePlayableSource {
+                didAutoFallback = true
+                playbackErrorMessage = "Source failed. Trying another source..."
+                Task { await switchToNextPlayableSource() }
+            } else {
+                playbackErrorMessage = item.error?.localizedDescription ?? "This source is not playable on iOS."
+                isPlaying = false
+            }
         }
         let current = player.currentTime().seconds
         let duration = player.currentItem?.duration.seconds ?? 0

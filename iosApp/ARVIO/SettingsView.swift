@@ -299,6 +299,8 @@ struct SettingsView: View {
             panelHeader("Playback", "Matches Android playback preferences saved in ARVIO cloud.")
             SettingsToggle("Auto-play next episode", isOn: profileBinding(\.autoPlayNext))
             SettingsToggle("Auto-play when one source exists", isOn: profileBinding(\.autoPlaySingleSource))
+            SettingsToggle("Auto-play trailers", isOn: profileBinding(\.trailerAutoPlay))
+            SettingsToggle("Trailer sound", isOn: profileBinding(\.trailerSoundEnabled))
             SettingsPicker(title: "Minimum auto-play quality", selection: profileBinding(\.autoPlayMinQuality), values: ["Any", "720p", "1080p", "4K"])
             SettingsPicker(title: "Quality filter", selection: qualityFilterPresetBinding, values: ["Off", "1080p+", "1080p only", "720p+", "Custom"])
             if qualityFilterPresetBinding.wrappedValue == "Custom" {

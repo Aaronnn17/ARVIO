@@ -319,6 +319,30 @@ final class TraktService: ObservableObject {
         }
     }
 
+    func removeFromWatchlist(item: MediaItem) async {
+        guard let accessToken = await accessToken(), let tmdbId = item.tmdbId else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            guard let url = proxyURL(path: "/sync/watchlist/remove", method: "POST") else { return }
+            let media = TraktScrobbleMedia(ids: TraktScrobbleIds(tmdb: tmdbId))
+            let body = TraktWatchlistMutationBody(
+                movies: item.kind == .movie ? [media] : nil,
+                shows: item.kind == .series ? [media] : nil
+            )
+            let _: EmptyResponse = try await client.request(
+                url,
+                method: "POST",
+                headers: proxyHeaders(userToken: accessToken),
+                body: body
+            )
+            await loadWatchlist()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func removeFromWatchlist(item: TraktWatchlistItem) async {
         guard let accessToken = await accessToken(), let tmdbId = item.tmdbId else { return }
         isLoading = true
@@ -340,6 +364,14 @@ final class TraktService: ObservableObject {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func isInWatchlist(_ item: MediaItem) -> Bool {
+        guard let tmdbId = item.tmdbId else { return false }
+        let expectedType = item.kind == .movie ? "movie" : "show"
+        return watchlist.contains { candidate in
+            candidate.tmdbId == tmdbId && candidate.type == expectedType
         }
     }
 

@@ -181,53 +181,95 @@ struct HeroSection: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            Image("ARVIOTVBanner")
-                .resizable()
-                .scaledToFill()
-                .frame(height: 360)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+            AsyncImage(url: item.backdropURL ?? item.posterURL) { phase in
+                if let image = phase.image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image("ARVIOTVBanner")
+                        .resizable()
+                        .scaledToFill()
+                }
+            }
+            .frame(height: 390)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
-            LinearGradient(colors: [Color.black.opacity(0.08), Color.black.opacity(0.86)], startPoint: .center, endPoint: .bottom)
+            LinearGradient(colors: [Color.black.opacity(0.04), Color.black.opacity(0.35), Color.black.opacity(0.9)], startPoint: .top, endPoint: .bottom)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            LinearGradient(colors: [Color.black.opacity(0.78), Color.black.opacity(0.0)], startPoint: .leading, endPoint: .trailing)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
             VStack(alignment: .leading, spacing: 12) {
-                Image("ARVIOFeatureGraphic")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 260)
-                    .padding(.bottom, 2)
-
                 Text(item.title)
                     .font(.system(size: 42, weight: .bold))
                     .foregroundStyle(ArvioTheme.textPrimary)
+                    .lineLimit(2)
+                    .frame(maxWidth: 680, alignment: .leading)
 
-                Text("\(item.subtitle)  -  \(item.year)  -  \(item.duration)")
+                Text(heroMetadata)
                     .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(ArvioTheme.textSecondary)
 
-                Text("A premium media hub experience for browsing, tracking and continuing your library across screens.")
+                Text(item.overview?.nilIfBlank ?? item.episodeTitle?.nilIfBlank ?? item.subtitle)
                     .font(.system(size: 17))
                     .foregroundStyle(ArvioTheme.textSecondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: 580, alignment: .leading)
+                    .lineLimit(3)
+                    .frame(maxWidth: 660, alignment: .leading)
 
                 HStack(spacing: 12) {
                     Button {
-                        appState.selectedMedia = item
+                        Task { await playHero() }
                     } label: {
-                        PrimaryButton(title: "Open Details")
+                        PrimaryButton(title: item.positionSeconds.map { $0 > 30 ? "Resume" : "Play" } ?? "Play")
                     }
                     .buttonStyle(.plain)
                     Button {
-                        Task { await appState.trakt.addToWatchlist(item: item) }
+                        appState.selectedMedia = item
                     } label: {
-                        SecondaryButton(title: "Add to Watchlist")
+                        SecondaryButton(title: "Details")
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        Task { await toggleWatchlist() }
+                    } label: {
+                        SecondaryButton(title: appState.trakt.isInWatchlist(item) ? "In Watchlist" : "Watchlist")
                     }
                     .buttonStyle(.plain)
                 }
                 .padding(.top, 6)
             }
             .padding(28)
+        }
+    }
+
+    private var heroMetadata: String {
+        [
+            item.kind == .movie ? "Movie" : "Series",
+            item.seasonEpisodeLabel,
+            item.year.nilIfBlank,
+            item.duration.nilIfBlank,
+            item.rating.nilIfBlank
+        ]
+        .compactMap { $0 }
+        .joined(separator: " - ")
+    }
+
+    private func playHero() async {
+        appState.selectedMedia = item
+        await appState.streams.resolve(item: item, season: item.season ?? 1, episode: item.episode ?? 1)
+        guard appState.settings.profileSettings.autoPlaySingleSource,
+              let stream = appState.streams.streams.first(where: \.isPlayable) else {
+            return
+        }
+        appState.selectedStream = stream
+    }
+
+    private func toggleWatchlist() async {
+        if appState.trakt.isInWatchlist(item) {
+            await appState.trakt.removeFromWatchlist(item: item)
+        } else {
+            await appState.trakt.addToWatchlist(item: item)
         }
     }
 }
@@ -419,5 +461,22 @@ struct CatalogDetailView: View {
             items = await appState.catalogs.items(for: config)
             isLoading = false
         }
+    }
+}
+
+private extension MediaItem {
+    var seasonEpisodeLabel: String? {
+        guard kind == .series else { return nil }
+        if let season, let episode {
+            return "S\(season) E\(episode)"
+        }
+        return nil
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 }

@@ -11,6 +11,8 @@ struct DetailsView: View {
     @State private var showTrailerPlayer = false
     @State private var selectedSeason = 1
     @State private var selectedEpisode = 1
+    @State private var showSources = false
+    @State private var actionStatus = ""
 
     var body: some View {
         ZStack {
@@ -18,8 +20,8 @@ struct DetailsView: View {
                 VStack(alignment: .leading, spacing: 24) {
                 ZStack(alignment: .bottomLeading) {
                     PosterBackdrop(item: item)
-                        .frame(height: 420)
-                    LinearGradient(colors: [Color.black.opacity(0.0), Color.black.opacity(0.9)], startPoint: .center, endPoint: .bottom)
+                        .frame(height: 440)
+                    LinearGradient(colors: [Color.black.opacity(0.0), Color.black.opacity(0.42), Color.black.opacity(0.92)], startPoint: .top, endPoint: .bottom)
                     VStack(alignment: .leading, spacing: 14) {
                         Button("Back") { appState.selectedMedia = nil }
                             .buttonStyle(.bordered)
@@ -35,26 +37,38 @@ struct DetailsView: View {
                             .lineLimit(3)
                             .frame(maxWidth: 760, alignment: .leading)
                         HStack(spacing: 12) {
-                            Button("Play") {
-                                Task { await resolveSelectedSource(autoPlay: true) }
+                            Button(playButtonTitle) {
+                                Task { await playSelected() }
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(ArvioTheme.gold)
 
-                            Button("Watchlist") {
-                                Task { await appState.trakt.addToWatchlist(item: item) }
+                            Button("Sources") {
+                                Task { await openSources() }
                             }
-                                .buttonStyle(.bordered)
+                            .buttonStyle(.bordered)
+
                             Button("Mark Watched") {
                                 Task { await appState.trakt.markWatched(item: currentPlaybackItem) }
                             }
                             .buttonStyle(.bordered)
+
+                            Button(appState.trakt.isInWatchlist(item) ? "In Watchlist" : "Watchlist") {
+                                Task { await toggleWatchlist() }
+                            }
+                            .buttonStyle(.bordered)
+
                             if trailerURL != nil {
                                 Button("Trailer") {
                                     showTrailerPlayer = true
                                 }
                                 .buttonStyle(.bordered)
                             }
+                        }
+                        if !actionStatus.isEmpty {
+                            Text(actionStatus)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(ArvioTheme.textSecondary)
                         }
                     }
                     .padding(28)
@@ -76,7 +90,9 @@ struct DetailsView: View {
                     episodeGrid
                 }
 
-                SourceSelector()
+                if showSources || appState.streams.isLoading || !appState.streams.streams.isEmpty || appState.streams.errorMessage != nil {
+                    SourceSelector()
+                }
 
                 if !cast.isEmpty {
                     castRail
@@ -89,7 +105,7 @@ struct DetailsView: View {
                 .padding(28)
             }
             if showTrailerPlayer, let trailerURL {
-                TrailerPlayerView(url: trailerURL) {
+                TrailerPlayerView(url: trailerURL, soundEnabled: appState.settings.profileSettings.trailerSoundEnabled) {
                     showTrailerPlayer = false
                 }
                 .transition(.opacity)
@@ -99,6 +115,8 @@ struct DetailsView: View {
         .task {
             selectedSeason = item.season ?? selectedSeason
             selectedEpisode = item.episode ?? selectedEpisode
+            showSources = false
+            actionStatus = ""
             async let loadedDetails = try? appState.tmdb.details(for: item)
             async let loadedRecommendations = try? appState.tmdb.recommendations(for: item)
             async let loadedCast = try? appState.tmdb.cast(for: item)
@@ -107,6 +125,9 @@ struct DetailsView: View {
             recommendations = await loadedRecommendations ?? []
             cast = await loadedCast ?? []
             trailerURL = await loadedTrailer ?? trailerURL
+            if appState.settings.profileSettings.trailerAutoPlay, trailerURL != nil {
+                showTrailerPlayer = true
+            }
             if item.kind == .series {
                 await loadEpisodes(season: selectedSeason)
             }
@@ -122,7 +143,7 @@ struct DetailsView: View {
                 ForEach(episodes) { episode in
                     Button {
                         selectedEpisode = episode.episodeNumber
-                        Task { await resolveSelectedSource(autoPlay: false) }
+                        Task { await playSelected() }
                     } label: {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
@@ -223,13 +244,48 @@ struct DetailsView: View {
 
     private func resolveSelectedSource(autoPlay: Bool) async {
         appState.selectedMedia = currentPlaybackItem
+        showSources = !autoPlay || !appState.settings.profileSettings.autoPlaySingleSource
+        actionStatus = autoPlay && appState.settings.profileSettings.autoPlaySingleSource ? "Loading best source..." : "Loading sources..."
         await appState.streams.resolve(item: currentPlaybackItem, season: selectedSeason, episode: selectedEpisode)
         let playable = appState.streams.streams.filter {
             $0.isPlayable && meetsMinimumQuality($0.quality, minimum: appState.settings.profileSettings.autoPlayMinQuality)
         }
-        if autoPlay && appState.settings.profileSettings.autoPlaySingleSource, playable.count == 1 {
-            appState.selectedStream = playable[0]
+        if autoPlay && appState.settings.profileSettings.autoPlaySingleSource {
+            if let best = playable.first ?? appState.streams.streams.first(where: \.isPlayable) {
+                actionStatus = ""
+                appState.selectedStream = best
+            } else {
+                showSources = true
+                actionStatus = "No playable source found. Pick another source or check addon configuration."
+            }
+        } else if playable.isEmpty {
+            actionStatus = "No playable source found."
+        } else {
+            actionStatus = "\(playable.count) playable source\(playable.count == 1 ? "" : "s") ready."
         }
+    }
+
+    private func playSelected() async {
+        await resolveSelectedSource(autoPlay: true)
+    }
+
+    private func openSources() async {
+        await resolveSelectedSource(autoPlay: false)
+    }
+
+    private func toggleWatchlist() async {
+        if appState.trakt.isInWatchlist(item) {
+            await appState.trakt.removeFromWatchlist(item: item)
+        } else {
+            await appState.trakt.addToWatchlist(item: item)
+        }
+    }
+
+    private var playButtonTitle: String {
+        if let position = currentPlaybackItem.positionSeconds, position > 30 {
+            return "Resume"
+        }
+        return "Play"
     }
 
     private var metadata: String {
