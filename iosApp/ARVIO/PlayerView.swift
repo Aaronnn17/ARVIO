@@ -36,6 +36,8 @@ struct PlayerView: View {
     @State private var subtitleStatus = ""
     @State private var currentSeconds = 0.0
     @State private var durationSeconds = 0.0
+    @State private var skipIntervals: [SkipInterval] = []
+    @State private var dismissedSkipIntervalIds: Set<String> = []
     private let progressTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -73,6 +75,11 @@ struct PlayerView: View {
                     }
                 }
 
+            if let interval = activeSkipInterval {
+                skipButton(interval)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
+
             if showControls {
                 playerHUD
                     .transition(.opacity)
@@ -88,6 +95,8 @@ struct PlayerView: View {
             selectedExternalSubtitleId = "off"
             currentCaption = ""
             subtitleStatus = ""
+            skipIntervals = []
+            dismissedSkipIntervalIds = []
             let asset = stream.requestHeaders.isEmpty
                 ? AVURLAsset(url: url)
                 : AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": stream.requestHeaders])
@@ -95,11 +104,12 @@ struct PlayerView: View {
             player = created
             if let seconds = stream.resumePositionSeconds, seconds > 5, !didSeek {
                 didSeek = true
-                created.seek(to: CMTime(seconds: Double(seconds), preferredTimescale: 600))
+                await created.seek(to: CMTime(seconds: Double(seconds), preferredTimescale: 600))
             }
             created.play()
             isPlaying = true
             loadTrackOptions(from: created.currentItem)
+            await loadSkipIntervalsIfNeeded()
         }
         .onReceive(progressTimer) { _ in updateProgress() }
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
@@ -174,6 +184,42 @@ struct PlayerView: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 22)
         }
+    }
+
+    private var activeSkipInterval: SkipInterval? {
+        skipIntervals.first { interval in
+            currentSeconds >= interval.startSeconds &&
+                currentSeconds < interval.endSeconds &&
+                !dismissedSkipIntervalIds.contains(interval.id)
+        }
+    }
+
+    private func skipButton(_ interval: SkipInterval) -> some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Button {
+                    skip(interval)
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "forward.end.fill")
+                        Text(interval.label)
+                    }
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Color.black)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 11)
+                    .background(Capsule().fill(ArvioTheme.gold))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1))
+                    .shadow(color: ArvioTheme.gold.opacity(0.35), radius: 16)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.trailing, 42)
+            .padding(.bottom, 92)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var sourcePanel: some View {
@@ -343,6 +389,20 @@ struct PlayerView: View {
         isPlaying.toggle()
     }
 
+    private func skip(_ interval: SkipInterval) {
+        guard let player else { return }
+        dismissedSkipIntervalIds.insert(interval.id)
+        let target = max(0, interval.endSeconds + 0.25)
+        currentSeconds = target
+        Task {
+            await player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+        }
+        if !isPlaying {
+            player.play()
+            isPlaying = true
+        }
+    }
+
     private func updateProgress() {
         guard let player else { return }
         let current = player.currentTime().seconds
@@ -350,6 +410,25 @@ struct PlayerView: View {
         if current.isFinite { currentSeconds = current }
         if duration.isFinite && duration > 0 { durationSeconds = duration }
         currentCaption = externalSubtitleCues.first { $0.start <= currentSeconds && $0.end >= currentSeconds }?.text ?? ""
+    }
+
+    private func loadSkipIntervalsIfNeeded() async {
+        guard let media = appState.selectedMedia,
+              media.kind == .series,
+              let season = media.season,
+              let episode = media.episode else {
+            return
+        }
+        do {
+            let externalIds = try await appState.tmdb.externalIds(for: media)
+            skipIntervals = await SkipIntroService.shared.intervals(
+                imdbId: externalIds.imdbId,
+                season: season,
+                episode: episode
+            )
+        } catch {
+            skipIntervals = []
+        }
     }
 
     private func loadTrackOptions(from item: AVPlayerItem?) {
