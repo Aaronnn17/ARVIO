@@ -227,10 +227,10 @@ final class StreamResolver: ObservableObject {
 
         var headers: [String: String] = [:]
         rawHeaders.split(separator: "&").forEach { entry in
-            guard let equals = entry.firstIndex(of: "=") else { return }
-            let rawKey = String(entry[..<equals])
-            let valueStart = entry.index(equals, offsetBy: 1)
-            let rawValue = String(entry[valueStart...])
+            let entryString = String(entry)
+            guard let equals = entryString.firstIndex(of: "=") else { return }
+            let rawKey = String(entryString[..<equals])
+            let rawValue = String(entryString[entryString.index(after: equals)...])
             let key = rawKey.removingPercentEncoding ?? rawKey
             let value = rawValue.removingPercentEncoding ?? rawValue
             guard !key.isEmpty, !value.isEmpty, !key.contains("\n"), !key.contains("\r"), !value.contains("\n"), !value.contains("\r") else { return }
