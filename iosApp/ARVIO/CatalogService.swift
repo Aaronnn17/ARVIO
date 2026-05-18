@@ -142,12 +142,14 @@ final class CatalogService: ObservableObject {
     private let cloud: CloudSyncService
     private let tmdb: TmdbService
     private let addons: AddonService
+    private let settings: SettingsService
     private var activeProfileId = "default"
 
-    init(cloud: CloudSyncService, tmdb: TmdbService, addons: AddonService) {
+    init(cloud: CloudSyncService, tmdb: TmdbService, addons: AddonService, settings: SettingsService) {
         self.cloud = cloud
         self.tmdb = tmdb
         self.addons = addons
+        self.settings = settings
         catalogs = Self.defaultCatalogs
     }
 
@@ -215,6 +217,19 @@ final class CatalogService: ObservableObject {
         await reloadRows()
     }
 
+    func syncHomeServerCatalogs() async {
+        let homeServerCatalogs = HomeServerService.catalogConfigs(
+            from: HomeServerService.parseConnections(settings.profileSettings.homeServerConnectionJson)
+        )
+        let existingIds = Set(homeServerCatalogs.map(\.id))
+        catalogs.removeAll { $0.sourceType == .homeServer && !existingIds.contains($0.id) }
+        for config in homeServerCatalogs where !catalogs.contains(where: { $0.id == config.id }) {
+            catalogs.append(config)
+        }
+        await saveCatalogState(hiddenIds: Array(hiddenCatalogIds))
+        await reloadRows()
+    }
+
     func addCatalog(title: String, sourceType: CatalogSourceType, sourceUrl: String) async {
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanUrl = sourceUrl.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -265,7 +280,7 @@ final class CatalogService: ObservableObject {
             case .trakt, .mdblist:
                 return try await tmdb.listItems(from: config.sourceUrl ?? config.sourceRef, fallbackKind: fallbackKind(for: config))
             case .homeServer:
-                return nil
+                return await HomeServerService.loadCatalogItems(sourceRef: config.sourceRef, settings: settings.profileSettings)
             }
         } catch {
             errorMessage = error.localizedDescription

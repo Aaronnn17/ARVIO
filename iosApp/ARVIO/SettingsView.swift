@@ -8,6 +8,11 @@ struct SettingsView: View {
     @State private var newCatalogTitle = ""
     @State private var newCatalogUrl = ""
     @State private var newCatalogType = CatalogSourceType.trakt
+    @State private var homeServerUrl = ""
+    @State private var homeServerUsername = ""
+    @State private var homeServerSecret = ""
+    @State private var homeServerDisplayName = ""
+    @State private var homeServerStatus = ""
 
     var body: some View {
         ScrollView {
@@ -19,6 +24,7 @@ struct SettingsView: View {
                 cloudPanel
                 traktPanel
                 profilePanel
+                homeServerPanel
                 playbackPanel
                 subtitlePanel
                 interfacePanel
@@ -81,6 +87,125 @@ struct SettingsView: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(Color.red.opacity(0.9))
             }
+        }
+        .settingsPanel()
+    }
+
+    private var homeServerPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                panelHeader("Home Server", "Connect Plex, Jellyfin, or Emby and use the same cloud format as Android.")
+                Spacer()
+                Button("Test") {
+                    Task { await testHomeServerConnections() }
+                }
+                .buttonStyle(.bordered)
+                .disabled(homeServerConnections.isEmpty)
+                Button("Sync Libraries") {
+                    Task { await appState.catalogs.syncHomeServerCatalogs() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(ArvioTheme.gold)
+                .disabled(homeServerConnections.isEmpty)
+            }
+
+            if homeServerConnections.isEmpty {
+                Text("No personal server is connected for this profile.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(ArvioTheme.textSecondary)
+            } else {
+                ForEach(homeServerConnections) { connection in
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(connection.displayLabel)
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(ArvioTheme.textPrimary)
+                                Text([connection.serverKind.rawValue, connection.userName, "\(connection.collections.filter(\.enabled).count) libraries"].filter { !$0.isEmpty }.joined(separator: " - "))
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(ArvioTheme.textTertiary)
+                            }
+                            Spacer()
+                            Button(connection.enabled ? "Disable" : "Enable") {
+                                Task { await updateHomeServerConnection(connection) { $0.enabled.toggle() } }
+                            }
+                            .buttonStyle(.bordered)
+                            Button("Remove", role: .destructive) {
+                                Task { await removeHomeServerConnection(connection) }
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        if !connection.collections.isEmpty {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 8)], spacing: 8) {
+                                ForEach(connection.collections) { collection in
+                                    Button {
+                                        Task { await toggleHomeServerCollection(connection, collection) }
+                                    } label: {
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(collection.name.isEmpty ? "Library" : collection.name)
+                                                    .font(.system(size: 13, weight: .bold))
+                                                    .lineLimit(1)
+                                                Text(collection.type.isEmpty ? "Collection" : collection.type)
+                                                    .font(.system(size: 11, weight: .medium))
+                                                    .foregroundStyle(ArvioTheme.textTertiary)
+                                            }
+                                            Spacer()
+                                            Text(collection.enabled ? "On" : "Off")
+                                                .font(.system(size: 11, weight: .black))
+                                                .foregroundStyle(collection.enabled ? ArvioTheme.gold : ArvioTheme.textTertiary)
+                                        }
+                                        .foregroundStyle(ArvioTheme.textPrimary)
+                                        .padding(10)
+                                        .background(RoundedRectangle(cornerRadius: 8).fill(collection.enabled ? ArvioTheme.gold.opacity(0.12) : Color.white.opacity(0.04)))
+                                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(collection.enabled ? ArvioTheme.gold.opacity(0.7) : ArvioTheme.border, lineWidth: 1))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(ArvioTheme.border, lineWidth: 1))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Add server")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(ArvioTheme.textPrimary)
+                TextField("Server URL, for example http://192.168.1.10:8096", text: $homeServerUrl)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .settingsField()
+                HStack(spacing: 10) {
+                    TextField("Username, optional for Plex token", text: $homeServerUsername)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .settingsField()
+                    TextField("Display name", text: $homeServerDisplayName)
+                        .settingsField()
+                }
+                SecureField("Password or Plex token", text: $homeServerSecret)
+                    .settingsField()
+                HStack {
+                    Button("Connect") {
+                        Task { await connectHomeServer() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(ArvioTheme.gold)
+                    if !homeServerStatus.isEmpty {
+                        Text(homeServerStatus)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(homeServerStatus.localizedCaseInsensitiveContains("failed") ? Color.red.opacity(0.9) : ArvioTheme.textSecondary)
+                    }
+                }
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.18)))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(ArvioTheme.border, lineWidth: 1))
         }
         .settingsPanel()
     }
@@ -372,6 +497,69 @@ struct SettingsView: View {
                 Task { await appState.settings.updateGlobal { $0[keyPath: keyPath] = value } }
             }
         )
+    }
+
+    private var homeServerConnections: [HomeServerConnection] {
+        HomeServerService.parseConnections(appState.settings.profileSettings.homeServerConnectionJson)
+    }
+
+    private func connectHomeServer() async {
+        homeServerStatus = "Connecting..."
+        do {
+            let connection = try await HomeServerService.connect(
+                serverUrl: homeServerUrl,
+                username: homeServerUsername,
+                secret: homeServerSecret,
+                displayName: homeServerDisplayName
+            )
+            var connections = homeServerConnections.filter { $0.id != connection.id }
+            connections.append(connection)
+            await saveHomeServerConnections(connections)
+            await appState.catalogs.syncHomeServerCatalogs()
+            homeServerUrl = ""
+            homeServerUsername = ""
+            homeServerSecret = ""
+            homeServerDisplayName = ""
+            homeServerStatus = "Connected \(connection.displayLabel)"
+        } catch {
+            homeServerStatus = "Connection failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func testHomeServerConnections() async {
+        homeServerStatus = "Testing..."
+        let refreshed = await HomeServerService.testConnections(homeServerConnections)
+        await saveHomeServerConnections(refreshed)
+        await appState.catalogs.syncHomeServerCatalogs()
+        homeServerStatus = refreshed.isEmpty ? "No usable server found" : "Tested \(refreshed.count) server(s)"
+    }
+
+    private func updateHomeServerConnection(_ connection: HomeServerConnection, mutate: (inout HomeServerConnection) -> Void) async {
+        var connections = homeServerConnections
+        guard let index = connections.firstIndex(where: { $0.id == connection.id }) else { return }
+        mutate(&connections[index])
+        await saveHomeServerConnections(connections)
+        await appState.catalogs.syncHomeServerCatalogs()
+    }
+
+    private func removeHomeServerConnection(_ connection: HomeServerConnection) async {
+        let connections = homeServerConnections.filter { $0.id != connection.id }
+        await saveHomeServerConnections(connections)
+        await appState.catalogs.syncHomeServerCatalogs()
+        homeServerStatus = "Removed \(connection.displayLabel)"
+    }
+
+    private func toggleHomeServerCollection(_ connection: HomeServerConnection, _ collection: HomeServerCollection) async {
+        await updateHomeServerConnection(connection) { updated in
+            guard let index = updated.collections.firstIndex(where: { $0.id == collection.id }) else { return }
+            updated.collections[index].enabled.toggle()
+        }
+    }
+
+    private func saveHomeServerConnections(_ connections: [HomeServerConnection]) async {
+        await appState.settings.updateProfile {
+            $0.homeServerConnectionJson = HomeServerService.encodeConnections(connections)
+        }
     }
 
     private var activeProfileNameBinding: Binding<String> {

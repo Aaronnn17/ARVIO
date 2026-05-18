@@ -112,7 +112,14 @@ final class StreamResolver: ObservableObject {
                 }
                 return all
             }
-            streams = Self.applyQualityFilters(to: resolved, regexes: qualityRegexes).map { stream in
+            let homeServerStreams = await HomeServerService.resolveSources(
+                item: item,
+                externalIds: externalIds,
+                season: season,
+                episode: episode,
+                settings: profileSettings
+            )
+            streams = Self.applyQualityFilters(to: resolved + homeServerStreams, regexes: qualityRegexes).map { stream in
                 ResolvedStream(
                     addonId: stream.addonId,
                     addonName: stream.addonName,
