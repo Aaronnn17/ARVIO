@@ -2,6 +2,12 @@ import Foundation
 
 struct TmdbListResponse: Decodable {
     let results: [TmdbMedia]
+    let totalPages: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case results
+        case totalPages = "total_pages"
+    }
 }
 
 struct TmdbFindResponse: Decodable {
@@ -205,6 +211,10 @@ struct TmdbCastResponse: Decodable {
     let cast: [TmdbCastMember]
 }
 
+private struct TmdbCollectionResponse: Decodable {
+    let parts: [TmdbMedia]
+}
+
 struct TmdbCastMember: Decodable, Identifiable, Hashable {
     let id: Int
     let name: String
@@ -341,6 +351,41 @@ final class TmdbService: ObservableObject {
         return response.results.compactMap { $0.asMediaItem(defaultKind: endpoint.1) }
     }
 
+    func items(for refs: [(MediaKind, Int)], limit: Int) async throws -> [MediaItem] {
+        var output: [MediaItem] = []
+        for (kind, tmdbId) in refs.prefix(limit) {
+            if let item = try? await itemDetails(tmdbId: tmdbId, kind: kind) {
+                output.append(item)
+            }
+        }
+        return output
+    }
+
+    func discoverItems(kind: MediaKind, query: [String: String], limit: Int) async throws -> [MediaItem] {
+        guard limit > 0 else { return [] }
+        var page = 1
+        var totalPages = 1
+        var output: [MediaItem] = []
+        while output.count < limit && page <= totalPages {
+            var merged = query
+            merged["language"] = merged["language"] ?? "en-US"
+            merged["page"] = "\(page)"
+            let response: TmdbListResponse = try await tmdb(path: "/discover/\(kind.tmdbPath)", query: merged)
+            output.append(contentsOf: response.results.compactMap { $0.asMediaItem(defaultKind: kind) })
+            totalPages = max(response.totalPages ?? 1, 1)
+            if response.results.isEmpty { break }
+            page += 1
+        }
+        return Array(output.prefix(limit))
+    }
+
+    func collectionItems(collectionId: Int, limit: Int) async throws -> [MediaItem] {
+        guard limit > 0 else { return [] }
+        let response: TmdbCollectionResponse = try await tmdb(path: "/collection/\(collectionId)", query: ["language": "en-US"])
+        let sorted = response.parts.sorted { ($0.releaseDate ?? "") < ($1.releaseDate ?? "") }
+        return Array(sorted.compactMap { $0.asMediaItem(defaultKind: .movie) }.prefix(limit))
+    }
+
     func listItems(from rawURL: String?, fallbackKind: MediaKind) async throws -> [MediaItem] {
         guard let normalized = normalizeCatalogURL(rawURL) else { return [] }
         if isTraktURL(normalized) {
@@ -460,7 +505,7 @@ final class TmdbService: ObservableObject {
         return try await resolveExternalList(values, fallbackKind: fallbackKind)
     }
 
-    private func itemDetails(tmdbId: Int, kind: MediaKind) async throws -> MediaItem {
+    func itemDetails(tmdbId: Int, kind: MediaKind) async throws -> MediaItem {
         let details: TmdbDetails = try await tmdb(path: "/\(kind.tmdbPath)/\(tmdbId)", query: ["language": "en-US"])
         return details.asMediaItem(kind: kind)
     }

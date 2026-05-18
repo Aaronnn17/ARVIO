@@ -17,6 +17,12 @@ struct HomeView: View {
                 if !favoriteChannels.isEmpty {
                     LiveChannelRail(title: "Favorite Channels", channels: favoriteChannels)
                 }
+                ForEach(collectionRails) { rail in
+                    let collections = collectionCatalogs(for: rail)
+                    if !collections.isEmpty {
+                        CollectionCatalogRail(title: rail.title, collections: collections)
+                    }
+                }
                 if appState.catalogs.isLoading && appState.catalogs.rows.isEmpty {
                     EmptyStatePanel(title: "Loading catalogs", message: "Syncing your Android catalog rows from ARVIO cloud.")
                 }
@@ -48,12 +54,98 @@ struct HomeView: View {
         }
     }
 
+    private var collectionRails: [CatalogConfig] {
+        appState.catalogs.catalogs.filter { $0.kind == .collectionRail }
+    }
+
+    private func collectionCatalogs(for rail: CatalogConfig) -> [CatalogConfig] {
+        appState.catalogs.catalogs.filter { catalog in
+            catalog.kind == .collection &&
+                catalog.collectionGroup == rail.collectionGroup
+        }
+    }
+
     private func loadLiveTVIfNeeded() async {
         guard appState.iptv.channels.isEmpty else { return }
         guard !appState.iptv.state.m3uUrl.isEmpty ||
             !appState.iptv.state.stalkerPortalUrl.isEmpty ||
             !appState.iptv.state.playlists.isEmpty else { return }
         await appState.iptv.reload()
+    }
+}
+
+struct CollectionCatalogRail: View {
+    @EnvironmentObject private var appState: AppState
+    let title: String
+    let collections: [CatalogConfig]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(ArvioTheme.textPrimary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(collections) { collection in
+                        Button {
+                            appState.selectedCatalog = collection
+                        } label: {
+                            CollectionCatalogCard(collection: collection)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct CollectionCatalogCard: View {
+    let collection: CatalogConfig
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            AsyncImage(url: coverURL) { phase in
+                if let image = phase.image {
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    LinearGradient(colors: [ArvioTheme.panel, Color.black], startPoint: .topLeading, endPoint: .bottomTrailing)
+                }
+            }
+            .frame(width: width, height: height)
+            .clipped()
+
+            LinearGradient(colors: [.clear, Color.black.opacity(0.78)], startPoint: .center, endPoint: .bottom)
+
+            if !collection.collectionHideTitle {
+                Text(collection.title)
+                    .font(.system(size: 17, weight: .black))
+                    .foregroundStyle(ArvioTheme.textPrimary)
+                    .lineLimit(2)
+                    .padding(14)
+            }
+        }
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ArvioTheme.border, lineWidth: 1))
+    }
+
+    private var coverURL: URL? {
+        [collection.collectionCoverImageUrl, collection.collectionHeroImageUrl]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+            .flatMap(URL.init(string:))
+    }
+
+    private var width: CGFloat {
+        collection.collectionTileShape == .poster ? 150 : 260
+    }
+
+    private var height: CGFloat {
+        collection.collectionTileShape == .poster ? 225 : 146
     }
 }
 

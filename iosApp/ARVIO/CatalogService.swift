@@ -19,6 +19,75 @@ enum CollectionTileShape: String, Codable, Hashable {
     case poster = "POSTER"
 }
 
+enum CollectionGroupKind: String, Codable, Hashable {
+    case featured = "FEATURED"
+    case service = "SERVICE"
+    case genre = "GENRE"
+    case decade = "DECADE"
+    case franchise = "FRANCHISE"
+    case network = "NETWORK"
+}
+
+enum CollectionSourceKind: String, Codable, Hashable {
+    case addonCatalog = "ADDON_CATALOG"
+    case tmdbGenre = "TMDB_GENRE"
+    case tmdbPerson = "TMDB_PERSON"
+    case tmdbCollection = "TMDB_COLLECTION"
+    case tmdbKeyword = "TMDB_KEYWORD"
+    case tmdbWatchProvider = "TMDB_WATCH_PROVIDER"
+    case curatedIds = "CURATED_IDS"
+    case mdblistPublic = "MDBLIST_PUBLIC"
+}
+
+struct CollectionSourceConfig: Codable, Hashable {
+    var kind: CollectionSourceKind
+    var mediaType: String?
+    var addonId: String?
+    var addonCatalogType: String?
+    var addonCatalogId: String?
+    var tmdbGenreId: Int?
+    var tmdbPersonId: Int?
+    var tmdbCollectionId: Int?
+    var tmdbKeywordId: Int?
+    var tmdbWatchProviderId: Int?
+    var watchRegion: String?
+    var sortBy: String?
+    var curatedRefs: [String]?
+    var mdblistSlug: String?
+
+    init(
+        kind: CollectionSourceKind,
+        mediaType: String? = nil,
+        addonId: String? = nil,
+        addonCatalogType: String? = nil,
+        addonCatalogId: String? = nil,
+        tmdbGenreId: Int? = nil,
+        tmdbPersonId: Int? = nil,
+        tmdbCollectionId: Int? = nil,
+        tmdbKeywordId: Int? = nil,
+        tmdbWatchProviderId: Int? = nil,
+        watchRegion: String? = nil,
+        sortBy: String? = nil,
+        curatedRefs: [String]? = nil,
+        mdblistSlug: String? = nil
+    ) {
+        self.kind = kind
+        self.mediaType = mediaType
+        self.addonId = addonId
+        self.addonCatalogType = addonCatalogType
+        self.addonCatalogId = addonCatalogId
+        self.tmdbGenreId = tmdbGenreId
+        self.tmdbPersonId = tmdbPersonId
+        self.tmdbCollectionId = tmdbCollectionId
+        self.tmdbKeywordId = tmdbKeywordId
+        self.tmdbWatchProviderId = tmdbWatchProviderId
+        self.watchRegion = watchRegion
+        self.sortBy = sortBy
+        self.curatedRefs = curatedRefs
+        self.mdblistSlug = mdblistSlug
+    }
+}
+
 struct CatalogConfig: Codable, Identifiable, Hashable {
     let id: String
     var title: String
@@ -31,12 +100,44 @@ struct CatalogConfig: Codable, Identifiable, Hashable {
     var addonCatalogId: String?
     var addonName: String?
     var kind: CatalogKind
+    var collectionGroup: CollectionGroupKind?
     var collectionDescription: String?
     var collectionCoverImageUrl: String?
+    var collectionFocusGifUrl: String?
     var collectionHeroImageUrl: String?
+    var collectionHeroGifUrl: String?
+    var collectionHeroVideoUrl: String?
     var collectionClearLogoUrl: String?
     var collectionTileShape: CollectionTileShape
     var collectionHideTitle: Bool
+    var collectionSources: [CollectionSourceConfig]
+    var requiredAddonUrls: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case sourceType
+        case sourceUrl
+        case sourceRef
+        case isPreinstalled
+        case addonId
+        case addonCatalogType
+        case addonCatalogId
+        case addonName
+        case kind
+        case collectionGroup
+        case collectionDescription
+        case collectionCoverImageUrl
+        case collectionFocusGifUrl
+        case collectionHeroImageUrl
+        case collectionHeroGifUrl
+        case collectionHeroVideoUrl
+        case collectionClearLogoUrl
+        case collectionTileShape
+        case collectionHideTitle
+        case collectionSources
+        case requiredAddonUrls
+    }
 
     init(
         id: String,
@@ -50,12 +151,18 @@ struct CatalogConfig: Codable, Identifiable, Hashable {
         addonCatalogId: String? = nil,
         addonName: String? = nil,
         kind: CatalogKind = .standard,
+        collectionGroup: CollectionGroupKind? = nil,
         collectionDescription: String? = nil,
         collectionCoverImageUrl: String? = nil,
+        collectionFocusGifUrl: String? = nil,
         collectionHeroImageUrl: String? = nil,
+        collectionHeroGifUrl: String? = nil,
+        collectionHeroVideoUrl: String? = nil,
         collectionClearLogoUrl: String? = nil,
         collectionTileShape: CollectionTileShape = .landscape,
-        collectionHideTitle: Bool = false
+        collectionHideTitle: Bool = false,
+        collectionSources: [CollectionSourceConfig] = [],
+        requiredAddonUrls: [String] = []
     ) {
         self.id = id
         self.title = title
@@ -68,12 +175,45 @@ struct CatalogConfig: Codable, Identifiable, Hashable {
         self.addonCatalogId = addonCatalogId
         self.addonName = addonName
         self.kind = kind
+        self.collectionGroup = collectionGroup
         self.collectionDescription = collectionDescription
         self.collectionCoverImageUrl = collectionCoverImageUrl
+        self.collectionFocusGifUrl = collectionFocusGifUrl
         self.collectionHeroImageUrl = collectionHeroImageUrl
+        self.collectionHeroGifUrl = collectionHeroGifUrl
+        self.collectionHeroVideoUrl = collectionHeroVideoUrl
         self.collectionClearLogoUrl = collectionClearLogoUrl
         self.collectionTileShape = collectionTileShape
         self.collectionHideTitle = collectionHideTitle
+        self.collectionSources = collectionSources
+        self.requiredAddonUrls = requiredAddonUrls
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? container.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        title = (try? container.decode(String.self, forKey: .title)) ?? "Catalog"
+        sourceType = (try? container.decode(CatalogSourceType.self, forKey: .sourceType)) ?? .preinstalled
+        sourceUrl = try? container.decode(String.self, forKey: .sourceUrl)
+        sourceRef = try? container.decode(String.self, forKey: .sourceRef)
+        isPreinstalled = (try? container.decode(Bool.self, forKey: .isPreinstalled)) ?? false
+        addonId = try? container.decode(String.self, forKey: .addonId)
+        addonCatalogType = try? container.decode(String.self, forKey: .addonCatalogType)
+        addonCatalogId = try? container.decode(String.self, forKey: .addonCatalogId)
+        addonName = try? container.decode(String.self, forKey: .addonName)
+        kind = (try? container.decode(CatalogKind.self, forKey: .kind)) ?? .standard
+        collectionGroup = try? container.decode(CollectionGroupKind.self, forKey: .collectionGroup)
+        collectionDescription = try? container.decode(String.self, forKey: .collectionDescription)
+        collectionCoverImageUrl = try? container.decode(String.self, forKey: .collectionCoverImageUrl)
+        collectionFocusGifUrl = try? container.decode(String.self, forKey: .collectionFocusGifUrl)
+        collectionHeroImageUrl = try? container.decode(String.self, forKey: .collectionHeroImageUrl)
+        collectionHeroGifUrl = try? container.decode(String.self, forKey: .collectionHeroGifUrl)
+        collectionHeroVideoUrl = try? container.decode(String.self, forKey: .collectionHeroVideoUrl)
+        collectionClearLogoUrl = try? container.decode(String.self, forKey: .collectionClearLogoUrl)
+        collectionTileShape = (try? container.decode(CollectionTileShape.self, forKey: .collectionTileShape)) ?? .landscape
+        collectionHideTitle = (try? container.decode(Bool.self, forKey: .collectionHideTitle)) ?? false
+        collectionSources = (try? container.decode([CollectionSourceConfig].self, forKey: .collectionSources)) ?? []
+        requiredAddonUrls = (try? container.decode([String].self, forKey: .requiredAddonUrls)) ?? []
     }
 }
 
@@ -163,8 +303,18 @@ final class CatalogService: ObservableObject {
         let profileCatalogs = cloud.payload.catalogsByProfile?[activeProfileId]
         let fallbackProfileCatalogs = cloud.payload.catalogsByProfile?.values.first
         let cloudCatalogs = profileCatalogs ?? fallbackProfileCatalogs ?? cloud.payload.catalogs
-        let visibleCatalogs = cloudCatalogs?.filter { !hiddenCatalogIds.contains($0.id) }
+        let resolvedCatalogs = cloudCatalogs.map { mergeMissingPreinstalledDefaults(into: $0) }
+        let visibleCatalogs = resolvedCatalogs?.filter { !hiddenCatalogIds.contains($0.id) }
         catalogs = visibleCatalogs?.nilIfEmpty ?? Self.defaultCatalogs
+    }
+
+    private func mergeMissingPreinstalledDefaults(into cloudCatalogs: [CatalogConfig]) -> [CatalogConfig] {
+        var merged = cloudCatalogs
+        let existingIds = Set(merged.map(\.id))
+        for config in Self.defaultCatalogs where config.isPreinstalled && !existingIds.contains(config.id) {
+            merged.append(config)
+        }
+        return merged
     }
 
     func reloadRows() async {
@@ -174,7 +324,7 @@ final class CatalogService: ObservableObject {
 
         let configs = catalogs.isEmpty ? Self.defaultCatalogs : catalogs
         var loadedRows: [CatalogRow] = []
-        for config in configs {
+        for config in configs where config.kind == .standard {
             if let items = await loadItems(for: config), !items.isEmpty {
                 loadedRows.append(CatalogRow(config: config, items: items))
             }
@@ -272,6 +422,9 @@ final class CatalogService: ObservableObject {
 
     private func loadItems(for config: CatalogConfig) async -> [MediaItem]? {
         do {
+            if config.kind == .collection {
+                return try await loadCollectionCatalog(config)
+            }
             switch config.sourceType {
             case .preinstalled:
                 return try await tmdb.catalogItems(for: config)
@@ -285,6 +438,72 @@ final class CatalogService: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
             return nil
+        }
+    }
+
+    private func loadCollectionCatalog(_ config: CatalogConfig) async throws -> [MediaItem] {
+        var output: [MediaItem] = []
+        for source in config.collectionSources {
+            let remaining = max(8, 40 - output.count)
+            let items = try await loadCollectionSource(source, limit: remaining)
+            for item in items where !output.contains(where: { $0.kind == item.kind && $0.tmdbId == item.tmdbId && $0.title == item.title }) {
+                output.append(item)
+            }
+            if output.count >= 40 { break }
+        }
+        return Array(output.prefix(40))
+    }
+
+    private func loadCollectionSource(_ source: CollectionSourceConfig, limit: Int) async throws -> [MediaItem] {
+        switch source.kind {
+        case .addonCatalog:
+            let config = CatalogConfig(
+                id: "collection_addon_\(source.addonCatalogType ?? "")_\(source.addonCatalogId ?? "")",
+                title: "Collection",
+                sourceType: .addon,
+                isPreinstalled: true,
+                addonId: source.addonId,
+                addonCatalogType: source.addonCatalogType,
+                addonCatalogId: source.addonCatalogId
+            )
+            return Array((try await loadAddonCatalog(config)).prefix(limit))
+        case .tmdbGenre:
+            guard let genreId = source.tmdbGenreId, let kind = mediaKind(from: source.mediaType) else { return [] }
+            return try await tmdb.discoverItems(kind: kind, query: ["with_genres": "\(genreId)", "sort_by": source.sortBy ?? "popularity.desc"], limit: limit)
+        case .tmdbPerson:
+            guard let personId = source.tmdbPersonId, let kind = mediaKind(from: source.mediaType) else { return [] }
+            let key = kind == .movie ? "with_crew" : "with_people"
+            return try await tmdb.discoverItems(kind: kind, query: [key: "\(personId)", "sort_by": source.sortBy ?? "popularity.desc"], limit: limit)
+        case .tmdbCollection:
+            guard let collectionId = source.tmdbCollectionId else { return [] }
+            return try await tmdb.collectionItems(collectionId: collectionId, limit: limit)
+        case .tmdbKeyword:
+            guard let keywordId = source.tmdbKeywordId else { return [] }
+            if let kind = mediaKind(from: source.mediaType) {
+                return try await tmdb.discoverItems(kind: kind, query: ["with_keywords": "\(keywordId)", "sort_by": source.sortBy ?? "popularity.desc"], limit: limit)
+            }
+            async let movies = tmdb.discoverItems(kind: .movie, query: ["with_keywords": "\(keywordId)", "sort_by": source.sortBy ?? "popularity.desc"], limit: limit / 2)
+            async let shows = tmdb.discoverItems(kind: .series, query: ["with_keywords": "\(keywordId)", "sort_by": source.sortBy ?? "popularity.desc"], limit: limit / 2)
+            let movieItems = try await movies
+            let showItems = try await shows
+            return movieItems + showItems
+        case .tmdbWatchProvider:
+            guard let providerId = source.tmdbWatchProviderId, let kind = mediaKind(from: source.mediaType) else { return [] }
+            return try await tmdb.discoverItems(
+                kind: kind,
+                query: [
+                    "with_watch_providers": "\(providerId)",
+                    "watch_region": source.watchRegion?.nilIfBlank ?? "US",
+                    "sort_by": source.sortBy ?? "popularity.desc"
+                ],
+                limit: limit
+            )
+        case .curatedIds:
+            return try await tmdb.items(for: curatedRefs(source.curatedRefs), limit: limit)
+        case .mdblistPublic:
+            guard let slug = source.mdblistSlug?.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+                  !slug.isEmpty else { return [] }
+            return try await tmdb.listItems(from: "https://mdblist.com/lists/\(slug)", fallbackKind: mediaKind(from: source.mediaType) ?? .movie)
         }
     }
 
@@ -315,7 +534,25 @@ final class CatalogService: ObservableObject {
         return .movie
     }
 
-    static let defaultCatalogs: [CatalogConfig] = [
+    private func mediaKind(from raw: String?) -> MediaKind? {
+        let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if value == "movie" || value == "movies" { return .movie }
+        if value == "series" || value == "tv" || value == "show" || value == "shows" { return .series }
+        return nil
+    }
+
+    private func curatedRefs(_ raw: [String]?) -> [(MediaKind, Int)] {
+        (raw ?? []).compactMap { entry in
+            let parts = entry.split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let id = Int(parts[1]) else { return nil }
+            let kind = mediaKind(from: parts[0])
+            return kind.map { ($0, id) }
+        }
+    }
+
+    static let defaultCatalogs: [CatalogConfig] = defaultTopLevelCatalogs + defaultCollectionRails + defaultCollectionCatalogs
+
+    private static let defaultTopLevelCatalogs: [CatalogConfig] = [
         CatalogConfig(id: "trending_movies", title: "Trending in Movies", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/trending-movies", sourceRef: "mdblist:https://mdblist.com/lists/snoak/trending-movies", isPreinstalled: true),
         CatalogConfig(id: "trending_tv", title: "Trending in Shows", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/trakt-s-trending-shows", sourceRef: "mdblist:https://mdblist.com/lists/snoak/trakt-s-trending-shows", isPreinstalled: true),
         CatalogConfig(id: "trending_anime", title: "Trending in Anime", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/trending-anime-shows", sourceRef: "mdblist:https://mdblist.com/lists/snoak/trending-anime-shows", isPreinstalled: true),
@@ -326,8 +563,145 @@ final class CatalogService: ObservableObject {
         CatalogConfig(id: "new_kdramas", title: "New in K-Dramas", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/latest-kdrama-shows", sourceRef: "mdblist:https://mdblist.com/lists/snoak/latest-kdrama-shows", isPreinstalled: true),
         CatalogConfig(id: "coming_soon", title: "Coming Soon", sourceType: .mdblist, sourceUrl: "https://mdblist.com/lists/snoak/upcoming-movies", sourceRef: "mdblist:https://mdblist.com/lists/snoak/upcoming-movies", isPreinstalled: true)
     ]
+
+    private static let defaultCollectionRails: [CatalogConfig] = [
+        CatalogConfig(id: "collection_rail_service", title: "Streaming Services", isPreinstalled: true, kind: .collectionRail, collectionGroup: .service),
+        CatalogConfig(id: "collection_rail_genre", title: "Genres", isPreinstalled: true, kind: .collectionRail, collectionGroup: .genre),
+        CatalogConfig(id: "collection_rail_franchise", title: "Franchises", isPreinstalled: true, kind: .collectionRail, collectionGroup: .franchise)
+    ]
+
+    private static let defaultCollectionCatalogs: [CatalogConfig] = [
+        collection(
+            id: "collection_service_netflix",
+            title: "Netflix",
+            group: .service,
+            cover: "https://raw.githubusercontent.com/chrishudson918/images/46fd4f8c335a7c581a7dcdb7dfac268c68ef84fc/Landscape%20Streaming%20Services/netflix.jpegli.jpg",
+            sources: [
+                CollectionSourceConfig(kind: .tmdbWatchProvider, mediaType: "movie", tmdbWatchProviderId: 8, watchRegion: "US", sortBy: "popularity.desc"),
+                CollectionSourceConfig(kind: .tmdbWatchProvider, mediaType: "series", tmdbWatchProviderId: 8, watchRegion: "US", sortBy: "popularity.desc")
+            ]
+        ),
+        collection(
+            id: "collection_service_prime",
+            title: "Prime Video",
+            group: .service,
+            cover: "https://raw.githubusercontent.com/mrtxiv/networks-video-collection/3486fc9a3d0efe59d1929e75f66021dc4e15bcb7/networks%20collection/amazonprime.png",
+            sources: [
+                CollectionSourceConfig(kind: .tmdbWatchProvider, mediaType: "movie", tmdbWatchProviderId: 9, watchRegion: "US", sortBy: "popularity.desc"),
+                CollectionSourceConfig(kind: .tmdbWatchProvider, mediaType: "series", tmdbWatchProviderId: 9, watchRegion: "US", sortBy: "popularity.desc")
+            ]
+        ),
+        collection(
+            id: "collection_service_disney",
+            title: "Disney+",
+            group: .service,
+            cover: "https://raw.githubusercontent.com/chrishudson918/images/46fd4f8c335a7c581a7dcdb7dfac268c68ef84fc/Landscape%20Streaming%20Services/disney.jpegli.jpg",
+            sources: [CollectionSourceConfig(kind: .mdblistPublic, mediaType: "all", mdblistSlug: "garycrawfordgc/disney-shows")]
+        ),
+        collection(
+            id: "collection_service_hbo",
+            title: "HBO Max",
+            group: .service,
+            cover: "https://raw.githubusercontent.com/mrtxiv/networks-video-collection/3486fc9a3d0efe59d1929e75f66021dc4e15bcb7/networks%20collection/hbomax.png",
+            sources: [
+                CollectionSourceConfig(kind: .tmdbWatchProvider, mediaType: "movie", tmdbWatchProviderId: 1899, watchRegion: "US", sortBy: "popularity.desc"),
+                CollectionSourceConfig(kind: .tmdbWatchProvider, mediaType: "series", tmdbWatchProviderId: 1899, watchRegion: "US", sortBy: "popularity.desc")
+            ]
+        ),
+        collection(
+            id: "collection_genre_action",
+            title: "Action",
+            group: .genre,
+            cover: "https://raw.githubusercontent.com/chrishudson918/images/main/Landscape%20Genres/action.jpegli.jpg",
+            sources: [
+                CollectionSourceConfig(kind: .tmdbGenre, mediaType: "movie", tmdbGenreId: 28, sortBy: "popularity.desc"),
+                CollectionSourceConfig(kind: .tmdbGenre, mediaType: "series", tmdbGenreId: 10759, sortBy: "popularity.desc")
+            ]
+        ),
+        collection(
+            id: "collection_genre_comedy",
+            title: "Comedy",
+            group: .genre,
+            cover: "https://raw.githubusercontent.com/chrishudson918/images/main/Landscape%20Genres/comedy.jpegli.jpg",
+            sources: [
+                CollectionSourceConfig(kind: .tmdbGenre, mediaType: "movie", tmdbGenreId: 35, sortBy: "popularity.desc"),
+                CollectionSourceConfig(kind: .tmdbGenre, mediaType: "series", tmdbGenreId: 35, sortBy: "popularity.desc")
+            ]
+        ),
+        collection(
+            id: "collection_genre_horror",
+            title: "Horror",
+            group: .genre,
+            cover: "https://raw.githubusercontent.com/chrishudson918/images/main/Landscape%20Genres/horror.jpegli.jpg",
+            sources: [
+                CollectionSourceConfig(kind: .tmdbGenre, mediaType: "movie", tmdbGenreId: 27, sortBy: "popularity.desc"),
+                CollectionSourceConfig(kind: .tmdbGenre, mediaType: "series", tmdbGenreId: 9648, sortBy: "popularity.desc")
+            ]
+        ),
+        collection(
+            id: "collection_franchise_star_wars",
+            title: "Star Wars",
+            group: .franchise,
+            cover: "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/Star-Wars.jpg",
+            tileShape: .poster,
+            sources: [CollectionSourceConfig(kind: .mdblistPublic, mediaType: "all", mdblistSlug: "jxduffy/star-wars-chronological-order")]
+        ),
+        collection(
+            id: "collection_franchise_harry_potter",
+            title: "Harry Potter",
+            group: .franchise,
+            cover: "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/Harry-Potter.jpg",
+            tileShape: .poster,
+            sources: [
+                CollectionSourceConfig(kind: .tmdbCollection, tmdbCollectionId: 1241),
+                CollectionSourceConfig(kind: .mdblistPublic, mediaType: "movie", mdblistSlug: "thebirdod/harry-potter-collection")
+            ]
+        ),
+        collection(
+            id: "collection_franchise_lotr",
+            title: "Lord of the Rings",
+            group: .franchise,
+            cover: "https://raw.githubusercontent.com/elucidationvortex-source/nuviotemplate/refs/heads/main/images/Lord-of-the-Rings.jpg",
+            tileShape: .poster,
+            sources: [
+                CollectionSourceConfig(kind: .tmdbCollection, tmdbCollectionId: 119),
+                CollectionSourceConfig(kind: .mdblistPublic, mediaType: "movie", mdblistSlug: "spudhead15/lord-of-the-rings-and-hobbit-collection")
+            ]
+        )
+    ]
+
+    private static func collection(
+        id: String,
+        title: String,
+        group: CollectionGroupKind,
+        cover: String,
+        tileShape: CollectionTileShape = .landscape,
+        sources: [CollectionSourceConfig]
+    ) -> CatalogConfig {
+        CatalogConfig(
+            id: id,
+            title: title,
+            sourceType: .preinstalled,
+            isPreinstalled: true,
+            kind: .collection,
+            collectionGroup: group,
+            collectionDescription: "\(title) collection",
+            collectionCoverImageUrl: cover,
+            collectionHeroImageUrl: cover,
+            collectionTileShape: tileShape,
+            collectionHideTitle: true,
+            collectionSources: sources
+        )
+    }
 }
 
 private extension Array {
     var nilIfEmpty: [Element]? { isEmpty ? nil : self }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
 }
