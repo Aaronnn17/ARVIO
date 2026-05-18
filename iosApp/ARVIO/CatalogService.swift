@@ -1,6 +1,6 @@
 import Foundation
 
-enum CatalogSourceType: String, Codable {
+enum CatalogSourceType: String, Codable, Hashable {
     case preinstalled = "PREINSTALLED"
     case trakt = "TRAKT"
     case mdblist = "MDBLIST"
@@ -8,13 +8,13 @@ enum CatalogSourceType: String, Codable {
     case homeServer = "HOME_SERVER"
 }
 
-enum CatalogKind: String, Codable {
+enum CatalogKind: String, Codable, Hashable {
     case standard = "STANDARD"
     case collection = "COLLECTION"
     case collectionRail = "COLLECTION_RAIL"
 }
 
-enum CollectionTileShape: String, Codable {
+enum CollectionTileShape: String, Codable, Hashable {
     case landscape = "LANDSCAPE"
     case poster = "POSTER"
 }
@@ -215,6 +215,42 @@ final class CatalogService: ObservableObject {
         await reloadRows()
     }
 
+    func addCatalog(title: String, sourceType: CatalogSourceType, sourceUrl: String) async {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanUrl = sourceUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty, !cleanUrl.isEmpty else { return }
+        let config = CatalogConfig(
+            id: "ios_custom_\(UUID().uuidString)",
+            title: cleanTitle,
+            sourceType: sourceType,
+            sourceUrl: cleanUrl,
+            sourceRef: cleanUrl,
+            isPreinstalled: false
+        )
+        catalogs.append(config)
+        await saveCatalogState(hiddenIds: Array(hiddenCatalogIds))
+        await reloadRows()
+    }
+
+    func renameCatalog(_ config: CatalogConfig, title: String) async {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty,
+              let index = catalogs.firstIndex(where: { $0.id == config.id }) else { return }
+        catalogs[index].title = cleanTitle
+        await saveCatalogState(hiddenIds: Array(hiddenCatalogIds))
+        await reloadRows()
+    }
+
+    func deleteCatalog(_ config: CatalogConfig) async {
+        if config.isPreinstalled {
+            await hideCatalog(config)
+            return
+        }
+        catalogs.removeAll { $0.id == config.id }
+        await saveCatalogState(hiddenIds: Array(hiddenCatalogIds))
+        await reloadRows()
+    }
+
     private func saveCatalogState(hiddenIds: [String]) async {
         await cloud.save(catalogs: catalogs, hiddenPreinstalledCatalogIds: hiddenIds, profileId: activeProfileId)
     }
@@ -238,7 +274,7 @@ final class CatalogService: ObservableObject {
     }
 
     private func loadAddonCatalog(_ config: CatalogConfig) async throws -> [MediaItem] {
-        guard let addon = addons.addons.first(where: { $0.id == config.addonId || $0.name == config.addonName }),
+        guard let addon = addons.addons.first(where: { $0.isEnabled && ($0.id == config.addonId || $0.name == config.addonName) }),
               let type = config.addonCatalogType ?? config.sourceRef?.components(separatedBy: "/").first,
               let catalogId = config.addonCatalogId ?? config.sourceRef?.components(separatedBy: "/").last else {
             return []

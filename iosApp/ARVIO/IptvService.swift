@@ -111,6 +111,7 @@ final class IptvService: ObservableObject {
     @Published private(set) var state = IptvCloudProfileState()
     @Published private(set) var channels: [IptvChannel] = []
     @Published private(set) var nowNextByChannelId: [String: IptvNowNext] = [:]
+    @Published private(set) var programsByChannelId: [String: [IptvProgram]] = [:]
     @Published private(set) var selectedGroup = "All"
     @Published private(set) var isLoading = false
     @Published private(set) var progressMessage = ""
@@ -227,7 +228,9 @@ final class IptvService: ObservableObject {
                 ).loadChannels())
             }
             channels = deduplicate(loaded)
-            nowNextByChannelId = try await loadGuide(for: channels, playlists: playlists)
+            let guide = try await loadGuide(for: channels, playlists: playlists)
+            nowNextByChannelId = guide.nowNext
+            programsByChannelId = guide.programs
             if !groups.contains(selectedGroup) {
                 selectedGroup = "All"
             }
@@ -352,7 +355,7 @@ final class IptvService: ObservableObject {
         }
     }
 
-    private func loadGuide(for channels: [IptvChannel], playlists: [IptvPlaylistEntry]) async throws -> [String: IptvNowNext] {
+    private func loadGuide(for channels: [IptvChannel], playlists: [IptvPlaylistEntry]) async throws -> (nowNext: [String: IptvNowNext], programs: [String: [IptvProgram]]) {
         let epgUrls = Array(Set(playlists.flatMap { playlist -> [String] in
             let configured = playlist.epgUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             if !configured.isEmpty { return [configured] }
@@ -361,7 +364,7 @@ final class IptvService: ObservableObject {
             }
             return []
         }))
-        guard !epgUrls.isEmpty, !channels.isEmpty else { return [:] }
+        guard !epgUrls.isEmpty, !channels.isEmpty else { return ([:], [:]) }
         progressMessage = "Loading guide..."
 
         var programs: [IptvProgram] = []
@@ -396,7 +399,7 @@ final class IptvService: ObservableObject {
                 result[channelId] = IptvNowNext(now: current, next: next)
             }
         }
-        return result
+        return (result, grouped.mapValues { $0.sorted { $0.start < $1.start } })
     }
 
     private func parseM3U(_ text: String) -> [IptvChannel] {

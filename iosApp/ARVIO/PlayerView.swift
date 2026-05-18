@@ -8,6 +8,13 @@ private struct PlayerTrackOption: Identifiable {
     let option: AVMediaSelectionOption?
 }
 
+private struct ExternalSubtitleCue: Identifiable {
+    let id = UUID()
+    let start: Double
+    let end: Double
+    let text: String
+}
+
 struct PlayerView: View {
     @EnvironmentObject private var appState: AppState
     let stream: ResolvedStream
@@ -22,6 +29,9 @@ struct PlayerView: View {
     @State private var subtitleOptions: [PlayerTrackOption] = [PlayerTrackOption(id: "off", title: "Off", option: nil)]
     @State private var selectedAudioId = ""
     @State private var selectedSubtitleId = "off"
+    @State private var externalSubtitleCues: [ExternalSubtitleCue] = []
+    @State private var selectedExternalSubtitleId = "off"
+    @State private var currentCaption = ""
     @State private var currentSeconds = 0.0
     @State private var durationSeconds = 0.0
     private let progressTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -32,6 +42,25 @@ struct PlayerView: View {
             if let player {
                 VideoPlayer(player: player)
                     .ignoresSafeArea()
+            }
+
+            if !currentCaption.isEmpty {
+                VStack {
+                    Spacer()
+                    Text(currentCaption)
+                        .font(captionFont)
+                        .foregroundStyle(captionColor)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(captionBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .shadow(radius: 8)
+                        .padding(.horizontal, 60)
+                        .padding(.bottom, captionBottomPadding)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
             }
 
             Color.black.opacity(showControls ? 0.24 : 0.001)
@@ -53,6 +82,9 @@ struct PlayerView: View {
             didSaveProgress = false
             currentSeconds = 0
             durationSeconds = 0
+            externalSubtitleCues = []
+            selectedExternalSubtitleId = "off"
+            currentCaption = ""
             let asset = stream.requestHeaders.isEmpty
                 ? AVURLAsset(url: url)
                 : AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": stream.requestHeaders])
@@ -197,6 +229,7 @@ struct PlayerView: View {
             trackSection(title: "Subtitles", options: subtitleOptions, selectedId: selectedSubtitleId) { id in
                 selectTrack(id: id, characteristic: .legible)
             }
+            externalSubtitleSection
         }
         .frame(width: 340)
         .padding(16)
@@ -239,6 +272,41 @@ struct PlayerView: View {
         }
     }
 
+    private var externalSubtitleSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("External")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(ArvioTheme.textPrimary)
+            let options = [ResolvedSubtitle(id: "off", label: "Off", language: "off", url: URL(string: "https://arvio.local/off")!)] + stream.subtitles
+            if options.count == 1 {
+                Text("No addon subtitles")
+                    .font(.system(size: 13))
+                    .foregroundStyle(ArvioTheme.textTertiary)
+            } else {
+                ForEach(options) { subtitle in
+                    Button {
+                        Task { await selectExternalSubtitle(subtitle) }
+                    } label: {
+                        HStack {
+                            Text(subtitle.label)
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            if subtitle.id == selectedExternalSubtitleId {
+                                Text("Selected")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(ArvioTheme.gold)
+                            }
+                        }
+                        .foregroundStyle(ArvioTheme.textPrimary)
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(subtitle.id == selectedExternalSubtitleId ? ArvioTheme.gold.opacity(0.14) : Color.white.opacity(0.06)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
     private func closePlayer() async {
         await saveProgressIfNeeded()
         appState.selectedStream = nil
@@ -265,6 +333,7 @@ struct PlayerView: View {
         let duration = player.currentItem?.duration.seconds ?? 0
         if current.isFinite { currentSeconds = current }
         if duration.isFinite && duration > 0 { durationSeconds = duration }
+        currentCaption = externalSubtitleCues.first { $0.start <= currentSeconds && $0.end >= currentSeconds }?.text ?? ""
     }
 
     private func loadTrackOptions(from item: AVPlayerItem?) {
@@ -315,6 +384,32 @@ struct PlayerView: View {
             selectedAudioId = id
         } else {
             selectedSubtitleId = id
+            selectedExternalSubtitleId = "off"
+            externalSubtitleCues = []
+            currentCaption = ""
+        }
+    }
+
+    private func selectExternalSubtitle(_ subtitle: ResolvedSubtitle) async {
+        if subtitle.id == "off" {
+            selectedExternalSubtitleId = "off"
+            externalSubtitleCues = []
+            currentCaption = ""
+            return
+        }
+        selectedSubtitleId = "off"
+        selectTrack(id: "off", characteristic: .legible)
+        selectedExternalSubtitleId = subtitle.id
+        do {
+            let (data, _) = try await URLSession.shared.data(from: subtitle.url)
+            guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+                externalSubtitleCues = []
+                return
+            }
+            externalSubtitleCues = Self.parseSubtitleCues(text)
+        } catch {
+            externalSubtitleCues = []
+            currentCaption = ""
         }
     }
 
@@ -376,5 +471,77 @@ struct PlayerView: View {
         guard seconds.isFinite, seconds >= 0 else { return "--:--" }
         let value = Int(seconds.rounded())
         return String(format: "%02d:%02d", value / 60, value % 60)
+    }
+
+    private var captionFont: Font {
+        switch appState.settings.profileSettings.subtitleSize {
+        case "Small": return .system(size: 18, weight: subtitleWeight)
+        case "Large": return .system(size: 28, weight: subtitleWeight)
+        case "Extra Large": return .system(size: 34, weight: subtitleWeight)
+        default: return .system(size: 23, weight: subtitleWeight)
+        }
+    }
+
+    private var subtitleWeight: Font.Weight {
+        appState.settings.profileSettings.subtitleStyle == "Regular" ? .regular : .bold
+    }
+
+    private var captionColor: Color {
+        switch appState.settings.profileSettings.subtitleColor {
+        case "Yellow": return .yellow
+        case "Cyan": return .cyan
+        case "Green": return .green
+        default: return .white
+        }
+    }
+
+    private var captionBackground: some ShapeStyle {
+        appState.settings.profileSettings.subtitleStyle == "Shadow" ? Color.black.opacity(0.25) : Color.black.opacity(0.62)
+    }
+
+    private var captionBottomPadding: CGFloat {
+        switch appState.settings.profileSettings.subtitleOffset {
+        case "High": return 150
+        case "Medium": return 100
+        default: return 58
+        }
+    }
+
+    private static func parseSubtitleCues(_ raw: String) -> [ExternalSubtitleCue] {
+        let normalized = raw
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let blocks = normalized.components(separatedBy: "\n\n")
+        return blocks.compactMap { block -> ExternalSubtitleCue? in
+            let lines = block
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.hasPrefix("WEBVTT") }
+            guard let timingIndex = lines.firstIndex(where: { $0.contains("-->") }) else { return nil }
+            let parts = lines[timingIndex].components(separatedBy: "-->")
+            guard parts.count == 2,
+                  let start = parseSubtitleTime(parts[0]),
+                  let end = parseSubtitleTime(parts[1]) else { return nil }
+            let text = lines.dropFirst(timingIndex + 1)
+                .joined(separator: "\n")
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return ExternalSubtitleCue(start: start, end: end, text: text)
+        }
+    }
+
+    private static func parseSubtitleTime(_ raw: String) -> Double? {
+        let value = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: .whitespaces)
+            .first?
+            .replacingOccurrences(of: ",", with: ".") ?? ""
+        let pieces = value.split(separator: ":").map(String.init)
+        guard pieces.count >= 2 else { return nil }
+        let seconds = Double(pieces.last ?? "") ?? 0
+        let minutes = Double(pieces.dropLast().last ?? "") ?? 0
+        let hours = pieces.count == 3 ? (Double(pieces.first ?? "") ?? 0) : 0
+        return hours * 3600 + minutes * 60 + seconds
     }
 }

@@ -8,6 +8,7 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
     let description: String?
     let catalogs: [String]
     let resources: [String]
+    var isEnabled: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -17,6 +18,8 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
         case description
         case catalogs
         case resources
+        case isEnabled
+        case enabled
         case url
         case transportUrl
         case manifest
@@ -29,7 +32,8 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
         manifestURL: String,
         description: String?,
         catalogs: [String],
-        resources: [String]
+        resources: [String],
+        isEnabled: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -38,6 +42,7 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
         self.description = description
         self.catalogs = catalogs
         self.resources = resources
+        self.isEnabled = isEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -58,6 +63,9 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
             catalogs = (try? container.decode([String].self, forKey: .catalogs)) ?? []
             resources = (try? container.decode([String].self, forKey: .resources)) ?? []
         }
+        isEnabled = (try? container.decode(Bool.self, forKey: .isEnabled)) ??
+            (try? container.decode(Bool.self, forKey: .enabled)) ??
+            true
     }
 
     func encode(to encoder: Encoder) throws {
@@ -69,6 +77,8 @@ struct InstalledAddon: Codable, Identifiable, Hashable {
         try container.encode(description, forKey: .description)
         try container.encode(catalogs, forKey: .catalogs)
         try container.encode(resources, forKey: .resources)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(isEnabled, forKey: .enabled)
         try container.encode(manifestBaseURL(manifestURL), forKey: .url)
         try container.encode(manifestBaseURL(manifestURL), forKey: .transportUrl)
     }
@@ -189,6 +199,13 @@ final class AddonService: ObservableObject {
 
     func remove(_ addon: InstalledAddon) async {
         addons.removeAll { $0.id == addon.id }
+        saveLocal()
+        await cloud.save(addons: addons, profileId: activeProfileId)
+    }
+
+    func toggleEnabled(_ addon: InstalledAddon) async {
+        guard let index = addons.firstIndex(where: { $0.id == addon.id }) else { return }
+        addons[index].isEnabled.toggle()
         saveLocal()
         await cloud.save(addons: addons, profileId: activeProfileId)
     }

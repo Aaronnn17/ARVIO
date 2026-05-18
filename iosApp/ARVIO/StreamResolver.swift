@@ -10,8 +10,16 @@ struct ResolvedStream: Identifiable, Hashable {
     let size: String
     let url: URL?
     let requestHeaders: [String: String]
+    let subtitles: [ResolvedSubtitle]
     let isPlayable: Bool
     let resumePositionSeconds: Int?
+}
+
+struct ResolvedSubtitle: Identifiable, Hashable {
+    let id: String
+    let label: String
+    let language: String
+    let url: URL
 }
 
 private struct StremioStreamResponse: Decodable {
@@ -27,6 +35,7 @@ private struct StremioStream: Decodable {
     let infoHash: String?
     let fileIdx: Int?
     let sources: [String]?
+    let subtitles: [StremioSubtitle]?
     let behaviorHints: StremioBehaviorHints?
 
     enum CodingKeys: String, CodingKey {
@@ -38,8 +47,15 @@ private struct StremioStream: Decodable {
         case infoHash
         case fileIdx
         case sources
+        case subtitles
         case behaviorHints
     }
+}
+
+private struct StremioSubtitle: Decodable {
+    let id: String?
+    let lang: String?
+    let url: String?
 }
 
 private struct StremioBehaviorHints: Decodable {
@@ -79,6 +95,7 @@ final class StreamResolver: ObservableObject {
 
             let resolved = await withTaskGroup(of: [ResolvedStream].self) { group in
                 for addon in addons.addons {
+                    guard addon.isEnabled else { continue }
                     group.addTask {
                         await Self.fetchStreams(
                             addon: addon,
@@ -105,6 +122,7 @@ final class StreamResolver: ObservableObject {
                     size: stream.size,
                     url: stream.url,
                     requestHeaders: stream.requestHeaders,
+                    subtitles: stream.subtitles,
                     isPlayable: stream.isPlayable,
                     resumePositionSeconds: item.positionSeconds
                 )
@@ -154,6 +172,17 @@ final class StreamResolver: ObservableObject {
                     playableURL = torrServerURL
                 }
                 let isPlayable = playableURL.map(isDirectPlayable(url:)) ?? false
+                let subtitles = (stream.subtitles ?? []).compactMap { subtitle -> ResolvedSubtitle? in
+                    guard let rawUrl = subtitle.url,
+                          let url = URL(string: rawUrl) else { return nil }
+                    let language = subtitle.lang?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank ?? "sub"
+                    return ResolvedSubtitle(
+                        id: subtitle.id?.nilIfBlank ?? "\(language)-\(rawUrl)",
+                        label: language.uppercased(),
+                        language: language,
+                        url: url
+                    )
+                }
                 output.append(ResolvedStream(
                     addonId: addon.id,
                     addonName: addon.name,
@@ -163,6 +192,7 @@ final class StreamResolver: ObservableObject {
                     size: size(from: text),
                     url: playableURL,
                     requestHeaders: split.1,
+                    subtitles: subtitles,
                     isPlayable: isPlayable,
                     resumePositionSeconds: nil
                 ))
@@ -369,4 +399,11 @@ private extension CharacterSet {
         allowed.remove(charactersIn: "&+=?")
         return allowed
     }()
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
 }

@@ -7,6 +7,7 @@ struct LiveTVView: View {
     @State private var stalkerPortalUrl = ""
     @State private var stalkerMacAddress = ""
     @State private var showProviderSettings = false
+    @State private var showGuide = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -19,7 +20,7 @@ struct LiveTVView: View {
                     setupPanel
                 }
                 if !appState.iptv.channels.isEmpty {
-                    channelGrid
+                    showGuide ? AnyView(epgGuide) : AnyView(channelGrid)
                 }
             }
             .padding(28)
@@ -49,6 +50,13 @@ struct LiveTVView: View {
             }
 
             Spacer()
+
+            Picker("Mode", selection: $showGuide) {
+                Text("Cards").tag(false)
+                Text("Guide").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 180)
 
             TextField(
                 "Search channels",
@@ -211,10 +219,138 @@ struct LiveTVView: View {
         }
     }
 
+    private var epgGuide: some View {
+        ScrollView([.vertical, .horizontal]) {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(appState.iptv.visibleChannels) { channel in
+                    HStack(spacing: 10) {
+                        ChannelGuideLabel(channel: channel)
+                            .onTapGesture {
+                                play(channel)
+                            }
+                        let programs = guidePrograms(for: channel)
+                        if programs.isEmpty {
+                            Text(appState.iptv.nowNextByChannelId[channel.id]?.now?.title ?? "No guide data")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(ArvioTheme.textTertiary)
+                                .frame(width: 760, height: 58, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .background(RoundedRectangle(cornerRadius: 8).fill(ArvioTheme.panel))
+                        } else {
+                            ForEach(programs) { program in
+                                ProgramBlock(program: program)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.bottom, 36)
+        }
+        .overlay(alignment: .topLeading) {
+            if appState.iptv.programsByChannelId.isEmpty {
+                Text("Guide data loads when your provider supplies XMLTV/EPG.")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ArvioTheme.textSecondary)
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.55)))
+            }
+        }
+    }
+
     private func countLabel(for group: String) -> String {
         if group == "All" { return "\(appState.iptv.channels.count)" }
         if group == "Favorites" { return "\(appState.iptv.state.favoriteChannels.count)" }
         return "\(appState.iptv.channels.filter { $0.group == group }.count)"
+    }
+
+    private func guidePrograms(for channel: IptvChannel) -> [IptvProgram] {
+        let now = Date()
+        let end = now.addingTimeInterval(60 * 60 * 6)
+        return (appState.iptv.programsByChannelId[channel.id] ?? [])
+            .filter { $0.stop > now && $0.start < end }
+            .prefix(8)
+            .map { $0 }
+    }
+
+    private func play(_ channel: IptvChannel) {
+        appState.iptv.markOpened(channel)
+        appState.selectedStream = liveStream(for: channel)
+    }
+
+    private func liveStream(for channel: IptvChannel) -> ResolvedStream {
+        ResolvedStream(
+            addonId: nil,
+            addonName: "Live TV",
+            sourceName: channel.group,
+            title: channel.name,
+            quality: "Live",
+            size: "",
+            url: URL(string: channel.streamUrl),
+            requestHeaders: [:],
+            subtitles: [],
+            isPlayable: true,
+            resumePositionSeconds: nil
+        )
+    }
+}
+
+private struct ChannelGuideLabel: View {
+    let channel: IptvChannel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AsyncImage(url: channel.logo.flatMap(URL.init(string:))) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFit()
+                } else {
+                    Image("ARVIOAppIcon").resizable().scaledToFit().opacity(0.75)
+                }
+            }
+            .frame(width: 34, height: 34)
+            Text(channel.name)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(ArvioTheme.textPrimary)
+                .lineLimit(2)
+        }
+        .frame(width: 220, height: 58, alignment: .leading)
+        .padding(.horizontal, 12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.26)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ArvioTheme.border, lineWidth: 1))
+    }
+}
+
+private struct ProgramBlock: View {
+    let program: IptvProgram
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(program.title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(ArvioTheme.textPrimary)
+                .lineLimit(1)
+            Text("\(time(program.start)) - \(time(program.stop))")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(ArvioTheme.textTertiary)
+        }
+        .frame(width: blockWidth, height: 58, alignment: .leading)
+        .padding(.horizontal, 10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(isNow ? ArvioTheme.gold.opacity(0.16) : ArvioTheme.panel))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(isNow ? ArvioTheme.gold : ArvioTheme.border, lineWidth: 1))
+    }
+
+    private var isNow: Bool {
+        program.start <= Date() && program.stop > Date()
+    }
+
+    private var blockWidth: CGFloat {
+        let minutes = max(30, min(180, program.stop.timeIntervalSince(program.start) / 60))
+        return CGFloat(minutes * 3.2)
+    }
+
+    private func time(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
     }
 }
 
@@ -301,6 +437,7 @@ private struct ChannelTile: View {
             size: "",
             url: URL(string: channel.streamUrl),
             requestHeaders: [:],
+            subtitles: [],
             isPlayable: true,
             resumePositionSeconds: nil
         )

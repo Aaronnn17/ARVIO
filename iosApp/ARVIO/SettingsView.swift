@@ -5,6 +5,9 @@ struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @State private var email = ""
     @State private var password = ""
+    @State private var newCatalogTitle = ""
+    @State private var newCatalogUrl = ""
+    @State private var newCatalogType = CatalogSourceType.trakt
 
     var body: some View {
         ScrollView {
@@ -238,6 +241,38 @@ struct SettingsView: View {
                 .buttonStyle(.bordered)
             }
 
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Add custom catalog")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(ArvioTheme.textPrimary)
+                HStack(spacing: 10) {
+                    TextField("Title", text: $newCatalogTitle)
+                        .settingsField()
+                    TextField("Trakt/MDBList URL", text: $newCatalogUrl)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .settingsField()
+                    Picker("Type", selection: $newCatalogType) {
+                        Text("Trakt").tag(CatalogSourceType.trakt)
+                        Text("MDBList").tag(CatalogSourceType.mdblist)
+                    }
+                    .pickerStyle(.menu)
+                    .tint(ArvioTheme.gold)
+                    Button("Add") {
+                        Task {
+                            await appState.catalogs.addCatalog(title: newCatalogTitle, sourceType: newCatalogType, sourceUrl: newCatalogUrl)
+                            newCatalogTitle = ""
+                            newCatalogUrl = ""
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(ArvioTheme.gold)
+                }
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(ArvioTheme.border, lineWidth: 1))
+
             if appState.catalogs.catalogs.isEmpty {
                 Text("No catalog rows configured.")
                     .font(.system(size: 14, weight: .medium))
@@ -246,7 +281,7 @@ struct SettingsView: View {
                 ForEach(Array(appState.catalogs.catalogs.enumerated()), id: \.offset) { index, catalog in
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(catalog.title)
+                            TextField("Catalog title", text: catalogTitleBinding(catalog))
                                 .font(.system(size: 15, weight: .bold))
                                 .foregroundStyle(ArvioTheme.textPrimary)
                             Text([catalog.sourceType.rawValue, rowLayout(for: catalog)].joined(separator: " - "))
@@ -273,6 +308,10 @@ struct SettingsView: View {
                         .disabled(index == appState.catalogs.catalogs.count - 1)
                         Button("Hide") {
                             Task { await appState.catalogs.hideCatalog(catalog) }
+                        }
+                        .buttonStyle(.bordered)
+                        Button(configDeleteTitle(catalog), role: .destructive) {
+                            Task { await appState.catalogs.deleteCatalog(catalog) }
                         }
                         .buttonStyle(.bordered)
                     }
@@ -367,6 +406,17 @@ struct SettingsView: View {
                 }
             }
         )
+    }
+
+    private func catalogTitleBinding(_ catalog: CatalogConfig) -> Binding<String> {
+        Binding(
+            get: { appState.catalogs.catalogs.first(where: { $0.id == catalog.id })?.title ?? catalog.title },
+            set: { title in Task { await appState.catalogs.renameCatalog(catalog, title: title) } }
+        )
+    }
+
+    private func configDeleteTitle(_ catalog: CatalogConfig) -> String {
+        catalog.isPreinstalled ? "Hide" : "Delete"
     }
 
     private func rowLayout(for catalog: CatalogConfig) -> String {
