@@ -27,8 +27,8 @@ final class AppState: ObservableObject {
         let tmdb = TmdbService()
         let settings = SettingsService(cloud: cloud)
         let catalogs = CatalogService(cloud: cloud, tmdb: tmdb, addons: addons, settings: settings)
-        let streams = StreamResolver(tmdb: tmdb, addons: addons, settings: settings)
         let iptv = IptvService(cloud: cloud)
+        let streams = StreamResolver(tmdb: tmdb, addons: addons, settings: settings, iptv: iptv)
         let profiles = ProfileService(cloud: cloud)
         let watchHistory = WatchHistoryService(auth: auth, trakt: trakt)
         self.auth = auth

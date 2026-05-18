@@ -298,11 +298,246 @@ final class IptvService: ObservableObject {
         saveLocal()
     }
 
+    func resolveVodSources(item: MediaItem, externalIds: TmdbExternalIds, season: Int, episode: Int) async -> [ResolvedStream] {
+        let credentials = xtreamCredentials()
+        guard !credentials.isEmpty else { return [] }
+
+        var streams: [ResolvedStream] = []
+        for credential in credentials {
+            if item.kind == .movie {
+                streams.append(contentsOf: await resolveXtreamMovieSources(
+                    credentials: credential,
+                    item: item,
+                    externalIds: externalIds
+                ))
+            } else {
+                streams.append(contentsOf: await resolveXtreamEpisodeSources(
+                    credentials: credential,
+                    item: item,
+                    externalIds: externalIds,
+                    season: season,
+                    episode: episode
+                ))
+            }
+        }
+        var seen = Set<String>()
+        return streams.filter { stream in
+            guard let key = stream.url?.absoluteString else { return false }
+            return seen.insert(key).inserted
+        }
+    }
+
     private func activePlaylists() -> [IptvPlaylistEntry] {
         let configured = state.playlists.filter { $0.enabled && !$0.m3uUrl.isEmpty }
         if !configured.isEmpty { return configured }
         guard !state.m3uUrl.isEmpty else { return [] }
         return [IptvPlaylistEntry(id: "list_1", name: "List 1", m3uUrl: state.m3uUrl, epgUrl: state.epgUrl, enabled: true)]
+    }
+
+    private func xtreamCredentials() -> [XtreamCredentials] {
+        var seen = Set<String>()
+        return activePlaylists().compactMap { XtreamCredentials.from(urlString: $0.m3uUrl) }.filter { credential in
+            let key = "\(credential.baseUrl)|\(credential.username)|\(credential.password)"
+            return seen.insert(key).inserted
+        }
+    }
+
+    private func resolveXtreamMovieSources(
+        credentials: XtreamCredentials,
+        item: MediaItem,
+        externalIds: TmdbExternalIds
+    ) async -> [ResolvedStream] {
+        do {
+            let vodStreams: [XtreamVodStream] = try await fetchXtream(action: "get_vod_streams", credentials: credentials)
+            let candidates = vodStreams
+                .compactMap { stream -> (stream: XtreamVodStream, score: Int)? in
+                    let score = matchScore(
+                        title: stream.name,
+                        year: stream.year,
+                        tmdb: stream.tmdb,
+                        imdb: stream.imdb,
+                        item: item,
+                        externalIds: externalIds
+                    )
+                    return score >= 70 ? (stream, score) : nil
+                }
+                .sorted { left, right in
+                    if left.score != right.score { return left.score > right.score }
+                    return sourceQualityScore(left.stream.name) > sourceQualityScore(right.stream.name)
+                }
+                .prefix(8)
+
+            return candidates.compactMap { candidate in
+                guard let streamId = candidate.stream.streamId else { return nil }
+                let ext = candidate.stream.containerExtension?.nilIfBlank ?? "mp4"
+                let url = URL(string: "\(credentials.baseUrl)/movie/\(credentials.username.xtreamPathComponent)/\(credentials.password.xtreamPathComponent)/\(streamId).\(ext.xtreamPathComponent)")
+                return ResolvedStream(
+                    addonId: "iptv_xtream_vod",
+                    addonName: "Xtream VOD",
+                    sourceName: "Xtream Movie",
+                    title: candidate.stream.name,
+                    quality: quality(from: candidate.stream.name),
+                    size: "",
+                    url: url,
+                    requestHeaders: [:],
+                    subtitles: [],
+                    isPlayable: url != nil,
+                    resumePositionSeconds: item.positionSeconds
+                )
+            }
+        } catch {
+            return []
+        }
+    }
+
+    private func resolveXtreamEpisodeSources(
+        credentials: XtreamCredentials,
+        item: MediaItem,
+        externalIds: TmdbExternalIds,
+        season: Int,
+        episode: Int
+    ) async -> [ResolvedStream] {
+        do {
+            let series: [XtreamSeries] = try await fetchXtream(action: "get_series", credentials: credentials)
+            let candidates = series
+                .compactMap { value -> (series: XtreamSeries, score: Int)? in
+                    let score = matchScore(
+                        title: value.name,
+                        year: value.year,
+                        tmdb: value.tmdb,
+                        imdb: value.imdb,
+                        item: item,
+                        externalIds: externalIds
+                    )
+                    return score >= 70 ? (value, score) : nil
+                }
+                .sorted { $0.score > $1.score }
+                .prefix(4)
+
+            var output: [ResolvedStream] = []
+            for candidate in candidates {
+                guard let seriesId = candidate.series.seriesId else { continue }
+                let info: XtreamSeriesInfoResponse = try await fetchXtream(
+                    action: "get_series_info",
+                    credentials: credentials,
+                    extra: [URLQueryItem(name: "series_id", value: String(seriesId))]
+                )
+                let key = String(season)
+                let fallbackKey = String(format: "%02d", season)
+                let episodes = info.episodes?[key] ?? info.episodes?[fallbackKey] ?? []
+                let matches = episodes
+                    .filter { $0.episodeNumber == episode }
+                    .sorted { sourceQualityScore($0.title ?? candidate.series.name) > sourceQualityScore($1.title ?? candidate.series.name) }
+                    .prefix(4)
+                for value in matches {
+                    guard let episodeId = value.id?.nilIfBlank else { continue }
+                    let ext = value.containerExtension?.nilIfBlank ?? "mp4"
+                    let title = value.title?.nilIfBlank ?? "\(candidate.series.name) S\(season) E\(episode)"
+                    let url = URL(string: "\(credentials.baseUrl)/series/\(credentials.username.xtreamPathComponent)/\(credentials.password.xtreamPathComponent)/\(episodeId.xtreamPathComponent).\(ext.xtreamPathComponent)")
+                    output.append(ResolvedStream(
+                        addonId: "iptv_xtream_vod",
+                        addonName: "Xtream VOD",
+                        sourceName: "Xtream Series",
+                        title: title,
+                        quality: quality(from: title),
+                        size: "",
+                        url: url,
+                        requestHeaders: [:],
+                        subtitles: [],
+                        isPlayable: url != nil,
+                        resumePositionSeconds: item.positionSeconds
+                    ))
+                }
+            }
+            return output
+        } catch {
+            return []
+        }
+    }
+
+    private func fetchXtream<T: Decodable>(
+        action: String,
+        credentials: XtreamCredentials,
+        extra: [URLQueryItem] = []
+    ) async throws -> T {
+        guard var components = URLComponents(string: credentials.baseUrl + "/player_api.php") else {
+            throw ArvioError.invalidURL(credentials.baseUrl)
+        }
+        components.queryItems = [
+            URLQueryItem(name: "username", value: credentials.username),
+            URLQueryItem(name: "password", value: credentials.password),
+            URLQueryItem(name: "action", value: action)
+        ] + extra
+        guard let url = components.url else { throw ArvioError.invalidURL(credentials.baseUrl) }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw ArvioError.requestFailed("Xtream VOD failed to load")
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    private func matchScore(
+        title: String,
+        year: String?,
+        tmdb: String?,
+        imdb: String?,
+        item: MediaItem,
+        externalIds: TmdbExternalIds
+    ) -> Int {
+        var score = 0
+        if let itemTmdb = item.tmdbId,
+           let value = tmdb?.nilIfBlank,
+           value.onlyDigits == String(itemTmdb) {
+            score += 140
+        }
+        if let itemImdb = externalIds.imdbId?.nilIfBlank?.lowercased(),
+           let value = imdb?.nilIfBlank?.lowercased(),
+           value == itemImdb {
+            score += 140
+        }
+
+        let normalizedCandidate = title.normalizedMediaTitle
+        let normalizedItem = item.title.normalizedMediaTitle
+        if normalizedCandidate == normalizedItem {
+            score += 90
+        } else if normalizedCandidate.contains(normalizedItem) || normalizedItem.contains(normalizedCandidate) {
+            score += 55
+        } else {
+            let itemTokens = Set(normalizedItem.split(separator: " ").map(String.init)).filter { $0.count > 2 }
+            let candidateTokens = Set(normalizedCandidate.split(separator: " ").map(String.init)).filter { $0.count > 2 }
+            let overlap = itemTokens.intersection(candidateTokens).count
+            if overlap > 0 {
+                score += min(45, overlap * 15)
+            }
+        }
+
+        if let itemYear = item.year.nilIfBlank?.onlyDigits.nilIfBlank,
+           let candidateYear = year?.nilIfBlank?.onlyDigits.nilIfBlank,
+           candidateYear == itemYear {
+            score += 25
+        } else if let itemYear = item.year.nilIfBlank?.onlyDigits.nilIfBlank,
+                  title.contains(itemYear) {
+            score += 15
+        }
+        return score
+    }
+
+    private func quality(from text: String) -> String {
+        if text.range(of: "2160p|4K|UHD", options: [.regularExpression, .caseInsensitive]) != nil { return "4K" }
+        if text.range(of: "1080p|FHD", options: [.regularExpression, .caseInsensitive]) != nil { return "1080p" }
+        if text.range(of: "720p|HD", options: [.regularExpression, .caseInsensitive]) != nil { return "720p" }
+        if text.range(of: "480p|SD", options: [.regularExpression, .caseInsensitive]) != nil { return "480p" }
+        return "Direct"
+    }
+
+    private func sourceQualityScore(_ text: String) -> Int {
+        switch quality(from: text) {
+        case "4K": return 40
+        case "1080p": return 30
+        case "720p": return 20
+        case "480p": return 10
+        default: return 0
+        }
     }
 
     private func fetchPlaylist(_ playlist: IptvPlaylistEntry) async throws -> [IptvChannel] {
@@ -342,7 +577,7 @@ final class IptvService: ObservableObject {
         let streams = try JSONDecoder().decode([XtreamLiveStream].self, from: data)
         return streams.compactMap { stream -> IptvChannel? in
             guard let streamId = stream.streamId else { return nil }
-            let streamUrl = "\(credentials.baseUrl)/live/\(credentials.username)/\(credentials.password)/\(streamId).ts"
+            let streamUrl = "\(credentials.baseUrl)/live/\(credentials.username.xtreamPathComponent)/\(credentials.password.xtreamPathComponent)/\(streamId).ts"
             return IptvChannel(
                 id: stableChannelId(epgId: stream.epgChannelId, streamUrl: streamUrl),
                 name: stream.name.nilIfBlank ?? "Channel \(streamId)",
@@ -512,6 +747,26 @@ private extension String {
     var normalizedGuideKey: String {
         trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
+
+    var normalizedMediaTitle: String {
+        let lower = trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let scalars = lower.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : " " }
+        return String(scalars)
+            .split(separator: " ")
+            .filter { value in
+                let token = String(value)
+                return token != "the" && token != "a" && token != "an"
+            }
+            .joined(separator: " ")
+    }
+
+    var onlyDigits: String {
+        String(filter(\.isNumber))
+    }
+
+    var xtreamPathComponent: String {
+        addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? self
+    }
 }
 
 private struct XtreamCredentials {
@@ -570,6 +825,132 @@ private struct XtreamLiveStream: Decodable {
         } else {
             categoryId = Int((try? container.decode(String.self, forKey: .categoryId)) ?? "")
         }
+    }
+}
+
+private struct XtreamVodStream: Decodable {
+    let name: String
+    let streamId: Int?
+    let streamIcon: String?
+    let containerExtension: String?
+    let tmdb: String?
+    let imdb: String?
+    let year: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case streamId = "stream_id"
+        case streamIcon = "stream_icon"
+        case containerExtension = "container_extension"
+        case tmdb
+        case imdb
+        case year
+        case releaseDate = "release_date"
+        case rating5Based = "rating_5based"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = (try? container.decode(String.self, forKey: .name)) ?? "Movie"
+        streamIcon = try? container.decode(String.self, forKey: .streamIcon)
+        containerExtension = try? container.decode(String.self, forKey: .containerExtension)
+        tmdb = try? container.decodeLossyString(forKey: .tmdb)
+        imdb = try? container.decodeLossyString(forKey: .imdb)
+        if let explicitYear = try? container.decodeLossyString(forKey: .year) {
+            year = explicitYear
+        } else {
+            year = (try? container.decode(String.self, forKey: .releaseDate))?.prefix(4).description
+        }
+        if let intValue = try? container.decode(Int.self, forKey: .streamId) {
+            streamId = intValue
+        } else {
+            streamId = Int((try? container.decode(String.self, forKey: .streamId)) ?? "")
+        }
+    }
+}
+
+private struct XtreamSeries: Decodable {
+    let name: String
+    let seriesId: Int?
+    let cover: String?
+    let tmdb: String?
+    let imdb: String?
+    let year: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case seriesId = "series_id"
+        case cover
+        case tmdb
+        case imdb
+        case year
+        case releaseDate = "release_date"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = (try? container.decode(String.self, forKey: .name)) ?? "Series"
+        cover = try? container.decode(String.self, forKey: .cover)
+        tmdb = try? container.decodeLossyString(forKey: .tmdb)
+        imdb = try? container.decodeLossyString(forKey: .imdb)
+        if let explicitYear = try? container.decodeLossyString(forKey: .year) {
+            year = explicitYear
+        } else {
+            year = (try? container.decode(String.self, forKey: .releaseDate))?.prefix(4).description
+        }
+        if let intValue = try? container.decode(Int.self, forKey: .seriesId) {
+            seriesId = intValue
+        } else {
+            seriesId = Int((try? container.decode(String.self, forKey: .seriesId)) ?? "")
+        }
+    }
+}
+
+private struct XtreamSeriesInfoResponse: Decodable {
+    let episodes: [String: [XtreamSeriesEpisode]]?
+}
+
+private struct XtreamSeriesEpisode: Decodable {
+    let id: String?
+    let episodeNumber: Int?
+    let title: String?
+    let containerExtension: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case episodeNumber = "episode_num"
+        case title
+        case containerExtension = "container_extension"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? container.decodeLossyString(forKey: .id)
+        title = try? container.decode(String.self, forKey: .title)
+        containerExtension = try? container.decode(String.self, forKey: .containerExtension)
+        if let intValue = try? container.decode(Int.self, forKey: .episodeNumber) {
+            episodeNumber = intValue
+        } else {
+            episodeNumber = Int((try? container.decode(String.self, forKey: .episodeNumber)) ?? "")
+        }
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func decodeLossyString(forKey key: Key) throws -> String {
+        if let value = try? decode(String.self, forKey: key) {
+            return value
+        }
+        if let value = try? decode(Int.self, forKey: key) {
+            return String(value)
+        }
+        if let value = try? decode(Double.self, forKey: key) {
+            return String(value)
+        }
+        throw DecodingError.valueNotFound(
+            String.self,
+            DecodingError.Context(codingPath: codingPath + [key], debugDescription: "No string-compatible value")
+        )
     }
 }
 

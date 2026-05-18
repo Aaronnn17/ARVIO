@@ -71,11 +71,13 @@ final class StreamResolver: ObservableObject {
     private let tmdb: TmdbService
     private let addons: AddonService
     private let settings: SettingsService
+    private let iptv: IptvService
 
-    init(tmdb: TmdbService, addons: AddonService, settings: SettingsService) {
+    init(tmdb: TmdbService, addons: AddonService, settings: SettingsService, iptv: IptvService) {
         self.tmdb = tmdb
         self.addons = addons
         self.settings = settings
+        self.iptv = iptv
     }
 
     func resolve(item: MediaItem, season: Int = 1, episode: Int = 1) async {
@@ -119,7 +121,13 @@ final class StreamResolver: ObservableObject {
                 episode: episode,
                 settings: profileSettings
             )
-            streams = Self.applyQualityFilters(to: resolved + homeServerStreams, regexes: qualityRegexes).map { stream in
+            let iptvStreams = await iptv.resolveVodSources(
+                item: item,
+                externalIds: externalIds,
+                season: season,
+                episode: episode
+            )
+            streams = Self.applyQualityFilters(to: resolved + homeServerStreams + iptvStreams, regexes: qualityRegexes).map { stream in
                 ResolvedStream(
                     addonId: stream.addonId,
                     addonName: stream.addonName,
