@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 struct CloudProfileSettings: Codable, Equatable {
     var defaultSubtitle: String = "Off"
@@ -30,6 +31,8 @@ struct CloudProfileSettings: Codable, Equatable {
     var filterSubtitlesByLanguage: Bool = true
     var homeServerConnectionJson: String?
     var catalogueRowLayoutModes: [String: String] = [:]
+    var torrServerBaseUrl: String = ""
+    var qualityFiltersJson: String = ""
 
     enum CodingKeys: String, CodingKey {
         case defaultSubtitle
@@ -61,6 +64,8 @@ struct CloudProfileSettings: Codable, Equatable {
         case filterSubtitlesByLanguage
         case homeServerConnectionJson
         case catalogueRowLayoutModes
+        case torrServerBaseUrl
+        case qualityFiltersJson
     }
 
     init() {}
@@ -94,7 +99,9 @@ struct CloudProfileSettings: Codable, Equatable {
         secondarySubtitle: String = "Off",
         filterSubtitlesByLanguage: Bool = true,
         homeServerConnectionJson: String? = nil,
-        catalogueRowLayoutModes: [String: String] = [:]
+        catalogueRowLayoutModes: [String: String] = [:],
+        torrServerBaseUrl: String = "",
+        qualityFiltersJson: String = ""
     ) {
         self.defaultSubtitle = defaultSubtitle
         self.defaultAudioLanguage = defaultAudioLanguage
@@ -125,6 +132,8 @@ struct CloudProfileSettings: Codable, Equatable {
         self.filterSubtitlesByLanguage = filterSubtitlesByLanguage
         self.homeServerConnectionJson = homeServerConnectionJson
         self.catalogueRowLayoutModes = catalogueRowLayoutModes
+        self.torrServerBaseUrl = torrServerBaseUrl
+        self.qualityFiltersJson = qualityFiltersJson
     }
 
     init(from decoder: Decoder) throws {
@@ -162,7 +171,17 @@ struct CloudProfileSettings: Codable, Equatable {
         filterSubtitlesByLanguage = (try? container.decode(Bool.self, forKey: .filterSubtitlesByLanguage)) ?? true
         homeServerConnectionJson = try? container.decode(String.self, forKey: .homeServerConnectionJson)
         catalogueRowLayoutModes = (try? container.decode([String: String].self, forKey: .catalogueRowLayoutModes)) ?? [:]
+        torrServerBaseUrl = (try? container.decode(String.self, forKey: .torrServerBaseUrl)) ?? ""
+        qualityFiltersJson = (try? container.decode(String.self, forKey: .qualityFiltersJson)) ?? ""
     }
+}
+
+struct QualityFilterConfig: Codable, Equatable, Identifiable {
+    var id: String = UUID().uuidString
+    var deviceName: String = UIDevice.current.name
+    var regexPattern: String = ""
+    var enabled: Bool = true
+    var createdAt: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
 }
 
 struct GlobalCloudSettings: Codable, Equatable {

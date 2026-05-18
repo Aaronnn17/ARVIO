@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PosterBackdrop: View {
     let item: MediaItem
+    var preferPoster = false
 
     var body: some View {
         ZStack {
@@ -11,7 +12,7 @@ struct PosterBackdrop: View {
                 endPoint: .bottomTrailing
             )
 
-            if let url = item.backdropURL ?? item.posterURL {
+            if let url = preferredImageURL {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image {
                         image
@@ -33,10 +34,15 @@ struct PosterBackdrop: View {
         }
         .clipped()
     }
+
+    private var preferredImageURL: URL? {
+        preferPoster ? (item.posterURL ?? item.backdropURL) : (item.backdropURL ?? item.posterURL)
+    }
 }
 
 struct MediaCard: View {
     let item: MediaItem
+    var layout = "Landscape"
     var onSelect: ((MediaItem) -> Void)?
 
     var body: some View {
@@ -44,8 +50,8 @@ struct MediaCard: View {
             onSelect?(item)
         } label: {
             VStack(alignment: .leading, spacing: 10) {
-                PosterBackdrop(item: item)
-                    .frame(width: 210, height: 118)
+                PosterBackdrop(item: item, preferPoster: isPortrait)
+                    .frame(width: cardWidth, height: imageHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
@@ -65,12 +71,32 @@ struct MediaCard: View {
                 if item.progress > 0 {
                     ProgressView(value: item.progress)
                         .tint(ArvioTheme.gold)
-                        .frame(width: 210)
+                        .frame(width: cardWidth)
                 }
             }
-            .frame(width: 210, alignment: .leading)
+            .frame(width: cardWidth, alignment: .leading)
         }
         .buttonStyle(.plain)
+    }
+
+    private var isPortrait: Bool {
+        layout == "Portrait"
+    }
+
+    private var cardWidth: CGFloat {
+        switch layout {
+        case "Portrait": return 156
+        case "Compact": return 170
+        default: return 210
+        }
+    }
+
+    private var imageHeight: CGFloat {
+        switch layout {
+        case "Portrait": return 234
+        case "Compact": return 96
+        default: return 118
+        }
     }
 }
 

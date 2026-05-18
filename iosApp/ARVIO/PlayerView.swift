@@ -53,7 +53,10 @@ struct PlayerView: View {
             didSaveProgress = false
             currentSeconds = 0
             durationSeconds = 0
-            let created = AVPlayer(url: url)
+            let asset = stream.requestHeaders.isEmpty
+                ? AVURLAsset(url: url)
+                : AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": stream.requestHeaders])
+            let created = AVPlayer(playerItem: AVPlayerItem(asset: asset))
             player = created
             if let seconds = stream.resumePositionSeconds, seconds > 5, !didSeek {
                 didSeek = true

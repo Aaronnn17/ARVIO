@@ -26,11 +26,11 @@ final class AppState: ObservableObject {
         let trakt = TraktService(cloud: cloud)
         let tmdb = TmdbService()
         let catalogs = CatalogService(cloud: cloud, tmdb: tmdb, addons: addons)
-        let streams = StreamResolver(tmdb: tmdb, addons: addons)
+        let settings = SettingsService(cloud: cloud)
+        let streams = StreamResolver(tmdb: tmdb, addons: addons, settings: settings)
         let iptv = IptvService(cloud: cloud)
         let profiles = ProfileService(cloud: cloud)
         let watchHistory = WatchHistoryService(auth: auth, trakt: trakt)
-        let settings = SettingsService(cloud: cloud)
         self.auth = auth
         self.cloud = cloud
         self.addons = addons

@@ -229,6 +229,10 @@ final class CloudSyncService: ObservableObject {
         await save(addons: nil, iptv: nil, settings: settings, globalSettings: globalSettings, settingsProfileId: profileId)
     }
 
+    func save(catalogs: [CatalogConfig], hiddenPreinstalledCatalogIds: [String], profileId: String) async {
+        await save(addons: nil, iptv: nil, catalogs: catalogs, hiddenPreinstalledCatalogIds: hiddenPreinstalledCatalogIds, catalogsProfileId: profileId)
+    }
+
     func save(traktToken: CloudTraktToken?, profileId: String) async {
         await save(addons: nil, iptv: nil, traktToken: traktToken, traktProfileId: profileId)
     }
@@ -243,6 +247,9 @@ final class CloudSyncService: ObservableObject {
         settings: CloudProfileSettings? = nil,
         globalSettings: GlobalCloudSettings? = nil,
         settingsProfileId: String? = nil,
+        catalogs: [CatalogConfig]? = nil,
+        hiddenPreinstalledCatalogIds: [String]? = nil,
+        catalogsProfileId: String? = nil,
         traktToken: CloudTraktToken? = nil,
         traktProfileId: String? = nil
     ) async {
@@ -304,6 +311,19 @@ final class CloudSyncService: ObservableObject {
                 object["dnsProvider"] = settings.dnsProvider
                 object["subtitleUsageJson"] = settings.subtitleUsageJson
                 object["subtitleSettingsUpdatedAt"] = settings.subtitleSettingsUpdatedAt
+            }
+            if let catalogs {
+                let profileId = catalogsProfileId ?? session.userId
+                var byProfile = object["catalogsByProfile"] as? [String: Any] ?? [:]
+                byProfile[profileId] = try jsonObject(catalogs)
+                object["catalogsByProfile"] = byProfile
+                object["catalogs"] = try jsonObject(catalogs)
+                if let hiddenPreinstalledCatalogIds {
+                    var hiddenByProfile = object["hiddenPreinstalledByProfile"] as? [String: Any] ?? [:]
+                    hiddenByProfile[profileId] = hiddenPreinstalledCatalogIds
+                    object["hiddenPreinstalledByProfile"] = hiddenByProfile
+                    object["hiddenPreinstalledCatalogs"] = hiddenPreinstalledCatalogIds
+                }
             }
             if let globalSettings {
                 object["subtitleAiEnabled"] = globalSettings.subtitleAiEnabled

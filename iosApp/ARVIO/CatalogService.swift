@@ -185,11 +185,38 @@ final class CatalogService: ObservableObject {
         await loadItems(for: config) ?? []
     }
 
-    private var hiddenCatalogIds: Set<String> {
+    var hiddenCatalogIds: Set<String> {
         let hidden = cloud.payload.hiddenPreinstalledByProfile?[activeProfileId] ??
             cloud.payload.hiddenPreinstalledByProfile?.values.first ??
             cloud.payload.hiddenPreinstalledCatalogs ?? []
         return Set(hidden)
+    }
+
+    func moveCatalog(_ config: CatalogConfig, direction: Int) async {
+        guard let index = catalogs.firstIndex(where: { $0.id == config.id }) else { return }
+        let target = index + direction
+        guard catalogs.indices.contains(target) else { return }
+        catalogs.swapAt(index, target)
+        await saveCatalogState(hiddenIds: Array(hiddenCatalogIds))
+        await reloadRows()
+    }
+
+    func hideCatalog(_ config: CatalogConfig) async {
+        var hidden = hiddenCatalogIds
+        hidden.insert(config.id)
+        catalogs.removeAll { $0.id == config.id }
+        await saveCatalogState(hiddenIds: Array(hidden))
+        await reloadRows()
+    }
+
+    func restoreDefaultCatalogs() async {
+        catalogs = Self.defaultCatalogs
+        await saveCatalogState(hiddenIds: [])
+        await reloadRows()
+    }
+
+    private func saveCatalogState(hiddenIds: [String]) async {
+        await cloud.save(catalogs: catalogs, hiddenPreinstalledCatalogIds: hiddenIds, profileId: activeProfileId)
     }
 
     private func loadItems(for config: CatalogConfig) async -> [MediaItem]? {

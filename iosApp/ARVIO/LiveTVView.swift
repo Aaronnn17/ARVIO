@@ -300,6 +300,7 @@ private struct ChannelTile: View {
             quality: "Live",
             size: "",
             url: URL(string: channel.streamUrl),
+            requestHeaders: [:],
             isPlayable: true,
             resumePositionSeconds: nil
         )

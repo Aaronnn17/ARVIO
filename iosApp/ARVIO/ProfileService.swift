@@ -64,6 +64,7 @@ final class ProfileService: ObservableObject {
     private let storageKey = "arvio.ios.profiles"
     private let activeKey = "arvio.ios.activeProfileId"
     var onActiveProfileChanged: ((String?) -> Void)?
+    private let avatarColors: [Int64] = [0xFFE50914, 0xFF1DB954, 0xFF3B82F6, 0xFFF59E0B, 0xFF8B5CF6, 0xFFEC4899, 0xFF14B8A6, 0xFF6366F1]
 
     init(cloud: CloudSyncService) {
         self.cloud = cloud
@@ -97,8 +98,7 @@ final class ProfileService: ObservableObject {
             errorMessage = "Profile name is required"
             return
         }
-        let colors: [Int64] = [0xFFE50914, 0xFF1DB954, 0xFF3B82F6, 0xFFF59E0B, 0xFF8B5CF6, 0xFFEC4899, 0xFF14B8A6, 0xFF6366F1]
-        profiles.append(ArvioProfile.make(name: name, color: colors[profiles.count % colors.count]))
+        profiles.append(ArvioProfile.make(name: name, color: avatarColors[profiles.count % avatarColors.count]))
         newProfileName = ""
         errorMessage = nil
         saveLocal()
@@ -147,6 +147,48 @@ final class ProfileService: ObservableObject {
             activeProfileId = profiles.first?.id
             onActiveProfileChanged?(activeProfileId)
         }
+        saveLocal()
+        await cloud.save(profiles: profiles, activeProfileId: activeProfileId)
+    }
+
+    func renameActive(_ name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = activeProfileIndex else { return }
+        profiles[index].name = trimmed
+        await saveProfiles()
+    }
+
+    func setActiveKidsProfile(_ isKids: Bool) async {
+        guard let index = activeProfileIndex else { return }
+        profiles[index].isKidsProfile = isKids
+        await saveProfiles()
+    }
+
+    func setActivePin(_ pin: String) async {
+        guard let index = activeProfileIndex else { return }
+        let trimmed = pin.trimmingCharacters(in: .whitespacesAndNewlines)
+        profiles[index].pin = trimmed.isEmpty ? nil : trimmed
+        profiles[index].isLocked = !trimmed.isEmpty
+        await saveProfiles()
+    }
+
+    func cycleActiveAvatarColor() async {
+        guard let index = activeProfileIndex else { return }
+        let current = profiles[index].avatarColor
+        let nextIndex = ((avatarColors.firstIndex(of: current) ?? -1) + 1) % avatarColors.count
+        profiles[index].avatarColor = avatarColors[nextIndex]
+        profiles[index].avatarId = nextIndex
+        profiles[index].avatarImageVersion = Int64(Date().timeIntervalSince1970 * 1000)
+        await saveProfiles()
+    }
+
+    private var activeProfileIndex: Int? {
+        guard let active = activeProfile else { return nil }
+        return profiles.firstIndex(where: { $0.id == active.id })
+    }
+
+    private func saveProfiles() async {
+        errorMessage = nil
         saveLocal()
         await cloud.save(profiles: profiles, activeProfileId: activeProfileId)
     }

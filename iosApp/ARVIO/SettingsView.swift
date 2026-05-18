@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
@@ -18,6 +19,7 @@ struct SettingsView: View {
                 playbackPanel
                 subtitlePanel
                 interfacePanel
+                catalogPanel
                 aiSubtitlePanel
                 syncSummaryPanel
             }
@@ -132,22 +134,34 @@ struct SettingsView: View {
     }
 
     private var profilePanel: some View {
-        HStack(spacing: 14) {
-            ProfileDot(profile: appState.profiles.activeProfile)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Profiles")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(ArvioTheme.textPrimary)
-                Text(appState.profiles.activeProfile?.name ?? "Default")
-                    .font(.system(size: 14))
-                    .foregroundStyle(ArvioTheme.textSecondary)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 14) {
+                ProfileDot(profile: appState.profiles.activeProfile)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Profiles")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(ArvioTheme.textPrimary)
+                    Text(appState.profiles.activeProfile?.name ?? "Default")
+                        .font(.system(size: 14))
+                        .foregroundStyle(ArvioTheme.textSecondary)
+                }
+                Spacer()
+                Button("Avatar") {
+                    Task { await appState.profiles.cycleActiveAvatarColor() }
+                }
+                .buttonStyle(.bordered)
+                Button("Switch") {
+                    appState.profiles.isSwitcherVisible = true
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(ArvioTheme.gold)
             }
-            Spacer()
-            Button("Switch") {
-                appState.profiles.isSwitcherVisible = true
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(ArvioTheme.gold)
+            TextField("Profile name", text: activeProfileNameBinding)
+                .settingsField()
+            SecureField("Profile PIN, optional", text: activeProfilePinBinding)
+                .keyboardType(.numberPad)
+                .settingsField()
+            SettingsToggle("Kids profile", isOn: activeProfileKidsBinding)
         }
         .settingsPanel()
     }
@@ -158,6 +172,17 @@ struct SettingsView: View {
             SettingsToggle("Auto-play next episode", isOn: profileBinding(\.autoPlayNext))
             SettingsToggle("Auto-play when one source exists", isOn: profileBinding(\.autoPlaySingleSource))
             SettingsPicker(title: "Minimum auto-play quality", selection: profileBinding(\.autoPlayMinQuality), values: ["Any", "720p", "1080p", "4K"])
+            SettingsPicker(title: "Quality filter", selection: qualityFilterPresetBinding, values: ["Off", "1080p+", "1080p only", "720p+", "Custom"])
+            if qualityFilterPresetBinding.wrappedValue == "Custom" {
+                TextField("Custom exclude regex", text: qualityFilterCustomRegexBinding)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .settingsField()
+            }
+            TextField("TorrServer URL, for example http://127.0.0.1:8090", text: profileBinding(\.torrServerBaseUrl))
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .settingsField()
             SettingsPicker(title: "Frame-rate matching", selection: profileBinding(\.frameRateMatchingMode), values: ["Off", "Seamless", "Non-seamless"])
             Stepper(value: profileBinding(\.volumeBoostDb), in: 0...15) {
                 SettingsValueLabel(title: "Volume boost", value: "\(appState.settings.profileSettings.volumeBoostDb)dB")
@@ -194,6 +219,68 @@ struct SettingsView: View {
             SettingsToggle("Show budget", isOn: profileBinding(\.showBudget))
             SettingsToggle("Blur spoilers", isOn: profileBinding(\.spoilerBlurEnabled))
             SettingsToggle("Skip profile selection", isOn: globalBinding(\.skipProfileSelection))
+        }
+        .settingsPanel()
+    }
+
+    private var catalogPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                panelHeader("Catalogs", "Manage home rows and row layout for this profile.")
+                Spacer()
+                Button("Refresh") {
+                    Task { await appState.catalogs.reloadRows() }
+                }
+                .buttonStyle(.bordered)
+                Button("Restore") {
+                    Task { await appState.catalogs.restoreDefaultCatalogs() }
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if appState.catalogs.catalogs.isEmpty {
+                Text("No catalog rows configured.")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(ArvioTheme.textSecondary)
+            } else {
+                ForEach(Array(appState.catalogs.catalogs.enumerated()), id: \.offset) { index, catalog in
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(catalog.title)
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(ArvioTheme.textPrimary)
+                            Text([catalog.sourceType.rawValue, rowLayout(for: catalog)].joined(separator: " - "))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(ArvioTheme.textTertiary)
+                        }
+                        Spacer()
+                        Picker("Layout", selection: catalogLayoutBinding(catalog)) {
+                            Text("Landscape").tag("Landscape")
+                            Text("Portrait").tag("Portrait")
+                            Text("Compact").tag("Compact")
+                        }
+                        .pickerStyle(.menu)
+                        .tint(ArvioTheme.gold)
+                        Button("Up") {
+                            Task { await appState.catalogs.moveCatalog(catalog, direction: -1) }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(index == 0)
+                        Button("Down") {
+                            Task { await appState.catalogs.moveCatalog(catalog, direction: 1) }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(index == appState.catalogs.catalogs.count - 1)
+                        Button("Hide") {
+                            Task { await appState.catalogs.hideCatalog(catalog) }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.04)))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(ArvioTheme.border, lineWidth: 1))
+                }
+            }
         }
         .settingsPanel()
     }
@@ -246,6 +333,119 @@ struct SettingsView: View {
                 Task { await appState.settings.updateGlobal { $0[keyPath: keyPath] = value } }
             }
         )
+    }
+
+    private var activeProfileNameBinding: Binding<String> {
+        Binding(
+            get: { appState.profiles.activeProfile?.name ?? "" },
+            set: { name in Task { await appState.profiles.renameActive(name) } }
+        )
+    }
+
+    private var activeProfilePinBinding: Binding<String> {
+        Binding(
+            get: { appState.profiles.activeProfile?.pin ?? "" },
+            set: { pin in Task { await appState.profiles.setActivePin(pin) } }
+        )
+    }
+
+    private var activeProfileKidsBinding: Binding<Bool> {
+        Binding(
+            get: { appState.profiles.activeProfile?.isKidsProfile ?? false },
+            set: { isKids in Task { await appState.profiles.setActiveKidsProfile(isKids) } }
+        )
+    }
+
+    private func catalogLayoutBinding(_ catalog: CatalogConfig) -> Binding<String> {
+        Binding(
+            get: { rowLayout(for: catalog) },
+            set: { layout in
+                Task {
+                    await appState.settings.updateProfile {
+                        $0.catalogueRowLayoutModes[catalog.id] = layout
+                    }
+                }
+            }
+        )
+    }
+
+    private func rowLayout(for catalog: CatalogConfig) -> String {
+        appState.settings.profileSettings.catalogueRowLayoutModes[catalog.id]
+            ?? (catalog.collectionTileShape == .poster ? "Portrait" : appState.settings.profileSettings.cardLayoutMode)
+    }
+
+    private var qualityFilterPresetBinding: Binding<String> {
+        Binding(
+            get: { detectQualityFilterPreset(from: appState.settings.profileSettings.qualityFiltersJson) },
+            set: { preset in
+                Task {
+                    await appState.settings.updateProfile {
+                        $0.qualityFiltersJson = makeQualityFiltersJson(preset: preset, customRegex: currentCustomQualityRegex())
+                    }
+                }
+            }
+        )
+    }
+
+    private var qualityFilterCustomRegexBinding: Binding<String> {
+        Binding(
+            get: { currentCustomQualityRegex() },
+            set: { regex in
+                Task {
+                    await appState.settings.updateProfile {
+                        $0.qualityFiltersJson = makeQualityFiltersJson(preset: "Custom", customRegex: regex)
+                    }
+                }
+            }
+        )
+    }
+
+    private func currentQualityFilters() -> [QualityFilterConfig] {
+        guard let data = appState.settings.profileSettings.qualityFiltersJson.data(using: .utf8),
+              let filters = try? JSONDecoder().decode([QualityFilterConfig].self, from: data) else {
+            return []
+        }
+        return filters
+    }
+
+    private func currentCustomQualityRegex() -> String {
+        currentQualityFilters().first(where: { $0.enabled && !$0.regexPattern.isEmpty })?.regexPattern ?? ""
+    }
+
+    private func detectQualityFilterPreset(from json: String) -> String {
+        let filters: [QualityFilterConfig]
+        if let data = json.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode([QualityFilterConfig].self, from: data) {
+            filters = decoded
+        } else {
+            filters = []
+        }
+        let enabled = filters.filter { $0.enabled && !$0.regexPattern.isEmpty }
+        guard let first = enabled.first else { return "Off" }
+        guard enabled.count == 1 else { return "Custom" }
+        return qualityFilterPresets.first(where: { $0.value == first.regexPattern })?.key ?? "Custom"
+    }
+
+    private func makeQualityFiltersJson(preset: String, customRegex: String) -> String {
+        let regex = qualityFilterPresets[preset] ?? (preset == "Custom" ? customRegex.trimmingCharacters(in: .whitespacesAndNewlines) : "")
+        guard !regex.isEmpty else { return "" }
+        let filter = QualityFilterConfig(
+            id: preset == "Custom" ? "ios_custom_quality_filter" : "preset_quality_\(preset.lowercased().replacingOccurrences(of: " ", with: "_").replacingOccurrences(of: "+", with: "_plus"))",
+            deviceName: preset == "Custom" ? UIDevice.current.name : "Preset: \(preset)",
+            regexPattern: regex,
+            enabled: true,
+            createdAt: Int64(Date().timeIntervalSince1970 * 1000)
+        )
+        guard let data = try? JSONEncoder().encode([filter]) else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private var qualityFilterPresets: [String: String] {
+        [
+            "1080p+": "(?:360|480|576|720)p|cam|hdcam|hdts|hdtc|telesync|telecine|ts|tc|screener|scr|sd",
+            "1080p only": "(?:2160|4k|uhd)|(?:360|480|576|720)p|cam|hdcam|hdts|hdtc|telesync|telecine|ts|tc|screener|scr|sd",
+            "720p+": "(?:360|480|576)p|cam|hdcam|hdts|hdtc|telesync|telecine|ts|tc|screener|scr|sd"
+        ]
     }
 }
 

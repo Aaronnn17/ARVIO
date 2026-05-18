@@ -146,13 +146,19 @@ struct MediaRail: View {
                         EmptyStatePanel(title: "Nothing here yet", message: "Content will appear here after sync finishes.")
                     }
                     ForEach(items) { item in
-                        MediaCard(item: item) { selected in
+                        MediaCard(item: item, layout: layout) { selected in
                             appState.selectedMedia = selected
                         }
                     }
                 }
             }
         }
+    }
+
+    private var layout: String {
+        guard let catalog else { return appState.settings.profileSettings.cardLayoutMode }
+        return appState.settings.profileSettings.catalogueRowLayoutModes[catalog.id]
+            ?? (catalog.collectionTileShape == .poster ? "Portrait" : appState.settings.profileSettings.cardLayoutMode)
     }
 }
 
