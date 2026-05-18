@@ -4,6 +4,16 @@ struct TmdbListResponse: Decodable {
     let results: [TmdbMedia]
 }
 
+struct TmdbFindResponse: Decodable {
+    let movieResults: [TmdbMedia]?
+    let tvResults: [TmdbMedia]?
+
+    enum CodingKeys: String, CodingKey {
+        case movieResults = "movie_results"
+        case tvResults = "tv_results"
+    }
+}
+
 struct TmdbMedia: Decodable {
     let id: Int
     let title: String?
@@ -104,6 +114,69 @@ struct TmdbDetails: Decodable {
     }
 }
 
+struct TmdbEpisodeListResponse: Decodable {
+    let episodes: [TmdbEpisode]
+}
+
+struct TmdbEpisode: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let overview: String?
+    let stillPath: String?
+    let voteAverage: Double?
+    let runtime: Int?
+    let airDate: String?
+    let episodeNumber: Int
+    let seasonNumber: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case overview
+        case stillPath = "still_path"
+        case voteAverage = "vote_average"
+        case runtime
+        case airDate = "air_date"
+        case episodeNumber = "episode_number"
+        case seasonNumber = "season_number"
+    }
+}
+
+struct TmdbVideoResponse: Decodable {
+    let results: [TmdbVideo]
+}
+
+struct TmdbVideo: Decodable, Identifiable, Hashable {
+    let id: String
+    let key: String
+    let name: String
+    let site: String
+    let type: String
+}
+
+struct TmdbCastResponse: Decodable {
+    let cast: [TmdbCastMember]
+}
+
+struct TmdbCastMember: Decodable, Identifiable, Hashable {
+    let id: Int
+    let name: String
+    let character: String?
+    let profilePath: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case character
+        case profilePath = "profile_path"
+    }
+
+    var imageURL: URL? {
+        guard let profilePath else { return nil }
+        return URL(string: "https://image.tmdb.org/t/p/w185\(profilePath)")
+    }
+}
+
 struct TmdbSeason: Decodable, Identifiable, Hashable {
     let id: Int
     let seasonNumber: Int
@@ -188,6 +261,89 @@ final class TmdbService: ObservableObject {
         guard let tmdbId = item.tmdbId else { return [] }
         let response: TmdbListResponse = try await tmdb(path: "/\(item.kind.tmdbPath)/\(tmdbId)/recommendations", query: ["language": "en-US"])
         return response.results.compactMap { $0.asMediaItem(defaultKind: item.kind) }
+    }
+
+    func catalogItems(for config: CatalogConfig) async throws -> [MediaItem] {
+        let id = config.id.lowercased()
+        let endpoint: (String, MediaKind)
+        switch id {
+        case "trending_movies", "movie_trending", "movies_trending":
+            endpoint = ("/trending/movie/day", .movie)
+        case "trending_series", "trending_tv", "series_trending", "tv_trending":
+            endpoint = ("/trending/tv/day", .series)
+        case "popular_movies", "movie_popular", "movies_popular":
+            endpoint = ("/movie/popular", .movie)
+        case "popular_series", "popular_tv", "series_popular", "tv_popular":
+            endpoint = ("/tv/popular", .series)
+        case "top_rated_movies", "movie_top_rated":
+            endpoint = ("/movie/top_rated", .movie)
+        case "top_rated_series", "tv_top_rated", "series_top_rated":
+            endpoint = ("/tv/top_rated", .series)
+        case "now_playing_movies", "movie_now_playing":
+            endpoint = ("/movie/now_playing", .movie)
+        case "airing_today_series", "tv_airing_today", "series_airing_today":
+            endpoint = ("/tv/airing_today", .series)
+        default:
+            if id.contains("series") || id.contains("tv") {
+                endpoint = ("/tv/popular", .series)
+            } else {
+                endpoint = ("/movie/popular", .movie)
+            }
+        }
+        let response: TmdbListResponse = try await tmdb(path: endpoint.0, query: ["language": "en-US"])
+        return response.results.compactMap { $0.asMediaItem(defaultKind: endpoint.1) }
+    }
+
+    func listItems(from rawURL: String?, fallbackKind: MediaKind) async throws -> [MediaItem] {
+        guard let rawURL, let url = URL(string: rawURL) else { return [] }
+        let (data, _) = try await URLSession.shared.data(from: url)
+        if let decoded = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            return try await resolveExternalList(decoded, fallbackKind: fallbackKind)
+        }
+        if let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let items = decoded["items"] as? [[String: Any]] ?? decoded["results"] as? [[String: Any]] {
+            return try await resolveExternalList(items, fallbackKind: fallbackKind)
+        }
+        return []
+    }
+
+    func seasonEpisodes(for item: MediaItem, season: Int) async throws -> [TmdbEpisode] {
+        guard let tmdbId = item.tmdbId else { return [] }
+        let response: TmdbEpisodeListResponse = try await tmdb(path: "/tv/\(tmdbId)/season/\(season)", query: ["language": "en-US"])
+        return response.episodes
+    }
+
+    func trailerURL(for item: MediaItem) async throws -> URL? {
+        guard let tmdbId = item.tmdbId else { return nil }
+        let response: TmdbVideoResponse = try await tmdb(path: "/\(item.kind.tmdbPath)/\(tmdbId)/videos", query: ["language": "en-US"])
+        let trailer = response.results.first { $0.site == "YouTube" && $0.type == "Trailer" } ??
+            response.results.first { $0.site == "YouTube" }
+        return trailer.flatMap { URL(string: "https://www.youtube.com/watch?v=\($0.key)") }
+    }
+
+    func cast(for item: MediaItem) async throws -> [TmdbCastMember] {
+        guard let tmdbId = item.tmdbId else { return [] }
+        let response: TmdbCastResponse = try await tmdb(path: "/\(item.kind.tmdbPath)/\(tmdbId)/credits", query: ["language": "en-US"])
+        return Array(response.cast.prefix(16))
+    }
+
+    private func resolveExternalList(_ values: [[String: Any]], fallbackKind: MediaKind) async throws -> [MediaItem] {
+        var resolved: [MediaItem] = []
+        for value in values.prefix(40) {
+            if let tmdb = value["tmdb"] as? Int ?? value["tmdb_id"] as? Int ?? value["id"] as? Int {
+                let kind = ((value["type"] as? String) ?? "").lowercased().contains("show") ? MediaKind.series : fallbackKind
+                let item = TmdbMedia(id: tmdb, title: value["title"] as? String, name: value["name"] as? String, overview: nil, releaseDate: nil, firstAirDate: nil, posterPath: nil, backdropPath: nil, voteAverage: nil, mediaType: kind == .movie ? "movie" : "tv").asMediaItem(defaultKind: kind)
+                if let item { resolved.append(item) }
+            } else if let imdb = value["imdb"] as? String ?? value["imdb_id"] as? String {
+                let find: TmdbFindResponse = try await tmdb(path: "/find/\(imdb)", query: ["external_source": "imdb_id"])
+                if let movie = find.movieResults?.first?.asMediaItem(defaultKind: .movie) {
+                    resolved.append(movie)
+                } else if let show = find.tvResults?.first?.asMediaItem(defaultKind: .series) {
+                    resolved.append(show)
+                }
+            }
+        }
+        return resolved
     }
 
     private func tmdb<T: Decodable>(path: String, query: [String: String]) async throws -> T {

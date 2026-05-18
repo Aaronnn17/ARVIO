@@ -8,6 +8,10 @@ struct CloudPayload: Codable {
     var profiles: [ArvioProfile]? = nil
     var traktTokens: [String: CloudTraktToken]? = nil
     var profileSettingsById: [String: CloudProfileSettings]? = nil
+    var catalogsByProfile: [String: [CatalogConfig]]? = nil
+    var catalogs: [CatalogConfig]? = nil
+    var hiddenPreinstalledByProfile: [String: [String]]? = nil
+    var hiddenPreinstalledCatalogs: [String]? = nil
     var defaultSubtitle: String? = nil
     var defaultAudioLanguage: String? = nil
     var cardLayoutMode: String? = nil
@@ -42,6 +46,10 @@ struct CloudPayload: Codable {
         case profiles
         case traktTokens
         case profileSettingsById
+        case catalogsByProfile
+        case catalogs
+        case hiddenPreinstalledByProfile
+        case hiddenPreinstalledCatalogs
         case defaultSubtitle
         case defaultAudioLanguage
         case cardLayoutMode
@@ -75,6 +83,10 @@ struct CloudPayload: Codable {
         profiles: [ArvioProfile]? = nil,
         traktTokens: [String: CloudTraktToken]? = nil,
         profileSettingsById: [String: CloudProfileSettings]? = nil,
+        catalogsByProfile: [String: [CatalogConfig]]? = nil,
+        catalogs: [CatalogConfig]? = nil,
+        hiddenPreinstalledByProfile: [String: [String]]? = nil,
+        hiddenPreinstalledCatalogs: [String]? = nil,
         iptvByProfile: [String: IptvCloudProfileState]? = nil,
         iptvM3uUrl: String? = nil,
         iptvEpgUrl: String? = nil,
@@ -89,6 +101,10 @@ struct CloudPayload: Codable {
         self.profiles = profiles
         self.traktTokens = traktTokens
         self.profileSettingsById = profileSettingsById
+        self.catalogsByProfile = catalogsByProfile
+        self.catalogs = catalogs
+        self.hiddenPreinstalledByProfile = hiddenPreinstalledByProfile
+        self.hiddenPreinstalledCatalogs = hiddenPreinstalledCatalogs
         self.iptvByProfile = iptvByProfile
         self.iptvM3uUrl = iptvM3uUrl
         self.iptvEpgUrl = iptvEpgUrl
@@ -106,6 +122,10 @@ struct CloudPayload: Codable {
         profiles = try? container.decode([ArvioProfile].self, forKey: .profiles)
         traktTokens = try? container.decode([String: CloudTraktToken].self, forKey: .traktTokens)
         profileSettingsById = try? container.decode([String: CloudProfileSettings].self, forKey: .profileSettingsById)
+        catalogsByProfile = try? container.decode([String: [CatalogConfig]].self, forKey: .catalogsByProfile)
+        catalogs = try? container.decode([CatalogConfig].self, forKey: .catalogs)
+        hiddenPreinstalledByProfile = try? container.decode([String: [String]].self, forKey: .hiddenPreinstalledByProfile)
+        hiddenPreinstalledCatalogs = try? container.decode([String].self, forKey: .hiddenPreinstalledCatalogs)
         defaultSubtitle = try? container.decode(String.self, forKey: .defaultSubtitle)
         defaultAudioLanguage = try? container.decode(String.self, forKey: .defaultAudioLanguage)
         cardLayoutMode = try? container.decode(String.self, forKey: .cardLayoutMode)

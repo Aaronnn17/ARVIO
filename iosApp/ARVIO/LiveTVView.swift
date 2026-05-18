@@ -6,6 +6,7 @@ struct LiveTVView: View {
     @State private var epgUrl = ""
     @State private var stalkerPortalUrl = ""
     @State private var stalkerMacAddress = ""
+    @State private var showProviderSettings = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -14,10 +15,11 @@ struct LiveTVView: View {
 
             VStack(alignment: .leading, spacing: 18) {
                 header
-            if appState.iptv.channels.isEmpty {
-                setupPanel
-            } else {
-                channelGrid
+                if appState.iptv.channels.isEmpty || showProviderSettings {
+                    setupPanel
+                }
+                if !appState.iptv.channels.isEmpty {
+                    channelGrid
                 }
             }
             .padding(28)
@@ -69,6 +71,13 @@ struct LiveTVView: View {
             }
             .buttonStyle(.plain)
             .disabled(appState.iptv.isLoading)
+
+            Button {
+                showProviderSettings.toggle()
+            } label: {
+                SecondaryButton(title: showProviderSettings ? "Hide Provider" : "Provider")
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -78,25 +87,46 @@ struct LiveTVView: View {
                 .padding(.bottom, 16)
 
             ForEach(appState.iptv.groups, id: \.self) { group in
-                Button {
-                    appState.iptv.setGroup(group)
-                } label: {
-                    HStack {
-                        Text(group)
-                            .font(.system(size: 16, weight: group == appState.iptv.selectedGroup ? .bold : .semibold))
-                            .lineLimit(1)
-                        Spacer()
-                        Text(countLabel(for: group))
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(ArvioTheme.textTertiary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        appState.iptv.setGroup(group)
+                    } label: {
+                        HStack {
+                            Text(group)
+                                .font(.system(size: 16, weight: group == appState.iptv.selectedGroup ? .bold : .semibold))
+                                .lineLimit(1)
+                            Spacer()
+                            Text(countLabel(for: group))
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(ArvioTheme.textTertiary)
+                        }
+                        .foregroundStyle(group == appState.iptv.selectedGroup ? ArvioTheme.textPrimary : ArvioTheme.textSecondary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(group == appState.iptv.selectedGroup ? ArvioTheme.gold.opacity(0.15) : Color.clear))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(group == appState.iptv.selectedGroup ? ArvioTheme.gold.opacity(0.85) : Color.clear, lineWidth: 1))
                     }
-                    .foregroundStyle(group == appState.iptv.selectedGroup ? ArvioTheme.textPrimary : ArvioTheme.textSecondary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 13)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(group == appState.iptv.selectedGroup ? ArvioTheme.gold.opacity(0.15) : Color.clear))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(group == appState.iptv.selectedGroup ? ArvioTheme.gold.opacity(0.85) : Color.clear, lineWidth: 1))
+                    .buttonStyle(.plain)
+
+                    if group == appState.iptv.selectedGroup && group != "All" && group != "Favorites" {
+                        HStack(spacing: 8) {
+                            Button(appState.iptv.state.favoriteGroups.contains(group) ? "Unfav" : "Fav") {
+                                Task { await appState.iptv.toggleFavoriteGroup(group) }
+                            }
+                            Button("Hide") {
+                                Task { await appState.iptv.toggleHiddenGroup(group) }
+                            }
+                            Button("Up") {
+                                Task { await appState.iptv.moveGroup(group, direction: -1) }
+                            }
+                            Button("Down") {
+                                Task { await appState.iptv.moveGroup(group, direction: 1) }
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .font(.system(size: 11, weight: .bold))
+                    }
                 }
-                .buttonStyle(.plain)
             }
 
             Spacer()

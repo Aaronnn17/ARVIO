@@ -8,6 +8,7 @@ final class AppState: ObservableObject {
     let addons: AddonService
     let trakt: TraktService
     let tmdb: TmdbService
+    let catalogs: CatalogService
     let streams: StreamResolver
     let iptv: IptvService
     let profiles: ProfileService
@@ -15,6 +16,7 @@ final class AppState: ObservableObject {
     let settings: SettingsService
     @Published var selectedMedia: MediaItem?
     @Published var selectedStream: ResolvedStream?
+    @Published var selectedCatalog: CatalogConfig?
     private var cancellables: Set<AnyCancellable> = []
 
     init() {
@@ -23,6 +25,7 @@ final class AppState: ObservableObject {
         let addons = AddonService(cloud: cloud)
         let trakt = TraktService(cloud: cloud)
         let tmdb = TmdbService()
+        let catalogs = CatalogService(cloud: cloud, tmdb: tmdb, addons: addons)
         let streams = StreamResolver(tmdb: tmdb, addons: addons)
         let iptv = IptvService(cloud: cloud)
         let profiles = ProfileService(cloud: cloud)
@@ -33,6 +36,7 @@ final class AppState: ObservableObject {
         self.addons = addons
         self.trakt = trakt
         self.tmdb = tmdb
+        self.catalogs = catalogs
         self.streams = streams
         self.iptv = iptv
         self.profiles = profiles
@@ -40,6 +44,7 @@ final class AppState: ObservableObject {
         self.settings = settings
         profiles.onActiveProfileChanged = { profileId in
             addons.setActiveProfileId(profileId)
+            catalogs.setActiveProfileId(profileId)
             trakt.setActiveProfileId(profileId)
             iptv.setActiveProfileId(profileId)
             watchHistory.setActiveProfileId(profileId)
@@ -47,7 +52,7 @@ final class AppState: ObservableObject {
             Task { await watchHistory.load() }
         }
 
-        [auth.objectWillChange, cloud.objectWillChange, addons.objectWillChange, trakt.objectWillChange, tmdb.objectWillChange, streams.objectWillChange, iptv.objectWillChange, profiles.objectWillChange, watchHistory.objectWillChange, settings.objectWillChange]
+        [auth.objectWillChange, cloud.objectWillChange, addons.objectWillChange, catalogs.objectWillChange, trakt.objectWillChange, tmdb.objectWillChange, streams.objectWillChange, iptv.objectWillChange, profiles.objectWillChange, watchHistory.objectWillChange, settings.objectWillChange]
             .forEach { publisher in
                 publisher
                     .sink { [weak self] _ in self?.objectWillChange.send() }
@@ -63,6 +68,7 @@ final class AppState: ObservableObject {
         }
         await watchHistory.load()
         await tmdb.loadHome()
+        await catalogs.reloadRows()
     }
 
     func reloadCloudState() async {
@@ -71,6 +77,7 @@ final class AppState: ObservableObject {
         profiles.ensureDefault(email: auth.session?.email)
         let profileId = profiles.activeProfile?.id
         addons.setActiveProfileId(profileId)
+        catalogs.setActiveProfileId(profileId)
         trakt.setActiveProfileId(profileId)
         iptv.setActiveProfileId(profileId)
         watchHistory.setActiveProfileId(profileId)

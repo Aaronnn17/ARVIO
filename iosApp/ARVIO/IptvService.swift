@@ -128,8 +128,21 @@ final class IptvService: ObservableObject {
 
     var groups: [String] {
         let rawGroups = channels.map { $0.group.isEmpty ? "Uncategorized" : $0.group }
-        let unique = Array(Set(rawGroups)).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        return ["All", "Favorites"] + unique
+        let hidden = Set(state.hiddenGroups)
+        let unique = Array(Set(rawGroups))
+            .filter { !hidden.contains($0) }
+            .sorted { left, right in
+                let leftIndex = state.groupOrder.firstIndex(of: left)
+                let rightIndex = state.groupOrder.firstIndex(of: right)
+                switch (leftIndex, rightIndex) {
+                case let (l?, r?): return l < r
+                case (_?, nil): return true
+                case (nil, _?): return false
+                case (nil, nil): return left.localizedCaseInsensitiveCompare(right) == .orderedAscending
+                }
+            }
+        let favoriteGroups = state.favoriteGroups.filter { unique.contains($0) }
+        return ["All", "Favorites"] + favoriteGroups + unique.filter { !favoriteGroups.contains($0) }
     }
 
     var visibleChannels: [IptvChannel] {
@@ -137,9 +150,11 @@ final class IptvService: ObservableObject {
         return channels.filter { channel in
             let groupMatches = selectedGroup == "All" ||
                 (selectedGroup == "Favorites" && state.favoriteChannels.contains(channel.id)) ||
+                (selectedGroup == "Favorites" && state.favoriteGroups.contains(channel.group)) ||
                 channel.group == selectedGroup
+            let hiddenMatches = selectedGroup != "All" || !state.hiddenGroups.contains(channel.group)
             let searchMatches = query.isEmpty || channel.name.localizedCaseInsensitiveContains(query)
-            return groupMatches && searchMatches
+            return groupMatches && hiddenMatches && searchMatches
         }
     }
 
@@ -228,6 +243,46 @@ final class IptvService: ObservableObject {
         } else {
             state.favoriteChannels.append(channel.id)
         }
+        saveLocal()
+        await cloud.save(iptv: state, profileId: activeProfileId)
+    }
+
+    func toggleFavoriteGroup(_ group: String) async {
+        guard group != "All", group != "Favorites" else { return }
+        if state.favoriteGroups.contains(group) {
+            state.favoriteGroups.removeAll { $0 == group }
+        } else {
+            state.favoriteGroups.append(group)
+        }
+        saveLocal()
+        await cloud.save(iptv: state, profileId: activeProfileId)
+    }
+
+    func toggleHiddenGroup(_ group: String) async {
+        guard group != "All", group != "Favorites" else { return }
+        if state.hiddenGroups.contains(group) {
+            state.hiddenGroups.removeAll { $0 == group }
+        } else {
+            state.hiddenGroups.append(group)
+            state.favoriteGroups.removeAll { $0 == group }
+            if selectedGroup == group { selectedGroup = "All" }
+        }
+        saveLocal()
+        await cloud.save(iptv: state, profileId: activeProfileId)
+    }
+
+    func moveGroup(_ group: String, direction: Int) async {
+        guard group != "All", group != "Favorites" else { return }
+        var order = state.groupOrder
+        let visible = Array(Set(channels.map { $0.group.isEmpty ? "Uncategorized" : $0.group })).sorted()
+        for value in visible where !order.contains(value) {
+            order.append(value)
+        }
+        guard let index = order.firstIndex(of: group) else { return }
+        let nextIndex = max(0, min(order.count - 1, index + direction))
+        guard index != nextIndex else { return }
+        order.swapAt(index, nextIndex)
+        state.groupOrder = order
         saveLocal()
         await cloud.save(iptv: state, profileId: activeProfileId)
     }

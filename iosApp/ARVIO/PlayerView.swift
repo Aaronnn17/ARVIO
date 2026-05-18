@@ -58,5 +58,10 @@ struct PlayerView: View {
             positionSeconds: Int(current.rounded()),
             durationSeconds: Int(duration.rounded())
         )
+        if current / duration >= 0.9 {
+            await appState.trakt.markWatched(item: media)
+        } else {
+            try? await appState.trakt.scrobblePause(item: media, progressPercent: (current / duration) * 100)
+        }
     }
 }

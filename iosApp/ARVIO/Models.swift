@@ -81,11 +81,13 @@ struct MediaItem: Identifiable, Hashable {
 
     var backdropURL: URL? {
         guard let backdropPath else { return nil }
+        if backdropPath.hasPrefix("http") { return URL(string: backdropPath) }
         return URL(string: "https://image.tmdb.org/t/p/w1280\(backdropPath)")
     }
 
     var posterURL: URL? {
         guard let posterPath else { return nil }
+        if posterPath.hasPrefix("http") { return URL(string: posterPath) }
         return URL(string: "https://image.tmdb.org/t/p/w780\(posterPath)")
     }
 }

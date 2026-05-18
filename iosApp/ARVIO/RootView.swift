@@ -27,7 +27,7 @@ struct RootView: View {
             .ignoresSafeArea()
 
             VStack(spacing: 0) {
-                if appState.selectedStream == nil && appState.selectedMedia == nil {
+                if appState.selectedStream == nil && appState.selectedMedia == nil && appState.selectedCatalog == nil {
                     TopNavigation(selectedTab: $selectedTab)
                 }
 
@@ -35,6 +35,8 @@ struct RootView: View {
                     PlayerView(stream: stream)
                 } else if let media = appState.selectedMedia {
                     DetailsView(item: media)
+                } else if let catalog = appState.selectedCatalog {
+                    CatalogDetailView(config: catalog)
                 } else {
                     Group {
                         switch selectedTab {
