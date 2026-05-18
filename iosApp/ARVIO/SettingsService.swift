@@ -30,6 +30,139 @@ struct CloudProfileSettings: Codable, Equatable {
     var filterSubtitlesByLanguage: Bool = true
     var homeServerConnectionJson: String?
     var catalogueRowLayoutModes: [String: String] = [:]
+
+    enum CodingKeys: String, CodingKey {
+        case defaultSubtitle
+        case defaultAudioLanguage
+        case contentLanguage
+        case subtitleSize
+        case subtitleColor
+        case subtitleStyle
+        case subtitleOffset
+        case subtitleStylized
+        case cardLayoutMode
+        case frameRateMatchingMode
+        case autoPlayNext
+        case autoPlaySingleSource
+        case autoPlayMinQuality
+        case trailerAutoPlay
+        case trailerSoundEnabled
+        case clockFormat
+        case showBudget
+        case spoilerBlurEnabled
+        case volumeBoostDb
+        case includeSpecials
+        case dnsProvider
+        case subtitleUsageJson
+        case subtitleSettingsUpdatedAt
+        case iptvHiddenGroups
+        case iptvGroupOrder
+        case secondarySubtitle
+        case filterSubtitlesByLanguage
+        case homeServerConnectionJson
+        case catalogueRowLayoutModes
+    }
+
+    init() {}
+
+    init(
+        defaultSubtitle: String = "Off",
+        defaultAudioLanguage: String = "Auto (Original)",
+        contentLanguage: String = "en-US",
+        subtitleSize: String = "Medium",
+        subtitleColor: String = "White",
+        subtitleStyle: String = "Bold",
+        subtitleOffset: String = "Low",
+        subtitleStylized: Bool = true,
+        cardLayoutMode: String = "Landscape",
+        frameRateMatchingMode: String = "Off",
+        autoPlayNext: Bool = true,
+        autoPlaySingleSource: Bool = true,
+        autoPlayMinQuality: String = "Any",
+        trailerAutoPlay: Bool = false,
+        trailerSoundEnabled: Bool = false,
+        clockFormat: String = "24h",
+        showBudget: Bool = true,
+        spoilerBlurEnabled: Bool = false,
+        volumeBoostDb: Int = 0,
+        includeSpecials: Bool = false,
+        dnsProvider: String = "system",
+        subtitleUsageJson: String = "",
+        subtitleSettingsUpdatedAt: Int64 = 0,
+        iptvHiddenGroups: String = "",
+        iptvGroupOrder: String = "",
+        secondarySubtitle: String = "Off",
+        filterSubtitlesByLanguage: Bool = true,
+        homeServerConnectionJson: String? = nil,
+        catalogueRowLayoutModes: [String: String] = [:]
+    ) {
+        self.defaultSubtitle = defaultSubtitle
+        self.defaultAudioLanguage = defaultAudioLanguage
+        self.contentLanguage = contentLanguage
+        self.subtitleSize = subtitleSize
+        self.subtitleColor = subtitleColor
+        self.subtitleStyle = subtitleStyle
+        self.subtitleOffset = subtitleOffset
+        self.subtitleStylized = subtitleStylized
+        self.cardLayoutMode = cardLayoutMode
+        self.frameRateMatchingMode = frameRateMatchingMode
+        self.autoPlayNext = autoPlayNext
+        self.autoPlaySingleSource = autoPlaySingleSource
+        self.autoPlayMinQuality = autoPlayMinQuality
+        self.trailerAutoPlay = trailerAutoPlay
+        self.trailerSoundEnabled = trailerSoundEnabled
+        self.clockFormat = clockFormat
+        self.showBudget = showBudget
+        self.spoilerBlurEnabled = spoilerBlurEnabled
+        self.volumeBoostDb = volumeBoostDb
+        self.includeSpecials = includeSpecials
+        self.dnsProvider = dnsProvider
+        self.subtitleUsageJson = subtitleUsageJson
+        self.subtitleSettingsUpdatedAt = subtitleSettingsUpdatedAt
+        self.iptvHiddenGroups = iptvHiddenGroups
+        self.iptvGroupOrder = iptvGroupOrder
+        self.secondarySubtitle = secondarySubtitle
+        self.filterSubtitlesByLanguage = filterSubtitlesByLanguage
+        self.homeServerConnectionJson = homeServerConnectionJson
+        self.catalogueRowLayoutModes = catalogueRowLayoutModes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        defaultSubtitle = (try? container.decode(String.self, forKey: .defaultSubtitle)) ?? "Off"
+        defaultAudioLanguage = (try? container.decode(String.self, forKey: .defaultAudioLanguage)) ?? "Auto (Original)"
+        contentLanguage = (try? container.decode(String.self, forKey: .contentLanguage)) ?? "en-US"
+        subtitleSize = (try? container.decode(String.self, forKey: .subtitleSize)) ?? "Medium"
+        subtitleColor = (try? container.decode(String.self, forKey: .subtitleColor)) ?? "White"
+        subtitleStyle = (try? container.decode(String.self, forKey: .subtitleStyle)) ?? "Bold"
+        subtitleOffset = (try? container.decode(String.self, forKey: .subtitleOffset)) ?? "Low"
+        subtitleStylized = (try? container.decode(Bool.self, forKey: .subtitleStylized)) ?? true
+        cardLayoutMode = (try? container.decode(String.self, forKey: .cardLayoutMode)) ?? "Landscape"
+        frameRateMatchingMode = (try? container.decode(String.self, forKey: .frameRateMatchingMode)) ?? "Off"
+        autoPlayNext = (try? container.decode(Bool.self, forKey: .autoPlayNext)) ?? true
+        autoPlaySingleSource = (try? container.decode(Bool.self, forKey: .autoPlaySingleSource)) ?? true
+        autoPlayMinQuality = (try? container.decode(String.self, forKey: .autoPlayMinQuality)) ?? "Any"
+        trailerAutoPlay = (try? container.decode(Bool.self, forKey: .trailerAutoPlay)) ?? false
+        trailerSoundEnabled = (try? container.decode(Bool.self, forKey: .trailerSoundEnabled)) ?? false
+        clockFormat = (try? container.decode(String.self, forKey: .clockFormat)) ?? "24h"
+        showBudget = (try? container.decode(Bool.self, forKey: .showBudget)) ?? true
+        spoilerBlurEnabled = (try? container.decode(Bool.self, forKey: .spoilerBlurEnabled)) ?? false
+        volumeBoostDb = (try? container.decode(Int.self, forKey: .volumeBoostDb)) ?? 0
+        includeSpecials = (try? container.decode(Bool.self, forKey: .includeSpecials)) ?? false
+        dnsProvider = (try? container.decode(String.self, forKey: .dnsProvider)) ?? "system"
+        subtitleUsageJson = (try? container.decode(String.self, forKey: .subtitleUsageJson)) ?? ""
+        if let intValue = try? container.decode(Int64.self, forKey: .subtitleSettingsUpdatedAt) {
+            subtitleSettingsUpdatedAt = intValue
+        } else {
+            subtitleSettingsUpdatedAt = Int64((try? container.decode(Int.self, forKey: .subtitleSettingsUpdatedAt)) ?? 0)
+        }
+        iptvHiddenGroups = (try? container.decode(String.self, forKey: .iptvHiddenGroups)) ?? ""
+        iptvGroupOrder = (try? container.decode(String.self, forKey: .iptvGroupOrder)) ?? ""
+        secondarySubtitle = (try? container.decode(String.self, forKey: .secondarySubtitle)) ?? "Off"
+        filterSubtitlesByLanguage = (try? container.decode(Bool.self, forKey: .filterSubtitlesByLanguage)) ?? true
+        homeServerConnectionJson = try? container.decode(String.self, forKey: .homeServerConnectionJson)
+        catalogueRowLayoutModes = (try? container.decode([String: String].self, forKey: .catalogueRowLayoutModes)) ?? [:]
+    }
 }
 
 struct GlobalCloudSettings: Codable, Equatable {

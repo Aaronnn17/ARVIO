@@ -4,6 +4,8 @@ struct LiveTVView: View {
     @EnvironmentObject private var appState: AppState
     @State private var m3uUrl = ""
     @State private var epgUrl = ""
+    @State private var stalkerPortalUrl = ""
+    @State private var stalkerMacAddress = ""
 
     var body: some View {
         HStack(spacing: 0) {
@@ -24,7 +26,10 @@ struct LiveTVView: View {
         .onAppear {
             m3uUrl = appState.iptv.state.m3uUrl
             epgUrl = appState.iptv.state.epgUrl
-            if appState.iptv.channels.isEmpty && !appState.iptv.state.m3uUrl.isEmpty {
+            stalkerPortalUrl = appState.iptv.state.stalkerPortalUrl
+            stalkerMacAddress = appState.iptv.state.stalkerMacAddress
+            if appState.iptv.channels.isEmpty &&
+                (!appState.iptv.state.m3uUrl.isEmpty || !appState.iptv.state.stalkerPortalUrl.isEmpty) {
                 Task { await appState.iptv.reload() }
             }
         }
@@ -116,10 +121,22 @@ struct LiveTVView: View {
             TextField("EPG URL (optional)", text: $epgUrl)
                 .textInputAutocapitalization(.never)
                 .settingsField()
+            TextField("Stalker portal URL (optional)", text: $stalkerPortalUrl)
+                .textInputAutocapitalization(.never)
+                .settingsField()
+            TextField("Stalker MAC address (optional)", text: $stalkerMacAddress)
+                .textInputAutocapitalization(.never)
+                .settingsField()
 
             HStack {
                 Button {
-                    Task { await appState.iptv.saveConfig(m3uUrl: m3uUrl, epgUrl: epgUrl) }
+                    Task {
+                        await appState.iptv.saveConfig(m3uUrl: m3uUrl, epgUrl: epgUrl)
+                        if !stalkerPortalUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                            !stalkerMacAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            await appState.iptv.saveStalkerConfig(portalUrl: stalkerPortalUrl, macAddress: stalkerMacAddress)
+                        }
+                    }
                 } label: {
                     PrimaryButton(title: "Save and Load")
                 }

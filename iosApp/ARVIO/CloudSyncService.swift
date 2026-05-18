@@ -6,6 +6,7 @@ struct CloudPayload: Codable {
     var addonsByProfile: [String: [InstalledAddon]]? = nil
     var activeProfileId: String? = nil
     var profiles: [ArvioProfile]? = nil
+    var traktTokens: [String: CloudTraktToken]? = nil
     var profileSettingsById: [String: CloudProfileSettings]? = nil
     var defaultSubtitle: String? = nil
     var defaultAudioLanguage: String? = nil
@@ -39,6 +40,7 @@ struct CloudPayload: Codable {
         case addonsByProfile
         case activeProfileId
         case profiles
+        case traktTokens
         case profileSettingsById
         case defaultSubtitle
         case defaultAudioLanguage
@@ -71,6 +73,7 @@ struct CloudPayload: Codable {
         addonsByProfile: [String: [InstalledAddon]]? = nil,
         activeProfileId: String? = nil,
         profiles: [ArvioProfile]? = nil,
+        traktTokens: [String: CloudTraktToken]? = nil,
         profileSettingsById: [String: CloudProfileSettings]? = nil,
         iptvByProfile: [String: IptvCloudProfileState]? = nil,
         iptvM3uUrl: String? = nil,
@@ -84,6 +87,7 @@ struct CloudPayload: Codable {
         self.addonsByProfile = addonsByProfile
         self.activeProfileId = activeProfileId
         self.profiles = profiles
+        self.traktTokens = traktTokens
         self.profileSettingsById = profileSettingsById
         self.iptvByProfile = iptvByProfile
         self.iptvM3uUrl = iptvM3uUrl
@@ -100,6 +104,7 @@ struct CloudPayload: Codable {
         addonsByProfile = try? container.decode([String: [InstalledAddon]].self, forKey: .addonsByProfile)
         activeProfileId = try? container.decode(String.self, forKey: .activeProfileId)
         profiles = try? container.decode([ArvioProfile].self, forKey: .profiles)
+        traktTokens = try? container.decode([String: CloudTraktToken].self, forKey: .traktTokens)
         profileSettingsById = try? container.decode([String: CloudProfileSettings].self, forKey: .profileSettingsById)
         defaultSubtitle = try? container.decode(String.self, forKey: .defaultSubtitle)
         defaultAudioLanguage = try? container.decode(String.self, forKey: .defaultAudioLanguage)
@@ -204,6 +209,10 @@ final class CloudSyncService: ObservableObject {
         await save(addons: nil, iptv: nil, settings: settings, globalSettings: globalSettings, settingsProfileId: profileId)
     }
 
+    func save(traktToken: CloudTraktToken?, profileId: String) async {
+        await save(addons: nil, iptv: nil, traktToken: traktToken, traktProfileId: profileId)
+    }
+
     private func save(
         addons: [InstalledAddon]?,
         addonProfileId: String? = nil,
@@ -213,7 +222,9 @@ final class CloudSyncService: ObservableObject {
         activeProfileId: String? = nil,
         settings: CloudProfileSettings? = nil,
         globalSettings: GlobalCloudSettings? = nil,
-        settingsProfileId: String? = nil
+        settingsProfileId: String? = nil,
+        traktToken: CloudTraktToken? = nil,
+        traktProfileId: String? = nil
     ) async {
         guard let session = auth.session else { return }
         isSyncing = true
@@ -247,6 +258,15 @@ final class CloudSyncService: ObservableObject {
                 } else {
                     object["activeProfileId"] = NSNull()
                 }
+            }
+            if let traktProfileId {
+                var tokens = object["traktTokens"] as? [String: Any] ?? [:]
+                if let traktToken {
+                    tokens[traktProfileId] = try jsonObject(traktToken)
+                } else {
+                    tokens.removeValue(forKey: traktProfileId)
+                }
+                object["traktTokens"] = tokens
             }
             if let settings {
                 let profileId = settingsProfileId ?? session.userId

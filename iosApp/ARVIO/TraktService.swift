@@ -81,6 +81,12 @@ struct TraktWatchlistItem: Identifiable, Decodable, Hashable {
     }
 }
 
+struct CloudTraktToken: Codable, Equatable {
+    let accessToken: String
+    let refreshToken: String?
+    let expiresAt: Int64?
+}
+
 private struct TraktWatchlistIds: Decodable {
     let tmdb: Int?
 }
@@ -90,6 +96,16 @@ private struct DeviceCodeRequest: Encodable {
 
 private struct DeviceTokenRequest: Encodable {
     let code: String
+}
+
+private struct RefreshTokenRequest: Encodable {
+    let refreshToken: String
+    let grantType = "refresh_token"
+
+    enum CodingKeys: String, CodingKey {
+        case refreshToken = "refresh_token"
+        case grantType = "grant_type"
+    }
 }
 
 private struct DeviceTokenResponse: Decodable {
@@ -166,8 +182,11 @@ final class TraktService: ObservableObject {
     private let client = JSONClient()
     private let keychain = KeychainStore()
     private let tokenAccount = "trakt-token"
+    private let cloud: CloudSyncService
+    private var activeProfileId = "default"
 
-    init() {
+    init(cloud: CloudSyncService) {
+        self.cloud = cloud
         token = keychain.load(TraktToken.self, account: tokenAccount)
     }
 
@@ -215,6 +234,7 @@ final class TraktService: ObservableObject {
             )
             try keychain.save(newToken, account: tokenAccount)
             token = newToken
+            await cloud.save(traktToken: newToken.asCloudToken, profileId: activeProfileId)
             deviceCode = nil
             errorMessage = nil
             await loadWatchlist()
@@ -228,17 +248,37 @@ final class TraktService: ObservableObject {
         watchlist = []
         deviceCode = nil
         keychain.delete(account: tokenAccount)
+        Task { await cloud.save(traktToken: nil, profileId: activeProfileId) }
+    }
+
+    func setActiveProfileId(_ profileId: String?) {
+        let resolved = profileId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        activeProfileId = resolved.isEmpty ? "default" : resolved
+        loadFromCloud()
+    }
+
+    func loadFromCloud() {
+        guard let cloudToken = cloud.payload.traktTokens?[activeProfileId] else { return }
+        let expires = cloudToken.expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) } ??
+            Date().addingTimeInterval(3600)
+        let restored = TraktToken(
+            accessToken: cloudToken.accessToken,
+            refreshToken: cloudToken.refreshToken ?? "",
+            expiresAt: expires
+        )
+        token = restored
+        try? keychain.save(restored, account: tokenAccount)
     }
 
     func loadWatchlist() async {
-        guard let token else { return }
+        guard let accessToken = await accessToken() else { return }
         isLoading = true
         defer { isLoading = false }
         do {
             guard let url = proxyURL(path: "/sync/watchlist") else { return }
             watchlist = try await client.request(
                 url,
-                headers: proxyHeaders(userToken: token.accessToken)
+                headers: proxyHeaders(userToken: accessToken)
             )
             errorMessage = nil
         } catch {
@@ -247,16 +287,16 @@ final class TraktService: ObservableObject {
     }
 
     func loadPlaybackProgress() async throws -> [TraktPlaybackItem] {
-        guard let token else { return [] }
+        guard let accessToken = await accessToken() else { return [] }
         guard let url = proxyURL(path: "/sync/playback") else { return [] }
         return try await client.request(
             url,
-            headers: proxyHeaders(userToken: token.accessToken)
+            headers: proxyHeaders(userToken: accessToken)
         )
     }
 
     func addToWatchlist(item: MediaItem) async {
-        guard let token, let tmdbId = item.tmdbId else { return }
+        guard let accessToken = await accessToken(), let tmdbId = item.tmdbId else { return }
         isLoading = true
         defer { isLoading = false }
         do {
@@ -269,7 +309,31 @@ final class TraktService: ObservableObject {
             let _: EmptyResponse = try await client.request(
                 url,
                 method: "POST",
-                headers: proxyHeaders(userToken: token.accessToken),
+                headers: proxyHeaders(userToken: accessToken),
+                body: body
+            )
+            await loadWatchlist()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func removeFromWatchlist(item: TraktWatchlistItem) async {
+        guard let accessToken = await accessToken(), let tmdbId = item.tmdbId else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            guard let url = proxyURL(path: "/sync/watchlist/remove", method: "POST") else { return }
+            let media = TraktScrobbleMedia(ids: TraktScrobbleIds(tmdb: tmdbId))
+            let body = TraktWatchlistMutationBody(
+                movies: item.type == "movie" ? [media] : nil,
+                shows: item.type == "show" ? [media] : nil
+            )
+            let _: EmptyResponse = try await client.request(
+                url,
+                method: "POST",
+                headers: proxyHeaders(userToken: accessToken),
                 body: body
             )
             await loadWatchlist()
@@ -280,7 +344,7 @@ final class TraktService: ObservableObject {
     }
 
     func scrobblePause(item: MediaItem, progressPercent: Double) async throws {
-        guard let token, let tmdbId = item.tmdbId else { return }
+        guard let accessToken = await accessToken(), let tmdbId = item.tmdbId else { return }
         guard let url = proxyURL(path: "/scrobble/pause", method: "POST") else { return }
         let progress = min(max(progressPercent, 0), 100)
         let body: TraktScrobbleBody
@@ -303,9 +367,58 @@ final class TraktService: ObservableObject {
         let _: EmptyResponse = try await client.request(
             url,
             method: "POST",
-            headers: proxyHeaders(userToken: token.accessToken),
+            headers: proxyHeaders(userToken: accessToken),
             body: body
         )
+    }
+
+    func markWatched(item: MediaItem) async {
+        guard let accessToken = await accessToken(), let tmdbId = item.tmdbId else { return }
+        do {
+            guard let url = proxyURL(path: "/sync/history", method: "POST") else { return }
+            let media = TraktScrobbleMedia(ids: TraktScrobbleIds(tmdb: tmdbId))
+            let body = TraktWatchlistMutationBody(
+                movies: item.kind == .movie ? [media] : nil,
+                shows: item.kind == .series ? [media] : nil
+            )
+            let _: EmptyResponse = try await client.request(
+                url,
+                method: "POST",
+                headers: proxyHeaders(userToken: accessToken),
+                body: body
+            )
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func accessToken() async -> String? {
+        guard let current = token else { return nil }
+        if current.expiresAt.timeIntervalSinceNow > 3600 || current.refreshToken.isEmpty {
+            return current.accessToken
+        }
+        do {
+            guard let url = proxyURL(path: "/oauth/token", method: "POST") else { return current.accessToken }
+            let response: DeviceTokenResponse = try await client.request(
+                url,
+                method: "POST",
+                headers: proxyHeaders(),
+                body: RefreshTokenRequest(refreshToken: current.refreshToken)
+            )
+            let refreshed = TraktToken(
+                accessToken: response.accessToken,
+                refreshToken: response.refreshToken,
+                expiresAt: Date().addingTimeInterval(TimeInterval(response.expiresIn))
+            )
+            try keychain.save(refreshed, account: tokenAccount)
+            token = refreshed
+            await cloud.save(traktToken: refreshed.asCloudToken, profileId: activeProfileId)
+            return refreshed.accessToken
+        } catch {
+            errorMessage = error.localizedDescription
+            return current.expiresAt.timeIntervalSinceNow > 0 ? current.accessToken : nil
+        }
     }
 
     private func proxyURL(path: String, method: String = "GET") -> URL? {
@@ -326,5 +439,15 @@ final class TraktService: ObservableObject {
             headers["x-user-token"] = userToken
         }
         return headers
+    }
+}
+
+private extension TraktToken {
+    var asCloudToken: CloudTraktToken {
+        CloudTraktToken(
+            accessToken: accessToken,
+            refreshToken: refreshToken.isEmpty ? nil : refreshToken,
+            expiresAt: Int64(expiresAt.timeIntervalSince1970)
+        )
     }
 }

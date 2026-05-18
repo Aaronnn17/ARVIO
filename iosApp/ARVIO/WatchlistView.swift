@@ -31,24 +31,28 @@ struct WatchlistView: View {
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
                         ForEach(appState.trakt.watchlist) { item in
-                            Button {
-                                appState.selectedMedia = item.asMediaItem()
-                            } label: {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    PosterBackdrop(item: item.asMediaItem())
-                                        .frame(width: 210, height: 118)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    Text(item.title)
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .foregroundStyle(ArvioTheme.textPrimary)
-                                        .lineLimit(1)
-                                    Text(([item.type.capitalized] + (item.year.map { [String($0)] } ?? [])).joined(separator: " - "))
-                                        .font(.system(size: 13, weight: .medium))
-                                        .foregroundStyle(ArvioTheme.textTertiary)
+                            VStack(alignment: .leading, spacing: 10) {
+                                PosterBackdrop(item: item.asMediaItem())
+                                    .frame(width: 210, height: 118)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                Text(item.title)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(ArvioTheme.textPrimary)
+                                    .lineLimit(1)
+                                Text(([item.type.capitalized] + (item.year.map { [String($0)] } ?? [])).joined(separator: " - "))
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(ArvioTheme.textTertiary)
+                                Button("Remove") {
+                                    Task { await appState.trakt.removeFromWatchlist(item: item) }
                                 }
-                                .frame(width: 210, alignment: .leading)
+                                .font(.system(size: 12, weight: .bold))
+                                .buttonStyle(.bordered)
                             }
-                            .buttonStyle(.plain)
+                            .frame(width: 210, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                appState.selectedMedia = item.asMediaItem()
+                            }
                         }
                     }
                 }

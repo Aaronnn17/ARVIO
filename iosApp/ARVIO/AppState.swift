@@ -21,7 +21,7 @@ final class AppState: ObservableObject {
         let auth = AuthService()
         let cloud = CloudSyncService(auth: auth)
         let addons = AddonService(cloud: cloud)
-        let trakt = TraktService()
+        let trakt = TraktService(cloud: cloud)
         let tmdb = TmdbService()
         let streams = StreamResolver(tmdb: tmdb, addons: addons)
         let iptv = IptvService(cloud: cloud)
@@ -40,6 +40,7 @@ final class AppState: ObservableObject {
         self.settings = settings
         profiles.onActiveProfileChanged = { profileId in
             addons.setActiveProfileId(profileId)
+            trakt.setActiveProfileId(profileId)
             iptv.setActiveProfileId(profileId)
             watchHistory.setActiveProfileId(profileId)
             settings.setActiveProfileId(profileId)
@@ -70,6 +71,7 @@ final class AppState: ObservableObject {
         profiles.ensureDefault(email: auth.session?.email)
         let profileId = profiles.activeProfile?.id
         addons.setActiveProfileId(profileId)
+        trakt.setActiveProfileId(profileId)
         iptv.setActiveProfileId(profileId)
         watchHistory.setActiveProfileId(profileId)
         settings.setActiveProfileId(profileId)
