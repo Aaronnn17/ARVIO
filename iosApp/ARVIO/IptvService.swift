@@ -282,7 +282,7 @@ final class IptvService: ObservableObject {
             throw ArvioError.requestFailed("Xtream channels failed to load")
         }
         let streams = try JSONDecoder().decode([XtreamLiveStream].self, from: data)
-        return streams.compactMap { stream in
+        return streams.compactMap { stream -> IptvChannel? in
             guard let streamId = stream.streamId else { return nil }
             let streamUrl = "\(credentials.baseUrl)/live/\(credentials.username)/\(credentials.password)/\(streamId).ts"
             return IptvChannel(
@@ -529,7 +529,7 @@ private final class StalkerClient {
         token = try await handshake()
         let genres = try await getGenres()
         let rawChannels = try await getChannels()
-        return rawChannels.compactMap { channel in
+        return rawChannels.compactMap { channel -> IptvChannel? in
             let command = channel["cmd"] as? String ?? channel["streamUrl"] as? String ?? ""
             guard !command.isEmpty else { return nil }
             let streamUrl = resolveStreamCommand(command)
