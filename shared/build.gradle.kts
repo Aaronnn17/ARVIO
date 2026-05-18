@@ -1,13 +1,25 @@
+import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
+
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 kotlin {
+    val framework = XCFramework("ArvioShared")
+
     jvm()
-    iosX64()
-    iosArm64()
-    iosSimulatorArm64()
+    listOf(
+        iosX64(),
+        iosArm64(),
+        iosSimulatorArm64()
+    ).forEach { target ->
+        target.binaries.framework {
+            baseName = "ArvioShared"
+            isStatic = true
+            framework.add(this)
+        }
+    }
 
     sourceSets {
         commonMain.dependencies {

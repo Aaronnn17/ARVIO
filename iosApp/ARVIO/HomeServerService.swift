@@ -796,12 +796,12 @@ enum HomeServerService {
 
     private static func qualityRank(_ quality: String) -> Int {
         let value = quality.lowercased()
-        if value.contains("4k") || value.contains("2160") { return 2160 }
+        if SharedCoreBridge.qualityRank(quality) >= 4 { return 2160 }
         if value.contains("1440") { return 1440 }
-        if value.contains("1080") { return 1080 }
-        if value.contains("720") { return 720 }
+        if SharedCoreBridge.qualityRank(quality) >= 3 { return 1080 }
+        if SharedCoreBridge.qualityRank(quality) >= 2 { return 720 }
         if value.contains("576") { return 576 }
-        if value.contains("480") { return 480 }
+        if SharedCoreBridge.qualityRank(quality) >= 1 { return 480 }
         return 0
     }
 

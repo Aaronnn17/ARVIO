@@ -547,8 +547,8 @@ final class IptvService: ObservableObject {
             score += 140
         }
 
-        let normalizedCandidate = title.normalizedMediaTitle
-        let normalizedItem = item.title.normalizedMediaTitle
+        let normalizedCandidate = SharedCoreBridge.normalizeTitle(title)
+        let normalizedItem = SharedCoreBridge.normalizeTitle(item.title)
         if normalizedCandidate == normalizedItem {
             score += 90
         } else if normalizedCandidate.contains(normalizedItem) || normalizedItem.contains(normalizedCandidate) {
@@ -574,11 +574,7 @@ final class IptvService: ObservableObject {
     }
 
     private func quality(from text: String) -> String {
-        if text.range(of: "2160p|4K|UHD", options: [.regularExpression, .caseInsensitive]) != nil { return "4K" }
-        if text.range(of: "1080p|FHD", options: [.regularExpression, .caseInsensitive]) != nil { return "1080p" }
-        if text.range(of: "720p|HD", options: [.regularExpression, .caseInsensitive]) != nil { return "720p" }
-        if text.range(of: "480p|SD", options: [.regularExpression, .caseInsensitive]) != nil { return "480p" }
-        return "Direct"
+        SharedCoreBridge.qualityLabel(from: text)
     }
 
     private func sourceQualityScore(_ text: String) -> Int {
@@ -859,24 +855,12 @@ private extension String {
         trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
-    var normalizedMediaTitle: String {
-        let lower = trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let scalars = lower.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : " " }
-        return String(scalars)
-            .split(separator: " ")
-            .filter { value in
-                let token = String(value)
-                return token != "the" && token != "a" && token != "an"
-            }
-            .joined(separator: " ")
-    }
-
     var onlyDigits: String {
         String(filter(\.isNumber))
     }
 
     var xtreamPathComponent: String {
-        addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? self
+        SharedCoreBridge.xtreamPathComponent(self)
     }
 }
 

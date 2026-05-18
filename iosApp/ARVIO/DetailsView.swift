@@ -247,11 +247,8 @@ struct DetailsView: View {
     }
 
     private func qualityRank(_ value: String) -> Int {
-        if value.localizedCaseInsensitiveContains("4K") || value.contains("2160") { return 4 }
-        if value.contains("1080") { return 3 }
-        if value.contains("720") { return 2 }
         if value == "Any" || value == "Unknown" { return 0 }
-        return 1
+        return SharedCoreBridge.qualityRank(value)
     }
 }
 
