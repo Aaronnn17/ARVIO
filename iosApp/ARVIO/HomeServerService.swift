@@ -35,7 +35,9 @@ struct HomeServerConnection: Codable, Identifiable, Hashable {
         enabled && !serverUrl.isEmpty && !accessToken.isEmpty && (serverKind == .plex || !userId.isEmpty)
     }
     var displayLabel: String {
-        let base = [displayName, serverName, URL(string: serverUrl)?.host, "Home Server"].first { ($0 ?? "").isEmpty == false } ?? "Home Server"
+        let base = [displayName, serverName, URL(string: serverUrl)?.host, "Home Server"]
+            .compactMap { $0 }
+            .first { !$0.isEmpty } ?? "Home Server"
         switch serverKind {
         case .plex where !base.localizedCaseInsensitiveContains("plex"): return "Plex \(base)"
         case .jellyfin where !base.localizedCaseInsensitiveContains("jellyfin"): return "Jellyfin \(base)"
@@ -728,7 +730,8 @@ enum HomeServerService {
     }
 
     private static func metadataItems(_ json: [String: Any], kind: HomeServerKind) -> [[String: Any]] {
-        if let values = array(json, path: ["MediaContainer", "Metadata"]), !values.isEmpty { return values }
+        let values = array(json, path: ["MediaContainer", "Metadata"])
+        if !values.isEmpty { return values }
         return array(json, key: "Metadata")
     }
 
