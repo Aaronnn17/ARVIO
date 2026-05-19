@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.util.LocalDeviceType
 
 /**
  * A single EPG program cell placed inside a row with an absolute offset.
