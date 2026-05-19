@@ -297,6 +297,21 @@ fun LiveTvScreen(
         playingChannelId?.let { enrichedState.value.index.byId[it] }
             ?: filteredChannels.firstOrNull { it.id == playingChannelId }
     }
+    val currentNowNext = remember(playingChannelId, playingCatchupProgram, state.snapshot.nowNext) {
+        val live = playingChannelId?.let { state.snapshot.nowNext[it] }
+        val catchup = playingCatchupProgram
+        if (catchup != null) {
+            com.arflix.tv.data.model.IptvNowNext(
+                now = catchup,
+                next = null,
+                later = null,
+                upcoming = emptyList(),
+                recent = emptyList()
+            )
+        } else {
+            live
+        }
+    }
 
     val epgPrefetchIds = remember(filteredChannels, selectedCategoryId, playingChannelId) {
         val maxPrefetch = if (selectedCategoryId == "all") 96 else 180
@@ -675,7 +690,7 @@ fun LiveTvScreen(
                         exoPlayer = exoPlayer,
                         channel = playingChannel,
                         clockTickMillis = guideClockMillis,
-                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        nowNext = currentNowNext,
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
                         favoriteSet = favSet,
                         onFullscreenClick = openFullScreenPlayer,
@@ -772,7 +787,7 @@ fun LiveTvScreen(
                         exoPlayer = exoPlayer,
                         channel = playingChannel,
                         clockTickMillis = guideClockMillis,
-                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        nowNext = currentNowNext,
                         onFavoriteToggle = { viewModel.toggleFavoriteChannel(it) },
                         favoriteSet = favSet,
                         onFullscreenClick = openFullScreenPlayer,
@@ -873,7 +888,7 @@ fun LiveTvScreen(
                 if (isFullScreen) {
                     FullscreenHud(
                         channel = playingChannel,
-                        nowNext = playingChannelId?.let { state.snapshot.nowNext[it] },
+                        nowNext = currentNowNext,
                         pokeSignal = hudPokeSignal,
                         modifier = Modifier,
                     )

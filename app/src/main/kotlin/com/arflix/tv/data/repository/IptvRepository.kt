@@ -584,11 +584,16 @@ class IptvRepository @Inject constructor(
         val endUnix = program.endUtcMillis / 1000L
         val durationMin = ((program.endUtcMillis - program.startUtcMillis) / 60_000L).coerceAtLeast(1L)
 
-        return when (channel.catchupType?.lowercase(Locale.US)) {
+        val resolvedType = channel.catchupType?.lowercase(Locale.US)
+            ?: if (resolveXtreamCredentials(channel.streamUrl) != null && resolveXtreamStreamId(channel) != null) "xtream" else "default"
+
+        return when (resolvedType) {
             "xtream" -> {
                 val creds = resolveXtreamCredentials(channel.streamUrl) ?: return channel.streamUrl
-                val streamId = channel.xtreamStreamId ?: return channel.streamUrl
-                val startDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(program.startUtcMillis), ZoneId.of("UTC"))
+                val streamId = channel.xtreamStreamId ?: resolveXtreamStreamId(channel) ?: return channel.streamUrl
+                val offset = getServerOffset()
+                val serverStartMs = program.startUtcMillis + offset
+                val startDt = LocalDateTime.ofInstant(Instant.ofEpochMilli(serverStartMs), ZoneId.of("UTC"))
                 val startStr = startDt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd:HH-mm"))
                 "${creds.baseUrl}/timeshift/${creds.username}/${creds.password}/$durationMin/$startStr/$streamId.ts"
             }
@@ -4187,6 +4192,20 @@ class IptvRepository @Inject constructor(
         streamIdToChannelIds: Map<String, List<String>>,
         channelsById: Map<String, IptvChannel> = emptyMap()
     ): Map<String, IptvNowNext> {
+        // Detect and save server timezone offset
+        val sampleListing = listings.firstOrNull { it.startTimestamp != null && !it.start.isNullOrBlank() }
+        if (sampleListing != null) {
+            val startMs = sampleListing.startTimestamp?.toLongOrNull()?.let { it * 1000L }
+            val parsedMs = parseXtreamDateTime(sampleListing.start)
+            if (startMs != null && parsedMs != null) {
+                val offset = parsedMs - startMs
+                if (Math.abs(offset) <= 18 * 60 * 60 * 1000L) {
+                    saveServerOffset(offset)
+                    System.err.println("[EPG] Detected Xtream Server timezone offset: ${offset / 3600000.0} hours")
+                }
+            }
+        }
+
         val nowMs = System.currentTimeMillis()
         val oldestRecentCutoff = oldestRecentCutoff(channelsById.values, nowMs)
 
@@ -4315,6 +4334,22 @@ class IptvRepository @Inject constructor(
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun saveServerOffset(offset: Long) {
+        runCatching {
+            context.getSharedPreferences("arvio_iptv_prefs", android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putLong("xtream_server_offset", offset)
+                .apply()
+        }
+    }
+
+    private fun getServerOffset(): Long {
+        return runCatching {
+            context.getSharedPreferences("arvio_iptv_prefs", android.content.Context.MODE_PRIVATE)
+                .getLong("xtream_server_offset", 0L)
+        }.getOrDefault(0L)
     }
 
     /**

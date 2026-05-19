@@ -105,7 +105,11 @@ fun EpgGrid(
     val programFocusTargets = remember { mutableStateMapOf<String, List<ProgramFocusTarget>>() }
 
     val maxCatchupDays = remember(channels) {
-        (channels.maxOfOrNull { it.catchupDays } ?: 0).coerceIn(0, 7)
+        (channels.maxOfOrNull { ch ->
+            if (ch.catchupDays > 0) ch.catchupDays
+            else if (!ch.source.catchupType.isNullOrBlank() || !ch.source.catchupSource.isNullOrBlank()) 7
+            else 0
+        } ?: 0).coerceIn(0, 7)
     }
     val todayStartMillis = remember { roundedWindowStart() }
     val windowStartMillis = remember(todayStartMillis, maxCatchupDays) {
@@ -650,10 +654,18 @@ private data class ProgramFocusTarget(val startMin: Int, val endMin: Int) {
     }
 }
 
-private fun ProgramPlacement.isCatchupSupported(channel: EnrichedChannel, nowMillis: Long): Boolean =
-    channel.catchupDays > 0 &&
+private fun ProgramPlacement.isCatchupSupported(channel: EnrichedChannel, nowMillis: Long): Boolean {
+    val days = if (channel.catchupDays > 0) {
+        channel.catchupDays
+    } else if (!channel.source.catchupType.isNullOrBlank() || !channel.source.catchupSource.isNullOrBlank()) {
+        7
+    } else {
+        0
+    }
+    return days > 0 &&
         !isPlaceholder &&
-        program.startUtcMillis >= nowMillis - channel.catchupDays * 24L * 60L * 60_000L
+        program.startUtcMillis >= nowMillis - days * 24L * 60L * 60_000L
+}
 
 private fun ProgramPlacement.canFocus(channel: EnrichedChannel, nowMillis: Long): Boolean =
     !isPast || isCatchupSupported(channel, nowMillis)
