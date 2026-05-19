@@ -685,16 +685,18 @@ private fun buildProgramPlacements(
             val gapEnd = minOf(program.startUtcMillis, windowEndMillis)
             if (gapEnd > cursor) {
                 // Clamp placeholder start to at most 60 mins before now to avoid horizontal scroll jumps
-                val placeholderStart = maxOf(cursor, nowMillis - 60 * 60_000L)
-                if (gapEnd > placeholderStart) {
+                var placeholderStart = maxOf(cursor, nowMillis - 60 * 60_000L)
+                while (placeholderStart < gapEnd) {
+                    val blockEnd = minOf(placeholderStart + 60 * 60_000L, gapEnd)
                     placements += ProgramPlacement(
-                        program = IptvProgram("No Information", startUtcMillis = placeholderStart, endUtcMillis = gapEnd),
+                        program = IptvProgram("No Information", startUtcMillis = placeholderStart, endUtcMillis = blockEnd),
                         startMin = ((placeholderStart - windowStartMillis) / 60_000L).toInt(),
-                        durationMin = ((gapEnd - placeholderStart) / 60_000L).toInt().coerceAtLeast(1),
-                        isNow = nowMillis in placeholderStart until gapEnd,
-                        isPast = gapEnd <= nowMillis,
+                        durationMin = ((blockEnd - placeholderStart) / 60_000L).toInt().coerceAtLeast(1),
+                        isNow = nowMillis in placeholderStart until blockEnd,
+                        isPast = blockEnd <= nowMillis,
                         isPlaceholder = true,
                     )
+                    placeholderStart = blockEnd
                 }
                 cursor = gapEnd
             }
@@ -720,16 +722,18 @@ private fun buildProgramPlacements(
     // 3. Fill trailing gap
     if (cursor < windowEndMillis) {
         // Clamp placeholder start to at most 60 mins before now to avoid horizontal scroll jumps
-        val placeholderStart = maxOf(cursor, nowMillis - 60 * 60_000L)
-        if (windowEndMillis > placeholderStart) {
+        var placeholderStart = maxOf(cursor, nowMillis - 60 * 60_000L)
+        while (placeholderStart < windowEndMillis) {
+            val blockEnd = minOf(placeholderStart + 60 * 60_000L, windowEndMillis)
             placements += ProgramPlacement(
-                program = IptvProgram("No Information", startUtcMillis = placeholderStart, endUtcMillis = windowEndMillis),
+                program = IptvProgram("No Information", startUtcMillis = placeholderStart, endUtcMillis = blockEnd),
                 startMin = ((placeholderStart - windowStartMillis) / 60_000L).toInt(),
-                durationMin = ((windowEndMillis - placeholderStart) / 60_000L).toInt().coerceAtLeast(1),
-                isNow = nowMillis in placeholderStart until windowEndMillis,
-                isPast = windowEndMillis <= nowMillis,
+                durationMin = ((blockEnd - placeholderStart) / 60_000L).toInt().coerceAtLeast(1),
+                isNow = nowMillis in placeholderStart until blockEnd,
+                isPast = blockEnd <= nowMillis,
                 isPlaceholder = true,
             )
+            placeholderStart = blockEnd
         }
     }
 
