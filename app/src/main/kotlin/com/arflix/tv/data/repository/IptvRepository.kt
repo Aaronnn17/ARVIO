@@ -5757,7 +5757,15 @@ class IptvRepository @Inject constructor(
         val titleKey = if (IptvIdSentinels.isReal(imdb) || IptvIdSentinels.isReal(tmdb)) {
             ""
         } else {
-            toCanonicalTitleKey(title)
+            val canonical = toCanonicalTitleKey(title)
+            // For title-only matches, append year to disambiguate remakes
+            // (e.g., Dune 1984 vs Dune 2021)
+            val year = parseYear(title)
+            if (canonical.isNotBlank() && year != null) {
+                "$canonical|$year"
+            } else {
+                canonical
+            }
         }
         // No real id AND no title token → uncacheable (would collide).
         if (!IptvIdSentinels.isReal(imdb) && !IptvIdSentinels.isReal(tmdb) && titleKey.isBlank()) {
