@@ -396,7 +396,7 @@ fun EpgGrid(
                                     totalWidth = totalWidth,
                                     pxPerMin = pxPerMin,
                                     stripe = idx % 2 == 1,
-                                    isActive = ch.id == selectedChannelId,
+                                    isActive = ch.id == selectedChannelId && focusMode == EpgGridFocusMode.Epg,
                                     rowHeight = rowHeight,
                                     onClick = { program -> onProgramSelect(ch, program) },
                                     onFocused = { onChannelFocused(ch) },
@@ -404,7 +404,7 @@ fun EpgGrid(
                                         requestNearestProgramFocus(targetRowIdx, anchorStartMin)
                                     },
                                     onMoveLeftFromStart = {
-                                        onExitEpg(ch)
+                                        // Stay in EPG; do not exit EPG or pass focus to channel list on left press
                                         true
                                     },
                                     rowIdx = idx,
