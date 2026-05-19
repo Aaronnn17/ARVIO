@@ -72,6 +72,8 @@ fun ProgramCell(
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
+    val deviceType = LocalDeviceType.current
+    val isTouchDevice = deviceType.isTouchDevice()
     var focused by remember { mutableStateOf(false) }
     val baseBg = when {
         isNow -> LiveColors.FocusBg
@@ -158,7 +160,7 @@ fun ProgramCell(
                 }
             )
             .then(
-                if (focusable) {
+                if (focusable || isTouchDevice) {
                     Modifier.pointerInput(Unit) { detectTapGestures(onTap = { onClick() }) }
                 } else {
                     Modifier

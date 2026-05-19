@@ -872,7 +872,19 @@ fun LiveTvScreen(
                             Key.DirectionLeft, Key.DirectionRight -> { hudPokeSignal++; false }
                             else -> false
                         }
-                    },
+                    }
+                    .then(
+                        if (isTouchDevice) {
+                            Modifier.clickable(
+                                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                hudPokeSignal++
+                            }
+                        } else {
+                            Modifier
+                        }
+                    ),
             ) {
                 androidx.compose.ui.viewinterop.AndroidView(
                     factory = { ctx ->
@@ -890,6 +902,7 @@ fun LiveTvScreen(
                         channel = playingChannel,
                         nowNext = currentNowNext,
                         pokeSignal = hudPokeSignal,
+                        onBackClick = if (isTouchDevice) { { isFullScreen = false } } else null,
                         modifier = Modifier,
                     )
                 }
