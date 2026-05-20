@@ -23,6 +23,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween as animTween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -2194,16 +2196,55 @@ fun PlayerScreen(
                 ) {
                     // Left side - clearlogo/title and episode info
                     Column(modifier = Modifier.weight(1f)) {
+                        val isPaused = hasPlaybackStarted && !isPlaying
+
                         if (!uiState.logoUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = uiState.logoUrl,
-                                contentDescription = uiState.title,
-                                alignment = Alignment.CenterStart,
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .height(32.dp)
-                                    .width(240.dp)
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                // "NOW PLAYING" slides in from the left when paused, pushes logo right
+                                AnimatedVisibility(
+                                    visible = isPaused,
+                                    enter = slideInHorizontally(
+                                        animationSpec = animTween(300, easing = FastOutSlowInEasing)
+                                    ) { -it },
+                                    exit = slideOutHorizontally(
+                                        animationSpec = animTween(250, easing = FastOutSlowInEasing)
+                                    ) { -it }
+                                ) {
+                                    Text(
+                                        text = "NOW PLAYING",
+                                        style = ArflixTypography.body.copy(
+                                            fontSize = 18.sp,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = playerAccent,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(end = 12.dp)
+                                    )
+                                }
+
+                                // Clear logo with shimmer overlay when paused
+                                Box {
+                                    AsyncImage(
+                                        model = uiState.logoUrl,
+                                        contentDescription = uiState.title,
+                                        alignment = Alignment.CenterStart,
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .height(32.dp)
+                                            .width(240.dp)
+                                    )
+                                    // Shimmer effect sweeps over the logo when paused
+                                    if (isPaused) {
+                                        PauseShimmerOverlay(
+                                            modifier = Modifier.matchParentSize()
+                                        )
+                                    }
+                                }
+                            }
                         } else {
                             Text(
                                 text = uiState.title,
@@ -4412,6 +4453,46 @@ private class PlaybackCookieJar : CookieJar {
             }
         }
         return valid
+    }
+}
+
+/**
+ * Animated shimmer overlay that sweeps a glossy highlight across the clear logo
+ * while the player is paused. Uses a linear gradient that translates left-to-right
+ * in an infinite repeat loop.
+ */
+@Composable
+private fun PauseShimmerOverlay(modifier: Modifier = Modifier) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pauseShimmer")
+    val shimmerProgress by infiniteTransition.animateFloat(
+        initialValue = -0.5f,
+        targetValue = 1.5f,
+        animationSpec = infiniteRepeatable(
+            animation = animTween(durationMillis = 1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmerProgress"
+    )
+
+    Box(modifier = modifier) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val shimmerWidth = size.width * 0.45f
+            val offsetX = size.width * shimmerProgress
+            drawRect(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        Color.White.copy(alpha = 0.10f),
+                        Color.White.copy(alpha = 0.30f),
+                        Color.White.copy(alpha = 0.10f),
+                        Color.Transparent
+                    ),
+                    start = Offset(offsetX, 0f),
+                    end = Offset(offsetX + shimmerWidth, size.height)
+                ),
+                size = size
+            )
+        }
     }
 }
 
