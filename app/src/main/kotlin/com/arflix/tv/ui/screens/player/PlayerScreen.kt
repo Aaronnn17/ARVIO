@@ -2215,7 +2215,7 @@ fun PlayerScreen(
                             ) { -it }
                         ) {
                             Text(
-                                text = "NOW PLAYING",
+                                text = stringResource(R.string.now_playing),
                                 style = ArflixTypography.body.copy(
                                     fontSize = 22.sp,
                                     fontWeight = FontWeight.Bold
@@ -2261,8 +2261,7 @@ fun PlayerScreen(
                             if (seasonNumber != null && episodeNumber != null) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.padding(top = 6.dp)
                                 ) {
                                     Text(
@@ -4458,37 +4457,49 @@ private class PlaybackCookieJar : CookieJar {
     }
 }
 
+// ── Shimmer constants ──────────────────────────────────────────────────
+private const val SHIMMER_START_OFFSET = -0.5f
+private const val SHIMMER_END_OFFSET = 1.5f
+private const val SHIMMER_DURATION_MS = 1500L
+private const val SHIMMER_WIDTH_FRACTION = 0.45f
+
 /**
  * Animated shimmer overlay that sweeps a glossy highlight across the clear logo
  * while the player is paused. Uses a linear gradient that translates left-to-right
- * in an infinite repeat loop.
+ * in an infinite repeat loop. Colors are hoisted with [remember] to avoid
+ * per-frame allocations.
  */
 @Composable
 private fun PauseShimmerOverlay(modifier: Modifier = Modifier) {
     val infiniteTransition = rememberInfiniteTransition(label = "pauseShimmer")
     val shimmerProgress by infiniteTransition.animateFloat(
-        initialValue = -0.5f,
-        targetValue = 1.5f,
+        initialValue = SHIMMER_START_OFFSET,
+        targetValue = SHIMMER_END_OFFSET,
         animationSpec = infiniteRepeatable(
-            animation = animTween(durationMillis = 1500, easing = FastOutSlowInEasing),
+            animation = animTween(durationMillis = SHIMMER_DURATION_MS, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "shimmerProgress"
     )
 
+    // Hoist gradient colors to avoid per-frame allocations
+    val shimmerColors = remember {
+        listOf(
+            Color.Transparent,
+            Color.White.copy(alpha = 0.10f),
+            Color.White.copy(alpha = 0.30f),
+            Color.White.copy(alpha = 0.10f),
+            Color.Transparent
+        )
+    }
+
     Box(modifier = modifier) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val shimmerWidth = size.width * 0.45f
+            val shimmerWidth = size.width * SHIMMER_WIDTH_FRACTION
             val offsetX = size.width * shimmerProgress
             drawRect(
                 brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        Color.White.copy(alpha = 0.10f),
-                        Color.White.copy(alpha = 0.30f),
-                        Color.White.copy(alpha = 0.10f),
-                        Color.Transparent
-                    ),
+                    colors = shimmerColors,
                     start = Offset(offsetX, 0f),
                     end = Offset(offsetX + shimmerWidth, size.height)
                 ),
