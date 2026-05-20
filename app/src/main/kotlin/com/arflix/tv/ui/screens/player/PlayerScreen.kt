@@ -2306,6 +2306,7 @@ fun PlayerScreen(
                             }
                         }
                     }
+                    } // closes inner Row (NOW PLAYING + content column)
 
                     // Right side - Ends At + Clock
                     Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 8.dp)) {
