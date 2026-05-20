@@ -4460,7 +4460,7 @@ private class PlaybackCookieJar : CookieJar {
 // ── Shimmer constants ──────────────────────────────────────────────────
 private const val SHIMMER_START_OFFSET = -0.5f
 private const val SHIMMER_END_OFFSET = 1.5f
-private const val SHIMMER_DURATION_MS = 1500L
+private const val SHIMMER_DURATION_MS = 1500
 private const val SHIMMER_WIDTH_FRACTION = 0.45f
 
 /**
