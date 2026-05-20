@@ -2195,11 +2195,16 @@ fun PlayerScreen(
                     verticalAlignment = Alignment.Top
                 ) {
                     // Left side - clearlogo/title, episode info, and source info
-                    Row(modifier = Modifier.weight(1f)) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         val isPaused = hasPlaybackStarted && !isPlaying
 
                         // "NOW PLAYING" slides in from the left when paused,
-                        // pushing ALL left-side content (logo, S/E, quality) right as a unit
+                        // pushing ALL left-side content (logo, S/E, quality) right as a unit.
+                        // Text is vertically centered against the full block height and sized
+                        // at 22sp to visually balance the 32dp clear logo.
                         AnimatedVisibility(
                             visible = isPaused,
                             enter = slideInHorizontally(
@@ -2212,13 +2217,13 @@ fun PlayerScreen(
                             Text(
                                 text = "NOW PLAYING",
                                 style = ArflixTypography.body.copy(
-                                    fontSize = 18.sp,
+                                    fontSize = 22.sp,
                                     fontWeight = FontWeight.Bold
                                 ),
                                 color = playerAccent,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(end = 12.dp)
+                                modifier = Modifier.padding(end = 16.dp)
                             )
                         }
 
