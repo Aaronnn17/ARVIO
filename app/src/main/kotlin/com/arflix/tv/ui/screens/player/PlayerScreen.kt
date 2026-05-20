@@ -2194,39 +2194,36 @@ fun PlayerScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.Top
                 ) {
-                    // Left side - clearlogo/title and episode info
-                    Column(modifier = Modifier.weight(1f)) {
+                    // Left side - clearlogo/title, episode info, and source info
+                    Row(modifier = Modifier.weight(1f)) {
                         val isPaused = hasPlaybackStarted && !isPlaying
 
-                        if (!uiState.logoUrl.isNullOrBlank()) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.height(32.dp)
-                            ) {
-                                // "NOW PLAYING" slides in from the left when paused, pushes logo right
-                                AnimatedVisibility(
-                                    visible = isPaused,
-                                    enter = slideInHorizontally(
-                                        animationSpec = animTween(300, easing = FastOutSlowInEasing)
-                                    ) { -it },
-                                    exit = slideOutHorizontally(
-                                        animationSpec = animTween(250, easing = FastOutSlowInEasing)
-                                    ) { -it }
-                                ) {
-                                    Text(
-                                        text = "NOW PLAYING",
-                                        style = ArflixTypography.body.copy(
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = playerAccent,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(end = 12.dp)
-                                    )
-                                }
+                        // "NOW PLAYING" slides in from the left when paused,
+                        // pushing ALL left-side content (logo, S/E, quality) right as a unit
+                        AnimatedVisibility(
+                            visible = isPaused,
+                            enter = slideInHorizontally(
+                                animationSpec = animTween(300, easing = FastOutSlowInEasing)
+                            ) { -it },
+                            exit = slideOutHorizontally(
+                                animationSpec = animTween(250, easing = FastOutSlowInEasing)
+                            ) { -it }
+                        ) {
+                            Text(
+                                text = "NOW PLAYING",
+                                style = ArflixTypography.body.copy(
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = playerAccent,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(end = 12.dp)
+                            )
+                        }
 
-                                // Clear logo with shimmer overlay when paused
+                        Column {
+                            if (!uiState.logoUrl.isNullOrBlank()) {
                                 Box {
                                     AsyncImage(
                                         model = uiState.logoUrl,
@@ -2244,50 +2241,49 @@ fun PlayerScreen(
                                         )
                                     }
                                 }
-                            }
-                        } else {
-                            Text(
-                                text = uiState.title,
-                                style = ArflixTypography.sectionTitle.copy(
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = TextPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        if (seasonNumber != null && episodeNumber != null) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ,
-                                modifier = Modifier.padding(top = 6.dp)
-                            ) {
+                            } else {
                                 Text(
-                                    text = "S$seasonNumber E$episodeNumber",
-                                    style = ArflixTypography.body.copy(fontSize = 16.sp),
-                                    color = TextSecondary,
+                                    text = uiState.title,
+                                    style = ArflixTypography.sectionTitle.copy(
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = TextPrimary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
-                                // Episode title would be shown here if available
                             }
-                        }
-                        // Source info
-                        uiState.selectedStream?.let { stream ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier.padding(top = 4.dp)
-                            ) {
-                                Text(
-                                    text = stream.quality,
-                                    style = ArflixTypography.caption.copy(fontSize = 12.sp),
-                                    color = playerAccent,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                            if (seasonNumber != null && episodeNumber != null) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ,
+                                    modifier = Modifier.padding(top = 6.dp)
+                                ) {
+                                    Text(
+                                        text = "S$seasonNumber E$episodeNumber",
+                                        style = ArflixTypography.body.copy(fontSize = 16.sp),
+                                        color = TextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    // Episode title would be shown here if available
+                                }
+                            }
+                            // Source info
+                            uiState.selectedStream?.let { stream ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(top = 4.dp)
+                                ) {
+                                    Text(
+                                        text = stream.quality,
+                                        style = ArflixTypography.caption.copy(fontSize = 12.sp),
+                                        color = playerAccent,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 stream.sizeBytes?.let { size ->
                                     Text(
                                         text = "•",
