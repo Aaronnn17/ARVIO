@@ -3694,7 +3694,7 @@ private fun MobileSettingsRow(
                 Column {
                     Text(
                         text = title,
-                        style = ArflixTypography.body,
+                        style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
                         color = TextPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -3702,7 +3702,7 @@ private fun MobileSettingsRow(
                     if (subtitle.isNotEmpty()) {
                         Text(
                             text = subtitle,
-                            style = ArflixTypography.caption,
+                            style = ArflixTypography.caption.copy(fontSize = 13.sp),
                             color = TextSecondary,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
@@ -3712,13 +3712,40 @@ private fun MobileSettingsRow(
             }
             if (value.isNotEmpty()) {
                 Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = value,
-                    style = ArflixTypography.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (value == "On" || value == "Off") {
+                    val isChecked = value == "On"
+                    Box(
+                        modifier = Modifier
+                            .width(44.dp)
+                            .height(24.dp)
+                            .background(
+                                color = if (isChecked) SuccessGreen else Color.White.copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(13.dp)
+                            )
+                            .padding(3.dp),
+                        contentAlignment = if (isChecked) Alignment.CenterEnd else Alignment.CenterStart
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .background(
+                                    color = Color.White,
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                        )
+                    }
+                } else {
+                    Text(
+                        text = value,
+                        style = ArflixTypography.caption.copy(
+                            fontSize = 13.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                        ),
+                        color = TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
         if (showDivider) {
