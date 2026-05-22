@@ -5377,7 +5377,7 @@ private fun HomeServerSettings(
 ) {
     val hasConnections = connections.isNotEmpty()
     Column {
-        if (!LocalDeviceType.current.isTouchDevice()) {
+        if (LocalDeviceType.current.isTouchDevice()) {
             Text(
                 text = "Home Server",
                 style = ArflixTypography.sectionTitle,
@@ -5560,15 +5560,21 @@ private fun IptvSettings(
             val epgSourceCount = playlist.settingsEpgInput()
                 .lineSequence()
                 .count { it.isNotBlank() }
+            val focusRingColor = resolveFocusBorderColor(fallback = Pink)
             Row(
                 modifier = Modifier
                     .settingsFocusSlot(rowIndex)
                     .fillMaxWidth()
                     .background(
                         if (isSelected) Pink.copy(alpha = 0.2f)
-                        else if (focusedIndex == rowIndex) Color.White.copy(alpha = 0.08f) 
-                        else Color.Transparent,
+                        else if (focusedIndex == rowIndex) Color.White.copy(alpha = 0.12f) 
+                        else Color.White.copy(alpha = 0.05f),
                         RoundedCornerShape(12.dp)
+                    )
+                    .border(
+                        width = if (focusedIndex == rowIndex) 2.dp else 0.dp,
+                        color = if (focusedIndex == rowIndex) focusRingColor else Color.Transparent,
+                        shape = RoundedCornerShape(12.dp)
                     )
                     .then(
                         if (isMobile) {
@@ -5607,7 +5613,7 @@ private fun IptvSettings(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = playlist.name,
-                        style = ArflixTypography.body,
+                        style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
                         color = if (focusedIndex == rowIndex || isSelected) TextPrimary else TextSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -5621,7 +5627,7 @@ private fun IptvSettings(
                                 epgSourceCount == 1 -> append(" • EPG")
                             }
                         },
-                        style = ArflixTypography.caption,
+                        style = ArflixTypography.caption.copy(fontSize = 13.sp),
                         color = TextSecondary.copy(alpha = 0.72f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -5804,15 +5810,15 @@ private fun SettingsRow(
                 onClick = onClick
             )
             .background(
-                if (isFocused) Color.White.copy(alpha = 0.105f) else Color.White.copy(alpha = 0.055f),
-                RoundedCornerShape(10.dp)
+                if (isFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
+                RoundedCornerShape(12.dp)
             )
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
                 color = if (isFocused) focusRingColor else Color.Transparent,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(12.dp)
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -5827,7 +5833,7 @@ private fun SettingsRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
-                    style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
+                    style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
                     color = TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -5848,15 +5854,14 @@ private fun SettingsRow(
         if (value.isNotBlank()) {
             Box(
                 modifier = Modifier
-                    .widthIn(min = 80.dp, max = 158.dp)
-                    .background(Color.Black.copy(alpha = 0.22f), RoundedCornerShape(999.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(999.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .background(Pink.copy(alpha = 0.15f), RoundedCornerShape(999.dp))
+                    .border(1.dp, Pink.copy(alpha = 0.3f), RoundedCornerShape(999.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = value.uppercase(),
-                    style = ArflixTypography.label.copy(fontSize = 12.sp),
+                    style = ArflixTypography.label.copy(fontSize = 11.sp, letterSpacing = 0.5.sp),
                     color = Pink,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -5887,40 +5892,42 @@ private fun SettingsToggleRow(
                 onClick = { onToggle(!isEnabled) }
             )
             .background(
-                if (isFocused) Color.White.copy(alpha = 0.105f) else Color.White.copy(alpha = 0.055f),
-                RoundedCornerShape(10.dp)
+                if (isFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
+                RoundedCornerShape(12.dp)
             )
             .border(
                 width = if (isFocused) 2.dp else 0.dp,
                 color = if (isFocused) focusRingColor else Color.Transparent,
-                shape = RoundedCornerShape(10.dp)
+                shape = RoundedCornerShape(12.dp)
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
+                style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
                 color = TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = subtitle,
-                style = ArflixTypography.caption.copy(fontSize = 13.sp),
-                color = TextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            if (subtitle.isNotEmpty()) {
+                Text(
+                    text = subtitle,
+                    style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                    color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
         
         // Custom toggle indicator instead of Switch
         Box(
             modifier = Modifier
-                .width(42.dp)
-                .height(22.dp)
+                .width(44.dp)
+                .height(24.dp)
                 .background(
                     color = if (isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f),
                     shape = RoundedCornerShape(13.dp)
@@ -5930,7 +5937,7 @@ private fun SettingsToggleRow(
         ) {
             Box(
                 modifier = Modifier
-                    .size(16.dp)
+                    .size(18.dp)
                     .background(
                         color = Color.White,
                         shape = RoundedCornerShape(10.dp)
@@ -6812,12 +6819,12 @@ private fun CatalogsSettings(
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
 
     Column {
-        if (!isMobile) {
+        if (isMobile) {
             Text(
                 text = stringResource(R.string.catalogs),
                 style = ArflixTypography.sectionTitle,
                 color = TextPrimary,
-                modifier = Modifier.padding(bottom = 12.dp)
+                modifier = Modifier.padding(bottom = 24.dp)
             )
         } else if (selectionMode) {
             Row(
@@ -6863,12 +6870,15 @@ private fun CatalogsSettings(
                 }
             }
         }
-        Text(
-            text = stringResource(R.string.catalogs),
-            style = ArflixTypography.caption,
-            color = TextSecondary.copy(alpha = 0.65f),
-            modifier = Modifier.padding(bottom = 20.dp)
-        )
+        
+        if (isMobile) {
+            Text(
+                text = stringResource(R.string.catalogs),
+                style = ArflixTypography.caption,
+                color = TextSecondary.copy(alpha = 0.65f),
+                modifier = Modifier.padding(bottom = 20.dp)
+            )
+        }
 
         SettingsRow(
             icon = Icons.Default.Add,
@@ -6915,15 +6925,21 @@ private fun CatalogsSettings(
             val isSelected = selectedIds.contains(catalog.id)
             val layoutToggleEnabled = catalog.kind != CatalogKind.COLLECTION_RAIL
             val layoutRowKey = remember(catalog.id, catalog.kind) { catalogueLayoutRowKey(catalog) }
+            val focusRingColor = resolveFocusBorderColor(fallback = Pink)
             Row(
                 modifier = Modifier
                     .settingsFocusSlot(rowFocusIndex)
                     .fillMaxWidth()
                     .background(
                         if (isSelected) Pink.copy(alpha = 0.2f)
-                        else if (isRowFocused) Color.White.copy(alpha = 0.08f) 
-                        else Color.Transparent,
+                        else if (isRowFocused) Color.White.copy(alpha = 0.12f) 
+                        else Color.White.copy(alpha = 0.05f),
                         RoundedCornerShape(12.dp)
+                    )
+                    .border(
+                        width = if (isRowFocused) 2.dp else 0.dp,
+                        color = if (isRowFocused) focusRingColor else Color.Transparent,
+                        shape = RoundedCornerShape(12.dp)
                     )
                     .then(
                         if (isMobile) {
@@ -6962,7 +6978,7 @@ private fun CatalogsSettings(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = title,
-                        style = ArflixTypography.body,
+                        style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
                         color = if (isRowFocused || isSelected) TextPrimary else TextSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -6970,7 +6986,7 @@ private fun CatalogsSettings(
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = subtitle,
-                        style = ArflixTypography.caption,
+                        style = ArflixTypography.caption.copy(fontSize = 13.sp),
                         color = TextSecondary.copy(alpha = 0.7f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -7155,7 +7171,7 @@ private fun StremioAddonsSettings(
                 .fillMaxWidth()
                 .clickable(onClick = onAddCustomAddon)
                 .background(
-                    if (focusedIndex == addons.size) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
+                    if (focusedIndex == addons.size) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
                     RoundedCornerShape(12.dp)
                 )
                 .border(
@@ -7163,7 +7179,7 @@ private fun StremioAddonsSettings(
                     color = if (focusedIndex == addons.size) Pink else Color.Transparent,
                     shape = RoundedCornerShape(12.dp)
                 )
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
@@ -7224,7 +7240,7 @@ private fun AddonRow(
             .fillMaxWidth()
             .clickable { onToggle() }
             .background(
-                if (isFocused) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
+                if (isFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
                 RoundedCornerShape(12.dp)
             )
             .border(
@@ -7232,7 +7248,7 @@ private fun AddonRow(
                 color = if (isFocused) focusRingColor else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
-            .padding(16.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -7259,14 +7275,14 @@ private fun AddonRow(
             Column {
                 Text(
                     text = addon.name,
-                    style = ArflixTypography.cardTitle,
+                    style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
                     color = TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = addon.description,
-                    style = ArflixTypography.caption,
+                    style = ArflixTypography.caption.copy(fontSize = 13.sp),
                     color = TextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -7302,8 +7318,8 @@ private fun AddonRow(
             ) {
                 Box(
                     modifier = Modifier
-                        .width(48.dp)
-                        .height(26.dp)
+                        .width(44.dp)
+                        .height(24.dp)
                         .background(
                             color = if (isEnabled) SuccessGreen else Color.White.copy(alpha = 0.2f),
                             shape = RoundedCornerShape(13.dp)
@@ -7313,7 +7329,7 @@ private fun AddonRow(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(20.dp)
+                            .size(18.dp)
                             .background(
                                 color = Color.White,
                                 shape = RoundedCornerShape(10.dp)
@@ -7377,12 +7393,14 @@ private fun AccountsSettings(
     onOpenDataDeletion: () -> Unit
 ) {
     Column {
-        Text(
-            text = stringResource(R.string.accounts),
-            style = ArflixTypography.sectionTitle,
-            color = TextPrimary,
-            modifier = Modifier.padding(bottom = 24.dp)
-        )
+        if (LocalDeviceType.current.isTouchDevice()) {
+            Text(
+                text = stringResource(R.string.accounts),
+                style = ArflixTypography.sectionTitle,
+                color = TextPrimary,
+                modifier = Modifier.padding(bottom = 24.dp)
+            )
+        }
 
         AccountRow(
             name = "ARVIO Cloud",
@@ -7487,7 +7505,7 @@ private fun AccountActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                if (isFocused) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
+                if (isFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
                 RoundedCornerShape(12.dp)
             )
             .border(
@@ -7495,47 +7513,48 @@ private fun AccountActionRow(
                 color = if (isFocused) focusRingColor else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
-            .padding(20.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                style = ArflixTypography.cardTitle,
+                style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
                 color = TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = description,
-                style = ArflixTypography.caption,
-                color = TextSecondary,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+            if (description.isNotEmpty()) {
+                Text(
+                    text = description,
+                    style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                    color = TextSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        Spacer(modifier = Modifier.width(12.dp))
+        Box(
             modifier = Modifier
                 .background(
-                    if (isEnabled) Pink.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.1f),
-                    RoundedCornerShape(8.dp)
+                    if (isEnabled) Pink.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                    RoundedCornerShape(999.dp)
                 )
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .border(
+                    1.dp,
+                    if (isEnabled) Pink.copy(alpha = 0.3f) else Color.White.copy(alpha = 0.15f),
+                    RoundedCornerShape(999.dp)
+                )
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = if (isEnabled) Icons.Default.LinkOff else Icons.Default.Link,
-                contentDescription = null,
-                tint = if (isEnabled) Pink else TextSecondary,
-                modifier = Modifier.size(16.dp)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = actionLabel.uppercase(),
-                style = ArflixTypography.label,
-                color = if (isEnabled) Pink else TextSecondary
+                style = ArflixTypography.label.copy(fontSize = 11.sp, letterSpacing = 0.5.sp),
+                color = if (isEnabled) Pink else TextSecondary,
+                maxLines = 1
             )
         }
     }
@@ -7557,7 +7576,7 @@ private fun SettingsActionRow(
             .fillMaxWidth()
             .clickable { onClick() }
             .background(
-                if (isFocused) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
+                if (isFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
                 RoundedCornerShape(12.dp)
             )
             .border(
@@ -7565,47 +7584,43 @@ private fun SettingsActionRow(
                 color = if (isFocused) focusRingColor else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
-            .padding(20.dp),
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                style = ArflixTypography.cardTitle,
+                style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
                 color = TextPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = description,
-                style = ArflixTypography.caption,
-                color = TextSecondary,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+            if (description.isNotEmpty()) {
+                Text(
+                    text = description,
+                    style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                    color = TextSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
+        Spacer(modifier = Modifier.width(12.dp))
+        Box(
             modifier = Modifier
-                .background(
-                    Pink.copy(alpha = 0.2f),
-                    RoundedCornerShape(8.dp)
-                )
-                .padding(horizontal = 12.dp, vertical = 6.dp)
+                .background(Pink.copy(alpha = 0.15f), RoundedCornerShape(999.dp))
+                .border(1.dp, Pink.copy(alpha = 0.3f), RoundedCornerShape(999.dp))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = Icons.Default.Person,
-                contentDescription = null,
-                tint = Pink,
-                modifier = Modifier.size(16.dp)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = actionLabel.uppercase(),
-                style = ArflixTypography.label,
-                color = Pink
+                style = ArflixTypography.label.copy(fontSize = 11.sp, letterSpacing = 0.5.sp),
+                color = Pink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -7635,7 +7650,7 @@ private fun AccountRow(
                 if (isConnected) onDisconnect() else onConnect()
             }
             .background(
-                if (isFocused) Color.White.copy(alpha = 0.1f) else BackgroundElevated,
+                if (isFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
                 RoundedCornerShape(12.dp)
             )
             .border(
@@ -7643,7 +7658,7 @@ private fun AccountRow(
                 color = if (isFocused) focusRingColor else Color.Transparent,
                 shape = RoundedCornerShape(12.dp)
             )
-            .padding(20.dp)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -7653,38 +7668,36 @@ private fun AccountRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = name,
-                    style = ArflixTypography.cardTitle,
+                    style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
                     color = TextPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = description,
-                    style = ArflixTypography.caption,
-                    color = TextSecondary,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (description.isNotEmpty()) {
+                    Text(
+                        text = description,
+                        style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                        color = TextSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
+            Spacer(modifier = Modifier.width(12.dp))
             
             if (isConnected) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                Box(
                     modifier = Modifier
-                        .background(SuccessGreen.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .background(SuccessGreen.copy(alpha = 0.15f), RoundedCornerShape(999.dp))
+                        .border(1.dp, SuccessGreen.copy(alpha = 0.3f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        tint = SuccessGreen,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = stringResource(R.string.connected).uppercase(),
-                        style = ArflixTypography.label,
-                        color = SuccessGreen
+                        style = ArflixTypography.label.copy(fontSize = 11.sp, letterSpacing = 0.5.sp),
+                        color = SuccessGreen,
+                        maxLines = 1
                     )
                 }
             } else if (isWorking) {
@@ -7694,23 +7707,18 @@ private fun AccountRow(
                     strokeWidth = 2.dp
                 )
             } else {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                Box(
                     modifier = Modifier
-                        .background(Pink.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .background(Pink.copy(alpha = 0.15f), RoundedCornerShape(999.dp))
+                        .border(1.dp, Pink.copy(alpha = 0.3f), RoundedCornerShape(999.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Link,
-                        contentDescription = null,
-                        tint = Pink,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = stringResource(R.string.connect).uppercase(),
-                        style = ArflixTypography.label,
-                        color = Pink
+                        style = ArflixTypography.label.copy(fontSize = 11.sp, letterSpacing = 0.5.sp),
+                        color = Pink,
+                        maxLines = 1
                     )
                 }
             }
@@ -7721,7 +7729,7 @@ private fun AccountRow(
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = expirationText,
-                style = ArflixTypography.caption,
+                style = ArflixTypography.caption.copy(fontSize = 13.sp),
                 color = TextSecondary.copy(alpha = 0.7f)
             )
         }
@@ -7732,7 +7740,7 @@ private fun AccountRow(
 
             Text(
                 text = "Go to: $authUrl",
-                style = ArflixTypography.caption,
+                style = ArflixTypography.caption.copy(fontSize = 13.sp),
                 color = TextSecondary.copy(alpha = 0.9f)
             )
 
@@ -7741,7 +7749,7 @@ private fun AccountRow(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = stringResource(R.string.enter_code),
-                    style = ArflixTypography.caption,
+                    style = ArflixTypography.caption.copy(fontSize = 13.sp),
                     color = TextSecondary.copy(alpha = 0.9f)
                 )
                 Spacer(modifier = Modifier.width(10.dp))
@@ -7763,7 +7771,7 @@ private fun AccountRow(
 
             Text(
                 text = stringResource(R.string.loading_label),
-                style = ArflixTypography.caption,
+                style = ArflixTypography.caption.copy(fontSize = 13.sp),
                 color = TextSecondary.copy(alpha = 0.7f)
             )
         }
