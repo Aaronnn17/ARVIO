@@ -3238,7 +3238,7 @@ private fun MobileSettingsMainPage(
                         ) {
                             Icon(imageVector = icon, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(24.dp))
                             Spacer(modifier = Modifier.width(16.dp))
-                            Text(text = name, style = ArflixTypography.body, color = TextPrimary, modifier = Modifier.weight(1f))
+                            Text(text = name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, modifier = Modifier.weight(1f))
                             Icon(imageVector = Icons.Default.ChevronRight, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(20.dp))
                         }
                         if (index < categories.lastIndex) {
@@ -3596,87 +3596,205 @@ private fun MobileSettingsSubPage(
                 }
             }
             "Plugins & Extensions" -> {
-                StremioAddonsSettings(
-                    addons = stremioAddons,
-                    focusedIndex = -1,
-                    focusedActionIndex = 0,
-                    onToggleAddon = { viewModel.toggleAddon(it) },
-                    onDeleteAddon = { viewModel.removeAddon(it) },
-                    onAddCustomAddon = onAddCustomAddonClick
-                )
+                MobileSettingsCategory(title = "ADDONS") {
+                    if (stremioAddons.isEmpty()) {
+                        MobileSettingsRow(
+                            icon = Icons.Default.Extension,
+                            title = "No addons installed",
+                            value = "",
+                            isFocused = false,
+                            showDivider = false,
+                            onClick = {}
+                        )
+                    } else {
+                        stremioAddons.forEachIndexed { index, addon ->
+                            MobileSettingsRow(
+                                icon = Icons.Default.Extension,
+                                title = addon.name,
+                                subtitle = addon.description,
+                                value = if (addon.isEnabled) "On" else "Off",
+                                isFocused = false,
+                                showDivider = index < stremioAddons.size - 1,
+                                onClick = { viewModel.toggleAddon(addon.id) }
+                            )
+                        }
+                    }
+                }
+                MobileSettingsCategory(title = "MANAGE") {
+                    MobileSettingsRow(
+                        icon = Icons.Default.Add,
+                        title = "Add Addon",
+                        subtitle = "Install a custom Stremio addon by URL",
+                        value = "",
+                        isFocused = false,
+                        showDivider = false,
+                        onClick = onAddCustomAddonClick
+                    )
+                }
             }
             "Catalogs" -> {
-                CatalogsSettings(
-                    catalogs = uiState.catalogs,
-                    focusedIndex = -1,
-                    focusedActionIndex = 0,
-                    onAddCatalog = onAddCatalogClick,
-                    onRenameCatalog = onRenameCatalogClick,
-                    onMoveCatalogUp = { viewModel.moveCatalogUp(it.id) },
-                    onMoveCatalogDown = { viewModel.moveCatalogDown(it.id) },
-                    onDeleteCatalog = { viewModel.removeCatalog(it.id) }
-                )
+                MobileSettingsCategory(title = "MANAGE") {
+                    MobileSettingsRow(
+                        icon = Icons.Default.Add,
+                        title = stringResource(R.string.add_catalog),
+                        subtitle = stringResource(R.string.add_catalog_desc),
+                        value = "",
+                        isFocused = false,
+                        showDivider = uiState.catalogs.isNotEmpty(),
+                        onClick = onAddCatalogClick
+                    )
+                    uiState.catalogs.forEachIndexed { index, catalog ->
+                        val title = if (catalog.isPreinstalled) {
+                            when (catalog.kind) {
+                                CatalogKind.COLLECTION -> "${catalog.title} (Built-in Collection)"
+                                CatalogKind.COLLECTION_RAIL -> "${catalog.title} (Built-in Rail)"
+                                else -> "${catalog.title} (Built-in)"
+                            }
+                        } else catalog.title
+                        val subtitle = when {
+                            catalog.kind == CatalogKind.COLLECTION_RAIL -> {
+                                val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "Collection"
+                                "$group rail"
+                            }
+                            catalog.kind == CatalogKind.COLLECTION -> {
+                                val group = catalog.collectionGroup?.name?.lowercase()?.replaceFirstChar { it.uppercase() } ?: "Collection"
+                                "$group collection"
+                            }
+                            catalog.sourceType == CatalogSourceType.PREINSTALLED -> "Preinstalled catalog"
+                            else -> when (catalog.sourceType) {
+                                CatalogSourceType.ADDON -> {
+                                    val addonLabel = catalog.addonName?.takeIf { it.isNotBlank() } ?: "Addon"
+                                    "From $addonLabel"
+                                }
+                                CatalogSourceType.HOME_SERVER -> "From Home Server"
+                                else -> catalog.sourceUrl ?: "Custom catalog"
+                            }
+                        }
+                        MobileSettingsRow(
+                            icon = Icons.Default.Widgets,
+                            title = title,
+                            subtitle = subtitle,
+                            value = "",
+                            isFocused = false,
+                            showDivider = index < uiState.catalogs.size - 1,
+                            onClick = { onRenameCatalogClick(catalog) }
+                        )
+                    }
+                }
             }
             "TV" -> {
-                IptvSettings(
-                    playlists = uiState.iptvPlaylists,
-                    channelCount = uiState.iptvChannelCount,
-                    isLoading = uiState.isIptvLoading,
-                    error = uiState.iptvError,
-                    statusMessage = uiState.iptvStatusMessage,
-                    statusType = uiState.iptvStatusType,
-                    progressText = uiState.iptvProgressText,
-                    progressPercent = uiState.iptvProgressPercent,
-                    focusedIndex = -1,
-                    focusedActionIndex = 0,
-                    onConfigure = onAddIptvClick,
-                    onEditPlaylist = onEditIptvClick,
-                    onTogglePlaylist = { idx ->
-                        val updated = uiState.iptvPlaylists.toMutableList()
-                        val item = updated.getOrNull(idx) ?: return@IptvSettings
-                        updated[idx] = item.copy(enabled = !item.enabled)
-                        viewModel.saveIptvPlaylists(updated)
-                    },
-                    onMovePlaylistUp = { idx ->
-                        if (idx <= 0) return@IptvSettings
-                        val updated = uiState.iptvPlaylists.toMutableList()
-                        val item = updated.removeAt(idx)
-                        updated.add(idx - 1, item)
-                        viewModel.saveIptvPlaylists(updated)
-                    },
-                    onMovePlaylistDown = { idx ->
-                        val updated = uiState.iptvPlaylists.toMutableList()
-                        if (idx !in 0 until updated.lastIndex) return@IptvSettings
-                        val item = updated.removeAt(idx)
-                        updated.add(idx + 1, item)
-                        viewModel.saveIptvPlaylists(updated)
-                    },
-                    onDeletePlaylist = { idx ->
-                        val updated = uiState.iptvPlaylists.toMutableList()
-                        if (idx in updated.indices) {
-                            updated.removeAt(idx)
-                            viewModel.saveIptvPlaylists(updated)
-                        }
-                    },
-                    onRefresh = { viewModel.refreshIptv() },
-                    onDelete = { viewModel.clearIptvConfig() }
-                )
+                MobileSettingsCategory(title = "PLAYLISTS") {
+                    MobileSettingsRow(
+                        icon = Icons.Default.Add,
+                        title = stringResource(R.string.add_playlist),
+                        subtitle = if (uiState.iptvPlaylists.isEmpty()) "Add up to 3 M3U / Xtream TV lists" else "Create another TV list",
+                        value = if (uiState.iptvPlaylists.size >= 3) "Full" else "",
+                        isFocused = false,
+                        showDivider = uiState.iptvPlaylists.isNotEmpty(),
+                        onClick = onAddIptvClick
+                    )
+                    uiState.iptvPlaylists.forEachIndexed { index, playlist ->
+                        MobileSettingsRow(
+                            icon = Icons.Default.LiveTv,
+                            title = playlist.name,
+                            subtitle = playlist.m3uUrl.take(56),
+                            value = if (playlist.enabled) "On" else "Off",
+                            isFocused = false,
+                            showDivider = index < uiState.iptvPlaylists.size - 1,
+                            onClick = { onEditIptvClick(index) }
+                        )
+                    }
+                }
+                MobileSettingsCategory(title = "ACTIONS") {
+                    val refreshSubtitle = when {
+                        uiState.isIptvLoading -> "Refreshing channels and EPG..."
+                        uiState.iptvError != null -> uiState.iptvError
+                        uiState.iptvPlaylists.none { it.epgUrl.isNotBlank() || it.epgUrls.orEmpty().isNotEmpty() } -> "Reload playlists now"
+                        else -> "Reload playlist and EPG now"
+                    }
+                    MobileSettingsRow(
+                        icon = Icons.Default.Link,
+                        title = stringResource(R.string.refresh_iptv),
+                        subtitle = refreshSubtitle,
+                        value = if (uiState.isIptvLoading) "Loading" else "",
+                        isFocused = false,
+                        onClick = { viewModel.refreshIptv() }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Delete,
+                        title = stringResource(R.string.delete_iptv),
+                        subtitle = if (uiState.iptvPlaylists.isEmpty()) "No playlists configured" else "Remove playlists, EPG and favorites",
+                        value = "",
+                        isFocused = false,
+                        showDivider = false,
+                        onClick = { viewModel.clearIptvConfig() }
+                    )
+                }
             }
             "Home Server" -> {
-                HomeServerSettings(
-                    connections = uiState.homeServerConnections,
-                    isWorking = uiState.isHomeServerConnecting,
-                    isPlexWorking = uiState.isPlexHomeServerPolling || uiState.plexHomeServerAuth != null,
-                    error = uiState.homeServerError,
-                    focusedIndex = -1,
-                    onConnect = onConnectHomeServerClick,
-                    onConnectPlex = onConnectPlexHomeServerClick,
-                    onEditConnection = { connection ->
-                        onConnectHomeServerClick()
-                    },
-                    onTest = { viewModel.testHomeServerConnection() },
-                    onDisconnect = { viewModel.disconnectHomeServer() }
-                )
+                MobileSettingsCategory(title = "CONNECTIONS") {
+                    MobileSettingsRow(
+                        icon = Icons.Default.Cloud,
+                        title = "Add server",
+                        subtitle = "Personal media libraries as sources",
+                        value = if (uiState.isHomeServerConnecting) "Working" else if (uiState.homeServerConnections.isNotEmpty()) "Add another" else "",
+                        isFocused = false,
+                        onClick = onConnectHomeServerClick
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.QrCode,
+                        title = "Connect with code",
+                        subtitle = "Sign in with a server code",
+                        value = if (uiState.isPlexHomeServerPolling || uiState.plexHomeServerAuth != null) "Waiting" else "",
+                        isFocused = false,
+                        showDivider = uiState.homeServerConnections.isNotEmpty(),
+                        onClick = onConnectPlexHomeServerClick
+                    )
+                    uiState.homeServerConnections.forEachIndexed { index, connection ->
+                        val libraries = connection.collections.count { it.enabled }
+                        val description = listOfNotNull(
+                            homeServerKindLabel(connection.serverKind).takeIf { it.isNotBlank() },
+                            connection.userName.takeIf { it.isNotBlank() },
+                            if (libraries > 0) "$libraries collections" else null
+                        ).joinToString("  |  ").ifBlank { connection.serverUrl }
+                        MobileSettingsRow(
+                            icon = Icons.Default.Cloud,
+                            title = connection.displayName.ifBlank { connection.serverName }.ifBlank { connection.serverUrl },
+                            subtitle = description,
+                            value = "",
+                            isFocused = false,
+                            showDivider = index < uiState.homeServerConnections.size - 1,
+                            onClick = { onConnectHomeServerClick() }
+                        )
+                    }
+                }
+                MobileSettingsCategory(title = "ACTIONS") {
+                    MobileSettingsRow(
+                        icon = Icons.Default.Settings,
+                        title = "Test connection",
+                        subtitle = if (uiState.homeServerConnections.isEmpty()) "Connect a server first" else "Check that this profile can reach every server",
+                        value = "",
+                        isFocused = false,
+                        onClick = { if (uiState.homeServerConnections.isNotEmpty()) viewModel.testHomeServerConnection() }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Delete,
+                        title = "Disconnect all",
+                        subtitle = if (uiState.homeServerConnections.isEmpty()) "No server is connected" else "Remove all servers from the active profile",
+                        value = "",
+                        isFocused = false,
+                        showDivider = false,
+                        onClick = { if (uiState.homeServerConnections.isNotEmpty()) viewModel.disconnectHomeServer() }
+                    )
+                }
+                if (!uiState.homeServerError.isNullOrBlank()) {
+                    Text(
+                        text = uiState.homeServerError,
+                        style = ArflixTypography.caption.copy(fontSize = 11.sp),
+                        color = Color(0xFFFF6B6B),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
             }
         }
     }
