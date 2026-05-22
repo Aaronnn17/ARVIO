@@ -1088,7 +1088,7 @@ fun SettingsScreen(
                                     "appearance" -> stringResource(R.string.interface_label)
                                     "profiles" -> stringResource(R.string.profiles)
                                     "network" -> stringResource(R.string.network)
-                                    "iptv" -> "Live TV"
+                                    "iptv" -> "TV"
                                     "home_server" -> "Home Server"
                                     "catalogs" -> stringResource(R.string.catalogs)
                                     "stremio" -> stringResource(R.string.addons)
@@ -1251,6 +1251,49 @@ fun SettingsScreen(
                         }
                         } // end "general" block
                         "iptv" -> IptvSettings(
+                            playlists = uiState.iptvPlaylists,
+                            channelCount = uiState.iptvChannelCount,
+                            isLoading = uiState.isIptvLoading,
+                            error = uiState.iptvError,
+                            statusMessage = uiState.iptvStatusMessage,
+                            statusType = uiState.iptvStatusType,
+                            progressText = uiState.iptvProgressText,
+                            progressPercent = uiState.iptvProgressPercent,
+                            focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
+                            focusedActionIndex = iptvActionIndex,
+                            onConfigure = { editingIptvIndex = -1; showIptvInput = true },
+                            onEditPlaylist = { idx -> editingIptvIndex = idx; showIptvInput = true },
+                            onTogglePlaylist = { idx ->
+                                val updated = uiState.iptvPlaylists.toMutableList()
+                                val item = updated.getOrNull(idx) ?: return@IptvSettings
+                                updated[idx] = item.copy(enabled = !item.enabled)
+                                viewModel.saveIptvPlaylists(updated)
+                            },
+                            onMovePlaylistUp = { idx ->
+                                if (idx <= 0) return@IptvSettings
+                                val updated = uiState.iptvPlaylists.toMutableList()
+                                val item = updated.removeAt(idx)
+                                updated.add(idx - 1, item)
+                                viewModel.saveIptvPlaylists(updated)
+                            },
+                            onMovePlaylistDown = { idx ->
+                                val updated = uiState.iptvPlaylists.toMutableList()
+                                if (idx !in 0 until updated.lastIndex) return@IptvSettings
+                                val item = updated.removeAt(idx)
+                                updated.add(idx + 1, item)
+                                viewModel.saveIptvPlaylists(updated)
+                            },
+                            onDeletePlaylist = { idx ->
+                                val updated = uiState.iptvPlaylists.toMutableList()
+                                if (idx in updated.indices) {
+                                    updated.removeAt(idx)
+                                    viewModel.saveIptvPlaylists(updated)
+                                }
+                            },
+                            onRefresh = { viewModel.refreshIptv() },
+                            onDelete = { viewModel.clearIptvConfig() }
+                        )
+                        "TV" -> IptvSettings(
                             playlists = uiState.iptvPlaylists,
                             channelCount = uiState.iptvChannelCount,
                             isLoading = uiState.isIptvLoading,
@@ -1486,7 +1529,7 @@ fun SettingsScreen(
         }
         if (showIptvInput) {
             InputModal(
-                title = if (editingIptvIndex >= 0) "Edit IPTV Playlist" else "Add IPTV Playlist",
+                title = if (editingIptvIndex >= 0) "Edit TV Playlist" else "Add TV Playlist",
                 fields = listOf(
                     InputField(
                         label = "Playlist Name",
@@ -3181,7 +3224,7 @@ private fun MobileSettingsMainPage(
                     "Appearance" to Icons.Default.Palette,
                     "Plugins & Extensions" to Icons.Default.Extension,
                     "Catalogs" to Icons.Default.Widgets,
-                    "IPTV" to Icons.Default.LiveTv,
+                    "TV" to Icons.Default.LiveTv,
                     "Home Server" to Icons.Default.Cloud
                 )
                 categories.forEachIndexed { index, (name, icon) ->
@@ -3574,7 +3617,7 @@ private fun MobileSettingsSubPage(
                     onDeleteCatalog = { viewModel.removeCatalog(it.id) }
                 )
             }
-            "IPTV" -> {
+            "TV" -> {
                 IptvSettings(
                     playlists = uiState.iptvPlaylists,
                     channelCount = uiState.iptvChannelCount,
@@ -4153,7 +4196,7 @@ private fun tvSettingsSectionTitle(section: String): String {
         "appearance" -> stringResource(R.string.interface_label)
         "profiles" -> stringResource(R.string.profiles)
         "network" -> stringResource(R.string.network)
-        "iptv" -> "Live TV"
+        "iptv" -> "TV"
         "home_server" -> "Home Server"
         "catalogs" -> stringResource(R.string.catalogs)
         "stremio" -> stringResource(R.string.addons)
@@ -4171,7 +4214,7 @@ private fun tvSettingsSectionDescription(section: String): String {
         "appearance" -> "Layout, OLED mode, focus styling and hero metadata."
         "profiles" -> "Profile startup behavior for this device."
         "network" -> "DNS and loading diagnostic preferences."
-        "iptv" -> "Live TV playlists, EPG refresh, channel loading and playlist management."
+        "iptv" -> "TV playlists, EPG refresh, channel loading and playlist management."
         "home_server" -> "Connect personal media servers and use their libraries as sources."
         "catalogs" -> "Discover, rename, order and remove home rows and list catalogs."
         "stremio" -> "Manage third-party addons used for catalog and source discovery."
