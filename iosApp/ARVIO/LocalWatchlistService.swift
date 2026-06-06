@@ -189,3 +189,10 @@ final class LocalWatchlistService: ObservableObject {
         storagePrefix + activeProfileId
     }
 }
+
+private extension String {
+    var nilIfBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+}

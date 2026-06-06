@@ -231,7 +231,7 @@ struct PlayerView: View {
             scrubSeconds = 0
             let asset = stream.requestHeaders.isEmpty
                 ? AVURLAsset(url: url)
-                : AVURLAsset(url: url, options: [AVURLAssetHTTPHeaderFieldsKey: stream.requestHeaders])
+                : AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": stream.requestHeaders])
             let created = AVPlayer(playerItem: AVPlayerItem(asset: asset))
             player = created
             if let seconds = stream.resumePositionSeconds, seconds > 5, !didSeek {

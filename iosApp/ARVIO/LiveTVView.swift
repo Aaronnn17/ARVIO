@@ -200,7 +200,7 @@ struct LiveTVView: View {
                                 Text(playlist.name)
                                     .font(.system(size: 14, weight: .bold))
                                     .foregroundStyle(ArvioTheme.textPrimary)
-                                Text([playlist.m3uUrl, playlist.epgUrl.nilIfBlank].compactMap { $0 }.joined(separator: " - "))
+                                Text(playlistSubtitle(playlist))
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundStyle(ArvioTheme.textTertiary)
                                     .lineLimit(1)
@@ -668,11 +668,17 @@ struct LiveTVView: View {
         }
         let asset = stream.requestHeaders.isEmpty
             ? AVURLAsset(url: url)
-            : AVURLAsset(url: url, options: [AVURLAssetHTTPHeaderFieldsKey: stream.requestHeaders])
+            : AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": stream.requestHeaders])
         let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
         previewPlayer = player
         player.isMuted = true
         player.play()
+    }
+
+    private func playlistSubtitle(_ playlist: IptvPlaylistEntry) -> String {
+        [playlist.m3uUrl, playlist.epgUrl.nilIfBlank]
+            .compactMap { $0 }
+            .joined(separator: " - ")
     }
 
     private func currentProgramText(for channel: IptvChannel?) -> String {
@@ -882,5 +888,12 @@ private struct ChannelTile: View {
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(ArvioTheme.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 }

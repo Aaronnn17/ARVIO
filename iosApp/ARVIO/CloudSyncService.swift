@@ -226,6 +226,13 @@ struct CloudPayload: Codable {
     }
 }
 
+private extension String {
+    var nilIfBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+}
+
 private struct AccountSyncRow: Codable {
     let userId: String?
     let payload: String?
