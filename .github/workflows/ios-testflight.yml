@@ -2,6 +2,9 @@ name: iOS TestFlight
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/ios-parity-one-shot
 
 jobs:
   testflight:
@@ -49,6 +52,9 @@ jobs:
           mkdir -p "$HOME/.appstoreconnect/private_keys"
           printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$RUNNER_TEMP/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
           cp "$RUNNER_TEMP/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8" "$HOME/.appstoreconnect/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+
+      - name: Build shared KMP framework
+        run: ./gradlew :shared:assembleArvioSharedReleaseXCFramework --no-daemon
 
       - name: Generate Xcode project
         run: xcodegen generate --spec iosApp/project.yml --project iosApp

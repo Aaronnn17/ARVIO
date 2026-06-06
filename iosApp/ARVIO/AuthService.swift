@@ -57,6 +57,43 @@ private struct RefreshBody: Encodable {
     }
 }
 
+struct CloudDeviceAuthSession: Decodable, Equatable {
+    let userCode: String
+    let deviceCode: String
+    let verificationURL: String
+    let expiresIn: Int
+    let interval: Int
+
+    enum CodingKeys: String, CodingKey {
+        case userCode = "user_code"
+        case deviceCode = "device_code"
+        case verificationURL = "verification_url"
+        case verificationURI = "verification_uri"
+        case expiresIn = "expires_in"
+        case interval
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userCode = try container.decode(String.self, forKey: .userCode)
+        deviceCode = try container.decode(String.self, forKey: .deviceCode)
+        let url = (try? container.decode(String.self, forKey: .verificationURL)) ??
+            (try? container.decode(String.self, forKey: .verificationURI)) ??
+            ""
+        verificationURL = url.isEmpty ? "https://auth.arvio.tv/?code=\(userCode)" : url
+        expiresIn = (try? container.decode(Int.self, forKey: .expiresIn)) ?? 600
+        interval = (try? container.decode(Int.self, forKey: .interval)) ?? 3
+    }
+}
+
+private struct CloudDeviceAuthStatus {
+    let status: String
+    let accessToken: String?
+    let refreshToken: String?
+    let email: String?
+    let message: String?
+}
+
 final class KeychainStore {
     private let service = "com.arvio.ios.session"
 
@@ -106,6 +143,8 @@ final class KeychainStore {
 final class AuthService: ObservableObject {
     @Published private(set) var session: AuthSession?
     @Published private(set) var profile: UserProfile?
+    @Published private(set) var cloudDeviceAuthSession: CloudDeviceAuthSession?
+    @Published private(set) var cloudDeviceAuthMessage: String?
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
 
@@ -141,9 +180,71 @@ final class AuthService: ObservableObject {
         await authenticate(path: "/auth/v1/signup", body: EmailPasswordBody(email: email, password: password))
     }
 
+    func beginCloudDeviceLink() async {
+        guard AppConfig.isCloudConfigured else {
+            errorMessage = "Supabase is not configured for iOS"
+            return
+        }
+        isLoading = true
+        errorMessage = nil
+        cloudDeviceAuthMessage = nil
+        defer { isLoading = false }
+
+        do {
+            let response = try await cloudFunctionRequest(path: "/functions/v1/tv-auth-start", body: [:])
+            guard (200..<300).contains(response.statusCode) else {
+                throw ArvioError.requestFailed(parseCloudFunctionError(response.data, fallback: "Failed to start cloud pairing"))
+            }
+            cloudDeviceAuthSession = try JSONDecoder().decode(CloudDeviceAuthSession.self, from: response.data)
+            cloudDeviceAuthMessage = "Open the auth page and enter the code."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func pollCloudDeviceLink() async {
+        guard let deviceCode = cloudDeviceAuthSession?.deviceCode else { return }
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        do {
+            let body = ["device_code": deviceCode]
+            var response = try await cloudFunctionRequest(path: "/functions/v1/tv-auth-status", body: body)
+            if response.statusCode == 404 {
+                response = try await cloudFunctionRequest(path: "/functions/v1/tv-auth-poll", body: body)
+            }
+            guard (200..<300).contains(response.statusCode) else {
+                throw ArvioError.requestFailed(parseCloudFunctionError(response.data, fallback: "Failed to poll cloud pairing"))
+            }
+            let status = parseCloudDeviceStatus(response.data)
+            switch status.status.lowercased() {
+            case "approved":
+                guard let accessToken = status.accessToken, let refreshToken = status.refreshToken else {
+                    throw ArvioError.requestFailed("Cloud pairing approved without session tokens")
+                }
+                try persist(accessToken: accessToken, refreshToken: refreshToken, email: status.email)
+                try await loadProfile()
+                cloudDeviceAuthSession = nil
+                cloudDeviceAuthMessage = "Cloud login linked."
+            case "expired":
+                cloudDeviceAuthSession = nil
+                cloudDeviceAuthMessage = "Cloud pairing expired. Start again."
+            case "pending":
+                cloudDeviceAuthMessage = "Still waiting for approval."
+            default:
+                cloudDeviceAuthMessage = status.message ?? "Cloud pairing failed."
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func signOut() {
         session = nil
         profile = nil
+        cloudDeviceAuthSession = nil
+        cloudDeviceAuthMessage = nil
         errorMessage = nil
         keychain.delete(account: sessionAccount)
     }
@@ -243,20 +344,71 @@ final class AuthService: ObservableObject {
     }
 
     private func persist(response: SupabaseAuthResponse, fallbackEmail: String) throws {
-        guard let userId = response.user?.id ?? decodeSubject(response.accessToken) else {
-            throw ArvioError.requestFailed("Auth response missing user")
-        }
-        let email = response.user?.email ?? decodeEmail(response.accessToken) ?? fallbackEmail
-        let expiresAt = Date().addingTimeInterval(TimeInterval(response.expiresIn ?? 3600))
-        let newSession = AuthSession(
+        let expiresAt = response.expiresIn.map { Date().addingTimeInterval(TimeInterval($0)) }
+        try persist(
             accessToken: response.accessToken,
             refreshToken: response.refreshToken,
-            userId: userId,
-            email: email,
+            userId: response.user?.id,
+            email: response.user?.email ?? decodeEmail(response.accessToken) ?? fallbackEmail,
             expiresAt: expiresAt
+        )
+    }
+
+    private func persist(accessToken: String, refreshToken: String, userId explicitUserId: String? = nil, email: String?, expiresAt: Date? = nil) throws {
+        guard let userId = explicitUserId ?? decodeSubject(accessToken) else {
+            throw ArvioError.requestFailed("Auth response missing user")
+        }
+        let newSession = AuthSession(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            userId: userId,
+            email: email ?? decodeEmail(accessToken) ?? "ARVIO",
+            expiresAt: expiresAt ?? decodeExpiration(accessToken) ?? Date().addingTimeInterval(3600)
         )
         try keychain.save(newSession, account: sessionAccount)
         session = newSession
+    }
+
+    private func cloudFunctionRequest(path: String, body: [String: String]) async throws -> (data: Data, statusCode: Int) {
+        guard AppConfig.isCloudConfigured else {
+            throw ArvioError.missingConfiguration("Supabase")
+        }
+        guard let url = URL(string: AppConfig.supabaseURL + path) else {
+            throw ArvioError.invalidURL(path)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(AppConfig.supabaseAnonKey)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ArvioError.requestFailed("No HTTP response")
+        }
+        return (data, http.statusCode)
+    }
+
+    private func parseCloudFunctionError(_ data: Data, fallback: String) -> String {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return String(data: data, encoding: .utf8)?.nilIfBlank ?? fallback
+        }
+        return (object["error"] as? String)?.nilIfBlank ??
+            (object["message"] as? String)?.nilIfBlank ??
+            (object["error_description"] as? String)?.nilIfBlank ??
+            fallback
+    }
+
+    private func parseCloudDeviceStatus(_ data: Data) -> CloudDeviceAuthStatus {
+        let object = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        return CloudDeviceAuthStatus(
+            status: (object["status"] as? String) ?? "error",
+            accessToken: (object["access_token"] as? String)?.nilIfBlank,
+            refreshToken: (object["refresh_token"] as? String)?.nilIfBlank,
+            email: (object["email"] as? String)?.nilIfBlank,
+            message: (object["message"] as? String)?.nilIfBlank
+        )
     }
 
     private func decodeSubject(_ jwt: String) -> String? {
@@ -265,6 +417,21 @@ final class AuthService: ObservableObject {
 
     private func decodeEmail(_ jwt: String) -> String? {
         decodePayload(jwt)?["email"] as? String
+    }
+
+    private func decodeExpiration(_ jwt: String) -> Date? {
+        guard let raw = decodePayload(jwt)?["exp"] else { return nil }
+        let seconds: TimeInterval?
+        if let value = raw as? Double {
+            seconds = value
+        } else if let value = raw as? Int {
+            seconds = TimeInterval(value)
+        } else if let value = raw as? String {
+            seconds = TimeInterval(value)
+        } else {
+            seconds = nil
+        }
+        return seconds.map { Date(timeIntervalSince1970: $0) }
     }
 
     private func decodePayload(_ jwt: String) -> [String: Any]? {
@@ -277,5 +444,12 @@ final class AuthService: ObservableObject {
             return nil
         }
         return json
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

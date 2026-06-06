@@ -2,6 +2,8 @@ import SwiftUI
 
 struct WatchlistView: View {
     @EnvironmentObject private var appState: AppState
+    @State private var filter: WatchlistFilter = .all
+    @State private var searchText = ""
 
     var body: some View {
         ScrollView {
@@ -11,53 +13,126 @@ struct WatchlistView: View {
                         Text("Watchlist")
                             .font(.system(size: 38, weight: .bold))
                             .foregroundStyle(ArvioTheme.textPrimary)
-                        Text(appState.trakt.isConnected ? "Synced from Trakt." : "Connect Trakt in Settings to sync your Android watchlist.")
+                        Text(appState.trakt.isConnected ? "Profile watchlist with Trakt sync." : "Profile watchlist synced through ARVIO cloud.")
                             .font(.system(size: 17))
                             .foregroundStyle(ArvioTheme.textSecondary)
                     }
                     Spacer()
                     Button("Refresh") {
-                        Task { await appState.trakt.loadWatchlist() }
+                        Task {
+                            await appState.watchlist.load()
+                            await appState.trakt.loadWatchlist()
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(ArvioTheme.gold)
                 }
 
-                if appState.trakt.watchlist.isEmpty {
+                HStack(spacing: 12) {
+                    Picker("Filter", selection: $filter) {
+                        ForEach(WatchlistFilter.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 360)
+
+                    TextField("Search watchlist", text: $searchText)
+                        .textInputAutocapitalization(.never)
+                        .padding(13)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.3)))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ArvioTheme.border, lineWidth: 1))
+                        .foregroundStyle(ArvioTheme.textPrimary)
+                }
+
+                if mergedItems.isEmpty {
                     EmptyStatePanel(
-                        title: "No synced watchlist yet",
-                        message: appState.trakt.isConnected ? "Trakt returned no saved items." : "Your Android watchlist syncs here after Trakt is connected."
+                        title: "No saved items yet",
+                        message: "Add a movie or series from Home, Search, or Details. Trakt items appear here too when linked."
                     )
+                } else if filteredItems.isEmpty {
+                    EmptyStatePanel(title: "No matches", message: "Change the filter or search text.")
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
-                        ForEach(appState.trakt.watchlist) { item in
+                        ForEach(filteredItems) { item in
                             VStack(alignment: .leading, spacing: 10) {
-                                PosterBackdrop(item: MediaItem(
-                                    title: item.title,
-                                    subtitle: item.type.capitalized,
-                                    year: item.year.map(String.init) ?? "",
-                                    duration: "Trakt",
-                                    rating: "",
-                                    kind: item.type == "movie" ? .movie : .series,
-                                    progress: 0,
-                                    palette: ["#10202a", "#071017"]
-                                ))
-                                .frame(width: 210, height: 118)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                PosterBackdrop(item: item)
+                                    .frame(width: 210, height: 118)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
                                 Text(item.title)
                                     .font(.system(size: 16, weight: .semibold))
                                     .foregroundStyle(ArvioTheme.textPrimary)
                                     .lineLimit(1)
-                                Text(([item.type.capitalized] + (item.year.map { [String($0)] } ?? [])).joined(separator: " - "))
+                                Text([item.kind.rawValue, item.year.nilIfBlank].compactMap { $0 }.joined(separator: " - "))
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(ArvioTheme.textTertiary)
+                                HStack(spacing: 8) {
+                                    Button("Open") {
+                                        appState.selectedMedia = item
+                                    }
+                                    .font(.system(size: 12, weight: .bold))
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(ArvioTheme.gold)
+                                    Button("Remove") {
+                                        Task {
+                                            await appState.watchlist.remove(item)
+                                            await appState.trakt.removeFromWatchlist(item: item)
+                                        }
+                                    }
+                                    .font(.system(size: 12, weight: .bold))
+                                    .buttonStyle(.bordered)
+                                }
                             }
                             .frame(width: 210, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                appState.selectedMedia = item
+                            }
                         }
                     }
                 }
             }
             .padding(28)
+        }
+        .task {
+            await appState.watchlist.load()
+            await appState.trakt.loadWatchlist()
+        }
+    }
+
+    private var mergedItems: [MediaItem] {
+        appState.watchlist.mergedWithTrakt(appState.trakt.watchlist)
+    }
+
+    private var filteredItems: [MediaItem] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return mergedItems.filter { item in
+            filter.matches(item) &&
+                (query.isEmpty || item.title.lowercased().contains(query) || item.year.contains(query))
+        }
+    }
+}
+
+private enum WatchlistFilter: String, CaseIterable, Identifiable {
+    case all
+    case movies
+    case series
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "All"
+        case .movies: return "Movies"
+        case .series: return "Series"
+        }
+    }
+
+    func matches(_ item: MediaItem) -> Bool {
+        switch self {
+        case .all: return true
+        case .movies: return item.kind == .movie
+        case .series: return item.kind == .series
         }
     }
 }

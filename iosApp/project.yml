@@ -16,6 +16,10 @@ targets:
     platform: iOS
     sources:
       - path: ARVIO
+    dependencies:
+      - framework: ../shared/build/XCFrameworks/release/ArvioShared.xcframework
+        embed: false
+      - sdk: JavaScriptCore.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.arvio.ios

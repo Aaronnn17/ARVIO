@@ -5,6 +5,14 @@ enum AppConfig {
     static let supabaseAnonKey = "__SUPABASE_ANON_KEY__"
     static let traktClientID = "__TRAKT_CLIENT_ID__"
 
+    static var tmdbProxyURL: String {
+        "\(supabaseURL)/functions/v1/tmdb-proxy"
+    }
+
+    static var traktProxyURL: String {
+        "\(supabaseURL)/functions/v1/trakt-proxy"
+    }
+
     static var isCloudConfigured: Bool {
         supabaseURL.hasPrefix("https://") &&
         supabaseURL.contains(".supabase.co") &&
@@ -12,6 +20,6 @@ enum AppConfig {
     }
 
     static var isTraktConfigured: Bool {
-        !traktClientID.isEmpty && !traktClientID.hasPrefix("__")
+        isCloudConfigured
     }
 }

@@ -29,6 +29,7 @@ struct AddonsView: View {
                         appState.addons.installURL = installURL
                         Task {
                             await appState.addons.install()
+                            await appState.catalogs.syncAddonCatalogs()
                             installURL = appState.addons.installURL
                         }
                     }
@@ -51,7 +52,15 @@ struct AddonsView: View {
                     LazyVStack(spacing: 12) {
                         ForEach(appState.addons.addons) { addon in
                             AddonRow(addon: addon) {
-                                Task { await appState.addons.remove(addon) }
+                                Task {
+                                    await appState.addons.toggleEnabled(addon)
+                                    await appState.catalogs.syncAddonCatalogs()
+                                }
+                            } onRemove: {
+                                Task {
+                                    await appState.addons.remove(addon)
+                                    await appState.catalogs.syncAddonCatalogs()
+                                }
                             }
                         }
                     }
@@ -64,6 +73,7 @@ struct AddonsView: View {
 
 struct AddonRow: View {
     let addon: InstalledAddon
+    let onToggle: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
@@ -79,6 +89,12 @@ struct AddonRow: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(RoundedRectangle(cornerRadius: 6).fill(ArvioTheme.gold.opacity(0.14)))
+                    Text(addon.isEnabled ? "Enabled" : "Disabled")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(addon.isEnabled ? Color.green.opacity(0.9) : ArvioTheme.textTertiary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.07)))
                 }
                 if let description = addon.description, !description.isEmpty {
                     Text(description)
@@ -93,6 +109,9 @@ struct AddonRow: View {
             }
 
             Spacer()
+
+            Button(addon.isEnabled ? "Disable" : "Enable", action: onToggle)
+                .buttonStyle(.bordered)
 
             Button("Remove", role: .destructive, action: onRemove)
                 .buttonStyle(.bordered)
