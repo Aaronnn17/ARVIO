@@ -29,6 +29,7 @@ export class MdbListClient {
   setKey(key: string | null) {
     const trimmed = key?.trim();
     this.key = trimmed ? trimmed : null;
+    this.watchedCache = null; // don't serve a previous key's watched history
     if (this.key) saveStored(MDBLIST_KEY_STORAGE, this.key);
     else removeStored(MDBLIST_KEY_STORAGE);
   }
@@ -118,18 +119,32 @@ export class MdbListClient {
     }));
   }
 
-  private async fetchAllWatched() {
+  private watchedCache: { at: number; data: Promise<{ movies: MdbWatchedMovieRow[]; episodes: MdbWatchedEpisodeRow[] }> } | null = null;
+
+  private fetchAllWatched() {
+    // watched("movies") and watched("shows") both call this in the same refresh
+    // (store.tsx Promise.all). Share one in-flight fetch (30s TTL) so the full
+    // history isn't paginated twice — halves /api/mdblist invocations per refresh.
+    if (this.watchedCache && Date.now() - this.watchedCache.at < 30_000) {
+      return this.watchedCache.data;
+    }
+    const data = this.loadAllWatched();
+    this.watchedCache = { at: Date.now(), data };
+    return data;
+  }
+
+  private async loadAllWatched() {
     const movies: MdbWatchedMovieRow[] = [];
     const episodes: MdbWatchedEpisodeRow[] = [];
-    let offset = 0;
     const limit = 1000;
-    while (true) {
-      const page = await this.request<MdbWatchedResponse>(`sync/watched?limit=${limit}&offset=${offset}`, {}).catch(() => null);
-      if (!page) break;
-      if (page.movies) movies.push(...page.movies);
-      if (page.episodes) episodes.push(...page.episodes);
-      if (!page.pagination?.has_more) break;
-      offset += limit;
+    // Hard page cap: never loop indefinitely on a bad has_more, even if it costs
+    // a truncated tail (20k movies / 20k episodes is far beyond any real library).
+    for (let page = 0; page < 20; page += 1) {
+      const resp = await this.request<MdbWatchedResponse>(`sync/watched?limit=${limit}&offset=${page * limit}`, {}).catch(() => null);
+      if (!resp) break;
+      if (resp.movies) movies.push(...resp.movies);
+      if (resp.episodes) episodes.push(...resp.episodes);
+      if (!resp.pagination?.has_more) break;
     }
     return { movies, episodes };
   }
