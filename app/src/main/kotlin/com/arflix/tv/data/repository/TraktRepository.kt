@@ -3905,8 +3905,14 @@ class TraktRepository @Inject constructor(
             val supabaseMovies = syncService.getWatchedMovies()
             val supabaseEpisodes = syncService.getWatchedEpisodes()
 
-            // If no Trakt auth AND no Supabase data, leave caches empty
-            if (!hasTraktAuth && supabaseMovies.isEmpty() && supabaseEpisodes.isEmpty()) {
+            // MDBList profiles: also pull watched state marked outside Arvio (e.g. the
+            // MDBList website) so those badges show up. Keys are already cache-compatible.
+            val useMdbList = syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST
+            val mdbMovies = if (useMdbList) mdbListRepository.getWatchedMovies() else emptySet()
+            val mdbEpisodes = if (useMdbList) mdbListRepository.getWatchedEpisodes() else emptySet()
+
+            // If no Trakt auth AND no Supabase/MDBList data, leave caches empty
+            if (!hasTraktAuth && supabaseMovies.isEmpty() && supabaseEpisodes.isEmpty() && mdbMovies.isEmpty() && mdbEpisodes.isEmpty()) {
                 watchedMoviesCache.clear()
                 watchedMoviesCache.addAll(localSnapshotMovies)
                 watchedEpisodesCache.clear()
@@ -3922,10 +3928,12 @@ class TraktRepository @Inject constructor(
             watchedMoviesCache.clear()
             watchedMoviesCache.addAll(localSnapshotMovies)
             watchedMoviesCache.addAll(if (supabaseMovies.isNotEmpty()) supabaseMovies else traktMovies)
+            watchedMoviesCache.addAll(mdbMovies)
 
             watchedEpisodesCache.clear()
             watchedEpisodesCache.addAll(localSnapshotEpisodes)
             watchedEpisodesCache.addAll(if (supabaseEpisodes.isNotEmpty()) supabaseEpisodes else traktEpisodes)
+            watchedEpisodesCache.addAll(mdbEpisodes)
 
             cacheInitialized = true
         } catch (e: Exception) {
