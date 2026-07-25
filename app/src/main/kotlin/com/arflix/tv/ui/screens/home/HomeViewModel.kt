@@ -3093,8 +3093,18 @@ class HomeViewModel @Inject constructor(
         } catch (e: Exception) {
             false
         }
+        // MDBList profiles have no Trakt token but still source CW from a remote provider —
+        // route them through the same getContinueWatching() path (it branches to MDBList).
+        val isMdbListActive = try {
+            traktRepository.isMdbListActive()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+        val useRemoteSync = isTraktAuthenticated || isMdbListActive
         // Debug: write CW state to a file we can pull via adb
-        val items: List<ContinueWatchingItem> = if (isTraktAuthenticated) {
+        val items: List<ContinueWatchingItem> = if (useRemoteSync) {
             // When connected to Trakt, use ONLY Trakt as the source of truth for
             // Continue Watching. The previous code merged local/history items which
             // polluted the CW row with shows not on the user's Trakt — e.g., items
@@ -3167,7 +3177,7 @@ class HomeViewModel @Inject constructor(
             // was dropping. For non-Trakt items, keep the 1..99 filter to avoid
             // showing completed (100%) or never-started (0%) items.
             .filter { item ->
-                if (isTraktAuthenticated) true else item.progress in 1..99
+                if (useRemoteSync) true else item.progress in 1..99
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
     }
@@ -3419,7 +3429,15 @@ class HomeViewModel @Inject constructor(
         } catch (e: Exception) {
             false
         }
-        val items = if (isTraktAuthenticated) {
+        val isMdbListActive = try {
+            traktRepository.isMdbListActive()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+        val useRemoteSync = isTraktAuthenticated || isMdbListActive
+        val items = if (useRemoteSync) {
             val traktItems = if (forceFresh) {
                 try {
                     traktRepository.getContinueWatching(forceRefresh = true)
@@ -3504,7 +3522,7 @@ class HomeViewModel @Inject constructor(
                 dismissedContinueWatchingKeys.contains(showKey) || persistedDismissedKeys.contains(showKey)
             }
             .filter { item ->
-                if (isTraktAuthenticated) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
+                if (useRemoteSync) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
     }
@@ -3517,7 +3535,15 @@ class HomeViewModel @Inject constructor(
         } catch (e: Exception) {
             false
         }
-        val items = if (isTraktAuthenticated) {
+        val isMdbListActive = try {
+            traktRepository.isMdbListActive()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+        val useRemoteSync = isTraktAuthenticated || isMdbListActive
+        val items = if (useRemoteSync) {
             try {
                 traktRepository.preloadContinueWatchingCache()
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -3562,7 +3588,7 @@ class HomeViewModel @Inject constructor(
                 dismissedContinueWatchingKeys.contains(showKey) || persistedDismissedKeys.contains(showKey)
             }
             .filter { item ->
-                if (isTraktAuthenticated) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
+                if (useRemoteSync) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
     }
