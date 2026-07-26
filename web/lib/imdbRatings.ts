@@ -67,6 +67,58 @@ function normalize(raw: unknown): string | null {
   return value.toFixed(1);
 }
 
+// Episodes need a different source: Cinemeta only carries a series-level
+// imdbRating (its per-episode `rating` fields are all 0 — verified across
+// several shows), so episode rows would otherwise fall back to TMDB's score.
+// Agregarr serves real IMDb ratings for a BATCH of imdb ids in one keyless
+// call, which is exactly what the Android app uses (getAgregarrImdbRatings).
+const AGREGARR_ENDPOINT = "https://api.agregarr.org/api/ratings";
+
+/**
+ * IMDb ratings for many imdb ids at once, keyed by imdb id. Ids already cached
+ * are served locally; the rest go out in a single request (chunked at 100, the
+ * limit the Android client uses).
+ */
+export async function getImdbRatings(imdbIds: string[]): Promise<Record<string, string>> {
+  const unique = [...new Set(imdbIds.map((id) => (id ?? "").trim().toLowerCase()).filter((id) => /^tt\d+$/.test(id)))];
+  const result: Record<string, string> = {};
+  const missing: string[] = [];
+  unique.forEach((id) => {
+    const hit = cached(id);
+    if (hit === null) missing.push(id);
+    else if (hit) result[id] = hit;
+  });
+  if (!missing.length) return result;
+
+  for (let i = 0; i < missing.length; i += 100) {
+    const chunk = missing.slice(i, i + 100);
+    const url = `${AGREGARR_ENDPOINT}?${chunk.map((id) => `id=${encodeURIComponent(id)}`).join("&")}`;
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(9000) : undefined
+      });
+      if (!response.ok) continue;
+      const rows = await response.json() as Array<{ imdbId?: string; rating?: unknown }>;
+      const seen = new Set<string>();
+      rows.forEach((row) => {
+        const id = (row?.imdbId ?? "").trim().toLowerCase();
+        if (!id) return;
+        seen.add(id);
+        const rating = normalize(row?.rating);
+        remember(id, rating ?? "");
+        if (rating) result[id] = rating;
+      });
+      // Ids the endpoint didn't answer for get a negative cache entry too, so a
+      // rating-less episode isn't re-requested on every render.
+      chunk.forEach((id) => { if (!seen.has(id)) remember(id, ""); });
+    } catch {
+      // Leave this chunk uncached so a transient failure can be retried later.
+    }
+  }
+  return result;
+}
+
 /**
  * The IMDb rating for a title, or null when Cinemeta doesn't know it (common
  * for very new or obscure entries — the caller should then show no badge

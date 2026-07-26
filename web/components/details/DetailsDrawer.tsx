@@ -11,7 +11,7 @@ import { saveProgress } from "@/lib/cloud";
 import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, isLinux, isWindows, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_SH_URL, VLC_SETUP_URL } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
-import { canonicalServiceName, IMDB_LOGO, TMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
+import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { getImdbRating } from "@/lib/imdbRatings";
 import { sourcePickerScore } from "@/lib/sourceRank";
 import { isBrowserPlayableStream, isDirectPlayableStream, streamPlayability } from "@/lib/streamCompatibility";
@@ -101,8 +101,7 @@ function DetailsView({ item }: { item: MediaItem }) {
   const detailWatched = isWatched(displayItem, selectedEpisode?.season, selectedEpisode?.episode);
 
   // Real IMDb rating for the title (Cinemeta by imdb id), matching the Android
-  // app. Episode rows below keep TMDB's score under a TMDB badge: Cinemeta
-  // carries no per-episode IMDb rating, so an IMDb badge there would be a lie.
+  // app. Episode rows get theirs from Agregarr (see getSeasonEpisodeRatings).
   const [detailImdbRating, setDetailImdbRating] = useState<string | null>(null);
   useEffect(() => {
     setDetailImdbRating(null);
@@ -947,7 +946,7 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
                   {episode.runtime ? `${episode.runtime}m` : `Episode ${episode.episodeNumber}`}
                   {episodeRating && (
                     <em className="episode-imdb">
-                      <img src={TMDB_LOGO} alt="TMDB" loading="lazy" />
+                      <img src={IMDB_LOGO} alt="IMDb" loading="lazy" />
                       {episodeRating}
                     </em>
                   )}
