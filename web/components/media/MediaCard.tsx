@@ -2,7 +2,7 @@
 
 import { BadgeCheck, Clapperboard } from "lucide-react";
 import { memo, useEffect, useState } from "react";
-import { IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
+import { TMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { useApp } from "@/lib/store";
 import { getCardMeta, getCardProviders, getLogoUrl, prefetchDetails } from "@/lib/tmdb";
 import type { MediaItem } from "@/lib/types";
@@ -131,7 +131,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
         {item.timeRemainingLabel && <span className="cw-badge top-right">{item.timeRemainingLabel}</span>}
         {item.rating ? (
           <span className="card-imdb">
-            <img src={IMDB_LOGO} alt="IMDb" loading="lazy" />
+            <img src={TMDB_LOGO} alt="TMDB" loading="lazy" />
             <b>{item.rating}</b>
           </span>
         ) : null}

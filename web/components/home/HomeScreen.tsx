@@ -2,7 +2,7 @@
 
 import { Info, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { IMDB_LOGO } from "@/lib/serviceLogos";
+import { TMDB_LOGO } from "@/lib/serviceLogos";
 import { genreNamesFromIds, getLogoUrl } from "@/lib/tmdb";
 import { useApp } from "@/lib/store";
 import { LazyRail } from "@/components/media/LazyRail";
@@ -135,7 +135,7 @@ export function HomeScreen() {
             <div className="hero-meta">
               {displayHero.rating && (
                 <span className="hero-imdb">
-                  <img src={IMDB_LOGO} alt="IMDb" />
+                  <img src={TMDB_LOGO} alt="TMDB" />
                   <b>{displayHero.rating}</b>
                 </span>
               )}

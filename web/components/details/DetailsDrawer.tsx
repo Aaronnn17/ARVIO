@@ -11,7 +11,7 @@ import { saveProgress } from "@/lib/cloud";
 import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, isLinux, isWindows, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_SH_URL, VLC_SETUP_URL } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
-import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
+import { canonicalServiceName, TMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { sourcePickerScore } from "@/lib/sourceRank";
 import { isBrowserPlayableStream, isDirectPlayableStream, streamPlayability } from "@/lib/streamCompatibility";
 import { authClient, useApp } from "@/lib/store";
@@ -222,7 +222,7 @@ function DetailsView({ item }: { item: MediaItem }) {
           <div className="detail-rating-line">
             {displayItem.rating ? (
               <span className="imdb-lockup">
-                <img src={IMDB_LOGO} alt="IMDb" />
+                <img src={TMDB_LOGO} alt="TMDB" />
                 <b>{displayItem.rating}</b>
               </span>
             ) : null}
@@ -931,7 +931,7 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
                   {episode.runtime ? `${episode.runtime}m` : `Episode ${episode.episodeNumber}`}
                   {episodeRating && (
                     <em className="episode-imdb">
-                      <img src={IMDB_LOGO} alt="IMDb" loading="lazy" />
+                      <img src={TMDB_LOGO} alt="TMDB" loading="lazy" />
                       {episodeRating}
                     </em>
                   )}
