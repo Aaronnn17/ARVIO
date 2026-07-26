@@ -159,6 +159,27 @@ export class TraktClient {
     return all;
   }
 
+  // Shows the user hid from their Trakt progress ("dropped"), across BOTH
+  // hidden sections Trakt keeps: progress_watched and progress_watched_reset.
+  // Trakt itself omits these from Up Next, so Continue Watching must too —
+  // otherwise a dropped show reappears here forever. Returns trakt show ids.
+  async hiddenProgressShowIds(): Promise<Set<number>> {
+    if (!this.token) return new Set();
+    await this.refreshIfNeeded();
+    const sections = ["progress_watched", "progress_watched_reset"];
+    const ids = new Set<number>();
+    const pages = await Promise.all(sections.map((section) =>
+      this.trakt<unknown[]>(`/users/hidden/${section}?type=show&limit=100`, {
+        headers: { "x-user-token": this.token!.access_token }
+      }).catch(() => [] as unknown[])
+    ));
+    pages.flat().forEach((raw) => {
+      const traktId = (raw as { show?: { ids?: { trakt?: number } } }).show?.ids?.trakt;
+      if (typeof traktId === "number") ids.add(traktId);
+    });
+    return ids;
+  }
+
   // `activityKey` (the show's last_watched_at) makes the persistent cache
   // activity-keyed: a show whose activity hasn't moved has IDENTICAL progress,
   // so entries stay valid for days instead of the blanket 15-minute TTL — a

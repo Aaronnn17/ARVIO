@@ -46,7 +46,12 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   const [logo, setLogo] = useState<string | null>(null);
   const progress = item.progress ?? 0;
   const watched = isWatched(item);
-  const showProgress = !watched && progress >= 1 && progress <= 94;
+  // "Up next" rows carry SERIES completion (how far through the show you are),
+  // not progress into the episode on the card — a 40% bar under "Up next S2 E5"
+  // reads as "you're 40% into that episode", which is wrong. Those rows get the
+  // "Up next" chip instead; the bar stays for genuinely resumable items.
+  const isUpNext = item.timeRemainingLabel === "Up next";
+  const showProgress = !watched && !isUpNext && progress >= 1 && progress <= 94;
   // CW/up-next items from Trakt arrive with no artwork, and a hydration that hit
   // a network/429 error leaves image+backdrop empty — the card renders grey while
   // the (separately cached) logo shows. Back-fill artwork lazily from TMDB.
@@ -105,7 +110,6 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   const dateLabel = formatReleaseDate(item.releaseDate) || item.subtitle || year;
   const runtimeLabel = formatRuntime(item.duration || runtime);
   const episodeLine = formatEpisodeLine(item);
-  const isUpNext = item.timeRemainingLabel === "Up next";
 
   return (
     <button
