@@ -11,7 +11,8 @@ import { saveProgress } from "@/lib/cloud";
 import { copyStreamUrl, downloadStreamUrl, downloadToVlc, externalLaunchMode, isAppleMobile, isDesktop, isLinux, isWindows, openExternalPlayer, openInAnyPlayer, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_SH_URL, VLC_SETUP_URL } from "@/lib/externalPlayers";
 import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
-import { canonicalServiceName, TMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
+import { canonicalServiceName, IMDB_LOGO, TMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
+import { getImdbRating } from "@/lib/imdbRatings";
 import { sourcePickerScore } from "@/lib/sourceRank";
 import { isBrowserPlayableStream, isDirectPlayableStream, streamPlayability } from "@/lib/streamCompatibility";
 import { authClient, useApp } from "@/lib/store";
@@ -98,6 +99,21 @@ function DetailsView({ item }: { item: MediaItem }) {
   const inWatchlist = watchlist.some((entry) => entry.mediaType === item.mediaType && entry.id === item.id);
   const canPlayBest = streams.length > 0;
   const detailWatched = isWatched(displayItem, selectedEpisode?.season, selectedEpisode?.episode);
+
+  // Real IMDb rating for the title (Cinemeta by imdb id), matching the Android
+  // app. Episode rows below keep TMDB's score under a TMDB badge: Cinemeta
+  // carries no per-episode IMDb rating, so an IMDb badge there would be a lie.
+  const [detailImdbRating, setDetailImdbRating] = useState<string | null>(null);
+  useEffect(() => {
+    setDetailImdbRating(null);
+    let active = true;
+    const imdbId = displayItem.imdbId;
+    if (!imdbId) return () => { active = false; };
+    void getImdbRating(displayItem.mediaType, imdbId).then((rating) => {
+      if (active && rating) setDetailImdbRating(rating);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [displayItem.imdbId, displayItem.mediaType]);
   const continueLabel = buildContinueLabel(displayItem, selectedEpisode);
   const detailMeta = buildDetailMeta(displayItem, settings.showBudget);
   // Clearlogos (bundled from the app, no background tiles). Providers we have
@@ -220,10 +236,10 @@ function DetailsView({ item }: { item: MediaItem }) {
           </div>
           <p>{displayItem.overview || "No overview available."}</p>
           <div className="detail-rating-line">
-            {displayItem.rating ? (
+            {detailImdbRating ? (
               <span className="imdb-lockup">
-                <img src={TMDB_LOGO} alt="TMDB" />
-                <b>{displayItem.rating}</b>
+                <img src={IMDB_LOGO} alt="IMDb" />
+                <b>{detailImdbRating}</b>
               </span>
             ) : null}
             {detailWatched && <span className="detail-watched-chip"><BadgeCheck size={13} /> Watched</span>}

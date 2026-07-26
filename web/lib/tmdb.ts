@@ -690,7 +690,7 @@ function persistProviderCache() {
 
 // Per-card runtime (minutes), cached + persisted. List responses omit runtime,
 // so cards fetch it lazily when needed.
-type CardMeta = { runtime: number; image?: string; backdrop?: string | null };
+type CardMeta = { runtime: number; image?: string; backdrop?: string | null; imdbId?: string | null };
 const CARD_META_KEY = "arvio.web.cardMeta.v2";
 const cardMetaCache = new Map<string, CardMeta>();
 
@@ -714,28 +714,34 @@ function persistCardMetaCache() {
   }, 800);
 }
 
-export async function getCardMeta(item: { mediaType: MediaType; id: number }): Promise<{ runtime: number; image: string; backdrop: string | null }> {
+export async function getCardMeta(item: { mediaType: MediaType; id: number }): Promise<{ runtime: number; image: string; backdrop: string | null; imdbId: string | null }> {
   const key = `${item.mediaType}:${item.id}`;
   restoreCardMetaCache();
   const cached = cardMetaCache.get(key);
   // Older cache entries only stored runtime; treat a missing `image` field as a
   // miss so the card can back-fill its artwork (fixes grey CW thumbnails).
   if (cached && "image" in cached) {
-    return { runtime: cached.runtime, image: cached.image ?? "", backdrop: cached.backdrop ?? null };
+    return { runtime: cached.runtime, image: cached.image ?? "", backdrop: cached.backdrop ?? null, imdbId: cached.imdbId ?? null };
   }
   try {
-    const payload = await tmdb<{ runtime?: number; episode_run_time?: number[]; poster_path?: string | null; backdrop_path?: string | null }>(`${item.mediaType}/${item.id}`, {});
+    // external_ids rides along on the call this function already makes, so the
+    // imdb id needed for real IMDb ratings costs no extra request.
+    const payload = await tmdb<{ runtime?: number; episode_run_time?: number[]; poster_path?: string | null; backdrop_path?: string | null; external_ids?: { imdb_id?: string | null } }>(
+      `${item.mediaType}/${item.id}`,
+      { append_to_response: "external_ids" }
+    );
     const runtime = payload.runtime ?? payload.episode_run_time?.[0] ?? 0;
     const meta = {
       runtime,
       image: tmdbImageUrl(config.imageBase, payload.poster_path),
-      backdrop: tmdbImageUrl(config.backdropBase, payload.backdrop_path) || null
+      backdrop: tmdbImageUrl(config.backdropBase, payload.backdrop_path) || null,
+      imdbId: payload.external_ids?.imdb_id ?? null
     };
     cardMetaCache.set(key, meta);
     persistCardMetaCache();
     return meta;
   } catch {
-    const meta = { runtime: 0, image: "", backdrop: null };
+    const meta = { runtime: 0, image: "", backdrop: null, imdbId: null };
     cardMetaCache.set(key, meta);
     return meta;
   }

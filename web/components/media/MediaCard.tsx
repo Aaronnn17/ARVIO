@@ -2,7 +2,8 @@
 
 import { BadgeCheck, Clapperboard } from "lucide-react";
 import { memo, useEffect, useState } from "react";
-import { TMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
+import { getImdbRating } from "@/lib/imdbRatings";
+import { IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { useApp } from "@/lib/store";
 import { getCardMeta, getCardProviders, getLogoUrl, prefetchDetails } from "@/lib/tmdb";
 import type { MediaItem } from "@/lib/types";
@@ -91,11 +92,15 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   // the same cached TMDB call, so fetch when either is missing.
   const [runtime, setRuntime] = useState<number | null>(null);
   const missingArtwork = !item.image && !item.backdrop;
+  // The badge shows the REAL IMDb rating (Cinemeta, keyed by imdb id) — the same
+  // source the Android app uses. TMDB's vote_average is a different score and
+  // must never be shown under an IMDb badge.
+  const [imdbRating, setImdbRating] = useState<string | null>(null);
   useEffect(() => {
     setRuntime(null);
     setFallbackArt(null);
+    setImdbRating(null);
     if (item.id <= 0 || item.isHomeServer) return undefined;
-    if (item.duration && !missingArtwork) return undefined;
     let active = true;
     void getCardMeta({ mediaType: item.mediaType, id: item.id }).then((meta) => {
       if (!active) return;
@@ -103,9 +108,14 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
       if (missingArtwork && (meta.image || meta.backdrop)) {
         setFallbackArt({ image: meta.image, backdrop: meta.backdrop });
       }
+      const imdbId = item.imdbId ?? meta.imdbId;
+      if (!imdbId) return;
+      return getImdbRating(item.mediaType, imdbId).then((rating) => {
+        if (active && rating) setImdbRating(rating);
+      });
     }).catch(() => undefined);
     return () => { active = false; };
-  }, [item.id, item.mediaType, item.isHomeServer, item.duration, missingArtwork]);
+  }, [item.id, item.mediaType, item.isHomeServer, item.imdbId, missingArtwork]);
 
   const dateLabel = formatReleaseDate(item.releaseDate) || item.subtitle || year;
   const runtimeLabel = formatRuntime(item.duration || runtime);
@@ -129,10 +139,10 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
         )}
         {watched && <span className="watched-badge" aria-label="Watched"><BadgeCheck size={13} /></span>}
         {item.timeRemainingLabel && <span className="cw-badge top-right">{item.timeRemainingLabel}</span>}
-        {item.rating ? (
+        {imdbRating ? (
           <span className="card-imdb">
-            <img src={TMDB_LOGO} alt="TMDB" loading="lazy" />
-            <b>{item.rating}</b>
+            <img src={IMDB_LOGO} alt="IMDb" loading="lazy" />
+            <b>{imdbRating}</b>
           </span>
         ) : null}
         {showProgress && (
