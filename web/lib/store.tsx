@@ -5,7 +5,7 @@ import { getStreams, getStreamsProgressive, installAddon as installAddonManifest
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
-import { getContinueWatching, pullCloudPayload, pullCloudProfiles, pullCloudTraktToken, pullCloudWatchlist, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTraktToken } from "./cloud";
+import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudPayload, pullCloudProfiles, pullCloudTraktToken, pullCloudWatchlist, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTraktToken } from "./cloud";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
@@ -241,12 +241,14 @@ function traktWatchedKeys(movies: unknown[], shows: unknown[]) {
 }
 
 function filterWatchedContinueWatching(items: MediaItem[], watchedKeys: Set<string>) {
-  if (!watchedKeys.size) return items;
-  return items.filter((item) => {
+  const nonLive = items.filter((item) => !isLiveStreamOrSportsItem(item));
+  if (!watchedKeys.size) return nonLive;
+  return nonLive.filter((item) => {
     const key = mediaWatchKey(item);
     return !key || !watchedKeys.has(key);
   });
 }
+
 
 function isMediaWatched(item: MediaItem, watchedKeys: Set<string>, seasonNumber?: number | null, episodeNumber?: number | null) {
   if (item.isWatched) return true;

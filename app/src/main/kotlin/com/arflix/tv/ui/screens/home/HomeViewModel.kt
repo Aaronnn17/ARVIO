@@ -654,12 +654,21 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun sanitizeContinueWatchingItems(items: List<ContinueWatchingItem>): List<ContinueWatchingItem> {
-        if (items.isEmpty()) return emptyList()
+        val nonLiveItems = items.filterNot { item ->
+            SportsAddonCapabilities.isLiveStreamOrSportsItem(
+                mediaType = item.mediaType,
+                id = item.id,
+                streamAddonId = item.streamAddonId,
+                title = item.title
+            )
+        }
+        if (nonLiveItems.isEmpty()) return emptyList()
 
         val seasonEpisodesCache = HashMap<Pair<Int, Int>, List<com.arflix.tv.data.model.Episode>?>()
 
-        return items.mapNotNull { item ->
+        return nonLiveItems.mapNotNull { item ->
             if (item.mediaType != MediaType.TV) {
+
                 return@mapNotNull item
             }
 

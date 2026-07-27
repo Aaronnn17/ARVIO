@@ -928,6 +928,49 @@ export async function saveCloudProfiles(auth: AuthClient, profiles: Profile[], a
   });
 }
 
+export function isLiveStreamOrSportsItem(item: {
+  mediaType?: string | null;
+  media_type?: string | null;
+  id?: number | string | null;
+  show_tmdb_id?: number | string | null;
+  streamAddonId?: string | null;
+  stream_addon_id?: string | null;
+  title?: string | null;
+}): boolean {
+  const mediaType = (item.mediaType ?? item.media_type ?? "").toLowerCase();
+  const rawId = item.show_tmdb_id ?? item.id;
+  const id = typeof rawId === "number" ? rawId : Number(rawId ?? 0);
+
+  const addonId = (item.streamAddonId ?? item.stream_addon_id ?? "").toLowerCase();
+  const title = (item.title ?? "").toLowerCase();
+
+  if (mediaType && mediaType !== "movie" && mediaType !== "tv") {
+    return true;
+  }
+  if (!id || id <= 0) {
+    return true;
+  }
+  if (addonId) {
+    if (
+      addonId.includes("livetv") ||
+      addonId.includes("live_tv") ||
+      addonId.includes("live-tv") ||
+      addonId.includes("live_stream") ||
+      addonId.includes("livestream") ||
+      addonId.includes("live-stream") ||
+      addonId.includes("tvchannels") ||
+      addonId.includes("iptv") ||
+      addonId.includes("sports")
+    ) {
+      return true;
+    }
+  }
+  if (title.startsWith("live:") || title.startsWith("[live]")) {
+    return true;
+  }
+  return false;
+}
+
 export async function getContinueWatching(auth: AuthClient, profileId?: string | null) {
   if (!auth.session) return [];
   if (canUseBackendSync(auth)) {
@@ -935,18 +978,19 @@ export async function getContinueWatching(auth: AuthClient, profileId?: string |
     return androidContinueWatchingItems(root, profileId)
       .map((item) => androidCwToHistory(item, profileId))
       .filter((item): item is WatchHistoryEntry => Boolean(item))
-      .filter((item) => (item.progress ?? 0) < 0.9)
+      .filter((item) => (item.progress ?? 0) < 0.9 && !isLiveStreamOrSportsItem(item))
       .sort((a, b) => Date.parse(b.updated_at ?? "") - Date.parse(a.updated_at ?? ""))
       .slice(0, 50);
   }
   const profileFilter = profileId ? `&profile_id=eq.${encodeURIComponent(profileId)}` : "";
-  return auth.supabase<WatchHistoryEntry[]>(
+  const records = await auth.supabase<WatchHistoryEntry[]>(
     `/rest/v1/watch_history?user_id=eq.${auth.session.userId}${profileFilter}&progress=lt.0.9&select=*&order=updated_at.desc&limit=50`
   );
+  return records.filter((item) => !isLiveStreamOrSportsItem(item));
 }
 
 export async function saveProgress(auth: AuthClient, entry: Omit<WatchHistoryEntry, "user_id">, profileId?: string | null) {
-  if (!auth.session) return;
+  if (!auth.session || isLiveStreamOrSportsItem(entry)) return;
   if (canUseBackendSync(auth)) {
     await mutateCloudPayload(auth, (root) => {
       const targetProfileId = entry.profile_id ?? profileId ?? "default";
@@ -976,6 +1020,7 @@ export async function saveProgress(auth: AuthClient, entry: Omit<WatchHistoryEnt
     })
   });
 }
+
 
 export async function markWatched(auth: AuthClient, entry: Omit<WatchHistoryEntry, "user_id" | "progress" | "position_seconds">, profileId?: string | null) {
   await saveProgress(auth, {

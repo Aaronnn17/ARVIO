@@ -140,4 +140,58 @@ object SportsAddonCapabilities {
     private fun AddonResource.safeName() = runCatching { name }.getOrNull().orEmpty()
 
     private fun AddonResource.safeTypes() = runCatching { types }.getOrNull().orEmpty()
+
+    fun isLiveStreamAddonId(addonId: String?): Boolean {
+        val id = addonId?.trim()?.lowercase(Locale.US) ?: return false
+        if (id.contains("cinemeta") || id.contains("tmdb") || id.contains("torrentio")) return false
+        return id.contains("livetv") || id.contains("live_tv") ||
+            id.contains("live-tv") || id.contains("live_stream") ||
+            id.contains("livestream") || id.contains("live-stream") ||
+            id.contains("tvchannels") || id.contains("tv-channels") ||
+            id.contains("iptv") || id.contains("sports")
+    }
+
+    fun isLiveStreamAddon(addon: Addon?): Boolean {
+        if (addon == null) return false
+        if (isSportsLiveTvAddon(addon) || isSportsOnlyLiveTvAddon(addon)) return true
+        if (isLiveStreamAddonId(addon.id) || isLiveStreamAddonId(addon.name)) return true
+        val manifest = addon.manifest ?: return false
+        return isLiveStreamManifest(manifest)
+    }
+
+    fun isLiveStreamManifest(manifest: AddonManifest): Boolean {
+        if (isSportsLiveTvManifest(manifest)) return true
+        if (isLiveStreamAddonId(manifest.id) || isLiveStreamAddonId(manifest.name)) return true
+        val types = manifest.safeResources().flatMap { it.safeTypes() } + manifest.safeTypes() + manifest.safeCatalogs().map { it.type }
+        val normalizedTypes = types.map { it.trim().lowercase(Locale.US) }
+        val liveTypes = setOf("tv", "channel", "channels", "live", "sports", "tvchannel", "live_tv", "livestream")
+        return normalizedTypes.any { it in liveTypes } && !normalizedTypes.contains("movie") && !normalizedTypes.contains("series")
+    }
+
+    fun isLiveStreamOrSportsItem(
+        mediaType: MediaType? = null,
+        id: Int? = null,
+        status: String? = null,
+        streamAddonId: String? = null,
+        title: String? = null,
+        addons: List<Addon> = emptyList()
+    ): Boolean {
+        if (status != null && (isSportsHomeStatus(status) || status.startsWith("iptv:") || status.startsWith("live:") || status.startsWith("channel:"))) {
+            return true
+        }
+        if (id != null && id <= 0) {
+            return true
+        }
+        if (!streamAddonId.isNullOrBlank()) {
+            if (isLiveStreamAddonId(streamAddonId)) return true
+            val addon = addons.firstOrNull { it.id.equals(streamAddonId, ignoreCase = true) }
+            if (addon != null && isLiveStreamAddon(addon)) return true
+        }
+        if (title != null) {
+            val lowerTitle = title.lowercase(Locale.US)
+            if (lowerTitle.startsWith("live:") || lowerTitle.startsWith("[live]")) return true
+        }
+        return false
+    }
 }
+

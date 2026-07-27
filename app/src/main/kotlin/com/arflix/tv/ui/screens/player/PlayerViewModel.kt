@@ -3928,10 +3928,17 @@ class PlayerViewModel @Inject constructor(
             val shouldPersistWatchHistory = !isPlaying ||
                 currentTime - lastWatchHistorySaveTime >= WATCH_HISTORY_UPDATE_INTERVAL_MS ||
                 hasSeekJump
-            if (shouldPersistWatchHistory && !isAtWatchedThreshold) {
+            val selectedStream = _uiState.value.selectedStream
+            val streamAddonIdForCheck = selectedStream?.addonId?.takeIf { it.isNotBlank() }
+            val isLiveStreamOrSports = SportsAddonCapabilities.isLiveStreamOrSportsItem(
+                mediaType = currentMediaType,
+                id = currentMediaId,
+                streamAddonId = streamAddonIdForCheck,
+                title = currentTitle
+            )
+            if (shouldPersistWatchHistory && !isAtWatchedThreshold && !isLiveStreamOrSports) {
                 lastWatchHistorySaveTime = currentTime
                 lastWatchHistorySavedPositionSeconds = positionSeconds
-                val selectedStream = _uiState.value.selectedStream
                 val shouldPersistStreamAffinity = positionSeconds >= 30L
                 val streamKey = if (shouldPersistStreamAffinity) buildStreamKey(selectedStream) else null
                 val streamAddonId = if (shouldPersistStreamAffinity) selectedStream?.addonId?.takeIf { it.isNotBlank() } else null
@@ -3983,6 +3990,7 @@ class PlayerViewModel @Inject constructor(
                         runCatching { cloudSyncRepository.pushToCloud() }
                     }
                 }
+
 
                 if (!isPlaying || playbackState == Player.STATE_ENDED || progressPercent >= Constants.WATCHED_THRESHOLD) {
                     runCatching { cloudSyncRepository.pushToCloud() }
