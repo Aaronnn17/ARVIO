@@ -9,7 +9,7 @@ import { getContinueWatching, pullCloudPayload, pullCloudProfiles, pullCloudTrak
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
-import { canDirectPlayMkvStream, streamPlayability } from "./streamCompatibility";
+import { canDirectPlayMkvStream, playbackPlan, streamPlayability } from "./streamCompatibility";
 import { loadHomeServerRows } from "./homeserver";
 import { buildXtreamCatchupUrl, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
@@ -1399,7 +1399,10 @@ export function AppProvider({
       });
       return;
     }
-    if (debrid && streamPlayability(stream).mode === "remux") {
+    // Only pre-resolve into the remux pipeline when the plan actually calls for
+    // it. A source the plan routes to VLC must not silently start a CPU-heavy
+    // in-browser remux that is going to fail anyway.
+    if (debrid && playbackPlan(stream).method === "remux" && playbackPlan(stream).route === "here") {
       const cached = cachedDebridDirectUrl(stream.url);
       if (cached) {
         setActiveStream({ ...stream, url: cached, originalUrl: stream.url, remux: true });

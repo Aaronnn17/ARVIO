@@ -126,6 +126,57 @@ export function isBrowserPlayableStream(stream: CompatStream) {
   return mode === "direct" || mode === "remux" || mode === "transcode";
 }
 
+// ── Playback routing ────────────────────────────────────────────────────────
+// One verdict per source that BOTH the UI and the player act on, so what the
+// badge promises is exactly what pressing Play does. Previously the UI showed a
+// loose hint ("external player recommended") while the player independently
+// guessed and then burned a 13s stall-timeout per failed attempt.
+export type PlaybackPlan = {
+  /** "here" plays in the browser, "vlc" needs an external player, "dead" can't play at all. */
+  route: "here" | "vlc" | "dead";
+  /** How it plays in-browser, when route === "here". */
+  method: "direct" | "remux" | "transcode";
+  /** Short UI label, e.g. "Plays here" / "Needs VLC". */
+  label: string;
+  /** Why — shown as the row's secondary line. */
+  detail: string;
+};
+
+export function playbackPlan(stream: CompatStream): PlaybackPlan {
+  const { mode, reason } = streamPlayability(stream);
+  const text = streamText(stream);
+  const caps = getMediaCapabilities();
+
+  if (mode === "locked") return { route: "dead", method: "direct", label: "Not playable", detail: reason };
+  if (mode === "external") {
+    return {
+      route: "vlc",
+      method: "direct",
+      // ARCHIVE_CONTAINERS and torrent-only rows can't play ANYWHERE.
+      label: ARCHIVE_CONTAINERS.test(text) ? "Not playable" : "Needs VLC",
+      detail: reason
+    };
+  }
+  if (mode === "transcode") {
+    return { route: "here", method: "transcode", label: "Plays here", detail: "Converted by your debrid service" };
+  }
+  if (mode === "remux") {
+    // Chromium demuxes Matroska itself, so these actually direct-play.
+    if (canDirectPlayMkvStream(stream)) {
+      return { route: "here", method: "direct", label: "Plays here", detail: "MKV plays natively in this browser" };
+    }
+    // The remux repackages video untouched but must find an audio track this
+    // browser can decode. Lossless-only audio (TrueHD/DTS with no AC-3/AAC
+    // companion) is the common failure, and AC-3 itself is unsupported here.
+    const losslessOnly = /truehd|dts/.test(text) && !/(aac|ac-?3|eac-?3|ddp|dd\+)/.test(text);
+    if (losslessOnly && !caps.ac3 && !caps.eac3) {
+      return { route: "vlc", method: "remux", label: "Needs VLC", detail: "Only lossless audio this browser can't decode" };
+    }
+    return { route: "here", method: "remux", label: "Plays here", detail: reason };
+  }
+  return { route: "here", method: "direct", label: "Plays here", detail: "" };
+}
+
 // Chromium's <video> demuxes Matroska natively (Chrome/Edge/Opera/Brave, desktop
 // and Android) — an MKV whose codecs the device can decode plays DIRECTLY, no
 // remux needed. canPlayType lies about this ("" for x-matroska), so detect the
