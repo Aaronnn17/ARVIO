@@ -340,16 +340,18 @@ class SportsRepository @Inject constructor(
     ): List<StremioMetaPreview> {
         val baseUrl = addonBaseUrl(addon) ?: return emptyList()
         val url = "$baseUrl/catalog/${encodePathSegment(catalog.type)}/${encodePathSegment(catalog.id)}.json"
-        return runCatching {
+        return try {
             val response = streamApi.getAddonCatalog(url)
             response.metas ?: response.items ?: emptyList()
-        }.onFailure { error ->
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
             AppLogger.breadcrumb(
                 tag = "Sports",
                 message = "sports_catalog_failed addon=${addon.id} catalog=${catalog.id} error=${error::class.java.simpleName}",
                 severity = "warning"
             )
-        }.getOrDefault(emptyList())
+            emptyList()
+        }
     }
 
     private fun placeholderItem(
