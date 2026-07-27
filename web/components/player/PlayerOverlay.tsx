@@ -25,7 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveProgress } from "@/lib/cloud";
-import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, resolveDebridDirectUrl } from "@/lib/debrid";
+import { cachedDebridDirectUrl, invalidateDebridDirectUrl, isUncachedDebridStream, parseDebridStream, resolveDebridDirectUrl } from "@/lib/debrid";
 import type { RemuxAudioTrack } from "@/lib/remux";
 import { copyStreamUrl, externalLaunchMode, openExternalPlayer, openInAnyPlayer } from "@/lib/externalPlayers";
 import { proxiedUrl } from "@/lib/http";
@@ -715,9 +715,43 @@ function VideoPlayer({
         });
       }
     };
+    let refreshedLink = false;
     const handlePlaybackError = () => {
       if (cancelled || handlingError) return;
       handlingError = true;
+      // A debrid CDN link is presigned and short-lived. When one expires the
+      // CDN rejects it (TorBox: "Invalid Presigned Token", HTTP 400) and every
+      // remaining attempt for this source replays the SAME dead url — which is
+      // why a single stale token used to cascade into "source failed" across
+      // the whole list. Drop the cached link and re-resolve once before
+      // treating the source as dead; the sources themselves are usually fine,
+      // which is why they still play in VLC and the APK.
+      if (!refreshedLink && !liveTv && stream.originalUrl && parseDebridStream(stream.originalUrl)) {
+        refreshedLink = true;
+        invalidateDebridDirectUrl(stream.originalUrl);
+        const debridInfo = parseDebridStream(stream.originalUrl);
+        if (debridInfo) {
+          detach?.();
+          void resolveDebridDirectUrl(debridInfo).then((result) => {
+            if (cancelled) return;
+            if (result.url && result.url !== stream.url) {
+              setError(false);
+              setBuffering(true);
+              detach = attachPlayback(video, result.url, { onError: handlePlaybackError, live: liveTv });
+              armStallTimer();
+              requestPlayback();
+              handlingError = false;
+            } else {
+              handlingError = false;
+              handlePlaybackError();
+            }
+          }).catch(() => {
+            handlingError = false;
+            handlePlaybackError();
+          });
+          return;
+        }
+      }
       attemptIndex += 1;
       const nextUrl = uniqueAttempts[attemptIndex];
       if (nextUrl) {
