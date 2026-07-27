@@ -181,7 +181,16 @@ export function playbackPlan(stream: CompatStream): PlaybackPlan {
     // The remux repackages video untouched but must find an audio track this
     // browser can decode. Lossless-only audio (TrueHD/DTS with no AC-3/AAC
     // companion) is the common failure, and AC-3 itself is unsupported here.
-    const losslessOnly = /truehd|dts/.test(text) && !/(aac|ac-?3|eac-?3|ddp|dd\+)/.test(text);
+    //
+    // Be conservative: the release name lists the HEADLINE track, not every
+    // track, and most TrueHD/DTS releases also ship an AAC or AC-3 companion
+    // the remux can pick. Only route away from the browser when the name says
+    // lossless AND nothing suggests a companion — a full disc REMUX practically
+    // always carries one, so those keep their Play button and let the remux's
+    // own track probe decide. Guessing wrong here removes a button that would
+    // have worked, which is worse than a rare failed attempt.
+    const mentionsCompanion = /(aac|ac-?3|eac-?3|ddp|dd\+|opus|flac)/.test(text) || /\bremux\b/.test(text);
+    const losslessOnly = /truehd|dts/.test(text) && !mentionsCompanion;
     if (losslessOnly && !caps.ac3 && !caps.eac3) {
       return { route: "vlc", method: "remux", label: "Needs VLC", detail: "Only lossless audio this browser can't decode" };
     }

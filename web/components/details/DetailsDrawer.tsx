@@ -694,9 +694,16 @@ function SourcePickerModal({
                   <span className="source-row-actions">
                     {/* The route decides which action leads: pressing the big
                         button should never be the one that cannot work. */}
-                    <button type="button" className={`source-action ${playable ? "primary-action" : ""}`} disabled={locked || !playable} onClick={() => onPlay(stream)}>
-                      <Play size={13} fill="currentColor" /> Play
-                    </button>
+                    {/* No Play button at all when this source genuinely cannot
+                        play in the browser — a greyed-out button still reads as
+                        "this should work", which is exactly the confusion we're
+                        removing. It stays (disabled) while the source is locked
+                        behind a resolver, because that IS a temporary state. */}
+                    {(playable || locked) && (
+                      <button type="button" className={`source-action ${playable ? "primary-action" : ""}`} disabled={locked} onClick={() => onPlay(stream)}>
+                        <Play size={13} fill="currentColor" /> Play
+                      </button>
+                    )}
                     <button type="button" className={`source-action ${!playable && !locked ? "primary-action" : ""}`} disabled={locked} onClick={() => openExternal("vlc", stream)}>
                       <ExternalLink size={13} /> VLC
                     </button>
