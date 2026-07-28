@@ -9,9 +9,9 @@ import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudPayload, pullCl
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
-import { canDirectPlayMkvStream, streamPlayability } from "./streamCompatibility";
+import { canDirectPlayMkvStream, playbackPlan, streamPlayability } from "./streamCompatibility";
 import { loadHomeServerRows } from "./homeserver";
-import { buildXtreamCatchupUrl, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
+import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, loadCatalog, searchMedia } from "./tmdb";
@@ -909,7 +909,9 @@ export function AppProvider({
         currentSettings.groupOrder,
         { userAgent: currentSettings.customUserAgent }
       );
-      setIptvSnapshot(loadedIptv);
+      // Stamp which playlists this snapshot came from so Live TV can reuse it
+      // on re-entry instead of rebuilding ~139k channels every visit.
+      setIptvSnapshot({ ...loadedIptv, signature: iptvPlaylistSignature(currentSettings.iptvPlaylists) });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Failed to load Live TV");
     } finally {
@@ -1401,7 +1403,10 @@ export function AppProvider({
       });
       return;
     }
-    if (debrid && streamPlayability(stream).mode === "remux") {
+    // Only pre-resolve into the remux pipeline when the plan actually calls for
+    // it. A source the plan routes to VLC must not silently start a CPU-heavy
+    // in-browser remux that is going to fail anyway.
+    if (debrid && playbackPlan(stream).method === "remux" && playbackPlan(stream).route === "here") {
       const cached = cachedDebridDirectUrl(stream.url);
       if (cached) {
         setActiveStream({ ...stream, url: cached, originalUrl: stream.url, remux: true });
