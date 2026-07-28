@@ -243,10 +243,14 @@ button {
   z-index: 1;
   display: grid;
   gap: 0;
-  padding: 0 0 78px;
+  padding: clamp(120px, 15vh, 160px) 0 78px;
   width: 100%;
   min-width: 0;
   overflow-x: hidden;
+}
+
+.screen:has(.hero) {
+  padding-top: 0;
 }
 
 .hero {
@@ -256,7 +260,7 @@ button {
   position: relative;
   display: flex;
   align-items: center;
-  padding: clamp(98px, 12.2vh, 132px) 3.35vw clamp(145px, 20.2vh, 218px);
+  padding: clamp(140px, 16vh, 195px) 3.35vw clamp(145px, 20.2vh, 218px);
   background-size: cover;
   background-position: center right;
   overflow: hidden;
@@ -274,7 +278,7 @@ button {
 .hero-copy {
   position: relative;
   width: min(760px, 52vw);
-  margin-top: -3.7vh;
+  margin-top: 0;
 }
 
 .eyebrow {
@@ -9476,7 +9480,7 @@ button,
 /* Final cinematic hero pass: long fades, no visible image boundary. */
 .hero {
   min-height: clamp(620px, 82vh, 880px) !important;
-  padding: clamp(96px, 11vh, 140px) 3.35vw clamp(150px, 20vh, 240px) !important;
+  padding: clamp(145px, 17.5vh, 200px) 3.35vw clamp(150px, 20vh, 240px) !important;
   background-position: 68% center !important;
   background-size: cover !important;
   isolation: isolate;
@@ -9508,7 +9512,7 @@ button,
 .hero-copy {
   z-index: 2 !important;
   width: min(800px, 50vw);
-  margin-top: clamp(-60px, -5vh, -24px);
+  margin-top: 0 !important;
 }
 
 .hero-logo,
