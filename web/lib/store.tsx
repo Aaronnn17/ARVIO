@@ -1506,7 +1506,7 @@ export function AppProvider({
     setActiveChannel(null);
   }, []);
 
-  const loadCatalogRow = useCallback((catalog: CatalogConfig) => loadCatalog(catalog, settings.language, addonsRef.current), [settings.language]);
+  const loadCatalogRow = useCallback((catalog: CatalogConfig) => loadCatalog(catalog, settings.language, addonsRef.current, settingsRef.current.homeServers), [settings.language]);
 
   const installAddon = useCallback(async (url: string) => {
     const addon = await installAddonManifest(url);
