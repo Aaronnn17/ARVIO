@@ -161,6 +161,8 @@ export interface CollectionSourceConfig {
   sortBy?: string | null;
   curatedRefs?: string[] | null;
   mdblistSlug?: string | null;
+  homeServerId?: string | null;
+  homeServerLibraryKey?: string | null;
 }
 
 export interface StreamBehaviorHints {
