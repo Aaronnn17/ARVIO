@@ -1437,6 +1437,8 @@ fun LiveTvScreen(
     // box. focusPlaylistSearch() still bumps it when the user actually asks
     // for search.
     var focusSearchCategorySignal by remember { mutableIntStateOf(0) }
+    // Bumped to put the selector on the category list (never on search).
+    var focusCategoryRailSignal by remember { mutableIntStateOf(0) }
     // Full-screen playback mode — pressing OK on an EPG row expands the
     // mini-player to cover the whole screen. Back collapses back to the grid.
     var isFullScreen by rememberSaveable { mutableStateOf(initialStreamUrl != null) }
@@ -2197,10 +2199,21 @@ fun LiveTvScreen(
         onDispose { exoPlayer.removeListener(listener) }
     }
 
-    // Default IPTV entry is the playlist/category rail, focused on Search.
+    // Default IPTV entry is the playlist/category rail. It used to land on the
+    // Search row, which is what users reported: the selector opened inside the
+    // search box and — because "down" from search selects the first category,
+    // which does not exist until the playlist has parsed — stayed stuck there
+    // through the whole load. Land on the categories instead; search is one
+    // press up from there.
     LaunchedEffect(visibleEnrichedState.value !== EnrichedChannels.Empty) {
-        if (!isTouchDevice && visibleEnrichedState.value !== EnrichedChannels.Empty) {
-            focusPlaylistSearch()
+        val entry = LiveTvStartup.entryFocus(
+            isTouchDevice = isTouchDevice,
+            hasChannels = visibleEnrichedState.value !== EnrichedChannels.Empty,
+        )
+        if (entry == LiveTvStartup.EntryFocus.CATEGORY_LIST) {
+            noteGuideUserNavigation()
+            focusZone = LiveTvFocusZone.CATEGORY_LIST
+            focusCategoryRailSignal += 1
         }
     }
 
@@ -2468,6 +2481,8 @@ fun LiveTvScreen(
                         focusZone = LiveTvFocusZone.TOPBAR
                     },
                     focusSearchSignal = focusSearchCategorySignal,
+                    focusCategorySignal = focusCategoryRailSignal,
+                    isTouchDevice = isTouchDevice,
                     modifier = Modifier
                         .fillMaxHeight()
                         .padding(top = contentTopPadding)

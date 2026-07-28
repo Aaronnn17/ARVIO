@@ -81,6 +81,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.R
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -110,6 +111,8 @@ fun CategorySidebar(
     onMoveUpFromSearch: () -> Unit = {},
     onTopBoundaryFocusChanged: (Boolean) -> Unit = {},
     focusSearchSignal: Int = 0,
+    focusCategorySignal: Int = 0,
+    isTouchDevice: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val targetWidth = if (expanded) LiveDims.SidebarExpanded else LiveDims.SidebarCollapsed
@@ -123,6 +126,7 @@ fun CategorySidebar(
     var activeMenu by remember { mutableStateOf<CategoryMenuState?>(null) }
     val searchFocusRequester = remember { FocusRequester() }
     val selectedCategoryFocusRequester = remember { FocusRequester() }
+    val firstCategoryFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
 
     fun openCategoryMenu(category: LiveCategory, hidden: Boolean) {
@@ -172,8 +176,47 @@ fun CategorySidebar(
             ?.invoke()
     }
 
+    val categoriesLoaded = LiveTvStartup.searchIsReachable(tree.top.size)
+
+    // Compose gives the initial D-pad focus to the first focusable row, which
+    // is search — so every time Live TV opened the selector sat in the search
+    // box, and while the playlist was still loading "down" had no category to
+    // move to, leaving it stuck there. Claim the category row as soon as one
+    // exists. Guarded so it only runs for a fresh entry, never fighting a user
+    // who deliberately moved to search afterwards.
+    var searchHasFocus by remember { mutableStateOf(false) }
+    // True once the user has deliberately gone to search (pressed up into it,
+    // or asked for it). Until then, search holding focus can only be Compose's
+    // default placement or the mini player's surface bouncing focus back, and
+    // both must be corrected.
+    var userChoseSearch by remember { mutableStateOf(false) }
+    var categoryHasHadFocus by remember { mutableStateOf(false) }
+
+    fun onCategoryFocused() {
+        categoryHasHadFocus = true
+        onTopBoundaryFocusChanged(false)
+    }
+
+    LaunchedEffect(categoriesLoaded, focusCategorySignal, searchHasFocus, userChoseSearch, isTouchDevice) {
+        if (isTouchDevice || !categoriesLoaded || userChoseSearch) return@LaunchedEffect
+        if (LiveTvStartup.shouldFocusSearch(focusSearchSignal)) return@LaunchedEffect
+        // A single claim is not enough: the mini player attaches its video
+        // surface a beat after the screen opens, that takes the platform focus,
+        // and Compose then falls back to the first focusable row — search. The
+        // row also lives in a LazyColumn, so its requester may not be attached
+        // on the first try. Retry briefly; re-runs whenever search takes focus
+        // again, so a late player start cannot strand the selector there.
+        repeat(LiveTvStartup.INITIAL_FOCUS_ATTEMPTS) {
+            val took = runCatching { selectedCategoryFocusRequester.requestFocus() }.isSuccess ||
+                runCatching { firstCategoryFocusRequester.requestFocus() }.isSuccess
+            if (took) return@LaunchedEffect
+            delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+        }
+    }
+
     LaunchedEffect(focusSearchSignal) {
         if (LiveTvStartup.shouldFocusSearch(focusSearchSignal)) {
+            userChoseSearch = true
             repeat(3) {
                 runCatching { searchFocusRequester.requestFocus() }
                 delay(50L)
@@ -198,7 +241,14 @@ fun CategorySidebar(
             .width(animatedWidth)
             .fillMaxHeight()
             .background(LiveColors.PanelDeep)
-            .focusGroup()
+            // Entering (or re-entering) the sidebar must land on the category
+            // list. Search is the first focusable child, so a plain focusGroup
+            // hands it the selector on entry and again every time the lazy list
+            // recomposes underneath the focused row — which is what pinned the
+            // selector in the search box while the playlist loaded.
+            .arvioDpadFocusGroup(
+                restoreFocusRequester = if (categoriesLoaded) selectedCategoryFocusRequester else null,
+            )
             .onFocusChanged { focusState ->
                 if (focusState.hasFocus) {
                     onFocusEnter()
@@ -254,15 +304,25 @@ fun CategorySidebar(
                     onSelect(first.id)
                 }
             },
-            onFocusChanged = onTopBoundaryFocusChanged,
+            onFocusChanged = { atTop ->
+                // Search taking focus *after* a category already had it means
+                // the user walked up into it — leave the selector alone from
+                // then on. Search taking it before that is Compose's default
+                // placement (or the player bouncing focus back), which the
+                // effect above corrects.
+                if (atTop && categoryHasHadFocus) userChoseSearch = true
+                searchHasFocus = atTop
+                onTopBoundaryFocusChanged(atTop)
+            },
             focusRequester = searchFocusRequester,
+            focusable = categoriesLoaded,
         )
         Spacer(Modifier.height(8.dp))
         LazyColumn(
             state = listState,
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            itemsIndexed(tree.top, key = { index, cat -> "top:${cat.id}:$index" }) { _, cat ->
+            itemsIndexed(tree.top, key = { index, cat -> "top:${cat.id}:$index" }) { index, cat ->
                 val isAllGroup = cat.id == "all" && cat.children.isNotEmpty()
                 val isOpen = isAllGroup && expandedAll
                 SidebarRow(
@@ -273,8 +333,16 @@ fun CategorySidebar(
                     expanded = expanded,
                     hasChildren = isAllGroup,
                     isOpenGroup = isOpen,
-                    focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
-                    onFocused = { onTopBoundaryFocusChanged(false) },
+                    // The selected category can be nested (or scrolled out of
+                    // the lazy list), in which case its requester is unattached
+                    // and cannot take focus. The first row always can, so it
+                    // acts as the guaranteed landing spot on entry.
+                    focusRequester = when {
+                        selectedId == cat.id -> selectedCategoryFocusRequester
+                        index == 0 -> firstCategoryFocusRequester
+                        else -> null
+                    },
+                    onFocused = { onCategoryFocused() },
                     onClick = {
                         if (isAllGroup) {
                             expandedAll = !expandedAll
@@ -296,7 +364,7 @@ fun CategorySidebar(
                             hasChildren = child.children.isNotEmpty(),
                             isOpenGroup = child.containsId(selectedId),
                             focusRequester = if (selectedId == child.id) selectedCategoryFocusRequester else null,
-                            onFocused = { onTopBoundaryFocusChanged(false) },
+                            onFocused = { onCategoryFocused() },
                             onClick = { onSelect(child.id) },
                         )
                         if (child.containsId(selectedId)) {
@@ -310,7 +378,7 @@ fun CategorySidebar(
                                     indent = 48.dp,
                                     labelSize = 9.5.sp,
                                     focusRequester = if (selectedId == grandchild.id) selectedCategoryFocusRequester else null,
-                                    onFocused = { onTopBoundaryFocusChanged(false) },
+                                    onFocused = { onCategoryFocused() },
                                     onClick = { onSelect(grandchild.id) },
                                 )
                             }
@@ -328,7 +396,7 @@ fun CategorySidebar(
                         active = selectedId == cat.id,
                         expanded = expanded,
                         focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
-                        onFocused = { onTopBoundaryFocusChanged(false) },
+                        onFocused = { onCategoryFocused() },
                         onLongClick = {
                             openCategoryMenu(cat, hidden = false)
                         },
@@ -346,7 +414,7 @@ fun CategorySidebar(
                         active = false,
                         expanded = expanded,
                         focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
-                        onFocused = { onTopBoundaryFocusChanged(false) },
+                        onFocused = { onCategoryFocused() },
                         onLongClick = {
                             openCategoryMenu(cat, hidden = true)
                         },
@@ -371,7 +439,7 @@ fun CategorySidebar(
                         hasChildren = country.children.isNotEmpty(),
                         isOpenGroup = isExpanded,
                         focusRequester = if (selectedId == country.id) selectedCategoryFocusRequester else null,
-                        onFocused = { onTopBoundaryFocusChanged(false) },
+                        onFocused = { onCategoryFocused() },
                         onClick = {
                             // Tap always toggles expansion. Opening also selects so
                             // the grid reflects the just-opened group; collapsing
@@ -396,7 +464,7 @@ fun CategorySidebar(
                                 indent = 40.dp,
                                 labelSize = 10.5.sp,
                                 focusRequester = if (selectedId == child.id) selectedCategoryFocusRequester else null,
-                                onFocused = { onTopBoundaryFocusChanged(false) },
+                                onFocused = { onCategoryFocused() },
                                 onClick = { onSelect(child.id) },
                             )
                         }
@@ -413,7 +481,7 @@ fun CategorySidebar(
                         active = selectedId == cat.id,
                         expanded = expanded,
                         focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
-                        onFocused = { onTopBoundaryFocusChanged(false) },
+                        onFocused = { onCategoryFocused() },
                         onClick = { onSelect(cat.id) },
                     )
                 }
@@ -442,6 +510,7 @@ private fun SearchEntry(
     onMoveDown: () -> Unit = {},
     onFocusChanged: (Boolean) -> Unit = {},
     focusRequester: FocusRequester? = null,
+    focusable: Boolean = true,
 ) {
     val focusManager = LocalFocusManager.current
     var focused by remember { mutableStateOf(false) }
@@ -482,7 +551,13 @@ private fun SearchEntry(
             )
             .clip(RoundedCornerShape(10.dp))
             .background(if (focused) LiveColors.FocusBg else LiveColors.Panel)
-            .focusable()
+            // Search is the first focusable row in the sidebar, so while the
+            // categories are still loading Compose parks the D-pad selector
+            // here by default — and "down" had nothing to move to yet, so
+            // every key press was swallowed and the selector looked frozen.
+            // Taking search out of the focus order until there is something to
+            // search past sends that initial focus to the category list.
+            .focusable(enabled = focusable)
             .onKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onKeyEvent false
                 when (ev.key) {
