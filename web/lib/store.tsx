@@ -11,7 +11,7 @@ import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
 import { canDirectPlayMkvStream, playbackPlan, streamPlayability } from "./streamCompatibility";
 import { loadHomeServerRows } from "./homeserver";
-import { buildXtreamCatchupUrl, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
+import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, loadCatalog, searchMedia } from "./tmdb";
@@ -907,7 +907,9 @@ export function AppProvider({
         currentSettings.groupOrder,
         { userAgent: currentSettings.customUserAgent }
       );
-      setIptvSnapshot(loadedIptv);
+      // Stamp which playlists this snapshot came from so Live TV can reuse it
+      // on re-entry instead of rebuilding ~139k channels every visit.
+      setIptvSnapshot({ ...loadedIptv, signature: iptvPlaylistSignature(currentSettings.iptvPlaylists) });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Failed to load Live TV");
     } finally {
