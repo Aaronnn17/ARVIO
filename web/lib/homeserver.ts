@@ -255,16 +255,18 @@ function isVideoCollectionType(type?: string | null): boolean {
 
 function mapItem(base: string, token: string, item: JellyfinItem): MediaItem {
   const mediaType: MediaType = item.Type === "Series" ? "tv" : "movie";
+  // Leave these empty when the server has no artwork rather than pointing at an
+  // image route that will 404: MediaCard renders a placeholder for empty values
+  // but a broken <img> for a failing URL, and it skips the TMDB artwork
+  // back-fill for home-server items, so there is nothing to recover with.
   const primaryTag = item.ImageTags?.Primary ?? item.PrimaryImageTag;
   const image = primaryTag
     ? directUrl(`${base}/Items/${item.Id}/Images/Primary?maxWidth=500&tag=${primaryTag}&api_key=${token}`)
-    : directUrl(`${base}/Items/${item.Id}/Images/Primary?maxWidth=500&api_key=${token}`);
+    : "";
   const backdropTag = item.BackdropImageTags?.[0];
   const backdrop = backdropTag
     ? directUrl(`${base}/Items/${item.Id}/Images/Backdrop/0?maxWidth=1280&tag=${backdropTag}&api_key=${token}`)
-    : item.BackdropImageTags?.length
-      ? directUrl(`${base}/Items/${item.Id}/Images/Backdrop/0?maxWidth=1280&api_key=${token}`)
-      : null;
+    : null;
   return {
     id: hashId(item.Id),
     title: item.Name,
