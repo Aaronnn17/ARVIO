@@ -9,6 +9,7 @@ import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
+import com.arflix.tv.ui.screens.tv.live.LiveTvGuideSources
 import com.arflix.tv.data.repository.IptvPlaybackTarget
 import com.arflix.tv.data.repository.IptvPlaybackUrlResolver
 import com.arflix.tv.data.repository.IptvRepository
@@ -1018,7 +1019,15 @@ class TvViewModel @Inject constructor(
             deferCompleteEpgBackfill(priorityChannelIds)
             return
         }
-        if (largeList) {
+        // A large list is only dangerous for the Xtream path, which fans out into
+        // one HTTP call per channel. An XMLTV source is a single file parsed with
+        // SAX, keeping only now/next/recent per channel, so it stays bounded no
+        // matter how many programmes the file holds — and it is the ONLY way a
+        // plain-M3U playlist can ever get a guide, because refreshEpgForChannels
+        // (the "loads on demand" fallback) skips every channel without Xtream
+        // credentials. Blocking it here left large M3U playlists with no EPG at
+        // all: verified on device, the guide stayed empty indefinitely.
+        if (largeList && !LiveTvGuideSources.hasXmltvSource(state.config)) {
             setEpgBackfillInProgress(false)
             System.err.println("[EPG-Complete] Skipping on-device full guide backfill for large playlist; visible guide loads on demand")
             return
