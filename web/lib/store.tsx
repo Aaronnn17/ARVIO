@@ -240,8 +240,8 @@ function traktWatchedKeys(movies: unknown[], shows: unknown[]) {
   return keys;
 }
 
-function filterWatchedContinueWatching(items: MediaItem[], watchedKeys: Set<string>) {
-  const nonLive = items.filter((item) => !isLiveStreamOrSportsItem(item));
+function filterWatchedContinueWatching(items: MediaItem[], watchedKeys: Set<string>, addons: InstalledAddon[]) {
+  const nonLive = items.filter((item) => !isLiveStreamOrSportsItem(item, addons));
   if (!watchedKeys.size) return nonLive;
   return nonLive.filter((item) => {
     const key = mediaWatchKey(item);
@@ -756,7 +756,7 @@ export function AppProvider({
       const client = syncClient();
       const traktReady = client.isConnected;
       const [historyRows, traktRows, playbackRows, watchedMoviesRows, watchedShowsRows, cloudWatchlistRows, hiddenShowIds] = await Promise.all([
-        authClient.session ? getContinueWatching(authClient, profileId).catch(() => []) : Promise.resolve([]),
+        authClient.session ? getContinueWatching(authClient, profileId, addonState).catch(() => []) : Promise.resolve([]),
         traktReady ? client.watchlist().catch(() => []) : Promise.resolve([]),
         traktReady ? client.playback().catch(() => []) : Promise.resolve([]),
         traktReady ? client.watched("movies").catch(() => []) : Promise.resolve([]),
@@ -846,7 +846,7 @@ export function AppProvider({
       // Order newest-activity-first across playback + up-next (matches the app's
       // updatedAt-descending sort) so the row leads with what you last watched.
       const cwSorted = dedupeMedia(cwBase).sort((a, b) => (b.activityAt ?? 0) - (a.activityAt ?? 0));
-      const cw = await hydrateContinueWatchingItems(filterWatchedContinueWatching(cwSorted, watchedKeys));
+      const cw = await hydrateContinueWatchingItems(filterWatchedContinueWatching(cwSorted, watchedKeys, addonState));
       // Trakt outage guard: when Trakt is connected but every read came back
       // empty, the calls were blocked (Cloudflare challenges the CORS
       // preflight intermittently, especially on VPN/datacenter IPs) — keep

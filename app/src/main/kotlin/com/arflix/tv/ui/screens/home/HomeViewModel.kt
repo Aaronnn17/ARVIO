@@ -654,12 +654,14 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun sanitizeContinueWatchingItems(items: List<ContinueWatchingItem>): List<ContinueWatchingItem> {
+        val installedAddons = streamRepository.installedAddons.first()
         val nonLiveItems = items.filterNot { item ->
             SportsAddonCapabilities.isLiveStreamOrSportsItem(
                 mediaType = item.mediaType,
                 id = item.id,
                 streamAddonId = item.streamAddonId,
-                title = item.title
+                title = item.title,
+                addons = installedAddons
             )
         }
         if (nonLiveItems.isEmpty()) return emptyList()
