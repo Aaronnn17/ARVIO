@@ -183,9 +183,44 @@ object AppModule {
     }
     @Provides
     @Singleton
+    @Named("aniList")
+    fun provideAniListRetrofit(okHttpClient: OkHttpClient): Retrofit {
+        return Retrofit.Builder()
+            .baseUrl("https://graphql.anilist.co/")
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    fun provideAniListApi(@Named("aniList") retrofit: Retrofit): com.arflix.tv.data.api.AniListApi {
+        return retrofit.create(com.arflix.tv.data.api.AniListApi::class.java)
+    }
+
+    @Provides
+    @Singleton
+    @Named("tvdb")
+    fun provideTvdbRetrofit(okHttpClient: OkHttpClient): Retrofit {
+        return Retrofit.Builder()
+            .baseUrl("https://api4.thetvdb.com/v4/")
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    fun provideTvdbApiV4(@Named("tvdb") retrofit: Retrofit): com.arflix.tv.data.api.TvdbApiV4 {
+        return retrofit.create(com.arflix.tv.data.api.TvdbApiV4::class.java)
+    }
+
+    @Provides
+    @Singleton
     fun provideMoshi(): com.squareup.moshi.Moshi {
         return com.squareup.moshi.Moshi.Builder()
             .add(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory())
             .build()
     }
 }
+
