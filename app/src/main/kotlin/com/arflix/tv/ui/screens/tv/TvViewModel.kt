@@ -1824,8 +1824,10 @@ class TvViewModel @Inject constructor(
         moveGroupUp(null, groupName)
     }
 
+    // Reordering reads the visible group list (which can hit the paged channel
+    // store) and then writes the new order, so it runs off the main thread.
     fun moveGroupUp(playlistId: String?, groupName: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val targetPlaylistId = playlistId?.trim().orEmpty()
             if (targetPlaylistId.isNotBlank()) {
                 iptvRepository.moveGroupUp(targetPlaylistId, groupName, currentVisiblePlaylistGroups(targetPlaylistId))
@@ -1845,7 +1847,7 @@ class TvViewModel @Inject constructor(
     }
 
     fun moveGroupToTop(playlistId: String?, groupName: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val targetPlaylistId = playlistId?.trim().orEmpty()
             if (targetPlaylistId.isNotBlank()) {
                 iptvRepository.moveGroupToTop(targetPlaylistId, groupName, currentVisiblePlaylistGroups(targetPlaylistId))
@@ -1865,7 +1867,7 @@ class TvViewModel @Inject constructor(
     }
 
     fun moveGroupDown(playlistId: String?, groupName: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val targetPlaylistId = playlistId?.trim().orEmpty()
             if (targetPlaylistId.isNotBlank()) {
                 iptvRepository.moveGroupDown(targetPlaylistId, groupName, currentVisiblePlaylistGroups(targetPlaylistId))

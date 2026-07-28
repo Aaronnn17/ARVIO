@@ -837,9 +837,14 @@ fun LiveTvScreen(
                 recents = recents.value,
             )
         }
-        if (result.isEmpty() && categoryCount > 0 && selectedCategoryId.startsWith("grp:") &&
-            viewModel.iptvRepository.pagedChannelsReady()
-        ) {
+        // pagedChannelsReady() runs COUNT(*) over the channel database, so it must
+        // not be evaluated inline here: this effect body runs on the main
+        // dispatcher and the query blocks it on every category switch.
+        val pagedStoreReady = result.isEmpty() &&
+            categoryCount > 0 &&
+            selectedCategoryId.startsWith("grp:") &&
+            withContext(Dispatchers.IO) { viewModel.iptvRepository.pagedChannelsReady() }
+        if (pagedStoreReady) {
             val resolvedGroup = lastKnownPlaylistGroupCounts
                 .firstOrNull { (playlistId, groupTitle, _) ->
                     playlistGroupCategoryId(playlistId, groupTitle) == selectedCategoryId
