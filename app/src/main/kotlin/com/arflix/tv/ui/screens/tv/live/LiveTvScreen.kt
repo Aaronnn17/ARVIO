@@ -993,10 +993,13 @@ fun LiveTvScreen(
     }
     // Open on the channel the user last watched. The session already persists
     // lastChannelId, but nothing consumed it on entry, so Live TV always
-    // started at the top of the list. An explicit initialChannelId (deep link,
-    // "continue" action) still wins.
-    val resumeChannelId = initialChannelId
-        ?: state.tvSession.lastChannelId.takeIf { it.isNotBlank() }
+    // started at the top of the list. Rules live in LiveTvStartup so they are
+    // unit tested rather than only verifiable on a device.
+    val resumeChannelId = LiveTvStartup.resumeChannelId(
+        explicitChannelId = initialChannelId,
+        lastChannelId = state.tvSession.lastChannelId,
+        availableChannelIds = LiveTvStartup.channelIds(state.snapshot.channels),
+    )
     var focusedChannelId by rememberSaveable { mutableStateOf<String?>(resumeChannelId) }
     var epgPrefetchAnchorId by rememberSaveable { mutableStateOf<String?>(resumeChannelId) }
     var startupChannelApplied by rememberSaveable(selectedProviderId) { mutableStateOf(false) }
@@ -1570,7 +1573,12 @@ fun LiveTvScreen(
     // layout is stable and normal focus handling behaves predictably.
     val channelsReady = currentUiState.snapshot.channels.isNotEmpty()
     LaunchedEffect(focusZone, isTouchDevice, channelsReady) {
-        if (!isTouchDevice && focusZone == LiveTvFocusZone.CATEGORY_LIST && channelsReady) {
+        if (LiveTvStartup.shouldClaimSidebarFocus(
+                isTouchDevice = isTouchDevice,
+                isCategoryZoneActive = focusZone == LiveTvFocusZone.CATEGORY_LIST,
+                channelsLoaded = channelsReady,
+            )
+        ) {
             runCatching { sidebarFocus.requestFocus() }
         }
     }
