@@ -459,4 +459,12 @@ export interface AppSettings {
   favoriteGroupIds: string[];
   hiddenGroupIds: string[];
   groupOrder: string[];
+  // Metadata & API Keys
+  customTmdbApiKey: string;
+  customTvdbApiKey: string;
+  customTvdbUserPin: string;
+  metadataMovieProviders: string[];
+  metadataTvProviders: string[];
+  metadataAnimeProviders: string[];
 }
+

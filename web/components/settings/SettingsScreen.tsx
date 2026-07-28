@@ -108,7 +108,9 @@ const SECTIONS = [
   { id: "telegram", label: "Telegram", icon: Send },
   { id: "catalogs", label: "Catalogs", icon: ListVideo },
   { id: "addons", label: "Addons", icon: Sparkles },
+  { id: "metadata", label: "Metadata & Keys", icon: Sparkles },
 ] as const;
+
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -1121,10 +1123,109 @@ function SectionBody({ section }: { section: SectionId }) {
       return <AddonsSection />;
     case "vlc":
       return <VlcSection />;
+    case "metadata":
+      return <MetadataSection settings={settings} set={set} />;
     default:
       return null;
   }
 }
+
+function MetadataSection({ settings, set }: { settings: AppSettings; set: (patch: Partial<AppSettings>) => void }) {
+  return (
+    <div className="settings-section">
+      <Panel title="Custom API Keys (Bring Your Own Key)">
+        <p style={{ fontSize: "14px", color: "var(--text-secondary)", marginBottom: "16px" }}>
+          Provide your custom API keys to bypass rate limits or use personal subscriber keys.
+        </p>
+
+        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+          <div className="settings-row-info">
+            <div style={{ fontWeight: 600, color: "#fff" }}>TMDB API Key</div>
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Custom v3 API key for TMDB fetches</div>
+          </div>
+          <input
+            type="text"
+            className="settings-input"
+            placeholder="System Default Key"
+            value={settings.customTmdbApiKey || ""}
+            onChange={(e) => set({ customTmdbApiKey: e.target.value })}
+            style={{ width: "240px", padding: "6px 12px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "#fff" }}
+          />
+        </div>
+
+        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+          <div className="settings-row-info">
+            <div style={{ fontWeight: 600, color: "#fff" }}>TVDB v4 API Key (Required for TVDB)</div>
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+              {settings.customTvdbApiKey?.trim() ? "Active — TVDB enabled" : "TVDB is disabled until a custom key is provided"}
+            </div>
+          </div>
+          <input
+            type="text"
+            className="settings-input"
+            placeholder="Enter Custom TVDB Key to Enable"
+            value={settings.customTvdbApiKey || ""}
+            onChange={(e) => set({ customTvdbApiKey: e.target.value })}
+            style={{ width: "240px", padding: "6px 12px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "#fff" }}
+          />
+        </div>
+
+
+        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="settings-row-info">
+            <div style={{ fontWeight: 600, color: "#fff" }}>TVDB User PIN</div>
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Required if using subscriber user key</div>
+          </div>
+          <input
+            type="password"
+            className="settings-input"
+            placeholder="Optional User PIN"
+            value={settings.customTvdbUserPin || ""}
+            onChange={(e) => set({ customTvdbUserPin: e.target.value })}
+            style={{ width: "240px", padding: "6px 12px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "#fff" }}
+          />
+        </div>
+      </Panel>
+
+      <Panel title="Metadata Provider Priorities">
+        <p style={{ fontSize: "14px", color: "var(--text-secondary)", marginBottom: "16px" }}>
+          Configured fallback priority order when fetching details for different content types.
+        </p>
+
+        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+          <div className="settings-row-info">
+            <div style={{ fontWeight: 600, color: "#fff" }}>Anime Metadata Providers</div>
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Active chain: AniList → TVDB → TMDB</div>
+          </div>
+          <span style={{ fontSize: "13px", color: "var(--accent-color, #4f46e5)", fontWeight: 600 }}>
+            {(settings.metadataAnimeProviders || ["anilist", "tvdb", "tmdb"]).join(" → ").toUpperCase()}
+          </span>
+        </div>
+
+        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+          <div className="settings-row-info">
+            <div style={{ fontWeight: 600, color: "#fff" }}>TV Shows Metadata Providers</div>
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Active chain: TVDB → TMDB</div>
+          </div>
+          <span style={{ fontSize: "13px", color: "var(--accent-color, #4f46e5)", fontWeight: 600 }}>
+            {(settings.metadataTvProviders || ["tvdb", "tmdb"]).join(" → ").toUpperCase()}
+          </span>
+        </div>
+
+        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div className="settings-row-info">
+            <div style={{ fontWeight: 600, color: "#fff" }}>Movies Metadata Providers</div>
+            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Active chain: TMDB</div>
+          </div>
+          <span style={{ fontSize: "13px", color: "var(--accent-color, #4f46e5)", fontWeight: 600 }}>
+            {(settings.metadataMovieProviders || ["tmdb"]).join(" → ").toUpperCase()}
+          </span>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 
 function safeArray<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];

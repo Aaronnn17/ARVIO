@@ -181,8 +181,15 @@ export const defaultSettings: AppSettings = {
   favoriteChannelIds: [],
   favoriteGroupIds: [],
   hiddenGroupIds: [],
-  groupOrder: []
+  groupOrder: [],
+  customTmdbApiKey: "",
+  customTvdbApiKey: "",
+  customTvdbUserPin: "",
+  metadataMovieProviders: ["tmdb"],
+  metadataTvProviders: ["tvdb", "tmdb"],
+  metadataAnimeProviders: ["anilist", "tvdb", "tmdb"]
 };
+
 
 const emptyIptv: IptvSnapshot = {
   channels: [],
