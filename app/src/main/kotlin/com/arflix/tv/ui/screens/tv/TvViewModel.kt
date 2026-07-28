@@ -714,6 +714,15 @@ class TvViewModel @Inject constructor(
     private fun shouldEmitEpgSpinnerState(): Boolean =
         !isActiveLargeIptvList()
 
+    /**
+     * Whether the active playlist counts as "large" (paged store, reduced
+     * per-focus work).
+     *
+     * Called from several per-focus paths, so it must not touch the database:
+     * [IptvRepository.pagedChannelStoreCount] caches the count precisely because
+     * this used to run a `COUNT(*)` over a 90MB SQLite file on the main thread,
+     * which ANR'd the app under sustained d-pad navigation.
+     */
     private fun isActiveLargeIptvList(): Boolean {
         val snapshotCount = _uiState.value.snapshot.channels.size
         if (isLargeIptvList(snapshotCount)) return true
