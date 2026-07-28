@@ -249,7 +249,14 @@ button {
   overflow-x: hidden;
 }
 
-.screen:has(.hero) {
+/* Screens that already supply their own top offset must not stack this one:
+   .section-heading carries clamp(112px, 14.3vh, 154px) of its own padding
+   (Watchlist/Browse/Addons), a hero fills the space itself, and .livetv-shell
+   sets its own. Without these exclusions those pages rendered ~232px of empty
+   space above the first heading instead of ~112px. */
+.screen:has(.hero),
+.screen:has(> .section-heading:first-child),
+.screen.livetv-shell {
   padding-top: 0;
 }
 
