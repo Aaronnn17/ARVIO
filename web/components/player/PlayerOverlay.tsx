@@ -33,6 +33,11 @@ import { attachPlayback } from "@/lib/player";
 import { resolverMediaUrl, resolverSubtitleUrl } from "@/lib/resolver";
 import { sourcePickerScore, streamSizeBytes } from "@/lib/sourceRank";
 import { playbackPlan, streamPlayability } from "@/lib/streamCompatibility";
+import {
+  bufferedEndAt,
+  isStalled,
+  nextStallAction,
+} from "@/lib/playerRecovery";
 import { authClient, useApp } from "@/lib/store";
 import { syncClient } from "@/lib/sync";
 import { SubtitleTranslator, subtitleLanguageName } from "@/lib/subtitleAi";
@@ -40,6 +45,9 @@ import { getLogoUrl } from "@/lib/tmdb";
 import type { AppSettings, InstalledAddon, MediaItem, StreamSource } from "@/lib/types";
 
 type PlayerPanel = "sources" | "subtitles" | "audio" | "settings" | null;
+
+/** How often the stall watchdog samples playback progress. */
+const STALL_POLL_MS = 1_000;
 
 function youTubeId(url: string): string | null {
   const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/);
@@ -290,6 +298,14 @@ function VideoPlayer({
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
+  // Position being dragged to. While this is set the scrubber shows it instead
+  // of `current`, and the seek is deferred to pointer release: React's onChange
+  // is the DOM `input` event, so seeking there fired a real seek on every step
+  // of a drag — each one restarting the buffer on a remote stream.
+  const [scrubTo, setScrubTo] = useState<number | null>(null);
+  // Time under the cursor, for the hover tooltip.
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const [hoverPct, setHoverPct] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [buffering, setBuffering] = useState(true);
@@ -484,16 +500,31 @@ function VideoPlayer({
     if (!booted || liveTv) return undefined;
     const video = videoRef.current;
     if (!video) return undefined;
-    let stalls: number[] = [];
-    let switched = false;
-    const onWaiting = () => {
-      if (switched || video.currentTime < 8) return;
-      const now = Date.now();
-      stalls = [...stalls.filter((t) => now - t < 90_000), now];
-      if (stalls.length < 3) return;
+    // Mid-playback stall recovery. Previously this only reacted after three
+    // stalls in 90s AND only if a strictly smaller source existed — so a single
+    // source, an equal-sized source, or a source with unknown size (all common)
+    // meant the video buffered forever with no message and no way to continue.
+    // Now every stall is recovered: nudge the decoder, then re-attach the
+    // source, then fall down the ladder, preferring a lighter source if one
+    // exists because a stall usually means the connection can't keep up.
+    let lastProgressTime = video.currentTime;
+    let stalledSinceMs = 0;
+    let nudged = false;
+    let reloaded = false;
+    let escalated = false;
+    let announced = false;
+
+    const resetStall = () => {
+      stalledSinceMs = 0;
+      nudged = false;
+      reloaded = false;
+      announced = false;
+    };
+
+    const lighterSource = () => {
       const current = currentStreamRef.current;
       const currentSize = streamSizeBytes(current);
-      const lighter = sourceListRef.current.find((candidate) => {
+      return sourceListRef.current.find((candidate) => {
         if (!candidate.url || candidate.url === current.url || candidate.url === current.originalUrl) return false;
         if (isUncachedDebridStream(candidate)) return false;
         const mode = streamPlayability(candidate).mode;
@@ -501,13 +532,76 @@ function VideoPlayer({
         const size = streamSizeBytes(candidate);
         return size > 0 && (!currentSize || size < currentSize * 0.55);
       });
-      if (!lighter) return;
-      switched = true;
-      onToast("Your connection can't keep up with this version — switching to a lighter one.");
-      onSelectStream(lighter, { forceBrowser: true });
     };
-    video.addEventListener("waiting", onWaiting);
-    return () => video.removeEventListener("waiting", onWaiting);
+
+    const tick = window.setInterval(() => {
+      if (escalated) return;
+      const stalledNow = isStalled({
+        paused: video.paused,
+        seeking: video.seeking,
+        ended: video.ended,
+        currentTime: video.currentTime,
+        lastProgressTime,
+      });
+      if (!stalledNow) {
+        lastProgressTime = video.currentTime;
+        resetStall();
+        return;
+      }
+      stalledSinceMs += STALL_POLL_MS;
+      const action = nextStallAction({
+        stalledForMs: stalledSinceMs,
+        currentTime: video.currentTime,
+        nudged,
+        reloaded,
+      });
+      if (action.kind === "wait") return;
+      if (!announced) {
+        announced = true;
+        onToast("Playback stalled — trying to recover…");
+      }
+      if (action.kind === "nudge") {
+        nudged = true;
+        try { video.currentTime = action.seekTo; } catch { /* seek can throw while unbuffered */ }
+        void video.play().catch(() => undefined);
+        return;
+      }
+      if (action.kind === "reload") {
+        reloaded = true;
+        const resumeAt = action.resumeAt;
+        // Re-attaching drops a dead socket and re-requests the byte range; the
+        // resume seek has to wait until the fresh element can accept it.
+        const onLoaded = () => {
+          video.removeEventListener("loadedmetadata", onLoaded);
+          try { video.currentTime = resumeAt; } catch { /* ignore */ }
+          void video.play().catch(() => undefined);
+        };
+        video.addEventListener("loadedmetadata", onLoaded);
+        video.load();
+        return;
+      }
+      // escalate
+      escalated = true;
+      const lighter = lighterSource();
+      if (lighter) {
+        onToast("Your connection can't keep up with this version — switching to a lighter one.");
+        onSelectStream(lighter, { forceBrowser: true });
+        return;
+      }
+      // Nothing lighter: surface the failure instead of buffering silently so
+      // the source list (and the external-player options) are reachable.
+      setBuffering(false);
+      setError(true);
+      setShowControls(true);
+      onToast("This source stopped responding. Pick another source to continue.");
+    }, STALL_POLL_MS);
+
+    const onSeeked = () => { lastProgressTime = video.currentTime; resetStall(); };
+    video.addEventListener("seeked", onSeeked);
+    return () => {
+      window.clearInterval(tick);
+      video.removeEventListener("seeked", onSeeked);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booted, stream.url, liveTv]);
 
@@ -817,14 +911,22 @@ function VideoPlayer({
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return undefined;
-    const onTime = () => setCurrent(video.currentTime);
+    const onTime = () => {
+      setCurrent(video.currentTime);
+      // Keep the buffer bar tied to the range under the playhead; `progress`
+      // alone only fires while bytes are arriving, so it goes stale on a seek.
+      setBuffered(bufferedEndAt(video.buffered, video.currentTime));
+    };
     const onDur = () => setDuration(video.duration || 0);
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     const onWaiting = () => setBuffering(true);
     const onPlaying = () => setBuffering(false);
+    // Use the range holding the playhead, not the last range: after seeking
+    // backwards the last range is somewhere ahead, and the buffer bar claimed
+    // far more was loaded than really was.
     const onProgress = () => {
-      if (video.buffered.length) setBuffered(video.buffered.end(video.buffered.length - 1));
+      setBuffered(bufferedEndAt(video.buffered, video.currentTime));
     };
     const onVol = () => { setVolume(video.volume); setMuted(video.muted); };
     video.addEventListener("timeupdate", onTime);
@@ -1124,7 +1226,9 @@ function VideoPlayer({
     track.addEventListener("cuechange", applyLine);
     return () => track.removeEventListener("cuechange", applyLine);
   }, [activeSubtitle, subtitleLinePercent, stream.url]);
-  const pct = duration > 0 ? (current / duration) * 100 : 0;
+  // While scrubbing the bar follows the drag, not the (not yet moved) playhead.
+  const scrubDisplayTime = scrubTo ?? current;
+  const pct = duration > 0 ? (scrubDisplayTime / duration) * 100 : 0;
   const bufPct = duration > 0 ? (buffered / duration) * 100 : 0;
 
   return (
@@ -1413,19 +1517,48 @@ function VideoPlayer({
 
       <div className="player-controls">
         {!liveTv && (
-          <input
-            className="scrubber"
-            type="range"
-            min={0}
-            max={duration || 0}
-            step={0.1}
-            value={current}
-            style={{ ["--pct" as string]: `${pct}%`, ["--buf" as string]: `${bufPct}%` }}
-            onChange={(e) => {
-              const v = videoRef.current;
-              if (v) v.currentTime = Number(e.target.value);
+          <div
+            className="scrubber-track"
+            onPointerMove={(e) => {
+              if (!duration) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+              setHoverTime(ratio * duration);
+              setHoverPct(ratio * 100);
             }}
-          />
+            onPointerLeave={() => setHoverTime(null)}
+          >
+            {hoverTime !== null && (
+              <span className="scrubber-hover-time" style={{ left: `${hoverPct}%` }}>
+                {fmt(hoverTime)}
+              </span>
+            )}
+            <input
+              className="scrubber"
+              type="range"
+              min={0}
+              max={duration || 0}
+              // 1s keeps keyboard arrows useful; 0.1 made a 2h film 72,000 steps.
+              step={1}
+              value={scrubDisplayTime}
+              aria-label="Seek"
+              aria-valuetext={fmt(scrubDisplayTime)}
+              style={{ ["--pct" as string]: `${pct}%`, ["--buf" as string]: `${bufPct}%` }}
+              onChange={(e) => setScrubTo(Number(e.target.value))}
+              onPointerUp={() => {
+                const v = videoRef.current;
+                if (v && scrubTo !== null) v.currentTime = scrubTo;
+                setScrubTo(null);
+              }}
+              onKeyUp={() => {
+                // Keyboard seeking has no pointer release to commit on.
+                const v = videoRef.current;
+                if (v && scrubTo !== null) v.currentTime = scrubTo;
+                setScrubTo(null);
+              }}
+              onBlur={() => setScrubTo(null)}
+            />
+          </div>
         )}
         <div className="player-controls-row">
           <div className="player-controls-left">

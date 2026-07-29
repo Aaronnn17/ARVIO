@@ -2958,6 +2958,31 @@ a.login-submit {
     rgba(255, 255, 255, 0.16) var(--buf, var(--pct, 0%)), rgba(255, 255, 255, 0.16) 100%);
 }
 .scrubber { width: 100%; height: 6px; }
+
+/* Wrapper gives the thin bar a taller pointer target and anchors the hover
+   time readout. Padding (not height) so the bar keeps its slim look. */
+.scrubber-track {
+  position: relative;
+  width: 100%;
+  padding: 9px 0;
+  display: flex;
+  align-items: center;
+}
+.scrubber-hover-time {
+  position: absolute;
+  bottom: calc(100% - 2px);
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 2;
+}
 .scrubber::-webkit-slider-thumb,
 .volume-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -10491,7 +10516,11 @@ button,
   margin-bottom: 4px;
 }
 
-.player-controls .scrubber:hover { height: 5px !important; }
+/* Hovering anywhere in the (much taller) track wrapper grows the bar and
+   reveals the thumb — the 3px bar itself is an awkward pointer target. */
+.player-controls .scrubber:hover,
+.scrubber-track:hover .scrubber,
+.scrubber-track:focus-within .scrubber { height: 5px !important; }
 
 /* iOS renders the native track unless it is explicitly zeroed out. */
 .player-controls .scrubber::-webkit-slider-runnable-track {
@@ -10515,7 +10544,9 @@ button,
 }
 
 .player-controls .scrubber:hover::-webkit-slider-thumb,
-.player-controls .scrubber:active::-webkit-slider-thumb { opacity: 1; }
+.player-controls .scrubber:active::-webkit-slider-thumb,
+.scrubber-track:hover .scrubber::-webkit-slider-thumb,
+.scrubber-track:focus-within .scrubber::-webkit-slider-thumb { opacity: 1; }
 .player-controls .scrubber::-moz-range-track { background: transparent; height: 100%; border: 0; }
 .player-controls .scrubber::-moz-range-thumb { width: 12px; height: 12px; border: 0; background: #fff; opacity: 0; }
 .player-controls .scrubber:hover::-moz-range-thumb,
