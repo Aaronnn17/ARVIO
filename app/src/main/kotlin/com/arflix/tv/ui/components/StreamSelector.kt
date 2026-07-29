@@ -1,5 +1,11 @@
 package com.arflix.tv.ui.components
 
+import com.arflix.tv.ui.motion.*
+
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.mutableFloatStateOf
+import kotlinx.coroutines.CancellationException
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -77,9 +83,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.foundation.lazy.list.TvLazyColumn
-import androidx.tv.foundation.lazy.list.TvLazyListState
-import androidx.tv.foundation.lazy.list.rememberTvLazyListState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.StreamSource
@@ -113,7 +119,7 @@ private val AccentGold = Color.White
  * buffer on the approaching edge so its focus border isn't clipped by the
  * viewport or a scroll-indicator overlay.
  */
-private suspend fun TvLazyListState.scrollToKeepFocusVisible(focusedIndex: Int, itemCount: Int) {
+private suspend fun LazyListState.scrollToKeepFocusVisible(focusedIndex: Int, itemCount: Int) {
     if (itemCount == 0) return
     val target = focusedIndex.coerceIn(0, itemCount - 1)
     val visibleItems = layoutInfo.visibleItemsInfo
@@ -164,14 +170,16 @@ fun StreamSelector(
     onClose: () -> Unit = {}
 ) {
     val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
+    val backMotion = rememberArvioPredictiveBack(enabled = isVisible, onCommit = onClose)
+
     var focusedIndex by remember { mutableIntStateOf(0) }
     var focusedTabIndex by remember { mutableIntStateOf(0) }
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     var focusedFilterIndex by remember { mutableIntStateOf(0) }
     var selectedFilterIndex by remember { mutableIntStateOf(0) }
     var focusZone by remember { mutableStateOf("streams") } // "streams" or "addons"
-    val listState = rememberTvLazyListState()
-    val addonListState = rememberTvLazyListState()
+    val listState = rememberLazyListState()
+    val addonListState = rememberLazyListState()
     val focusRequester = remember { FocusRequester() }
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val pluginPrefix = stringResource(R.string.plugin_prefix)
@@ -338,15 +346,20 @@ fun StreamSelector(
     AnimatedVisibility(
         visible = isVisible,
         enter = fadeIn(tween(200)) + slideInVertically(tween(300)) { it / 4 },
-        exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 4 }
+        exit = fadeOut(tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing)) + slideOutVertically(tween(250, easing = androidx.compose.animation.core.FastOutSlowInEasing)) { it / 4 }
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .focusRequester(focusRequester)
-                .focusable()
-                .background(Color.Black.copy(alpha = 0.95f))
-                .onKeyEvent { event ->
+                .background(Color.Black.copy(alpha = (0.95f * (1f - backMotion.eased * 0.5f)).coerceIn(0f, 0.95f)))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .focusRequester(focusRequester)
+                    .focusable()
+                    .arvioBackModal(backMotion)
+                    .onKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown) {
                         val isRtl = isRtlLayoutDirection
                         val actualKey = event.key
@@ -359,7 +372,7 @@ fun StreamSelector(
                         } else actualKey
 
                         when (logicalKey) {
-                            Key.Back, Key.Escape -> {
+                            Key.Escape -> {
                                 onClose()
                                 true
                             }
@@ -650,6 +663,7 @@ fun StreamSelector(
         }
     }
 }
+}
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -667,8 +681,8 @@ private fun OledSourceSelectorTv(
     selectedTabIndex: Int,
     focusedTabIndex: Int,
     addonRailFocused: Boolean,
-    listState: TvLazyListState,
-    addonListState: TvLazyListState,
+    listState: LazyListState,
+    addonListState: LazyListState,
     focusedIndex: Int,
     streamsFocused: Boolean,
     count4K: Int,
@@ -810,7 +824,7 @@ private fun OledSourceSelectorTv(
                     message = stringResource(R.string.stream_no_sources_match)
                 )
                 else -> Box(modifier = Modifier.fillMaxSize()) {
-                    TvLazyColumn(
+                    LazyColumn(
                         state = listState,
                         contentPadding = PaddingValues(bottom = 10.dp),
                         verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -1631,7 +1645,7 @@ private fun SourceAddonRail(
     selectedTabIndex: Int,
     focusedTabIndex: Int,
     isFocused: Boolean,
-    listState: TvLazyListState,
+    listState: LazyListState,
     totalSources: Int,
     count4K: Int,
     count1080: Int,
@@ -1656,7 +1670,7 @@ private fun SourceAddonRail(
         )
         Spacer(modifier = Modifier.height(10.dp))
         Box(modifier = Modifier.weight(1f)) {
-            TvLazyColumn(
+            LazyColumn(
                 state = listState,
                 verticalArrangement = Arrangement.spacedBy(5.dp),
                 modifier = Modifier.fillMaxSize()
