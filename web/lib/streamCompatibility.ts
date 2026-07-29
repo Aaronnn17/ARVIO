@@ -36,21 +36,19 @@ function videoBlockReason(text: string): string | null {
   // black picture with working sound.
   const dolbyVision = /dolby[.\s_-]?vision/.test(text) || /\bdovi\b/.test(text) || /\bdv\b/.test(text);
   if ((hevc || dolbyVision) && !caps.hevc10 && !caps.hevc) return "This device has no HEVC decoder";
-  // Dolby Vision profile 5 has NO HDR10 base layer: browsers decode it but
-  // render a black/green picture while the audio plays fine. Profiles 7 and 8
-  // do carry an HDR10 base, so they display correctly.
+  // Dolby Vision renders black — with the audio and subtitles playing normally
+  // — on any browser without a DV decoder. That is the reported symptom, and
+  // it is not limited to profile 5: this used to assume profiles 7/8 were safe
+  // because they carry an HDR10 base layer, and treated an "hdr" or "remux"
+  // marker in the name as proof of one. Browsers do not reliably fall back to
+  // that base layer, so "…HDR10+ | Dolby Vision P7…" was badged "Plays here"
+  // and then played black. Measured in Chrome: dvhe.05 and dvhe.08 are both
+  // unsupported.
   //
-  // Profile is rarely stated, so infer it: an explicit p5 marker means blocked,
-  // an explicit p7/p8 marker (or an HDR10/HDR marker, or a REMUX, which is
-  // profile 7) means it has a base layer. Bare "DV" with nothing else is
-  // profile 5 in practice — that is the case that shows a black picture.
-  const dvProfile5 = /\b(dv|dovi)[.\s_-]?p?0?5\b/.test(text) || /profile[.\s_-]?5/.test(text);
-  const dvHasBaseLayer = /\b(dv|dovi)[.\s_-]?p?0?[78]\b/.test(text)
-    || /profile[.\s_-]?[78]/.test(text)
-    || text.includes("hdr")
-    || /\bremux\b/.test(text);
-  if (dolbyVision && (dvProfile5 || !dvHasBaseLayer)) {
-    return "Dolby Vision profile 5 shows a black picture in browsers";
+  // Trust the decoder, not the filename: DV only plays here if the browser
+  // actually advertises it.
+  if (dolbyVision && !caps.dolbyVision) {
+    return "Dolby Vision shows a black picture in this browser";
   }
   if (text.includes("av1") && !caps.av1) return "This device has no AV1 decoder";
   return null;
