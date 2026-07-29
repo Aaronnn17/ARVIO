@@ -2935,6 +2935,15 @@ a.login-submit {
 }
 .player-time em { color: var(--soft); font-style: normal; margin: 0 2px; }
 .player-time-remaining { margin-left: 10px; color: rgba(255, 255, 255, 0.55); }
+.player-buffer-health {
+  display: block;
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+}
 .player-quality {
   font-size: 12px;
   font-weight: 700;
