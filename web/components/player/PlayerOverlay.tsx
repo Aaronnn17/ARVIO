@@ -1570,7 +1570,12 @@ function VideoPlayer({
             onPointerLeave={() => setHoverTime(null)}
           >
             {hoverTime !== null && (
-              <span className="scrubber-hover-time" style={{ left: `${hoverPct}%` }}>
+              <span
+                className="scrubber-hover-time"
+                // Clamp so the readout stays inside the bar at both ends
+                // instead of hanging off the edge near 0:00 and the finish.
+                style={{ left: `${Math.min(96, Math.max(4, hoverPct))}%` }}
+              >
                 {fmt(hoverTime)}
               </span>
             )}
@@ -1639,7 +1644,16 @@ function VideoPlayer({
             </div>
             {liveTv
               ? <span className="player-time player-live-indicator"><span className="live-dot" /> LIVE</span>
-              : <span className="player-time">{fmt(current)} <em>/</em> {fmt(duration)}</span>}
+              : (
+                <span className="player-time">
+                  {fmt(scrubDisplayTime)} <em>/</em> {fmt(duration)}
+                  {duration > 0 && (
+                    // "How much is left" is the question people actually ask;
+                    // the elapsed/total pair alone makes you do the subtraction.
+                    <span className="player-time-remaining">-{fmt(Math.max(0, duration - scrubDisplayTime))}</span>
+                  )}
+                </span>
+              )}
           </div>
           <div className="player-controls-right">
             <div className="player-badges">

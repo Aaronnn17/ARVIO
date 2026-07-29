@@ -2926,8 +2926,15 @@ a.login-submit {
   gap: 14px;
 }
 .player-spacer { flex: 1; }
-.player-time { font-size: 14px; color: rgba(255, 255, 255, 0.86); white-space: nowrap; }
+.player-time {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.86);
+  white-space: nowrap;
+  /* Digits must not reflow the row as the clock ticks. */
+  font-variant-numeric: tabular-nums;
+}
 .player-time em { color: var(--soft); font-style: normal; margin: 0 2px; }
+.player-time-remaining { margin-left: 10px; color: rgba(255, 255, 255, 0.55); }
 .player-quality {
   font-size: 12px;
   font-weight: 700;
@@ -2970,18 +2977,21 @@ a.login-submit {
 }
 .scrubber-hover-time {
   position: absolute;
-  bottom: calc(100% - 2px);
+  bottom: calc(100% + 2px);
+  /* Clamp so the readout never hangs off either end of the bar. */
   transform: translateX(-50%);
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.85);
+  margin-inline: 0;
+  padding: 4px 9px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   color: #fff;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
   white-space: nowrap;
-  z-index: 2;
+  z-index: 3;
 }
 .scrubber::-webkit-slider-thumb,
 .volume-slider::-webkit-slider-thumb {
@@ -3861,10 +3871,20 @@ select:focus {
   transform: translateY(-1px);
 }
 
-.player-top,
-.player-controls,
+/* The side panel sits over the video as a solid surface, so it blurs. The top
+   and bottom bars do NOT: they are transparent strips, and blurring there
+   frosted a visible band of the picture along both edges.
+   A soft gradient scrim keeps the controls readable over bright scenes
+   without touching the image the way a backdrop blur does. */
 .player-side-panel {
   backdrop-filter: blur(18px);
+}
+
+.player-top {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+}
+.player-controls {
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.34) 55%, rgba(0, 0, 0, 0));
 }
 
 .toast {
@@ -10506,12 +10526,14 @@ button,
 .player-controls .scrubber {
   -webkit-appearance: none;
   appearance: none;
-  height: 3px !important;
+  /* 3px was too thin to see the played/buffered split at a glance and too
+     fiddly to aim at; 6px reads clearly and still looks slim. */
+  height: 6px !important;
   border-radius: 999px;
   background: linear-gradient(90deg,
-    #fff 0, #fff var(--pct, 0%),
-    rgba(255, 255, 255, 0.45) var(--pct, 0%), rgba(255, 255, 255, 0.45) var(--buf, var(--pct, 0%)),
-    rgba(255, 255, 255, 0.18) var(--buf, var(--pct, 0%)), rgba(255, 255, 255, 0.18) 100%);
+    var(--accent, #e50914) 0, var(--accent, #e50914) var(--pct, 0%),
+    rgba(255, 255, 255, 0.42) var(--pct, 0%), rgba(255, 255, 255, 0.42) var(--buf, var(--pct, 0%)),
+    rgba(255, 255, 255, 0.16) var(--buf, var(--pct, 0%)), rgba(255, 255, 255, 0.16) 100%);
   transition: height 0.12s ease;
   margin-bottom: 4px;
 }
@@ -10520,7 +10542,7 @@ button,
    reveals the thumb — the 3px bar itself is an awkward pointer target. */
 .player-controls .scrubber:hover,
 .scrubber-track:hover .scrubber,
-.scrubber-track:focus-within .scrubber { height: 5px !important; }
+.scrubber-track:focus-within .scrubber { height: 9px !important; }
 
 /* iOS renders the native track unless it is explicitly zeroed out. */
 .player-controls .scrubber::-webkit-slider-runnable-track {
@@ -10530,27 +10552,38 @@ button,
   border: 0;
 }
 
+/* The thumb used to be invisible until hover, so at a glance there was no
+   handle to grab and no marker for the exact play position. Keep it visible
+   and grow it on hover/drag instead. */
 .player-controls .scrubber::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
   margin-top: 0;
   border: 0;
   border-radius: 999px;
   background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
-  opacity: 0;
-  transition: opacity 0.12s ease;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.6);
+  opacity: 1;
+  transition: transform 0.12s ease;
 }
 
 .player-controls .scrubber:hover::-webkit-slider-thumb,
 .player-controls .scrubber:active::-webkit-slider-thumb,
 .scrubber-track:hover .scrubber::-webkit-slider-thumb,
-.scrubber-track:focus-within .scrubber::-webkit-slider-thumb { opacity: 1; }
+.scrubber-track:focus-within .scrubber::-webkit-slider-thumb { transform: scale(1.35); }
 .player-controls .scrubber::-moz-range-track { background: transparent; height: 100%; border: 0; }
-.player-controls .scrubber::-moz-range-thumb { width: 12px; height: 12px; border: 0; background: #fff; opacity: 0; }
+.player-controls .scrubber::-moz-range-thumb {
+  width: 13px; height: 13px; border: 0; border-radius: 999px; background: #fff;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.6); opacity: 1;
+}
 .player-controls .scrubber:hover::-moz-range-thumb,
-.player-controls .scrubber:active::-moz-range-thumb { opacity: 1; }
+.player-controls .scrubber:active::-moz-range-thumb { transform: scale(1.35); }
+/* Keyboard focus needs a visible ring — the thumb alone is not an indicator. */
+.player-controls .scrubber:focus-visible {
+  outline: 2px solid var(--accent, #e50914);
+  outline-offset: 4px;
+}
 
 .player-controls-row {
   display: flex;
