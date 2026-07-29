@@ -113,10 +113,11 @@ fun Modifier.arvioBackSurface(motion: ArvioBackMotion): Modifier = graphicsLayer
 fun Modifier.arvioBackPeek(motion: ArvioBackMotion, active: Boolean): Modifier = graphicsLayer {
     if (!active) return@graphicsLayer
     val p = motion.eased
-    val s = 0.95f + p * 0.05f
+    if (p <= 0f) return@graphicsLayer
+    val s = 0.96f + p * 0.04f
     scaleX = s
     scaleY = s
-    alpha = 0.5f + p * 0.5f
+    alpha = 0.6f + p * 0.4f
 }
 
 /** Modal dismiss: shrink + fade in place. No positional shift — a modal closes, it doesn't traverse. */
