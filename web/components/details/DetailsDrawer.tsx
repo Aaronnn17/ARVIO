@@ -15,6 +15,7 @@ import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/service
 import { getImdbRating } from "@/lib/imdbRatings";
 import { sourcePickerScore } from "@/lib/sourceRank";
 import { isBrowserPlayableStream, isDirectPlayableStream, playbackPlan, streamPlayability } from "@/lib/streamCompatibility";
+import { cachedVerdict, verifyTopSources, type VerifiedVerdict } from "@/lib/streamVerify";
 import { authClient, useApp } from "@/lib/store";
 import { syncClient } from "@/lib/sync";
 import { getDetails, getLogoUrl, getPersonDetails, getReviews, getSeasonEpisodes } from "@/lib/tmdb";
@@ -392,6 +393,10 @@ function SourcePickerModal({
   const [addonFilter, setAddonFilter] = useState("all");
   const [mode, setMode] = useState<"all" | "playable">("all");
   const [query, setQuery] = useState("");
+  // Verified playability, keyed by url. The name-based plan labels the list
+  // instantly; these results come back a moment later and correct it, so a row
+  // only claims "Plays here" once the file itself has said so.
+  const [verified, setVerified] = useState<Record<string, VerifiedVerdict>>({});
   // Windows-only: offer the one-time vlc:// setup so "Open in VLC" launches VLC
   // directly instead of downloading a .m3u. Hidden once the user has set it up.
   // macOS is excluded — VLC self-registers vlc:// there, so no installer is
@@ -482,6 +487,33 @@ function SourcePickerModal({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefetchSignature]);
+
+  // Verify the rows the user can actually see. The release name only ever gives
+  // a guess — reading the container header and asking the browser whether it
+  // can decode each track is the real answer, and it needs no per-release rule.
+  // Only the top few are probed: checking hundreds would be pointless traffic,
+  // and these are the ones people press.
+  const verifySignature = filtered.slice(0, 6).map((s) => s.url ?? "").join("|");
+  useEffect(() => {
+    let alive = true;
+    const targets = filtered
+      .slice(0, 6)
+      .filter((s) => s.url && !isUncachedDebridStream(s) && playbackPlan(s).route === "here");
+    if (!targets.length) return undefined;
+    void verifyTopSources(
+      targets.map((s) => ({ url: s.url, headers: s.behaviorHints?.proxyHeaders?.request })),
+    ).then(() => {
+      if (!alive) return;
+      const next: Record<string, VerifiedVerdict> = {};
+      for (const s of targets) {
+        const verdict = s.url ? cachedVerdict(s.url) : undefined;
+        if (s.url && verdict) next[s.url] = verdict;
+      }
+      if (Object.keys(next).length) setVerified((prev) => ({ ...prev, ...next }));
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verifySignature]);
 
   const playable = streams.filter((s) => playbackPlan(s).route === "here").length;
   const title = selectedEpisode ? `${item.title} - S${selectedEpisode.season} E${selectedEpisode.episode}` : item.title;
@@ -658,7 +690,16 @@ function SourcePickerModal({
           )}
           {filtered.map((stream, index) => {
             const locked = !stream.url;
-            const plan = playbackPlan(stream);
+            const namePlan = playbackPlan(stream);
+            // A verified verdict overrides the name-based guess: it read the
+            // file and asked the browser, so it is the one that matches what
+            // pressing Play will do.
+            const proof = stream.url ? verified[stream.url] : undefined;
+            const plan = proof && !proof.playable
+              ? { ...namePlan, route: "vlc" as const, label: "Needs VLC", detail: proof.reason }
+              : proof?.playable && namePlan.route !== "here"
+                ? { ...namePlan, route: "here" as const, label: "Plays here", detail: "Checked — plays in this browser" }
+                : namePlan;
             const playable = plan.route === "here";
             const uncached = isUncachedDebridStream(stream);
             // One verdict per row, and it matches what Play actually does. The
