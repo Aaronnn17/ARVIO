@@ -198,6 +198,22 @@ export function playbackPlan(stream: CompatStream): PlaybackPlan {
         ? "(aac|ac-?3|eac-?3|ddp|dd\\+|opus|flac)"
         : "(aac|opus|flac)"
     ).test(text);
+    // A remux can only rescue blocked audio if the file actually carries a
+    // second track. Disc remuxes and dual-audio releases usually do; a WEB-DL
+    // carries exactly one. That distinction is why almost every
+    // "…MAX.WEB-DL.DDP5.1.Atmos…" episode was badged "Plays here" and then
+    // failed: E-AC-3 is undecodable in this browser and there was no other
+    // track to switch to.
+    const likelyMultiTrack = /\bremux\b|\bmulti\b|dual[.\s_-]?audio|\bmulti-?audio\b|\bdual\b/.test(text);
+    const audioBlocked = audioBlockReason(text) !== null;
+    if (audioBlocked && !decodableCompanion && !likelyMultiTrack) {
+      return {
+        route: "vlc",
+        method: "remux",
+        label: "Needs VLC",
+        detail: "This browser can't decode its only audio track",
+      };
+    }
     const losslessOnly = /truehd|dts/.test(text) && !decodableCompanion;
     if (losslessOnly) {
       return { route: "vlc", method: "remux", label: "Needs VLC", detail: "Only lossless audio this browser can't decode" };
