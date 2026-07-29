@@ -397,7 +397,7 @@ fun PlayerScreen(
     var showSubtitleMenu by remember { mutableStateOf(false) }
     var showSourceMenu by remember { mutableStateOf(false) }
     // Post-episode "Up Next" prompt (issue #86). Shown on STATE_ENDED for TV shows:
-    // a 10-second countdown lets the user Cancel or immediately Continue. On timeout we
+    // a 10-second countdown lets the user stop watching or immediately Continue. On timeout we
     // advance to the next episode. Gated on the existing autoPlayNext profile setting —
     // when disabled we simply stay on the ended frame rather than advancing silently.
     var showNextEpisodePrompt by remember { mutableStateOf(false) }
@@ -407,6 +407,21 @@ fun PlayerScreen(
     var pendingNextSourceName by remember { mutableStateOf<String?>(null) }
     var pendingNextBingeGroup by remember { mutableStateOf<String?>(null) }
     var nextEpisodePromptButton by remember { mutableIntStateOf(0) } // 0 = next, 1 = cancel
+    val nextEpisodePromptGate = remember { NextEpisodePromptGate() }
+    val playPendingNextEpisode: () -> Unit = {
+        showNextEpisodePrompt = false
+        onPlayNext(
+            pendingNextSeason,
+            pendingNextEpisode,
+            pendingNextAddonId,
+            pendingNextSourceName,
+            pendingNextBingeGroup
+        )
+    }
+    val cancelNextEpisodePrompt: () -> Unit = {
+        showNextEpisodePrompt = false
+        onBack()
+    }
     var playerResizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var subtitleMenuIndex by remember { mutableIntStateOf(0) }
     var subtitleMenuTab by remember { mutableIntStateOf(0) } // 0 = Subtitles, 1 = Audio
@@ -2305,25 +2320,35 @@ fun PlayerScreen(
             // Post-episode prompt: when a TV episode ends, show the "Up Next" overlay with a
             // 10-second countdown that auto-advances (or lets the user cancel / continue
             // immediately). Gated on the profile's autoPlayNext setting — when disabled we
-            // stay on the ended frame rather than silently advancing. Only trigger once per
-            // session (showNextEpisodePrompt guard) to avoid re-triggering on tick loops.
-            if (exoPlayer.playbackState == Player.STATE_ENDED &&
+            // stay on the ended frame rather than silently advancing. STATE_ENDED remains active
+            // after closing, so the per-episode gate prevents the countdown from reopening.
+            val endedEpisodeKey = if (
                 mediaType == MediaType.TV &&
-                !showNextEpisodePrompt &&
-                !showSourceMenu &&
-                !showSubtitleMenu &&
-                uiState.error == null
+                seasonNumber != null &&
+                episodeNumber != null
             ) {
-                if (seasonNumber != null && episodeNumber != null && uiState.autoPlayNext) {
-                    val selected = uiState.selectedStream
-                    pendingNextSeason = seasonNumber
-                    pendingNextEpisode = episodeNumber + 1
-                    pendingNextAddonId = selected?.addonId?.takeIf { it.isNotBlank() }
-                    pendingNextSourceName = selected?.source?.takeIf { it.isNotBlank() }
-                    pendingNextBingeGroup = selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
-                    nextEpisodePromptButton = 0
-                    showNextEpisodePrompt = true
-                }
+                PlaybackEpisodeKey(mediaId, seasonNumber, episodeNumber)
+            } else {
+                null
+            }
+            if (endedEpisodeKey != null && nextEpisodePromptGate.tryOpen(
+                    episode = endedEpisodeKey,
+                    eligible = exoPlayer.playbackState == Player.STATE_ENDED &&
+                        !showNextEpisodePrompt &&
+                        !showSourceMenu &&
+                        !showSubtitleMenu &&
+                        uiState.error == null &&
+                        uiState.autoPlayNext,
+                )
+            ) {
+                val selected = uiState.selectedStream
+                pendingNextSeason = endedEpisodeKey.seasonNumber
+                pendingNextEpisode = endedEpisodeKey.episodeNumber + 1
+                pendingNextAddonId = selected?.addonId?.takeIf { it.isNotBlank() }
+                pendingNextSourceName = selected?.source?.takeIf { it.isNotBlank() }
+                pendingNextBingeGroup = selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                nextEpisodePromptButton = 0
+                showNextEpisodePrompt = true
             }
 
             val tickDelayMs = when {
@@ -2453,6 +2478,10 @@ fun PlayerScreen(
             delay(120)
             runCatching { subtitleSettingsBtnFocusRequester.requestFocus() }
         }
+    }
+
+    BackHandler(enabled = showNextEpisodePrompt) {
+        cancelNextEpisodePrompt()
     }
 
     BackHandler(
@@ -2609,20 +2638,15 @@ fun PlayerScreen(
                                 true
                             }
                             Key.Enter, Key.DirectionCenter -> {
-                                showNextEpisodePrompt = false
                                 if (nextEpisodePromptButton == 0) {
-                                    onPlayNext(
-                                        pendingNextSeason,
-                                        pendingNextEpisode,
-                                        pendingNextAddonId,
-                                        pendingNextSourceName,
-                                        pendingNextBingeGroup
-                                    )
+                                    playPendingNextEpisode()
+                                } else {
+                                    cancelNextEpisodePrompt()
                                 }
                                 true
                             }
                             Key.Back, Key.Escape -> {
-                                showNextEpisodePrompt = false
+                                cancelNextEpisodePrompt()
                                 true
                             }
                             else -> true
@@ -3818,8 +3842,8 @@ fun PlayerScreen(
 
         // Post-episode "Up Next" prompt (issue #86). Shown when a TV episode ends and
         // autoPlayNext is enabled. 10-second countdown auto-advances, or the user can
-        // hit Enter to continue immediately or Back/Escape/Close to cancel and stay on
-        // the ended frame. Placed after StreamSelector so it renders above the player
+        // hit Enter to continue immediately or Back/Escape/Close to stop and return to
+        // the show overview. Placed after StreamSelector so it renders above the player
         // but below any error/source overlays that might appear simultaneously.
         NextEpisodeOverlay(
             isVisible = showNextEpisodePrompt,
@@ -3835,20 +3859,8 @@ fun PlayerScreen(
             countdownSeconds = 10,
             focusedButtonOverride = nextEpisodePromptButton,
             onFocusedButtonChange = { nextEpisodePromptButton = it },
-            onPlayNext = {
-                showNextEpisodePrompt = false
-                onPlayNext(
-                    pendingNextSeason,
-                    pendingNextEpisode,
-                    pendingNextAddonId,
-                    pendingNextSourceName,
-                    pendingNextBingeGroup
-                )
-            },
-            onCancel = {
-                showNextEpisodePrompt = false
-                // Stay on the ended frame — user can hit Back to leave the player.
-            }
+            onPlayNext = playPendingNextEpisode,
+            onCancel = cancelNextEpisodePrompt
         )
 
         // Volume indicator
