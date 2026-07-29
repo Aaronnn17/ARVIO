@@ -182,16 +182,26 @@ export function playbackPlan(stream: CompatStream): PlaybackPlan {
     // browser can decode. Lossless-only audio (TrueHD/DTS with no AC-3/AAC
     // companion) is the common failure, and AC-3 itself is unsupported here.
     //
-    // Be conservative: the release name lists the HEADLINE track, not every
-    // track, and most TrueHD/DTS releases also ship an AAC or AC-3 companion
-    // the remux can pick. Only route away from the browser when the name says
-    // lossless AND nothing suggests a companion — a full disc REMUX practically
-    // always carries one, so those keep their Play button and let the remux's
-    // own track probe decide. Guessing wrong here removes a button that would
-    // have worked, which is worse than a rare failed attempt.
-    const mentionsCompanion = /(aac|ac-?3|eac-?3|ddp|dd\+|opus|flac)/.test(text) || /\bremux\b/.test(text);
-    const losslessOnly = /truehd|dts/.test(text) && !mentionsCompanion;
-    if (losslessOnly && !caps.ac3 && !caps.eac3) {
+    // The release name lists the HEADLINE track, so a companion mention (AAC,
+    // Opus, FLAC…) is real evidence the remux has something to pick.
+    //
+    // "Remux" is NOT such evidence, though it used to count as one. A disc
+    // remux carries the disc's own tracks — typically TrueHD/DTS-HD and often
+    // nothing else this browser can decode. Treating the word as a promise of a
+    // safe companion is what put an 80GB "BluRay.Remux.DV.P7.HDR.MULTi.
+    // TrueHD.Atmos" at the top of the list badged "Plays here": measured in
+    // Chrome, TrueHD, Atmos, E-AC-3 and AC-3 are all unsupported, so pressing
+    // Play sat at readyState 0 with no picture, no error and no timeout.
+    //
+    // AC-3/E-AC-3 only count as a companion when this browser can actually
+    // decode them — naming a codec it cannot play is not a fallback.
+    const decodableCompanion = new RegExp(
+      caps.ac3 || caps.eac3
+        ? "(aac|ac-?3|eac-?3|ddp|dd\\+|opus|flac)"
+        : "(aac|opus|flac)"
+    ).test(text);
+    const losslessOnly = /truehd|dts/.test(text) && !decodableCompanion;
+    if (losslessOnly) {
       return { route: "vlc", method: "remux", label: "Needs VLC", detail: "Only lossless audio this browser can't decode" };
     }
     return { route: "here", method: "remux", label: "Plays here", detail: reason };
