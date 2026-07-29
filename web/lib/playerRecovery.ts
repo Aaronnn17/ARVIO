@@ -99,6 +99,28 @@ export function bufferedAhead(ranges: TimeRanges | null, currentTime: number): n
   return 0;
 }
 
+/**
+ * What a MediaError means for the source.
+ *
+ * The player used to treat every failure identically, so a momentary network
+ * drop was punished exactly like an undecodable codec: walk the ladder, declare
+ * the source unplayable, hop away. They need opposite responses — a network
+ * fault is worth retrying on the same source, a decode fault never is.
+ *
+ * Codes are the MediaError constants (1 aborted, 2 network, 3 decode,
+ * 4 src-not-supported).
+ */
+export type MediaFaultKind = "retryable" | "fatal";
+
+export function classifyMediaError(code: number | null | undefined): MediaFaultKind {
+  // NETWORK (2) and ABORTED (1) say nothing about whether the browser can play
+  // this content — the bytes just stopped arriving.
+  if (code === 1 || code === 2) return "retryable";
+  // DECODE (3) and SRC_NOT_SUPPORTED (4) mean this browser genuinely cannot
+  // play these bytes; retrying the same URL will fail the same way.
+  return "fatal";
+}
+
 /** End of the buffered range holding the playhead, for the scrubber's buffer bar. */
 export function bufferedEndAt(ranges: TimeRanges | null, currentTime: number): number {
   if (!ranges) return 0;

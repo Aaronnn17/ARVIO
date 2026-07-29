@@ -35,6 +35,7 @@ import { sourcePickerScore, streamSizeBytes } from "@/lib/sourceRank";
 import { playbackPlan, streamPlayability } from "@/lib/streamCompatibility";
 import {
   bufferedEndAt,
+  classifyMediaError,
   isStalled,
   nextStallAction,
 } from "@/lib/playerRecovery";
@@ -744,6 +745,14 @@ function VideoPlayer({
     let handlingError = false;
     let cancelled = false;
     let detach: (() => void) | undefined;
+    // Set once this source has actually rendered frames. Everything below is
+    // STARTUP logic — "can this URL be opened at all?" — and must stand down
+    // afterwards. Without this, an error five seconds into a working stream ran
+    // the startup ladder and declared the source unplayable, which is why a
+    // source that was visibly playing would suddenly say it can't play in the
+    // browser and hop to the next one. Once playback has proven itself, a later
+    // fault is a stall/interruption and belongs to the recovery watchdog.
+    let hasPlayed = false;
     // Playback ladder: direct first (free for CORS-friendly providers), then the
     // Cloudflare resolver media proxy for live TV (fixes CORS/ORB without Netlify
     // bandwidth), then the legacy Netlify fallbacks.
@@ -816,6 +825,21 @@ function VideoPlayer({
     let refreshedLink = false;
     const handlePlaybackError = () => {
       if (cancelled || handlingError) return;
+      // A source that already played is not a startup failure. Walking the
+      // ladder here would re-attach a different URL (or hop to another source)
+      // mid-film; the stall watchdog recovers in place instead, keeping the
+      // user's position and the source they chose. A decode fault is the one
+      // exception — those bytes will never play here, so say so plainly rather
+      // than letting the watchdog retry something that cannot work.
+      if (hasPlayed) {
+        if (classifyMediaError(video.error?.code) === "fatal") {
+          setBuffering(false);
+          setError(true);
+          setShowControls(true);
+          onToast("This source stopped decoding partway through. Try another source or open it in VLC.");
+        }
+        return;
+      }
       handlingError = true;
       // A debrid CDN link is presigned and short-lived. When one expires the
       // CDN rejects it (TorBox: "Invalid Presigned Token", HTTP 400) and every
@@ -895,12 +919,29 @@ function VideoPlayer({
     }, 6500);
     const onErr = () => handlePlaybackError();
     video.addEventListener("error", onErr);
+    // The moment real frames arrive this source has proven it plays here, so
+    // retire the startup watchdogs and the ladder. Anything that goes wrong
+    // from now on is handled by the stall watchdog, which recovers in place.
+    const onFirstPlaying = () => {
+      if (video.readyState < 3) return;
+      hasPlayed = true;
+      window.clearTimeout(stallTimer);
+      window.clearTimeout(playableWatchdog);
+      video.removeEventListener("playing", onFirstPlaying);
+      video.removeEventListener("timeupdate", onFirstPlaying);
+    };
+    video.addEventListener("playing", onFirstPlaying);
+    // `playing` can be missed when a source starts already-buffered; a moving
+    // clock is the same proof.
+    video.addEventListener("timeupdate", onFirstPlaying);
     return () => {
       cancelled = true;
       window.clearTimeout(startTimer);
       window.clearTimeout(slowTimer);
       window.clearTimeout(stallTimer);
       window.clearTimeout(playableWatchdog);
+      video.removeEventListener("playing", onFirstPlaying);
+      video.removeEventListener("timeupdate", onFirstPlaying);
       video.removeEventListener("loadedmetadata", onReadyToStart);
       video.removeEventListener("canplay", onReadyToStart);
       video.removeEventListener("error", onErr);
