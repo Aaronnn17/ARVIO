@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.settings
 
+import androidx.activity.compose.BackHandler
 import com.arflix.tv.ui.motion.*
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -719,6 +720,19 @@ fun SettingsScreen(
         uiState.packError != null ||
         uiState.pendingPackManifest != null ||
         pluginsModalOpen
+
+    BackHandler(enabled = !isTouchDevice && !hasBlockingModal) {
+        when (activeZone) {
+            Zone.SIDEBAR -> onBack()
+            Zone.SECTION -> {
+                activeZone = Zone.SIDEBAR
+                isSidebarFocused = true
+            }
+            Zone.CONTENT -> {
+                activeZone = Zone.SECTION
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -4376,6 +4390,9 @@ private fun UnknownSourcesModal(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
@@ -8207,6 +8224,10 @@ private fun AccountDisconnectConfirmDialog(
     // Disconnect button, or the Box itself). This is intentional: it intercepts key
     // events BEFORE clickable children can handle them, preventing the Cancel button
     // from firing via its own clickable when the user presses OK/Enter to open the dialog.
+    BackHandler {
+        onDismiss()
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -8524,6 +8545,9 @@ private fun InputModalLegacy(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
@@ -8858,6 +8882,10 @@ private fun InputModal(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            hideKeyboardAll()
+            onDismiss()
+        }
         ModalScrim(
             onDismiss = {
                 hideKeyboardAll()
@@ -9297,6 +9325,9 @@ private fun SubtitlePickerModal(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
@@ -9421,6 +9452,9 @@ private fun UiModeWarningDialog(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
@@ -9771,6 +9805,9 @@ private fun CatalogPackImportDialog(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
@@ -10012,6 +10049,9 @@ private fun CatalogPackDeleteConfirmDialog(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier

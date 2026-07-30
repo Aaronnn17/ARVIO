@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.tv.live
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -170,6 +171,10 @@ fun CategorySidebar(
         activeMenuActions.getOrNull(index.coerceIn(0, (activeMenuActions.size - 1).coerceAtLeast(0)))
             ?.onClick
             ?.invoke()
+    }
+
+    BackHandler(enabled = activeMenu != null) {
+        activeMenu = null
     }
 
     LaunchedEffect(focusSearchSignal) {

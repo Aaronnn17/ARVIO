@@ -2,6 +2,7 @@
 
 package com.arflix.tv.ui.screens.home
 
+import androidx.activity.compose.BackHandler
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedContent
@@ -2299,6 +2300,19 @@ private fun HomeInputLayer(
         val currentRowItems = categories.getOrNull(focusState.currentRowIndex)?.items.orEmpty()
         if (currentRowItems.isNotEmpty() && focusState.currentItemIndex > currentRowItems.lastIndex) {
             focusState.currentItemIndex = currentRowItems.lastIndex
+        }
+    }
+
+    BackHandler {
+        selectPressedInHome = false
+        selectDownAtMs = 0L
+        if (focusState.isSidebarFocused) {
+            onExitApp()
+        } else {
+            categories.getOrNull(focusState.currentRowIndex)?.id?.let { categoryId ->
+                focusState.rowItemIndicesByCategoryId[categoryId] = focusState.currentItemIndex
+            }
+            focusState.isSidebarFocused = true
         }
     }
 

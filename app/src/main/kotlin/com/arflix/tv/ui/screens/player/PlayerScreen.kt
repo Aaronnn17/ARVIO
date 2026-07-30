@@ -2490,6 +2490,24 @@ fun PlayerScreen(
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
     ) {
+    BackHandler {
+        when {
+            showNextEpisodePrompt -> showNextEpisodePrompt = false
+            showSubtitleSettings -> {
+                showSubtitleSettings = false
+                showControls = true
+            }
+            showSubtitleMenu -> {
+                showSubtitleMenu = false
+                showControls = true
+            }
+            showSourceMenu -> showSourceMenu = false
+            uiState.error != null -> onBack()
+            showControls -> showControls = false
+            else -> onBack()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
