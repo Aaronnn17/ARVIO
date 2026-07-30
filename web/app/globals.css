@@ -2253,8 +2253,14 @@ a.login-submit {
 .rail-skeleton {
   min-height: clamp(220px, 28vh, 320px);
 }
+.media-card-skeleton {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .card-skeleton {
-  width: clamp(280px, 22.1vw, 424px);
+  width: 100%;
   aspect-ratio: 16 / 9;
   border-radius: clamp(12px, 0.94vw, 18px);
   background: linear-gradient(100deg, var(--bg-card) 30%, var(--bg-elevated) 50%, var(--bg-card) 70%);
@@ -2262,10 +2268,30 @@ a.login-submit {
   animation: arvio-shimmer 1.4s ease-in-out infinite;
 }
 
+.rail.is-poster .card-skeleton,
 .rail-skeleton.is-poster .card-skeleton {
-  width: clamp(150px, 12vw, 210px);
   aspect-ratio: 2 / 3;
 }
+
+.card-skeleton-title {
+  width: 75%;
+  height: 14px;
+  border-radius: 4px;
+  margin-top: 4px;
+  background: linear-gradient(100deg, var(--bg-card) 30%, var(--bg-elevated) 50%, var(--bg-card) 70%);
+  background-size: 200% 100%;
+  animation: arvio-shimmer 1.4s ease-in-out infinite;
+}
+
+.card-skeleton-meta {
+  width: 45%;
+  height: 11px;
+  border-radius: 4px;
+  background: linear-gradient(100deg, var(--bg-card) 30%, var(--bg-elevated) 50%, var(--bg-card) 70%);
+  background-size: 200% 100%;
+  animation: arvio-shimmer 1.4s ease-in-out infinite;
+}
+
 @keyframes arvio-shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }

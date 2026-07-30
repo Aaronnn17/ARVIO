@@ -5,6 +5,7 @@ import { loadStored, saveStored } from "@/lib/storage";
 import { useApp } from "@/lib/store";
 import type { CatalogConfig, Category, MediaItem } from "@/lib/types";
 import { MediaRail } from "./MediaRail";
+import { RailScroller } from "./RailScroller";
 
 // v3: v2 entries were poisoned by collection rails colliding on a cache key
 // that omitted collectionSources (all service rows shared one entry).
@@ -99,9 +100,15 @@ export function LazyRail({ catalog, eager = false, posterMode, onOpen, onFocus, 
       <div className="rail-head">
         <h3>{catalog.name}</h3>
       </div>
-      <div className="rail-strip">
-        {loading && Array.from({ length: 6 }).map((_, index) => <div key={index} className="card-skeleton" />)}
-      </div>
+      <RailScroller className="rail-strip" ariaLabel={catalog.name}>
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div key={index} className="media-card-skeleton">
+            <div className="card-skeleton" />
+            <div className="card-skeleton-title" />
+            <div className="card-skeleton-meta" />
+          </div>
+        ))}
+      </RailScroller>
     </section>
   );
 }
