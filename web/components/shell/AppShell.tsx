@@ -86,18 +86,13 @@ export function AppShell() {
       {!activeStream && <TopNav />}
 
       <section className="content">
-        {selected ? (
-          <DetailsDrawer />
-        ) : (
-          <>
-            <div style={{ display: section === "home" ? "contents" : "none" }}><HomeScreen /></div>
-            <div style={{ display: section === "search" ? "contents" : "none" }}><SearchScreen /></div>
-            <div style={{ display: section === "watchlist" ? "contents" : "none" }}><WatchlistScreen /></div>
-            <div style={{ display: section === "tv" ? "contents" : "none" }}><LiveTvScreen /></div>
-            <div style={{ display: section === "addons" ? "contents" : "none" }}><AddonsScreen /></div>
-            <div style={{ display: section === "settings" ? "contents" : "none" }}><SettingsScreen /></div>
-          </>
-        )}
+        <div style={{ display: !selected && section === "home" ? "contents" : "none" }}><HomeScreen /></div>
+        <div style={{ display: !selected && section === "search" ? "contents" : "none" }}><SearchScreen /></div>
+        <div style={{ display: !selected && section === "watchlist" ? "contents" : "none" }}><WatchlistScreen /></div>
+        <div style={{ display: !selected && section === "tv" ? "contents" : "none" }}><LiveTvScreen /></div>
+        <div style={{ display: !selected && section === "addons" ? "contents" : "none" }}><AddonsScreen /></div>
+        <div style={{ display: !selected && section === "settings" ? "contents" : "none" }}><SettingsScreen /></div>
+        {selected && <DetailsDrawer />}
       </section>
 
       <PlayerOverlay />

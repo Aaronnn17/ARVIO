@@ -9634,8 +9634,8 @@ button,
 .hero-overview {
   font-size: clamp(14px, 1.15vw, 18px) !important;
   line-height: 1.45 !important;
-  height: auto !important;
-  max-height: calc(3 * 1.45em) !important;
+  min-height: calc(3 * 1.45em) !important;
+  height: calc(3 * 1.45em) !important;
   display: -webkit-box !important;
   -webkit-line-clamp: 3 !important;
   -webkit-box-orient: vertical !important;
@@ -12112,8 +12112,8 @@ html { background: #000; }
   .hero-copy p:not(.eyebrow) {
     font-size: 13px !important;
     line-height: 1.45 !important;
-    height: auto !important;
-    max-height: calc(2 * 1.45em) !important;
+    min-height: calc(2 * 1.45em) !important;
+    height: calc(2 * 1.45em) !important;
     -webkit-line-clamp: 2 !important;
     margin-bottom: 4px !important;
   }
