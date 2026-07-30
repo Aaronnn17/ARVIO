@@ -251,12 +251,15 @@ button {
 
 /* Screens that already supply their own top offset must not stack this one:
    .section-heading carries clamp(112px, 14.3vh, 154px) of its own padding
-   (Watchlist/Browse/Addons), a hero fills the space itself, and .livetv-shell
-   sets its own. Without these exclusions those pages rendered ~232px of empty
-   space above the first heading instead of ~112px. */
+   (Watchlist/Browse/Addons) and a hero fills the space itself.
+
+   .livetv-shell is deliberately NOT in this list. It sets its own full padding
+   (clamp(84px, 9vh, 104px) top — the Live TV overhaul block), and that
+   single-class rule already beats the .screen base by source order. Forcing
+   padding-top: 0 from here out-specified it (two classes vs one) and pushed
+   the whole TV page underneath the fixed top bar. */
 .screen:has(.hero),
-.screen:has(> .section-heading:first-child),
-.screen.livetv-shell {
+.screen:has(> .section-heading:first-child) {
   padding-top: 0;
 }
 
@@ -10732,7 +10735,10 @@ button,
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: clamp(84px, 9vh, 104px) clamp(16px, 2.6vw, 40px) 24px;
+  /* Top clearance must cover the fixed top bar's centered controls, whose
+     bottom edge reaches (clamp(96px,13vh,154px) + 58px)/2 ≈ 106px on large
+     screens — 104px left a 2px sliver of clickable nav over the heading. */
+  padding: clamp(84px, 9vh, 108px) clamp(16px, 2.6vw, 40px) 24px;
   min-height: 100vh;
 }
 
@@ -10924,7 +10930,10 @@ button,
   overflow-y: auto;
   max-height: calc(100vh - 200px);
   position: sticky;
-  top: 96px;
+  /* Must clear the fixed bar's clickable controls at every size: their bottom
+     edge reaches ~106px on large screens, and 96px tucked the stuck list
+     underneath them. */
+  top: 108px;
   padding-right: 4px;
   scrollbar-width: thin;
 }
@@ -11138,9 +11147,11 @@ button,
   border: 1px solid rgba(255, 255, 255, 0.07);
   background: rgba(255, 255, 255, 0.03);
   position: sticky;
-  top: 96px;
+  /* Same clearance as .livetv-cats — 96px sat under the bar's controls on
+     large screens. max-height follows so the stuck panel still fits. */
+  top: 108px;
   align-self: start;
-  max-height: calc(100vh - 130px);
+  max-height: calc(100vh - 142px);
   overflow-y: auto;
   scrollbar-width: thin;
 }
@@ -11215,7 +11226,12 @@ button,
 
 /* Mobile: single column, categories become horizontal chips */
 @media (max-width: 760px) {
-  .livetv-shell { padding: 76px 12px 90px; gap: 10px; }
+  /* 681-760px still shows the DESKTOP fixed bar (the mobile header only
+     exists at <=680px), and that bar is clamp(96px, 13vh, 154px) tall — a flat
+     76px put the Live TV heading under its click-intercepting controls on any
+     tallish tablet. Clear the bar here; at <=680px the 16px !important rule in
+     the mobile-header block takes over anyway. */
+  .livetv-shell { padding: clamp(96px, 13vh, 112px) 12px 90px; gap: 10px; }
   .livetv-columns { display: flex; flex-direction: column; gap: 10px; }
   .livetv-cats {
     flex-direction: row;
