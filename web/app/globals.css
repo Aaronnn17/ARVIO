@@ -256,8 +256,7 @@ button {
    sets its own. Without these exclusions those pages rendered ~232px of empty
    space above the first heading instead of ~112px. */
 .screen:has(.hero),
-.screen:has(> .section-heading:first-child),
-.screen.livetv-shell {
+.screen:has(> .section-heading:first-child) {
   padding-top: 0;
 }
 
@@ -10777,7 +10776,7 @@ button,
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: clamp(84px, 9vh, 104px) clamp(16px, 2.6vw, 40px) 24px;
+  padding: clamp(112px, 14.3vh, 154px) clamp(16px, 2.6vw, 40px) 24px;
   min-height: 100vh;
 }
 
