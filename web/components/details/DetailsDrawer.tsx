@@ -14,8 +14,6 @@ import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefe
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { getImdbRating } from "@/lib/imdbRatings";
 import { sourcePickerScore } from "@/lib/sourceRank";
-import { isBrowserPlayableStream, isDirectPlayableStream, playbackPlan, streamPlayability } from "@/lib/streamCompatibility";
-import { cachedVerdict, verifyTopSources, type VerifiedVerdict } from "@/lib/streamVerify";
 import { authClient, useApp } from "@/lib/store";
 import { syncClient } from "@/lib/sync";
 import { getDetails, getLogoUrl, getPersonDetails, getReviews, getSeasonEpisodes } from "@/lib/tmdb";
@@ -38,7 +36,7 @@ function needsDetailsHydration(item: MediaItem) {
 }
 
 function DetailsView({ item }: { item: MediaItem }) {
-  const { streams, selectedEpisode, activeProfile, addons: installedAddons, loadEpisodeStreams, openDetails, playStream, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally } = useApp();
+  const { streams, selectedEpisode, activeProfile, addons: installedAddons, loadEpisodeStreams, openDetails, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally } = useApp();
   const [detailsItem, setDetailsItem] = useState<MediaItem>(item);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [reviews, setReviews] = useState<ReviewInfo[]>([]);
@@ -95,7 +93,6 @@ function DetailsView({ item }: { item: MediaItem }) {
     return () => { active = false; };
   }, [item.id, item.mediaType]);
 
-  const playableCount = streams.filter((s) => playbackPlan(s).route === "here").length;
   const isTv = displayItem.mediaType === "tv";
   const inWatchlist = watchlist.some((entry) => entry.mediaType === item.mediaType && entry.id === item.id);
   const canPlayBest = streams.length > 0;
@@ -246,7 +243,7 @@ function DetailsView({ item }: { item: MediaItem }) {
           </div>
           <div className="chips detail-metadata">
             {detailMeta.map((meta) => <span key={meta}>{meta}</span>)}
-            {streams.length > 0 && <span>{playableCount}/{streams.length} web playable</span>}
+            {streams.length > 0 && <span>{streams.length} sources</span>}
           </div>
           <p className="detail-overview">{displayItem.overview || "No overview available."}</p>
           {serviceLogos.length ? (
@@ -355,10 +352,6 @@ function DetailsView({ item }: { item: MediaItem }) {
         selectedEpisode={selectedEpisode}
         activeProfileId={activeProfile?.id ?? null}
         onClose={() => setSourcePickerVisible(false)}
-        onPlay={(stream) => {
-          playStream(stream);
-          if (stream.url) setSourcePickerVisible(false);
-        }}
         onToast={setToast}
         loading={busy === "Finding sources"}
       />
@@ -374,7 +367,6 @@ function SourcePickerModal({
   selectedEpisode,
   activeProfileId,
   onClose,
-  onPlay,
   onToast,
   loading
 }: {
@@ -385,18 +377,12 @@ function SourcePickerModal({
   selectedEpisode: { season: number; episode: number } | null;
   activeProfileId: string | null;
   onClose: () => void;
-  onPlay: (stream: StreamSource) => void;
   onToast: (message: string) => void;
   loading: boolean;
 }) {
   const { settings } = useApp();
   const [addonFilter, setAddonFilter] = useState("all");
-  const [mode, setMode] = useState<"all" | "playable">("all");
   const [query, setQuery] = useState("");
-  // Verified playability, keyed by url. The name-based plan labels the list
-  // instantly; these results come back a moment later and correct it, so a row
-  // only claims "Plays here" once the file itself has said so.
-  const [verified, setVerified] = useState<Record<string, VerifiedVerdict>>({});
   // Windows-only: offer the one-time vlc:// setup so "Open in VLC" launches VLC
   // directly instead of downloading a .m3u. Hidden once the user has set it up.
   // macOS is excluded — VLC self-registers vlc:// there, so no installer is
@@ -424,7 +410,6 @@ function SourcePickerModal({
   useEffect(() => {
     if (!visible) return undefined;
     setAddonFilter("all");
-    setMode("all");
     setQuery("");
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -467,21 +452,17 @@ function SourcePickerModal({
     return Array.from(unique.values());
   }, [installedAddons, streams]);
 
-  // Rank for whoever is actually going to play this. An external-player user
-  // wants the biggest, highest-quality file; a browser user needs one their
-  // browser can decode. Ranking used to ignore this and serve both the same
-  // list, which put unplayable sources first for everyone on browser.
-  const rankTarget = settings.defaultPlayer === "browser" ? "browser" : "external";
-
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return streams.filter((stream) => {
       if (addonFilter !== "all" && (stream.addonId || stream.addonName) !== addonFilter) return false;
-      if (mode === "playable" && playbackPlan(stream).route !== "here") return false;
       if (!needle) return true;
       return `${stream.source} ${stream.addonName} ${stream.description ?? ""} ${stream.quality ?? ""} ${stream.size ?? ""}`.toLowerCase().includes(needle);
-    }).sort((a, b) => sourcePickerScore(b, rankTarget) - sourcePickerScore(a, rankTarget));
-  }, [addonFilter, mode, query, streams, rankTarget]);
+      // Every source opens in an external player, so quality-first ("external")
+      // is the right order for everyone — the browser-aware reordering only
+      // made sense while in-browser Play existed here.
+    }).sort((a, b) => sourcePickerScore(b, "external") - sourcePickerScore(a, "external"));
+  }, [addonFilter, query, streams]);
 
   // Warm the direct CDN URLs of the top debrid picks while the user is still
   // looking at the list — pressing Play then skips the resolver round-trips
@@ -494,34 +475,6 @@ function SourcePickerModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefetchSignature]);
 
-  // Verify the rows the user can actually see. The release name only ever gives
-  // a guess — reading the container header and asking the browser whether it
-  // can decode each track is the real answer, and it needs no per-release rule.
-  // Only the top few are probed: checking hundreds would be pointless traffic,
-  // and these are the ones people press.
-  const verifySignature = filtered.slice(0, 6).map((s) => s.url ?? "").join("|");
-  useEffect(() => {
-    let alive = true;
-    const targets = filtered
-      .slice(0, 6)
-      .filter((s) => s.url && !isUncachedDebridStream(s) && playbackPlan(s).route === "here");
-    if (!targets.length) return undefined;
-    void verifyTopSources(
-      targets.map((s) => ({ url: s.url, headers: s.behaviorHints?.proxyHeaders?.request })),
-    ).then(() => {
-      if (!alive) return;
-      const next: Record<string, VerifiedVerdict> = {};
-      for (const s of targets) {
-        const verdict = s.url ? cachedVerdict(s.url) : undefined;
-        if (s.url && verdict) next[s.url] = verdict;
-      }
-      if (Object.keys(next).length) setVerified((prev) => ({ ...prev, ...next }));
-    });
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verifySignature]);
-
-  const playable = streams.filter((s) => playbackPlan(s).route === "here").length;
   const title = selectedEpisode ? `${item.title} - S${selectedEpisode.season} E${selectedEpisode.episode}` : item.title;
   const openExternal = (player: "vlc" | "infuse", stream: StreamSource) => {
     if (!stream.url) {
@@ -646,15 +599,8 @@ function SourcePickerModal({
             <p className="eyebrow">sources</p>
             <h2>{title}</h2>
             <span>
-              {playable}/{streams.length} browser playable.{" "}
-              {rankTarget === "browser"
-                ? (playable === 0
-                    // A browser user staring at a list where nothing can play
-                    // needs the way out stated once, not discovered by trying
-                    // five rows that all fail.
-                    ? "Nothing here plays in this browser — open one in VLC, or set VLC as your default player in Settings."
-                    : "Sources your browser can play are shown first.")
-                : "Highest quality and largest files are shown first."}
+              {streams.length} sources — highest quality and largest files first.
+              Playback uses an external player like VLC.
             </span>
           </div>
           <button type="button" className="person-close" onClick={onClose} aria-label="Close source picker"><X size={24} /></button>
@@ -672,15 +618,12 @@ function SourcePickerModal({
             <Search size={18} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search quality, release, provider" />
           </label>
-          {/* Single home for the playability filter. It briefly also existed as
-              a chip in the addon-tab row below, which meant two controls drove
-              one piece of state and could disagree about what was active. */}
-          <div className="source-filter-group" aria-label="Source mode">
-            <button type="button" className={mode === "all" ? "is-active" : ""} onClick={() => setMode("all")}>
+          {/* The "Browser playable" filter is gone with the in-browser Play
+              path: it counted a name-based guess that was wrong often enough
+              to be a broken promise. All sources, searchable, one order. */}
+          <div className="source-filter-group" aria-label="Source count">
+            <button type="button" className="is-active" disabled>
               <Filter size={16} /> All sources{streams.length ? ` ${streams.length}` : ""}
-            </button>
-            <button type="button" className={mode === "playable" ? "is-active" : ""} onClick={() => setMode("playable")}>
-              Browser playable{playable > 0 ? ` ${playable}` : ""}
             </button>
           </div>
         </div>
@@ -706,28 +649,18 @@ function SourcePickerModal({
           )}
           {filtered.map((stream, index) => {
             const locked = !stream.url;
-            const namePlan = playbackPlan(stream);
-            // A verified verdict overrides the name-based guess: it read the
-            // file and asked the browser, so it is the one that matches what
-            // pressing Play will do.
-            const proof = stream.url ? verified[stream.url] : undefined;
-            const plan = proof && !proof.playable
-              ? { ...namePlan, route: "vlc" as const, label: "Needs VLC", detail: proof.reason }
-              : proof?.playable && namePlan.route !== "here"
-                ? { ...namePlan, route: "here" as const, label: "Plays here", detail: "Checked — plays in this browser" }
-                : namePlan;
-            const playable = plan.route === "here";
+            // No browser-playback claims at all. The "Plays here" verdict was
+            // inferred from release names and failed often enough that users
+            // stopped trusting the list — the product decision is to promise
+            // only what always works: an external player. In-browser Play is
+            // removed with it; a button that usually fails is worse than none.
             const uncached = isUncachedDebridStream(stream);
-            // One verdict per row, and it matches what Play actually does. The
-            // old copy said "external player recommended" on EVERY row —
-            // including ones that play here fine — so it read as noise.
             const statusLabel = uncached
               ? "Not cached — downloads first, slow start"
-              : plan.detail ? `${plan.label} — ${plan.detail}` : plan.label;
-            const statusClass = uncached
-              ? "needs-vlc"
-              : plan.route !== "here" ? "needs-vlc"
-                : plan.method === "transcode" ? "is-transcode" : "is-web";
+              : locked
+                ? "Needs a debrid resolver"
+                : "Plays in an external player — open in VLC";
+            const statusClass = "needs-vlc";
             return (
               <article key={`${stream.addonId}-${stream.source}-${index}`} className={`source-picker-row ${locked ? "is-locked" : ""}`}>
                 <span className="source-rank">{index + 1}</span>
@@ -747,33 +680,11 @@ function SourcePickerModal({
                 </span>
                 <span className="source-side">
                   <b>{stream.quality || "HD"}</b>
-                  <small>{locked ? "Needs resolver" : plan.route === "here" ? (plan.method === "direct" ? "Browser" : plan.method === "remux" ? "Remux" : "Transcode") : plan.route === "vlc" ? "External" : "Unplayable"}</small>
+                  <small>{locked ? "Needs resolver" : "External"}</small>
                   <span className="source-row-actions">
-                    {/* The route decides which action leads: pressing the big
-                        button should never be the one that cannot work. */}
-                    {/* No Play button at all when this source genuinely cannot
-                        play in the browser — a greyed-out button still reads as
-                        "this should work", which is exactly the confusion we're
-                        removing. It stays (disabled) while the source is locked
-                        behind a resolver, because that IS a temporary state. */}
-                    {/* Which action is emphasised follows the user's default
-                        player, so one click is right for both audiences without
-                        hiding the other path. An external-player user was
-                        previously nudged towards in-browser Play on every row
-                        that happened to be browser-playable. */}
-                    {(playable || locked) && (
-                      <button
-                        type="button"
-                        className={`source-action ${playable && rankTarget === "browser" ? "primary-action" : ""}`}
-                        disabled={locked}
-                        onClick={() => onPlay(stream)}
-                      >
-                        <Play size={13} fill="currentColor" /> Play
-                      </button>
-                    )}
                     <button
                       type="button"
-                      className={`source-action ${!locked && (rankTarget === "external" || !playable) ? "primary-action" : ""}`}
+                      className={`source-action ${locked ? "" : "primary-action"}`}
                       disabled={locked}
                       onClick={() => openExternal("vlc", stream)}
                     >
@@ -896,11 +807,8 @@ function streamBadges(stream: StreamSource) {
   if (stream.behaviorHints?.cached) labels.push({ label: "CACHED", tone: "ok" });
   if (parseDebridStream(stream.url) || /real-?debrid|premiumize|alldebrid|torbox|\brd\b|\bpm\b|\bad\b|\bdebrid\b/i.test(text)) labels.push({ label: "DEBRID", tone: "ok" });
   if (stream.url) labels.push({ label: "DIRECT", tone: "ok" });
-  const mode = streamPlayability(stream).mode;
-  if (mode === "direct") labels.push({ label: "WEB", tone: "ok" });
-  else if (mode === "remux") labels.push({ label: "REMUX", tone: "ok" });
-  else if (mode === "transcode") labels.push({ label: "TRANSCODE", tone: "ok" });
-  else if (stream.url) labels.push({ label: "TRY", tone: "warn" });
+  // The WEB/REMUX/TRANSCODE badges were browser-playability claims inferred
+  // from the release name; they left with the in-browser Play path.
   if (!stream.url) labels.push({ label: "ANDROID", tone: "warn" });
   const seen = new Set<string>();
   return labels.filter((badge) => {
