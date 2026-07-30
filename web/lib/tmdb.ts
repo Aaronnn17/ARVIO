@@ -1,5 +1,7 @@
 import { config } from "./config";
 import { apiProxiedUrl, jsonRequest, proxiedUrl } from "./http";
+import { MetadataDispatcher } from "./metadata/dispatcher";
+import type { ProviderPriorityConfig } from "./metadata/types";
 import { tmdbImageUrl } from "./mediaImages";
 import { loadStored, saveStored } from "./storage";
 import type { CatalogConfig, Category, CollectionSourceConfig, EpisodeInfo, InstalledAddon, MediaItem, MediaType, PersonDetails, ReviewInfo } from "./types";
@@ -92,8 +94,23 @@ export function genreNamesFromIds(ids?: number[]): string[] {
   return (ids ?? []).map((id) => TMDB_GENRES[id]).filter(Boolean);
 }
 
+export function isAnime(item: TmdbItem | Partial<MediaItem>): boolean {
+  if ("mediaType" in item && item.mediaType === "anime") return true;
+  const genreIds = ("genre_ids" in item ? item.genre_ids : "genreIds" in item ? item.genreIds : []) ?? [];
+  const genres = ("genres" in item ? item.genres : []) ?? [];
+  const hasAnimation = genreIds.includes(16) || (genres as any[]).some((g: any) =>
+    typeof g === "string" ? g.toLowerCase() === "animation" : g.id === 16 || g.name === "Animation"
+  );
+  const origLang = ("original_language" in item ? item.original_language : "originalLanguage" in item ? item.originalLanguage : "") ?? "";
+  return hasAnimation && (origLang === "ja" || origLang === "jp");
+}
+
 export function mapTmdbItem(item: TmdbItem, fallbackType: MediaType): MediaItem {
-  const mediaType: MediaType = item.media_type === "tv" || fallbackType === "tv" ? "tv" : "movie";
+  const mediaType: MediaType = isAnime(item)
+    ? "anime"
+    : item.media_type === "tv" || fallbackType === "tv"
+      ? "tv"
+      : "movie";
   const date = mediaType === "movie" ? item.release_date : item.first_air_date;
   const runtime = item.runtime ?? item.episode_run_time?.[0];
   return {
@@ -119,10 +136,13 @@ export function mapTmdbItem(item: TmdbItem, fallbackType: MediaType): MediaItem 
 let tmdbCooldownUntil = 0;
 const TMDB_COOLDOWN_MS = 30_000;
 
-async function tmdb<T>(path: string, params: Record<string, string | number | undefined> = {}) {
+export async function tmdb<T>(path: string, params: Record<string, string | number | undefined> = {}, customKey?: string) {
   const url = new URL(`/api/tmdb/${path.replace(/^\/+/, "")}`, window.location.origin);
   // Never surface adult titles anywhere in the app (discover/search/trending).
   url.searchParams.set("include_adult", "false");
+  if (customKey?.trim()) {
+    url.searchParams.set("api_key", customKey.trim());
+  }
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   });
@@ -232,7 +252,7 @@ export async function loadCatalog(catalog: CatalogConfig, language = "en-US", ad
   }
 
   if (catalog.sourceType === "trakt" && catalog.sourceUrl) {
-    const refs = await loadTraktPublicList(catalog.sourceUrl);
+    const refs = await loadTraktPublicList(catalog.sourceUrl) as Array<{ type: MediaType; id: number }>;
     const details = await hydrateRefs(refs, language);
     return {
       id: catalog.id,
@@ -280,7 +300,7 @@ async function loadCollectionSource(source: CollectionSourceConfig, language: st
   if (kind === "CURATED_IDS") {
     const refs = (source.curatedRefs ?? [])
       .map(parseCuratedRef)
-      .filter((ref): ref is { type: MediaType; id: number } => Boolean(ref));
+      .filter(<T>(ref: T | null): ref is NonNullable<T> => Boolean(ref));
     const items = await Promise.all(refs.map((ref) => getBasicItem(ref.type, ref.id, language).catch(() => null)));
     return items.filter((item): item is MediaItem => Boolean(item));
   }
@@ -458,7 +478,7 @@ async function loadMdblist(catalog: CatalogConfig, language: string) {
         : [];
   const ids = rawItems
     .map((item) => extractMdblistIdentity(item as MdblistItem, catalog.mediaType))
-    .filter((item): item is { id: number; type: MediaType } => Boolean(item?.id));
+    .filter(<T>(item: T | null | undefined): item is NonNullable<T> => Boolean((item as any)?.id));
   return hydrateRefs(ids, language);
 }
 
@@ -548,7 +568,7 @@ async function loadTraktPublicList(sourceUrl: string) {
       const id = type === "tv" ? item.show?.ids?.tmdb : item.movie?.ids?.tmdb;
       return id ? { type, id } : null;
     })
-    .filter((item): item is { type: MediaType; id: number } => Boolean(item));
+    .filter(<T>(item: T | null): item is NonNullable<T> => Boolean(item));
 }
 
 function parseTraktUrl(sourceUrl: string): { type: "user"; user: string; slug: string } | { type: "list"; slug: string } | null {
@@ -783,7 +803,11 @@ const seriesEpisodeRatingsCache = new Map<string, Map<string, string>>();
 const SEASON_EPISODE_CACHE_KEY = "arvio.web.seasonEpisodes.v1";
 const SEASON_EPISODE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
-export async function getSeasonEpisodes(tvId: number, seasonNumber: number, language = "en-US"): Promise<EpisodeInfo[]> {
+export async function getSeasonEpisodes(tvId: number, seasonNumber: number, language = "en-US", priorityConfig?: ProviderPriorityConfig): Promise<EpisodeInfo[]> {
+  if (priorityConfig?.customTvdbApiKey) {
+    const dispatched = await MetadataDispatcher.getEpisodes(tvId, "tv", seasonNumber, priorityConfig).catch(() => []);
+    if (dispatched.length > 0) return dispatched;
+  }
   const key = `${tvId}:${seasonNumber}:${language}`;
   const memo = seasonCache.get(key);
   if (memo?.length) return memo;
@@ -798,7 +822,8 @@ export async function getSeasonEpisodes(tvId: number, seasonNumber: number, lang
     // list (the cinemeta proxy call has no timeout and can hang for a long time).
     const season = await tmdb<{ episodes?: Array<{ id: number; episode_number: number; name?: string; overview?: string; still_path?: string | null; vote_average?: number; air_date?: string; runtime?: number }> }>(
       `tv/${tvId}/season/${seasonNumber}`,
-      { language }
+      { language },
+      priorityConfig?.customTmdbApiKey
     );
     // Real IMDb ratings need the episode numbers first (the imdb id lives on the
     // per-episode endpoint), so this starts after the season lands and still
@@ -1026,14 +1051,14 @@ export async function getBasicItem(mediaType: MediaType, id: number, language = 
 const detailsPayloadCache = new Map<string, { at: number; payload: TmdbItem }>();
 const DETAILS_CACHE_TTL_MS = 10 * 60 * 1000;
 
-async function fetchDetailsPayload(item: MediaItem) {
+async function fetchDetailsPayload(item: MediaItem, customApiKey?: string) {
   const key = `${item.mediaType}-${item.id}`;
   const cached = detailsPayloadCache.get(key);
   if (cached && Date.now() - cached.at < DETAILS_CACHE_TTL_MS) return cached.payload;
   const payload = await tmdb<TmdbItem>(`${item.mediaType}/${item.id}`, {
     language: "en-US",
     append_to_response: "credits,videos,similar,recommendations,external_ids,watch/providers"
-  });
+  }, customApiKey);
   detailsPayloadCache.set(key, { at: Date.now(), payload });
   if (detailsPayloadCache.size > 60) {
     const oldest = [...detailsPayloadCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
@@ -1079,9 +1104,14 @@ export async function getTitlesForSearch(
   }
 }
 
-export async function getDetails(item: MediaItem) {
+export async function getDetails(item: MediaItem, priorityConfig?: ProviderPriorityConfig) {
   try {
-    const details = await fetchDetailsPayload(item);
+    let resolvedMeta: MediaItem | null = null;
+    if (priorityConfig || item.mediaType === "anime") {
+      resolvedMeta = await MetadataDispatcher.getDetails(item.id, item.mediaType, priorityConfig).catch(() => null);
+    }
+
+    const details = await fetchDetailsPayload(item, priorityConfig?.customTmdbApiKey);
     const mapped = mapTmdbItem({ ...details, media_type: item.mediaType }, item.mediaType);
     const trailer = details.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer" && video.official)
       ?? details.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer")
@@ -1093,10 +1123,18 @@ export async function getDetails(item: MediaItem) {
     return {
       ...item,
       ...mapped,
-      rating: mapped.rating || item.rating,
+      ...(resolvedMeta ? {
+        title: resolvedMeta.title || mapped.title,
+        overview: resolvedMeta.overview || mapped.overview,
+        rating: resolvedMeta.rating || mapped.rating,
+        badge: resolvedMeta.badge || mapped.badge,
+        image: resolvedMeta.image || mapped.image,
+        backdrop: resolvedMeta.backdrop || mapped.backdrop
+      } : {}),
+      rating: resolvedMeta?.rating || mapped.rating || item.rating,
       imdbId: details.external_ids?.imdb_id ?? item.imdbId ?? null,
       genres: (details.genres ?? []).map((genre) => genre.name).filter(Boolean),
-      status: details.status ?? null,
+      status: resolvedMeta?.status || (details.status ?? null),
       budget: details.budget ?? null,
       revenue: details.revenue ?? null,
       originalLanguage: details.original_language ?? null,

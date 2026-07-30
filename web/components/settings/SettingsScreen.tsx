@@ -1131,96 +1131,60 @@ function SectionBody({ section }: { section: SectionId }) {
 }
 
 function MetadataSection({ settings, set }: { settings: AppSettings; set: (patch: Partial<AppSettings>) => void }) {
+  const animeChain = (settings.metadataAnimeProviders || ["anilist", "tvdb", "tmdb"]).join(" → ").toUpperCase();
+  const tvChain = (settings.metadataTvProviders || ["tvdb", "tmdb"]).join(" → ").toUpperCase();
+  const movieChain = (settings.metadataMovieProviders || ["tmdb"]).join(" → ").toUpperCase();
+  const tvdbActive = Boolean(settings.customTvdbApiKey?.trim());
+
   return (
     <div className="settings-section">
       <Panel title="Custom API Keys (Bring Your Own Key)">
-        <p style={{ fontSize: "14px", color: "var(--text-secondary)", marginBottom: "16px" }}>
-          Provide your custom API keys to bypass rate limits or use personal subscriber keys.
-        </p>
-
-        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-          <div className="settings-row-info">
-            <div style={{ fontWeight: 600, color: "#fff" }}>TMDB API Key</div>
-            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Custom v3 API key for TMDB fetches</div>
-          </div>
+        <Row label="TMDB API Key" hint="Custom v3 API key for TMDB requests">
           <input
             type="text"
             className="settings-input"
             placeholder="System Default Key"
             value={settings.customTmdbApiKey || ""}
             onChange={(e) => set({ customTmdbApiKey: e.target.value })}
-            style={{ width: "240px", padding: "6px 12px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "#fff" }}
           />
-        </div>
+        </Row>
 
-        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-          <div className="settings-row-info">
-            <div style={{ fontWeight: 600, color: "#fff" }}>TVDB v4 API Key (Required for TVDB)</div>
-            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-              {settings.customTvdbApiKey?.trim() ? "Active — TVDB enabled" : "TVDB is disabled until a custom key is provided"}
-            </div>
-          </div>
+        <Row
+          label="TVDB v4 API Key"
+          hint={tvdbActive ? "Active — TVDB enabled for metadata fallback" : "TVDB is disabled until a custom API key is provided"}
+        >
           <input
             type="text"
             className="settings-input"
             placeholder="Enter Custom TVDB Key to Enable"
             value={settings.customTvdbApiKey || ""}
             onChange={(e) => set({ customTvdbApiKey: e.target.value })}
-            style={{ width: "240px", padding: "6px 12px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "#fff" }}
           />
-        </div>
+        </Row>
 
-
-        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div className="settings-row-info">
-            <div style={{ fontWeight: 600, color: "#fff" }}>TVDB User PIN</div>
-            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Required if using subscriber user key</div>
-          </div>
+        <Row label="TVDB User PIN" hint="Required if using subscriber user key">
           <input
             type="password"
             className="settings-input"
             placeholder="Optional User PIN"
             value={settings.customTvdbUserPin || ""}
             onChange={(e) => set({ customTvdbUserPin: e.target.value })}
-            style={{ width: "240px", padding: "6px 12px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.15)", background: "rgba(0,0,0,0.3)", color: "#fff" }}
           />
-        </div>
+        </Row>
       </Panel>
 
       <Panel title="Metadata Provider Priorities">
-        <p style={{ fontSize: "14px", color: "var(--text-secondary)", marginBottom: "16px" }}>
-          Configured fallback priority order when fetching details for different content types.
-        </p>
+        <Row label="Anime Metadata Priority" hint={`Active chain: ${animeChain}`}>
+          <span className="accent-badge">{animeChain}</span>
+        </Row>
 
-        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-          <div className="settings-row-info">
-            <div style={{ fontWeight: 600, color: "#fff" }}>Anime Metadata Providers</div>
-            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Active chain: AniList → TVDB → TMDB</div>
-          </div>
-          <span style={{ fontSize: "13px", color: "var(--accent-color, #4f46e5)", fontWeight: 600 }}>
-            {(settings.metadataAnimeProviders || ["anilist", "tvdb", "tmdb"]).join(" → ").toUpperCase()}
-          </span>
-        </div>
+        <Row label="TV Shows Metadata Priority" hint={`Active chain: ${tvChain}`}>
+          <span className="accent-badge">{tvChain}</span>
+        </Row>
 
-        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-          <div className="settings-row-info">
-            <div style={{ fontWeight: 600, color: "#fff" }}>TV Shows Metadata Providers</div>
-            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Active chain: TVDB → TMDB</div>
-          </div>
-          <span style={{ fontSize: "13px", color: "var(--accent-color, #4f46e5)", fontWeight: 600 }}>
-            {(settings.metadataTvProviders || ["tvdb", "tmdb"]).join(" → ").toUpperCase()}
-          </span>
-        </div>
-
-        <div className="settings-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div className="settings-row-info">
-            <div style={{ fontWeight: 600, color: "#fff" }}>Movies Metadata Providers</div>
-            <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Active chain: TMDB</div>
-          </div>
-          <span style={{ fontSize: "13px", color: "var(--accent-color, #4f46e5)", fontWeight: 600 }}>
-            {(settings.metadataMovieProviders || ["tmdb"]).join(" → ").toUpperCase()}
-          </span>
-        </div>
+        <Row label="Movies Metadata Priority" hint={`Active chain: ${movieChain}`}>
+          <span className="accent-badge">{movieChain}</span>
+        </Row>
       </Panel>
     </div>
   );

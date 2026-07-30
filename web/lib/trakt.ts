@@ -1,6 +1,7 @@
 import { config, hasTraktConfig } from "./config";
 import { HttpError, jsonRequest } from "./http";
 import { loadStored, removeStored, saveStored } from "./storage";
+import type { MediaType } from "./types";
 
 const TRAKT_TOKEN_KEY = "arvio.web.trakt.token";
 // v2: v1 stored FULL progress payloads (every season/episode — ~740KB across a
@@ -425,7 +426,7 @@ export class TraktClient {
   }
 
   private mediaBody(item: TraktMediaRef) {
-    if (item.mediaType === "tv") {
+    if (item.mediaType === "tv" || item.mediaType === "anime") {
       const show = { ids: { tmdb: item.tmdbId } };
       if (item.season && item.episode) {
         return { shows: [{ ...show, seasons: [{ number: item.season, episodes: [{ number: item.episode }] }] }] };
@@ -437,7 +438,7 @@ export class TraktClient {
 }
 
 interface TraktMediaRef {
-  mediaType: "movie" | "tv";
+  mediaType: MediaType;
   tmdbId: number;
   season?: number | null;
   episode?: number | null;

@@ -1,10 +1,11 @@
 import { jsonRequest } from "./http";
 import { loadStored, removeStored, saveStored } from "./storage";
+import type { MediaType } from "./types";
 
 const MDBLIST_KEY_STORAGE = "arvio.web.mdblist.key";
 
 export interface MdbMediaRef {
-  mediaType: "movie" | "tv";
+  mediaType: MediaType;
   tmdbId: number;
   season?: number | null;
   episode?: number | null;
@@ -167,7 +168,7 @@ export class MdbListClient {
 
   private async modifyWatchlist(action: "add" | "remove", item: MdbMediaRef) {
     if (!this.key) return;
-    const body = item.mediaType === "tv"
+    const body = item.mediaType === "tv" || item.mediaType === "anime"
       ? { shows: [{ tmdb: item.tmdbId }] }
       : { movies: [{ tmdb: item.tmdbId }] };
     await this.request(`watchlist/items/${action}`, { method: "POST", body: JSON.stringify(body) });
@@ -184,7 +185,7 @@ export class MdbListClient {
   }
 
   private watchedBody(item: MdbMediaRef) {
-    if (item.mediaType === "tv") {
+    if (item.mediaType === "tv" || item.mediaType === "anime") {
       const ids = { tmdb: item.tmdbId };
       if (item.season && item.episode) {
         return { shows: [{ ids, seasons: [{ number: item.season, episodes: [{ number: item.episode }] }] }] };

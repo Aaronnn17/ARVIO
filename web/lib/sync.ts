@@ -1,10 +1,11 @@
+import type { MediaType } from "./types";
 import { mdblistClient } from "./mdblist";
 import { traktClient } from "./store";
 
 export type SyncProvider = "trakt" | "mdblist" | "none";
 
 export interface SyncMediaRef {
-  mediaType: "movie" | "tv";
+  mediaType: MediaType;
   tmdbId: number;
   season?: number | null;
   episode?: number | null;

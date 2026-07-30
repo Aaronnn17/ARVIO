@@ -15,6 +15,8 @@ import { buildXtreamCatchupUrl, loadIptvGuideForChannels, loadIptvSnapshot, load
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, loadCatalog, searchMedia } from "./tmdb";
+import { convertAniListToTmdbEpisode, fetchAniZipMapping } from "./metadata/anizip";
+import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
 import { mdblistClient } from "./mdblist";
 import { activeSyncProvider, syncClient } from "./sync";
@@ -1242,7 +1244,15 @@ export function AppProvider({
     }
     setBusy("Opening details");
     setStreams([]);
-    const detailed = await getDetails(item).catch(() => item);
+    const priorityConfig: ProviderPriorityConfig = {
+      movieProviders: settingsRef.current.metadataMovieProviders as MetadataProviderId[],
+      tvProviders: settingsRef.current.metadataTvProviders as MetadataProviderId[],
+      animeProviders: settingsRef.current.metadataAnimeProviders as MetadataProviderId[],
+      customTmdbApiKey: settingsRef.current.customTmdbApiKey,
+      customTvdbApiKey: settingsRef.current.customTvdbApiKey,
+      customTvdbUserPin: settingsRef.current.customTvdbUserPin
+    };
+    const detailed = await getDetails(item, priorityConfig).catch(() => item);
     const withResumeEpisode = {
       ...detailed,
       seasonNumber: item.seasonNumber ?? detailed.seasonNumber ?? null,
@@ -1282,10 +1292,22 @@ export function AppProvider({
     setSelectedEpisode({ season, episode });
     setStreams([]);
     setBusy("Finding sources");
-    appendVodSources(item, season, episode);
-    appendHomeServerSources(item, season, episode);
-    appendTelegramSources(item, season, episode);
-    const found = await getStreamsProgressive(addonsRef.current, item, season, episode, mergeStreams).catch(() => []);
+
+    let targetSeason = season;
+    let targetEpisode = episode;
+    if (item.mediaType === "anime" || item.badge === "ANIME") {
+      const mapping = await fetchAniZipMapping(item.id).catch(() => null);
+      if (mapping) {
+        const converted = convertAniListToTmdbEpisode(mapping, episode);
+        targetSeason = converted.season;
+        targetEpisode = converted.episode;
+      }
+    }
+
+    appendVodSources(item, targetSeason, targetEpisode);
+    appendHomeServerSources(item, targetSeason, targetEpisode);
+    appendTelegramSources(item, targetSeason, targetEpisode);
+    const found = await getStreamsProgressive(addonsRef.current, item, targetSeason, targetEpisode, mergeStreams).catch(() => []);
     mergeStreams(found);
     setBusy("");
     return found;

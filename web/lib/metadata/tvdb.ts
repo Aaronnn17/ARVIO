@@ -4,6 +4,8 @@ import type { MetadataResolver, ProviderPriorityConfig } from "./types";
 
 const TVDB_API_BASE = "https://api4.thetvdb.com/v4";
 
+let cachedKey: string | null = null;
+let cachedPin: string | null = null;
 let cachedToken: string | null = null;
 let tokenExpiresAt = 0;
 
@@ -13,9 +15,10 @@ async function getTvdbToken(apiKey?: string, pin?: string): Promise<string | nul
     // TVDB is disabled unless user supplies a custom API key
     return null;
   }
+  const cleanPin = pin?.trim() || undefined;
 
   const now = Date.now();
-  if (cachedToken && now < tokenExpiresAt) {
+  if (cachedToken && now < tokenExpiresAt && cachedKey === cleanKey && cachedPin === cleanPin) {
     return cachedToken;
   }
 
@@ -23,12 +26,14 @@ async function getTvdbToken(apiKey?: string, pin?: string): Promise<string | nul
     const res = await fetch(`${TVDB_API_BASE}/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apikey: cleanKey, pin: pin || undefined })
+      body: JSON.stringify({ apikey: cleanKey, pin: cleanPin })
     });
 
     if (!res.ok) return null;
     const json = await res.json();
     if (json.data?.token) {
+      cachedKey = cleanKey;
+      cachedPin = cleanPin ?? null;
       cachedToken = json.data.token;
       tokenExpiresAt = now + 23 * 3600 * 1000; // Cache 23 hours
       return cachedToken;
@@ -41,7 +46,7 @@ async function getTvdbToken(apiKey?: string, pin?: string): Promise<string | nul
 export const tvdbResolver: MetadataResolver = {
   id: "tvdb",
   name: "TheTVDB",
-  supportedTypes: ["tv", "anime" as any],
+  supportedTypes: ["tv", "anime"],
 
   async getDetails(id: string | number, options?: ProviderPriorityConfig): Promise<MediaItem | null> {
     const token = await getTvdbToken(options?.customTvdbApiKey, options?.customTvdbUserPin);

@@ -78,7 +78,7 @@ function mapAniListToMediaItem(media: any): MediaItem {
     year: media.seasonYear ? String(media.seasonYear) : undefined,
     rating,
     duration: media.duration ? `${media.duration}m` : undefined,
-    mediaType: "anime" as any,
+    mediaType: "anime",
     image: poster ?? undefined,
     backdrop: media.bannerImage ?? poster ?? null,
     badge: media.format ?? "ANIME",
@@ -91,7 +91,7 @@ function mapAniListToMediaItem(media: any): MediaItem {
 export const aniListResolver: MetadataResolver = {
   id: "anilist",
   name: "AniList",
-  supportedTypes: ["anime" as any, "tv"],
+  supportedTypes: ["anime", "tv"],
 
   async getDetails(id: string | number): Promise<MediaItem | null> {
     try {

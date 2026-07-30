@@ -1,12 +1,14 @@
-import type { MediaItem, MediaType } from "../types";
+import type { EpisodeInfo, MediaItem, MediaType } from "../types";
 import { aniListResolver } from "./anilist";
 import { tvdbResolver } from "./tvdb";
+import { tmdbResolver } from "./tmdbResolver";
 import type { MetadataProviderId, MetadataResolver, ProviderPriorityConfig } from "./types";
 
 export class MetadataDispatcher {
   private static resolvers: Record<string, MetadataResolver> = {
     anilist: aniListResolver,
-    tvdb: tvdbResolver
+    tvdb: tvdbResolver,
+    tmdb: tmdbResolver
   };
 
   static registerResolver(resolver: MetadataResolver) {
@@ -14,13 +16,13 @@ export class MetadataDispatcher {
   }
 
   static getPriorityList(type: MediaType, config?: ProviderPriorityConfig): MetadataProviderId[] {
-    if (type === ("anime" as any)) {
-      return config?.animeProviders ?? ["anilist", "tvdb", "tmdb" as any];
+    if (type === "anime") {
+      return config?.animeProviders ?? ["anilist", "tvdb", "tmdb"];
     }
     if (type === "tv") {
-      return config?.tvProviders ?? ["tvdb", "tmdb" as any];
+      return config?.tvProviders ?? ["tvdb", "tmdb"];
     }
-    return config?.movieProviders ?? ["tmdb" as any];
+    return config?.movieProviders ?? ["tmdb"];
   }
 
   static async getDetails(
@@ -40,6 +42,26 @@ export class MetadataDispatcher {
       }
     }
     return null;
+  }
+
+  static async getEpisodes(
+    id: string | number,
+    type: MediaType,
+    seasonNumber = 1,
+    config?: ProviderPriorityConfig
+  ): Promise<EpisodeInfo[]> {
+    const priority = this.getPriorityList(type, config);
+
+    for (const providerId of priority) {
+      const resolver = this.resolvers[providerId];
+      if (!resolver || !resolver.getEpisodes) continue;
+
+      const episodes = await resolver.getEpisodes(id, seasonNumber, config);
+      if (episodes && episodes.length > 0) {
+        return episodes;
+      }
+    }
+    return [];
   }
 
   static async search(

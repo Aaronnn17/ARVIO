@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { loadStored, saveStored } from "./storage";
+import type { MediaType } from "./types";
 
 // Real IMDb ratings — parity with the Android app (MediaRepository.getImdbRating).
 // TMDB's vote_average is a DIFFERENT score and was previously rendered under an
@@ -28,16 +29,16 @@ function writeStore(store: Record<string, CacheEntry>) {
   // quota silently kills every other write in the app).
   const entries = Object.entries(store);
   if (entries.length > MAX_ENTRIES) {
-    const keep = entries.sort((a, b) => b[1].at - a[1].at).slice(0, MAX_ENTRIES);
-    store = Object.fromEntries(keep);
+    entries.sort((a, b) => b[1].at - a[1].at);
+    store = Object.fromEntries(entries.slice(0, MAX_ENTRIES));
   }
   saveStored(STORE_KEY, store);
 }
 
 function cached(imdbId: string): string | null {
-  const hit = MEMORY.get(imdbId);
-  if (hit !== undefined) return hit;
-  const entry = readStore()[imdbId];
+  if (MEMORY.has(imdbId)) return MEMORY.get(imdbId)!;
+  const store = readStore();
+  const entry = store[imdbId];
   if (entry && Date.now() - entry.at < TTL_MS) {
     MEMORY.set(imdbId, entry.rating);
     return entry.rating;
@@ -45,15 +46,15 @@ function cached(imdbId: string): string | null {
   return null;
 }
 
-function remember(imdbId: string, rating: string) {
+function record(imdbId: string, rating: string) {
   MEMORY.set(imdbId, rating);
   const store = readStore();
   store[imdbId] = { rating, at: Date.now() };
   writeStore(store);
 }
 
-function cinemetaUrl(mediaType: "movie" | "tv", imdbId: string) {
-  const typePath = mediaType === "tv" ? "series" : "movie";
+function cinemetaUrl(mediaType: MediaType, imdbId: string) {
+  const typePath = mediaType === "tv" || mediaType === "anime" ? "series" : "movie";
   const target = `https://v3-cinemeta.strem.io/meta/${typePath}/${imdbId}.json`;
   const base = config.resolverUrl.replace(/\/+$/, "");
   // Route through the resolver worker: it is CORS-clean and edge-caches
@@ -80,13 +81,14 @@ const AGREGARR_ENDPOINT = "https://api.agregarr.org/api/ratings";
  * limit the Android client uses).
  */
 export async function getImdbRatings(imdbIds: string[]): Promise<Record<string, string>> {
-  const unique = [...new Set(imdbIds.map((id) => (id ?? "").trim().toLowerCase()).filter((id) => /^tt\d+$/.test(id)))];
   const result: Record<string, string> = {};
   const missing: string[] = [];
-  unique.forEach((id) => {
+  imdbIds.forEach((raw) => {
+    const id = (raw ?? "").trim().toLowerCase();
+    if (!/^tt\d+$/.test(id)) return;
     const hit = cached(id);
-    if (hit === null) missing.push(id);
-    else if (hit) result[id] = hit;
+    if (hit) result[id] = hit;
+    else missing.push(id);
   });
   if (!missing.length) return result;
 
@@ -106,12 +108,12 @@ export async function getImdbRatings(imdbIds: string[]): Promise<Record<string, 
         if (!id) return;
         seen.add(id);
         const rating = normalize(row?.rating);
-        remember(id, rating ?? "");
+        record(id, rating ?? "");
         if (rating) result[id] = rating;
       });
       // Ids the endpoint didn't answer for get a negative cache entry too, so a
       // rating-less episode isn't re-requested on every render.
-      chunk.forEach((id) => { if (!seen.has(id)) remember(id, ""); });
+      chunk.forEach((id) => { if (!seen.has(id)) record(id, ""); });
     } catch {
       // Leave this chunk uncached so a transient failure can be retried later.
     }
@@ -124,7 +126,7 @@ export async function getImdbRatings(imdbIds: string[]): Promise<Record<string, 
  * for very new or obscure entries — the caller should then show no badge
  * rather than substituting a different provider's score).
  */
-export async function getImdbRating(mediaType: "movie" | "tv", imdbId?: string | null): Promise<string | null> {
+export async function getImdbRating(mediaType: MediaType, imdbId?: string | null): Promise<string | null> {
   const id = (imdbId ?? "").trim().toLowerCase();
   if (!/^tt\d+$/.test(id)) return null;
   const hit = cached(id);
@@ -144,7 +146,7 @@ export async function getImdbRating(mediaType: "movie" | "tv", imdbId?: string |
       const rating = normalize(payload?.meta?.imdbRating);
       // Cache misses too (as an empty string) so a title Cinemeta has no rating
       // for isn't re-fetched on every render for the next week.
-      remember(id, rating ?? "");
+      record(id, rating ?? "");
       return rating;
     } catch {
       return null;
