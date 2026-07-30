@@ -175,7 +175,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
             loading="lazy"
             decoding="async"
             onLoad={() => setImgLoaded(true)}
-            className={imgLoaded ? "is-loaded" : ""}
+            className={`poster-art ${imgLoaded ? "is-loaded" : ""}`}
           />
         ) : (
           <Clapperboard size={42} />
