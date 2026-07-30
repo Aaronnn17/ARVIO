@@ -636,7 +636,10 @@ function VideoPlayer({
   const sourceList = useMemo(() => {
     const playable = streams.filter((candidate) => Boolean(candidate.url));
     const base = playable.length ? playable : [stream];
-    return [...base].sort((a, b) => sourcePickerScore(b) - sourcePickerScore(a));
+    // Always the browser ordering here: this list is the in-player picker and
+    // the auto-hop fallback, so every candidate has to decode in this browser
+    // no matter what the user's default player is elsewhere.
+    return [...base].sort((a, b) => sourcePickerScore(b, "browser") - sourcePickerScore(a, "browser"));
   }, [streams, stream]);
 
   // When a source is truly dead (URL ladder + remux exhausted), hop to the next

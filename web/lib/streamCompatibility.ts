@@ -88,6 +88,30 @@ export function videoDecodableForDevice(stream: CompatStream): boolean {
   return videoBlockReason(streamText(stream)) === null;
 }
 
+/**
+ * Will this browser end up with audio it can decode?
+ *
+ * The counterpart to [videoDecodableForDevice], and the signal ranking was
+ * missing: undecodable video was sunk hard while undecodable audio scored
+ * normally, so DDP/Atmos releases — nearly every modern streaming rip — ranked
+ * top and then failed. A blocked track is only survivable when the file
+ * plausibly carries another one (disc remux, MULTi/dual-audio) for the remux to
+ * switch to.
+ */
+export function audioDecodableForDevice(stream: CompatStream): boolean {
+  const text = streamText(stream);
+  if (audioBlockReason(text) === null) return true;
+  const caps = getMediaCapabilities();
+  const decodableCompanion = new RegExp(
+    caps.ac3 || caps.eac3
+      ? "(aac|ac-?3|eac-?3|ddp|dd\\+|opus|flac)"
+      : "(aac|opus|flac)"
+  ).test(text);
+  if (decodableCompanion) return true;
+  return /\bremux\b|\bmulti\b|dual[.\s_-]?audio|\bmulti-?audio\b|\bdual\b/.test(text)
+    && !(/truehd|dts/.test(text));
+}
+
 function videoDecodableForRemux(text: string) {
   const caps = getMediaCapabilities();
   if (text.includes("av1")) return caps.av1;

@@ -467,6 +467,12 @@ function SourcePickerModal({
     return Array.from(unique.values());
   }, [installedAddons, streams]);
 
+  // Rank for whoever is actually going to play this. An external-player user
+  // wants the biggest, highest-quality file; a browser user needs one their
+  // browser can decode. Ranking used to ignore this and serve both the same
+  // list, which put unplayable sources first for everyone on browser.
+  const rankTarget = settings.defaultPlayer === "browser" ? "browser" : "external";
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return streams.filter((stream) => {
@@ -474,8 +480,8 @@ function SourcePickerModal({
       if (mode === "playable" && playbackPlan(stream).route !== "here") return false;
       if (!needle) return true;
       return `${stream.source} ${stream.addonName} ${stream.description ?? ""} ${stream.quality ?? ""} ${stream.size ?? ""}`.toLowerCase().includes(needle);
-    }).sort((a, b) => sourcePickerScore(b) - sourcePickerScore(a));
-  }, [addonFilter, mode, query, streams]);
+    }).sort((a, b) => sourcePickerScore(b, rankTarget) - sourcePickerScore(a, rankTarget));
+  }, [addonFilter, mode, query, streams, rankTarget]);
 
   // Warm the direct CDN URLs of the top debrid picks while the user is still
   // looking at the list — pressing Play then skips the resolver round-trips
@@ -639,7 +645,17 @@ function SourcePickerModal({
           <div>
             <p className="eyebrow">sources</p>
             <h2>{title}</h2>
-            <span>{playable}/{streams.length} browser playable. Highest quality and largest files are shown first.</span>
+            <span>
+              {playable}/{streams.length} browser playable.{" "}
+              {rankTarget === "browser"
+                ? (playable === 0
+                    // A browser user staring at a list where nothing can play
+                    // needs the way out stated once, not discovered by trying
+                    // five rows that all fail.
+                    ? "Nothing here plays in this browser — open one in VLC, or set VLC as your default player in Settings."
+                    : "Sources your browser can play are shown first.")
+                : "Highest quality and largest files are shown first."}
+            </span>
           </div>
           <button type="button" className="person-close" onClick={onClose} aria-label="Close source picker"><X size={24} /></button>
         </header>
@@ -740,12 +756,27 @@ function SourcePickerModal({
                         "this should work", which is exactly the confusion we're
                         removing. It stays (disabled) while the source is locked
                         behind a resolver, because that IS a temporary state. */}
+                    {/* Which action is emphasised follows the user's default
+                        player, so one click is right for both audiences without
+                        hiding the other path. An external-player user was
+                        previously nudged towards in-browser Play on every row
+                        that happened to be browser-playable. */}
                     {(playable || locked) && (
-                      <button type="button" className={`source-action ${playable ? "primary-action" : ""}`} disabled={locked} onClick={() => onPlay(stream)}>
+                      <button
+                        type="button"
+                        className={`source-action ${playable && rankTarget === "browser" ? "primary-action" : ""}`}
+                        disabled={locked}
+                        onClick={() => onPlay(stream)}
+                      >
                         <Play size={13} fill="currentColor" /> Play
                       </button>
                     )}
-                    <button type="button" className={`source-action ${!playable && !locked ? "primary-action" : ""}`} disabled={locked} onClick={() => openExternal("vlc", stream)}>
+                    <button
+                      type="button"
+                      className={`source-action ${!locked && (rankTarget === "external" || !playable) ? "primary-action" : ""}`}
+                      disabled={locked}
+                      onClick={() => openExternal("vlc", stream)}
+                    >
                       <ExternalLink size={13} /> VLC
                     </button>
                     <button type="button" className="source-action" disabled={locked} onClick={() => openAnyPlayer(stream)}>
