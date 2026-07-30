@@ -96,6 +96,23 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
   };
 
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleMouseEnter = () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => {
+      prefetchDetails(item);
+      onFocus?.(item);
+    }, 120);
+  };
+
+  const handleMouseLeave = () => {
+    if (hoverTimer.current) {
+      clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  };
+
   // Rails load lazily, so a card only mounts when its row is near the viewport —
   // fetch the title-treatment logo on mount (getLogoUrl is cached + persisted).
   useEffect(() => {
@@ -164,7 +181,8 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onTouchMove={handleTouchEnd}
-      onMouseEnter={() => { prefetchDetails(item); onFocus?.(item); }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       onFocus={() => { prefetchDetails(item); onFocus?.(item); }}
     >
       <div className={`poster ${!imgLoaded ? "is-loading" : ""}`}>

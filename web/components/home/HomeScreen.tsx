@@ -55,20 +55,40 @@ export function HomeScreen() {
   };
 
   const heroPool = heroPoolRows;
+  const [heroIndex, setHeroIndex] = useState(0);
+  const [heroPaused, setHeroPaused] = useState(false);
+  const touchStartX = useRef<number | null>(null);
 
-  // Auto-advance the hero every 8s until the user hovers a card (which pins the
-  // hero to whatever they're pointing at and stops the carousel).
+  const handleHeroTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleHeroTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null || heroPool.length < 2) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    const threshold = 50;
+    if (dx < -threshold) {
+      setHeroIndex((prev) => (prev + 1) % heroPool.length);
+    } else if (dx > threshold) {
+      setHeroIndex((prev) => (prev - 1 + heroPool.length) % heroPool.length);
+    }
+    touchStartX.current = null;
+  };
+
+  // Auto-advance hero carousel every 6.5 seconds unless hovered directly
   useEffect(() => {
-    if (heroPool.length < 2) return undefined;
-    let index = 0;
-    if (!userInteractedHero.current) setHeroPreview(heroPool[0]);
+    if (heroPool.length < 2 || heroPaused) return undefined;
     const timer = window.setInterval(() => {
-      if (userInteractedHero.current) return;
-      index = (index + 1) % heroPool.length;
-      setHeroPreview(heroPool[index]);
-    }, 8000);
+      setHeroIndex((prev) => (prev + 1) % heroPool.length);
+    }, 6500);
     return () => window.clearInterval(timer);
-  }, [heroPool, setHeroPreview]);
+  }, [heroPool.length, heroPaused]);
+
+  useEffect(() => {
+    if (heroPool[heroIndex]) {
+      setHeroPreview(heroPool[heroIndex]);
+    }
+  }, [heroIndex, heroPool, setHeroPreview]);
 
   // Synchronize hero changes so all content (logo, text, metadata, backdrop) updates together.
   useEffect(() => {
@@ -109,12 +129,6 @@ export function HomeScreen() {
     };
   }, [hero, displayHero]);
 
-  const onCardFocus = (item: MediaItem) => {
-    userInteractedHero.current = true;
-    if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    hoverTimer.current = setTimeout(() => setHeroPreview(item), 220);
-  };
-
   const heroGenres = (displayHero?.genres?.length ? displayHero.genres : genreNamesFromIds(displayHero?.genreIds)).slice(0, 3);
 
   // Real IMDb rating for the hero (Cinemeta by imdb id) — TMDB's vote_average
@@ -144,7 +158,14 @@ export function HomeScreen() {
   return (
     <div className="screen">
       {displayHero && (
-        <section className="hero" style={{ backgroundImage: displayHero.backdrop ? `url(${displayHero.backdrop})` : undefined }}>
+        <section
+          className="hero"
+          style={{ backgroundImage: displayHero.backdrop ? `url(${displayHero.backdrop})` : undefined }}
+          onMouseEnter={() => setHeroPaused(true)}
+          onMouseLeave={() => setHeroPaused(false)}
+          onTouchStart={handleHeroTouchStart}
+          onTouchEnd={handleHeroTouchEnd}
+        >
           <div className="hero-copy" key={displayHero.id}>
             <div className="hero-title-slot">
               {heroLogo ? (
@@ -163,23 +184,33 @@ export function HomeScreen() {
               {metaBits.map((bit) => <span key={String(bit)}>{bit}</span>)}
             </div>
             <p className="hero-overview">
-              {(() => {
-                const desc = displayHero.overview || displayHero.subtitle || "Continue from your ARVIO library.";
-                return desc.length > 150 ? desc.slice(0, 150) + "..." : desc;
-              })()}
+              {displayHero.overview || displayHero.subtitle || "Continue from your ARVIO library."}
             </p>
             <div className="hero-actions">
               <button type="button" className="primary" onClick={() => openDetails(displayHero)}><Play size={20} fill="currentColor" /> Play</button>
               <button type="button" className="secondary" onClick={() => openDetails(displayHero)}><Info size={20} /> More Info</button>
             </div>
           </div>
+          {heroPool.length > 1 && (
+            <div className="hero-carousel-dots" aria-label="Featured content carousel">
+              {heroPool.map((item, idx) => (
+                <button
+                  key={`${item.mediaType}-${item.id}-${idx}`}
+                  type="button"
+                  className={`hero-dot ${idx === heroIndex ? "is-active" : ""}`}
+                  onClick={() => setHeroIndex(idx)}
+                  aria-label={`Slide ${idx + 1}: ${item.title}`}
+                />
+              ))}
+            </div>
+          )}
         </section>
       )}
       {dedupedCategories.map((category) => (
-        <MediaRail key={category.id} category={category} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode} />
+        <MediaRail key={category.id} category={category} onOpen={openDetails} posterMode={posterMode} />
       ))}
       {homeServerRows.map((category) => (
-        <MediaRail key={category.id} category={category} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode} />
+        <MediaRail key={category.id} category={category} onOpen={openDetails} posterMode={posterMode} />
       ))}
       {catalogConfigs.map((catalog, index) => (
         <LazyRail
@@ -187,7 +218,6 @@ export function HomeScreen() {
           catalog={catalog}
           eager={index < 8}
           onOpen={openDetails}
-          onFocus={onCardFocus}
           onLoaded={seedHeroFromRow}
         />
       ))}
