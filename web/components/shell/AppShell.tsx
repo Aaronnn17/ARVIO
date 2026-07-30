@@ -90,12 +90,12 @@ export function AppShell() {
           <DetailsDrawer />
         ) : (
           <>
-            {section === "home" && <HomeScreen />}
-            {section === "search" && <SearchScreen />}
-            {section === "watchlist" && <WatchlistScreen />}
-            {section === "tv" && <LiveTvScreen />}
-            {section === "addons" && <AddonsScreen />}
-            {section === "settings" && <SettingsScreen />}
+            <div style={{ display: section === "home" ? "contents" : "none" }}><HomeScreen /></div>
+            <div style={{ display: section === "search" ? "contents" : "none" }}><SearchScreen /></div>
+            <div style={{ display: section === "watchlist" ? "contents" : "none" }}><WatchlistScreen /></div>
+            <div style={{ display: section === "tv" ? "contents" : "none" }}><LiveTvScreen /></div>
+            <div style={{ display: section === "addons" ? "contents" : "none" }}><AddonsScreen /></div>
+            <div style={{ display: section === "settings" ? "contents" : "none" }}><SettingsScreen /></div>
           </>
         )}
       </section>

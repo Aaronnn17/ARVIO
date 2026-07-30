@@ -99,35 +99,20 @@ export function HomeScreen() {
     }
 
     let active = true;
+    setDisplayHero(hero);
 
-    // Fast path: if no hero is currently displayed, show it immediately so there is no blank screen on first load
-    if (!displayHero) {
-      setDisplayHero(hero);
-      void getLogoUrl({ mediaType: hero.mediaType, id: hero.id })
-        .then((url) => {
-          if (active) setHeroLogo(url);
-        })
-        .catch(() => undefined);
-      return;
-    }
-
-    // Normal path: fetch the logo in the background first, then swap all content together
     void getLogoUrl({ mediaType: hero.mediaType, id: hero.id })
       .then((url) => {
-        if (!active) return;
-        setHeroLogo(url);
-        setDisplayHero(hero);
+        if (active) setHeroLogo(url);
       })
       .catch(() => {
-        if (!active) return;
-        setHeroLogo(null);
-        setDisplayHero(hero);
+        if (active) setHeroLogo(null);
       });
 
     return () => {
       active = false;
     };
-  }, [hero, displayHero]);
+  }, [hero]);
 
   const heroGenres = (displayHero?.genres?.length ? displayHero.genres : genreNamesFromIds(displayHero?.genreIds)).slice(0, 3);
 
