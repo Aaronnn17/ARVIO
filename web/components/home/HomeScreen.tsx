@@ -146,11 +146,13 @@ export function HomeScreen() {
       {displayHero && (
         <section className="hero" style={{ backgroundImage: displayHero.backdrop ? `url(${displayHero.backdrop})` : undefined }}>
           <div className="hero-copy" key={displayHero.id}>
-            {heroLogo ? (
-              <img className="hero-logo" src={heroLogo} alt={displayHero.title} />
-            ) : (
-              <h2>{displayHero.title}</h2>
-            )}
+            <div className="hero-title-slot">
+              {heroLogo ? (
+                <img className="hero-logo" src={heroLogo} alt={displayHero.title} />
+              ) : (
+                <h2>{displayHero.title}</h2>
+              )}
+            </div>
             <div className="hero-meta">
               {heroImdbRating && (
                 <span className="hero-imdb">
@@ -160,7 +162,7 @@ export function HomeScreen() {
               )}
               {metaBits.map((bit) => <span key={String(bit)}>{bit}</span>)}
             </div>
-            <p>
+            <p className="hero-overview">
               {(() => {
                 const desc = displayHero.overview || displayHero.subtitle || "Continue from your ARVIO library.";
                 return desc.length > 150 ? desc.slice(0, 150) + "..." : desc;
