@@ -14,12 +14,13 @@ import { SettingsScreen } from "@/components/settings/SettingsScreen";
 import { WatchlistScreen } from "@/components/watchlist/WatchlistScreen";
 import { BackHandler } from "./BackHandler";
 import { ExternalPlaybackPrompt } from "./ExternalPlaybackPrompt";
+import { MediaContextMenu } from "./MediaContextMenu";
 import { EntitlementGate } from "./Paywall";
 import { Toast } from "./Toast";
 import { TopNav } from "./TopNav";
 
 const ACCENTS: Record<string, string> = {
-  arctic: "#ededed",
+  arctic: "#ededed", 
   gold: "#ffcd3c",
   green: "#00d588",
   blue: "#3b82f6",
@@ -101,6 +102,7 @@ export function AppShell() {
 
       <PlayerOverlay />
       <ExternalPlaybackPrompt />
+      <MediaContextMenu />
       <BackHandler />
       <Toast />
     </main>

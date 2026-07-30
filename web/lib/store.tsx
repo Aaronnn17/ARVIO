@@ -506,6 +506,28 @@ export interface AppStore {
   // Watchlist list-source switcher (Trakt custom lists / collection).
   loadTraktLists: () => Promise<Array<{ id: string; name: string }>>;
   loadTraktListItems: (source: string) => Promise<MediaItem[]>;
+
+  toggleWatchlist: (item: MediaItem) => Promise<void>;
+  toggleWatched: (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => Promise<void>;
+  removeFromContinueWatching: (item: MediaItem) => Promise<void>;
+  activeContextMenu: ContextMenuTarget | null;
+  openContextMenu: (target: ContextMenuTarget) => void;
+  closeContextMenu: () => void;
+}
+
+export interface ContextMenuTarget {
+  item?: MediaItem;
+  title?: string;
+  subtitle?: string;
+  isContinueWatching?: boolean;
+  position?: { x: number; y: number } | null;
+  actions?: Array<{
+    id: string;
+    label: string;
+    icon: React.ReactNode;
+    danger?: boolean;
+    action: () => void | Promise<void>;
+  }>;
 }
 
 const AppContext = createContext<AppStore | null>(null);
@@ -1726,6 +1748,95 @@ export function AppProvider({
   }, []);
   const backToProfiles = useCallback(() => setView("profiles"), []);
 
+  const [activeContextMenu, setActiveContextMenu] = useState<ContextMenuTarget | null>(null);
+
+  const openContextMenu = useCallback((target: ContextMenuTarget) => {
+    setActiveContextMenu(target);
+  }, []);
+
+  const closeContextMenu = useCallback(() => {
+    setActiveContextMenu(null);
+  }, []);
+
+  const toggleWatchlist = useCallback(async (item: MediaItem) => {
+    const inWatchlist = watchlist.some((entry) => entry.mediaType === item.mediaType && entry.id === item.id);
+    const slim = slimCacheItem(item);
+    const cacheKey = watchlistCacheKeyFor(activeProfileId);
+
+    setWatchlist((prev) => {
+      const next = inWatchlist
+        ? prev.filter((entry) => !(entry.mediaType === item.mediaType && entry.id === item.id))
+        : [slim, ...prev];
+      saveCachedList(cacheKey, next, 60);
+      return next;
+    });
+
+    if (activeSyncProvider() !== "none") {
+      try {
+        if (inWatchlist) {
+          await syncClient().removeFromWatchlist({ mediaType: item.mediaType, tmdbId: item.id });
+          setToast("Removed from watchlist.");
+        } else {
+          await syncClient().addToWatchlist({ mediaType: item.mediaType, tmdbId: item.id });
+          setToast("Added to watchlist.");
+        }
+      } catch (err) {
+        setWatchlist((prev) => {
+          const next = inWatchlist ? [slim, ...prev] : prev.filter((entry) => !(entry.mediaType === item.mediaType && entry.id === item.id));
+          saveCachedList(cacheKey, next, 60);
+          return next;
+        });
+        setToast(err instanceof Error ? err.message : "Failed to update watchlist.");
+      }
+    } else {
+      setToast(inWatchlist ? "Removed from watchlist." : "Added to watchlist.");
+    }
+  }, [watchlist, activeProfileId]);
+
+  const toggleWatched = useCallback(async (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => {
+    const currentlyWatched = isWatched(item, seasonNumber, episodeNumber);
+    markWatchedLocally({ mediaType: item.mediaType, id: item.id, season: seasonNumber, episode: episodeNumber }, !currentlyWatched);
+    setToast(!currentlyWatched ? "Marked as watched." : "Marked as unwatched.");
+
+    if (activeSyncProvider() !== "none") {
+      try {
+        const ref = { mediaType: item.mediaType, tmdbId: item.id, season: seasonNumber, episode: episodeNumber };
+        if (!currentlyWatched) {
+          await syncClient().addToHistory(ref);
+        } else {
+          await syncClient().removeFromHistory(ref);
+        }
+      } catch {
+        // Sync best effort
+      }
+    }
+  }, [isWatched, markWatchedLocally]);
+
+  const removeFromContinueWatching = useCallback(async (item: MediaItem) => {
+    const key = mediaWatchKey(item);
+    const cacheKey = cwCacheKeyFor(activeProfileId);
+
+    setContinueWatching((prev) => {
+      const next = prev.filter((entry) => mediaWatchKey(entry) !== key && mediaWatchKey(entry) !== `${item.mediaType}:${item.id}`);
+      saveCachedList(cacheKey, next, 30);
+      return next;
+    });
+
+    setCategories((prev) => prev.map((cat) => cat.id === "continue_watching"
+      ? { ...cat, items: cat.items.filter((entry) => mediaWatchKey(entry) !== key && mediaWatchKey(entry) !== `${item.mediaType}:${item.id}`) }
+      : cat).filter((cat) => cat.id !== "continue_watching" || cat.items.length));
+
+    setToast("Removed from Continue Watching.");
+
+    if (activeSyncProvider() !== "none") {
+      try {
+        await syncClient().removeFromHistory({ mediaType: item.mediaType, tmdbId: item.id, season: item.seasonNumber, episode: item.episodeNumber });
+      } catch {
+        // Sync best effort
+      }
+    }
+  }, [activeProfileId]);
+
   const value = useMemo<AppStore>(() => ({
     view,
     cloudLoginRequired,
@@ -1796,7 +1907,13 @@ export function AppProvider({
     connectMdblist,
     disconnectMdblist,
     loadTraktLists,
-    loadTraktListItems
+    loadTraktListItems,
+    toggleWatchlist,
+    toggleWatched,
+    removeFromContinueWatching,
+    activeContextMenu,
+    openContextMenu,
+    closeContextMenu
   }), [
     view, cloudLoginRequired, profiles, activeProfile, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
@@ -1806,7 +1923,8 @@ export function AppProvider({
     refreshIptv, loadIptvGuide,
     installAddon, removeAddon, setAddonsState, signIn, signOut, beginTrakt, pollTrakt, disconnectTrakt,
     connectMdblist, disconnectMdblist,
-    loadTraktLists, loadTraktListItems
+    loadTraktLists, loadTraktListItems,
+    toggleWatchlist, toggleWatched, removeFromContinueWatching, activeContextMenu, openContextMenu, closeContextMenu
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

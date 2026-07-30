@@ -629,6 +629,7 @@ function ChannelRow({ channel, guide, favorite, selected, onFocus, onVisible, on
   onPlay: () => void;
   onToggleFavorite: () => void;
 }) {
+  const { openContextMenu } = useApp();
   const rowRef = useRef<HTMLElement | null>(null);
   const now = guide?.now;
   const next = guide?.next ?? guide?.later ?? guide?.upcoming?.[0];
@@ -648,8 +649,36 @@ function ChannelRow({ channel, guide, favorite, selected, onFocus, onVisible, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel.id]);
 
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContextMenu({
+      title: channel.name,
+      subtitle: channel.group || "Live TV",
+      position: { x: e.clientX, y: e.clientY },
+      actions: [
+        {
+          id: "play_channel",
+          label: "Play Channel",
+          icon: <Play size={18} fill="currentColor" />,
+          action: () => {
+            onPlay();
+          }
+        },
+        {
+          id: "toggle_favorite",
+          label: favorite ? "Remove from Favorites" : "Add to Favorites",
+          icon: <Star size={18} fill={favorite ? "currentColor" : "none"} />,
+          action: () => {
+            onToggleFavorite();
+          }
+        }
+      ]
+    });
+  };
+
   return (
-    <article ref={rowRef} className={`livetv-row ${selected ? "is-selected" : ""}`} onMouseEnter={onFocus} onFocus={onFocus}>
+    <article ref={rowRef} className={`livetv-row ${selected ? "is-selected" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} onContextMenu={handleContextMenu}>
       <button type="button" className="livetv-row-main" onClick={onPlay}>
         <span className="livetv-row-logo">{channel.logo ? <img src={channel.logo} alt="" loading="lazy" /> : <Tv size={20} />}</span>
         <span className="livetv-row-copy">

@@ -1,7 +1,7 @@
 "use client";
 
 import { BadgeCheck, Clapperboard } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { getImdbRating } from "@/lib/imdbRatings";
 import { IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { useApp } from "@/lib/store";
@@ -42,7 +42,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   onFocus?: (item: MediaItem) => void;
   posterMode?: boolean;
 }) {
-  const { settings, isWatched } = useApp();
+  const { settings, isWatched, openContextMenu } = useApp();
   const effectivePosterMode = posterMode ?? settings.cardLayoutMode === "poster";
   const [logo, setLogo] = useState<string | null>(null);
   const progress = item.progress ?? 0;
@@ -53,6 +53,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   // "Up next" chip instead; the bar stays for genuinely resumable items.
   const isUpNext = item.timeRemainingLabel === "Up next";
   const showProgress = !watched && !isUpNext && progress >= 1 && progress <= 94;
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // CW/up-next items from Trakt arrive with no artwork, and a hydration that hit
   // a network/429 error leaves image+backdrop empty — the card renders grey while
   // the (separately cached) logo shows. Back-fill artwork lazily from TMDB.
@@ -61,6 +62,34 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   const backdrop = item.backdrop || fallbackArt?.backdrop || "";
   const artwork = effectivePosterMode ? (image || backdrop) : (backdrop || image);
   const year = item.releaseDate?.slice(0, 4) || item.year || (item.mediaType === "tv" ? "Series" : "Movie");
+
+  const triggerContextMenu = (posX?: number, posY?: number) => {
+    openContextMenu({
+      item,
+      isContinueWatching: isUpNext || showProgress || Boolean(item.timeRemainingLabel),
+      position: posX !== undefined && posY !== undefined ? { x: posX, y: posY } : null
+    });
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    triggerContextMenu(e.clientX, e.clientY);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    const touch = e.touches[0];
+    const posX = touch?.clientX ?? 0;
+    const posY = touch?.clientY ?? 0;
+    longPressTimer.current = setTimeout(() => {
+      triggerContextMenu(posX, posY);
+    }, 500);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  };
 
   // Rails load lazily, so a card only mounts when its row is near the viewport —
   // fetch the title-treatment logo on mount (getLogoUrl is cached + persisted).
@@ -126,6 +155,10 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
       type="button"
       className={`media-card ${effectivePosterMode ? "is-poster" : ""}`}
       onClick={() => onOpen(item)}
+      onContextMenu={handleContextMenu}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchEnd}
       onMouseEnter={() => { prefetchDetails(item); onFocus?.(item); }}
       onFocus={() => { prefetchDetails(item); onFocus?.(item); }}
     >
