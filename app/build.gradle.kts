@@ -155,6 +155,12 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
     sourceSets {
         getByName("main") {
             java.srcDir("src/main/tdlib-java")

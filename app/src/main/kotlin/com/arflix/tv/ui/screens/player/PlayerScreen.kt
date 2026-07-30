@@ -131,7 +131,6 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
@@ -438,6 +437,7 @@ fun PlayerScreen(
             "Bottom" -> 2; "Low" -> 8; "Medium" -> 15; "High" -> 25; else -> 8
         })
     }
+    var useVideoFrameSubtitleViewport by remember { mutableStateOf(false) }
     val subtitleGroups = remember(uiState.subtitles, uiState.preferredSubtitleLang, uiState.secondarySubtitleLang, uiState.selectedStream, uiState.isAiAvailable, uiState.aiTargetLanguageName) {
         val streamSource = uiState.selectedStream?.source ?: ""
         val primaryName = getFullLanguageName(uiState.preferredSubtitleLang)
@@ -1008,6 +1008,12 @@ fun PlayerScreen(
                     // Feed the selected text track's rendered cues to "Find best match" so it can
                     // read a built-in subtitle's timing (embedded tracks have no URL to parse).
                     override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+                        val shouldUseVideoFrame = cueGroup.cues.requiresVideoFrameSubtitleViewport(
+                            preserveAuthoredTextPositioning = latestUiState.subtitleStylized
+                        )
+                        if (useVideoFrameSubtitleViewport != shouldUseVideoFrame) {
+                            useVideoFrameSubtitleViewport = shouldUseVideoFrame
+                        }
                         viewModel.onPlayerCues(
                             cueGroup.cues.isNotEmpty(),
                             cueGroup.presentationTimeUs / 1000L,
@@ -2986,7 +2992,7 @@ fun PlayerScreen(
         if (uiState.selectedStreamUrl != null && !isCasting) {
             AndroidView(
                 factory = { ctx ->
-                    PlayerView(ctx).apply {
+                    FullViewportSubtitlePlayerView(ctx).apply {
                         keepScreenOn = true
                         player = exoPlayer
                         useController = false
@@ -3057,6 +3063,7 @@ fun PlayerScreen(
                     playerView.keepScreenOn = true
                     playerView.player = exoPlayer
                     playerView.resizeMode = playerResizeMode
+                    playerView.setUseVideoFrameForSubtitles(useVideoFrameSubtitleViewport)
                     playerView.subtitleView?.apply {
                         val baseSizeSp = when (subtitleSizePref) {
                             "Small" -> 18f; "Large" -> 30f; "Extra Large" -> 36f; else -> 24f
