@@ -45,6 +45,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   const { settings, isWatched, openContextMenu } = useApp();
   const effectivePosterMode = posterMode ?? settings.cardLayoutMode === "poster";
   const [logo, setLogo] = useState<string | null>(null);
+  const [imgLoaded, setImgLoaded] = useState(false);
   const progress = item.progress ?? 0;
   const watched = isWatched(item);
   // "Up next" rows carry SERIES completion (how far through the show you are),
@@ -62,6 +63,10 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   const backdrop = item.backdrop || fallbackArt?.backdrop || "";
   const artwork = effectivePosterMode ? (image || backdrop) : (backdrop || image);
   const year = item.releaseDate?.slice(0, 4) || item.year || (item.mediaType === "tv" ? "Series" : "Movie");
+
+  useEffect(() => {
+    setImgLoaded(false);
+  }, [artwork]);
 
   const triggerContextMenu = (posX?: number, posY?: number) => {
     openContextMenu({
@@ -162,8 +167,19 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
       onMouseEnter={() => { prefetchDetails(item); onFocus?.(item); }}
       onFocus={() => { prefetchDetails(item); onFocus?.(item); }}
     >
-      <div className="poster">
-        {artwork ? <img src={artwork} alt="" loading="lazy" decoding="async" /> : <Clapperboard size={42} />}
+      <div className={`poster ${!imgLoaded ? "is-loading" : ""}`}>
+        {artwork ? (
+          <img
+            src={artwork}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setImgLoaded(true)}
+            className={imgLoaded ? "is-loaded" : ""}
+          />
+        ) : (
+          <Clapperboard size={42} />
+        )}
         {logo && !effectivePosterMode && <img className="card-logo" src={logo} alt="" loading="lazy" decoding="async" />}
         {serviceBadges.length > 0 && (
           <span className="card-services top-left">
