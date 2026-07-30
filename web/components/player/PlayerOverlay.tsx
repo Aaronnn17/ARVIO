@@ -1158,14 +1158,26 @@ function VideoPlayer({
       setBuffering(true);
       const attempt = video.play();
       void attempt?.catch(() => {
-        setBuffering(false);
-        if (video.error) setError(true);
-        setShowControls(true);
+        if (video.error) {
+          setBuffering(false);
+          setError(true);
+          setShowControls(true);
+          return;
+        }
+        // No media error means autoplay policy: the page has no user
+        // activation yet (controller-only session). Muted playback is exempt.
+        video.muted = true;
+        void video.play().then(() => {
+          onToast("Started muted — press M or the speaker button to unmute.");
+        }).catch(() => {
+          setBuffering(false);
+          setShowControls(true);
+        });
       });
     }
     else video.pause();
     flashControls();
-  }, [flashControls]);
+  }, [flashControls, onToast]);
 
   const seekBy = useCallback((delta: number) => {
     const video = videoRef.current;
@@ -1180,9 +1192,15 @@ function VideoPlayer({
   const toggleFullscreen = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    if (!document.fullscreenElement) void el.requestFullscreen?.().catch(() => undefined);
+    if (!document.fullscreenElement) {
+      void el.requestFullscreen?.().catch(() => {
+        // Fullscreen demands a real click/tap (transient activation), which
+        // controller input can never mint — say so instead of doing nothing.
+        onToast("Fullscreen needs a real click or tap first — or press F11.");
+      });
+    }
     else void document.exitFullscreen?.().catch(() => undefined);
-  }, []);
+  }, [onToast]);
 
   const openPanel = useCallback((panel: Exclude<PlayerPanel, null>) => {
     setActivePanel((currentPanel) => {
@@ -1306,7 +1324,10 @@ function VideoPlayer({
           break;
         case "Escape":
           if (activePanel) setActivePanel(null);
-          else if (!document.fullscreenElement) onClose();
+          // A synthetic Escape (gamepad B) can't trigger the browser's own
+          // exit-fullscreen default — do it ourselves, then close next press.
+          else if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+          else onClose();
           break;
         default:
           break;

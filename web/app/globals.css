@@ -257,9 +257,23 @@ button {
    (clamp(84px, 9vh, 104px) top — the Live TV overhaul block), and that
    single-class rule already beats the .screen base by source order. Forcing
    padding-top: 0 from here out-specified it (two classes vs one) and pushed
-   the whole TV page underneath the fixed top bar. */
+   the whole TV page underneath the fixed top bar.
+
+   The .has-hero / .has-section-heading classes are set by the components and
+   duplicate the :has() conditions: TV browsers (Tizen/webOS ship Chromium
+   69-94; :has() needs 105+) would otherwise ignore these rules entirely and
+   render double top padding on every screen.
+
+   The class fallbacks MUST live in their own rule: one selector an engine
+   can't parse (like :has() below Chromium 105) invalidates the entire
+   comma-separated list, fallbacks included. */
 .screen:has(.hero),
 .screen:has(> .section-heading:first-child) {
+  padding-top: 0;
+}
+
+.screen.has-hero,
+.screen.has-section-heading {
   padding-top: 0;
 }
 
@@ -5614,7 +5628,7 @@ button,
 
   .livetv-shell,
   .settings-shell,
-  .screen:has(.search-hero) {
+  .screen.has-search-hero {
     min-height: auto !important;
   }
 
@@ -9423,8 +9437,16 @@ button,
   }
 }
 
-/* Final search layout pass - keep search clear of the fixed top navigation */
-.screen:has(.search-hero) {
+/* Final search layout pass - keep search clear of the fixed top navigation.
+   .has-search-hero is set by SearchScreen so :has()-less TV engines (Tizen/
+   webOS) match too; 100vh first as their fallback for dvh (Chromium 108+). */
+.screen.has-search-hero {
+  min-height: 100vh;
+  padding-top: 0;
+}
+
+.screen:has(.search-hero),
+.screen.has-search-hero {
   min-height: 100dvh;
   padding-top: 0;
 }
@@ -9484,13 +9506,13 @@ button,
     0 24px 70px rgba(0, 0, 0, 0.44);
 }
 
-.screen:has(.search-hero) .grid-results {
+.screen.has-search-hero .grid-results {
   padding: 0 clamp(22px, 4.2vw, 78px) 96px;
   grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   align-items: start;
 }
 
-.screen:has(.search-hero).poster-results .grid-results {
+.screen.has-search-hero.poster-results .grid-results {
   grid-template-columns: repeat(auto-fill, minmax(150px, 210px));
 }
 
@@ -9519,8 +9541,8 @@ button,
     font-size: 16px;
   }
 
-  .screen:has(.search-hero) .grid-results,
-  .screen:has(.search-hero).poster-results .grid-results {
+  .screen.has-search-hero .grid-results,
+  .screen.has-search-hero.poster-results .grid-results {
     grid-template-columns: 1fr;
     padding: 0 var(--phone-gutter) 24px !important;
   }
@@ -10406,7 +10428,7 @@ button,
   grid-template-columns: repeat(auto-fill, minmax(min(232px, 100%), 1fr));
 }
 
-.screen:has(.search-hero) .grid-results {
+.screen.has-search-hero .grid-results {
   grid-template-columns: repeat(auto-fill, minmax(min(232px, 100%), 1fr));
 }
 
@@ -11903,4 +11925,39 @@ html { background: #000; }
 :where(button, a[href], [role="button"], [tabindex]):focus-visible {
   outline: 2px solid var(--accent, #fff);
   outline-offset: 2px;
+}
+
+/* Gamepad-driven focus is set by script after UNTRUSTED key events, so the
+   browser's :focus-visible heuristic may never engage — kbd-nav mode (set by
+   tvNav/gamepadNav on key navigation, cleared on pointer use) guarantees the
+   ring. Hover-equivalent styling rides the same class: hoverParity.ts clones
+   every :hover rule as a html.kbd-nav …:focus-within twin at runtime.
+   :where() around the prefix keeps specificity at (0,1,0) so bespoke
+   `outline: none` suppressions (cards/rows with their own focus skin) still
+   win — same invariant as the :focus-visible rule above. */
+:where(html.kbd-nav) :where(button, a[href], [role="button"], [tabindex]):focus {
+  outline: 2px solid var(--accent, #fff);
+  outline-offset: 2px;
+}
+
+/* ============ TV browsers (Tizen / webOS) ============ */
+/* `is-tv` is set on <html> by tvNav when the UA is a smart-TV shell. Plain
+   `:focus` (not :focus-visible) on purpose: TV engines predate :focus-visible,
+   and on a couch every focus IS keyboard focus — the ring must always show. */
+.is-tv *:focus {
+  outline: 3px solid #fff !important;
+  outline-offset: 3px;
+}
+
+/* TV SoCs render backdrop blur at single-digit framerates. These surfaces all
+   carry near-opaque backgrounds of their own, so dropping the blur costs
+   almost nothing visually and buys back the frame budget. */
+.is-tv .player-side-panel,
+.is-tv .toast,
+.is-tv .chips span,
+.is-tv .hero-meta > span,
+.is-tv .login-proof span,
+.is-tv .player-quality {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
