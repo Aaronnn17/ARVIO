@@ -77,6 +77,7 @@ button {
   width: 76px;
   height: 76px;
   object-fit: contain;
+  border-radius: 18px;
   filter: drop-shadow(0 0 28px rgba(0, 213, 136, 0.26));
 }
 

@@ -38,7 +38,7 @@ export function LoginScreen() {
       <div className="login-hero">
         <div className="login-copy">
           <div className="login-brand-lockup">
-            <img src="/arvio-logo.svg" alt="" className="login-brand-logo" />
+            <img src="/arvio-icon-512.png" alt="" className="login-brand-logo" />
             <img src="/arvio-wordmark.svg" alt="ARVIO" className="login-wordmark" />
           </div>
           <p className="login-tag">Cloud sign-in required</p>
