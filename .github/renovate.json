@@ -1,0 +1,26 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":group(allNonMajor)",
+    ":rebaseStalePrs",
+    ":semanticCommits"
+  ],
+  "labels": ["dependencies"],
+  "assignees": [],
+  "packageRules": [
+    {
+      "matchPackagePatterns": ["*"],
+      "matchPaths": ["web/**"],
+      "groupName": "web dependencies"
+    },
+    {
+      "matchManagers": ["gradle", "gradle-wrapper"],
+      "groupName": "gradle dependencies"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    }
+  ]
+}
