@@ -2969,6 +2969,17 @@ class StreamRepository @Inject constructor(
     private val STREAM_PREWARM_NETWORK_TIMEOUT_MS = 700L
     private val STREAM_REDIRECT_RESOLUTION_TIMEOUT_MS = 1_800L
     private val PLAYBACK_HOST_BAD_TTL_MS = 5 * 60_000L
+
+    // Some scraper plugins (e.g. 4KHDHub, DVDPlay via HubCloud) return a final playback URL
+    // without any request headers, even though the host requires a same-site Referer/Origin to
+    // serve the actual video instead of an interstitial/anti-bot HTML page. ExoPlayer then fails
+    // extractor sniffing ("NoDeclaredBrand") because it received HTML, not a media container.
+    // These hosts are known to need a Referer pointing back at themselves; only applied when the
+    // plugin didn't already supply its own headers, so this never overrides addon-provided values.
+    private val GATED_HOST_DEFAULT_REFERERS = mapOf(
+        "hubcloud" to "https://hubcloud.cx/",
+        "hubdrive" to "https://hubdrive.dev/"
+    )
     private val SIDE_EFFECT_PRONE_PREWARM_HOST_MARKERS = setOf(
         "torrentio",
         "torbox",
@@ -3363,10 +3374,17 @@ class StreamRepository @Inject constructor(
             normalizedUrl.startsWith("https://", ignoreCase = true)
         ) {
             val (resolvedUrl, urlHeaders) = splitUrlAndHeaders(normalizedUrl)
-            val mergedHeaders = mergeRequestHeaders(
+            val explicitHeaders = mergeRequestHeaders(
                 base = stream.behaviorHints?.proxyHeaders?.request.orEmpty(),
                 extra = urlHeaders
             )
+            // Only fall back to a known-gated-host Referer/Origin when the addon/plugin didn't
+            // already provide its own Referer — never override an explicit value.
+            val mergedHeaders = if (explicitHeaders.keys.none { it.equals("Referer", ignoreCase = true) }) {
+                mergeRequestHeaders(base = explicitHeaders, extra = defaultHeadersForGatedHost(resolvedUrl))
+            } else {
+                explicitHeaders
+            }
             val mergedBehaviorHints = when {
                 mergedHeaders.isNotEmpty() -> {
                     val current = stream.behaviorHints
@@ -3491,6 +3509,18 @@ class StreamRepository @Inject constructor(
                 parsed[key] = value
             }
         return baseUrl to parsed
+    }
+
+    // See GATED_HOST_DEFAULT_REFERERS above for why this exists.
+    private fun defaultHeadersForGatedHost(url: String): Map<String, String> {
+        val host = runCatching { java.net.URI(url).host?.lowercase(Locale.US) }.getOrNull().orEmpty()
+        if (host.isBlank()) return emptyMap()
+        val referer = GATED_HOST_DEFAULT_REFERERS.entries
+            .firstOrNull { (marker, _) -> host.contains(marker) }
+            ?.value
+            ?: return emptyMap()
+        val origin = deriveOriginFromReferer(referer) ?: referer.trimEnd('/')
+        return mapOf("Referer" to referer, "Origin" to origin)
     }
 
     private fun deriveOriginFromReferer(referer: String): String? {
