@@ -3129,7 +3129,29 @@ class StreamRepository @Inject constructor(
             host.contains("comet", ignoreCase = true) ||
             host.contains("mediafusion", ignoreCase = true) ||
             host.contains("stremthru", ignoreCase = true) ||
-            host.contains("jackettio", ignoreCase = true)
+            host.contains("jackettio", ignoreCase = true) ||
+            GATED_HOST_DEFAULT_REFERERS.keys.any { host.contains(it) }
+    }
+
+    // HubCloud-style "10Gbps" links redirect through a Cloudflare Worker and land on
+    // an anti-leech HTML page (e.g. gamerxyt.com/dl.php?link=<real-video-url>) whose
+    // own URL already carries the real direct link as a query parameter. A browser
+    // would follow this via client-side JS; ExoPlayer/OkHttp won't, so it just gets
+    // the landing page's HTML and fails extractor sniffing. Unwrap it here instead.
+    private fun unwrapEmbeddedLinkParam(url: String): String {
+        val parsed = runCatching { java.net.URI(url) }.getOrNull() ?: return url
+        val query = parsed.rawQuery ?: return url
+        val embedded = query.split('&')
+            .asSequence()
+            .mapNotNull { pair ->
+                val idx = pair.indexOf('=')
+                if (idx < 0) return@mapNotNull null
+                val key = pair.substring(0, idx)
+                if (!key.equals("link", ignoreCase = true) && !key.equals("url", ignoreCase = true)) return@mapNotNull null
+                runCatching { URLDecoder.decode(pair.substring(idx + 1), "UTF-8") }.getOrNull()
+            }
+            .firstOrNull { it.startsWith("http://", ignoreCase = true) || it.startsWith("https://", ignoreCase = true) }
+        return embedded ?: url
     }
 
     private suspend fun resolveRedirectedPlaybackUrl(
@@ -3404,11 +3426,12 @@ class StreamRepository @Inject constructor(
                 }
                 else -> stream.behaviorHints
             }
-            val playbackUrl = if (shouldResolveRedirectBeforePlayback(resolvedUrl, stream)) {
+            val redirectResolvedUrl = if (shouldResolveRedirectBeforePlayback(resolvedUrl, stream)) {
                 resolveRedirectedPlaybackUrl(resolvedUrl, mergedHeaders)
             } else {
                 resolvedUrl
             }
+            val playbackUrl = unwrapEmbeddedLinkParam(redirectResolvedUrl)
             return stream.copy(
                 url = playbackUrl,
                 behaviorHints = mergedBehaviorHints
