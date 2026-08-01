@@ -1362,7 +1362,7 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
         upstreamLabel = stream.description.orEmpty().lines()
             .firstOrNull { it.trimStart().startsWith("🔌") }
             // Keep "Torrentio | ThePirateBay", drop the emoji decorations.
-            ?.replace(Regex("""[^\p{L}\p{N} .+|\-]"""), "")
+            ?.replace(StreamSelectorRegexes.CLEAN_TITLE_REGEX, "")
             ?.trim()
             ?.takeIf { it.isNotBlank() },
     )
@@ -1472,7 +1472,7 @@ private fun rowSubtitle(presentation: SourcePresentation): String {
         presentation.editionLabel?.let(::add)
         presentation.bitrateLabel?.let(::add)
     }
-        .distinctBy { it.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), "") }
+        .distinctBy { it.lowercase().replace(StreamSelectorRegexes.DISTINCT_TITLE_REGEX, "") }
         .joinToString(" · ")
 }
 
@@ -2658,4 +2658,10 @@ private fun qualityScore(quality: String): Int {
         quality.contains("480p", ignoreCase = true) -> 1
         else -> 0
     }
+}
+
+
+private object StreamSelectorRegexes {
+    val CLEAN_TITLE_REGEX = Regex("""[^\p{L}\p{N} .+|\-]""")
+    val DISTINCT_TITLE_REGEX = Regex("[^\\p{L}\\p{N}]+")
 }

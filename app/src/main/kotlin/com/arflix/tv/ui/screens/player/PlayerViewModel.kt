@@ -3042,7 +3042,7 @@ class PlayerViewModel @Inject constructor(
 
     /** Whitespace/tag-insensitive form for comparing renderer cue text against parsed file text. */
     private fun normalizeCueTextForCompare(text: String): String =
-        text.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+        text.replace(PlayerVMRegexes.HTML_TAGS, " ").replace(PlayerVMRegexes.MULTIPLE_SPACES, " ").trim()
 
     /**
      * A scored candidate. [offsetMs] is 0 for a normal (as-authored) match, or the uniform delay
@@ -4530,4 +4530,10 @@ class PlayerViewModel @Inject constructor(
             "offcloud.com",
         )
     }
+}
+
+
+private object PlayerVMRegexes {
+    val HTML_TAGS = Regex("<[^>]*>")
+    val MULTIPLE_SPACES = Regex("\\s+")
 }

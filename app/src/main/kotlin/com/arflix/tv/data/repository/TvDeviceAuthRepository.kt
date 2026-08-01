@@ -52,7 +52,7 @@ class TvDeviceAuthRepository @Inject constructor(
 
     suspend fun startSession(): Result<TvDeviceAuthSession> {
         return withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val request = Request.Builder()
                     .url(Constants.TV_AUTH_START_URL)
                     .header("apikey", Constants.APP_ANON_KEY)
@@ -70,21 +70,24 @@ class TvDeviceAuthRepository @Inject constructor(
                     val verificationUrl = json.optString("verification_url")
                         .ifBlank { json.optString("verification_uri") }
                         .ifBlank { "https://auth.arvio.tv/?code=${java.net.URLEncoder.encode(userCode, "UTF-8")}" }
-                    TvDeviceAuthSession(
+                    Result.success(TvDeviceAuthSession(
                         userCode = userCode,
                         deviceCode = json.getString("device_code"),
                         verificationUrl = verificationUrl,
                         expiresInSeconds = json.optInt("expires_in", 600),
                         intervalSeconds = json.optInt("interval", 3)
-                    )
+                    ))
                 }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Result.failure(e)
             }
         }
     }
 
     suspend fun pollStatus(deviceCode: String): Result<TvDeviceAuthStatus> {
         return withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val payload = JSONObject().put("device_code", deviceCode).toString()
                 val statusRequest = Request.Builder()
                     .url(Constants.TV_AUTH_STATUS_URL)
@@ -108,14 +111,17 @@ class TvDeviceAuthRepository @Inject constructor(
                             if (!fallback.isSuccessful) {
                                 throw IllegalStateException(parseError(fallbackBody, context.getString(R.string.tv_link_failed_poll)))
                             }
-                            return@use parseStatus(fallbackBody)
+                            return@use Result.success(parseStatus(fallbackBody))
                         }
                     }
                     if (!response.isSuccessful) {
                         throw IllegalStateException(parseError(body, context.getString(R.string.tv_link_failed_poll)))
                     }
-                    parseStatus(body)
+                    Result.success(parseStatus(body))
                 }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Result.failure(e)
             }
         }
     }
@@ -133,7 +139,7 @@ class TvDeviceAuthRepository @Inject constructor(
             return Result.failure(IllegalArgumentException(message))
         }
         return withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val payload = JSONObject()
                     .put("code", userCode)
                     .put("email", normalizedEmail)
@@ -153,21 +159,26 @@ class TvDeviceAuthRepository @Inject constructor(
                     if (!response.isSuccessful) {
                         throw IllegalStateException(parseError(body, context.getString(R.string.tv_link_failed)))
                     }
-                    TvDeviceAuthCompleteResult(ok = true)
+                    Result.success(TvDeviceAuthCompleteResult(ok = true))
                 }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Result.failure(e)
             }
         }
     }
 
     private fun parseError(body: String, fallback: String): String {
-        return runCatching {
+        return try {
             val json = JSONObject(body)
             json.optString("error").ifBlank {
                 json.optString("message").ifBlank {
                     json.optString("error_description").ifBlank { fallback }
                 }
             }
-        }.getOrDefault(fallback)
+        } catch (e: org.json.JSONException) {
+            fallback
+        }
     }
 
     private fun parseStatus(body: String): TvDeviceAuthStatus {

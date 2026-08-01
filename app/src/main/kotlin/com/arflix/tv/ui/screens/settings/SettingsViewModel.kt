@@ -1509,7 +1509,7 @@ class SettingsViewModel @Inject constructor(
     fun addQualityFilter(deviceName: String, regexPattern: String) {
         val trimmedRegex = regexPattern.trim()
         if (trimmedRegex.isBlank()) return
-        if (runCatching { Regex(trimmedRegex) }.isFailure) return
+        try { Regex(trimmedRegex) } catch (e: Exception) { return }
 
         viewModelScope.launch {
             val next = _uiState.value.qualityFilters + QualityFilterConfig(
@@ -1525,7 +1525,7 @@ class SettingsViewModel @Inject constructor(
     fun updateQualityFilter(filterId: String, deviceName: String, regexPattern: String) {
         val trimmedRegex = regexPattern.trim()
         if (trimmedRegex.isBlank()) return
-        if (runCatching { Regex(trimmedRegex) }.isFailure) return
+        try { Regex(trimmedRegex) } catch (e: Exception) { return }
 
         viewModelScope.launch {
             val next = _uiState.value.qualityFilters.map { filter ->
