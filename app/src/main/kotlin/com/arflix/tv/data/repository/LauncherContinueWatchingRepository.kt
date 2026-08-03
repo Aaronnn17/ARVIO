@@ -118,14 +118,33 @@ class LauncherContinueWatchingRepository @Inject constructor(
         return historyFallback
             .sortedByDescending { it.updated_at ?: it.paused_at.orEmpty() }
             .map { entry ->
+                val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
+                
+                val localizedTitle = runCatching {
+                    if (mediaType == MediaType.TV) {
+                        mediaRepository.getTvDetails(entry.show_tmdb_id)?.title
+                    } else {
+                        mediaRepository.getMovieDetails(entry.show_tmdb_id)?.title
+                    }
+                }.getOrNull()?.takeIf { it.isNotBlank() } ?: entry.title.orEmpty()
+
+                val resolvedEpisodeTitle = runCatching {
+                    if (mediaType == MediaType.TV && entry.season != null && entry.episode != null) {
+                        val episodes = mediaRepository.getSeasonEpisodes(entry.show_tmdb_id, entry.season)
+                        episodes?.firstOrNull { it.episodeNumber == entry.episode }?.name
+                    } else {
+                        null
+                    }
+                }.getOrNull()?.takeIf { it.isNotBlank() } ?: entry.episode_title
+                
                 ContinueWatchingItem(
                     id = entry.show_tmdb_id,
-                    title = entry.title.orEmpty(),
-                    mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE,
+                    title = localizedTitle,
+                    mediaType = mediaType,
                     progress = (entry.progress * 100f).toInt().coerceIn(0, 99),
                     season = entry.season,
                     episode = entry.episode,
-                    episodeTitle = entry.episode_title,
+                    episodeTitle = resolvedEpisodeTitle,
                     posterPath = entry.poster_path,
                     backdropPath = entry.backdrop_path,
                     resumePositionSeconds = entry.position_seconds,
@@ -144,8 +163,6 @@ class LauncherContinueWatchingRepository @Inject constructor(
             }
             .distinctBy { "${it.mediaType}:${it.id}:${it.season ?: -1}:${it.episode ?: -1}" }
             .take(Constants.MAX_CONTINUE_WATCHING)
-    }
-
 
     @RequiresApi(Build.VERSION_CODES.O)
     private fun syncPublishedRows(items: List<ContinueWatchingItem>) {
