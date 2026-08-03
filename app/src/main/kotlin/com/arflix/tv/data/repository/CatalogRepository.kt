@@ -1393,7 +1393,7 @@ class CatalogRepository @Inject constructor(
         val hiddenAddon = decodeHiddenAddon(profileId, prefs)
         val hiddenHomeServer = decodeHiddenHomeServer(profileId, prefs)
         
-        // 1. Leemos el estado del interruptor
+        // 1. We read the switch's status
         val isIptvOnly = prefs[iptvOnlyModeKey] ?: false
 
         fun CatalogConfig.isHidden(): Boolean {
@@ -1431,7 +1431,7 @@ class CatalogRepository @Inject constructor(
                 }
             }
             
-            // 2. APLICAMOS EL FILTRO AQUÍ
+            // 2. We apply the filter here
             return if (isIptvOnly) {
                 base.filter { it.sourceType == CatalogSourceType.HOME_SERVER }
             } else {
