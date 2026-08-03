@@ -467,4 +467,56 @@ export interface AppSettings {
   favoriteGroupIds: string[];
   hiddenGroupIds: string[];
   groupOrder: string[];
+  iptvSortOrder?: "provider" | "number" | "name";
+  // Plugins & Scrapers
+
+  pluginsEnabled: boolean;
+  groupStreamsByRepository: boolean;
+  repositories: PluginRepository[];
 }
+
+
+export interface PluginRepository {
+  id: string;
+  name: string;
+  url: string;
+  scraperCount: number;
+  version?: string;
+  description?: string;
+  updatedAt?: number;
+  enabled?: boolean;
+}
+
+export interface PluginScraper {
+  id: string;
+  name: string;
+  repoId: string;
+  repoName: string;
+  enabled: boolean;
+  version?: string;
+  description?: string;
+  supportedTypes?: MediaType[];
+}
+
+export interface ScraperTestResult {
+  scraperId: string;
+  scraperName: string;
+  status: "success" | "error" | "loading";
+  latencyMs?: number;
+  streamCount?: number;
+  errorMessage?: string;
+  streams?: StreamSource[];
+}
+
+export interface PluginUiState {
+  pluginsEnabled: boolean;
+  groupStreamsByRepository: boolean;
+  repositories: PluginRepository[];
+  scrapers: PluginScraper[];
+  isLoading?: boolean;
+  isAddingRepo?: boolean;
+  errorMessage?: string | null;
+  successMessage?: string | null;
+  testResult?: ScraperTestResult | null;
+}
+
