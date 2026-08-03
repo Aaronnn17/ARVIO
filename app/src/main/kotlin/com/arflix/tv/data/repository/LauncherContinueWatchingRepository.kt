@@ -18,6 +18,7 @@ import com.arflix.tv.MainActivity
 import com.arflix.tv.R
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.SportsAddonCapabilities
+import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.navigation.Screen
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
@@ -42,7 +43,8 @@ class LauncherContinueWatchingRepository @Inject constructor(
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
     private val watchHistoryRepository: WatchHistoryRepository,
-    private val streamRepository: StreamRepository
+    private val streamRepository: StreamRepository,
+    private val mediaRepository: MediaRepository
 ) {
     companion object {
         private const val TAG = "LauncherCW"
