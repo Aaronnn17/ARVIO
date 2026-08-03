@@ -5,7 +5,7 @@ import { getStreams, getStreamsProgressive, installAddon as installAddonManifest
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
-import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudPayload, pullCloudProfiles, pullCloudTraktToken, pullCloudWatchlist, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTraktToken } from "./cloud";
+import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudPayload, pullCloudProfiles, pullCloudTraktToken, pullCloudWatchlist, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTraktToken, saveProgress } from "./cloud";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
@@ -1798,6 +1798,27 @@ export function AppProvider({
     markWatchedLocally({ mediaType: item.mediaType, id: item.id, season: seasonNumber, episode: episodeNumber }, !currentlyWatched);
     setToast(!currentlyWatched ? "Marked as watched." : "Marked as unwatched.");
 
+    if (authClient.session) {
+      try {
+        await saveProgress(
+          authClient,
+          {
+            media_type: item.mediaType,
+            show_tmdb_id: item.id,
+            season: seasonNumber ?? item.seasonNumber ?? null,
+            episode: episodeNumber ?? item.episodeNumber ?? null,
+            title: item.title,
+            duration_seconds: 0,
+            position_seconds: 0,
+            progress: currentlyWatched ? 0 : 1
+          },
+          activeProfileId
+        );
+      } catch {
+        // Cloud sync best effort
+      }
+    }
+
     if (activeSyncProvider() !== "none") {
       try {
         const ref = { mediaType: item.mediaType, tmdbId: item.id, season: seasonNumber, episode: episodeNumber };
@@ -1810,7 +1831,7 @@ export function AppProvider({
         // Sync best effort
       }
     }
-  }, [isWatched, markWatchedLocally]);
+  }, [isWatched, markWatchedLocally, auth, activeProfileId]);
 
   const removeFromContinueWatching = useCallback(async (item: MediaItem) => {
     const key = mediaWatchKey(item);

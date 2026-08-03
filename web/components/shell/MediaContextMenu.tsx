@@ -146,6 +146,7 @@ export function MediaContextMenu() {
               type="button"
               className={`context-menu-action-btn ${act.danger ? "is-danger" : ""}`}
               onClick={() => {
+                closeContextMenu();
                 act.action();
               }}
             >

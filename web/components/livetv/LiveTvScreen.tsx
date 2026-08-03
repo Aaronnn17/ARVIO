@@ -27,7 +27,7 @@ function groupLabel(group: string) {
   return group.trim() || "Uncategorized";
 }
 
-export function LiveTvScreen() {
+export function LiveTvScreen({ active = true }: { active?: boolean }) {
   const { iptvSnapshot, settings, setSettings, playChannel, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth } = useApp();
 
   // Open a channel straight in VLC/Infuse from the detail panel — the reliable
@@ -86,14 +86,14 @@ export function LiveTvScreen() {
   // is already cached). Reuse the snapshot that is still in memory and only
   // rebuild when the playlists actually changed, or when it has gone stale.
   useEffect(() => {
-    if (!playlists.length) return;
+    if (!active || !playlists.length) return;
     const snapshotMatchesPlaylists = iptvSnapshot.channels.length > 0
       && iptvSnapshot.signature === playlistSignature;
     const age = Date.now() - (iptvSnapshot.loadedAt ?? 0);
     if (snapshotMatchesPlaylists && age < IPTV_SNAPSHOT_TTL_MS) return;
     void refreshIptv();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playlistSignature, refreshIptv, playlists.length]);
+  }, [active, playlistSignature, refreshIptv, playlists.length]);
 
   const categories = useMemo(() => {
     const orderMap = new Map(iptvSnapshot.groupOrder.map((id, index) => [id, index]));

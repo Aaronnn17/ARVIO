@@ -89,7 +89,7 @@ export function AppShell() {
         <div style={{ display: !selected && section === "home" ? "contents" : "none" }}><HomeScreen /></div>
         <div style={{ display: !selected && section === "search" ? "contents" : "none" }}><SearchScreen /></div>
         <div style={{ display: !selected && section === "watchlist" ? "contents" : "none" }}><WatchlistScreen /></div>
-        <div style={{ display: !selected && section === "tv" ? "contents" : "none" }}><LiveTvScreen /></div>
+        <div style={{ display: !selected && section === "tv" ? "contents" : "none" }}><LiveTvScreen active={section === "tv"} /></div>
         <div style={{ display: !selected && section === "addons" ? "contents" : "none" }}><AddonsScreen /></div>
         <div style={{ display: !selected && section === "settings" ? "contents" : "none" }}><SettingsScreen /></div>
         {selected && <DetailsDrawer />}
