@@ -447,7 +447,7 @@ fun SettingsScreen(
                     groupOrder = uiState.iptvGroupOrder
                 ).size // Reset row + category rows
             } else {
-                2 + uiState.iptvPlaylists.size // Add + rows + refresh + clear
+                3 + uiState.iptvPlaylists.size // Add + toggle + rows + refresh + clear
             }
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
@@ -775,7 +775,7 @@ fun SettingsScreen(
                                         iptvActionIndex > 0 &&
                                         (
                                             showIptvCategoriesSettings && contentFocusIndex > 0 ||
-                                                !showIptvCategoriesSettings && contentFocusIndex in 1..uiState.iptvPlaylists.size
+                                                !showIptvCategoriesSettings && contentFocusIndex in 2..(uiState.iptvPlaylists.size + 1)
                                             )
                                     ) {
                                         iptvActionIndex--
@@ -820,7 +820,7 @@ fun SettingsScreen(
                                         addonActionIndex++
                                     } else if (currentSection == "iptv" && showIptvCategoriesSettings && contentFocusIndex > 0 && iptvActionIndex < 2) {
                                         iptvActionIndex++
-                                    } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 1..uiState.iptvPlaylists.size && iptvActionIndex < 5) {
+                                    } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 2..(uiState.iptvPlaylists.size + 1) && iptvActionIndex < 5) {
                                         iptvActionIndex++
                                     } else if (currentSection == "catalogs" && contentFocusIndex > 1 && catalogActionIndex < 5) {
                                         catalogActionIndex++
@@ -975,55 +975,58 @@ fun SettingsScreen(
                                                     }
                                                 }
                                             } else when {
-                                                contentFocusIndex == 0 -> {
-                                                    editingIptvIndex = -1
-                                                    showIptvInput = true
-                                                }
-                                                contentFocusIndex in 1..uiState.iptvPlaylists.size -> {
-                                                    val idx = contentFocusIndex - 1
-                                                    val updated = uiState.iptvPlaylists.toMutableList()
-                                                    val playlist = updated.getOrNull(idx)
-                                                    if (playlist != null) {
-                                                        when (iptvActionIndex) {
-                                                            0 -> {
-                                                                openIptvCategories(playlist.id)
-                                                            }
-                                                            1 -> {
-                                                                updated[idx] = playlist.copy(enabled = !playlist.enabled)
-                                                                viewModel.saveIptvPlaylists(updated)
-                                                            }
-                                                            2 -> {
-                                                                editingIptvIndex = idx
-                                                                showIptvInput = true
-                                                            }
-                                                            3 -> {
-                                                                if (idx > 0) {
-                                                                    val item = updated.removeAt(idx)
-                                                                    updated.add(idx - 1, item)
-                                                                    viewModel.saveIptvPlaylists(updated)
-                                                                }
-                                                            }
-                                                            4 -> {
-                                                                if (idx < updated.lastIndex) {
-                                                                    val item = updated.removeAt(idx)
-                                                                    updated.add(idx + 1, item)
-                                                                    viewModel.saveIptvPlaylists(updated)
-                                                                }
-                                                            }
-                                                            else -> {
-                                                                updated.removeAt(idx)
-                                                                viewModel.saveIptvPlaylists(updated)
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                contentFocusIndex == uiState.iptvPlaylists.size + 1 -> {
-                                                    viewModel.refreshIptv(force = true)
-                                                }
-                                                contentFocusIndex == uiState.iptvPlaylists.size + 2 -> {
-                                                    viewModel.clearIptvConfig()
-                                                }
-                                            }
+    contentFocusIndex == 0 -> {
+        editingIptvIndex = -1
+        showIptvInput = true
+    }
+    contentFocusIndex == 1 -> {
+        viewModel.setIptvOnlyMode(!uiState.iptvOnlyMode)
+    }
+    contentFocusIndex in 2..(uiState.iptvPlaylists.size + 1) -> {
+        val idx = contentFocusIndex - 2
+        val updated = uiState.iptvPlaylists.toMutableList()
+        val playlist = updated.getOrNull(idx)
+        if (playlist != null) {
+            when (iptvActionIndex) {
+                0 -> {
+                    openIptvCategories(playlist.id)
+                }
+                1 -> {
+                    updated[idx] = playlist.copy(enabled = !playlist.enabled)
+                    viewModel.saveIptvPlaylists(updated)
+                }
+                2 -> {
+                    editingIptvIndex = idx
+                    showIptvInput = true
+                }
+                3 -> {
+                    if (idx > 0) {
+                        val item = updated.removeAt(idx)
+                        updated.add(idx - 1, item)
+                        viewModel.saveIptvPlaylists(updated)
+                    }
+                }
+                4 -> {
+                    if (idx < updated.lastIndex) {
+                        val item = updated.removeAt(idx)
+                        updated.add(idx + 1, item)
+                        viewModel.saveIptvPlaylists(updated)
+                    }
+                }
+                else -> {
+                    updated.removeAt(idx)
+                    viewModel.saveIptvPlaylists(updated)
+                }
+            }
+        }
+    }
+    contentFocusIndex == uiState.iptvPlaylists.size + 2 -> {
+        viewModel.refreshIptv(force = true)
+    }
+    contentFocusIndex == uiState.iptvPlaylists.size + 3 -> {
+        viewModel.clearIptvConfig()
+    }
+}
                                         }
                                         "home_server" -> {
                                             when (contentFocusIndex) {
@@ -1521,6 +1524,8 @@ fun SettingsScreen(
                             },
                             onRefresh = { viewModel.refreshIptv() },
                             onDelete = { viewModel.clearIptvConfig() },
+                            iptvOnlyMode = uiState.iptvOnlyMode,
+                            onToggleIptvOnlyMode = { viewModel.setIptvOnlyMode(it) },
                             onManageCategories = openIptvCategories
                         )
                         "TV" -> IptvSettings(
@@ -1565,6 +1570,8 @@ fun SettingsScreen(
                             },
                             onRefresh = { viewModel.refreshIptv() },
                             onDelete = { viewModel.clearIptvConfig() },
+                            iptvOnlyMode = uiState.iptvOnlyMode,
+                            onToggleIptvOnlyMode = { viewModel.setIptvOnlyMode(it) },
                             onManageCategories = openIptvCategories
                         )
                         "home_server" -> HomeServerSettings(
