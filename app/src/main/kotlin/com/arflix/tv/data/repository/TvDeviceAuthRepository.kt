@@ -52,7 +52,7 @@ class TvDeviceAuthRepository @Inject constructor(
 
     suspend fun startSession(): Result<TvDeviceAuthSession> {
         return withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val request = Request.Builder()
                     .url(Constants.TV_AUTH_START_URL)
                     .header("apikey", Constants.APP_ANON_KEY)
@@ -60,7 +60,7 @@ class TvDeviceAuthRepository @Inject constructor(
                     .post("{}".toRequestBody(jsonMediaType))
                     .build()
 
-                okHttpClient.newCall(request).execute().use { response ->
+                val session = okHttpClient.newCall(request).execute().use { response ->
                     val body = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
                         throw IllegalStateException(parseError(body, context.getString(R.string.tv_link_failed_start)))
@@ -78,13 +78,22 @@ class TvDeviceAuthRepository @Inject constructor(
                         intervalSeconds = json.optInt("interval", 3)
                     )
                 }
+                Result.success(session)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                Result.failure(e)
+            } catch (e: org.json.JSONException) {
+                Result.failure(e)
+            } catch (e: Exception) {
+                Result.failure(e)
             }
         }
     }
 
     suspend fun pollStatus(deviceCode: String): Result<TvDeviceAuthStatus> {
         return withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val payload = JSONObject().put("device_code", deviceCode).toString()
                 val statusRequest = Request.Builder()
                     .url(Constants.TV_AUTH_STATUS_URL)
@@ -93,7 +102,7 @@ class TvDeviceAuthRepository @Inject constructor(
                     .post(payload.toRequestBody(jsonMediaType))
                     .build()
 
-                okHttpClient.newCall(statusRequest).execute().use { response ->
+                val status = okHttpClient.newCall(statusRequest).execute().use { response ->
                     val body = response.body?.string().orEmpty()
                     if (response.code == 404) {
                         // Backward compatibility for older deployments still using /tv-auth-poll
@@ -116,6 +125,15 @@ class TvDeviceAuthRepository @Inject constructor(
                     }
                     parseStatus(body)
                 }
+                Result.success(status)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                Result.failure(e)
+            } catch (e: org.json.JSONException) {
+                Result.failure(e)
+            } catch (e: Exception) {
+                Result.failure(e)
             }
         }
     }
@@ -133,7 +151,7 @@ class TvDeviceAuthRepository @Inject constructor(
             return Result.failure(IllegalArgumentException(message))
         }
         return withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val payload = JSONObject()
                     .put("code", userCode)
                     .put("email", normalizedEmail)
@@ -148,26 +166,39 @@ class TvDeviceAuthRepository @Inject constructor(
                     .post(payload.toRequestBody(jsonMediaType))
                     .build()
 
-                okHttpClient.newCall(request).execute().use { response ->
+                val completeResult = okHttpClient.newCall(request).execute().use { response ->
                     val body = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
                         throw IllegalStateException(parseError(body, context.getString(R.string.tv_link_failed)))
                     }
                     TvDeviceAuthCompleteResult(ok = true)
                 }
+                Result.success(completeResult)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                Result.failure(e)
+            } catch (e: org.json.JSONException) {
+                Result.failure(e)
+            } catch (e: Exception) {
+                Result.failure(e)
             }
         }
     }
 
     private fun parseError(body: String, fallback: String): String {
-        return runCatching {
+        return try {
             val json = JSONObject(body)
             json.optString("error").ifBlank {
                 json.optString("message").ifBlank {
                     json.optString("error_description").ifBlank { fallback }
                 }
             }
-        }.getOrDefault(fallback)
+        } catch (e: org.json.JSONException) {
+            fallback
+        } catch (e: Exception) {
+            fallback
+        }
     }
 
     private fun parseStatus(body: String): TvDeviceAuthStatus {
