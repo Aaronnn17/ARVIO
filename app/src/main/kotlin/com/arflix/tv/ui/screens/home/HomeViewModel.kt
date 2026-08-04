@@ -2363,6 +2363,22 @@ class HomeViewModel @Inject constructor(
                         else -> categoryById[cfg.id]
                     }
                 }.toMutableList()
+                if (catalogRepository.isIptvOnlyMode().first()) {
+    iptvRepository.warmXtreamVodCachesIfPossible()
+    val movieIds = iptvRepository.getXtreamVodTmdbIds()
+    val seriesIds = iptvRepository.getXtreamSeriesTmdbIds()
+    categories = categories.mapNotNull { category ->
+        if (category.id == FAVORITE_TV_CATEGORY_ID) return@mapNotNull category
+        val filtered = category.items.filter { item ->
+            when (item.mediaType) {
+                MediaType.MOVIE -> item.id in movieIds
+                MediaType.TV -> item.id in seriesIds
+                else -> false
+            }
+        }
+        if (filtered.isEmpty()) null else category.copy(items = filtered)
+    }.toMutableList()
+}
                 if (categories.any { it.id != "continue_watching" && !it.id.startsWith("collection_row_") }) {
                     lastResolvedBaseCategories = categories.filter {
                         it.id != "continue_watching" && !it.id.startsWith("collection_row_")
