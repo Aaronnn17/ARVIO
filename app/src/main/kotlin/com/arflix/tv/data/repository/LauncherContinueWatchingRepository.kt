@@ -163,7 +163,7 @@ class LauncherContinueWatchingRepository @Inject constructor(
             }
             .distinctBy { "${it.mediaType}:${it.id}:${it.season ?: -1}:${it.episode ?: -1}" }
             .take(Constants.MAX_CONTINUE_WATCHING)
-
+        }
     @RequiresApi(Build.VERSION_CODES.O)
     private fun syncPublishedRows(items: List<ContinueWatchingItem>) {
         val channelId = ensurePreviewChannel() ?: return
