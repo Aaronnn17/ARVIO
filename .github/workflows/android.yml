@@ -1,7 +1,7 @@
 name: Compilar APK
 
 on:
-  workflow_dispatch: # Esto es la magia que crea el botón para ejecutarlo manualmente
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,13 +16,14 @@ jobs:
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: gradle
 
-    - name: Dar permisos de ejecución a Gradle
-      run: chmod +x gradlew
+    - name: Ver archivos descargados (Debug)
+      run: ls -la
 
     - name: Compilar la App (Modo Debug)
-      run: ./gradlew assembleDebug
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        arguments: assembleDebug
 
     - name: Guardar el APK para descargar
       uses: actions/upload-artifact@v4
