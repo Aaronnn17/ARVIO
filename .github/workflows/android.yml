@@ -17,16 +17,16 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Ver archivos descargados (Debug)
-      run: ls -la
-
-    - name: Compilar la App (Modo Debug)
+    - name: Compilar la App
       uses: gradle/actions/setup-gradle@v3
       with:
-        arguments: assembleDebug
+        arguments: assemble
 
-    - name: Guardar el APK para descargar
+    - name: Buscar todos los APKs generados (por si están en otra carpeta)
+      run: find . -name "*.apk"
+
+    - name: Guardar los APKs para descargar
       uses: actions/upload-artifact@v4
       with:
         name: ARVIO-APK
-        path: app/build/outputs/apk/debug/*.apk
+        path: '**/*.apk'
