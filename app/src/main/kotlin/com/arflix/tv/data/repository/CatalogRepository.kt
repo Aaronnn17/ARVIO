@@ -3,6 +3,7 @@ package com.arflix.tv.data.repository
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import com.arflix.tv.data.api.TraktApi
 import com.arflix.tv.data.model.Addon
@@ -79,6 +80,19 @@ class CatalogRepository @Inject constructor(
     private val listType = TypeToken.getParameterized(List::class.java, CatalogConfig::class.java).type
     private val hiddenListType = TypeToken.getParameterized(List::class.java, String::class.java).type
 
+    private val iptvOnlyModeKey = booleanPreferencesKey("iptv_only_mode_v1")
+
+    fun isIptvOnlyMode(): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { it[iptvOnlyModeKey] ?: false }
+            .distinctUntilChanged()
+
+    suspend fun setIptvOnlyMode(enabled: Boolean) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[iptvOnlyModeKey] = enabled
+        }
+    }
+    
     private fun decodeHiddenPreinstalled(profileId: String, prefs: Preferences): Set<String> {
         val raw = prefs[hiddenPreinstalledKey(profileId)]
         if (raw.isNullOrBlank()) return emptySet()
