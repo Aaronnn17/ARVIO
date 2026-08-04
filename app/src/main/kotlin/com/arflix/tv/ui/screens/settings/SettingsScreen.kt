@@ -1521,7 +1521,9 @@ fun SettingsScreen(
                             },
                             onRefresh = { viewModel.refreshIptv() },
                             onDelete = { viewModel.clearIptvConfig() },
-                            onManageCategories = openIptvCategories
+                            onManageCategories = openIptvCategories,
+                            sortOrder = uiState.iptvSortOrder,
+                            onSortOrderChange = { viewModel.setIptvSortOrder(it) }
                         )
                         "TV" -> IptvSettings(
                             playlists = uiState.iptvPlaylists,
@@ -4173,7 +4175,9 @@ private fun MobileSettingsSubPage(
                     onManageCategories = { playlistId ->
                         viewModel.setIptvSelectedPlaylistId(playlistId)
                         onNavigate("IPTV_CATEGORIES")
-                    }
+                    },
+                    sortOrder = uiState.iptvSortOrder,
+                    onSortOrderChange = { viewModel.setIptvSortOrder(it) }
                 )
             }
             "IPTV_CATEGORIES" -> {
@@ -6192,7 +6196,9 @@ private fun IptvSettings(
     onDeletePlaylist: (Int) -> Unit,
     onRefresh: () -> Unit,
     onDelete: () -> Unit,
-    onManageCategories: (String) -> Unit = {}
+    onManageCategories: (String) -> Unit = {},
+    sortOrder: String = "provider",
+    onSortOrderChange: (String) -> Unit = {}
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     var selectionMode by remember { mutableStateOf(false) }
@@ -6273,6 +6279,28 @@ private fun IptvSettings(
                     }
                 }
             }
+            MobileSettingsCategory(title = "Options") {
+                val sortDisplayValue = when (sortOrder) {
+                    "number" -> "Channel Number"
+                    "name" -> "Alphabetical (A-Z)"
+                    else -> "Provider Order"
+                }
+                MobileSettingsRow(
+                    icon = Icons.Default.List,
+                    title = "Sort order",
+                    subtitle = "Choose how live channels and groups are ordered in the list",
+                    value = sortDisplayValue,
+                    isFocused = false,
+                    onClick = {
+                        val next = when (sortOrder) {
+                            "provider" -> "number"
+                            "number" -> "name"
+                            else -> "provider"
+                        }
+                        onSortOrderChange(next)
+                    }
+                )
+            }
             MobileSettingsCategory(title = stringResource(R.string.settings_section_actions)) {
                 val refreshSubtitle = when { isLoading -> stringResource(R.string.settings_refreshing_channels_epg); error != null -> error; playlists.none { it.epgUrl.isNotBlank() || it.epgUrls.orEmpty().isNotEmpty() } -> stringResource(R.string.settings_reload_playlists_now); else -> stringResource(R.string.settings_reload_playlist_epg_now) }
                 MobileSettingsRow(icon = Icons.Default.Link, title = stringResource(R.string.refresh_iptv), subtitle = refreshSubtitle, value = if (isLoading) stringResource(R.string.loading_label) else "", isFocused = false, onClick = onRefresh)
@@ -6289,6 +6317,27 @@ private fun IptvSettings(
         // TV UI
         Column {
             SettingsRow(icon = Icons.Default.LiveTv, title = stringResource(R.string.add_playlist), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_add_iptv_lists_hint) else stringResource(R.string.settings_create_another_iptv), value = if (playlists.size >= 3) stringResource(R.string.settings_badge_full) else stringResource(R.string.settings_badge_add), isFocused = focusedIndex == 0, onClick = onConfigure, modifier = Modifier.settingsFocusSlot(0))
+            Spacer(modifier = Modifier.height(16.dp))
+            SettingsRow(
+                icon = Icons.Default.List,
+                title = "Sort order",
+                subtitle = "Choose how live channels and groups are ordered in the list",
+                value = when (sortOrder) {
+                    "number" -> "Channel Number"
+                    "name" -> "Alphabetical (A-Z)"
+                    else -> "Provider Order"
+                },
+                isFocused = focusedIndex == playlists.size + 3,
+                onClick = {
+                    val next = when (sortOrder) {
+                        "provider" -> "number"
+                        "number" -> "name"
+                        else -> "provider"
+                    }
+                    onSortOrderChange(next)
+                },
+                modifier = Modifier.settingsFocusSlot(playlists.size + 3)
+            )
             Spacer(modifier = Modifier.height(16.dp))
             playlists.forEachIndexed { index, playlist ->
                 val rowIndex = index + 1

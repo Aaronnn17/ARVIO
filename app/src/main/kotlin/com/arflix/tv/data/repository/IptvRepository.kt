@@ -156,7 +156,8 @@ data class IptvConfig(
     val epgUrl: String = "",
     val playlists: List<IptvPlaylistEntry> = emptyList(),
     val stalkerPortalUrl: String = "",
-    val stalkerMacAddress: String = ""
+    val stalkerMacAddress: String = "",
+    val sortOrder: String = "provider"
 )
 
 data class IptvPlaylistEntry(
@@ -455,7 +456,8 @@ class IptvRepository @Inject constructor(
                 epgUrl = primary?.epgUrl ?: legacyEpgUrls.firstOrNull().orEmpty(),
                 playlists = playlists,
                 stalkerPortalUrl = decryptConfigValue(prefs[stalkerPortalUrlKey()].orEmpty()),
-                stalkerMacAddress = prefs[stalkerMacAddressKey()].orEmpty()
+                stalkerMacAddress = prefs[stalkerMacAddressKey()].orEmpty(),
+                sortOrder = prefs[sortOrderKey()] ?: "provider"
             )
         }
 
@@ -610,6 +612,13 @@ class IptvRepository @Inject constructor(
         }
         invalidateCache()
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save stalker config")
+    }
+
+    suspend fun saveSortOrder(sortOrder: String) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[sortOrderKey()] = sortOrder
+        }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save iptv sort order")
     }
 
     /**
@@ -2820,6 +2829,7 @@ class IptvRepository @Inject constructor(
     private fun playlistsKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_playlists_json")
     private fun stalkerPortalUrlKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_stalker_portal_url")
     private fun stalkerMacAddressKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_stalker_mac_address")
+    private fun sortOrderKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_sort_order")
     private fun epgUrlKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_epg_url")
     private fun favoriteGroupsKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_favorite_groups")

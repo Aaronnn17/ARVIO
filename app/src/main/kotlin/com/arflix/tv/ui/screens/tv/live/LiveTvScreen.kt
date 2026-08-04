@@ -912,7 +912,13 @@ fun LiveTvScreen(
             return@LaunchedEffect
         }
         filteredChannelsCategoryKey = selectedCategoryId
-        filteredChannelsState.value = result
+        val sortMode = state.snapshot.sortOrder
+        val sortedResult = when (sortMode) {
+            "number" -> result.sortedWith(compareBy<EnrichedChannel> { it.number ?: Int.MAX_VALUE }.thenBy { it.name })
+            "name" -> result.sortedBy { it.name }
+            else -> result
+        }
+        filteredChannelsState.value = sortedResult
     }
     val visibleChannels = visibleEnrichedState.value.all
     // Variant grouping + collapsing + index building are O(channels). Doing them
