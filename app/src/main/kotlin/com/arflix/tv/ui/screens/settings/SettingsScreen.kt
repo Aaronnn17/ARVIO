@@ -4136,6 +4136,8 @@ private fun MobileSettingsSubPage(
             }
             "TV" -> {
                 IptvSettings(
+                    iptvOnlyMode = uiState.iptvOnlyMode ?: false,
+                    onToggleIptvOnlyMode = { viewModel.toggleIptvOnlyMode() },
                     playlists = uiState.iptvPlaylists,
                     channelCount = uiState.iptvChannelCount,
                     isLoading = uiState.isIptvLoading,
@@ -6228,15 +6230,37 @@ private fun IptvSettings(
                 }
             }
             MobileSettingsCategory(title = "Content Mode") {
-                MobileSettingsRow(
-                    icon = Icons.Default.Tv,
-                    title = "Exclusive IPTV Mode",
-                    subtitle = "Show only content available on your IPTV server",
-                    value = "",
-                    isFocused = false,
-                    showDivider = false,
-                    onClick = { onToggleIptvOnlyMode(!iptvOnlyMode) }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onToggleIptvOnlyMode(!iptvOnlyMode) }
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Icon(
+                        imageVector = Icons.Default.LiveTv, 
+                        contentDescription = null,
+                        tint = TextSecondary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Exclusive IPTV Mode",
+                            style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
+                            color = TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Show only content available on your IPTV server",
+                            style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                            color = TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
                     Box(
                         modifier = Modifier
                             .width(44.dp)
@@ -6245,11 +6269,14 @@ private fun IptvSettings(
                                 color = if (iptvOnlyMode) SuccessGreen else Color.White.copy(alpha = 0.2f),
                                 shape = RoundedCornerShape(13.dp)
                             )
-                            .clickable { onToggleIptvOnlyMode(!iptvOnlyMode) }
                             .padding(3.dp),
                         contentAlignment = if (iptvOnlyMode) Alignment.CenterEnd else Alignment.CenterStart
                     ) {
-                        Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .background(color = Color.White, shape = RoundedCornerShape(10.dp))
+                        )
                     }
                 }
             }
