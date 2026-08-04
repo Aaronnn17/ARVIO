@@ -1,4 +1,4 @@
-name: Compilar APK
+name: Compilar APK Sideload
 
 on:
   workflow_dispatch:
@@ -17,16 +17,14 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Compilar la App
-      uses: gradle/actions/setup-gradle@v3
-      with:
-        arguments: assemble
+    - name: Dar permisos al ejecutable
+      run: chmod +x gradlew
 
-    - name: Buscar todos los APKs generados (por si están en otra carpeta)
-      run: find . -name "*.apk"
+    - name: Compilar la App (Versión Sideload)
+      run: ./gradlew :app:assembleSideloadDebug
 
-    - name: Guardar los APKs para descargar
+    - name: Guardar el APK para descargar
       uses: actions/upload-artifact@v4
       with:
         name: ARVIO-APK
-        path: '**/*.apk'
+        path: app/build/outputs/apk/sideload/debug/*.apk
