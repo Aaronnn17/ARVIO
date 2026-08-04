@@ -4463,6 +4463,14 @@ class IptvRepository @Inject constructor(
         }
     }
 
+    /** TMDB ids of movies currently available on the configured Xtream VOD server. */
+    fun getXtreamVodTmdbIds(): Set<Int> =
+        cachedXtreamVodStreams.mapNotNull { it.tmdb?.toIntOrNull() }.toSet()
+
+    /** TMDB ids of TV series currently available on the configured Xtream server. */
+    fun getXtreamSeriesTmdbIds(): Set<Int> =
+        cachedXtreamSeries.mapNotNull { it.tmdb?.toIntOrNull() }.toSet()
+        
     suspend fun prefetchEpisodeVodResolution(
         title: String,
         season: Int,
