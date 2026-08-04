@@ -4137,7 +4137,7 @@ private fun MobileSettingsSubPage(
             "TV" -> {
                 IptvSettings(
                     iptvOnlyMode = uiState.iptvOnlyMode ?: false,
-                    onToggleIptvOnlyMode = { viewModel.toggleIptvOnlyMode() },
+                    onToggleIptvOnlyMode = { isEnabled -> viewModel.setIptvOnlyMode(isEnabled) },
                     playlists = uiState.iptvPlaylists,
                     channelCount = uiState.iptvChannelCount,
                     isLoading = uiState.isIptvLoading,
