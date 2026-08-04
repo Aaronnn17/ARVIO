@@ -162,6 +162,7 @@ data class SettingsUiState(
     val iptvAvailableGroups: List<String> = emptyList(),
     val iptvHiddenGroups: List<String> = emptyList(),
     val iptvGroupOrder: List<String> = emptyList(),
+    val iptvOnlyMode: Boolean = false,
     // App updates
     val isSelfUpdateSupported: Boolean = true,
     val updateStatus: com.arflix.tv.updater.UpdateStatus = com.arflix.tv.updater.UpdateStatus.Idle,
@@ -384,6 +385,7 @@ class SettingsViewModel @Inject constructor(
         observeAuthState()
         observeIptvConfig()
         observeIptvGroupPrefs()
+        observeIptvOnlyMode()
         initializeCatalogs()
         observeCatalogs()
         initializeUpdaterState()
@@ -401,6 +403,14 @@ class SettingsViewModel @Inject constructor(
                     iptvHiddenGroups = hidden,
                     iptvGroupOrder = order
                 )
+            }
+        }
+    }
+
+    private fun observeIptvOnlyMode() {
+        viewModelScope.launch {
+            catalogRepository.isIptvOnlyMode().collect { enabled ->
+                _uiState.value = _uiState.value.copy(iptvOnlyMode = enabled)
             }
         }
     }
@@ -772,6 +782,12 @@ class SettingsViewModel @Inject constructor(
     fun moveIptvGroupToTop(playlistId: String, groupName: String) {
         viewModelScope.launch {
             iptvRepository.moveGroupToTop(playlistId, groupName, _uiState.value.iptvAvailableGroups)
+        }
+    }
+
+    fun setIptvOnlyMode(enabled: Boolean) {
+        viewModelScope.launch {
+            catalogRepository.setIptvOnlyMode(enabled)
         }
     }
 
