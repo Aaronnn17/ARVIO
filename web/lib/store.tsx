@@ -181,11 +181,7 @@ export const defaultSettings: AppSettings = {
   favoriteChannelIds: [],
   favoriteGroupIds: [],
   hiddenGroupIds: [],
-  groupOrder: [],
-  pluginsEnabled: true,
-  groupStreamsByRepository: false,
-  repositories: [],
-  iptvSortOrder: "provider"
+  groupOrder: []
 };
 
 
@@ -1815,7 +1811,7 @@ export function AppProvider({
             title: item.title,
             duration_seconds: 0,
             position_seconds: 0,
-            progress: currentlyWatched ? 0 : 1
+            progress: currentlyWatched ? 0 : 100
           },
           activeProfileId
         );
@@ -1836,7 +1832,7 @@ export function AppProvider({
         // Sync best effort
       }
     }
-  }, [isWatched, markWatchedLocally, auth, activeProfileId]);
+  }, [isWatched, markWatchedLocally, authClient, activeProfileId]);
 
   const removeFromContinueWatching = useCallback(async (item: MediaItem) => {
     const key = mediaWatchKey(item);
@@ -1854,6 +1850,27 @@ export function AppProvider({
 
     setToast("Removed from Continue Watching.");
 
+    if (authClient.session) {
+      try {
+        await saveProgress(
+          authClient,
+          {
+            media_type: item.mediaType,
+            show_tmdb_id: item.id,
+            season: item.seasonNumber ?? null,
+            episode: item.episodeNumber ?? null,
+            title: item.title,
+            duration_seconds: 0,
+            position_seconds: 0,
+            progress: 100
+          },
+          activeProfileId
+        );
+      } catch {
+        // Cloud sync best effort
+      }
+    }
+
     if (activeSyncProvider() !== "none") {
       try {
         await syncClient().removeFromHistory({ mediaType: item.mediaType, tmdbId: item.id, season: item.seasonNumber, episode: item.episodeNumber });
@@ -1861,7 +1878,7 @@ export function AppProvider({
         // Sync best effort
       }
     }
-  }, [activeProfileId]);
+  }, [activeProfileId, authClient]);
 
   const value = useMemo<AppStore>(() => ({
     view,

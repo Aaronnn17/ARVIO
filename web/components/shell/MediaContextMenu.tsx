@@ -117,7 +117,7 @@ export function MediaContextMenu() {
     : {};
 
   return (
-    <div className="context-menu-scrim" onClick={closeContextMenu}>
+    <div className="context-menu-scrim" role="dialog" aria-modal="true" onClick={closeContextMenu}>
       <div
         className={`context-menu-card ${isDesktop ? "is-floating" : "is-bottom-sheet"}`}
         style={menuStyle}

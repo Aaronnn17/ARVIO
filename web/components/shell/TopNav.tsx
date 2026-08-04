@@ -31,7 +31,7 @@ export function TopNav() {
       <aside className={`sidebar ${scrolled ? "is-scrolled" : ""}`} aria-label="ARVIO navigation">
         <div className="profile-cluster">
           <button type="button" className="brand" onClick={switchProfile} aria-label="Switch profile">
-            {activeProfile ? <ProfileAvatarVisual profile={activeProfile} avatarImages={avatarImages} /> : <img src="/arvio-icon-512.png" alt="" />}
+            {activeProfile ? <ProfileAvatarVisual profile={activeProfile} avatarImages={avatarImages} /> : <img src="/arvio-logo.svg" alt="" />}
           </button>
           <span className="profile-name-text">{activeProfile?.name ?? ""}</span>
         </div>
@@ -72,7 +72,7 @@ export function TopNav() {
       {/* Mobile Top Header (screen <= 680px) */}
       <header className={`mobile-header ${scrolled ? "is-scrolled" : ""}`}>
         <div className="mobile-brand">
-          <img src="/arvio-icon-512.png" alt="" className="mobile-brand-logo" />
+          <img src="/arvio-logo.svg" alt="" className="mobile-brand-logo" />
           <img src="/arvio-wordmark.svg" alt="ARVIO" className="mobile-wordmark" />
         </div>
         <button
@@ -85,7 +85,7 @@ export function TopNav() {
             {activeProfile ? (
               <ProfileAvatarVisual profile={activeProfile} avatarImages={avatarImages} />
             ) : (
-              <img src="/arvio-icon-512.png" alt="" />
+              <img src="/arvio-logo.svg" alt="" />
             )}
           </div>
         </button>

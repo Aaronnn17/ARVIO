@@ -55,40 +55,20 @@ export function HomeScreen() {
   };
 
   const heroPool = heroPoolRows;
-  const [heroIndex, setHeroIndex] = useState(0);
-  const [heroPaused, setHeroPaused] = useState(false);
-  const touchStartX = useRef<number | null>(null);
 
-  const handleHeroTouchStart = (e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX;
-  };
-
-  const handleHeroTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartX.current === null || heroPool.length < 2) return;
-    const dx = e.changedTouches[0].clientX - touchStartX.current;
-    const threshold = 50;
-    if (dx < -threshold) {
-      setHeroIndex((prev) => (prev + 1) % heroPool.length);
-    } else if (dx > threshold) {
-      setHeroIndex((prev) => (prev - 1 + heroPool.length) % heroPool.length);
-    }
-    touchStartX.current = null;
-  };
-
-  // Auto-advance hero carousel every 6.5 seconds unless hovered directly
+  // Auto-advance the hero every 8s until the user hovers a card (which pins the
+  // hero to whatever they're pointing at and stops the carousel).
   useEffect(() => {
-    if (heroPool.length < 2 || heroPaused) return undefined;
+    if (heroPool.length < 2) return undefined;
+    let index = 0;
+    if (!userInteractedHero.current) setHeroPreview(heroPool[0]);
     const timer = window.setInterval(() => {
-      setHeroIndex((prev) => (prev + 1) % heroPool.length);
-    }, 6500);
+      if (userInteractedHero.current) return;
+      index = (index + 1) % heroPool.length;
+      setHeroPreview(heroPool[index]);
+    }, 8000);
     return () => window.clearInterval(timer);
-  }, [heroPool.length, heroPaused]);
-
-  useEffect(() => {
-    if (heroPool[heroIndex]) {
-      setHeroPreview(heroPool[heroIndex]);
-    }
-  }, [heroIndex, heroPool, setHeroPreview]);
+  }, [heroPool, setHeroPreview]);
 
   // Synchronize hero changes so all content (logo, text, metadata, backdrop) updates together.
   useEffect(() => {
@@ -99,20 +79,41 @@ export function HomeScreen() {
     }
 
     let active = true;
-    setDisplayHero(hero);
 
+    // Fast path: if no hero is currently displayed, show it immediately so there is no blank screen on first load
+    if (!displayHero) {
+      setDisplayHero(hero);
+      void getLogoUrl({ mediaType: hero.mediaType, id: hero.id })
+        .then((url) => {
+          if (active) setHeroLogo(url);
+        })
+        .catch(() => undefined);
+      return;
+    }
+
+    // Normal path: fetch the logo in the background first, then swap all content together
     void getLogoUrl({ mediaType: hero.mediaType, id: hero.id })
       .then((url) => {
-        if (active) setHeroLogo(url);
+        if (!active) return;
+        setHeroLogo(url);
+        setDisplayHero(hero);
       })
       .catch(() => {
-        if (active) setHeroLogo(null);
+        if (!active) return;
+        setHeroLogo(null);
+        setDisplayHero(hero);
       });
 
     return () => {
       active = false;
     };
-  }, [hero]);
+  }, [hero, displayHero]);
+
+  const onCardFocus = (item: MediaItem) => {
+    userInteractedHero.current = true;
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setHeroPreview(item), 220);
+  };
 
   const heroGenres = (displayHero?.genres?.length ? displayHero.genres : genreNamesFromIds(displayHero?.genreIds)).slice(0, 3);
 
@@ -143,22 +144,13 @@ export function HomeScreen() {
   return (
     <div className="screen">
       {displayHero && (
-        <section
-          className="hero"
-          style={{ backgroundImage: displayHero.backdrop ? `url(${displayHero.backdrop})` : undefined }}
-          onMouseEnter={() => setHeroPaused(true)}
-          onMouseLeave={() => setHeroPaused(false)}
-          onTouchStart={handleHeroTouchStart}
-          onTouchEnd={handleHeroTouchEnd}
-        >
+        <section className="hero" style={{ backgroundImage: displayHero.backdrop ? `url(${displayHero.backdrop})` : undefined }}>
           <div className="hero-copy" key={displayHero.id}>
-            <div className="hero-title-slot">
-              {heroLogo ? (
-                <img className="hero-logo" src={heroLogo} alt={displayHero.title} />
-              ) : (
-                <h2>{displayHero.title}</h2>
-              )}
-            </div>
+            {heroLogo ? (
+              <img className="hero-logo" src={heroLogo} alt={displayHero.title} />
+            ) : (
+              <h2>{displayHero.title}</h2>
+            )}
             <div className="hero-meta">
               {heroImdbRating && (
                 <span className="hero-imdb">
@@ -168,34 +160,24 @@ export function HomeScreen() {
               )}
               {metaBits.map((bit) => <span key={String(bit)}>{bit}</span>)}
             </div>
-            <p className="hero-overview">
-              {displayHero.overview || displayHero.subtitle || "Continue from your ARVIO library."}
+            <p>
+              {(() => {
+                const desc = displayHero.overview || displayHero.subtitle || "Continue from your ARVIO library.";
+                return desc.length > 150 ? desc.slice(0, 150) + "..." : desc;
+              })()}
             </p>
             <div className="hero-actions">
               <button type="button" className="primary" onClick={() => openDetails(displayHero)}><Play size={20} fill="currentColor" /> Play</button>
               <button type="button" className="secondary" onClick={() => openDetails(displayHero)}><Info size={20} /> More Info</button>
             </div>
           </div>
-          {heroPool.length > 1 && (
-            <div className="hero-carousel-dots" aria-label="Featured content carousel">
-              {heroPool.map((item, idx) => (
-                <button
-                  key={`${item.mediaType}-${item.id}-${idx}`}
-                  type="button"
-                  className={`hero-dot ${idx === heroIndex ? "is-active" : ""}`}
-                  onClick={() => setHeroIndex(idx)}
-                  aria-label={`Slide ${idx + 1}: ${item.title}`}
-                />
-              ))}
-            </div>
-          )}
         </section>
       )}
       {dedupedCategories.map((category) => (
-        <MediaRail key={category.id} category={category} onOpen={openDetails} posterMode={posterMode} />
+        <MediaRail key={category.id} category={category} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode} />
       ))}
       {homeServerRows.map((category) => (
-        <MediaRail key={category.id} category={category} onOpen={openDetails} posterMode={posterMode} />
+        <MediaRail key={category.id} category={category} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode} />
       ))}
       {catalogConfigs.map((catalog, index) => (
         <LazyRail
@@ -203,6 +185,7 @@ export function HomeScreen() {
           catalog={catalog}
           eager={index < 8}
           onOpen={openDetails}
+          onFocus={onCardFocus}
           onLoaded={seedHeroFromRow}
         />
       ))}

@@ -77,7 +77,6 @@ button {
   width: 76px;
   height: 76px;
   object-fit: contain;
-  border-radius: 18px;
   filter: drop-shadow(0 0 28px rgba(0, 213, 136, 0.26));
 }
 
@@ -256,7 +255,8 @@ button {
    sets its own. Without these exclusions those pages rendered ~232px of empty
    space above the first heading instead of ~112px. */
 .screen:has(.hero),
-.screen:has(> .section-heading:first-child) {
+.screen:has(> .section-heading:first-child),
+.screen.livetv-shell {
   padding-top: 0;
 }
 
@@ -271,7 +271,6 @@ button {
   background-size: cover;
   background-position: center right;
   overflow: hidden;
-  transition: background-image 0s;
 }
 
 .hero::before {
@@ -287,18 +286,6 @@ button {
   position: relative;
   width: min(760px, 52vw);
   margin-top: 0;
-  animation: hero-content-in 420ms ease-out;
-}
-
-@keyframes hero-content-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .eyebrow {
@@ -343,6 +330,14 @@ p {
   align-items: center;
   gap: 16px;
   margin-top: clamp(14px, 2.4vh, 26px);
+  /* The first rail after the hero is pulled UP over it (Netflix-style overlap,
+     `.hero + .rail`, up to -150px). A tall hero block — a title treatment near
+     `.hero-logo`'s max-height plus a three-line synopsis — then grows down INTO
+     that overlap and the buttons end up glued to the rail heading. This reserve
+     mirrors the pull exactly, so the rail can never reach the buttons.
+     Verified harmless where the overlap doesn't apply: adding it left the
+     measured button-to-heading gap unchanged (the hero simply grows), so it
+     costs nothing on layouts that were already fine. */
   margin-bottom: clamp(96px, 17vh, 150px);
 }
 
@@ -591,41 +586,12 @@ p {
   will-change: transform;
 }
 
-.poster.is-loading {
-  position: relative;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.poster.is-loading::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
-  transform: translateX(-100%);
-  animation: arvio-shimmer-gpu 1.5s infinite;
-  will-change: transform;
-}
-
-.poster img.poster-art {
+.poster img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0;
-  transition: transform 380ms cubic-bezier(0.2, 0.7, 0.2, 1), opacity 320ms ease;
-}
-
-.poster img.poster-art.is-loaded {
-  opacity: 1;
-}
-
-.poster .card-imdb img,
-.poster .card-services img,
-.poster .card-logo {
-  opacity: 1 !important;
+  transition: transform 380ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  animation: arvio-img-in 420ms ease both;
 }
 
 @keyframes arvio-img-in {
@@ -2287,63 +2253,22 @@ a.login-submit {
 .rail-skeleton {
   min-height: clamp(220px, 28vh, 320px);
 }
-.media-card-skeleton {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.card-skeleton,
-.card-skeleton-title,
-.card-skeleton-meta {
-  position: relative;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.card-skeleton::after,
-.card-skeleton-title::after,
-.card-skeleton-meta::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
-  transform: translateX(-100%);
-  animation: arvio-shimmer-gpu 1.5s infinite;
-  will-change: transform;
-}
-
 .card-skeleton {
-  width: 100%;
+  width: clamp(280px, 22.1vw, 424px);
   aspect-ratio: 16 / 9;
   border-radius: clamp(12px, 0.94vw, 18px);
+  background: linear-gradient(100deg, var(--bg-card) 30%, var(--bg-elevated) 50%, var(--bg-card) 70%);
+  background-size: 200% 100%;
+  animation: arvio-shimmer 1.4s ease-in-out infinite;
 }
 
-.rail.is-poster .card-skeleton,
 .rail-skeleton.is-poster .card-skeleton {
+  width: clamp(150px, 12vw, 210px);
   aspect-ratio: 2 / 3;
 }
-
-.card-skeleton-title {
-  width: 75%;
-  height: 14px;
-  border-radius: 4px;
-  margin-top: 4px;
-}
-
-.card-skeleton-meta {
-  width: 45%;
-  height: 11px;
-  border-radius: 4px;
-}
-
-@keyframes arvio-shimmer-gpu {
-  100% {
-    transform: translateX(100%);
-  }
+@keyframes arvio-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 /* ============================================================
@@ -9595,53 +9520,11 @@ button,
   z-index: 2 !important;
   width: min(800px, 50vw);
   margin-top: 0 !important;
-  display: flex;
-  flex-direction: column;
 }
 
-.hero-title-slot {
-  height: clamp(100px, 13vh, 150px);
-  display: flex;
-  align-items: flex-end;
-  margin-bottom: clamp(10px, 1.5vh, 16px);
-}
-
-.hero-title-slot h2 {
-  margin: 0;
+.hero-logo,
+.hero h2 {
   max-width: min(760px, 48vw);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.hero-title-slot .hero-logo {
-  max-height: 100%;
-  max-width: min(760px, 48vw);
-  object-fit: contain;
-  object-position: bottom left;
-}
-
-.hero-meta {
-  height: clamp(28px, 3.5vh, 36px);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.hero-overview {
-  font-size: clamp(14px, 1.15vw, 18px) !important;
-  line-height: 1.45 !important;
-  min-height: calc(3 * 1.45em) !important;
-  height: calc(3 * 1.45em) !important;
-  display: -webkit-box !important;
-  -webkit-line-clamp: 3 !important;
-  -webkit-box-orient: vertical !important;
-  overflow: hidden !important;
-  margin-top: clamp(8px, 1.2vh, 14px) !important;
-  margin-bottom: clamp(16px, 2.4vh, 28px) !important;
 }
 
 .hero + .rail,
@@ -10776,7 +10659,7 @@ button,
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: clamp(112px, 14.3vh, 154px) clamp(16px, 2.6vw, 40px) 24px;
+  padding: clamp(84px, 9vh, 104px) clamp(16px, 2.6vw, 40px) 24px;
   min-height: 100vh;
 }
 
@@ -11988,6 +11871,26 @@ html { background: #000; }
   display: none;
 }
 
+.context-menu-header-art {
+  position: relative;
+  width: calc(100% + 32px);
+  margin: -16px -16px 12px -16px;
+  height: 110px;
+  overflow: hidden;
+}
+
+.context-menu-header-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.context-menu-header-art-gradient {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 0%, rgba(12, 14, 18, 0.95) 100%);
+}
+
 .context-menu-header {
   padding: 4px 8px 8px;
 }
@@ -12071,88 +11974,17 @@ html { background: #000; }
   flex: 1;
 }
 
-.hero-carousel-dots {
-  position: absolute;
-  right: clamp(24px, 3.35vw, 64px);
-  bottom: clamp(260px, 30vh, 360px);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  z-index: 5;
+.context-menu-footer-hint {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
+  text-align: center;
 }
 
-/* ---- Mobile hero layout ---- */
-@media (max-width: 680px) {
-  .hero {
-    min-height: auto;
-    align-items: flex-end;
-    padding: 220px 16px 28px;
-  }
-  .hero::before {
-    background:
-      linear-gradient(180deg, transparent 5%, rgba(0,0,0,0.55) 40%, rgba(0,0,0,0.95) 85%);
-  }
-  .hero-copy {
-    width: 100%;
-  }
-  .hero h2 {
-    font-size: clamp(26px, 7vw, 38px);
-    margin-bottom: 8px;
-    line-height: 1.05;
-  }
-  .hero-logo {
-    max-height: 60px;
-  }
-  .hero-meta {
-    font-size: 13px;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-bottom: 6px;
-  }
-  .hero-copy p:not(.eyebrow) {
-    font-size: 13px !important;
-    line-height: 1.45 !important;
-    min-height: calc(2 * 1.45em) !important;
-    height: calc(2 * 1.45em) !important;
-    -webkit-line-clamp: 2 !important;
-    margin-bottom: 4px !important;
-  }
-  .hero-actions {
-    margin-top: 10px;
-    margin-bottom: 16px;
-    gap: 10px;
-  }
-  .hero-actions .primary,
-  .hero-actions .secondary {
-    min-height: 42px;
-    padding: 0 18px;
-    font-size: 14px;
-    border-radius: 14px;
-  }
-  .hero-carousel-dots {
-    display: none;
-  }
-}
-
-.hero-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  border: 0;
-  padding: 0;
-  background: rgba(255, 255, 255, 0.35);
-  cursor: pointer;
-  transition: width 240ms cubic-bezier(0.2, 0.7, 0.2, 1), background-color 240ms ease, opacity 240ms ease;
-}
-
-.hero-dot:hover {
-  background: rgba(255, 255, 255, 0.75);
-}
-
-.hero-dot.is-active {
-  width: 32px;
-  background: #fff;
-  box-shadow: 0 0 14px rgba(255, 255, 255, 0.5);
+.context-menu-card.is-floating .context-menu-footer-hint {
+  display: none;
 }
 
 @keyframes arvio-fade-in {
@@ -12169,4 +12001,3 @@ html { background: #000; }
   from { opacity: 0; transform: scale(0.92); }
   to { opacity: 1; transform: scale(1); }
 }
-

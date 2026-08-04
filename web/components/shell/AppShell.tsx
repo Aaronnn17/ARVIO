@@ -63,7 +63,7 @@ export function AppShell() {
   if (!mounted) {
     return (
       <main className="app-boot">
-        <img src="/arvio-icon-512.png" alt="" className="app-boot-logo" />
+        <img src="/arvio-logo.svg" alt="" className="app-boot-logo" />
         <img src="/arvio-wordmark.svg" alt="ARVIO" className="app-boot-wordmark" />
       </main>
     );
@@ -86,13 +86,18 @@ export function AppShell() {
       {!activeStream && <TopNav />}
 
       <section className="content">
-        <div style={{ display: !selected && section === "home" ? "contents" : "none" }}><HomeScreen /></div>
-        <div style={{ display: !selected && section === "search" ? "contents" : "none" }}><SearchScreen /></div>
-        <div style={{ display: !selected && section === "watchlist" ? "contents" : "none" }}><WatchlistScreen /></div>
-        <div style={{ display: !selected && section === "tv" ? "contents" : "none" }}><LiveTvScreen active={section === "tv"} /></div>
-        <div style={{ display: !selected && section === "addons" ? "contents" : "none" }}><AddonsScreen /></div>
-        <div style={{ display: !selected && section === "settings" ? "contents" : "none" }}><SettingsScreen /></div>
-        {selected && <DetailsDrawer />}
+        {selected ? (
+          <DetailsDrawer />
+        ) : (
+          <>
+            {section === "home" && <HomeScreen />}
+            {section === "search" && <SearchScreen />}
+            {section === "watchlist" && <WatchlistScreen />}
+            {section === "tv" && <LiveTvScreen />}
+            {section === "addons" && <AddonsScreen />}
+            {section === "settings" && <SettingsScreen />}
+          </>
+        )}
       </section>
 
       <PlayerOverlay />

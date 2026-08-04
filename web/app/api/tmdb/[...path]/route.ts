@@ -25,7 +25,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
     // query-less CDN cache-key bug (fixed upstream with Netlify-Vary: query).
     target.searchParams.set("cv", "2");
   } else if (tmdbKey) {
-    target = new URL(`https://api.tmdb.org/3/${path.join("/")}`);
+    target = new URL(`https://api.themoviedb.org/3/${path.join("/")}`);
     input.searchParams.forEach((value, key) => target.searchParams.set(key, value));
     target.searchParams.set("api_key", tmdbKey);
   } else {
@@ -48,8 +48,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
     response = null;
   }
 
-  if ((!response || !response.ok) && tmdbKey) {
-    const direct = new URL(`https://api.tmdb.org/3/${path.join("/")}`);
+  if ((!response || !response.ok) && usesNetlifyProxy && tmdbKey) {
+    const direct = new URL(`https://api.themoviedb.org/3/${path.join("/")}`);
     input.searchParams.forEach((value, key) => direct.searchParams.set(key, value));
     direct.searchParams.set("api_key", tmdbKey);
     try {

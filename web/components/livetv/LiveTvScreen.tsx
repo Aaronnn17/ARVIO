@@ -27,7 +27,7 @@ function groupLabel(group: string) {
   return group.trim() || "Uncategorized";
 }
 
-export function LiveTvScreen({ active = true }: { active?: boolean }) {
+export function LiveTvScreen() {
   const { iptvSnapshot, settings, setSettings, playChannel, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth } = useApp();
 
   // Open a channel straight in VLC/Infuse from the detail panel — the reliable
@@ -86,14 +86,14 @@ export function LiveTvScreen({ active = true }: { active?: boolean }) {
   // is already cached). Reuse the snapshot that is still in memory and only
   // rebuild when the playlists actually changed, or when it has gone stale.
   useEffect(() => {
-    if (!active || !playlists.length) return;
+    if (!playlists.length) return;
     const snapshotMatchesPlaylists = iptvSnapshot.channels.length > 0
       && iptvSnapshot.signature === playlistSignature;
     const age = Date.now() - (iptvSnapshot.loadedAt ?? 0);
     if (snapshotMatchesPlaylists && age < IPTV_SNAPSHOT_TTL_MS) return;
     void refreshIptv();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, playlistSignature, refreshIptv, playlists.length]);
+  }, [playlistSignature, refreshIptv, playlists.length]);
 
   const categories = useMemo(() => {
     const orderMap = new Map(iptvSnapshot.groupOrder.map((id, index) => [id, index]));
@@ -101,7 +101,6 @@ export function LiveTvScreen({ active = true }: { active?: boolean }) {
       const keyed = items[0] ? groupKey(items[0]) : group;
       return orderMap.get(keyed) ?? orderMap.get(group) ?? Number.MAX_SAFE_INTEGER;
     };
-    const sortMode = settings.iptvSortOrder ?? "provider";
     const groupRows = Object.entries(groups)
       .map(([group, items]) => ({
         id: `group:${group}`,
@@ -112,19 +111,13 @@ export function LiveTvScreen({ active = true }: { active?: boolean }) {
         rank: groupRank(group, items)
       }))
       .filter((group) => !group.hidden)
-      .sort((a, b) => {
-        if (Number(b.favorite) !== Number(a.favorite)) return Number(b.favorite) - Number(a.favorite);
-        if (a.rank !== b.rank) return a.rank - b.rank;
-        if (sortMode === "name") return a.label.localeCompare(b.label);
-        if (sortMode === "number") return b.count - a.count || a.label.localeCompare(b.label);
-        return 0;
-      });
+      .sort((a, b) => Number(b.favorite) - Number(a.favorite) || a.rank - b.rank || b.count - a.count || a.label.localeCompare(b.label));
     return [
       { id: "all", label: "All Channels", count: channels.length, favorite: false, hidden: false },
       { id: "favorites", label: "Favorites", count: favoriteChannels.length, favorite: true, hidden: false },
       ...groupRows
     ];
-  }, [channels.length, favoriteChannels.length, favoriteGroups, groups, hiddenGroups, iptvSnapshot.groupOrder, settings.iptvSortOrder]);
+  }, [channels.length, favoriteChannels.length, favoriteGroups, groups, hiddenGroups, iptvSnapshot.groupOrder]);
 
   const visibleChannels = useMemo(() => {
     const base = activeCategory === "favorites"
@@ -133,27 +126,14 @@ export function LiveTvScreen({ active = true }: { active?: boolean }) {
         ? groups[activeCategory.slice(6)] ?? []
         : channels;
     const needle = query.trim().toLowerCase();
-    const filtered = needle
+    return needle
       ? base.filter((channel) =>
           channel.name.toLowerCase().includes(needle) ||
           channel.group.toLowerCase().includes(needle) ||
           channel.tvgId?.toLowerCase().includes(needle)
         )
       : base;
-    const sortMode = settings.iptvSortOrder ?? "provider";
-    if (sortMode === "number") {
-      return [...filtered].sort((a, b) => {
-        const numA = a.number ? parseInt(a.number, 10) : Number.MAX_SAFE_INTEGER;
-        const numB = b.number ? parseInt(b.number, 10) : Number.MAX_SAFE_INTEGER;
-        if (numA !== numB) return numA - numB;
-        return a.name.localeCompare(b.name);
-      });
-    }
-    if (sortMode === "name") {
-      return [...filtered].sort((a, b) => a.name.localeCompare(b.name));
-    }
-    return filtered;
-  }, [activeCategory, channels, favoriteChannels, groups, query, settings.iptvSortOrder]);
+  }, [activeCategory, channels, favoriteChannels, groups, query]);
 
   useEffect(() => {
     setVisibleCount(CHANNEL_PAGE_SIZE);
@@ -649,7 +629,6 @@ function ChannelRow({ channel, guide, favorite, selected, onFocus, onVisible, on
   onPlay: () => void;
   onToggleFavorite: () => void;
 }) {
-  const { openContextMenu } = useApp();
   const rowRef = useRef<HTMLElement | null>(null);
   const now = guide?.now;
   const next = guide?.next ?? guide?.later ?? guide?.upcoming?.[0];
@@ -669,36 +648,8 @@ function ChannelRow({ channel, guide, favorite, selected, onFocus, onVisible, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel.id]);
 
-  const handleContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    openContextMenu({
-      title: channel.name,
-      subtitle: channel.group || "Live TV",
-      position: { x: e.clientX, y: e.clientY },
-      actions: [
-        {
-          id: "play_channel",
-          label: "Play Channel",
-          icon: <Play size={18} fill="currentColor" />,
-          action: () => {
-            onPlay();
-          }
-        },
-        {
-          id: "toggle_favorite",
-          label: favorite ? "Remove from Favorites" : "Add to Favorites",
-          icon: <Star size={18} fill={favorite ? "currentColor" : "none"} />,
-          action: () => {
-            onToggleFavorite();
-          }
-        }
-      ]
-    });
-  };
-
   return (
-    <article ref={rowRef} className={`livetv-row ${selected ? "is-selected" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} onContextMenu={handleContextMenu}>
+    <article ref={rowRef} className={`livetv-row ${selected ? "is-selected" : ""}`} onMouseEnter={onFocus} onFocus={onFocus}>
       <button type="button" className="livetv-row-main" onClick={onPlay}>
         <span className="livetv-row-logo">{channel.logo ? <img src={channel.logo} alt="" loading="lazy" /> : <Tv size={20} />}</span>
         <span className="livetv-row-copy">

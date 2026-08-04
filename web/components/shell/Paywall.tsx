@@ -114,7 +114,7 @@ function PaywallScreen({
     <main className="paywall">
       <div className="paywall-card">
         <div className="paywall-brand">
-          <img src="/arvio-icon-512.png" alt="" className="paywall-logo" />
+          <img src="/arvio-logo.svg" alt="" className="paywall-logo" />
           <img src="/arvio-wordmark.svg" alt="ARVIO" className="paywall-wordmark" />
         </div>
 

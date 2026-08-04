@@ -5,7 +5,6 @@ import { loadStored, saveStored } from "@/lib/storage";
 import { useApp } from "@/lib/store";
 import type { CatalogConfig, Category, MediaItem } from "@/lib/types";
 import { MediaRail } from "./MediaRail";
-import { RailScroller } from "./RailScroller";
 
 // v3: v2 entries were poisoned by collection rails colliding on a cache key
 // that omitted collectionSources (all service rows shared one entry).
@@ -22,11 +21,11 @@ export function LazyRail({ catalog, eager = false, posterMode, onOpen, onFocus, 
   onLoaded?: (category: Category) => void;
 }) {
   const { loadCatalogRow, settings } = useApp();
+  const effectivePosterMode = posterMode ?? (catalog.layout ? catalog.layout === "poster" : settings.cardLayoutMode === "poster");
   const cacheKey = catalogCacheKey(catalog, settings.language);
   const ref = useRef<HTMLDivElement | null>(null);
   const startedRef = useRef(false);
   const [category, setCategory] = useState<Category | null>(() => readCachedCatalog(cacheKey));
-  const effectivePosterMode = catalog.layout === "poster" || category?.layout === "poster" || (posterMode ?? (settings.cardLayoutMode === "poster"));
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
 
@@ -100,15 +99,9 @@ export function LazyRail({ catalog, eager = false, posterMode, onOpen, onFocus, 
       <div className="rail-head">
         <h3>{catalog.name}</h3>
       </div>
-      <RailScroller className="rail-strip" ariaLabel={catalog.name}>
-        {Array.from({ length: 6 }).map((_, index) => (
-          <div key={index} className="media-card-skeleton">
-            <div className="card-skeleton" />
-            <div className="card-skeleton-title" />
-            <div className="card-skeleton-meta" />
-          </div>
-        ))}
-      </RailScroller>
+      <div className="rail-strip">
+        {loading && Array.from({ length: 6 }).map((_, index) => <div key={index} className="card-skeleton" />)}
+      </div>
     </section>
   );
 }
