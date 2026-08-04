@@ -92,6 +92,14 @@ import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.compose.foundation.layout.PaddingValues
@@ -108,6 +116,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -451,7 +460,7 @@ fun SettingsScreen(
             }
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
-            "stremio" -> stremioAddons.size // rows + add button
+            "stremio" -> stremioAddons.size + 1 // rows + refresh + add button
             "plugins" -> pluginsMaxIndex
             "accounts" -> 6 // Cloud + Trakt + Telegram + Force Sync + App Update + Privacy/Data + MDBList
             else -> 0
@@ -1109,6 +1118,9 @@ fun SettingsScreen(
                                                         else -> viewModel.toggleAddon(addon.id)
                                                     }
                                                 }
+                                                contentFocusIndex == stremioAddons.size -> {
+                                                    viewModel.refreshAddons()
+                                                }
                                                 else -> {
                                                     showCustomAddonInput = true
                                                 }
@@ -1621,13 +1633,15 @@ fun SettingsScreen(
                         )
                         "stremio" -> StremioAddonsSettings(
                             addons = stremioAddons,
+                            isRefreshingAddons = uiState.isRefreshingAddons,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             focusedActionIndex = addonActionIndex,
                             onToggleAddon = { viewModel.toggleAddon(it) },
                             onMoveAddonUp = { viewModel.moveAddonUp(it) },
                             onMoveAddonDown = { viewModel.moveAddonDown(it) },
                             onDeleteAddon = { viewModel.removeAddon(it) },
-                            onAddCustomAddon = { showCustomAddonInput = true }
+                            onAddCustomAddon = { showCustomAddonInput = true },
+                            onRefreshAddons = { viewModel.refreshAddons() }
                         )
                         "plugins" -> {
                             com.arflix.tv.ui.screens.plugin.PluginScreen(
@@ -4092,13 +4106,15 @@ private fun MobileSettingsSubPage(
             "Addons" -> {
                 StremioAddonsSettings(
                     addons = stremioAddons,
+                    isRefreshingAddons = uiState.isRefreshingAddons,
                     focusedIndex = -1,
                     focusedActionIndex = 0,
                     onToggleAddon = { viewModel.toggleAddon(it) },
                     onMoveAddonUp = { viewModel.moveAddonUp(it) },
                     onMoveAddonDown = { viewModel.moveAddonDown(it) },
                     onDeleteAddon = { viewModel.removeAddon(it) },
-                    onAddCustomAddon = onAddCustomAddonClick
+                    onAddCustomAddon = onAddCustomAddonClick,
+                    onRefreshAddons = { viewModel.refreshAddons() }
                 )
             }
             "Plugins & Extensions" -> {
@@ -7543,20 +7559,86 @@ private fun CatalogActionChip(
 @Composable
 private fun StremioAddonsSettings(
     addons: List<com.arflix.tv.data.model.Addon> = emptyList(),
+    isRefreshingAddons: Boolean = false,
     focusedIndex: Int = -1,
     focusedActionIndex: Int = 0,
     onToggleAddon: (String) -> Unit = {},
     onMoveAddonUp: (String) -> Unit = {},
     onMoveAddonDown: (String) -> Unit = {},
     onDeleteAddon: (String) -> Unit = {},
-    onAddCustomAddon: () -> Unit = {}
+    onAddCustomAddon: () -> Unit = {},
+    onRefreshAddons: () -> Unit = {}
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
 
     if (isMobile) {
-        Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        var pullOffsetY by remember { mutableFloatStateOf(0f) }
+        val density = LocalDensity.current
+        val refreshThreshold = remember(density) { with(density) { 90.dp.toPx() } }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .pointerInput(isRefreshingAddons) {
+                    detectVerticalDragGestures(
+                        onVerticalDrag = { change, dragAmount ->
+                            if (dragAmount > 0 || pullOffsetY > 0f) {
+                                change.consume()
+                                pullOffsetY = (pullOffsetY + dragAmount * 0.5f).coerceAtLeast(0f)
+                            }
+                        },
+                        onDragEnd = {
+                            if (pullOffsetY >= refreshThreshold && !isRefreshingAddons) {
+                                onRefreshAddons()
+                            }
+                            pullOffsetY = 0f
+                        },
+                        onDragCancel = {
+                            pullOffsetY = 0f
+                        }
+                    )
+                },
+            verticalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            AnimatedVisibility(
+                visible = isRefreshingAddons || pullOffsetY > 0f,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = Pink,
+                        strokeWidth = 2.5.dp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(R.string.settings_pulling_latest_addon),
+                        style = ArflixTypography.caption.copy(
+                            fontSize = 12.sp,
+                            fontStyle = FontStyle.Italic
+                        ),
+                        color = TextSecondary
+                    )
+                }
+            }
+
             MobileSettingsCategory(title = stringResource(R.string.settings_section_add_addon)) {
-                MobileSettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_addon), subtitle = stringResource(R.string.settings_install_custom_addon), value = "", isFocused = false, showDivider = false, onClick = onAddCustomAddon)
+                MobileSettingsRow(
+                    icon = Icons.Default.Add,
+                    title = stringResource(R.string.add_addon),
+                    subtitle = stringResource(R.string.settings_install_custom_addon),
+                    value = "",
+                    isFocused = false,
+                    showDivider = false,
+                    onClick = onAddCustomAddon
+                )
             }
             MobileSettingsCategory(title = stringResource(R.string.settings_section_my_addons)) {
                 if (addons.isEmpty()) {
@@ -7649,7 +7731,33 @@ private fun StremioAddonsSettings(
                 }
             }
             Spacer(modifier = Modifier.height(24.dp))
-            Row(modifier = Modifier.settingsFocusSlot(addons.size).fillMaxWidth().clickable(onClick = onAddCustomAddon).background(if (focusedIndex == addons.size) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp)).border(width = if (focusedIndex == addons.size) 2.dp else 0.dp, color = if (focusedIndex == addons.size) Pink else Color.Transparent, shape = RoundedCornerShape(12.dp)).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Row(
+                modifier = Modifier
+                    .settingsFocusSlot(addons.size)
+                    .fillMaxWidth()
+                    .clickable(onClick = onRefreshAddons)
+                    .background(if (focusedIndex == addons.size) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+                    .border(width = if (focusedIndex == addons.size) 2.dp else 0.dp, color = if (focusedIndex == addons.size) Pink else Color.Transparent, shape = RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null, tint = Pink, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(stringResource(R.string.refresh_addons), style = ArflixTypography.button, color = Pink)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .settingsFocusSlot(addons.size + 1)
+                    .fillMaxWidth()
+                    .clickable(onClick = onAddCustomAddon)
+                    .background(if (focusedIndex == addons.size + 1) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+                    .border(width = if (focusedIndex == addons.size + 1) 2.dp else 0.dp, color = if (focusedIndex == addons.size + 1) Pink else Color.Transparent, shape = RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
                 Icon(Icons.Default.Widgets, contentDescription = null, tint = Pink, modifier = Modifier.size(20.dp))
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(stringResource(R.string.add_addon), style = ArflixTypography.button, color = Pink)
