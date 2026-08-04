@@ -6191,6 +6191,7 @@ private fun IptvSettings(
     progressPercent: Int,
     focusedIndex: Int,
     focusedActionIndex: Int,
+    iptvOnlyMode: Boolean,
     onConfigure: () -> Unit,
     onEditPlaylist: (Int) -> Unit,
     onTogglePlaylist: (Int) -> Unit,
@@ -6199,6 +6200,7 @@ private fun IptvSettings(
     onDeletePlaylist: (Int) -> Unit,
     onRefresh: () -> Unit,
     onDelete: () -> Unit,
+    onToggleIptvOnlyMode: (Boolean) -> Unit,
     onManageCategories: (String) -> Unit = {}
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
@@ -6222,6 +6224,32 @@ private fun IptvSettings(
                     }
                     Box(modifier = Modifier.size(36.dp).clickable { selectionMode = false; selectedIndices = emptySet() }.background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
                         Icon(Icons.Default.Close, contentDescription = stringResource(R.string.close), tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
+            MobileSettingsCategory(title = "Content Mode") {
+                MobileSettingsRow(
+                    icon = Icons.Default.Tv,
+                    title = "Exclusive IPTV Mode",
+                    subtitle = "Show only content available on your IPTV server",
+                    value = "",
+                    isFocused = false,
+                    showDivider = false,
+                    onClick = { onToggleIptvOnlyMode(!iptvOnlyMode) }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(44.dp)
+                            .height(24.dp)
+                            .background(
+                                color = if (iptvOnlyMode) SuccessGreen else Color.White.copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(13.dp)
+                            )
+                            .clickable { onToggleIptvOnlyMode(!iptvOnlyMode) }
+                            .padding(3.dp),
+                        contentAlignment = if (iptvOnlyMode) Alignment.CenterEnd else Alignment.CenterStart
+                    ) {
+                        Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
                     }
                 }
             }
@@ -6297,8 +6325,34 @@ private fun IptvSettings(
         Column {
             SettingsRow(icon = Icons.Default.LiveTv, title = stringResource(R.string.add_playlist), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_add_iptv_lists_hint) else stringResource(R.string.settings_create_another_iptv), value = if (playlists.size >= 3) stringResource(R.string.settings_badge_full) else stringResource(R.string.settings_badge_add), isFocused = focusedIndex == 0, onClick = onConfigure, modifier = Modifier.settingsFocusSlot(0))
             Spacer(modifier = Modifier.height(16.dp))
+            val focusRingColorIptvOnly = resolveAccentColor(fallback = Pink)
+            Row(
+                modifier = Modifier.settingsFocusSlot(1)
+                    .fillMaxWidth()
+                    .background(if (focusedIndex == 1) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+                    .border(width = if (focusedIndex == 1) 2.dp else 0.dp, color = if (focusedIndex == 1) focusRingColorIptvOnly else Color.Transparent, shape = RoundedCornerShape(12.dp))
+                    .clickable { onToggleIptvOnlyMode(!iptvOnlyMode) }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Exclusive IPTV Mode", style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = if (focusedIndex == 1) TextPrimary else TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Show only content available on your IPTV server", style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Box(
+                    modifier = Modifier.width(44.dp).height(24.dp)
+                        .background(color = if (iptvOnlyMode) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp))
+                        .clickable { onToggleIptvOnlyMode(!iptvOnlyMode) }
+                        .padding(3.dp),
+                    contentAlignment = if (iptvOnlyMode) Alignment.CenterEnd else Alignment.CenterStart
+                ) {
+                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
             playlists.forEachIndexed { index, playlist ->
-                val rowIndex = index + 1
+                val rowIndex = index + 2
                 val epgSourceCount = playlist.settingsEpgInput().lineSequence().count { it.isNotBlank() }
                 val focusRingColor = resolveAccentColor(fallback = Pink)
                 Row(modifier = Modifier.settingsFocusSlot(rowIndex).fillMaxWidth().background(if (focusedIndex == rowIndex) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp)).border(width = if (focusedIndex == rowIndex) 2.dp else 0.dp, color = if (focusedIndex == rowIndex) focusRingColor else Color.Transparent, shape = RoundedCornerShape(12.dp)).clickable { onEditPlaylist(index) }.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -6348,9 +6402,9 @@ private fun IptvSettings(
             }
             Spacer(modifier = Modifier.height(6.dp))
             val refreshSubtitle = when { isLoading -> stringResource(R.string.settings_refreshing_channels_epg); error != null -> error; playlists.none { it.epgUrl.isNotBlank() || it.epgUrls.orEmpty().isNotEmpty() } -> stringResource(R.string.settings_reload_playlists_now); else -> stringResource(R.string.settings_reload_playlist_epg_now) }
-            SettingsRow(icon = Icons.Default.Link, title = stringResource(R.string.refresh_iptv), subtitle = refreshSubtitle, value = if (isLoading) stringResource(R.string.settings_badge_loading) else stringResource(R.string.settings_badge_refresh), isFocused = focusedIndex == playlists.size + 1, onClick = onRefresh, modifier = Modifier.settingsFocusSlot(playlists.size + 1))
+            SettingsRow(icon = Icons.Default.Link, title = stringResource(R.string.refresh_iptv), subtitle = refreshSubtitle, value = if (isLoading) stringResource(R.string.settings_badge_loading) else stringResource(R.string.settings_badge_refresh), isFocused = focusedIndex == playlists.size + 2, onClick = onRefresh, modifier = Modifier.settingsFocusSlot(playlists.size + 2))
             Spacer(modifier = Modifier.height(16.dp))
-            SettingsRow(icon = Icons.Default.Delete, title = stringResource(R.string.delete_iptv), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_no_playlists_configured) else stringResource(R.string.settings_remove_playlists_epg), value = if (playlists.isEmpty()) stringResource(R.string.settings_badge_empty) else stringResource(R.string.settings_badge_delete), isFocused = focusedIndex == playlists.size + 2, onClick = onDelete, modifier = Modifier.settingsFocusSlot(playlists.size + 2))
+            SettingsRow(icon = Icons.Default.Delete, title = stringResource(R.string.delete_iptv), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_no_playlists_configured) else stringResource(R.string.settings_remove_playlists_epg), value = if (playlists.isEmpty()) stringResource(R.string.settings_badge_empty) else stringResource(R.string.settings_badge_delete), isFocused = focusedIndex == playlists.size + 3, onClick = onDelete, modifier = Modifier.settingsFocusSlot(playlists.size + 3))
             if (isLoading && !progressText.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(stringResource(R.string.settings_progress_format, progressText, progressPercent.coerceIn(0, 100)), style = ArflixTypography.caption, color = TextSecondary)
