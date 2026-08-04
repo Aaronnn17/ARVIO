@@ -56,6 +56,8 @@ import com.arflix.tv.ui.screens.settings.LocalSettingsFocusTracker
 import com.arflix.tv.ui.screens.settings.settingsFocusSlot
 import com.arflix.tv.util.LocalDeviceType
 
+import com.arflix.tv.domain.model.PluginRepository
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun PluginScreen(
@@ -72,6 +74,7 @@ fun PluginScreen(
     val uiState by viewModel.uiState.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
+    var repoToDelete by remember { mutableStateOf<PluginRepository?>(null) }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val sectionNavKey = if (isRtl) Key.DirectionRight else Key.DirectionLeft
     val isMobile = LocalDeviceType.current.isTouchDevice()
@@ -83,8 +86,9 @@ fun PluginScreen(
     // Slot 0: Add button
     // Slot 1 to repos.size: Repos
     // Slot repos.size + 1 to repos.size + scrapers.size (or + 1 if empty text)
+    // Slot repos.size + scrapers.size + 1: Reset button
     val scrapersCount = if (scrapers.isEmpty()) 1 else scrapers.size
-    val totalItems = 1 + repositories.size + scrapersCount
+    val totalItems = 1 + repositories.size + scrapersCount + 1
 
     LaunchedEffect(totalItems) {
         onMaxIndexChanged((totalItems - 1).coerceAtLeast(0))
@@ -93,7 +97,7 @@ fun PluginScreen(
         }
     }
 
-    val modalOpen = showAddDialog
+    val modalOpen = showAddDialog || showResetDialog || (repoToDelete != null)
     LaunchedEffect(modalOpen) {
         onModalStateChanged(modalOpen)
     }
@@ -113,6 +117,7 @@ fun PluginScreen(
                         viewModel.onEvent(PluginUiEvent.ToggleScraper(scraper.id, !scraper.enabled))
                     }
                 }
+                totalItems - 1 -> { showResetDialog = true }
             }
             onEnterTriggerHandled()
         }
@@ -151,7 +156,7 @@ fun PluginScreen(
                             value = stringResource(R.string.delete),
                             isFocused = false,
                             showDivider = idx < repositories.lastIndex,
-                            onClick = { viewModel.onEvent(PluginUiEvent.RemoveRepository(repo.id)) }
+                            onClick = { repoToDelete = repo }
                         )
                     }
                 }
@@ -180,6 +185,18 @@ fun PluginScreen(
                         )
                     }
                 }
+            }
+
+            MobileSettingsCategory(title = "") {
+                MobileSettingsRow(
+                    icon = Icons.Default.Delete,
+                    title = "Reset Plugins & Extensions",
+                    subtitle = "Deletes all repositories, scrapers, and local data",
+                    value = "",
+                    isFocused = false,
+                    showDivider = false,
+                    onClick = { showResetDialog = true }
+                )
             }
         }
     } else {
@@ -215,6 +232,7 @@ fun PluginScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .settingsFocusSlot(0)
+                    .focusProperties { canFocus = false }
                     .clickable { showAddDialog = true }
                     .background(
                         if (isAddRowFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
@@ -299,6 +317,42 @@ fun PluginScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                 }
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
+            val resetIndex = totalItems - 1
+            val isResetRowFocused = (focusedIndex == resetIndex)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .settingsFocusSlot(resetIndex)
+                    .focusProperties { canFocus = false }
+                    .clickable { showResetDialog = true }
+                    .background(
+                        if (isResetRowFocused) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f),
+                        RoundedCornerShape(12.dp)
+                    )
+                    .border(
+                        width = if (isResetRowFocused) 2.dp else 0.dp,
+                        color = if (isResetRowFocused) Color.Red else Color.Transparent,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = null,
+                    tint = Color.Red,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Reset Plugins & Extensions",
+                    style = ArflixTypography.button,
+                    color = Color.Red
+                )
+            }
         }
     }
 
@@ -311,6 +365,35 @@ fun PluginScreen(
             onDismiss = {
                 showAddDialog = false
             }
+        )
+    }
+
+    if (showResetDialog) {
+        WarningDialog(
+            title = "Warning",
+            message = "Are you sure you want to delete all plugins, scrapers, and local code data? This action cannot be undone.",
+            cancelText = stringResource(R.string.cancel),
+            confirmText = stringResource(R.string.delete),
+            onConfirm = {
+                viewModel.onEvent(PluginUiEvent.ResetAllPlugins)
+                onFocusedIndexChanged(0)
+                showResetDialog = false
+            },
+            onDismiss = { showResetDialog = false }
+        )
+    }
+
+    repoToDelete?.let { repo ->
+        WarningDialog(
+            title = stringResource(R.string.delete),
+            message = "Are you sure you want to remove '${repo.name}'?",
+            cancelText = stringResource(R.string.cancel),
+            confirmText = stringResource(R.string.delete),
+            onConfirm = {
+                viewModel.onEvent(PluginUiEvent.RemoveRepository(repo.id))
+                repoToDelete = null
+            },
+            onDismiss = { repoToDelete = null }
         )
     }
 }
@@ -352,7 +435,9 @@ fun FocusableSettingsRow(
         value = value,
         isFocused = (focusedIndex == index),
         onClick = onClick,
-        modifier = modifier.settingsFocusSlot(index)
+        modifier = modifier
+            .settingsFocusSlot(index)
+            .focusProperties { canFocus = false }
     )
 }
 
@@ -372,7 +457,9 @@ fun FocusableSettingsToggleRow(
         isEnabled = isEnabled,
         isFocused = (focusedIndex == index),
         onToggle = onToggle,
-        modifier = modifier.settingsFocusSlot(index)
+        modifier = modifier
+            .settingsFocusSlot(index)
+            .focusProperties { canFocus = false }
     )
 }
 
@@ -446,13 +533,21 @@ fun AddRepoDialog(
                     Spacer(modifier = Modifier.height(20.dp))
 
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                        var isCancelFocused by remember { mutableStateOf(false) }
+                        var isSaveFocused by remember { mutableStateOf(false) }
+
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .focusRequester(cancelFocus)
+                                .onFocusChanged { isCancelFocused = it.isFocused }
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(BackgroundElevated)
-                                .border(1.dp, TextSecondary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                .background(if (isCancelFocused) BackgroundElevated.copy(alpha = 0.8f) else BackgroundElevated)
+                                .border(
+                                    width = if (isCancelFocused) 2.dp else 1.dp,
+                                    color = if (isCancelFocused) Color.White.copy(alpha = 0.8f) else TextSecondary.copy(alpha = 0.3f),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
                                 .clickable { onDismiss() }
                                 .padding(vertical = 12.dp),
                             contentAlignment = Alignment.Center
@@ -469,15 +564,140 @@ fun AddRepoDialog(
                             modifier = Modifier
                                 .weight(1f)
                                 .focusRequester(saveFocus)
+                                .onFocusChanged { isSaveFocused = it.isFocused }
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Pink.copy(alpha = 0.15f))
-                                .border(1.dp, Pink.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                .background(if (isSaveFocused) Pink.copy(alpha = 0.35f) else Pink.copy(alpha = 0.15f))
+                                .border(
+                                    width = if (isSaveFocused) 2.dp else 1.dp,
+                                    color = if (isSaveFocused) Pink else Pink.copy(alpha = 0.4f),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
                                 .clickable { onSave(value) }
                                 .padding(vertical = 12.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = stringResource(R.string.add),
+                                textAlign = TextAlign.Center,
+                                color = Pink,
+                                style = ArflixTypography.button
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun WarningDialog(
+    title: String,
+    message: String,
+    cancelText: String,
+    confirmText: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    HideDialogSystemBars()
+    val cancelFocusRequester = remember { FocusRequester() }
+    val confirmFocus = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(100)
+        try { cancelFocusRequester.requestFocus() } catch (_: Exception) {}
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnClickOutside = true, usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown &&
+                        (event.key == Key.Back || event.key == Key.Escape)) {
+                        onDismiss()
+                        return@onPreviewKeyEvent true
+                    }
+                    false
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(420.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(BackgroundElevated)
+                    .padding(24.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = title,
+                        style = ArflixTypography.sectionTitle,
+                        color = Color.Red,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Start
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = message,
+                        style = ArflixTypography.body,
+                        color = TextSecondary,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Start
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        var isCancelFocused by remember { mutableStateOf(false) }
+                        var isConfirmFocused by remember { mutableStateOf(false) }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(cancelFocusRequester)
+                                .onFocusChanged { isCancelFocused = it.isFocused }
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isCancelFocused) BackgroundElevated.copy(alpha = 0.8f) else BackgroundElevated)
+                                .border(
+                                    width = if (isCancelFocused) 2.dp else 1.dp,
+                                    color = if (isCancelFocused) Color.White.copy(alpha = 0.8f) else TextSecondary.copy(alpha = 0.3f),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                .clickable { onDismiss() }
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = cancelText,
+                                textAlign = TextAlign.Center,
+                                color = TextSecondary,
+                                style = ArflixTypography.button
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(confirmFocus)
+                                .onFocusChanged { isConfirmFocused = it.isFocused }
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isConfirmFocused) Pink.copy(alpha = 0.35f) else Pink.copy(alpha = 0.15f))
+                                .border(
+                                    width = if (isConfirmFocused) 2.dp else 1.dp,
+                                    color = if (isConfirmFocused) Pink else Pink.copy(alpha = 0.4f),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                .clickable { onConfirm() }
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = confirmText,
                                 textAlign = TextAlign.Center,
                                 color = Pink,
                                 style = ArflixTypography.button
