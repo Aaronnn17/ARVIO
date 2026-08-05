@@ -343,14 +343,29 @@ class SportsRepository @Inject constructor(
         return try {
             val response = streamApi.getAddonCatalog(url)
             response.metas ?: response.items ?: emptyList()
-        } catch (error: Exception) {
-            if (error is kotlinx.coroutines.CancellationException) throw error
+        } catch (e: retrofit2.HttpException) {
             AppLogger.breadcrumb(
                 tag = "Sports",
-                message = "sports_catalog_failed addon=${addon.id} catalog=${catalog.id} error=${error::class.java.simpleName}",
+                message = "sports_catalog_failed addon=${addon.id} catalog=${catalog.id} error=${e::class.java.simpleName}",
                 severity = "warning"
             )
             emptyList()
+        } catch (e: java.io.IOException) {
+            AppLogger.breadcrumb(
+                tag = "Sports",
+                message = "sports_catalog_failed addon=${addon.id} catalog=${catalog.id} error=${e::class.java.simpleName}",
+                severity = "warning"
+            )
+            emptyList()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            AppLogger.breadcrumb(
+                tag = "Sports",
+                message = "sports_catalog_failed addon=${addon.id} catalog=${catalog.id} error=${e::class.java.simpleName}",
+                severity = "warning"
+            )
+            emptyList()
+        }
         }
     }
 
