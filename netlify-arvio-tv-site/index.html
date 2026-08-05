@@ -783,9 +783,9 @@
   }
   .nav-inner {
     display: grid;
-    grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
-    gap: 18px;
+    gap: 16px;
     padding: 16px 0;
   }
   .brand {
@@ -813,25 +813,26 @@
     justify-self: center;
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 5px;
+    gap: 2px;
+    padding: 4px;
     border: 1px solid var(--line-soft);
     border-radius: 999px;
     background:
       linear-gradient(180deg, color-mix(in oklch, var(--ink) 4%, transparent), transparent),
       color-mix(in oklch, var(--bg) 84%, transparent);
     box-shadow: 0 16px 44px -32px oklch(0 0 0 / 0.9);
-    font-size: 13px;
+    font-size: 12.5px;
     color: var(--ink-2);
     font-weight: 650;
     white-space: nowrap;
+    min-width: 0;
   }
   .nav-links a {
     position: relative;
     display: inline-flex;
     align-items: center;
-    min-height: 34px;
-    padding: 8px 12px;
+    min-height: 32px;
+    padding: 6px 10px;
     border-radius: 999px;
     white-space: nowrap;
     flex-shrink: 0;
@@ -865,15 +866,15 @@
   .nav-links a:hover::after,
   .nav-links a.active::after { opacity: 1; transform: scaleX(1); }
   .nav-links .nav-donate {
-    padding-left: 28px !important;
+    padding-left: 24px !important;
     color: color-mix(in oklch, #ff7eb8 58%, var(--ink));
   }
-  .nav-links .nav-donate::before { left: 11px; }
+  .nav-links .nav-donate::before { left: 9px; }
   .nav-actions {
     justify-self: end;
     display: inline-flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     margin-left: 0;
     flex-shrink: 0;
   }
@@ -1977,9 +1978,18 @@
   }
 
   /* ============ RESPONSIVE ============ */
+  @media (max-width: 1320px) {
+    .nav-links { display: none; }
+    .nav-inner {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .nav-actions { margin-left: auto; }
+  }
+
   @media (max-width: 900px) {
     .wrap { padding: 0 20px; }
-    .nav-links { display: none; }
     .nav-inner {
       display: flex;
       justify-content: space-between;
