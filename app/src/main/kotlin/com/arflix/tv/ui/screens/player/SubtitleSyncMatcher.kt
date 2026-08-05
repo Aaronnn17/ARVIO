@@ -272,7 +272,7 @@ object SubtitleSyncMatcher {
                 else -> sb.append(' ')
             }
         }
-        return sb.toString().replace(SubtitleSyncRegexes.MULTIPLE_SPACES, " ").trim()
+        return sb.toString().replace(SubtitleSyncMatcherRegexes.MULTI_SPACE_REGEX, " ").trim()
     }
 
     fun cueTextAt(cues: List<TimedCue>, timeMs: Long): String? =
@@ -333,6 +333,6 @@ object SubtitleSyncMatcher {
 }
 
 
-private object SubtitleSyncRegexes {
-    val MULTIPLE_SPACES = Regex("\\s+")
+private object SubtitleSyncMatcherRegexes {
+    val MULTI_SPACE_REGEX = Regex("\\s+")
 }

@@ -3042,7 +3042,7 @@ class PlayerViewModel @Inject constructor(
 
     /** Whitespace/tag-insensitive form for comparing renderer cue text against parsed file text. */
     private fun normalizeCueTextForCompare(text: String): String =
-        text.replace(PlayerVMRegexes.HTML_TAGS, " ").replace(PlayerVMRegexes.MULTIPLE_SPACES, " ").trim()
+        text.replace(PlayerViewModelRegexes.HTML_TAG_REGEX, " ").replace(PlayerViewModelRegexes.MULTI_SPACE_REGEX, " ").trim()
 
     /**
      * A scored candidate. [offsetMs] is 0 for a normal (as-authored) match, or the uniform delay
@@ -4533,7 +4533,7 @@ class PlayerViewModel @Inject constructor(
 }
 
 
-private object PlayerVMRegexes {
-    val HTML_TAGS = Regex("<[^>]*>")
-    val MULTIPLE_SPACES = Regex("\\s+")
+private object PlayerViewModelRegexes {
+    val HTML_TAG_REGEX = Regex("<[^>]*>")
+    val MULTI_SPACE_REGEX = Regex("\\s+")
 }
