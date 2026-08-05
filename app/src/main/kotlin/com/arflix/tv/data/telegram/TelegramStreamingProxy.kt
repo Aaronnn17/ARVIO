@@ -1,6 +1,8 @@
 package com.arflix.tv.data.telegram
 
 import android.util.Log
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
 import io.ktor.http.ContentRange
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -35,15 +37,31 @@ import javax.inject.Singleton
  */
 @Singleton
 class TelegramStreamingProxy @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val client: TelegramClient
 ) {
     companion object {
         private const val TAG = "TelegramProxy"
         private const val CHUNK_SIZE = 2 * 1024 * 1024       // 2 MB served per ExoPlayer request
-        private const val PREFETCH_SIZE = 20 * 1024 * 1024L  // 20 MB prefetch window sent to TDLib
+        private const val FORWARD_BUFFER_SECONDS = 150L              // 2.5 minutes forward cache
+        private const val BACKWARD_BUFFER_SECONDS = 30L              // 30 seconds rewind cache
+        private const val DEFAULT_ESTIMATED_DURATION_SECONDS = 5400L // Default 1.5 hour movie estimate
+        private const val MIN_FORWARD_PREFETCH_BYTES = 20 * 1024 * 1024L  // Min 20 MB forward
+        private const val MAX_FORWARD_PREFETCH_BYTES = 300 * 1024 * 1024L // Max 300 MB forward
+        private const val LOW_STORAGE_PREFETCH_SIZE = 2 * 1024 * 1024L   // 2 MB prefetch window under low storage
+        private const val LOW_STORAGE_THRESHOLD_BYTES = 500 * 1024 * 1024L // 500 MB free space
+        private const val CRITICAL_STORAGE_THRESHOLD_BYTES = 200 * 1024 * 1024L // 200 MB free space
         private const val DOWNLOAD_TIMEOUT_MS = 30_000L
         private const val DOWNLOAD_PRIORITY = 32              // max TDLib priority
         private const val POLL_INTERVAL_MS = 100L
+    }
+
+    private fun calculateForwardPrefetchBytes(totalSize: Long): Long {
+        if (totalSize <= 0) return 30 * 1024 * 1024L
+        // Average byte rate = totalSize / duration (estimated as 1.5h if unknown)
+        val bytesPerSecond = (totalSize / DEFAULT_ESTIMATED_DURATION_SECONDS).coerceAtLeast(600_000L)
+        val forwardBytes = bytesPerSecond * FORWARD_BUFFER_SECONDS
+        return forwardBytes.coerceIn(MIN_FORWARD_PREFETCH_BYTES, MAX_FORWARD_PREFETCH_BYTES)
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -106,7 +124,7 @@ class TelegramStreamingProxy @Inject constructor(
                         var offset = start
                         while (offset <= end) {
                             val chunkSize = minOf(CHUNK_SIZE.toLong(), end - offset + 1).toInt()
-                            val bytes = downloadChunk(fileId, localPath, offset, chunkSize)
+                            val bytes = downloadChunk(fileId, localPath, offset, chunkSize, totalSize)
                             if (bytes == null || bytes.isEmpty()) break
                             writeFully(bytes)
                             offset += bytes.size
@@ -154,15 +172,31 @@ class TelegramStreamingProxy @Inject constructor(
         fileId: Int,
         @Suppress("UNUSED_PARAMETER") localPath: String?,
         offset: Long,
-        limit: Int
+        limit: Int,
+        totalSize: Long
     ): ByteArray? {
-        // Ask TDLib to prefetch a large window (non-blocking), but only wait for chunk_size bytes
+        val freeSpace = runCatching { context.filesDir.usableSpace }.getOrDefault(Long.MAX_VALUE)
+        if (freeSpace < CRITICAL_STORAGE_THRESHOLD_BYTES) {
+            Log.w(TAG, "Critical storage warning: freeSpace=${freeSpace / (1024 * 1024)}MB, triggering storage optimization")
+            runCatching {
+                client.sendRequest(TdApi.OptimizeStorage().also { p ->
+                    p.size = CRITICAL_STORAGE_THRESHOLD_BYTES
+                })
+            }
+        }
+        val prefetchSize = if (freeSpace < LOW_STORAGE_THRESHOLD_BYTES) {
+            LOW_STORAGE_PREFETCH_SIZE
+        } else {
+            calculateForwardPrefetchBytes(totalSize)
+        }
+
+        // Ask TDLib to prefetch a window (non-blocking), but only wait for chunk_size bytes
         withTimeoutOrNull(DOWNLOAD_TIMEOUT_MS) {
             client.sendRequest(TdApi.DownloadFile().also { req ->
                 req.fileId = fileId
                 req.priority = DOWNLOAD_PRIORITY
                 req.offset = offset
-                req.limit = PREFETCH_SIZE   // download 20 MB ahead in background
+                req.limit = prefetchSize
                 req.synchronous = false     // don't block — TDLib downloads while we poll
             })
         }
