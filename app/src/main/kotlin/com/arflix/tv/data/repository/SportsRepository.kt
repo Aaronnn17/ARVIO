@@ -38,6 +38,14 @@ class SportsRepository @Inject constructor(
     private val streamRepository: StreamRepository,
     private val streamApi: StreamApi
 ) {
+    companion object {
+        private const val MAX_EVENT_ITEMS = 24
+        private const val MAX_CATALOGS_PER_LOAD = 3
+        private const val CATEGORY_ARTWORK_TIMEOUT_MS = 1_500L
+
+        private fun drawable(name: String): String =
+            "android.resource://com.arvio.tv/drawable/$name"
+    }
     data class SportsPlayback(
         val mediaId: Int,
         val title: String,
@@ -366,7 +374,6 @@ class SportsRepository @Inject constructor(
             )
             emptyList()
         }
-        }
     }
 
     private fun placeholderItem(
@@ -621,15 +628,6 @@ class SportsRepository @Inject constructor(
             "KB" -> (value * 1024).toLong()
             else -> 0L
         }
-    }
-
-    private companion object {
-        const val MAX_EVENT_ITEMS = 24
-        const val MAX_CATALOGS_PER_LOAD = 3
-        const val CATEGORY_ARTWORK_TIMEOUT_MS = 1_500L
-
-        fun drawable(name: String): String =
-            "android.resource://com.arvio.tv/drawable/$name"
     }
 }
 

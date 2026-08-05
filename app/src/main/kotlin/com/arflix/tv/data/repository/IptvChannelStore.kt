@@ -361,9 +361,18 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
     private fun readChannel(cursor: android.database.Cursor, c: ColumnIndices): IptvChannel {
         val headersJson = if (cursor.isNull(c.requestHeaders)) null else cursor.getString(c.requestHeaders)
         val drmJson = if (cursor.isNull(c.drm)) null else cursor.getString(c.drm)
-        @Suppress("UNCHECKED_CAST")
         val headers = headersJson?.let {
-            try { gson.fromJson(it, Map::class.java) as? Map<String, String> } catch (e: Exception) { null }
+            try {
+                val jsonElement = com.google.gson.JsonParser.parseString(it)
+                if (jsonElement.isJsonObject) {
+                    jsonElement.asJsonObject.entrySet().mapNotNull { entry ->
+                        val value = entry.value
+                        if (value != null && value.isJsonPrimitive && value.asJsonPrimitive.isString) {
+                            entry.key to value.asString
+                        } else null
+                    }.toMap()
+                } else null
+            } catch (e: Exception) { null }
         }.orEmpty()
         val drm = drmJson?.let { try { gson.fromJson(it, DrmInfo::class.java) } catch (e: Exception) { null } }
         val name = cursor.getString(c.name).orEmpty()

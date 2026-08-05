@@ -1984,12 +1984,14 @@ fun SettingsScreen(
                 onDismiss = { showQualityFilterEditor = false },
                 onSave = {
                     val id = editingQualityFilterId
-                    if (id == null) {
+                    val success = if (id == null) {
                         viewModel.addQualityFilter(qualityFilterDeviceName, qualityFilterRegexPattern)
                     } else {
                         viewModel.updateQualityFilter(id, qualityFilterDeviceName, qualityFilterRegexPattern)
                     }
-                    showQualityFilterEditor = false
+                    if (success) {
+                        showQualityFilterEditor = false
+                    }
                 }
             )
         }

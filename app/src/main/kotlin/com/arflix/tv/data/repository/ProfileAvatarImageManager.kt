@@ -230,16 +230,11 @@ class ProfileAvatarImageManager @Inject constructor(
                         ?.optString(profileId)
                         ?.takeIf { it.isNotBlank() }
                 } catch (e: org.json.JSONException) {
-<<<<<<< HEAD
                     com.arflix.tv.util.AppLogger.e("ProfileAvatar", "Error parsing inline avatar JSON: ${e.message}")
                     null
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     com.arflix.tv.util.AppLogger.e("ProfileAvatar", "Unexpected error parsing inline avatar: ${e.message}")
-=======
-                    null
-                } catch (e: Exception) {
->>>>>>> origin/chore/auto-refactor-20231024-14946652076883075151
                     null
                 }
             }

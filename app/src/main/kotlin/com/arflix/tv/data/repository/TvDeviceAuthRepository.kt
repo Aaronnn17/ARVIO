@@ -60,7 +60,7 @@ class TvDeviceAuthRepository @Inject constructor(
                     .post("{}".toRequestBody(jsonMediaType))
                     .build()
 
-                val session = okHttpClient.newCall(request).execute().use { response ->
+                okHttpClient.newCall(request).execute().use { response ->
                     val body = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
                         throw IllegalStateException(parseError(body, context.getString(R.string.tv_link_failed_start)))
@@ -195,7 +195,6 @@ class TvDeviceAuthRepository @Inject constructor(
             fallback
         } catch (e: Exception) {
             fallback
-        }
         }
     }
 

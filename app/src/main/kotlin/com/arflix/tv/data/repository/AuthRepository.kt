@@ -1717,8 +1717,8 @@ class AuthRepository @Inject constructor(
                 body = body
             )
             val responseJson = try { JSONObject(responseBody) } catch (e: org.json.JSONException) { null }
-            if (responseJson?.optBoolean("accepted", true) == false) {
-                val reason = responseJson.optString("reason", "existing_snapshot_is_richer")
+            if (responseJson == null || !responseJson.optBoolean("accepted", false)) {
+                val reason = responseJson?.optString("reason", "invalid_response") ?: "invalid_response"
                 throw AccountSyncPayloadRejectedException("Cloud sync upload rejected: $reason")
             }
             Result.success(Unit)
@@ -2110,7 +2110,13 @@ class AuthRepository @Inject constructor(
 
     private fun parseInstantMillis(value: String?): Long {
         if (value.isNullOrBlank()) return 0L
-        return try { Instant.parse(value).toEpochMilliseconds() } catch (e: Exception) { 0L }
+        return try {
+            Instant.parse(value).toEpochMilliseconds()
+        } catch (e: IllegalArgumentException) {
+            0L
+        } catch (e: java.time.format.DateTimeParseException) {
+            0L
+        }
     }
 
     private fun encodeProfileAccountSyncPayload(existingAddons: String?, payload: String): String {

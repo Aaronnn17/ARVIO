@@ -222,6 +222,7 @@ class WatchHistoryRepository @Inject constructor(
                 AppLogger.e("WatchHistoryRepository", "Fallback error in watch history operation", fallbackEx)
             }
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             AppLogger.e("WatchHistoryRepository", "Error in watch history operation", e)
         }
 
