@@ -60,7 +60,7 @@ class TvDeviceAuthRepository @Inject constructor(
                     .post("{}".toRequestBody(jsonMediaType))
                     .build()
 
-                okHttpClient.newCall(request).execute().use { response ->
+                val session = okHttpClient.newCall(request).execute().use { response ->
                     val body = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
                         throw IllegalStateException(parseError(body, context.getString(R.string.tv_link_failed_start)))
@@ -78,8 +78,13 @@ class TvDeviceAuthRepository @Inject constructor(
                         intervalSeconds = json.optInt("interval", 3)
                     ))
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                Result.failure(e)
+            } catch (e: org.json.JSONException) {
+                Result.failure(e)
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
                 Result.failure(e)
             }
         }
@@ -119,8 +124,13 @@ class TvDeviceAuthRepository @Inject constructor(
                     }
                     Result.success(parseStatus(body))
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                Result.failure(e)
+            } catch (e: org.json.JSONException) {
+                Result.failure(e)
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
                 Result.failure(e)
             }
         }
@@ -161,8 +171,13 @@ class TvDeviceAuthRepository @Inject constructor(
                     }
                     Result.success(TvDeviceAuthCompleteResult(ok = true))
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                Result.failure(e)
+            } catch (e: org.json.JSONException) {
+                Result.failure(e)
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
                 Result.failure(e)
             }
         }
@@ -178,6 +193,9 @@ class TvDeviceAuthRepository @Inject constructor(
             }
         } catch (e: org.json.JSONException) {
             fallback
+        } catch (e: Exception) {
+            fallback
+        }
         }
     }
 

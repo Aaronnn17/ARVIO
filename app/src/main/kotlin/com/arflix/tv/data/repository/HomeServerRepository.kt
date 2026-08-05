@@ -2529,7 +2529,7 @@ private object HomeServerXmlRegexCache {
         }
     }
 }
-private object HomeServerRegexes {
+internal object HomeServerRegexes {
     val DIACRITICS_REGEX = Regex("\\p{Mn}+")
     val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
     val ARTICLES_REGEX = Regex("\\b(the|a|an)\\b")
