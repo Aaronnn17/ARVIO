@@ -294,8 +294,8 @@ private fun localizedCategoryTitle(category: Category): String = when (category.
     "collection_row_franchise" -> stringResource(R.string.franchises)
     "collection_row_network"   -> stringResource(R.string.networks)
     "collection_row_featured"  -> stringResource(R.string.featured)
-    "top10_movies_today"       -> if (androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl) "10 הסרטים הנצפים היום" else stringResource(R.string.home_top10_movies_today)
-    "top10_shows_today"        -> if (androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl) "10 הסדרות הנצפות היום" else stringResource(R.string.home_top10_shows_today)
+    "top10_movies_today"       -> stringResource(R.string.home_top10_movies_today)
+    "top10_shows_today"        -> stringResource(R.string.home_top10_shows_today)
     else                       -> category.title
 }
 
@@ -423,14 +423,16 @@ private fun createHomeHeroPlaybackHandles(context: Context): HomeHeroPlaybackHan
 
 private suspend fun androidx.compose.foundation.lazy.LazyListState.animateHomeScrollDelta(
     deltaPx: Float,
-    durationMillis: Int
+    durationMillis: Int,
+    isRtl: Boolean = false
 ) {
-    if (abs(deltaPx) <= 1f) return
+    val targetDelta = if (isRtl) -deltaPx else deltaPx
+    if (abs(targetDelta) <= 1f) return
     scroll(scrollPriority = MutatePriority.PreventUserInput) {
         var previousValue = 0f
         animate(
             initialValue = 0f,
-            targetValue = deltaPx,
+            targetValue = targetDelta,
             animationSpec = spring(
                 dampingRatio = 0.85f,
                 stiffness = 200f
@@ -1767,28 +1769,28 @@ private fun HomeHeroLayer(
         val buttonsBottomPadding = contentRowTopPadding - 10.dp
         val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 34.dp else 34.dp
 
-        androidx.compose.runtime.CompositionLocalProvider(
-            androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+        val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = AppTopBarContentTopInset)
+                .zIndex(3f)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = AppTopBarContentTopInset)
-                    .zIndex(3f)
-            ) {
-                heroItem?.let { item ->
-                    if (!item.status.orEmpty().startsWith("collection:")) {
-                        HeroSection(
-                            item = item,
-                            logoUrl = heroLogoUrl,
-                            overviewOverride = heroOverviewOverride,
-                            showBudget = showBudget,
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(start = contentStartPadding, end = 400.dp)
-                                .offset(y = -heroBottomPadding)
-                        )
-                    }
+            heroItem?.let { item ->
+                if (!item.status.orEmpty().startsWith("collection:")) {
+                    HeroSection(
+                        item = item,
+                        logoUrl = heroLogoUrl,
+                        overviewOverride = heroOverviewOverride,
+                        showBudget = showBudget,
+                        modifier = Modifier
+                            .align(if (isRtl) Alignment.BottomEnd else Alignment.BottomStart)
+                            .padding(
+                                start = if (isRtl) 400.dp else contentStartPadding,
+                                end = if (isRtl) contentStartPadding else 400.dp
+                            )
+                            .offset(y = -heroBottomPadding)
+                    )
                 }
             }
         }
@@ -3406,6 +3408,7 @@ private fun ContentRow(
             category.items
         }
     }
+    val isRtlLayout = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val totalItems = itemsToRender.size
     val maxFirstIndex = remember(totalItems) {
         (totalItems - 1).coerceAtLeast(0)
@@ -3521,7 +3524,8 @@ private fun ContentRow(
                         isFastScrolling -> 115
                         jumpDistance >= 3 -> 180
                         else -> 150
-                    }
+                    },
+                    isRtl = isRtlLayout
                 )
                 if (
                     !isFastScrolling && (

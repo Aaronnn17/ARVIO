@@ -953,7 +953,7 @@ class HomeViewModel @Inject constructor(
         val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: "en-US"
         val language = prefs[profileManager.profileStringKeyFor(profileId, "content_language")]
             ?: fallbackLanguage
-        mediaRepository.contentLanguage = if (language == "en-US") null else language
+        mediaRepository.contentLanguage = language
         return language
     }
 
@@ -981,7 +981,20 @@ class HomeViewModel @Inject constructor(
                 .getParameterized(MutableList::class.java, Category::class.java)
                 .type
             val parsed: List<Category> = gson.fromJson(json, type) ?: emptyList()
-            parsed.filter { it.items.isNotEmpty() }
+            var hadBlankTitles = false
+            val sanitized = parsed.map { cat ->
+                val cleanItems = cat.items.filter { item ->
+                    val isValid = item.title.isNotBlank() && item.title != "Unknown"
+                    if (!isValid) hadBlankTitles = true
+                    isValid
+                }
+                cat.copy(items = cleanItems)
+            }.filter { it.items.isNotEmpty() }
+
+            if (hadBlankTitles) {
+                file.delete()
+            }
+            sanitized
         }.getOrDefault(emptyList())
     }
     // IO concurrency for network requests (logo fetches, catalog loads, etc.)
@@ -1408,6 +1421,9 @@ class HomeViewModel @Inject constructor(
                 ).collect { preferences ->
                     val previousState = _uiState.value
                     val autoplayJustEnabled = !previousState.trailerAutoPlay && preferences.trailerAutoPlay
+                    val langChanged = mediaRepository.contentLanguage != preferences.contentLanguage
+                    mediaRepository.contentLanguage = preferences.contentLanguage
+
                     _uiState.value = previousState.copy(
                         trailerAutoPlay = preferences.trailerAutoPlay,
                         trailerSoundEnabled = preferences.trailerSoundEnabled,
@@ -1418,7 +1434,13 @@ class HomeViewModel @Inject constructor(
                         smoothScrolling = preferences.smoothScrolling
                     )
 
-                    if (autoplayJustEnabled) {
+                    if (langChanged) {
+                        mediaRepository.clearMediaCache()
+                        runCatching {
+                            context.cacheDir.listFiles()?.filter { it.name.startsWith("home_categories_cache_") }?.forEach { it.delete() }
+                        }
+                        loadHomeData()
+                    } else if (autoplayJustEnabled) {
                         _uiState.value.heroItem?.let(::hydrateHeroDetailsIfNeeded)
                     }
                 }
