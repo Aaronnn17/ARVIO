@@ -3606,6 +3606,7 @@ private fun MobileSettingsMainPage(
                     icon = Icons.Default.Language,
                     title = stringResource(R.string.content_language),
                     value = TMDB_LANGUAGES.firstOrNull { it.first == uiState.contentLanguage }?.second ?: uiState.contentLanguage,
+                    isToggle = false,
                     isFocused = false,
                     onClick = openContentLanguagePicker
                 )
@@ -3613,6 +3614,7 @@ private fun MobileSettingsMainPage(
                     icon = Icons.Default.VolumeUp,
                     title = stringResource(R.string.default_audio),
                     value = uiState.defaultAudioLanguage,
+                    isToggle = false,
                     isFocused = false,
                     onClick = openAudioLanguagePicker
                 )
@@ -3620,6 +3622,7 @@ private fun MobileSettingsMainPage(
                     icon = Icons.Default.Subtitles,
                     title = stringResource(R.string.default_subtitle),
                     value = uiState.defaultSubtitle,
+                    isToggle = false,
                     isFocused = false,
                     onClick = openSubtitlePicker
                 )
@@ -3627,33 +3630,10 @@ private fun MobileSettingsMainPage(
                     icon = Icons.Default.Subtitles,
                     title = stringResource(R.string.secondary_subtitle),
                     value = uiState.secondarySubtitle,
-                    isFocused = false,
-                    onClick = openSecondarySubtitlePicker
-                )
-                // AI-independent: the timing-based match scan needs no API key.
-                MobileSettingsRow(
-                    icon = Icons.Default.Subtitles,
-                    title = stringResource(R.string.ai_find_best_match_title),
-                    subtitle = stringResource(R.string.ai_find_best_match_desc),
-                    value = if (uiState.subtitleAiFindBestMatch) "On" else "Off",
-                    isFocused = false,
-                    onClick = { viewModel.setSubtitleAiFindBestMatch(!uiState.subtitleAiFindBestMatch) }
-                )
-                MobileSettingsRow(
-                    icon = Icons.Default.Subtitles,
-                    title = stringResource(R.string.subtitle_preload_title),
-                    subtitle = stringResource(R.string.subtitle_preload_desc),
-                    value = if (uiState.subtitlePreloadEnabled) "On" else "Off",
-                    isFocused = false,
-                    onClick = { viewModel.setSubtitlePreloadEnabled(!uiState.subtitlePreloadEnabled) }
-                )
-                MobileSettingsRow(
-                    icon = Icons.Default.Subtitles,
-                    title = stringResource(R.string.filter_subtitles),
-                    value = if (uiState.filterSubtitlesByLanguage) "On" else "Off",
+                    isToggle = false,
                     isFocused = false,
                     showDivider = false,
-                    onClick = { viewModel.setFilterSubtitlesByLanguage(!uiState.filterSubtitlesByLanguage) }
+                    onClick = openSecondarySubtitlePicker
                 )
             }
         }
@@ -3891,6 +3871,34 @@ private fun MobileSettingsSubPage(
             }
             "Audio & Subtitles" -> {
                 MobileSettingsCategory(title = stringResource(R.string.settings_section_subtitles)) {
+                    // AI-independent: the timing-based match scan needs no API key.
+                    MobileSettingsRow(
+                        icon = Icons.Default.Subtitles,
+                        title = stringResource(R.string.ai_find_best_match_title),
+                        subtitle = stringResource(R.string.ai_find_best_match_desc),
+                        value = if (uiState.subtitleAiFindBestMatch) "On" else "Off",
+                        isToggle = true,
+                        isFocused = false,
+                        onClick = { viewModel.setSubtitleAiFindBestMatch(!uiState.subtitleAiFindBestMatch) }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Subtitles,
+                        title = stringResource(R.string.subtitle_preload_title),
+                        subtitle = stringResource(R.string.subtitle_preload_desc),
+                        value = if (uiState.subtitlePreloadEnabled) "On" else "Off",
+                        isToggle = true,
+                        isFocused = false,
+                        onClick = { viewModel.setSubtitlePreloadEnabled(!uiState.subtitlePreloadEnabled) }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Subtitles,
+                        title = stringResource(R.string.filter_subtitles),
+                        subtitle = stringResource(R.string.filter_subtitles_desc),
+                        value = if (uiState.filterSubtitlesByLanguage) "On" else "Off",
+                        isToggle = true,
+                        isFocused = false,
+                        onClick = { viewModel.setFilterSubtitlesByLanguage(!uiState.filterSubtitlesByLanguage) }
+                    )
                     MobileSettingsRow(
                         icon = Icons.Default.Subtitles,
                         title = stringResource(R.string.subtitle_size),
@@ -3925,16 +3933,8 @@ private fun MobileSettingsSubPage(
                         subtitle = stringResource(R.string.subtitle_stylized_desc),
                         value = if (uiState.subtitleStylized) "On" else "Off",
                         isFocused = false,
-                        onClick = { viewModel.toggleSubtitleStylized() }
-                    )
-                    MobileSettingsRow(
-                        icon = Icons.Default.Subtitles,
-                        title = stringResource(R.string.filter_subtitles),
-                        subtitle = stringResource(R.string.filter_subtitles_desc),
-                        value = if (uiState.filterSubtitlesByLanguage) "On" else "Off",
-                        isFocused = false,
                         showDivider = false,
-                        onClick = { viewModel.setFilterSubtitlesByLanguage(!uiState.filterSubtitlesByLanguage) }
+                        onClick = { viewModel.toggleSubtitleStylized() }
                     )
                 }
                 MobileSettingsCategory(title = stringResource(R.string.ai_subtitles_section)) {
@@ -4242,6 +4242,7 @@ private fun MobileSettingsRow(
     subtitle: String = "",
     value: String?,
     isFocused: Boolean = false,
+    isToggle: Boolean = (value == "On" || value == "Off"),
     showDivider: Boolean = true,
     onClick: () -> Unit
 ) {
@@ -4284,7 +4285,7 @@ private fun MobileSettingsRow(
             val safeValue = value.orEmpty()
             if (safeValue.isNotEmpty()) {
                 Spacer(modifier = Modifier.width(16.dp))
-                if (safeValue == "On" || safeValue == "Off") {
+                if (isToggle && (safeValue == "On" || safeValue == "Off")) {
                     val isChecked = safeValue == "On"
                     Box(
                         modifier = Modifier
