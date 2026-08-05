@@ -101,6 +101,7 @@ class LauncherContinueWatchingRepository @Inject constructor(
     private suspend fun loadPublisherItems(): List<ContinueWatchingItem> {
         val installedAddons = streamRepository.installedAddons.first()
         val primaryItems = runCatching { traktRepository.getContinueWatching() }.getOrDefault(emptyList())
+        
         val filteredPrimary = primaryItems.filterNot { item ->
             SportsAddonCapabilities.isLiveStreamOrSportsItem(
                 mediaType = item.mediaType,
@@ -110,60 +111,67 @@ class LauncherContinueWatchingRepository @Inject constructor(
                 addons = installedAddons
             )
         }
-        if (filteredPrimary.isNotEmpty()) {
-            return filteredPrimary.take(Constants.MAX_CONTINUE_WATCHING)
+
+        val selectedItems = if (filteredPrimary.isNotEmpty()) {
+            filteredPrimary.take(Constants.MAX_CONTINUE_WATCHING)
+        } else {
+            val historyFallback = runCatching { watchHistoryRepository.getContinueWatching() }.getOrDefault(emptyList())
+            historyFallback
+                .sortedByDescending { it.updated_at ?: it.paused_at.orEmpty() }
+                .map { entry ->
+                    ContinueWatchingItem(
+                        id = entry.show_tmdb_id,
+                        title = entry.title.orEmpty(),
+                        mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE,
+                        progress = (entry.progress * 100f).toInt().coerceIn(0, 99),
+                        season = entry.season,
+                        episode = entry.episode,
+                        episodeTitle = entry.episode_title,
+                        posterPath = entry.poster_path,
+                        backdropPath = entry.backdrop_path,
+                        resumePositionSeconds = entry.position_seconds,
+                        durationSeconds = entry.duration_seconds,
+                        streamAddonId = entry.stream_addon_id
+                    )
+                }
+                .filterNot { item ->
+                    SportsAddonCapabilities.isLiveStreamOrSportsItem(
+                        mediaType = item.mediaType,
+                        id = item.id,
+                        streamAddonId = item.streamAddonId,
+                        title = item.title,
+                        addons = installedAddons
+                    )
+                }
+                .distinctBy { "${it.mediaType}:${it.id}:${it.season ?: -1}:${it.episode ?: -1}" }
+                .take(Constants.MAX_CONTINUE_WATCHING)
         }
 
-        val historyFallback = runCatching { watchHistoryRepository.getContinueWatching() }.getOrDefault(emptyList())
-        return historyFallback
-            .sortedByDescending { it.updated_at ?: it.paused_at.orEmpty() }
-            .map { entry ->
-                val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
-                
-                val localizedTitle = runCatching {
-                    if (mediaType == MediaType.TV) {
-                        mediaRepository.getTvDetails(entry.show_tmdb_id)?.title
-                    } else {
-                        mediaRepository.getMovieDetails(entry.show_tmdb_id)?.title
-                    }
-                }.getOrNull()?.takeIf { it.isNotBlank() } ?: entry.title.orEmpty()
+        return selectedItems.map { item ->
+            val localizedTitle = runCatching {
+                if (item.mediaType == MediaType.TV) {
+                    mediaRepository.getTvDetails(item.id).title
+                } else {
+                    mediaRepository.getMovieDetails(item.id).title
+                }
+            }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
 
-                val resolvedEpisodeTitle = runCatching {
-                    if (mediaType == MediaType.TV && entry.season != null && entry.episode != null) {
-                        val episodes = mediaRepository.getSeasonEpisodes(entry.show_tmdb_id, entry.season)
-                        episodes?.firstOrNull { it.episodeNumber == entry.episode }?.name
-                    } else {
-                        null
-                    }
-                }.getOrNull()?.takeIf { it.isNotBlank() } ?: entry.episode_title
-                
-                ContinueWatchingItem(
-                    id = entry.show_tmdb_id,
-                    title = localizedTitle,
-                    mediaType = mediaType,
-                    progress = (entry.progress * 100f).toInt().coerceIn(0, 99),
-                    season = entry.season,
-                    episode = entry.episode,
-                    episodeTitle = resolvedEpisodeTitle,
-                    posterPath = entry.poster_path,
-                    backdropPath = entry.backdrop_path,
-                    resumePositionSeconds = entry.position_seconds,
-                    durationSeconds = entry.duration_seconds,
-                    streamAddonId = entry.stream_addon_id
-                )
-            }
-            .filterNot { item ->
-                SportsAddonCapabilities.isLiveStreamOrSportsItem(
-                    mediaType = item.mediaType,
-                    id = item.id,
-                    streamAddonId = item.streamAddonId,
-                    title = item.title,
-                    addons = installedAddons
-                )
-            }
-            .distinctBy { "${it.mediaType}:${it.id}:${it.season ?: -1}:${it.episode ?: -1}" }
-            .take(Constants.MAX_CONTINUE_WATCHING)
+            val resolvedEpisodeTitle = runCatching {
+                if (item.mediaType == MediaType.TV && item.season != null && item.episode != null) {
+                    val episodes = mediaRepository.getSeasonEpisodes(item.id, item.season)
+                    episodes.firstOrNull { it.episodeNumber == item.episode }?.name
+                } else {
+                    null
+                }
+            }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.episodeTitle
 
+            item.copy(
+                title = localizedTitle,
+                episodeTitle = resolvedEpisodeTitle
+            )
+        }
+    }
+    
     @RequiresApi(Build.VERSION_CODES.O)
     private fun syncPublishedRows(items: List<ContinueWatchingItem>) {
         val channelId = ensurePreviewChannel() ?: return
