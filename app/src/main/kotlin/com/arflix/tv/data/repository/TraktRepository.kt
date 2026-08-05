@@ -3220,7 +3220,7 @@ class TraktRepository @Inject constructor(
         if (normalizedTitle.isBlank()) return null
         if (year == null && !allowTitleOnly) return null
 
-        return runCatching {
+        return try {
             val results = when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.searchMovies(
                     apiKey = Constants.TMDB_API_KEY,
@@ -3262,7 +3262,10 @@ class TraktRepository @Inject constructor(
                 .firstOrNull()
                 ?.id
                 ?.takeIf { it > 0 }
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            null
+        }
     }
 
     private fun isWatchlistMatch(
