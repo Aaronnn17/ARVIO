@@ -18,7 +18,6 @@ import com.arflix.tv.MainActivity
 import com.arflix.tv.R
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.SportsAddonCapabilities
-import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.navigation.Screen
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
@@ -43,8 +42,7 @@ class LauncherContinueWatchingRepository @Inject constructor(
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
     private val watchHistoryRepository: WatchHistoryRepository,
-    private val streamRepository: StreamRepository,
-    private val mediaRepository: MediaRepository
+    private val streamRepository: StreamRepository
 ) {
     companion object {
         private const val TAG = "LauncherCW"
@@ -118,33 +116,14 @@ class LauncherContinueWatchingRepository @Inject constructor(
         return historyFallback
             .sortedByDescending { it.updated_at ?: it.paused_at.orEmpty() }
             .map { entry ->
-                val mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE
-                
-                val localizedTitle = runCatching {
-                    if (mediaType == MediaType.TV) {
-                        mediaRepository.getTvDetails(entry.show_tmdb_id)?.title
-                    } else {
-                        mediaRepository.getMovieDetails(entry.show_tmdb_id)?.title
-                    }
-                }.getOrNull()?.takeIf { it.isNotBlank() } ?: entry.title.orEmpty()
-
-                val resolvedEpisodeTitle = runCatching {
-                    if (mediaType == MediaType.TV && entry.season != null && entry.episode != null) {
-                        val episodes = mediaRepository.getSeasonEpisodes(entry.show_tmdb_id, entry.season)
-                        episodes?.firstOrNull { it.episodeNumber == entry.episode }?.name
-                    } else {
-                        null
-                    }
-                }.getOrNull()?.takeIf { it.isNotBlank() } ?: entry.episode_title
-                
                 ContinueWatchingItem(
                     id = entry.show_tmdb_id,
-                    title = localizedTitle,
-                    mediaType = mediaType,
+                    title = entry.title.orEmpty(),
+                    mediaType = if (entry.media_type == "tv") MediaType.TV else MediaType.MOVIE,
                     progress = (entry.progress * 100f).toInt().coerceIn(0, 99),
                     season = entry.season,
                     episode = entry.episode,
-                    episodeTitle = resolvedEpisodeTitle,
+                    episodeTitle = entry.episode_title,
                     posterPath = entry.poster_path,
                     backdropPath = entry.backdrop_path,
                     resumePositionSeconds = entry.position_seconds,
@@ -163,6 +142,8 @@ class LauncherContinueWatchingRepository @Inject constructor(
             }
             .distinctBy { "${it.mediaType}:${it.id}:${it.season ?: -1}:${it.episode ?: -1}" }
             .take(Constants.MAX_CONTINUE_WATCHING)
+    }
+
 
     @RequiresApi(Build.VERSION_CODES.O)
     private fun syncPublishedRows(items: List<ContinueWatchingItem>) {
