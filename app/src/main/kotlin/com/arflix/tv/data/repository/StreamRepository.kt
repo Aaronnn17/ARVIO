@@ -1361,6 +1361,10 @@ class StreamRepository @Inject constructor(
 
     private fun idMatchesAnyPrefix(id: String, prefixes: List<String>?): Boolean {
         if (prefixes.isNullOrEmpty()) return true
+        val isStandardId = id.startsWith("tt", ignoreCase = true) ||
+            id.startsWith("tmdb:", ignoreCase = true) ||
+            id.startsWith("imdb:", ignoreCase = true)
+        if (isStandardId) return true
         return prefixes.any { prefix ->
             val normalizedPrefix = prefix.trim()
             normalizedPrefix.isBlank() ||

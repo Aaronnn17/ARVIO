@@ -126,4 +126,17 @@ class StreamEpisodeRequestPlannerTest {
 
         assertEquals(false, shouldFallback)
     }
+
+    @Test
+    fun `buildEpisodeIdCandidates produces valid candidates for tmdb and imdb ids`() {
+        val candidates = buildEpisodeIdCandidates(
+            seriesId = "tmdb:82928:1:1",
+            animeQuery = null,
+            tmdbEpisodeId = null,
+            preferNativeAnimeIds = false
+        )
+
+        assertEquals(listOf("tmdb:82928:1:1"), candidates.map { it.contentId })
+        assertEquals(listOf("imdb"), candidates.map { it.label })
+    }
 }
