@@ -165,7 +165,11 @@ data class IptvPlaylistEntry(
     val m3uUrl: String,
     val epgUrl: String = "",
     val enabled: Boolean = true,
-    val epgUrls: List<String> = emptyList()
+    val epgUrls: List<String> = emptyList(),
+    // NEW FIELDS: Selective Import
+    val importLiveTv: Boolean = true,
+    val importVod: Boolean = true,
+    val importSeries: Boolean = true
 )
 
 data class IptvLoadProgress(
@@ -805,7 +809,11 @@ class IptvRepository @Inject constructor(
             m3uUrl = m3uUrl,
             epgUrl = epgUrls.firstOrNull().orEmpty(),
             enabled = runCatching { playlist.enabled }.getOrDefault(true),
-            epgUrls = epgUrls
+            epgUrls = epgUrls,
+            // NEW: Save preferences when reading from disk
+            importLiveTv = runCatching { playlist.importLiveTv }.getOrDefault(true),
+            importVod = runCatching { playlist.importVod }.getOrDefault(true),
+            importSeries = runCatching { playlist.importSeries }.getOrDefault(true)
         )
     }
 
