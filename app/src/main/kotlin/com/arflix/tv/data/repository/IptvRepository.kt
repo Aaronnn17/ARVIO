@@ -3097,32 +3097,38 @@ class IptvRepository @Inject constructor(
     }
 
     private suspend fun fetchChannelsForPlaylistWithRetries(
-        playlist: IptvPlaylistEntry,
-        onProgress: (IptvLoadProgress) -> Unit
-    ): List<IptvChannel> {
-        resolveXtreamCredentials(playlist)?.let { creds ->
-            onProgress(IptvLoadProgress(context.getString(R.string.iptv_xtream_detected), 6))
-            val apiResult = runCatching {
-                withTimeoutOrNull(60_000L) {
-                    fetchXtreamLiveChannels(creds, onProgress)
-                } ?: throw IllegalStateException(context.getString(R.string.iptv_xtream_timeout))
-            }
-            val providerOrdered = apiResult.getOrDefault(emptyList())
-            if (providerOrdered.isNotEmpty()) {
-                onProgress(
-                    IptvLoadProgress(
-                        context.getString(R.string.iptv_loaded_api, providerOrdered.size),
-                        95,
-                    )
-                )
-                return providerOrdered
-            }
-            apiResult.exceptionOrNull()?.let { error ->
-                System.err.println("IptvRepository: Xtream catalog unavailable; falling back to M3U: ${error.message}")
-            }
+    playlist: IptvPlaylistEntry,
+    onProgress: (IptvLoadProgress) -> Unit
+): List<IptvChannel> {
+    resolveXtreamCredentials(playlist)?.let { creds ->
+        // NEW: If it's Xtream and the user has disabled “channels,” we don't request live streams.
+        // The return@let (not return@fetchChannelsForPlaylistWithRetries) is key: this way,
+        // if the m3uUrl later also contains standalone content, we don't block it.
+        if (!playlist.importLiveTv) {
+            return emptyList()
         }
-        return fetchAndParseM3uWithRetries(playlist.m3uUrl, onProgress)
+        onProgress(IptvLoadProgress(context.getString(R.string.iptv_xtream_detected), 6))
+        val apiResult = runCatching {
+            withTimeoutOrNull(60_000L) {
+                fetchXtreamLiveChannels(creds, onProgress)
+            } ?: throw IllegalStateException(context.getString(R.string.iptv_xtream_timeout))
+        }
+        val providerOrdered = apiResult.getOrDefault(emptyList())
+        if (providerOrdered.isNotEmpty()) {
+            onProgress(
+                IptvLoadProgress(
+                    context.getString(R.string.iptv_loaded_api, providerOrdered.size),
+                    95,
+                )
+            )
+            return providerOrdered
+        }
+        apiResult.exceptionOrNull()?.let { error ->
+            System.err.println("IptvRepository: Xtream catalog unavailable; falling back to M3U: ${error.message}")
+        }
     }
+    return fetchAndParseM3uWithRetries(playlist.m3uUrl, onProgress)
+}
 
     private suspend fun fetchAndParseM3uWithRetries(
         url: String,
@@ -4084,6 +4090,16 @@ class IptvRepository @Inject constructor(
         }
     }
 
+    private fun isVodImportEnabled(config: IptvConfig, creds: XtreamCredentials): Boolean {
+        val matchingPlaylist = config.playlists.firstOrNull { resolveXtreamCredentials(it) == creds }
+        return matchingPlaylist?.importVod ?: true
+    }
+
+    private fun isSeriesImportEnabled(config: IptvConfig, creds: XtreamCredentials): Boolean {
+        val matchingPlaylist = config.playlists.firstOrNull { resolveXtreamCredentials(it) == creds }
+        return matchingPlaylist?.importSeries ?: true
+    }
+
     suspend fun findMovieVodSource(
         title: String,
         year: Int?,
@@ -4110,6 +4126,8 @@ class IptvRepository @Inject constructor(
             val creds = resolveXtreamCredentials(config.epgUrl)
                 ?: resolveXtreamCredentials(config.m3uUrl)
                 ?: return@withContext emptyList()
+
+            if (!isVodImportEnabled(config, creds)) return@withContext emptyList()
 
             val credsFingerprint = xtreamDiskCacheHash(creds)
             val cacheKey = iptvMovieSourceCacheKey(
@@ -4228,6 +4246,9 @@ class IptvRepository @Inject constructor(
             val creds = resolveXtreamCredentials(config.epgUrl)
                 ?: resolveXtreamCredentials(config.m3uUrl)
                 ?: return@withContext emptyList()
+                
+            if (!isSeriesImportEnabled(config, creds)) return@withContext emptyList()
+            
             val normalizedTitle = normalizeLookupText(title)
             val normalizedImdb = normalizeImdbId(imdbId)
             val normalizedTmdb = normalizeTmdbId(tmdbId)
@@ -4456,13 +4477,16 @@ class IptvRepository @Inject constructor(
     }
 
     suspend fun warmXtreamVodCachesIfPossible() {
-        withContext(Dispatchers.IO) {
-            val config = observeConfig().first()
-            val creds = resolveXtreamCredentials(config.epgUrl)
-                ?: resolveXtreamCredentials(config.m3uUrl)
-                ?: return@withContext
-            runCatching {
+    withContext(Dispatchers.IO) {
+        val config = observeConfig().first()
+        val creds = resolveXtreamCredentials(config.epgUrl)
+            ?: resolveXtreamCredentials(config.m3uUrl)
+            ?: return@withContext
+        runCatching {
+            if (isVodImportEnabled(config, creds)) {
                 loadXtreamVodStreams(creds)
+            }
+            if (isSeriesImportEnabled(config, creds)) {
                 loadXtreamSeriesList(creds)
                 val activeProfileId = runCatching { profileManager.getProfileIdSync() }.getOrDefault("default")
                 val providerKey = "$activeProfileId|${xtreamCacheKey(creds)}"
@@ -4470,6 +4494,7 @@ class IptvRepository @Inject constructor(
             }
         }
     }
+}
 
     suspend fun prefetchEpisodeVodResolution(
         title: String,
