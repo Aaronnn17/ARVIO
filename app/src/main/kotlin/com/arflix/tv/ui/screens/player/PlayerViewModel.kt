@@ -2454,9 +2454,12 @@ class PlayerViewModel @Inject constructor(
             .take(maxAttempts)
 
         for (candidate in candidates) {
+            // A null resolution means the source is unplayable (e.g. an unresolvable
+            // HubCloud login/nav page). Skip it rather than probing the raw URL, which
+            // would look "reachable" (HTTP 200 HTML) and then fail ExoPlayer sniffing.
             val resolved = runCatching {
                 streamRepository.resolveStreamForPlayback(candidate)
-            }.getOrNull() ?: candidate
+            }.getOrNull() ?: continue
 
             val candidateUrl = resolved.url?.trim().orEmpty()
             if (candidateUrl.isBlank()) continue
