@@ -401,6 +401,9 @@ fun SettingsScreen(
     var iptvEditUrl by remember { mutableStateOf("") }
     var iptvEditEpg by remember { mutableStateOf("") }
     var iptvEditEnabled by remember { mutableStateOf(true) }
+    var iptvEditImportLiveTv by remember { mutableStateOf(true) }
+    var iptvEditImportVod by remember { mutableStateOf(true) }
+    var iptvEditImportSeries by remember { mutableStateOf(true) }
     var iptvEditXtreamUser by remember { mutableStateOf("") }
     var iptvEditXtreamPass by remember { mutableStateOf("") }
     var showCatalogInput by remember { mutableStateOf(false) }
@@ -631,6 +634,9 @@ fun SettingsScreen(
             iptvEditEnabled = true
             iptvEditXtreamUser = ""
             iptvEditXtreamPass = ""
+            iptvEditImportLiveTv = true
+            iptvEditImportVod = true
+            iptvEditImportSeries = true
         } else {
             val playlist = uiState.iptvPlaylists.getOrNull(editingIptvIndex)
             iptvEditName = playlist?.name ?: "List ${editingIptvIndex + 2}".takeIf { editingIptvIndex >= 0 } ?: "List ${uiState.iptvPlaylists.size + 1}"
@@ -654,6 +660,9 @@ fun SettingsScreen(
             }
             iptvEditEpg = playlist?.settingsEpgInput().orEmpty()
             iptvEditEnabled = playlist?.enabled ?: true
+            iptvEditImportLiveTv = playlist?.importLiveTv ?: true
+            iptvEditImportVod = playlist?.importVod ?: true
+            iptvEditImportSeries = playlist?.importSeries ?: true
         }
     }
 
@@ -1825,6 +1834,23 @@ fun SettingsScreen(
                         onValueChange = { iptvEditEpg = it }
                     )
                 ),
+                toggleFields = listOf(
+                    ToggleField(
+                        label = "Live TV channels",
+                        value = iptvEditImportLiveTv,
+                        onValueChange = { iptvEditImportLiveTv = it }
+                    ),
+                    ToggleField(
+                        label = "Movies",
+                        value = iptvEditImportVod,
+                        onValueChange = { iptvEditImportVod = it }
+                    ),
+                    ToggleField(
+                        label = "Series",
+                        value = iptvEditImportSeries,
+                        onValueChange = { iptvEditImportSeries = it }
+                    )
+                ),
                 onConfirm = {
                     // Build the m3uUrl: if Xtream credentials are provided, combine as "host user pass"
                     val hasXtream = iptvEditXtreamUser.isNotBlank() && iptvEditXtreamPass.isNotBlank()
@@ -1847,7 +1873,10 @@ fun SettingsScreen(
                         m3uUrl = finalM3uUrl,
                         epgUrl = finalEpgUrls.firstOrNull().orEmpty(),
                         enabled = iptvEditEnabled,
-                        epgUrls = finalEpgUrls
+                        epgUrls = finalEpgUrls,
+                        importLiveTv = iptvEditImportLiveTv,
+                        importVod = iptvEditImportVod,
+                        importSeries = iptvEditImportSeries
                     )
                     if (editingIptvIndex in updated.indices) updated[editingIptvIndex] = entry else updated.add(entry)
                     viewModel.saveIptvPlaylists(updated)
@@ -8440,6 +8469,12 @@ data class InputField(
     val onValueChange: (String) -> Unit
 )
 
+data class ToggleField(
+    val label: String,
+    val value: Boolean,
+    val onValueChange: (Boolean) -> Unit
+)
+
 private fun IptvPlaylistEntry.settingsEpgInput(): String {
     return (epgUrls.orEmpty().ifEmpty { listOf(epgUrl) })
         .map { it.trim() }
@@ -8734,12 +8769,13 @@ private fun InputModal(
     title: String,
     supportingText: String? = null,
     fields: List<InputField>,
+    toggleFields: List<ToggleField> = emptyList(),
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
     var focusedIndex by remember(title, fields.size) { mutableIntStateOf(0) }
     var lastFocusedFieldIndex by remember(title, fields.size) { mutableStateOf<Int?>(null) }
-    val totalItems = fields.size + 3 // inputs + paste + cancel + confirm
+    val totalItems = fields.size + toggleFields.size + 3 // inputs + toggles + paste + cancel + confirm
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
     val screenHeightDp = LocalConfiguration.current.screenHeightDp.dp
     val maxDialogHeight = (screenHeightDp * 0.88f).coerceAtMost(if (isTouchDevice) 620.dp else 660.dp)
@@ -8880,11 +8916,11 @@ private fun InputModal(
                                     true
                                 }
                                 Key.DirectionLeft -> {
-                                    if (focusedIndex == fields.size + 2) focusedIndex = fields.size + 1
+                                    if (focusedIndex == fields.size + toggleFields.size + 2) focusedIndex = fields.size + toggleFields.size + 1
                                     true
                                 }
                                 Key.DirectionRight -> {
-                                    if (focusedIndex == fields.size + 1) focusedIndex = fields.size + 2
+                                    if (focusedIndex == fields.size + toggleFields.size + 1) focusedIndex = fields.size + toggleFields.size + 2
                                     true
                                 }
                                 Key.Enter, Key.DirectionCenter -> {
@@ -8893,16 +8929,21 @@ private fun InputModal(
                                             showKeyboardFor(focusedIndex)
                                             true
                                         }
-                                        focusedIndex == fields.size -> {
+                                        focusedIndex in fields.size until (fields.size + toggleFields.size) -> {
+                                            val toggle = toggleFields[focusedIndex - fields.size]
+                                            toggle.onValueChange(!toggle.value)
+                                            true
+                                        }
+                                        focusedIndex == fields.size + toggleFields.size -> {
                                             pasteClipboardIntoTarget()
                                             true
                                         }
-                                        focusedIndex == fields.size + 1 -> {
+                                        focusedIndex == fields.size + toggleFields.size + 1 -> {
                                             hideKeyboardAll()
                                             onDismiss()
                                             true
                                         }
-                                        focusedIndex == fields.size + 2 -> {
+                                        focusedIndex == fields.size + toggleFields.size + 2 -> {
                                             hideKeyboardAll()
                                             onConfirm()
                                             true
@@ -9120,9 +9161,53 @@ private fun InputModal(
                         }
                     }
                 }
+                if (toggleFields.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    toggleFields.forEachIndexed { toggleIndex, toggle ->
+                        val absoluteIndex = fields.size + toggleIndex
+                        val isFocused = focusedIndex == absoluteIndex
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color.White.copy(alpha = if (isFocused) 0.12f else 0.05f), RoundedCornerShape(10.dp))
+                                .border(
+                                    width = if (isFocused) 2.dp else 1.dp,
+                                    color = if (isFocused) resolveAccentColor(fallback = Pink) else Color.White.copy(alpha = 0.2f),
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                                .clickable { toggle.onValueChange(!toggle.value) }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = toggle.label,
+                                style = ArflixTypography.caption,
+                                color = if (isFocused) Pink else TextSecondary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .width(44.dp)
+                                    .height(24.dp)
+                                    .background(
+                                        color = if (toggle.value) SuccessGreen else Color.White.copy(alpha = 0.2f),
+                                        shape = RoundedCornerShape(13.dp)
+                                    )
+                                    .padding(3.dp),
+                                contentAlignment = if (toggle.value) Alignment.CenterEnd else Alignment.CenterStart
+                            ) {
+                                Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                            }
+                        }
+                        if (toggleIndex < toggleFields.size - 1) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(12.dp))
 
-                val isPasteFocused = focusedIndex == fields.size
+                val isPasteFocused = focusedIndex == fields.size + toggleFields.size
                 val fieldFallbackLabel = stringResource(R.string.settings_field_fallback)
                 val pasteTargetLabel = fields.getOrNull(pasteTargetIndex())
                     ?.label
@@ -9172,7 +9257,7 @@ private fun InputModal(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    val isCancelFocused = focusedIndex == fields.size + 1
+                    val isCancelFocused = focusedIndex == fields.size + toggleFields.size + 1
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -9200,7 +9285,7 @@ private fun InputModal(
                         )
                     }
 
-                    val isConfirmFocused = focusedIndex == fields.size + 2
+                    val isConfirmFocused = focusedIndex == fields.size + toggleFields.size + 2
                     Box(
                         modifier = Modifier
                             .weight(1f)
