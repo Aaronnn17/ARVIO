@@ -191,6 +191,73 @@ internal fun usesSlowAggregatorTimeout(addon: Addon): Boolean {
         haystack.contains("hdhub")
 }
 
+// --- HubCloud/HubDrive URL classification (pure, unit-tested) --------------------
+// Kept top-level + internal so the host-gating and link-selection logic can be
+// exercised without spinning up the repository or the network.
+
+// Registrable-name labels of the HubCloud/HubDrive family. Matched exactly against
+// a host's second-level label (see [registrableLabel]) so a look-alike such as
+// `hubcloud.evil.com` — which merely *contains* "hubcloud" — is not treated as one
+// of ours. TLDs vary (.cx/.ist/.one/.dev), so we key on the label, not the domain.
+internal val HUB_DOMAIN_LABELS = setOf("hubcloud", "hubdrive", "hubcdn", "gamerxyt")
+
+/** Second-level label of a host: hubcloud.cx -> "hubcloud", pixel.hubcloud.cx -> "hubcloud". */
+internal fun registrableLabel(host: String): String {
+    val labels = host.split('.').filter { it.isNotEmpty() }
+    return when {
+        labels.size >= 2 -> labels[labels.size - 2]
+        else -> labels.lastOrNull().orEmpty()
+    }
+}
+
+/** True when the URL is a resolvable HubCloud/HubDrive *page* (not a direct file endpoint). */
+internal fun isHubCloudPageUrl(url: String): Boolean {
+    val parsed = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+    val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
+    val label = registrableLabel(host)
+    if (label != "hubcloud" && label != "hubdrive") return false
+    val path = parsed.path?.lowercase(Locale.US).orEmpty()
+    // Direct file endpoints on the same domain (e.g. pixel.hubcloud.cx/?id=...) have
+    // no such path and are left as-is.
+    return path.contains("/drive/") || path.contains("/video/") ||
+        path.contains("/file/") || path.contains("/s/")
+}
+
+/**
+ * True for anti-leech landing pages that carry the real file in a ?link=/?url=
+ * parameter. Gated so a legitimate proxy/auth URL with such a parameter is never
+ * rewritten: host is matched by exact registrable label, `/dl.php` is a separate
+ * path signal for generic wrapper hosts.
+ */
+internal fun isEmbeddedLinkLandingHost(url: String): Boolean {
+    val parsed = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+    val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
+    val path = parsed.path?.lowercase(Locale.US).orEmpty()
+    return HUB_DOMAIN_LABELS.contains(registrableLabel(host)) || path.contains("/dl.php")
+}
+
+/**
+ * Best direct link from a HubCloud links page, best-first: a signed R2 object
+ * (range + no gate), then FSL file servers, then the PixelServer 10Gbps redirect.
+ */
+internal fun pickHubCloudDirectLink(hrefs: List<String>): String? {
+    fun firstMatching(predicate: (String) -> Boolean): String? = hrefs.firstOrNull(predicate)
+    return firstMatching { it.contains("r2.cloudflarestorage.com", true) || it.contains("r2.dev", true) ||
+            it.contains("response-content-disposition=attachment", true) }
+        ?: firstMatching { it.contains("fsl.", true) && (it.contains("token=", true) ||
+            it.contains(".mkv", true) || it.contains(".mp4", true)) }
+        ?: firstMatching { it.contains("pixel.", true) }
+        ?: firstMatching { it.contains("workers.dev", true) }
+}
+
+/** URL with the query string stripped — safe for logging (drops signed tokens). */
+internal fun redactUrlForLog(url: String?): String {
+    val raw = url?.trim().orEmpty()
+    if (raw.isBlank()) return ""
+    val cut = raw.indexOf('?')
+    return if (cut >= 0) raw.substring(0, cut) + "?…" else raw
+}
+
 /**
  * Repository for stream resolution from Stremio addons
  * Enhanced with addon management
@@ -3141,33 +3208,6 @@ class StreamRepository @Inject constructor(
             GATED_HOST_DEFAULT_REFERERS.keys.any { host.contains(it) }
     }
 
-    // Registrable-name labels of the HubCloud/HubDrive family. Matched exactly
-    // against a host's second-level label (see [registrableLabel]) so that a
-    // look-alike such as `hubcloud.evil.com` — which merely *contains* "hubcloud"
-    // — is not treated as one of ours. TLDs vary (.cx/.ist/.one/.dev), so we key
-    // on the label rather than the full domain.
-    private val HUB_DOMAIN_LABELS = setOf("hubcloud", "hubdrive", "hubcdn", "gamerxyt")
-
-    /** Second-level label of a host: hubcloud.cx -> "hubcloud", pixel.hubcloud.cx -> "hubcloud". */
-    private fun registrableLabel(host: String): String {
-        val labels = host.split('.').filter { it.isNotEmpty() }
-        return when {
-            labels.size >= 2 -> labels[labels.size - 2]
-            else -> labels.lastOrNull().orEmpty()
-        }
-    }
-
-    // Anti-leech landing pages that carry the real file in a ?link=/?url=
-    // parameter. Gated so we never rewrite a legitimate proxy/auth URL that
-    // happens to have such a parameter. Host is matched by exact registrable
-    // label; `/dl.php` is a separate path signal for generic wrapper hosts.
-    private fun isEmbeddedLinkLandingHost(url: String): Boolean {
-        val parsed = runCatching { java.net.URI(url) }.getOrNull() ?: return false
-        val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
-        val path = parsed.path?.lowercase(Locale.US).orEmpty()
-        return HUB_DOMAIN_LABELS.contains(registrableLabel(host)) || path.contains("/dl.php")
-    }
-
     // HubCloud-style "10Gbps" links redirect through a Cloudflare Worker and land on
     // an anti-leech HTML page (e.g. gamerxyt.com/dl.php?link=<real-video-url>) whose
     // own URL already carries the real direct link as a query parameter. A browser
@@ -3242,18 +3282,6 @@ class StreamRepository @Inject constructor(
     // exposes direct download anchors (Cloudflare R2 signed URL, FSL, PixelServer).
     // Returns a direct media URL, or null when the page can't be resolved (e.g. a
     // login/nav page) so the caller skips the source and fails over to the next.
-    private fun isHubCloudPageUrl(url: String): Boolean {
-        val parsed = runCatching { java.net.URI(url) } .getOrNull() ?: return false
-        val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
-        val label = registrableLabel(host)
-        if (label != "hubcloud" && label != "hubdrive") return false
-        val path = parsed.path?.lowercase(Locale.US).orEmpty()
-        // Only treat *page* URLs as resolvable. Direct file endpoints on the same
-        // domain (e.g. pixel.hubcloud.cx/?id=...) have no such path and are left as-is.
-        return path.contains("/drive/") || path.contains("/video/") ||
-            path.contains("/file/") || path.contains("/s/")
-    }
-
     private fun httpGetStringOrNull(url: String, referer: String?): String? {
         return runCatching {
             val builder = Request.Builder().url(url).get()
@@ -3275,31 +3303,11 @@ class StreamRepository @Inject constructor(
         }.getOrNull()
     }
 
-    /** URL with the query string stripped — safe for logging (drops signed tokens). */
-    private fun redactUrlForLog(url: String?): String {
-        val raw = url?.trim().orEmpty()
-        if (raw.isBlank()) return ""
-        val cut = raw.indexOf('?')
-        return if (cut >= 0) raw.substring(0, cut) + "?…" else raw
-    }
-
     private fun htmlUnescape(value: String): String =
         value.replace("&amp;", "&").replace("&#38;", "&").replace("&quot;", "\"").replace("&#39;", "'")
 
     private val hubHrefRegex = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
     private val hubVarUrlRegex = Regex("""var\s+url\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
-
-    // Ordered best-first: a signed R2 object plays most reliably (range + no gate),
-    // then FSL file servers, then the PixelServer 10Gbps redirect endpoint.
-    private fun pickHubCloudDirectLink(hrefs: List<String>): String? {
-        fun firstMatching(predicate: (String) -> Boolean): String? = hrefs.firstOrNull(predicate)
-        return firstMatching { it.contains("r2.cloudflarestorage.com", true) || it.contains("r2.dev", true) ||
-                it.contains("response-content-disposition=attachment", true) }
-            ?: firstMatching { it.contains("fsl.", true) && (it.contains("token=", true) ||
-                it.contains(".mkv", true) || it.contains(".mp4", true)) }
-            ?: firstMatching { it.contains("pixel.", true) }
-            ?: firstMatching { it.contains("workers.dev", true) }
-    }
 
     private suspend fun resolveHubCloudChain(pageUrl: String): String? = withContext(Dispatchers.IO) {
         runCatching {
