@@ -2040,6 +2040,7 @@ fun LiveTvScreen(
             } else {
                 val currentExo = exoPlayer.currentPosition
                 val maxExo = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 60_000L
+                val currentNow = currentNowNext?.now
                 val currentElapsed = if (currentNow != null && currentNow.startUtcMillis > 0L) {
                     (System.currentTimeMillis() - currentNow.startUtcMillis).coerceAtLeast(0L)
                 } else {
@@ -2121,7 +2122,9 @@ fun LiveTvScreen(
                     ?: (catchupPlaybackOffsetMs % 60_000L)
                 Pair(isHls, candidateOffsetMs)
             } else {
-                Pair(isHls, seekTargetMs)
+                val candidateOffsetMs = sourceChannel?.catchupInSegmentSeekOffset(catchupPlaybackOffsetMs)
+                    ?: seekTargetMs
+                Pair(isHls, candidateOffsetMs)
             }
         } else {
             Pair(isHls, seekTargetMs)
@@ -2690,7 +2693,9 @@ fun LiveTvScreen(
                     .then(
                         if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
                             Modifier.onPreviewKeyEvent { ev ->
-                                hudPokeSignal++
+                                if (ev.type == KeyEventType.KeyDown) {
+                                    hudPokeSignal++
+                                }
                                 false
                             }
                         } else {

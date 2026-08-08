@@ -262,13 +262,19 @@ fun FullscreenHud(
             }
 
             // Freeze the timer while buffering so it doesn't continue advancing
-            val elapsedShowMs = if (isBuffering) {
-                if (frozenElapsedMs == null) {
-                    frozenElapsedMs = currentElapsedShowMs
+            LaunchedEffect(isBuffering) {
+                if (isBuffering) {
+                    if (frozenElapsedMs == null) {
+                        frozenElapsedMs = currentElapsedShowMs
+                    }
+                } else {
+                    frozenElapsedMs = null
                 }
-                frozenElapsedMs!!
+            }
+
+            val elapsedShowMs = if (isBuffering) {
+                frozenElapsedMs ?: currentElapsedShowMs
             } else {
-                frozenElapsedMs = null
                 currentElapsedShowMs
             }
 
@@ -488,10 +494,12 @@ fun FullscreenHud(
                         )
 
                         // LIVE button
-                        HudActionButton(
-                            label = stringResource(R.string.live_badge_live),
-                            onClick = { onGoLiveClick?.invoke() },
-                        )
+                        if (isCatchupMode) {
+                            HudActionButton(
+                                label = stringResource(R.string.live_badge_live),
+                                onClick = { onGoLiveClick?.invoke() },
+                            )
+                        }
 
                         // Guide button at far right
                         if (onGuideClick != null) {
@@ -560,7 +568,7 @@ private fun HudSeekBar(
                 .height(if (isFocused) 16.dp else 6.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
-            val widthPx = maxWidth
+            val trackWidth = maxWidth
             val clampedProgress = progress.coerceIn(0f, 1f)
 
             // Progress track background
@@ -583,10 +591,11 @@ private fun HudSeekBar(
 
             // Circular white Scrubber Thumb Ball when focused
             if (isFocused) {
-                val thumbOffset = widthPx * clampedProgress - 8.dp
+                val maxThumbStart = (trackWidth - 16.dp).coerceAtLeast(0.dp)
+                val thumbOffset = (trackWidth * clampedProgress - 8.dp).coerceIn(0.dp, maxThumbStart)
                 Box(
                     modifier = Modifier
-                        .padding(start = thumbOffset.coerceAtLeast(0.dp))
+                        .padding(start = thumbOffset)
                         .size(16.dp)
                         .clip(CircleShape)
                         .background(Color.White),
