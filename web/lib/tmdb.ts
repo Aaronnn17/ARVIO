@@ -95,6 +95,7 @@ export function genreNamesFromIds(ids?: number[]): string[] {
 }
 
 export function isAnime(item: TmdbItem | Partial<MediaItem>): boolean {
+  if ("isAnime" in item && typeof item.isAnime === "boolean") return item.isAnime;
   if ("mediaType" in item && item.mediaType === "anime") return true;
   const genreIds = ("genre_ids" in item ? item.genre_ids : "genreIds" in item ? item.genreIds : []) ?? [];
   const genres = ("genres" in item ? item.genres : []) ?? [];
@@ -106,11 +107,10 @@ export function isAnime(item: TmdbItem | Partial<MediaItem>): boolean {
 }
 
 export function mapTmdbItem(item: TmdbItem, fallbackType: MediaType): MediaItem {
-  const mediaType: MediaType = isAnime(item)
-    ? "anime"
-    : item.media_type === "tv" || fallbackType === "tv"
-      ? "tv"
-      : "movie";
+  const mediaType: MediaType = item.media_type === "tv" || fallbackType === "tv"
+    ? "tv"
+    : "movie";
+  const animeFlag = isAnime(item);
   const date = mediaType === "movie" ? item.release_date : item.first_air_date;
   const runtime = item.runtime ?? item.episode_run_time?.[0];
   return {
@@ -122,6 +122,7 @@ export function mapTmdbItem(item: TmdbItem, fallbackType: MediaType): MediaItem 
     rating: item.vote_average ? item.vote_average.toFixed(1) : "",
     duration: runtime ? `${runtime}m` : "",
     mediaType,
+    isAnime: animeFlag,
     image: tmdbImageUrl(config.imageBase, item.poster_path),
     backdrop: tmdbImageUrl(config.backdropBase, item.backdrop_path) || null,
     genreIds: item.genre_ids ?? []
@@ -140,14 +141,15 @@ export async function tmdb<T>(path: string, params: Record<string, string | numb
   const url = new URL(`/api/tmdb/${path.replace(/^\/+/, "")}`, window.location.origin);
   // Never surface adult titles anywhere in the app (discover/search/trending).
   url.searchParams.set("include_adult", "false");
-  if (customKey?.trim()) {
-    url.searchParams.set("api_key", customKey.trim());
-  }
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   });
   if (Date.now() < tmdbCooldownUntil) {
     throw new Error("Rate limited — TMDB requests are pausing briefly.");
+  }
+  const headers: Record<string, string> = {};
+  if (customKey?.trim()) {
+    headers["X-TMDB-API-Key"] = customKey.trim();
   }
   // Timeout + one retry. Callers swallow failures and render partial UI (a
   // details page without seasons/cast, "No episodes found"), so a single
@@ -157,6 +159,7 @@ export async function tmdb<T>(path: string, params: Record<string, string | numb
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       return await jsonRequest<T>(url.toString(), {
+        headers: Object.keys(headers).length > 0 ? headers : undefined,
         signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(12_000) : undefined
       });
     } catch (error) {
@@ -804,7 +807,7 @@ const SEASON_EPISODE_CACHE_KEY = "arvio.web.seasonEpisodes.v1";
 const SEASON_EPISODE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
 export async function getSeasonEpisodes(tvId: number, seasonNumber: number, language = "en-US", priorityConfig?: ProviderPriorityConfig): Promise<EpisodeInfo[]> {
-  if (priorityConfig?.customTvdbApiKey) {
+  if (priorityConfig) {
     const dispatched = await MetadataDispatcher.getEpisodes(tvId, "tv", seasonNumber, priorityConfig).catch(() => []);
     if (dispatched.length > 0) return dispatched;
   }
@@ -1106,13 +1109,19 @@ export async function getTitlesForSearch(
 
 export async function getDetails(item: MediaItem, priorityConfig?: ProviderPriorityConfig) {
   try {
-    let resolvedMeta: MediaItem | null = null;
-    if (priorityConfig || item.mediaType === "anime") {
-      resolvedMeta = await MetadataDispatcher.getDetails(item.id, item.mediaType, priorityConfig).catch(() => null);
-    }
-
     const details = await fetchDetailsPayload(item, priorityConfig?.customTmdbApiKey);
     const mapped = mapTmdbItem({ ...details, media_type: item.mediaType }, item.mediaType);
+    const tvdbId = details.external_ids?.tvdb_id ?? item.tvdbId ?? null;
+    const imdbId = details.external_ids?.imdb_id ?? item.imdbId ?? null;
+
+    let resolvedMeta: MediaItem | null = null;
+    if (priorityConfig || item.isAnime || isAnime(item)) {
+      const lookupId: string | number = (item.isAnime || isAnime(item))
+        ? (item.title || details.title || details.name || item.id)
+        : (tvdbId ?? item.id);
+      resolvedMeta = await MetadataDispatcher.getDetails(lookupId, item.mediaType, priorityConfig).catch(() => null);
+    }
+
     const trailer = details.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer" && video.official)
       ?? details.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer")
       ?? details.videos?.results?.find((video) => video.site === "YouTube");
@@ -1123,6 +1132,9 @@ export async function getDetails(item: MediaItem, priorityConfig?: ProviderPrior
     return {
       ...item,
       ...mapped,
+      id: item.id, // Preserve canonical TMDB ID
+      anilistId: resolvedMeta?.anilistId ?? item.anilistId ?? null,
+      tvdbId: tvdbId ?? resolvedMeta?.tvdbId ?? item.tvdbId ?? null,
       ...(resolvedMeta ? {
         title: resolvedMeta.title || mapped.title,
         overview: resolvedMeta.overview || mapped.overview,
@@ -1132,7 +1144,7 @@ export async function getDetails(item: MediaItem, priorityConfig?: ProviderPrior
         backdrop: resolvedMeta.backdrop || mapped.backdrop
       } : {}),
       rating: resolvedMeta?.rating || mapped.rating || item.rating,
-      imdbId: details.external_ids?.imdb_id ?? item.imdbId ?? null,
+      imdbId,
       genres: (details.genres ?? []).map((genre) => genre.name).filter(Boolean),
       status: resolvedMeta?.status || (details.status ?? null),
       budget: details.budget ?? null,

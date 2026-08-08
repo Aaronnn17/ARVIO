@@ -187,7 +187,7 @@ export class MdbListClient {
   private watchedBody(item: MdbMediaRef) {
     if (item.mediaType === "tv" || item.mediaType === "anime") {
       const ids = { tmdb: item.tmdbId };
-      if (item.season && item.episode) {
+      if (item.season != null && item.episode != null) {
         return { shows: [{ ids, seasons: [{ number: item.season, episodes: [{ number: item.episode }] }] }] };
       }
       return { shows: [{ ids }] };
@@ -200,7 +200,7 @@ export class MdbListClient {
     const progress = Math.round(item.progress);
     let body: unknown;
     if (item.mediaType === "tv") {
-      if (!item.season || !item.episode) return; // MDBList needs season+episode to scrobble an episode
+      if (item.season == null || item.episode == null) return; // MDBList needs season+episode to scrobble an episode
       body = {
         progress,
         show: { ids: { tmdb: item.tmdbId }, season: { number: item.season, episode: { number: item.episode } } }

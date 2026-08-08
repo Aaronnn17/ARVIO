@@ -16,6 +16,7 @@ import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktP
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, loadCatalog, searchMedia } from "./tmdb";
 import { convertAniListToTmdbEpisode, fetchAniZipMapping } from "./metadata/anizip";
+import { aniListResolver } from "./metadata/anilist";
 import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
 import { mdblistClient } from "./mdblist";
@@ -67,6 +68,34 @@ function localProfilesMatchAccount(): boolean {
   const email = currentAccountEmail();
   if (!email) return true; // signed out: local profiles are fine
   return owner === email;
+}
+
+function getPriorityConfig(settings: AppSettings): ProviderPriorityConfig {
+  return {
+    movieProviders: (settings.metadataMovieProviders as MetadataProviderId[]) ?? ["tmdb"],
+    tvProviders: (settings.metadataTvProviders as MetadataProviderId[]) ?? ["tvdb", "tmdb"],
+    animeProviders: (settings.metadataAnimeProviders as MetadataProviderId[]) ?? ["anilist", "tvdb", "tmdb"],
+    customTmdbApiKey: settings.customTmdbApiKey,
+    customTvdbApiKey: settings.customTvdbApiKey,
+    customTvdbUserPin: settings.customTvdbUserPin
+  };
+}
+
+async function resolveEpisodeTarget(item: MediaItem, season: number, episode: number): Promise<{ season: number; episode: number }> {
+  if (item.isAnime || item.mediaType === "anime" || item.badge === "ANIME") {
+    let anilistId = item.anilistId;
+    if (!anilistId && item.title) {
+      const resolvedAni = await aniListResolver.getDetails(item.title, "anime").catch(() => null);
+      anilistId = resolvedAni?.anilistId ?? resolvedAni?.id ?? null;
+    }
+    if (anilistId) {
+      const mapping = await fetchAniZipMapping(anilistId).catch(() => null);
+      if (mapping) {
+        return convertAniListToTmdbEpisode(mapping, episode);
+      }
+    }
+  }
+  return { season, episode };
 }
 
 // Instant-paint caches for Continue Watching / Watchlist. The TTL is deliberately
@@ -1244,14 +1273,7 @@ export function AppProvider({
     }
     setBusy("Opening details");
     setStreams([]);
-    const priorityConfig: ProviderPriorityConfig = {
-      movieProviders: settingsRef.current.metadataMovieProviders as MetadataProviderId[],
-      tvProviders: settingsRef.current.metadataTvProviders as MetadataProviderId[],
-      animeProviders: settingsRef.current.metadataAnimeProviders as MetadataProviderId[],
-      customTmdbApiKey: settingsRef.current.customTmdbApiKey,
-      customTvdbApiKey: settingsRef.current.customTvdbApiKey,
-      customTvdbUserPin: settingsRef.current.customTvdbUserPin
-    };
+    const priorityConfig = getPriorityConfig(settingsRef.current);
     const detailed = await getDetails(item, priorityConfig).catch(() => item);
     const withResumeEpisode = {
       ...detailed,
@@ -1272,14 +1294,15 @@ export function AppProvider({
     } else if (withResumeEpisode.seasonNumber && withResumeEpisode.episodeNumber) {
       setSelectedEpisode({ season: withResumeEpisode.seasonNumber, episode: withResumeEpisode.episodeNumber });
       setBusy("Finding sources");
-      appendVodSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
-      appendHomeServerSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
-      appendTelegramSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
+      const target = await resolveEpisodeTarget(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
+      appendVodSources(withResumeEpisode, target.season, target.episode);
+      appendHomeServerSources(withResumeEpisode, target.season, target.episode);
+      appendTelegramSources(withResumeEpisode, target.season, target.episode);
       const found = await getStreamsProgressive(
         addonsRef.current,
         withResumeEpisode,
-        withResumeEpisode.seasonNumber,
-        withResumeEpisode.episodeNumber,
+        target.season,
+        target.episode,
         mergeStreams
       ).catch(() => []);
       mergeStreams(found);
@@ -1293,21 +1316,12 @@ export function AppProvider({
     setStreams([]);
     setBusy("Finding sources");
 
-    let targetSeason = season;
-    let targetEpisode = episode;
-    if (item.mediaType === "anime" || item.badge === "ANIME") {
-      const mapping = await fetchAniZipMapping(item.id).catch(() => null);
-      if (mapping) {
-        const converted = convertAniListToTmdbEpisode(mapping, episode);
-        targetSeason = converted.season;
-        targetEpisode = converted.episode;
-      }
-    }
+    const target = await resolveEpisodeTarget(item, season, episode);
 
-    appendVodSources(item, targetSeason, targetEpisode);
-    appendHomeServerSources(item, targetSeason, targetEpisode);
-    appendTelegramSources(item, targetSeason, targetEpisode);
-    const found = await getStreamsProgressive(addonsRef.current, item, targetSeason, targetEpisode, mergeStreams).catch(() => []);
+    appendVodSources(item, target.season, target.episode);
+    appendHomeServerSources(item, target.season, target.episode);
+    appendTelegramSources(item, target.season, target.episode);
+    const found = await getStreamsProgressive(addonsRef.current, item, target.season, target.episode, mergeStreams).catch(() => []);
     mergeStreams(found);
     setBusy("");
     return found;
@@ -1318,7 +1332,8 @@ export function AppProvider({
     if (!selected || selected.mediaType !== "tv" || !selectedEpisode) return false;
     const nextEpisode = selectedEpisode.episode + 1;
     setSelectedEpisode({ season: selectedEpisode.season, episode: nextEpisode });
-    const found = await getStreams(addonsRef.current, selected, selectedEpisode.season, nextEpisode).catch(() => []);
+    const target = await resolveEpisodeTarget(selected, selectedEpisode.season, nextEpisode);
+    const found = await getStreams(addonsRef.current, selected, target.season, target.episode).catch(() => []);
     setStreams(found);
     const best = found.find((stream) => stream.url);
     setActiveStream(best ?? null);
@@ -1455,7 +1470,8 @@ export function AppProvider({
   const playTrailer = useCallback(async (item: MediaItem) => {
     let url = item.trailerUrl ?? null;
     if (!url) {
-      const detailed = await getDetails(item).catch(() => item);
+      const priorityConfig = getPriorityConfig(settingsRef.current);
+      const detailed = await getDetails(item, priorityConfig).catch(() => item);
       url = detailed.trailerUrl ?? null;
       setSelected((current) => current ?? detailed);
     }

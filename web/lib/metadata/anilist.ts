@@ -1,4 +1,4 @@
-import type { MediaItem } from "../types";
+import type { MediaItem, MediaType } from "../types";
 import type { MetadataResolver } from "./types";
 
 const ANILIST_GRAPHQL_ENDPOINT = "https://graphql.anilist.co";
@@ -69,16 +69,18 @@ function mapAniListToMediaItem(media: any): MediaItem {
   const title = media.title?.english || media.title?.romaji || media.title?.native || "Untitled Anime";
   const poster = media.coverImage?.extraLarge || media.coverImage?.large || media.coverImage?.medium || null;
   const rating = media.averageScore ? (media.averageScore / 10).toFixed(1) : undefined;
-  
+
   return {
     id: media.id,
+    anilistId: media.id,
     title,
     subtitle: media.title?.romaji !== title ? media.title?.romaji : undefined,
     overview: media.description ? media.description.replace(/<[^>]*>?/gm, "") : "",
     year: media.seasonYear ? String(media.seasonYear) : undefined,
     rating,
     duration: media.duration ? `${media.duration}m` : undefined,
-    mediaType: "anime",
+    mediaType: "tv",
+    isAnime: true,
     image: poster ?? undefined,
     backdrop: media.bannerImage ?? poster ?? null,
     badge: media.format ?? "ANIME",
@@ -91,9 +93,9 @@ function mapAniListToMediaItem(media: any): MediaItem {
 export const aniListResolver: MetadataResolver = {
   id: "anilist",
   name: "AniList",
-  supportedTypes: ["anime", "tv"],
+  supportedTypes: ["anime"],
 
-  async getDetails(id: string | number): Promise<MediaItem | null> {
+  async getDetails(id: string | number, _mediaType?: MediaType): Promise<MediaItem | null> {
     try {
       const isNumeric = !isNaN(Number(id));
       const variables = isNumeric ? { id: Number(id) } : { search: String(id) };
@@ -114,7 +116,7 @@ export const aniListResolver: MetadataResolver = {
     }
   },
 
-  async search(query: string): Promise<MediaItem[]> {
+  async search(query: string, _mediaType?: MediaType): Promise<MediaItem[]> {
     try {
       const res = await fetch(ANILIST_GRAPHQL_ENDPOINT, {
         method: "POST",

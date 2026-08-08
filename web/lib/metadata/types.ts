@@ -7,9 +7,9 @@ export interface MetadataResolver {
   name: string;
   supportedTypes: MediaType[];
 
-  getDetails(id: string | number, options?: ProviderPriorityConfig): Promise<MediaItem | null>;
+  getDetails(id: string | number, mediaType: MediaType, options?: ProviderPriorityConfig): Promise<MediaItem | null>;
   getEpisodes?(id: string | number, seasonNumber?: number, options?: ProviderPriorityConfig): Promise<EpisodeInfo[]>;
-  search(query: string, options?: ProviderPriorityConfig): Promise<MediaItem[]>;
+  search(query: string, mediaType: MediaType, options?: ProviderPriorityConfig): Promise<MediaItem[]>;
 }
 
 

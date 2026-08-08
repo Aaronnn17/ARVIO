@@ -1,4 +1,4 @@
-import type { EpisodeInfo, MediaItem } from "../types";
+import type { EpisodeInfo, MediaItem, MediaType } from "../types";
 import type { MetadataResolver, ProviderPriorityConfig } from "./types";
 
 
@@ -48,7 +48,7 @@ export const tvdbResolver: MetadataResolver = {
   name: "TheTVDB",
   supportedTypes: ["tv", "anime"],
 
-  async getDetails(id: string | number, options?: ProviderPriorityConfig): Promise<MediaItem | null> {
+  async getDetails(id: string | number, _mediaType?: MediaType, options?: ProviderPriorityConfig): Promise<MediaItem | null> {
     const token = await getTvdbToken(options?.customTvdbApiKey, options?.customTvdbUserPin);
     if (!token) return null;
 
@@ -84,15 +84,37 @@ export const tvdbResolver: MetadataResolver = {
     if (!token) return [];
 
     try {
-      const res = await fetch(`${TVDB_API_BASE}/series/${id}/episodes/default?page=0`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const allEpisodes: any[] = [];
+      let page = 0;
+      let totalPages = 1;
 
-      if (!res.ok) return [];
-      const json = await res.json();
-      const episodes = json.data?.episodes ?? [];
+      while (page < totalPages && page < 50) {
+        const res = await fetch(`${TVDB_API_BASE}/series/${id}/episodes/default?page=${page}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
 
-      return episodes
+        if (!res.ok) break;
+        const json = await res.json();
+        const pageEpisodes = Array.isArray(json.data?.episodes)
+          ? json.data.episodes
+          : Array.isArray(json.data)
+            ? json.data
+            : [];
+        if (pageEpisodes.length > 0) {
+          allEpisodes.push(...pageEpisodes);
+        } else {
+          break;
+        }
+
+        if (json.links?.next) {
+          totalPages = typeof json.links.total_pages === "number" ? json.links.total_pages : page + 2;
+          page += 1;
+        } else {
+          break;
+        }
+      }
+
+      return allEpisodes
         .filter((ep: any) => ep.seasonNumber === seasonNumber)
         .map((ep: any) => ({
           id: ep.id,
@@ -109,7 +131,7 @@ export const tvdbResolver: MetadataResolver = {
     }
   },
 
-  async search(query: string, options?: ProviderPriorityConfig): Promise<MediaItem[]> {
+  async search(query: string, _mediaType?: MediaType, options?: ProviderPriorityConfig): Promise<MediaItem[]> {
     const token = await getTvdbToken(options?.customTvdbApiKey, options?.customTvdbUserPin);
     if (!token) return [];
 

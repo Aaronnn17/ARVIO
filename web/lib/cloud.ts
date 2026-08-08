@@ -660,6 +660,9 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
   const hiddenCatalogIds = scopedValue<string[]>(root, "hiddenPreinstalledByProfile", profileId);
   const profileAddons = scopedValue<InstalledAddon[]>(root, "addonsByProfile", profileId);
   const legacySettings = objectRecord<unknown>(root.settings) as Partial<AppSettings>;
+  delete legacySettings.customTmdbApiKey;
+  delete legacySettings.customTvdbApiKey;
+  delete legacySettings.customTvdbUserPin;
   const legacyCatalogs = arrayValue(root.catalogs) as AppSettings["catalogs"];
   const legacyHiddenCatalogIds = arrayValue<string>(root.hiddenPreinstalledCatalogs);
   // Canonical, timestamp-managed GLOBAL settings live at the top level of the payload (written by
@@ -749,7 +752,8 @@ export async function saveCloudSettings(
     // exclusively through saveCloudAddons (merge-protected). A stale session's
     // partial in-memory addon list must never leak into the shared payload.
     void addons;
-    root.settings = settings;
+    const { customTmdbApiKey: _k1, customTvdbApiKey: _k2, customTvdbUserPin: _k3, ...sanitizedSettings } = settings;
+    root.settings = sanitizedSettings;
 
     // ── Genuine global settings that Android merges by per-field timestamp. Only write + bump the
     //    timestamp when the web actually changed the field vs its baseline; otherwise leave the

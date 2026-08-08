@@ -28,7 +28,7 @@ export async function fetchAniZipMapping(anilistId: number): Promise<AniZipMappi
       for (const [epNum, epInfo] of Object.entries<any>(data.episodes)) {
         const parsedSeason = epInfo.seasonNumber ?? epInfo.tvdbSeason ?? epInfo.season;
         const parsedEpisode = epInfo.episodeNumber ?? epInfo.tvdbEpisode ?? (typeof epInfo.episode === "number" ? epInfo.episode : !isNaN(Number(epInfo.episode)) ? Number(epInfo.episode) : undefined);
-        
+
         episodeMap[epNum] = {
           season: typeof parsedSeason === "number" ? parsedSeason : undefined,
           episode: typeof parsedEpisode === "number" ? parsedEpisode : undefined
@@ -61,7 +61,7 @@ export function convertAniListToTmdbEpisode(
 ): { season: number; episode: number } {
   // 1. Direct episode map lookup if available
   const mapped = mapping.episodeMap?.[String(aniListEpisodeNumber)];
-  if (mapped?.season && mapped?.episode) {
+  if (typeof mapped?.season === "number" && typeof mapped?.episode === "number") {
     return { season: mapped.season, episode: mapped.episode };
   }
 

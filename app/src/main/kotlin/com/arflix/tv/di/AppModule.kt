@@ -223,4 +223,3 @@ object AppModule {
             .build()
     }
 }
-

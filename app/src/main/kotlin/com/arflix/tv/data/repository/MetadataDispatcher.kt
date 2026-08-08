@@ -22,7 +22,7 @@ class MetadataDispatcher @Inject constructor(
     suspend fun getAnimeDetails(query: String): AniListMedia? = withContext(Dispatchers.IO) {
         try {
             val graphqlQuery = """
-                query (${'$'}search: String) {
+                query (${'$'}search: String!) {
                   Media(search: ${'$'}search, type: ANIME) {
                     id
                     idMal
@@ -75,5 +75,3 @@ class MetadataDispatcher @Inject constructor(
         }
     }
 }
-
-

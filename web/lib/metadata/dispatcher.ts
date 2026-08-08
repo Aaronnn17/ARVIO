@@ -34,9 +34,9 @@ export class MetadataDispatcher {
 
     for (const providerId of priority) {
       const resolver = this.resolvers[providerId];
-      if (!resolver) continue;
+      if (!resolver || !resolver.supportedTypes.includes(type)) continue;
 
-      const result = await resolver.getDetails(id, config);
+      const result = await resolver.getDetails(id, type, config);
       if (result) {
         return result;
       }
@@ -54,7 +54,7 @@ export class MetadataDispatcher {
 
     for (const providerId of priority) {
       const resolver = this.resolvers[providerId];
-      if (!resolver || !resolver.getEpisodes) continue;
+      if (!resolver || !resolver.getEpisodes || !resolver.supportedTypes.includes(type)) continue;
 
       const episodes = await resolver.getEpisodes(id, seasonNumber, config);
       if (episodes && episodes.length > 0) {
@@ -73,9 +73,9 @@ export class MetadataDispatcher {
 
     for (const providerId of priority) {
       const resolver = this.resolvers[providerId];
-      if (!resolver) continue;
+      if (!resolver || !resolver.supportedTypes.includes(type)) continue;
 
-      const results = await resolver.search(query, config);
+      const results = await resolver.search(query, type, config);
       if (results && results.length > 0) {
         return results;
       }

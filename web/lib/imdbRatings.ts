@@ -83,12 +83,17 @@ const AGREGARR_ENDPOINT = "https://api.agregarr.org/api/ratings";
 export async function getImdbRatings(imdbIds: string[]): Promise<Record<string, string>> {
   const result: Record<string, string> = {};
   const missing: string[] = [];
+  const seen = new Set<string>();
   imdbIds.forEach((raw) => {
     const id = (raw ?? "").trim().toLowerCase();
-    if (!/^tt\d+$/.test(id)) return;
+    if (!/^tt\d+$/.test(id) || seen.has(id)) return;
+    seen.add(id);
     const hit = cached(id);
-    if (hit) result[id] = hit;
-    else missing.push(id);
+    if (hit !== null) {
+      if (hit) result[id] = hit;
+    } else {
+      missing.push(id);
+    }
   });
   if (!missing.length) return result;
 
