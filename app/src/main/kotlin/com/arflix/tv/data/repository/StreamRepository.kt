@@ -3141,18 +3141,31 @@ class StreamRepository @Inject constructor(
             GATED_HOST_DEFAULT_REFERERS.keys.any { host.contains(it) }
     }
 
-    // Hosts known to be anti-leech landing pages that carry the real file in a
-    // ?link=/?url= parameter. Unwrapping is gated to these so we never rewrite a
-    // legitimate proxy/auth URL that happens to have such a parameter.
-    private val EMBEDDED_LINK_LANDING_MARKERS = setOf(
-        "gamerxyt", "hubcloud", "hubdrive", "hubcdn", "/dl.php"
-    )
+    // Registrable-name labels of the HubCloud/HubDrive family. Matched exactly
+    // against a host's second-level label (see [registrableLabel]) so that a
+    // look-alike such as `hubcloud.evil.com` — which merely *contains* "hubcloud"
+    // — is not treated as one of ours. TLDs vary (.cx/.ist/.one/.dev), so we key
+    // on the label rather than the full domain.
+    private val HUB_DOMAIN_LABELS = setOf("hubcloud", "hubdrive", "hubcdn", "gamerxyt")
 
+    /** Second-level label of a host: hubcloud.cx -> "hubcloud", pixel.hubcloud.cx -> "hubcloud". */
+    private fun registrableLabel(host: String): String {
+        val labels = host.split('.').filter { it.isNotEmpty() }
+        return when {
+            labels.size >= 2 -> labels[labels.size - 2]
+            else -> labels.lastOrNull().orEmpty()
+        }
+    }
+
+    // Anti-leech landing pages that carry the real file in a ?link=/?url=
+    // parameter. Gated so we never rewrite a legitimate proxy/auth URL that
+    // happens to have such a parameter. Host is matched by exact registrable
+    // label; `/dl.php` is a separate path signal for generic wrapper hosts.
     private fun isEmbeddedLinkLandingHost(url: String): Boolean {
         val parsed = runCatching { java.net.URI(url) }.getOrNull() ?: return false
         val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
         val path = parsed.path?.lowercase(Locale.US).orEmpty()
-        return EMBEDDED_LINK_LANDING_MARKERS.any { host.contains(it) || path.contains(it) }
+        return HUB_DOMAIN_LABELS.contains(registrableLabel(host)) || path.contains("/dl.php")
     }
 
     // HubCloud-style "10Gbps" links redirect through a Cloudflare Worker and land on
@@ -3199,7 +3212,11 @@ class StreamRepository @Inject constructor(
                     .apply { requestHeaders.forEach { (key, value) -> addHeader(key, value) } }
                     .build()
 
-                OkHttpProvider.playbackClient.newCall(request).execute().use { response ->
+                val call = OkHttpProvider.playbackClient.newCall(request)
+                // withTimeout can't interrupt a blocking execute(); a per-call
+                // timeout is what actually caps a stalled redirect host.
+                call.timeout().timeout(STREAM_REDIRECT_RESOLUTION_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                call.execute().use { response ->
                     response.request.url.toString().takeIf { finalUrl ->
                         finalUrl.isNotBlank() && !finalUrl.equals(url, ignoreCase = true)
                     } ?: url
@@ -3228,7 +3245,8 @@ class StreamRepository @Inject constructor(
     private fun isHubCloudPageUrl(url: String): Boolean {
         val parsed = runCatching { java.net.URI(url) } .getOrNull() ?: return false
         val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
-        if (!host.contains("hubcloud") && !host.contains("hubdrive")) return false
+        val label = registrableLabel(host)
+        if (label != "hubcloud" && label != "hubdrive") return false
         val path = parsed.path?.lowercase(Locale.US).orEmpty()
         // Only treat *page* URLs as resolvable. Direct file endpoints on the same
         // domain (e.g. pixel.hubcloud.cx/?id=...) have no such path and are left as-is.
