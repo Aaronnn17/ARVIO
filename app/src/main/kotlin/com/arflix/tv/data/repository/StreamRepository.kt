@@ -2972,6 +2972,10 @@ class StreamRepository @Inject constructor(
     // that whole chain, so redirect resolution silently returned the raw
     // (unplayable) URL. 8s covers the multi-hop chain without stalling startup.
     private val STREAM_REDIRECT_RESOLUTION_TIMEOUT_MS = 8_000L
+    // Per-request cap for the HubCloud/HubDrive resolver's blocking HTTP calls.
+    // Kept small so the (up to three) sequential hops stay bounded even though the
+    // enclosing withTimeout can't interrupt a blocking OkHttp execute().
+    private val HUBCLOUD_HTTP_CALL_TIMEOUT_MS = 4_000L
     private val PLAYBACK_HOST_BAD_TTL_MS = 5 * 60_000L
 
     // Some scraper plugins (e.g. 4KHDHub, DVDPlay via HubCloud) return a final playback URL
@@ -3137,6 +3141,20 @@ class StreamRepository @Inject constructor(
             GATED_HOST_DEFAULT_REFERERS.keys.any { host.contains(it) }
     }
 
+    // Hosts known to be anti-leech landing pages that carry the real file in a
+    // ?link=/?url= parameter. Unwrapping is gated to these so we never rewrite a
+    // legitimate proxy/auth URL that happens to have such a parameter.
+    private val EMBEDDED_LINK_LANDING_MARKERS = setOf(
+        "gamerxyt", "hubcloud", "hubdrive", "hubcdn", "/dl.php"
+    )
+
+    private fun isEmbeddedLinkLandingHost(url: String): Boolean {
+        val parsed = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+        val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
+        val path = parsed.path?.lowercase(Locale.US).orEmpty()
+        return EMBEDDED_LINK_LANDING_MARKERS.any { host.contains(it) || path.contains(it) }
+    }
+
     // HubCloud-style "10Gbps" links redirect through a Cloudflare Worker and land on
     // an anti-leech HTML page (e.g. gamerxyt.com/dl.php?link=<real-video-url>) whose
     // own URL already carries the real direct link as a query parameter. A browser
@@ -3227,11 +3245,24 @@ class StreamRepository @Inject constructor(
                 builder.header("Referer", referer)
                 deriveOriginFromReferer(referer)?.let { builder.header("Origin", it) }
             }
-            OkHttpProvider.client.newCall(builder.build()).execute().use { response ->
+            val call = OkHttpProvider.client.newCall(builder.build())
+            // A blocking execute() inside withTimeout can't be cancelled by the
+            // coroutine, and the resolver chains up to three of them. A per-call
+            // timeout is the only thing that actually caps a slow HubCloud host.
+            call.timeout().timeout(HUBCLOUD_HTTP_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            call.execute().use { response ->
                 if (!response.isSuccessful) return null
                 response.body?.string()
             }
         }.getOrNull()
+    }
+
+    /** URL with the query string stripped — safe for logging (drops signed tokens). */
+    private fun redactUrlForLog(url: String?): String {
+        val raw = url?.trim().orEmpty()
+        if (raw.isBlank()) return ""
+        val cut = raw.indexOf('?')
+        return if (cut >= 0) raw.substring(0, cut) + "?…" else raw
     }
 
     private fun htmlUnescape(value: String): String =
@@ -3502,10 +3533,10 @@ class StreamRepository @Inject constructor(
             if (isHubCloudPageUrl(resolvedUrl)) {
                 val direct = resolveHubCloudChain(resolvedUrl)
                 if (direct.isNullOrBlank()) {
-                    Log.w("HubFix", "hubcloud unresolved url=$resolvedUrl -> skip source")
+                    Log.w("HubFix", "hubcloud unresolved url=${redactUrlForLog(resolvedUrl)} -> skip source")
                     return null
                 }
-                Log.w("HubFix", "hubcloud resolved url=$resolvedUrl -> $direct")
+                Log.w("HubFix", "hubcloud resolved url=${redactUrlForLog(resolvedUrl)} -> ${redactUrlForLog(direct)}")
                 val directHeaders = mergeRequestHeaders(
                     base = explicitHeaders,
                     extra = if (explicitHeaders.keys.none { it.equals("Referer", ignoreCase = true) }) {
@@ -3549,14 +3580,21 @@ class StreamRepository @Inject constructor(
                 else -> stream.behaviorHints
             }
             val willResolveRedirect = shouldResolveRedirectBeforePlayback(resolvedUrl, stream)
-            Log.w("HubFix", "resolveStreamInternal url=$resolvedUrl willRedirect=$willResolveRedirect gatedHeaders=${defaultHeadersForGatedHost(resolvedUrl)}")
+            Log.w("HubFix", "resolveStreamInternal url=${redactUrlForLog(resolvedUrl)} willRedirect=$willResolveRedirect gatedHeaders=${defaultHeadersForGatedHost(resolvedUrl)}")
             val redirectResolvedUrl = if (willResolveRedirect) {
                 resolveRedirectedPlaybackUrl(resolvedUrl, mergedHeaders)
             } else {
                 resolvedUrl
             }
-            val playbackUrl = unwrapEmbeddedLinkParam(redirectResolvedUrl)
-            Log.w("HubFix", "resolveStreamInternal redirectResolved=$redirectResolvedUrl finalPlaybackUrl=$playbackUrl")
+            // Only unwrap ?link=/?url= for the known anti-leech landing hosts that embed
+            // the real file there. Doing it for every stream can strip legitimate proxy
+            // URLs and break addon auth, so gate it by host.
+            val playbackUrl = if (isEmbeddedLinkLandingHost(redirectResolvedUrl)) {
+                unwrapEmbeddedLinkParam(redirectResolvedUrl)
+            } else {
+                redirectResolvedUrl
+            }
+            Log.w("HubFix", "resolveStreamInternal redirectResolved=${redactUrlForLog(redirectResolvedUrl)} finalPlaybackUrl=${redactUrlForLog(playbackUrl)}")
             return stream.copy(
                 url = playbackUrl,
                 behaviorHints = mergedBehaviorHints
