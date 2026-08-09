@@ -179,6 +179,7 @@ data class SettingsUiState(
     val packError: String? = null,
     // Addons
     val addons: List<Addon> = emptyList(),
+    val isRefreshingAddons: Boolean = false,
     val torrServerBaseUrl: String = "",
     val homeServerConnection: HomeServerConnection? = null,
     val homeServerConnections: List<HomeServerConnection> = emptyList(),
@@ -1685,6 +1686,49 @@ class SettingsViewModel @Inject constructor(
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     toastMessage = error.message?.takeIf { it.isNotBlank() } ?: context.getString(R.string.addon_failed_add),
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun refreshAddons() {
+        if (_uiState.value.isRefreshingAddons) return
+        _uiState.value = _uiState.value.copy(isRefreshingAddons = true)
+        viewModelScope.launch {
+            try {
+                if (authRepository.hasValidCloudSyncSession()) {
+                    val restoreResult = restoreCloudStateToLocalInternal(
+                        silent = true,
+                        pushPendingLocalFirst = false
+                    )
+                    if (restoreResult == CloudRestoreResult.FAILED) {
+                        _uiState.value = _uiState.value.copy(
+                            isRefreshingAddons = false,
+                            toastMessage = "Cloud restore failed; addons were not changed",
+                            toastType = ToastType.ERROR
+                        )
+                        return@launch
+                    }
+                }
+                val report = streamRepository.refreshInstalledAddons()
+                val updatedAddons = streamRepository.installedAddons.first()
+                runCatching {
+                    catalogRepository.syncAddonCatalogs(updatedAddons)
+                }
+                val toast = "${report.refreshed} addons refreshed, ${report.failed} failed"
+                _uiState.value = _uiState.value.copy(
+                    addons = updatedAddons,
+                    isRefreshingAddons = false,
+                    toastMessage = toast,
+                    toastType = if (report.failed == 0) ToastType.SUCCESS else ToastType.INFO
+                )
+                syncLocalStateToCloud(silent = true)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _uiState.value = _uiState.value.copy(
+                    isRefreshingAddons = false,
+                    toastMessage = "Failed to refresh addons",
                     toastType = ToastType.ERROR
                 )
             }
