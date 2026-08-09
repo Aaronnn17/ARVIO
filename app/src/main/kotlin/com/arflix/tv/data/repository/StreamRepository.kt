@@ -808,7 +808,10 @@ class StreamRepository @Inject constructor(
         var failedCount = 0
 
         val updatedAddons = currentAddons.map { oldAddon ->
-            val addonUrl = oldAddon.url?.takeIf { it.isNotBlank() }
+            val isRefreshable = oldAddon.isInstalled &&
+                oldAddon.runtimeKind == RuntimeKind.STREMIO &&
+                defaultAddons.none { it.id == oldAddon.id }
+            val addonUrl = oldAddon.url?.takeIf { isRefreshable && it.isNotBlank() }
             if (addonUrl == null) {
                 oldAddon
             } else {
@@ -818,7 +821,9 @@ class StreamRepository @Inject constructor(
                     hydrated.copy(
                         id = oldAddon.id,
                         isEnabled = oldAddon.isEnabled,
-                        isInstalled = oldAddon.isInstalled
+                        isInstalled = oldAddon.isInstalled,
+                        runtimeKind = oldAddon.runtimeKind,
+                        installSource = oldAddon.installSource
                     )
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e

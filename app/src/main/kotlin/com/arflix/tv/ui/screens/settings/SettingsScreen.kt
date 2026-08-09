@@ -92,14 +92,6 @@ import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontStyle
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.compose.foundation.layout.PaddingValues
@@ -118,7 +110,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -7459,64 +7450,25 @@ private fun StremioAddonsSettings(
     val isMobile = LocalDeviceType.current.isTouchDevice()
 
     if (isMobile) {
-        var pullOffsetY by remember { mutableFloatStateOf(0f) }
-        val density = LocalDensity.current
-        val refreshThreshold = remember(density) { with(density) { 90.dp.toPx() } }
-
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .pointerInput(isRefreshingAddons) {
-                    detectVerticalDragGestures(
-                        onVerticalDrag = { change, dragAmount ->
-                            if (dragAmount > 0 || pullOffsetY > 0f) {
-                                change.consume()
-                                pullOffsetY = (pullOffsetY + dragAmount * 0.5f).coerceAtLeast(0f)
-                            }
-                        },
-                        onDragEnd = {
-                            if (pullOffsetY >= refreshThreshold && !isRefreshingAddons) {
-                                onRefreshAddons()
-                            }
-                            pullOffsetY = 0f
-                        },
-                        onDragCancel = {
-                            pullOffsetY = 0f
-                        }
-                    )
-                },
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
-            AnimatedVisibility(
-                visible = isRefreshingAddons || pullOffsetY > 0f,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 14.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = Pink,
-                        strokeWidth = 2.5.dp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = stringResource(R.string.settings_pulling_latest_addon),
-                        style = ArflixTypography.caption.copy(
-                            fontSize = 12.sp,
-                            fontStyle = FontStyle.Italic
-                        ),
-                        color = TextSecondary
-                    )
-                }
-            }
-
             MobileSettingsCategory(title = stringResource(R.string.settings_section_add_addon)) {
+                MobileSettingsRow(
+                    icon = Icons.Default.Refresh,
+                    title = stringResource(R.string.refresh_addons),
+                    subtitle = stringResource(R.string.settings_refresh_addons_desc),
+                    value = if (isRefreshingAddons) {
+                        stringResource(R.string.settings_pulling_latest_addon)
+                    } else {
+                        ""
+                    },
+                    isFocused = false,
+                    onClick = {
+                        if (!isRefreshingAddons) onRefreshAddons()
+                    }
+                )
                 MobileSettingsRow(
                     icon = Icons.Default.Add,
                     title = stringResource(R.string.add_addon),
@@ -7622,7 +7574,7 @@ private fun StremioAddonsSettings(
                 modifier = Modifier
                     .settingsFocusSlot(addons.size)
                     .fillMaxWidth()
-                    .clickable(onClick = onRefreshAddons)
+                    .clickable(enabled = !isRefreshingAddons, onClick = onRefreshAddons)
                     .background(if (focusedIndex == addons.size) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
                     .border(width = if (focusedIndex == addons.size) 2.dp else 0.dp, color = if (focusedIndex == addons.size) Pink else Color.Transparent, shape = RoundedCornerShape(12.dp))
                     .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -7631,7 +7583,17 @@ private fun StremioAddonsSettings(
             ) {
                 Icon(Icons.Default.Refresh, contentDescription = null, tint = Pink, modifier = Modifier.size(20.dp))
                 Spacer(modifier = Modifier.width(12.dp))
-                Text(stringResource(R.string.refresh_addons), style = ArflixTypography.button, color = Pink)
+                Text(
+                    text = stringResource(
+                        if (isRefreshingAddons) {
+                            R.string.settings_pulling_latest_addon
+                        } else {
+                            R.string.refresh_addons
+                        }
+                    ),
+                    style = ArflixTypography.button,
+                    color = Pink
+                )
             }
             Spacer(modifier = Modifier.height(12.dp))
             Row(
