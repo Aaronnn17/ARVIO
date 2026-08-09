@@ -136,9 +136,11 @@ data class SettingsUiState(
     val isTraktAuthStarting: Boolean = false,
     val isTraktPolling: Boolean = false,
     val traktExpiration: String? = null,
+    val traktUsername: String? = null,
     // MDBList (alternative remote sync provider)
     val isMdbListConnected: Boolean = false,
     val mdbListConnecting: Boolean = false,
+    val mdbListUsername: String? = null,
     // Trakt Sync
     val isSyncing: Boolean = false,
     val syncProgress: SyncProgress = SyncProgress(),
@@ -315,6 +317,7 @@ class SettingsViewModel @Inject constructor(
 
     private var traktPollingJob: Job? = null
     private var traktStartupJob: Job? = null
+    private var loadSettingsJob: Job? = null
     private var plexHomeServerPollingJob: Job? = null
     private var plexHomeServerUrl: String? = null
     private var plexHomeServerDisplayName: String? = null
@@ -434,7 +437,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     private fun loadSettings() {
-        viewModelScope.launch {
+        loadSettingsJob?.cancel()
+        loadSettingsJob = viewModelScope.launch {
+            val loadProfileId = profileManager.getProfileIdSync()
             // Load local preferences first
             val prefs = context.settingsDataStore.data.first()
             var defaultSub = prefs[defaultSubtitleKey()] ?: "Off"
@@ -525,6 +530,29 @@ class SettingsViewModel @Inject constructor(
             val isTrakt = traktRepository.hasTrakt()
             val isMdbList = mdbListRepository.isConnected()
 
+            // Fetch usernames for connected integrations (best-effort, non-blocking)
+            val traktUsername = if (isTrakt) {
+                try {
+                    traktRepository.fetchUsername()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            } else null
+
+            val mdbListUsername = if (isMdbList) {
+                try {
+                    mdbListRepository.fetchUsername()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    null
+                }
+            } else null
+
+            if (profileManager.getProfileIdSync() != loadProfileId) return@launch
+
             // Get Trakt expiration if authenticated
             var traktExpiration: String? = null
             if (isTrakt) {
@@ -572,7 +600,9 @@ class SettingsViewModel @Inject constructor(
                 accountEmail = accountEmail,
                 isTraktAuthenticated = isTrakt,
                 traktExpiration = traktExpiration,
+                traktUsername = traktUsername,
                 isMdbListConnected = isMdbList,
+                mdbListUsername = mdbListUsername,
                 catalogs = existingCatalogs,
                 contentLanguage = contentLang,
                 deviceModeOverride = deviceModeOverride,
@@ -3158,16 +3188,14 @@ class SettingsViewModel @Inject constructor(
     // ========== Trakt Authentication ==========
 
     fun startTraktAuth() {
-        val current = _uiState.value
-        if (current.isTraktAuthStarting || current.isTraktPolling) return
-
-        traktStartupJob?.cancel()
-        traktStartupJob = viewModelScope.launch {
+        viewModelScope.launch {
+            cancelTraktAuth()
             traktPollingJob?.cancel()
             _uiState.value = _uiState.value.copy(
                 traktCode = null,
                 isTraktAuthStarting = true,
                 isTraktPolling = false,
+                traktUsername = null,
                 toastMessage = null
             )
 
@@ -3180,6 +3208,7 @@ class SettingsViewModel @Inject constructor(
                     traktCode = deviceCode,
                     isTraktAuthStarting = false,
                     isTraktAuthenticated = false,
+                    traktUsername = null,
                     isTraktPolling = true
                 )
 
@@ -3197,6 +3226,7 @@ class SettingsViewModel @Inject constructor(
                     traktCode = null,
                     isTraktAuthStarting = false,
                     isTraktPolling = false,
+                    traktUsername = null,
                     toastMessage = message,
                     toastType = ToastType.ERROR
                 )
@@ -3210,6 +3240,7 @@ class SettingsViewModel @Inject constructor(
             traktRepository.logout()
             _uiState.value = _uiState.value.copy(
                 isTraktAuthenticated = false,
+                traktUsername = null,
                 traktExpiration = null
             )
             startTraktAuth()
@@ -3236,9 +3267,19 @@ class SettingsViewModel @Inject constructor(
                     // Mutual exclusion: selecting Trakt disconnects MDBList for this profile.
                     syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.TRAKT)
                     syncProviderStore.setMdbListApiKey(null)
+                    // Fetch username best-effort (don't fail the auth flow if it errors)
+                    val username = try {
+                        traktRepository.fetchUsername()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
                     _uiState.value = _uiState.value.copy(
                         isTraktAuthenticated = true,
+                        traktUsername = username,
                         isMdbListConnected = false,
+                        mdbListUsername = null,
                         traktCode = null,
                         isTraktAuthStarting = false,
                         isTraktPolling = false,
@@ -3295,6 +3336,7 @@ class SettingsViewModel @Inject constructor(
                 traktCode = null,
                 isTraktAuthStarting = false,
                 isTraktPolling = false,
+                traktUsername = null,
                 toastMessage = lastFailure ?: "Trakt activation code expired",
                 toastType = ToastType.ERROR
             )
@@ -3307,7 +3349,8 @@ class SettingsViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             traktCode = null,
             isTraktAuthStarting = false,
-            isTraktPolling = false
+            isTraktPolling = false,
+            traktUsername = null
         )
     }
 
@@ -3318,6 +3361,7 @@ class SettingsViewModel @Inject constructor(
             syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.NONE)
             _uiState.value = _uiState.value.copy(
                 isTraktAuthenticated = false,
+                traktUsername = null,
                 traktExpiration = null,
                 toastMessage = "Trakt disconnected",
                 toastType = ToastType.SUCCESS
@@ -3352,10 +3396,20 @@ class SettingsViewModel @Inject constructor(
             runCatching { traktRepository.logout() }
             syncProviderStore.setMdbListApiKey(trimmed)
             syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
+            // Fetch username from the /user endpoint we already called during validateKey
+            val username = try {
+                mdbListRepository.fetchUsername()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
             _uiState.value = _uiState.value.copy(
                 mdbListConnecting = false,
                 isMdbListConnected = true,
+                mdbListUsername = username,
                 isTraktAuthenticated = false,
+                traktUsername = null,
                 traktExpiration = null,
                 toastMessage = context.getString(R.string.mdblist_connected),
                 toastType = ToastType.SUCCESS
@@ -3372,6 +3426,7 @@ class SettingsViewModel @Inject constructor(
             syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.NONE)
             _uiState.value = _uiState.value.copy(
                 isMdbListConnected = false,
+                mdbListUsername = null,
                 toastMessage = context.getString(R.string.mdblist_disconnected),
                 toastType = ToastType.SUCCESS
             )

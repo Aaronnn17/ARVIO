@@ -9,7 +9,9 @@ import android.os.SystemClock
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import com.arflix.tv.BuildConfig
@@ -27,6 +29,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -3543,7 +3546,11 @@ private fun MobileSettingsLayout(
                 onConnectHomeServerClick = onConnectHomeServerClick,
                 onConnectPlexHomeServerClick = onConnectPlexHomeServerClick,
                 onAddCustomAddonClick = onAddCustomAddonClick,
-                openCustomUserAgentDialog = openCustomUserAgentDialog
+                openCustomUserAgentDialog = openCustomUserAgentDialog,
+                onConnectTrakt = { viewModel.startTraktAuth() },
+                onDisconnectTrakt = onDisconnectTrakt,
+                onConnectMdbList = { /* dialog opened inside TrackingIntegrationsPage */ },
+                onDisconnectMdbList = { viewModel.disconnectMdbList() }
             )
         }
     }
@@ -3563,8 +3570,10 @@ private fun mobileCategoryTitle(page: String): String = when (page) {
     "Catalogs" -> stringResource(R.string.catalogs)
     "TV" -> stringResource(R.string.iptv)
     "Home Server" -> stringResource(R.string.settings_home_server)
+    "Tracking Integrations" -> stringResource(R.string.settings_tracking_integrations)
     else -> page
 }
+
 
 @Composable
 private fun MobileSettingsMainPage(
@@ -3579,6 +3588,7 @@ private fun MobileSettingsMainPage(
     onNavigateToTelegram: () -> Unit = {},
     onDisconnectTrakt: () -> Unit = {}
 ) {
+
     var showMdbListConnect by remember { mutableStateOf(false) }
     var showMdbListDisconnectConfirm by remember { mutableStateOf(false) }
     if (showMdbListConnect) {
@@ -3710,17 +3720,14 @@ private fun MobileSettingsMainPage(
                 }
                 MobileSettingsRow(
                     icon = Icons.Default.Movie,
-                    title = stringResource(R.string.trakt_account),
-                    value = if (uiState.isTraktAuthenticated) stringResource(R.string.settings_disconnect) else stringResource(R.string.connect),
+                    title = stringResource(R.string.settings_tracking_integrations),
+                    value = when {
+                        uiState.isTraktAuthenticated -> "Trakt"
+                        uiState.isMdbListConnected -> "MDBList"
+                        else -> ""
+                    },
                     isFocused = false,
-                    onClick = { if (uiState.isTraktAuthenticated) onDisconnectTrakt() else viewModel.startTraktAuth() }
-                )
-                MobileSettingsRow(
-                    icon = Icons.Default.Movie,
-                    title = stringResource(R.string.mdblist_account),
-                    value = if (uiState.isMdbListConnected) stringResource(R.string.settings_disconnect) else stringResource(R.string.connect),
-                    isFocused = false,
-                    onClick = { if (uiState.isMdbListConnected) showMdbListDisconnectConfirm = true else showMdbListConnect = true }
+                    onClick = { onNavigate("Tracking Integrations") }
                 )
                 MobileSettingsRow(
                     icon = Icons.Default.QrCode,
@@ -3765,8 +3772,14 @@ private fun MobileSettingsSubPage(
     onConnectHomeServerClick: () -> Unit,
     onConnectPlexHomeServerClick: () -> Unit,
     onAddCustomAddonClick: () -> Unit,
-    openCustomUserAgentDialog: () -> Unit = {}
+    openCustomUserAgentDialog: () -> Unit = {},
+    // Tracking integrations
+    onConnectTrakt: () -> Unit = {},
+    onDisconnectTrakt: () -> Unit = {},
+    onConnectMdbList: () -> Unit = {},
+    onDisconnectMdbList: () -> Unit = {}
 ) {
+
     val scrollState = rememberScrollState()
     Column(
         modifier = Modifier
@@ -4216,6 +4229,142 @@ private fun MobileSettingsSubPage(
                     onDisconnect = { viewModel.disconnectHomeServer() }
                 )
             }
+            "Tracking Integrations" -> {
+                TrackingIntegrationsPage(
+                    uiState = uiState,
+                    onConnectTrakt = onConnectTrakt,
+                    onDisconnectTrakt = onDisconnectTrakt,
+                    onConnectMdbList = onConnectMdbList,
+                    onDisconnectMdbList = onDisconnectMdbList
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileSettingsCategory(
+    title: String,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = title,
+            style = ArflixTypography.caption.copy(fontSize = 12.sp, letterSpacing = 1.sp),
+            color = TextSecondary,
+            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(BackgroundElevated)
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun MobileSettingsRow(
+    icon: ImageVector? = null,
+    @androidx.annotation.DrawableRes iconRes: Int? = null,
+    title: String,
+    subtitle: String = "",
+    value: String?,
+    isFocused: Boolean = false,
+    isToggle: Boolean = (value == "On" || value == "Off"),
+    showDivider: Boolean = true,
+    onClick: () -> Unit
+) {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onClick() }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                if (iconRes != null) {
+                    Icon(
+                        painter = painterResource(id = iconRes),
+                        contentDescription = null,
+                        tint = TextSecondary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                } else if (icon != null) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = TextSecondary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Column {
+                    Text(
+                        text = title,
+                        style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (subtitle.isNotEmpty()) {
+                        Text(
+                            text = subtitle,
+                            style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                            color = TextSecondary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+            val safeValue = value.orEmpty()
+            if (safeValue.isNotEmpty()) {
+                Spacer(modifier = Modifier.width(16.dp))
+                if (isToggle && (safeValue == "On" || safeValue == "Off")) {
+                    val isChecked = safeValue == "On"
+                    Box(
+                        modifier = Modifier
+                            .width(44.dp)
+                            .height(24.dp)
+                            .background(
+                                color = if (isChecked) SuccessGreen else Color.White.copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(13.dp)
+                            )
+                            .padding(3.dp),
+                        contentAlignment = if (isChecked) Alignment.CenterEnd else Alignment.CenterStart
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .background(
+                                    color = Color.White,
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                        )
+                    }
+                } else {
+                    Text(
+                        text = localizeSettingValue(safeValue),
+                        style = ArflixTypography.caption.copy(
+                            fontSize = 13.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                        ),
+                        color = TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        if (showDivider) {
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).padding(horizontal = 16.dp).background(Color.White.copy(alpha = 0.05f)))
         }
     }
 }
@@ -8232,9 +8381,310 @@ private fun AccountDisconnectConfirmDialog(
     }
 }
 
+// ========== Tracking Integrations Mobile Sub-Page ==========
+
+/**
+ * Full Tracking Integrations sub-page rendered inside MobileSettingsSubPage.
+ * Owns all connect/disconnect dialog state for the three services.
+ */
+// ========== Tracking Integrations Mobile Sub-Page ==========
+
+/**
+ * Full Tracking Integrations sub-page rendered inside MobileSettingsSubPage.
+ * Uses standard MobileSettingsCategory blocks matching the rest of the settings UI.
+ */
+@Composable
+private fun TrackingIntegrationsPage(
+    uiState: SettingsUiState,
+    onConnectTrakt: () -> Unit,
+    onDisconnectTrakt: () -> Unit,
+    onConnectMdbList: () -> Unit,
+    onDisconnectMdbList: () -> Unit
+) {
+    val viewModel = androidx.lifecycle.viewmodel.compose.viewModel<SettingsViewModel>()
+
+    var showMdbListConnect by remember { mutableStateOf(false) }
+    var showMdbListDisconnectConfirm by remember { mutableStateOf(false) }
+    var showTraktDisconnectConfirm by remember { mutableStateOf(false) }
+
+    if (showMdbListConnect) {
+        MdbListConnectDialog(
+            connecting = uiState.mdbListConnecting,
+            onConnect = { key ->
+                showMdbListConnect = false
+                viewModel.connectMdbList(key)
+            },
+            onDismiss = { showMdbListConnect = false }
+        )
+    }
+    if (showMdbListDisconnectConfirm) {
+        AccountDisconnectConfirmDialog(
+            title = stringResource(R.string.mdblist_disconnect_confirm_title),
+            description = stringResource(R.string.mdblist_disconnect_confirm_desc),
+            onConfirm = {
+                showMdbListDisconnectConfirm = false
+                onDisconnectMdbList()
+            },
+            onDismiss = { showMdbListDisconnectConfirm = false }
+        )
+    }
+    if (showTraktDisconnectConfirm) {
+        AccountDisconnectConfirmDialog(
+            title = stringResource(R.string.settings_trakt_disconnect_confirm_title),
+            description = stringResource(R.string.settings_trakt_disconnect_confirm_desc),
+            onConfirm = {
+                showTraktDisconnectConfirm = false
+                onDisconnectTrakt()
+            },
+            onDismiss = { showTraktDisconnectConfirm = false }
+        )
+    }
+
+    val activeProviders = buildList {
+        if (uiState.isTraktAuthenticated) add("Trakt")
+        if (uiState.isMdbListConnected) add("MDBList")
+    }
+    val activeProvider = if (activeProviders.isNotEmpty()) {
+        activeProviders.joinToString(", ")
+    } else {
+        stringResource(R.string.settings_tracking_none)
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
+        // Section 1: SYNC STATS (2x2 grid with BackgroundElevated chips)
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = stringResource(R.string.settings_tracking_section_stats),
+                style = ArflixTypography.caption.copy(fontSize = 12.sp, letterSpacing = 1.sp),
+                color = TextSecondary,
+                modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
+            )
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    TrackingStatChip(
+                        label = stringResource(R.string.settings_tracking_movies),
+                        value = if (uiState.syncedMovies > 0) uiState.syncedMovies.toString() else "—",
+                        modifier = Modifier.weight(1f)
+                    )
+                    TrackingStatChip(
+                        label = stringResource(R.string.settings_tracking_episodes),
+                        value = if (uiState.syncedEpisodes > 0) uiState.syncedEpisodes.toString() else "—",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    TrackingStatChip(
+                        label = stringResource(R.string.settings_tracking_provider),
+                        value = activeProvider,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TrackingStatChip(
+                        label = stringResource(R.string.settings_tracking_last_sync),
+                        value = uiState.lastSyncTime ?: "—",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+
+        // Section 2: SERVICES
+        MobileSettingsCategory(title = stringResource(R.string.settings_tracking_section_services)) {
+            // Trakt
+            TrackingServiceRow(
+                iconRes = R.drawable.ic_trakt,
+                title = "Trakt",
+                tagline = stringResource(R.string.settings_trakt_tagline),
+                isConnected = uiState.isTraktAuthenticated,
+                isWorking = uiState.isTraktPolling || uiState.isTraktAuthStarting,
+                connectedAs = uiState.traktUsername,
+                showDivider = true,
+                onConnect = onConnectTrakt,
+                onDisconnect = { showTraktDisconnectConfirm = true }
+            )
+
+            // MDBList
+            TrackingServiceRow(
+                iconRes = R.drawable.ic_mdblist,
+                title = "MDBList",
+                tagline = stringResource(R.string.settings_mdblist_tagline),
+                isConnected = uiState.isMdbListConnected,
+                isWorking = uiState.mdbListConnecting,
+                connectedAs = uiState.mdbListUsername,
+                showDivider = true,
+                onConnect = { showMdbListConnect = true },
+                onDisconnect = { showMdbListDisconnectConfirm = true }
+            )
+
+            // Simkl — Coming Soon
+            TrackingServiceRow(
+                iconRes = R.drawable.ic_simkl,
+                title = "Simkl",
+                tagline = stringResource(R.string.settings_simkl_tagline),
+                isConnected = false,
+                isWorking = false,
+                connectedAs = null,
+                comingSoon = true,
+                showDivider = false,
+                onConnect = {},
+                onDisconnect = {}
+            )
+        }
+    }
+}
+
+@Composable
+private fun TrackingStatChip(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(BackgroundElevated)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+    ) {
+        Text(
+            text = value,
+            style = ArflixTypography.cardTitle.copy(fontSize = 18.sp),
+            color = TextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = label,
+            style = ArflixTypography.caption.copy(fontSize = 11.sp),
+            color = TextSecondary
+        )
+    }
+}
+
+@Composable
+private fun TrackingServiceRow(
+    @androidx.annotation.DrawableRes iconRes: Int,
+    title: String,
+    tagline: String,
+    isConnected: Boolean,
+    isWorking: Boolean,
+    connectedAs: String?,
+    comingSoon: Boolean = false,
+    showDivider: Boolean = true,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit
+) {
+    val rowAlpha = if (comingSoon) 0.5f else 1f
+
+    Column(modifier = Modifier.alpha(rowAlpha)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (!comingSoon && !isWorking) {
+                        Modifier.clickable { if (isConnected) onDisconnect() else onConnect() }
+                    } else Modifier
+                )
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Icon(
+                    painter = painterResource(id = iconRes),
+                    contentDescription = null,
+                    tint = TextSecondary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(16.dp))
+                Column {
+                    Text(
+                        text = title,
+                        style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
+                        color = TextPrimary
+                    )
+                    Text(
+                        text = tagline,
+                        style = ArflixTypography.caption.copy(fontSize = 13.sp),
+                        color = TextSecondary
+                    )
+                    if (isConnected && !connectedAs.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = stringResource(R.string.settings_connected_as, "@$connectedAs"),
+                            style = ArflixTypography.caption.copy(fontSize = 12.sp),
+                            color = TextSecondary
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Status pill
+            val (pillText, pillBg, pillText2) = when {
+                comingSoon -> Triple(
+                    stringResource(R.string.settings_coming_soon),
+                    Color.White.copy(alpha = 0.10f),
+                    TextSecondary
+                )
+                isWorking -> Triple(
+                    stringResource(R.string.settings_connecting),
+                    Color.White.copy(alpha = 0.10f),
+                    TextSecondary
+                )
+                isConnected -> Triple(
+                    stringResource(R.string.connected),
+                    Color(0xFF1CE783).copy(alpha = 0.15f),
+                    Color(0xFF1CE783)
+                )
+                else -> Triple(
+                    stringResource(R.string.connect),
+                    Pink.copy(alpha = 0.15f),
+                    Pink
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(pillBg)
+                    .padding(horizontal = 12.dp, vertical = 5.dp)
+            ) {
+                Text(
+                    text = pillText,
+                    style = ArflixTypography.caption.copy(fontSize = 12.sp),
+                    color = pillText2
+                )
+            }
+        }
+
+        if (showDivider) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .padding(horizontal = 16.dp)
+                    .background(Color.White.copy(alpha = 0.05f))
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun AccountRow(
+
     name: String,
     description: String,
     isConnected: Boolean,
