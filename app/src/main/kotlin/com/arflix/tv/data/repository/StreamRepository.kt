@@ -200,6 +200,7 @@ internal fun usesSlowAggregatorTimeout(addon: Addon): Boolean {
 // `hubcloud.evil.com` — which merely *contains* "hubcloud" — is not treated as one
 // of ours. TLDs vary (.cx/.ist/.one/.dev), so we key on the label, not the domain.
 internal val HUB_DOMAIN_LABELS = setOf("hubcloud", "hubdrive", "hubcdn", "gamerxyt")
+internal val HUB_GATED_DOMAIN_LABELS = setOf("hubcloud", "hubdrive")
 
 /** Second-level label of a host: hubcloud.cx -> "hubcloud", pixel.hubcloud.cx -> "hubcloud". */
 internal fun registrableLabel(host: String): String {
@@ -210,12 +211,18 @@ internal fun registrableLabel(host: String): String {
     }
 }
 
+/** Exact HubCloud/HubDrive label for a host, or null for unrelated/look-alike hosts. */
+internal fun gatedHubHostLabel(host: String): String? {
+    val label = registrableLabel(host.lowercase(Locale.US).removePrefix("www."))
+    return label.takeIf(HUB_GATED_DOMAIN_LABELS::contains)
+}
+
 /** True when the URL is a resolvable HubCloud/HubDrive *page* (not a direct file endpoint). */
 internal fun isHubCloudPageUrl(url: String): Boolean {
-    val parsed = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+    // Stream URLs may append request headers after `|`; classify the URL portion only.
+    val parsed = runCatching { java.net.URI(url.substringBefore('|').trim()) }.getOrNull() ?: return false
     val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
-    val label = registrableLabel(host)
-    if (label != "hubcloud" && label != "hubdrive") return false
+    if (gatedHubHostLabel(host) == null) return false
     val path = parsed.path?.lowercase(Locale.US).orEmpty()
     // Direct file endpoints on the same domain (e.g. pixel.hubcloud.cx/?id=...) have
     // no such path and are left as-is.
@@ -226,14 +233,12 @@ internal fun isHubCloudPageUrl(url: String): Boolean {
 /**
  * True for anti-leech landing pages that carry the real file in a ?link=/?url=
  * parameter. Gated so a legitimate proxy/auth URL with such a parameter is never
- * rewritten: host is matched by exact registrable label, `/dl.php` is a separate
- * path signal for generic wrapper hosts.
+ * rewritten: the host must match an explicitly supported registrable label.
  */
 internal fun isEmbeddedLinkLandingHost(url: String): Boolean {
     val parsed = runCatching { java.net.URI(url) }.getOrNull() ?: return false
     val host = parsed.host?.lowercase(Locale.US)?.removePrefix("www.").orEmpty()
-    val path = parsed.path?.lowercase(Locale.US).orEmpty()
-    return HUB_DOMAIN_LABELS.contains(registrableLabel(host)) || path.contains("/dl.php")
+    return HUB_DOMAIN_LABELS.contains(registrableLabel(host))
 }
 
 /**
@@ -3205,7 +3210,7 @@ class StreamRepository @Inject constructor(
             host.contains("mediafusion", ignoreCase = true) ||
             host.contains("stremthru", ignoreCase = true) ||
             host.contains("jackettio", ignoreCase = true) ||
-            GATED_HOST_DEFAULT_REFERERS.keys.any { host.contains(it) }
+            gatedHubHostLabel(host) != null
     }
 
     // HubCloud-style "10Gbps" links redirect through a Cloudflare Worker and land on
@@ -3727,10 +3732,8 @@ class StreamRepository @Inject constructor(
     private fun defaultHeadersForGatedHost(url: String): Map<String, String> {
         val host = runCatching { java.net.URI(url).host?.lowercase(Locale.US) }.getOrNull().orEmpty()
         if (host.isBlank()) return emptyMap()
-        val referer = GATED_HOST_DEFAULT_REFERERS.entries
-            .firstOrNull { (marker, _) -> host.contains(marker) }
-            ?.value
-            ?: return emptyMap()
+        val label = gatedHubHostLabel(host) ?: return emptyMap()
+        val referer = GATED_HOST_DEFAULT_REFERERS[label] ?: return emptyMap()
         val origin = deriveOriginFromReferer(referer) ?: referer.trimEnd('/')
         return mapOf("Referer" to referer, "Origin" to origin)
     }

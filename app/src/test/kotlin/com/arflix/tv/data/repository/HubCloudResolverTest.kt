@@ -23,6 +23,15 @@ class HubCloudResolverTest {
         assertEquals("evil", registrableLabel("hubcloud.evil.com"))
     }
 
+    @Test
+    fun `gated host label rejects substring look-alikes`() {
+        assertEquals("hubcloud", gatedHubHostLabel("hubcloud.cx"))
+        assertEquals("hubcloud", gatedHubHostLabel("pixel.hubcloud.cx"))
+        assertEquals("hubdrive", gatedHubHostLabel("www.hubdrive.dev"))
+        assertNull(gatedHubHostLabel("hubcloud.evil.com"))
+        assertNull(gatedHubHostLabel("not-hubcloud.com"))
+    }
+
     // --- isHubCloudPageUrl --------------------------------------------------
 
     @Test
@@ -30,6 +39,7 @@ class HubCloudResolverTest {
         assertTrue(isHubCloudPageUrl("https://hubcloud.cx/drive/abc123"))
         assertTrue(isHubCloudPageUrl("https://hubcloud.ist/video/xyz"))
         assertTrue(isHubCloudPageUrl("https://hubdrive.dev/file/def"))
+        assertTrue(isHubCloudPageUrl("https://hubcloud.cx/drive/abc123|Referer=https%3A%2F%2Fhubcloud.cx"))
     }
 
     @Test
@@ -56,8 +66,8 @@ class HubCloudResolverTest {
     @Test
     fun `landing hosts are recognised by exact label`() {
         assertTrue(isEmbeddedLinkLandingHost("https://gamerxyt.com/hubcloud.php?id=1"))
+        assertTrue(isEmbeddedLinkLandingHost("https://gamerxyt.com/dl.php?link=x"))
         assertTrue(isEmbeddedLinkLandingHost("https://hubcloud.cx/drive/admin"))
-        assertTrue(isEmbeddedLinkLandingHost("https://any.host.example/dl.php?link=x"))
     }
 
     @Test
@@ -66,6 +76,8 @@ class HubCloudResolverTest {
         // carries ?url=/?link= must not be classified as a landing page.
         assertFalse(isEmbeddedLinkLandingHost("https://myproxy.example.com/stream?url=https://cdn/x.mkv"))
         assertFalse(isEmbeddedLinkLandingHost("https://hubcloud.evil.com/go?link=https://cdn/x.mkv"))
+        assertFalse(isEmbeddedLinkLandingHost("https://any.host.example/dl.php?link=https://cdn/x.mkv"))
+        assertFalse(isEmbeddedLinkLandingHost("https://hubcloud.evil.com/dl.php?link=https://cdn/x.mkv"))
     }
 
     // --- pickHubCloudDirectLink --------------------------------------------
