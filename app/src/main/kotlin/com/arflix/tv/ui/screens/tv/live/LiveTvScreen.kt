@@ -1840,6 +1840,7 @@ fun LiveTvScreen(
     var playerDurationMs by remember { mutableLongStateOf(0L) }
     var playerIsPlaying by remember { mutableStateOf(false) }
     var playerPlayWhenReady by remember { mutableStateOf(true) }
+    var playerIsBuffering by remember { mutableStateOf(false) }
     LaunchedEffect(exoPlayer, playingCatchupProgram, catchupUrlAnchorOffsetMs) {
         while (true) {
             val programDuration = playingCatchupProgram
@@ -1856,6 +1857,7 @@ fun LiveTvScreen(
                 .let { position -> if (duration > 0L) position.coerceAtMost(duration) else position }
             playerIsPlaying = exoPlayer.isPlaying
             playerPlayWhenReady = exoPlayer.playWhenReady
+            playerIsBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING
             delay(if (playingCatchupProgram != null) 500L else 1_500L)
         }
     }
@@ -1895,9 +1897,21 @@ fun LiveTvScreen(
         resetRetry: Boolean,
         initialPositionMs: Long = 0L,
         drmInfo: com.arflix.tv.data.model.DrmInfo? = null,
+        forcePrepare: Boolean = false,
     ) {
         val mergedHeaders = (baseRequestHeaders + headers).safePlaybackHeaders()
         iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
+
+        if (!forcePrepare &&
+            stream == lastPreparedStreamUrl &&
+            isHls == lastPreparedIsHls &&
+            headers == lastPreparedHeaders &&
+            (playingCatchupProgram == null || catchupUrlAnchorOffsetMs == lastPreparedCatchupOffsetMs)
+        ) {
+            return
+        }
+
+        playerIsBuffering = true
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
         val mediaItem = MediaItem.Builder()
@@ -2010,12 +2024,50 @@ fun LiveTvScreen(
         hudPokeSignal++
     }
 
+    fun seekToPosition(targetMs: Long) {
+        if (playingCatchupProgram != null) {
+            val delta = targetMs - playerPositionMs
+            seekCatchupBy(delta)
+        } else {
+            val currentNow = currentNowNext?.now
+            val ch = playingChannel
+            val currentElapsed = if (currentNow != null && currentNow.startUtcMillis > 0L) {
+                (System.currentTimeMillis() - currentNow.startUtcMillis).coerceAtLeast(0L)
+            } else {
+                playerPositionMs
+            }
+            val boundedTarget = targetMs.coerceIn(0L, currentElapsed)
+            if (boundedTarget >= currentElapsed) {
+                hudPokeSignal++
+                return
+            }
+            if (ch != null && currentNow != null && ch.supportsCatchupHistory()) {
+                System.err.println("[IPTV-Catchup] auto-switch catchup program=${currentNow.title} targetMs=$boundedTarget")
+                playingCatchupProgram = currentNow
+                catchupPlaybackOffsetMs = boundedTarget
+                playerPositionMs = boundedTarget
+                lastPreparedStreamUrl = null
+                playerIsBuffering = true
+                hudPokeSignal++
+            } else {
+                val currentExo = exoPlayer.currentPosition
+                val maxExo = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 60_000L
+                val delta = boundedTarget - currentElapsed
+                val newExo = (currentExo + delta).coerceIn(0L, maxExo)
+                exoPlayer.seekTo(newExo)
+                hudPokeSignal++
+            }
+        }
+    }
+
     fun returnCatchupToLive() {
         if (playingCatchupProgram == null) return
         System.err.println("[IPTV-Catchup] return-live channel=${playingChannelId.orEmpty()}")
         playingCatchupProgram = null
         catchupPlaybackOffsetMs = 0L
         fullscreenGuideOpen = false
+        lastPreparedStreamUrl = null
+        playerIsBuffering = true
         exoPlayer.play()
         hudPokeSignal++
     }
@@ -2060,23 +2112,15 @@ fun LiveTvScreen(
             )
             return@LaunchedEffect
         }
-        val stream = target.url
         val headers = sourceChannel?.requestHeaders.orEmpty()
-        delay(90L)
-        if (
-            stream == lastPreparedStreamUrl &&
-            target.isHls == lastPreparedIsHls &&
-            headers == lastPreparedHeaders &&
-            catchupUrlAnchorOffsetMs == lastPreparedCatchupOffsetMs
-        ) {
-            return@LaunchedEffect
-        }
+        val initialSeekMs = if (playingCatchupProgram != null) catchupInSegmentSeekMs else 0L
+
         prepareStream(
-            stream = stream,
+            stream = target.url,
             isHls = target.isHls,
             headers = headers,
             resetRetry = true,
-            initialPositionMs = if (playingCatchupProgram != null) catchupInSegmentSeekMs else 0L,
+            initialPositionMs = initialSeekMs,
             drmInfo = playingChannel?.source?.drmInfo,
         )
         // Persist "recent" as soon as playback starts.
@@ -2105,12 +2149,23 @@ fun LiveTvScreen(
     ) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                playerIsBuffering = (playbackState == Player.STATE_BUFFERING)
                 if (playbackState == Player.STATE_READY) {
                     playbackDiagnostic = null
+                    playerIsBuffering = false
+                }
+            }
+
+            override fun onIsLoadingChanged(isLoading: Boolean) {
+                if (exoPlayer.playbackState == Player.STATE_BUFFERING || (isLoading && !exoPlayer.isPlaying)) {
+                    playerIsBuffering = true
+                } else if (exoPlayer.playbackState == Player.STATE_READY) {
+                    playerIsBuffering = false
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                playerIsBuffering = false
                 val prepared = lastPreparedStreamUrl ?: return
                 val preparedIsHls = lastPreparedIsHls
                 val nextAttempt = playerRetryCount + 1
@@ -2173,7 +2228,7 @@ fun LiveTvScreen(
                     }
                     System.err.println(
                         "[IPTV] Retrying live playback attempt=$nextAttempt " +
-                        "code=${error.errorCodeName} status=${httpResponseCode(error) ?: "-"} " +
+                            "code=${error.errorCodeName} status=${httpResponseCode(error) ?: "-"} " +
                             "candidates=$catchupCandidateCount url=${redactPlaybackUrl(retryTarget.url)}"
                     )
                     playbackDiagnostic = PlaybackDiagnostic(
@@ -2186,12 +2241,12 @@ fun LiveTvScreen(
                         isHls = retryTarget.isHls,
                         headers = retryHeaders,
                         resetRetry = false,
-                        initialPositionMs = if (retryProgram != null) catchupInSegmentSeekMs else 0L,
+                        initialPositionMs = retryChannel?.catchupInSegmentSeekOffset(catchupPlaybackOffsetMs) ?: 0L,
                         drmInfo = retryChannel?.drmInfo,
+                        forcePrepare = true,
                     )
                 }
             }
-
         }
         exoPlayer.addListener(listener)
         onDispose { exoPlayer.removeListener(listener) }
@@ -2603,51 +2658,30 @@ fun LiveTvScreen(
                             false
                         } else {
                             val firstPress = ev.nativeKeyEvent.repeatCount == 0
-                            if (playingCatchupProgram != null) {
-                                when (ev.key) {
-                                    Key.Back, Key.Escape -> {
-                                        if (firstPress) returnCatchupToLive()
+                            if (firstPress && playingCatchupProgram != null) {
+                                when (ev.nativeKeyEvent.keyCode) {
+                                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                                    AndroidKeyEvent.KEYCODE_SPACE -> {
+                                        toggleCatchupPlayback()
                                         return@onPreviewKeyEvent true
                                     }
-                                    Key.DirectionCenter, Key.Enter -> {
-                                        if (firstPress) toggleCatchupPlayback()
+                                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
+                                        exoPlayer.play()
+                                        hudPokeSignal++
                                         return@onPreviewKeyEvent true
                                     }
-                                    Key.DirectionLeft -> {
-                                        if (firstPress) seekCatchupBy(-CatchupSeekStepMs)
+                                    AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                                        exoPlayer.pause()
+                                        hudPokeSignal++
                                         return@onPreviewKeyEvent true
                                     }
-                                    Key.DirectionRight -> {
-                                        if (firstPress) seekCatchupBy(CatchupSeekStepMs)
+                                    AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> {
+                                        seekCatchupBy(-CatchupSeekStepMs)
                                         return@onPreviewKeyEvent true
                                     }
-                                    else -> Unit
-                                }
-                                if (firstPress) {
-                                    when (ev.nativeKeyEvent.keyCode) {
-                                        AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-                                        AndroidKeyEvent.KEYCODE_SPACE -> {
-                                            toggleCatchupPlayback()
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
-                                            exoPlayer.play()
-                                            hudPokeSignal++
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                                            exoPlayer.pause()
-                                            hudPokeSignal++
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> {
-                                            seekCatchupBy(-CatchupSeekStepMs)
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                                            seekCatchupBy(CatchupSeekStepMs)
-                                            return@onPreviewKeyEvent true
-                                        }
+                                    AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                                        seekCatchupBy(CatchupSeekStepMs)
+                                        return@onPreviewKeyEvent true
                                     }
                                 }
                             }
@@ -2661,28 +2695,19 @@ fun LiveTvScreen(
                                         hudPokeSignal++
                                         return@onPreviewKeyEvent true
                                     }
-                                } else {
-                                    when (ev.key) {
-                                        Key.DirectionUp, Key.DirectionDown -> {
-                                            quickZapOpen = true
-                                            isHudVisible = false
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        Key.DirectionCenter, Key.Enter -> {
-                                            openFullscreenGuide()
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        else -> Unit
-                                    }
                                 }
                             }
                             when (ev.key) {
-                                Key.Back, Key.Escape -> { exitFullScreenPlayback(); true }
-                                Key.DirectionUp -> { zap(+1); hudPokeSignal++; true }
-                                Key.DirectionDown -> { zap(-1); hudPokeSignal++; true }
-                                Key.DirectionCenter, Key.Enter -> { openFullscreenGuide(); true }
-                                Key.DirectionLeft -> { hudPokeSignal++; false }
-                                Key.DirectionRight -> { hudPokeSignal++; false }
+                                Key.Back, Key.Escape -> {
+                                    if (firstPress) {
+                                        if (playingCatchupProgram != null) {
+                                            returnCatchupToLive()
+                                        } else {
+                                            exitFullScreenPlayback()
+                                        }
+                                    }
+                                    true
+                                }
                                 else -> false
                             }
                         }
@@ -2691,9 +2716,16 @@ fun LiveTvScreen(
                         if (isTouchDevice) {
                             Modifier.clickable(
                                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                indication = null
+                                indication = null,
                             ) {
                                 hudPokeSignal++
+                            }
+                        } else if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
+                            Modifier.onPreviewKeyEvent { ev ->
+                                if (ev.type == KeyEventType.KeyDown) {
+                                    hudPokeSignal++
+                                }
+                                false
                             }
                         } else {
                             Modifier
@@ -2718,12 +2750,18 @@ fun LiveTvScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
                 if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
+                    val categoryTitle = playingChannel?.source?.group?.takeIf { it.isNotBlank() }
+                        ?: visibleEnrichedState.value.tree.byId(selectedCategoryId)?.label
+                        ?: selectedCategoryId
+
                     FullscreenHud(
                         channel = playingChannel,
                         nowNext = currentNowNext,
                         pokeSignal = hudPokeSignal,
+                        categoryName = categoryTitle,
                         isCatchupMode = playingCatchupProgram != null,
                         isPlaying = if (playingCatchupProgram != null) playerPlayWhenReady else playerIsPlaying,
+                        isBuffering = playerIsBuffering,
                         playbackPositionMs = playerPositionMs,
                         playbackDurationMs = playerDurationMs,
                         onBackClick = if (isTouchDevice) {
@@ -2738,8 +2776,77 @@ fun LiveTvScreen(
                             null
                         },
                         onGuideClick = { openFullscreenGuide() },
-                        onPlayPauseClick = { toggleCatchupPlayback() },
+                        onPlayPauseClick = {
+                            if (playingCatchupProgram != null) {
+                                toggleCatchupPlayback()
+                            } else {
+                                if (exoPlayer.isPlaying) {
+                                    exoPlayer.pause()
+                                    playerPlayWhenReady = false
+                                } else {
+                                    exoPlayer.playWhenReady = true
+                                    exoPlayer.play()
+                                    playerPlayWhenReady = true
+                                }
+                                hudPokeSignal++
+                            }
+                        },
+                        onRewindClick = {
+                            val currentNow = currentNowNext?.now
+                            val currentElapsed = if (currentNow != null && currentNow.startUtcMillis > 0L) {
+                                (System.currentTimeMillis() - currentNow.startUtcMillis).coerceAtLeast(0L)
+                            } else {
+                                playerPositionMs
+                            }
+                            seekToPosition((currentElapsed - 10_000L).coerceAtLeast(0L))
+                        },
+                        onFastForwardClick = {
+                            val currentNow = currentNowNext?.now
+                            val currentElapsed = if (currentNow != null && currentNow.startUtcMillis > 0L) {
+                                (System.currentTimeMillis() - currentNow.startUtcMillis).coerceAtLeast(0L)
+                            } else {
+                                playerPositionMs
+                            }
+                            seekToPosition(currentElapsed + 10_000L)
+                        },
+                        onPreviousCatchupClick = {
+                            val curIdx = filteredChannels.indexOfFirst { it.id == playingChannel?.id }
+                            if (curIdx > 0) {
+                                selectChannel(filteredChannels[curIdx - 1])
+                            }
+                        },
+                        onNextCatchupClick = {
+                            val curIdx = filteredChannels.indexOfFirst { it.id == playingChannel?.id }
+                            if (curIdx in 0 until filteredChannels.size - 1) {
+                                selectChannel(filteredChannels[curIdx + 1])
+                            }
+                        },
+                        onReplayClick = {
+                            if (playingCatchupProgram != null) {
+                                seekCatchupBy(-playerPositionMs)
+                            } else {
+                                val preparedStream = lastPreparedStreamUrl
+                                if (preparedStream != null) {
+                                    prepareStream(
+                                        stream = preparedStream,
+                                        isHls = lastPreparedIsHls,
+                                        headers = lastPreparedHeaders,
+                                        resetRetry = true,
+                                        drmInfo = playingChannel?.source?.drmInfo,
+                                        forcePrepare = true,
+                                    )
+                                }
+                                hudPokeSignal++
+                            }
+                        },
                         onGoLiveClick = { returnCatchupToLive() },
+                        onSeekToPosition = { targetMs ->
+                            seekToPosition(targetMs)
+                        },
+                        onOpenQuickZap = {
+                            quickZapOpen = true
+                            isHudVisible = false
+                        },
                         onVisibilityChanged = { isHudVisible = it },
                         modifier = Modifier,
                     )

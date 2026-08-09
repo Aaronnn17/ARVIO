@@ -166,3 +166,6 @@ arctic-fuse-2-temp/
 gradle-8.4-bin.zip
 *.zip
 _tmp_tv_perf/
+
+# Agent skills & customizations
+.agents/
