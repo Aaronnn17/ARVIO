@@ -273,6 +273,7 @@ fun MobileSettingsRow(
     subtitle: String = "",
     value: String?,
     isFocused: Boolean = false,
+    isToggle: Boolean = (value == "On" || value == "Off"),
     showDivider: Boolean = true,
     onClick: () -> Unit
 ) {
@@ -315,7 +316,7 @@ fun MobileSettingsRow(
             val safeValue = value.orEmpty()
             if (safeValue.isNotEmpty()) {
                 Spacer(modifier = Modifier.width(16.dp))
-                if (safeValue == "On" || safeValue == "Off") {
+                if (isToggle && (safeValue == "On" || safeValue == "Off")) {
                     val isChecked = safeValue == "On"
                     Box(
                         modifier = Modifier

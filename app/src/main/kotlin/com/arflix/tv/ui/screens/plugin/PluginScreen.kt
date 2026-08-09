@@ -397,7 +397,6 @@ fun PluginScreen(
         )
     }
 }
-
 @Composable
 fun HideDialogSystemBars() {
     val view = LocalView.current
@@ -589,7 +588,6 @@ fun AddRepoDialog(
         }
     }
 }
-
 @Composable
 fun WarningDialog(
     title: String,
@@ -709,4 +707,3 @@ fun WarningDialog(
         }
     }
 }
-
