@@ -61,4 +61,6 @@
     <string name="add_later">أضف أفلاما ومسلسلات للمشاهدة لاحقا</string>
     <string name="sources_available">مصادر متاحة</string>
     <string name="ends_at">ينتهي في</string>
+    <string name="home_top10_movies_today">أفضل 10 أفلام اليوم</string>
+    <string name="home_top10_shows_today">أفضل 10 مسلسلات اليوم</string>
 </resources>

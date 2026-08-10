@@ -240,4 +240,6 @@
     <string name="settings_trakt_desc">סנכרון היסטוריית צפייה, התקדמות ורשימת צפייה</string>
     <string name="mdblist_key_help">השג את מפתח ה-API שלך מ-mdblist.com/preferences</string>
     <string name="settings_telegram_desc">חפש קובצי וידאו בערוצים ובקבוצות שלך</string>
+    <string name="home_top10_movies_today">10 הסרטים הנצפים היום</string>
+    <string name="home_top10_shows_today">10 הסדרות הנצפות היום</string>
 </resources>
