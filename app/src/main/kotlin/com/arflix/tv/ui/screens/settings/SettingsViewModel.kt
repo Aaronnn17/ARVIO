@@ -12,6 +12,7 @@ import com.arflix.tv.R
 import com.arflix.tv.server.AiKeyConfigServer
 import com.arflix.tv.ui.screens.player.SubtitleAiModel
 import com.arflix.tv.util.DeviceIpAddress
+import com.arflix.tv.util.DiagnosticsManager
 import com.arflix.tv.util.QrCodeGenerator
 import com.arflix.tv.data.api.TraktDeviceCode
 import com.arflix.tv.data.model.Addon
@@ -119,6 +120,7 @@ data class SettingsUiState(
     // attached to the ExoPlayer audio session. Issue #88.
     val volumeBoostDb: Int = 0,
     val showLoadingStats: Boolean = true,
+    val diagnosticsSharingEnabled: Boolean = true,
     val includeSpecials: Boolean = false,
     val isLoggedIn: Boolean = false,
     val accountEmail: String? = null,
@@ -376,6 +378,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     init {
+        _uiState.value = _uiState.value.copy(
+            diagnosticsSharingEnabled = DiagnosticsManager.isReportingEnabled(context)
+        )
         loadSettings()
         observeProfileChanges()
         observeAddons()
@@ -433,6 +438,11 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setDiagnosticsSharingEnabled(enabled: Boolean) {
+        DiagnosticsManager.setReportingEnabled(context, enabled)
+        _uiState.value = _uiState.value.copy(diagnosticsSharingEnabled = enabled)
+    }
+
     private fun loadSettings() {
         viewModelScope.launch {
             // Load local preferences first
@@ -446,7 +456,7 @@ class SettingsViewModel @Inject constructor(
             val oledBlackBackground = prefs[com.arflix.tv.util.OLED_BLACK_BACKGROUND_KEY] ?: false
             val contentLang = prefs[contentLanguageKey()] ?: "en-US"
             // Apply content language to MediaRepository immediately
-            mediaRepository.contentLanguage = if (contentLang == "en-US") null else contentLang
+            mediaRepository.contentLanguage = contentLang
             var autoPlay = prefs[autoPlayNextKey()] ?: true
             var autoPlaySingleSource = prefs[autoPlaySingleSourceKey()] ?: true
             // Ensure defaults are persisted on first launch so they're never ambiguous
@@ -1105,7 +1115,7 @@ class SettingsViewModel @Inject constructor(
             // Mirror to SharedPreferences so attachBaseContext can read it synchronously on next launch
             context.getSharedPreferences("app_locale", android.content.Context.MODE_PRIVATE)
                 .edit().putString("locale_tag", lang).apply()
-            mediaRepository.contentLanguage = if (lang == "en-US") null else lang
+            mediaRepository.contentLanguage = lang
             _uiState.value = _uiState.value.copy(contentLanguage = lang)
             syncLocalStateToCloud(silent = true)
         }
