@@ -597,6 +597,9 @@
     <string name="settings_from_source">From %1$s</string>
     <string name="settings_from_home_server">From Home Server</string>
     <string name="settings_custom_catalog">Custom catalog</string>
+    <string name="refresh_addons">Refresh Addons</string>
+    <string name="settings_refresh_addons_desc">Pull latest addon changes for current profile</string>
+    <string name="settings_pulling_latest_addon">Pulling latest addons</string>
     <string name="settings_section_add_addon">ADD ADDON</string>
     <string name="settings_install_custom_addon">Install a custom Stremio addon by URL</string>
     <string name="settings_section_my_addons">MY ADDONS</string>
