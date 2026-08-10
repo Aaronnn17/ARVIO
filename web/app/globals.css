@@ -11960,3 +11960,189 @@ html { background: #000; }
   outline: 2px solid var(--accent, #fff);
   outline-offset: 2px;
 }
+
+/* ============================================================
+   Context Menu (Right-click PC & Mobile long-press)
+   ============================================================ */
+.context-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(12px);
+  animation: arvio-fade-in 180ms ease both;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+@media (min-width: 768px) {
+  .context-menu-scrim {
+    justify-content: center;
+    align-items: center;
+  }
+}
+
+.context-menu-card {
+  width: 100%;
+  max-width: 400px;
+  background: linear-gradient(180deg, rgba(30, 35, 45, 0.98), rgba(12, 14, 18, 0.99));
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.7);
+  padding: 16px 16px 24px;
+  animation: arvio-slide-up 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  overflow: hidden;
+}
+
+.context-menu-card.is-floating {
+  border-radius: 16px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.12);
+  width: 320px;
+  padding: 16px;
+  animation: arvio-scale-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.context-menu-drag-handle {
+  width: 36px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  margin: 0 auto 12px;
+}
+
+.context-menu-card.is-floating .context-menu-drag-handle {
+  display: none;
+}
+
+.context-menu-header-art {
+  position: relative;
+  width: calc(100% + 32px);
+  margin: -16px -16px 12px -16px;
+  height: 110px;
+  overflow: hidden;
+}
+
+.context-menu-header-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.context-menu-header-art-gradient {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 0%, rgba(12, 14, 18, 0.95) 100%);
+}
+
+.context-menu-header {
+  padding: 4px 8px 8px;
+}
+
+.context-menu-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-menu-subtitle {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-menu-divider {
+  height: 1.5px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 8px 0;
+}
+
+.context-menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.context-menu-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease, transform 100ms ease;
+  text-align: left;
+}
+
+.context-menu-action-btn:hover,
+.context-menu-action-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  outline: none;
+}
+
+.context-menu-action-btn.is-danger {
+  color: #ef4444;
+}
+
+.context-menu-action-btn.is-danger:hover,
+.context-menu-action-btn.is-danger:focus-visible {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.context-menu-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.context-menu-label {
+  flex: 1;
+}
+
+.context-menu-footer-hint {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
+  text-align: center;
+}
+
+.context-menu-card.is-floating .context-menu-footer-hint {
+  display: none;
+}
+
+@keyframes arvio-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes arvio-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes arvio-scale-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
