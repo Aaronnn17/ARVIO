@@ -891,7 +891,7 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
   isWatched: (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => boolean;
   onPlayEpisode: (season: number, episode: number) => void;
 }) {
-  const { openContextMenu, markWatchedLocally, toggleWatched } = useApp();
+  const { openContextMenu, setToast, toggleWatched } = useApp();
   const seasons = item.seasons ?? [];
   const [season, setSeason] = useState(seasons[0]?.seasonNumber ?? 1);
   const [episodes, setEpisodes] = useState<EpisodeInfo[]>([]);
@@ -914,6 +914,20 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
     return () => { active = false; };
   }, [item.id, season, retryNonce]);
 
+  const updateSeasonWatched = async (seasonNum: number, watched: boolean) => {
+    try {
+      const targetEpisodes = await getSeasonEpisodes(item.id, seasonNum);
+      for (const ep of targetEpisodes) {
+        if (isWatched(item, seasonNum, ep.episodeNumber) !== watched) {
+          await toggleWatched(item, seasonNum, ep.episodeNumber);
+        }
+      }
+      setToast(`Season ${seasonNum} marked as ${watched ? "watched" : "unwatched"}.`);
+    } catch {
+      setToast(`Could not update Season ${seasonNum}. Please try again.`);
+    }
+  };
+
   const handleSeasonContextMenu = (e: React.MouseEvent, seasonNum: number, seasonName: string) => {
     e.preventDefault();
     e.stopPropagation();
@@ -926,20 +940,16 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
           id: "mark_season_watched",
           label: "Mark Season Watched",
           icon: <Check size={18} />,
-          action: () => {
-            episodes.forEach((ep) => {
-              markWatchedLocally({ mediaType: "tv", id: item.id, season: seasonNum, episode: ep.episodeNumber }, true);
-            });
+          action: async () => {
+            await updateSeasonWatched(seasonNum, true);
           }
         },
         {
           id: "mark_season_unwatched",
           label: "Mark Season Unwatched",
           icon: <EyeOff size={18} />,
-          action: () => {
-            episodes.forEach((ep) => {
-              markWatchedLocally({ mediaType: "tv", id: item.id, season: seasonNum, episode: ep.episodeNumber }, false);
-            });
+          action: async () => {
+            await updateSeasonWatched(seasonNum, false);
           }
         }
       ]

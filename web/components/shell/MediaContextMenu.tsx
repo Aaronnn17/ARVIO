@@ -1,6 +1,6 @@
 "use client";
 
-import { Bookmark, Check, EyeOff, Info, Play, Trash2, X } from "lucide-react";
+import { Bookmark, Check, EyeOff, Info, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
 
@@ -54,20 +54,10 @@ export function MediaContextMenu() {
 
     actions = [
       {
-        id: "play",
-        label: "Play",
-        icon: <Play size={18} fill="currentColor" />,
-        action: () => {
-          closeContextMenu();
-          void openDetails(item);
-        }
-      },
-      {
         id: "details",
         label: "View Details",
         icon: <Info size={18} />,
         action: () => {
-          closeContextMenu();
           void openDetails(item);
         }
       },
@@ -76,7 +66,6 @@ export function MediaContextMenu() {
         label: inWatchlist ? "Remove from Watchlist" : "Add to Watchlist",
         icon: inWatchlist ? <Trash2 size={18} /> : <Bookmark size={18} />,
         action: () => {
-          closeContextMenu();
           void toggleWatchlist(item);
         }
       },
@@ -85,7 +74,6 @@ export function MediaContextMenu() {
         label: watched ? "Mark as Unwatched" : "Mark as Watched",
         icon: watched ? <EyeOff size={18} /> : <Check size={18} />,
         action: () => {
-          closeContextMenu();
           void toggleWatched(item);
         }
       }
@@ -98,7 +86,6 @@ export function MediaContextMenu() {
         icon: <X size={18} />,
         danger: true,
         action: () => {
-          closeContextMenu();
           void removeFromContinueWatching(item);
         }
       });

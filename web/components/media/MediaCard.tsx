@@ -55,6 +55,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   const isUpNext = item.timeRemainingLabel === "Up next";
   const showProgress = !watched && !isUpNext && progress >= 1 && progress <= 94;
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressClickUntil = useRef(0);
   // CW/up-next items from Trakt arrive with no artwork, and a hydration that hit
   // a network/429 error leaves image+backdrop empty — the card renders grey while
   // the (separately cached) logo shows. Back-fill artwork lazily from TMDB.
@@ -88,12 +89,22 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
     const posX = touch?.clientX ?? 0;
     const posY = touch?.clientY ?? 0;
     longPressTimer.current = setTimeout(() => {
+      suppressClickUntil.current = Date.now() + 750;
       triggerContextMenu(posX, posY);
     }, 500);
   };
 
   const handleTouchEnd = () => {
     if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  };
+
+  const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (Date.now() < suppressClickUntil.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    onOpen(item);
   };
 
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -176,7 +187,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
     <button
       type="button"
       className={`media-card ${effectivePosterMode ? "is-poster" : ""}`}
-      onClick={() => onOpen(item)}
+      onClick={handleClick}
       onContextMenu={handleContextMenu}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
