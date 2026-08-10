@@ -469,6 +469,7 @@ export interface AppStore {
   activeStream: StreamSource | null;
   activeChannel: IptvChannel | null;
   addons: InstalledAddon[];
+  addonsReady: boolean;
   iptvSnapshot: IptvSnapshot;
   query: string;
   setQuery: (value: string) => void;
@@ -555,6 +556,7 @@ export function AppProvider({
   const [activeStream, setActiveStream] = useState<StreamSource | null>(null);
   const [activeChannel, setActiveChannel] = useState<IptvChannel | null>(null);
   const [addons, setAddons] = useState<InstalledAddon[]>([]);
+  const [addonsReady, setAddonsReady] = useState(false);
   const [iptvSnapshot, setIptvSnapshot] = useState<IptvSnapshot>(emptyIptv);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MediaItem[]>([]);
@@ -668,6 +670,7 @@ export function AppProvider({
     if (existing?.key === key) return existing.promise;
     const run = (async () => {
       const currentSettings = settingsRef.current;
+      setAddonsReady(false);
       setBusy("Syncing catalogs");
       // Paint Continue Watching instantly from the last known list for this
       // profile — the fresh Trakt fetch replaces it seconds later. Without
@@ -742,6 +745,7 @@ export function AppProvider({
         enabled: !effectiveSettings.disabledAddonIds.includes(addon.id) && addon.enabled !== false
       }));
       setAddons(addonState);
+      setAddonsReady(true);
       // Only persist locally when we actually have addons — an empty list can't
       // overwrite a good one.
       if (addonState.length) saveLocalAddons(addonState);
@@ -886,6 +890,7 @@ export function AppProvider({
         saveCachedList(watchlistCacheKey, hydratedWatchlist, 60);
       }
       } catch (error) {
+        setAddonsReady(true);
         setToast(error instanceof Error ? error.message : "Failed to load ARVIO");
       } finally {
         setBusy("");
@@ -1762,6 +1767,7 @@ export function AppProvider({
     activeStream,
     activeChannel,
     addons,
+    addonsReady,
     iptvSnapshot,
     query,
     setQuery,
@@ -1802,7 +1808,7 @@ export function AppProvider({
     view, cloudLoginRequired, profiles, activeProfile, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
     section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
-    addons, iptvSnapshot, query, results, settings, auth, traktConnected, mdblistConnected, deviceCode, busy, toast,
+    addons, addonsReady, iptvSnapshot, query, results, settings, auth, traktConnected, mdblistConnected, deviceCode, busy, toast,
     updateSettings, refreshData, openDetails, closeDetails, playStream, playTrailer, playChannel, playCatchup, closePlayer,
     refreshIptv, loadIptvGuide,
     installAddon, removeAddon, setAddonsState, signIn, signOut, beginTrakt, pollTrakt, disconnectTrakt,
