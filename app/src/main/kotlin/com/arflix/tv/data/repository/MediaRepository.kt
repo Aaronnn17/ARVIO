@@ -101,7 +101,7 @@ class MediaRepository @Inject constructor(
     private val apiKey = Constants.TMDB_API_KEY
     private val gson = Gson()
 
-    /** TMDB content language (e.g. "en-US", "fr-FR", "nl-NL"). Null = TMDB default (English). */
+    /** TMDB content language (e.g. "en-US", "fr-FR", "nl-NL"). */
     @Volatile
     var contentLanguage: String = "en-US"
         set(value) {
@@ -3052,7 +3052,10 @@ class MediaRepository @Inject constructor(
             val videos = tmdbApi.getVideos(type, mediaId, apiKey, language = contentLanguage)
             var results = videos.results
             // If language-specific request returned no YouTube videos, fall back to English
-            if (results.none { it.site == "YouTube" } && !contentLanguage.isNullOrBlank()) {
+            if (
+                results.none { it.site == "YouTube" } &&
+                !contentLanguage.equals("en-US", ignoreCase = true)
+            ) {
                 results = tmdbApi.getVideos(type, mediaId, apiKey, language = null).results
             }
             val trailer = results.find { it.type == "Trailer" && it.site == "YouTube" && it.official }

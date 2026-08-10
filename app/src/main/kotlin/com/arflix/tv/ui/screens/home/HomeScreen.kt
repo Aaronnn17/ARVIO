@@ -1769,7 +1769,6 @@ private fun HomeHeroLayer(
         val buttonsBottomPadding = contentRowTopPadding - 10.dp
         val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 34.dp else 34.dp
 
-        val isRtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1784,10 +1783,10 @@ private fun HomeHeroLayer(
                         overviewOverride = heroOverviewOverride,
                         showBudget = showBudget,
                         modifier = Modifier
-                            .align(if (isRtl) Alignment.BottomEnd else Alignment.BottomStart)
+                            .align(Alignment.BottomStart)
                             .padding(
-                                start = if (isRtl) 400.dp else contentStartPadding,
-                                end = if (isRtl) contentStartPadding else 400.dp
+                                start = contentStartPadding,
+                                end = 400.dp
                             )
                             .offset(y = -heroBottomPadding)
                     )

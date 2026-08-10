@@ -1107,9 +1107,6 @@ class SettingsViewModel @Inject constructor(
                 .edit().putString("locale_tag", lang).apply()
             mediaRepository.contentLanguage = lang
             _uiState.value = _uiState.value.copy(contentLanguage = lang)
-            runCatching {
-                context.cacheDir.listFiles()?.filter { it.name.startsWith("home_categories_cache_") }?.forEach { it.delete() }
-            }
             syncLocalStateToCloud(silent = true)
         }
     }

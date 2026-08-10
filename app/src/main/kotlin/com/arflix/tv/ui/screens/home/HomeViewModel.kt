@@ -942,7 +942,7 @@ class HomeViewModel @Inject constructor(
         val profileId = profileManager.getProfileIdSync()
             .ifBlank { "default" }
             .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
-        val language = (mediaRepository.contentLanguage ?: "en-US")
+        val language = mediaRepository.contentLanguage
             .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
         return java.io.File(context.cacheDir, "home_categories_cache_${profileId}_$language.json")
     }
@@ -1035,6 +1035,7 @@ class HomeViewModel @Inject constructor(
     private var watchedBadgesJob: Job? = null
     private var loadHomeRequestId: Long = 0L
     private var activeRuntimeProfileId: String? = null
+    private var observedContentLanguage: String? = null
     private val HERO_DEBOUNCE_MS = 80L // Short debounce; focus idle is handled in HomeScreen
     private val startupCreatedAtMs = SystemClock.elapsedRealtime()
     private val startupSettleMs = if (isLowRamDevice) 5_000L else 4_000L
@@ -1386,6 +1387,21 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private fun invalidateContentLanguageCaches() {
+        heroUpdateJob?.cancel()
+        heroDetailsJob?.cancel()
+        prefetchJob?.cancel()
+        heroDetailsCache.clear()
+        heroDetailsFetchInFlight.clear()
+        lastResolvedBaseCategories = emptyList()
+        mediaRepository.clearMediaCache()
+        _uiState.value = _uiState.value.copy(
+            heroOverviewOverride = null,
+            heroTrailerKey = null,
+            isHeroTransitioning = false
+        )
+    }
+
     init {
         viewModelScope.launch {
             streamRepository.installedAddons.collectLatest { addons ->
@@ -1421,8 +1437,10 @@ class HomeViewModel @Inject constructor(
                 ).collect { preferences ->
                     val previousState = _uiState.value
                     val autoplayJustEnabled = !previousState.trailerAutoPlay && preferences.trailerAutoPlay
-                    val langChanged = mediaRepository.contentLanguage != preferences.contentLanguage
                     mediaRepository.contentLanguage = preferences.contentLanguage
+                    val normalizedLanguage = mediaRepository.contentLanguage
+                    val langChanged = observedContentLanguage?.let { it != normalizedLanguage } ?: false
+                    observedContentLanguage = normalizedLanguage
 
                     _uiState.value = previousState.copy(
                         trailerAutoPlay = preferences.trailerAutoPlay,
@@ -1435,10 +1453,7 @@ class HomeViewModel @Inject constructor(
                     )
 
                     if (langChanged) {
-                        mediaRepository.clearMediaCache()
-                        runCatching {
-                            context.cacheDir.listFiles()?.filter { it.name.startsWith("home_categories_cache_") }?.forEach { it.delete() }
-                        }
+                        invalidateContentLanguageCaches()
                         loadHomeData()
                     } else if (autoplayJustEnabled) {
                         _uiState.value.heroItem?.let(::hydrateHeroDetailsIfNeeded)
