@@ -839,7 +839,7 @@ export async function saveCloudSettings(
         favoriteGroups: settings.favoriteGroupIds,
         hiddenGroups: settings.hiddenGroupIds,
         groupOrder: settings.groupOrder,
-        sortOrder: settings.iptvSortOrder
+        sortOrder: settings.iptvSortOrder ?? "provider"
       });
     }
   });

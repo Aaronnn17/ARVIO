@@ -467,5 +467,5 @@ export interface AppSettings {
   favoriteGroupIds: string[];
   hiddenGroupIds: string[];
   groupOrder: string[];
-  iptvSortOrder: "provider" | "number" | "name";
+  iptvSortOrder?: "provider" | "number" | "name";
 }
