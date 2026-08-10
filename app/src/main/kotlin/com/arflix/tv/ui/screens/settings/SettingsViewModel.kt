@@ -155,6 +155,7 @@ data class SettingsUiState(
     val iptvPlaylists: List<IptvPlaylistEntry> = emptyList(),
     val iptvStalkerUrl: String = "",
     val iptvStalkerMac: String = "",
+    val iptvSortOrder: String = "provider",
     val iptvChannelCount: Int = 0,
     val isIptvLoading: Boolean = false,
     val iptvError: String? = null,
@@ -1865,7 +1866,8 @@ class SettingsViewModel @Inject constructor(
                         iptvEpgUrl = config.epgUrl,
                         iptvPlaylists = config.playlists,
                         iptvStalkerUrl = config.stalkerPortalUrl,
-                        iptvStalkerMac = config.stalkerMacAddress
+                        iptvStalkerMac = config.stalkerMacAddress,
+                        iptvSortOrder = config.sortOrder
                     )
                 }
                 if (!hasObservedIptvConfig) {
@@ -2364,6 +2366,12 @@ class SettingsViewModel @Inject constructor(
                     }
                 }
             }
+        }
+    }
+
+    fun setIptvSortOrder(mode: String) {
+        viewModelScope.launch {
+            iptvRepository.saveSortOrder(mode)
         }
     }
 

@@ -827,6 +827,7 @@ fun LiveTvScreen(
         favSet,
         recentsFilterKey,
         pagedLoadedLimit,
+        state.snapshot.sortOrder,
     ) {
         val tree = visibleEnrichedState.value.tree
         val categoryCount = tree.countForCategory(selectedCategoryId) ?: 0
@@ -912,7 +913,7 @@ fun LiveTvScreen(
             return@LaunchedEffect
         }
         filteredChannelsCategoryKey = selectedCategoryId
-        filteredChannelsState.value = result
+        filteredChannelsState.value = sortChannelsByConfiguredOrder(result, state.snapshot.sortOrder)
     }
     val visibleChannels = visibleEnrichedState.value.all
     // Variant grouping + collapsing + index building are O(channels). Doing them
