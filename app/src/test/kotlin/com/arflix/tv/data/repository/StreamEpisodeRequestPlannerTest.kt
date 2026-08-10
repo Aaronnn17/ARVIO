@@ -128,15 +128,33 @@ class StreamEpisodeRequestPlannerTest {
     }
 
     @Test
-    fun `buildEpisodeIdCandidates produces valid candidates for tmdb and imdb ids`() {
+    fun `generic series addons fall back from imdb to supported tmdb ids`() {
+        val tmdbEpisodeId = buildTmdbEpisodeIdCandidate(
+            tmdbId = 82928,
+            season = 1,
+            episode = 1,
+            supportsTmdbIds = true
+        )
         val candidates = buildEpisodeIdCandidates(
-            seriesId = "tmdb:82928:1:1",
+            seriesId = "tt1234567:1:1",
             animeQuery = null,
-            tmdbEpisodeId = null,
+            tmdbEpisodeId = tmdbEpisodeId,
             preferNativeAnimeIds = false
         )
 
-        assertEquals(listOf("tmdb:82928:1:1"), candidates.map { it.contentId })
-        assertEquals(listOf("imdb"), candidates.map { it.label })
+        assertEquals(listOf("tt1234567:1:1", "tmdb:82928:1:1"), candidates.map { it.contentId })
+        assertEquals(listOf("imdb", "tmdb"), candidates.map { it.label })
+    }
+
+    @Test
+    fun `tmdb fallback is skipped when addon does not support tmdb ids`() {
+        val candidate = buildTmdbEpisodeIdCandidate(
+            tmdbId = 82928,
+            season = 1,
+            episode = 1,
+            supportsTmdbIds = false
+        )
+
+        assertEquals(null, candidate)
     }
 }
