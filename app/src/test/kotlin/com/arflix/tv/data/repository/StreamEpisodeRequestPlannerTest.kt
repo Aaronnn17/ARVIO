@@ -38,6 +38,18 @@ class StreamEpisodeRequestPlannerTest {
     }
 
     @Test
+    fun `episode addon lookup includes imdb and tmdb ids`() {
+        assertEquals(
+            listOf("tt9054364", "tmdb:82684"),
+            buildEpisodeAddonLookupIds(imdbId = "tt9054364", tmdbId = 82684)
+        )
+        assertEquals(
+            listOf("tt9054364"),
+            buildEpisodeAddonLookupIds(imdbId = "tt9054364", tmdbId = null)
+        )
+    }
+
+    @Test
     fun `native anime addons can skip ambiguous tmdb episode ids`() {
         val candidates = buildEpisodeIdCandidates(
             seriesId = "tt9054364:3:1",
