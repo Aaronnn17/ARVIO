@@ -3762,7 +3762,7 @@ private fun MobileSettingsMainPage(
                     onClick = { if (uiState.isMdbListConnected) showMdbListDisconnectConfirm = true else showMdbListConnect = true }
                 )
                 MobileSettingsRow(
-                    icon = Icons.Default.QrCode,
+                    iconRes = R.drawable.ic_telegram,
                     title = "Telegram",
                     value = stringResource(R.string.settings_open),
                     isFocused = false,
