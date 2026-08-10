@@ -560,6 +560,12 @@
     <string name="settings_badge_delete">DELETE</string>
     <string name="settings_n_selected">%1$d selected</string>
     <string name="settings_section_playlists">PLAYLISTS</string>
+    <string name="settings_section_options">OPTIONS</string>
+    <string name="settings_iptv_channel_order">Channel order</string>
+    <string name="settings_iptv_channel_order_description">Choose how channels are ordered within each group</string>
+    <string name="settings_iptv_order_provider">Provider order</string>
+    <string name="settings_iptv_order_number">Channel number</string>
+    <string name="settings_iptv_order_name">Alphabetical (A-Z)</string>
     <string name="settings_add_tv_lists_hint">Add up to 3 M3U / Xtream TV lists</string>
     <string name="settings_create_another_tv">Create another TV list</string>
     <string name="settings_badge_full_short">Full</string>

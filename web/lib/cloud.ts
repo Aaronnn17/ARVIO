@@ -60,6 +60,7 @@ interface AndroidIptvProfileState {
   favoriteGroups?: string[];
   hiddenGroups?: string[];
   groupOrder?: string[];
+  sortOrder?: string;
 }
 
 function canUseBackendSync(auth: AuthClient) {
@@ -482,6 +483,7 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
     favoriteGroupIds: stringArray(state.favoriteGroups).length ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
     hiddenGroupIds: stringArray(state.hiddenGroups),
     groupOrder: stringArray(state.groupOrder),
+    iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
     iptvStalkerUrl: stringValue(state.stalkerPortalUrl ?? rootState.iptvStalkerUrl),
     iptvStalkerMac: stringValue(state.stalkerMacAddress ?? rootState.iptvStalkerMac)
   };
@@ -836,7 +838,8 @@ export async function saveCloudSettings(
         favoriteChannels: settings.favoriteChannelIds,
         favoriteGroups: settings.favoriteGroupIds,
         hiddenGroups: settings.hiddenGroupIds,
-        groupOrder: settings.groupOrder
+        groupOrder: settings.groupOrder,
+        sortOrder: settings.iptvSortOrder
       });
     }
   });

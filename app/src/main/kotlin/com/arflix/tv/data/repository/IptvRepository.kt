@@ -151,6 +151,12 @@ private object IptvIdSentinels {
 private const val LargeIptvListChannelCount = 10_000
 internal const val IPTV_GROUP_ORDER_SCHEMA = 3
 
+internal fun normalizeIptvSortOrder(value: String?): String = when (value?.trim()?.lowercase()) {
+    "number" -> "number"
+    "name" -> "name"
+    else -> "provider"
+}
+
 data class IptvConfig(
     val m3uUrl: String = "",
     val epgUrl: String = "",
@@ -182,6 +188,7 @@ data class IptvCloudProfileState(
     val hiddenGroups: List<String> = emptyList(),
     val groupOrder: List<String> = emptyList(),
     val groupOrderSchema: Int = 0,
+    val sortOrder: String = "provider",
     val playlists: List<IptvPlaylistEntry> = emptyList(),
     val tvSession: IptvTvSessionState = IptvTvSessionState()
 )
@@ -457,7 +464,7 @@ class IptvRepository @Inject constructor(
                 playlists = playlists,
                 stalkerPortalUrl = decryptConfigValue(prefs[stalkerPortalUrlKey()].orEmpty()),
                 stalkerMacAddress = prefs[stalkerMacAddressKey()].orEmpty(),
-                sortOrder = prefs[sortOrderKey()] ?: "provider"
+                sortOrder = normalizeIptvSortOrder(prefs[sortOrderKey()])
             )
         }
 
@@ -615,8 +622,9 @@ class IptvRepository @Inject constructor(
     }
 
     suspend fun saveSortOrder(sortOrder: String) {
+        val normalizedSortOrder = normalizeIptvSortOrder(sortOrder)
         context.settingsDataStore.edit { prefs ->
-            prefs[sortOrderKey()] = sortOrder
+            prefs[sortOrderKey()] = normalizedSortOrder
         }
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save iptv sort order")
     }
@@ -2830,6 +2838,8 @@ class IptvRepository @Inject constructor(
     private fun stalkerPortalUrlKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_stalker_portal_url")
     private fun stalkerMacAddressKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_stalker_mac_address")
     private fun sortOrderKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_sort_order")
+    private fun sortOrderKeyFor(profileId: String): Preferences.Key<String> =
+        profileManager.profileStringKeyFor(profileId, "iptv_sort_order")
     private fun epgUrlKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_epg_url")
     private fun favoriteGroupsKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_favorite_groups")
@@ -3031,6 +3041,7 @@ class IptvRepository @Inject constructor(
                 }.getOrDefault(emptyList())
             } else emptyList(),
             groupOrderSchema = IPTV_GROUP_ORDER_SCHEMA,
+            sortOrder = normalizeIptvSortOrder(prefs[sortOrderKeyFor(safeProfileId)]),
             playlists = playlists,
             tvSession = decodeTvSessionState(tvSessionRaw)
         )
@@ -3073,6 +3084,7 @@ class IptvRepository @Inject constructor(
             if (normalizedGroupOrder.isEmpty()) prefs.remove(groupOrderKeyFor(safeProfileId))
             else prefs[groupOrderKeyFor(safeProfileId)] = gson.toJson(normalizedGroupOrder)
             prefs[groupOrderSchemaKeyFor(safeProfileId)] = IPTV_GROUP_ORDER_SCHEMA.toString()
+            prefs[sortOrderKeyFor(safeProfileId)] = normalizeIptvSortOrder(state.sortOrder)
             if (effectivePlaylists.isEmpty()) prefs.remove(playlistsKeyFor(safeProfileId))
             else prefs[playlistsKeyFor(safeProfileId)] = gson.toJson(effectivePlaylists)
             if (state.tvSession != IptvTvSessionState()) {
