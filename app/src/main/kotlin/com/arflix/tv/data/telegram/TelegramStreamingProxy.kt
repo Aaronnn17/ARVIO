@@ -1,7 +1,7 @@
 package com.arflix.tv.data.telegram
 
-import android.util.Log
 import android.content.Context
+import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.ktor.http.ContentRange
 import io.ktor.http.ContentType
@@ -17,15 +17,48 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.drinkless.tdlib.TdApi
 import java.net.ServerSocket
 import javax.inject.Inject
 import javax.inject.Singleton
+
+internal object TelegramBufferPolicy {
+    const val LOW_STORAGE_PREFETCH_BYTES = 2 * 1024 * 1024L
+    const val MIN_PREFETCH_BYTES = 4 * 1024 * 1024L
+    const val MAX_PREFETCH_BYTES = 20 * 1024 * 1024L
+    const val DEFAULT_PREFETCH_BYTES = 8 * 1024 * 1024L
+    const val LOW_STORAGE_THRESHOLD_BYTES = 500 * 1024 * 1024L
+
+    private const val TARGET_BUFFER_SECONDS = 60L
+    private const val DEFAULT_ESTIMATED_DURATION_SECONDS = 90 * 60L
+
+    fun prefetchBytes(totalSize: Long, usableSpace: Long): Long {
+        val target = when {
+            usableSpace < LOW_STORAGE_THRESHOLD_BYTES -> LOW_STORAGE_PREFETCH_BYTES
+            totalSize <= 0L -> DEFAULT_PREFETCH_BYTES
+            else -> {
+                val bytesPerSecond = (totalSize / DEFAULT_ESTIMATED_DURATION_SECONDS)
+                    .coerceAtLeast(1L)
+                (bytesPerSecond * TARGET_BUFFER_SECONDS)
+                    .coerceIn(MIN_PREFETCH_BYTES, MAX_PREFETCH_BYTES)
+            }
+        }
+
+        return if (totalSize > 0L) minOf(target, totalSize) else target
+    }
+}
 
 /**
  * Runs a local Ktor HTTP server on a random port.
@@ -42,32 +75,25 @@ class TelegramStreamingProxy @Inject constructor(
 ) {
     companion object {
         private const val TAG = "TelegramProxy"
-        private const val CHUNK_SIZE = 2 * 1024 * 1024       // 2 MB served per ExoPlayer request
-        private const val FORWARD_BUFFER_SECONDS = 150L              // 2.5 minutes forward cache
-        private const val BACKWARD_BUFFER_SECONDS = 30L              // 30 seconds rewind cache
-        private const val DEFAULT_ESTIMATED_DURATION_SECONDS = 5400L // Default 1.5 hour movie estimate
-        private const val MIN_FORWARD_PREFETCH_BYTES = 20 * 1024 * 1024L  // Min 20 MB forward
-        private const val MAX_FORWARD_PREFETCH_BYTES = 300 * 1024 * 1024L // Max 300 MB forward
-        private const val LOW_STORAGE_PREFETCH_SIZE = 2 * 1024 * 1024L   // 2 MB prefetch window under low storage
-        private const val LOW_STORAGE_THRESHOLD_BYTES = 500 * 1024 * 1024L // 500 MB free space
-        private const val CRITICAL_STORAGE_THRESHOLD_BYTES = 200 * 1024 * 1024L // 200 MB free space
+        private const val CHUNK_SIZE = 2 * 1024 * 1024
+        private const val CACHE_CLEANUP_GRACE_MS = 30_000L
+        private const val FILE_DELETE_TIMEOUT_MS = 5_000L
         private const val DOWNLOAD_TIMEOUT_MS = 30_000L
-        private const val DOWNLOAD_PRIORITY = 32              // max TDLib priority
+        private const val DOWNLOAD_PRIORITY = 32
         private const val POLL_INTERVAL_MS = 100L
     }
 
-    private fun calculateForwardPrefetchBytes(totalSize: Long): Long {
-        if (totalSize <= 0) return 30 * 1024 * 1024L
-        // Average byte rate = totalSize / duration (estimated as 1.5h if unknown)
-        val bytesPerSecond = (totalSize / DEFAULT_ESTIMATED_DURATION_SECONDS).coerceAtLeast(600_000L)
-        val forwardBytes = bytesPerSecond * FORWARD_BUFFER_SECONDS
-        return forwardBytes.coerceIn(MIN_FORWARD_PREFETCH_BYTES, MAX_FORWARD_PREFETCH_BYTES)
-    }
+    private data class StreamRequestState(
+        var activeRequests: Int = 0,
+        var cleanupJob: Job? = null
+    )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var port: Int = 0
     private var server: io.ktor.server.engine.ApplicationEngine? = null
     @Volatile private var lastStreamedFileId: Int? = null
+    private val requestStateMutex = Mutex()
+    private val requestStates = mutableMapOf<Int, StreamRequestState>()
 
     fun start() {
         if (server != null) return
@@ -82,52 +108,50 @@ class TelegramStreamingProxy @Inject constructor(
                         return@get
                     }
 
-                    // When a new file starts streaming, clean up the previous one so
-                    // TDLib's downloaded chunks don't accumulate in tdlib_files/ indefinitely.
-                    val prev = lastStreamedFileId
-                    if (prev != null && prev != fileId) {
-                        scope.launch { deleteFile(prev) }
-                    }
-                    lastStreamedFileId = fileId
+                    beginStreamRequest(fileId)
+                    try {
+                        val rangeHeader = call.request.headers[HttpHeaders.Range]
+                        val (rangeStart, rangeEnd) = parseRange(rangeHeader)
 
-                    val rangeHeader = call.request.headers[HttpHeaders.Range]
-                    val (rangeStart, rangeEnd) = parseRange(rangeHeader)
+                        val fileInfo = getFileInfo(fileId)
+                        val totalSize = fileInfo?.second ?: 0L
+                        val localPath = fileInfo?.first
+                        Log.d(TAG, "FileInfo: fileId=$fileId totalSize=$totalSize localPath=$localPath")
 
-                    // Get file info to know total size
-                    val fileInfo = getFileInfo(fileId)
-                    val totalSize = fileInfo?.second ?: 0L
-                    val localPath = fileInfo?.first
-                    Log.d(TAG, "FileInfo: fileId=$fileId totalSize=$totalSize localPath=$localPath")
+                        if (totalSize <= 0L) {
+                            call.respond(HttpStatusCode.NotFound)
+                            return@get
+                        }
 
-                    if (totalSize <= 0L) {
-                        call.respond(HttpStatusCode.NotFound)
-                        return@get
-                    }
+                        val start = rangeStart ?: 0L
+                        val end = rangeEnd ?: (totalSize - 1L)
+                        val length = end - start + 1
 
-                    val start = rangeStart ?: 0L
-                    val end = rangeEnd ?: (totalSize - 1L)
-                    val length = end - start + 1
+                        call.response.header(HttpHeaders.ContentLength, length.toString())
+                        call.response.header(HttpHeaders.AcceptRanges, "bytes")
+                        call.response.header(
+                            HttpHeaders.ContentRange,
+                            "bytes $start-$end/$totalSize"
+                        )
 
-                    call.response.header(HttpHeaders.ContentLength, length.toString())
-                    call.response.header(HttpHeaders.AcceptRanges, "bytes")
-                    call.response.header(
-                        HttpHeaders.ContentRange,
-                        "bytes $start-$end/$totalSize"
-                    )
+                        val status = if (rangeHeader != null) HttpStatusCode.PartialContent else HttpStatusCode.OK
 
-                    val status = if (rangeHeader != null) HttpStatusCode.PartialContent else HttpStatusCode.OK
-
-                    call.respondBytesWriter(
-                        contentType = ContentType.Video.Any,
-                        status = status
-                    ) {
-                        var offset = start
-                        while (offset <= end) {
-                            val chunkSize = minOf(CHUNK_SIZE.toLong(), end - offset + 1).toInt()
-                            val bytes = downloadChunk(fileId, localPath, offset, chunkSize, totalSize)
-                            if (bytes == null || bytes.isEmpty()) break
-                            writeFully(bytes)
-                            offset += bytes.size
+                        call.respondBytesWriter(
+                            contentType = ContentType.Video.Any,
+                            status = status
+                        ) {
+                            var offset = start
+                            while (offset <= end) {
+                                val chunkSize = minOf(CHUNK_SIZE.toLong(), end - offset + 1).toInt()
+                                val bytes = downloadChunk(fileId, localPath, offset, chunkSize, totalSize)
+                                if (bytes == null || bytes.isEmpty()) break
+                                writeFully(bytes)
+                                offset += bytes.size
+                            }
+                        }
+                    } finally {
+                        withContext(NonCancellable) {
+                            endStreamRequest(fileId)
                         }
                     }
                 }
@@ -146,15 +170,66 @@ class TelegramStreamingProxy @Inject constructor(
     }
 
     private suspend fun deleteFile(fileId: Int) {
-        runCatching {
-            client.sendRequest(TdApi.CancelDownloadFile().also { req ->
-                req.fileId = fileId
-                req.onlyIfPending = false
-            })
+        try {
+            client.sendRequest(
+                TdApi.CancelDownloadFile().also { request ->
+                    request.fileId = fileId
+                    request.onlyIfPending = false
+                },
+                timeoutMs = FILE_DELETE_TIMEOUT_MS
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to cancel cached file $fileId", e)
         }
-        runCatching {
-            client.sendRequest(TdApi.DeleteFile().also { it.fileId = fileId })
+
+        try {
+            client.sendRequest(
+                TdApi.DeleteFile().also { it.fileId = fileId },
+                timeoutMs = FILE_DELETE_TIMEOUT_MS
+            )
             Log.d(TAG, "Deleted cached file $fileId")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to delete cached file $fileId", e)
+        }
+    }
+
+    private suspend fun beginStreamRequest(fileId: Int) {
+        requestStateMutex.withLock {
+            val state = requestStates.getOrPut(fileId) { StreamRequestState() }
+            state.cleanupJob?.cancel()
+            state.cleanupJob = null
+            state.activeRequests += 1
+            lastStreamedFileId = fileId
+        }
+    }
+
+    private suspend fun endStreamRequest(fileId: Int) {
+        requestStateMutex.withLock {
+            val state = requestStates[fileId] ?: return@withLock
+            state.activeRequests = (state.activeRequests - 1).coerceAtLeast(0)
+            if (state.activeRequests != 0) return@withLock
+
+            state.cleanupJob = scope.launch {
+                delay(CACHE_CLEANUP_GRACE_MS)
+                val cleanupJob = currentCoroutineContext()[Job]
+                requestStateMutex.lock()
+                try {
+                    val current = requestStates[fileId]
+                    if (current?.activeRequests == 0 && current.cleanupJob === cleanupJob) {
+                        deleteFile(fileId)
+                        requestStates.remove(fileId)
+                        if (lastStreamedFileId == fileId) {
+                            lastStreamedFileId = null
+                        }
+                    }
+                } finally {
+                    requestStateMutex.unlock()
+                }
+            }
         }
     }
 
@@ -176,21 +251,9 @@ class TelegramStreamingProxy @Inject constructor(
         totalSize: Long
     ): ByteArray? {
         val freeSpace = runCatching { context.filesDir.usableSpace }.getOrDefault(Long.MAX_VALUE)
-        if (freeSpace < CRITICAL_STORAGE_THRESHOLD_BYTES) {
-            Log.w(TAG, "Critical storage warning: freeSpace=${freeSpace / (1024 * 1024)}MB, triggering storage optimization")
-            runCatching {
-                client.sendRequest(TdApi.OptimizeStorage().also { p ->
-                    p.size = CRITICAL_STORAGE_THRESHOLD_BYTES
-                })
-            }
-        }
-        val prefetchSize = if (freeSpace < LOW_STORAGE_THRESHOLD_BYTES) {
-            LOW_STORAGE_PREFETCH_SIZE
-        } else {
-            calculateForwardPrefetchBytes(totalSize)
-        }
+        val prefetchSize = TelegramBufferPolicy.prefetchBytes(totalSize, freeSpace)
 
-        // Ask TDLib to prefetch a window (non-blocking), but only wait for chunk_size bytes
+        // Ask TDLib to prefetch a bounded window, but only wait for the current chunk.
         withTimeoutOrNull(DOWNLOAD_TIMEOUT_MS) {
             client.sendRequest(TdApi.DownloadFile().also { req ->
                 req.fileId = fileId
