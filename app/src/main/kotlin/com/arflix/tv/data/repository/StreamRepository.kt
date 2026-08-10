@@ -112,6 +112,13 @@ internal fun buildTmdbEpisodeIdCandidate(
     return "tmdb:$tmdbId:$season:$episode"
 }
 
+internal fun buildEpisodeAddonLookupIds(imdbId: String, tmdbId: Int?): List<String> {
+    return buildList {
+        add(imdbId)
+        if (tmdbId != null) add("tmdb:$tmdbId")
+    }.distinct()
+}
+
 internal fun buildNativeAnimeRetryCandidates(
     seriesId: String,
     animeQuery: String?,
@@ -1575,12 +1582,9 @@ class StreamRepository @Inject constructor(
         genreIds: List<Int>,
         originalLanguage: String?
     ): List<Addon> {
-        val seriesAddons = buildList {
-            addAll(getStreamAddons(addons, "series", imdbId))
-            if (tmdbId != null) {
-                addAll(getStreamAddons(addons, "series", "tmdb:$tmdbId"))
-            }
-        }.distinctBy { it.id }
+        val seriesAddons = buildEpisodeAddonLookupIds(imdbId, tmdbId)
+            .flatMap { id -> getStreamAddons(addons, "series", id) }
+            .distinctBy { it.id }
         val hasNativeAnimeAddon = addons.any(::shouldPreferNativeAnimeIds)
         val shouldIncludeAnimeAddons = isAnime ||
             shouldTryNativeAnimeFallback(
@@ -1603,7 +1607,7 @@ class StreamRepository @Inject constructor(
     // debrid-backed addons (Torrentio, MediaFusion, etc.) that resolve remotely.
     private val ADDON_TIMEOUT_MS = 6_000L
     private val ADDON_EPISODE_TIMEOUT_MS = 10_000L
-    private val ADDON_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 8_000L
+    private val ADDON_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 4_000L
     private val ADDON_NATIVE_ANIME_EPISODE_TIMEOUT_MS = 24_000L
     private val ADDON_NATIVE_ANIME_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 12_000L
     private val ANIME_ID_LOOKUP_TIMEOUT_MS = 3_000L
@@ -1612,7 +1616,7 @@ class StreamRepository @Inject constructor(
     private val ADDON_EXTENDED_TIMEOUT_MS = 30_000L
     private val ADDON_EXTENDED_EPISODE_TIMEOUT_MS = 45_000L
     private val ADDON_EXTENDED_SINGLE_STREAM_REQUEST_TIMEOUT_MS = 35_000L
-    // Aggregators (AIOStreams/Comet/MediaFusion/HdHub) can take well over the default timeout
+    // Aggregators (AIOStreams/Comet/MediaFusion/HdHub/PenguPlay) can take well over the default timeout
     // on a cold request. Progressive fetch keeps them from blocking faster addon results.
     private val ADDON_AGGREGATOR_TIMEOUT_MS = 20_000L
     private val ADDON_AGGREGATOR_EPISODE_TIMEOUT_MS = 25_000L

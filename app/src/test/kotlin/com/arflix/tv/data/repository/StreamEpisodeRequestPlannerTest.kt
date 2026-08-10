@@ -38,19 +38,15 @@ class StreamEpisodeRequestPlannerTest {
     }
 
     @Test
-    fun `generic series without anime query includes tmdb episode candidate`() {
-        val candidates = buildEpisodeIdCandidates(
-            seriesId = "tt9054364:1:2",
-            animeQuery = null,
-            tmdbEpisodeId = "tmdb:82684:1:2",
-            preferNativeAnimeIds = false
-        )
-
+    fun `episode addon lookup includes imdb and tmdb ids`() {
         assertEquals(
-            listOf("tt9054364:1:2", "tmdb:82684:1:2"),
-            candidates.map { it.contentId }
+            listOf("tt9054364", "tmdb:82684"),
+            buildEpisodeAddonLookupIds(imdbId = "tt9054364", tmdbId = 82684)
         )
-        assertEquals(listOf("imdb", "tmdb"), candidates.map { it.label })
+        assertEquals(
+            listOf("tt9054364"),
+            buildEpisodeAddonLookupIds(imdbId = "tt9054364", tmdbId = null)
+        )
     }
 
     @Test
