@@ -12,6 +12,7 @@ import com.arflix.tv.R
 import com.arflix.tv.server.AiKeyConfigServer
 import com.arflix.tv.ui.screens.player.SubtitleAiModel
 import com.arflix.tv.util.DeviceIpAddress
+import com.arflix.tv.util.DiagnosticsManager
 import com.arflix.tv.util.QrCodeGenerator
 import com.arflix.tv.data.api.TraktDeviceCode
 import com.arflix.tv.data.model.Addon
@@ -119,6 +120,7 @@ data class SettingsUiState(
     // attached to the ExoPlayer audio session. Issue #88.
     val volumeBoostDb: Int = 0,
     val showLoadingStats: Boolean = true,
+    val diagnosticsSharingEnabled: Boolean = true,
     val includeSpecials: Boolean = false,
     val isLoggedIn: Boolean = false,
     val accountEmail: String? = null,
@@ -179,6 +181,7 @@ data class SettingsUiState(
     val packError: String? = null,
     // Addons
     val addons: List<Addon> = emptyList(),
+    val isRefreshingAddons: Boolean = false,
     val torrServerBaseUrl: String = "",
     val homeServerConnection: HomeServerConnection? = null,
     val homeServerConnections: List<HomeServerConnection> = emptyList(),
@@ -375,6 +378,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     init {
+        _uiState.value = _uiState.value.copy(
+            diagnosticsSharingEnabled = DiagnosticsManager.isReportingEnabled(context)
+        )
         loadSettings()
         observeProfileChanges()
         observeAddons()
@@ -432,6 +438,11 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setDiagnosticsSharingEnabled(enabled: Boolean) {
+        DiagnosticsManager.setReportingEnabled(context, enabled)
+        _uiState.value = _uiState.value.copy(diagnosticsSharingEnabled = enabled)
+    }
+
     private fun loadSettings() {
         viewModelScope.launch {
             // Load local preferences first
@@ -445,7 +456,7 @@ class SettingsViewModel @Inject constructor(
             val oledBlackBackground = prefs[com.arflix.tv.util.OLED_BLACK_BACKGROUND_KEY] ?: false
             val contentLang = prefs[contentLanguageKey()] ?: "en-US"
             // Apply content language to MediaRepository immediately
-            mediaRepository.contentLanguage = if (contentLang == "en-US") null else contentLang
+            mediaRepository.contentLanguage = contentLang
             var autoPlay = prefs[autoPlayNextKey()] ?: true
             var autoPlaySingleSource = prefs[autoPlaySingleSourceKey()] ?: true
             // Ensure defaults are persisted on first launch so they're never ambiguous
@@ -899,19 +910,24 @@ class SettingsViewModel @Inject constructor(
             "French",
             "German",
             "Greek",
+            "Gujarati",
             "Hebrew",
             "Hindi",
             "Hungarian",
             "Indonesian",
             "Italian",
             "Japanese",
+            "Kannada",
             "Korean",
             "Lithuanian",
+            "Malayalam",
+            "Marathi",
             "Norwegian",
             "Persian",
             "Polish",
             "Portuguese",
             "Portuguese (Brazil)",
+            "Punjabi",
             "Romanian",
             "Russian",
             "Serbian",
@@ -919,6 +935,8 @@ class SettingsViewModel @Inject constructor(
             "Slovenian",
             "Spanish",
             "Swedish",
+            "Tamil",
+            "Telugu",
             "Thai",
             "Turkish",
             "Ukrainian",
@@ -953,19 +971,24 @@ class SettingsViewModel @Inject constructor(
             "French",
             "German",
             "Greek",
+            "Gujarati",
             "Hebrew",
             "Hindi",
             "Hungarian",
             "Indonesian",
             "Italian",
             "Japanese",
+            "Kannada",
             "Korean",
             "Lithuanian",
+            "Malayalam",
+            "Marathi",
             "Norwegian",
             "Persian",
             "Polish",
             "Portuguese",
             "Portuguese (Brazil)",
+            "Punjabi",
             "Romanian",
             "Russian",
             "Serbian",
@@ -973,6 +996,8 @@ class SettingsViewModel @Inject constructor(
             "Slovenian",
             "Spanish",
             "Swedish",
+            "Tamil",
+            "Telugu",
             "Thai",
             "Turkish",
             "Ukrainian",
@@ -1090,7 +1115,7 @@ class SettingsViewModel @Inject constructor(
             // Mirror to SharedPreferences so attachBaseContext can read it synchronously on next launch
             context.getSharedPreferences("app_locale", android.content.Context.MODE_PRIVATE)
                 .edit().putString("locale_tag", lang).apply()
-            mediaRepository.contentLanguage = if (lang == "en-US") null else lang
+            mediaRepository.contentLanguage = lang
             _uiState.value = _uiState.value.copy(contentLanguage = lang)
             syncLocalStateToCloud(silent = true)
         }
@@ -1671,6 +1696,49 @@ class SettingsViewModel @Inject constructor(
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     toastMessage = error.message?.takeIf { it.isNotBlank() } ?: context.getString(R.string.addon_failed_add),
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun refreshAddons() {
+        if (_uiState.value.isRefreshingAddons) return
+        _uiState.value = _uiState.value.copy(isRefreshingAddons = true)
+        viewModelScope.launch {
+            try {
+                if (authRepository.hasValidCloudSyncSession()) {
+                    val restoreResult = restoreCloudStateToLocalInternal(
+                        silent = true,
+                        pushPendingLocalFirst = false
+                    )
+                    if (restoreResult == CloudRestoreResult.FAILED) {
+                        _uiState.value = _uiState.value.copy(
+                            isRefreshingAddons = false,
+                            toastMessage = "Cloud restore failed; addons were not changed",
+                            toastType = ToastType.ERROR
+                        )
+                        return@launch
+                    }
+                }
+                val report = streamRepository.refreshInstalledAddons()
+                val updatedAddons = streamRepository.installedAddons.first()
+                runCatching {
+                    catalogRepository.syncAddonCatalogs(updatedAddons)
+                }
+                val toast = "${report.refreshed} addons refreshed, ${report.failed} failed"
+                _uiState.value = _uiState.value.copy(
+                    addons = updatedAddons,
+                    isRefreshingAddons = false,
+                    toastMessage = toast,
+                    toastType = if (report.failed == 0) ToastType.SUCCESS else ToastType.INFO
+                )
+                syncLocalStateToCloud(silent = true)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _uiState.value = _uiState.value.copy(
+                    isRefreshingAddons = false,
+                    toastMessage = "Failed to refresh addons",
                     toastType = ToastType.ERROR
                 )
             }
@@ -3163,9 +3231,10 @@ class SettingsViewModel @Inject constructor(
         traktPollingJob = viewModelScope.launch {
             val expiresAt = System.currentTimeMillis() + (deviceCode.expiresIn * 1000)
             var lastFailure: String? = null
+            var pollDelayMs = deviceCode.interval.coerceAtLeast(1) * 1000L
 
             while (System.currentTimeMillis() < expiresAt) {
-                delay(deviceCode.interval * 1000L)
+                delay(pollDelayMs)
 
                 try {
                     traktRepository.pollForToken(deviceCode.deviceCode)
@@ -3196,21 +3265,38 @@ class SettingsViewModel @Inject constructor(
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
 
-                    // Keep polling on 400 (pending) - user hasn't entered code yet
-                    // Check both HttpException code and message for 400
-                    val is400 = when (e) {
-                        is retrofit2.HttpException -> e.code() == 400
+                    val httpError = e as? retrofit2.HttpException
+                    val isPending = when {
+                        httpError?.code() == 400 -> true
                         else -> e.message?.contains("400") == true ||
-                                e.message?.contains("pending") == true
+                            e.message?.contains("pending", ignoreCase = true) == true
                     }
-                    if (!is400) {
-                        lastFailure = when (e) {
-                            is retrofit2.HttpException -> "Trakt authorization failed (${e.code()})"
-                            else -> e.message?.takeIf { it.isNotBlank() } ?: "Trakt authorization failed"
-                        }
-                        break
+                    if (isPending) continue
+
+                    // Trakt uses 429 to ask device clients to slow down. Keep the
+                    // activation alive and honor Retry-After instead of aborting it.
+                    if (httpError?.code() == 429) {
+                        val retryAfterMs = httpError.response()
+                            ?.headers()
+                            ?.get("Retry-After")
+                            ?.toLongOrNull()
+                            ?.times(1000L)
+                        pollDelayMs = maxOf(
+                            pollDelayMs + 1_000L,
+                            retryAfterMs ?: 0L
+                        ).coerceAtMost(30_000L)
+                        continue
                     }
-                    // 400 = pending, continue polling
+
+                    lastFailure = when (httpError?.code()) {
+                        404 -> "Trakt activation code is invalid"
+                        409 -> "Trakt activation code was already used"
+                        410 -> "Trakt activation code expired"
+                        418 -> "Trakt authorization was denied"
+                        null -> e.message?.takeIf { it.isNotBlank() } ?: "Trakt authorization failed"
+                        else -> "Trakt authorization failed (${httpError.code()})"
+                    }
+                    break
                 }
             }
 

@@ -98,6 +98,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.Icon
 import com.arflix.tv.ui.components.LoadingIndicator
+import com.arflix.tv.ui.components.MobileSettingsCategory
+import com.arflix.tv.ui.components.MobileSettingsRow
 import com.arflix.tv.ui.components.QrCodeImage
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.ToastType as ComponentToastType
@@ -209,6 +211,7 @@ class SettingsFocusTracker {
 val LocalSettingsFocusTracker = compositionLocalOf<SettingsFocusTracker?> { null }
 
 private const val ACCOUNT_DELETION_URL = "https://auth.arvio.tv/delete"
+private const val PRIVACY_POLICY_URL = "https://arvio.tv/privacy"
 
 private val tvGeneralSectionIds = setOf(
     "language",
@@ -222,8 +225,8 @@ private val tvGeneralSectionIds = setOf(
 
 private fun tvGeneralRowsForSection(section: String): List<Int> {
     return when (section) {
-        "language" -> listOf(0, 3)
-        "subtitles" -> listOf(1, 2, 38, 39, 4, 5, 6, 7, 8, 9)
+        "language" -> listOf(0, 3, 1, 2)
+        "subtitles" -> listOf(4, 5, 6, 7, 8, 38, 39, 9)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
         "playback" -> listOf(10, 11, 12, 13, 14, 37, 34, 16, 15, 40, 27)
         "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22, 41, 36)
@@ -451,9 +454,9 @@ fun SettingsScreen(
             }
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
-            "stremio" -> stremioAddons.size // rows + add button
+            "stremio" -> stremioAddons.size + 1 // rows + refresh + add button
             "plugins" -> pluginsMaxIndex
-            "accounts" -> 6 // Cloud + Trakt + Telegram + Force Sync + App Update + Privacy/Data + MDBList
+            "accounts" -> 8 // Cloud, integrations, sync, update, diagnostics, privacy, deletion
             else -> 0
         }
     }
@@ -1109,6 +1112,9 @@ fun SettingsScreen(
                                                         else -> viewModel.toggleAddon(addon.id)
                                                     }
                                                 }
+                                                contentFocusIndex == stremioAddons.size -> {
+                                                    viewModel.refreshAddons()
+                                                }
                                                 else -> {
                                                     showCustomAddonInput = true
                                                 }
@@ -1148,6 +1154,9 @@ fun SettingsScreen(
                                                         viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true)
                                                     }
                                                 }
+                                                6 -> viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled)
+                                                7 -> openExternalUrl(context, PRIVACY_POLICY_URL)
+                                                8 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
                                             }
                                         }
                                         "plugins" -> {
@@ -1621,13 +1630,15 @@ fun SettingsScreen(
                         )
                         "stremio" -> StremioAddonsSettings(
                             addons = stremioAddons,
+                            isRefreshingAddons = uiState.isRefreshingAddons,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             focusedActionIndex = addonActionIndex,
                             onToggleAddon = { viewModel.toggleAddon(it) },
                             onMoveAddonUp = { viewModel.moveAddonUp(it) },
                             onMoveAddonDown = { viewModel.moveAddonDown(it) },
                             onDeleteAddon = { viewModel.removeAddon(it) },
-                            onAddCustomAddon = { showCustomAddonInput = true }
+                            onAddCustomAddon = { showCustomAddonInput = true },
+                            onRefreshAddons = { viewModel.refreshAddons() }
                         )
                         "plugins" -> {
                             com.arflix.tv.ui.screens.plugin.PluginScreen(
@@ -1652,6 +1663,7 @@ fun SettingsScreen(
                             isTraktPolling = uiState.isTraktPolling,
                             isForceCloudSyncing = uiState.isForceCloudSyncing,
                             lastCloudSyncStatus = uiState.lastCloudSyncStatus,
+                            diagnosticsSharingEnabled = uiState.diagnosticsSharingEnabled,
                             isSelfUpdateSupported = uiState.isSelfUpdateSupported,
                             updateStatus = uiState.updateStatus,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
@@ -1673,6 +1685,8 @@ fun SettingsScreen(
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
                             onInstallUpdate = { viewModel.installAppUpdateOrRequestPermission() },
+                            onDiagnosticsSharingToggle = viewModel::setDiagnosticsSharingEnabled,
+                            onOpenPrivacy = { openExternalUrl(context, PRIVACY_POLICY_URL) },
                             onOpenDataDeletion = { openExternalUrl(context, ACCOUNT_DELETION_URL) },
                             onNavigateToTelegram = onNavigateToTelegramSettings
                         )
@@ -2056,7 +2070,7 @@ fun SettingsScreen(
 
         if (showContentLanguagePicker) {
             SubtitlePickerModal(
-                title = stringResource(R.string.app_language),
+                title = stringResource(R.string.content_language),
                 options = TMDB_LANGUAGES.map { it.second },
                 selected = TMDB_LANGUAGES.firstOrNull { it.first == uiState.contentLanguage }?.second ?: "English",
                 focusedIndex = contentLanguagePickerIndex,
@@ -2168,7 +2182,8 @@ fun SettingsScreen(
                 onPasswordChange = { cloudDialogPassword = it },
                 onDismiss = { viewModel.closeCloudEmailPasswordDialog() },
                 onSignIn = { viewModel.completeCloudAuthWithEmailPassword(cloudDialogEmail, cloudDialogPassword, createAccount = false) },
-                onCreateAccount = { viewModel.completeCloudAuthWithEmailPassword(cloudDialogEmail, cloudDialogPassword, createAccount = true) }
+                onCreateAccount = { viewModel.completeCloudAuthWithEmailPassword(cloudDialogEmail, cloudDialogPassword, createAccount = true) },
+                onOpenPrivacy = { openExternalUrl(context, PRIVACY_POLICY_URL) }
             )
         }
 
@@ -2695,9 +2710,10 @@ private fun CloudEmailPasswordModal(
     onPasswordChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onSignIn: () -> Unit,
-    onCreateAccount: () -> Unit
+    onCreateAccount: () -> Unit,
+    onOpenPrivacy: () -> Unit
 ) {
-    // Focus order: 0 email, 1 password, 2 cancel, 3 sign in, 4 create
+    // Focus order: 0 email, 1 password, 2 cancel, 3 sign in, 4 create, 5 privacy
     var focusedIndex by remember { mutableIntStateOf(0) }
     val emailRequester = remember { FocusRequester() }
     val passwordRequester = remember { FocusRequester() }
@@ -2736,6 +2752,7 @@ private fun CloudEmailPasswordModal(
                                     focusedIndex = when (focusedIndex) {
                                         1 -> 0
                                         2, 3, 4 -> 1
+                                        5 -> 3
                                         else -> focusedIndex
                                     }
                                     true
@@ -2744,7 +2761,7 @@ private fun CloudEmailPasswordModal(
                                     focusedIndex = when (focusedIndex) {
                                         0 -> 1
                                         1 -> 2
-                                        2 -> 3
+                                        2, 3, 4 -> 5
                                         else -> focusedIndex
                                     }
                                     true
@@ -2770,6 +2787,7 @@ private fun CloudEmailPasswordModal(
                                         2 -> { onDismiss(); true }
                                         3 -> { onSignIn(); true }
                                         4 -> { onCreateAccount(); true }
+                                        5 -> { onOpenPrivacy(); true }
                                         else -> false
                                     }
                                 }
@@ -2930,6 +2948,33 @@ private fun CloudEmailPasswordModal(
                             color = Color.White
                         )
                     }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = stringResource(R.string.login_privacy_notice),
+                    style = ArflixTypography.caption,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onOpenPrivacy)
+                        .border(
+                            width = if (focusedIndex == 5) 2.dp else 1.dp,
+                            color = if (focusedIndex == 5) Pink else Color.White.copy(alpha = 0.14f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.login_read_privacy_policy),
+                        style = ArflixTypography.button,
+                        color = if (focusedIndex == 5) TextPrimary else TextSecondary
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -3572,6 +3617,7 @@ private fun MobileSettingsMainPage(
     onNavigateToTelegram: () -> Unit = {},
     onDisconnectTrakt: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     var showMdbListConnect by remember { mutableStateOf(false) }
     var showMdbListDisconnectConfirm by remember { mutableStateOf(false) }
     if (showMdbListConnect) {
@@ -3606,13 +3652,23 @@ private fun MobileSettingsMainPage(
                     icon = Icons.Default.Language,
                     title = stringResource(R.string.content_language),
                     value = TMDB_LANGUAGES.firstOrNull { it.first == uiState.contentLanguage }?.second ?: uiState.contentLanguage,
+                    isToggle = false,
                     isFocused = false,
                     onClick = openContentLanguagePicker
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.VolumeUp,
+                    title = stringResource(R.string.default_audio),
+                    value = uiState.defaultAudioLanguage,
+                    isToggle = false,
+                    isFocused = false,
+                    onClick = openAudioLanguagePicker
                 )
                 MobileSettingsRow(
                     icon = Icons.Default.Subtitles,
                     title = stringResource(R.string.default_subtitle),
                     value = uiState.defaultSubtitle,
+                    isToggle = false,
                     isFocused = false,
                     onClick = openSubtitlePicker
                 )
@@ -3620,40 +3676,10 @@ private fun MobileSettingsMainPage(
                     icon = Icons.Default.Subtitles,
                     title = stringResource(R.string.secondary_subtitle),
                     value = uiState.secondarySubtitle,
-                    isFocused = false,
-                    onClick = openSecondarySubtitlePicker
-                )
-                // AI-independent: the timing-based match scan needs no API key.
-                MobileSettingsRow(
-                    icon = Icons.Default.Subtitles,
-                    title = stringResource(R.string.ai_find_best_match_title),
-                    subtitle = stringResource(R.string.ai_find_best_match_desc),
-                    value = if (uiState.subtitleAiFindBestMatch) "On" else "Off",
-                    isFocused = false,
-                    onClick = { viewModel.setSubtitleAiFindBestMatch(!uiState.subtitleAiFindBestMatch) }
-                )
-                MobileSettingsRow(
-                    icon = Icons.Default.Subtitles,
-                    title = stringResource(R.string.subtitle_preload_title),
-                    subtitle = stringResource(R.string.subtitle_preload_desc),
-                    value = if (uiState.subtitlePreloadEnabled) "On" else "Off",
-                    isFocused = false,
-                    onClick = { viewModel.setSubtitlePreloadEnabled(!uiState.subtitlePreloadEnabled) }
-                )
-                MobileSettingsRow(
-                    icon = Icons.Default.Subtitles,
-                    title = stringResource(R.string.filter_subtitles),
-                    value = if (uiState.filterSubtitlesByLanguage) "On" else "Off",
-                    isFocused = false,
-                    onClick = { viewModel.setFilterSubtitlesByLanguage(!uiState.filterSubtitlesByLanguage) }
-                )
-                MobileSettingsRow(
-                    icon = Icons.Default.VolumeUp,
-                    title = stringResource(R.string.default_audio),
-                    value = uiState.defaultAudioLanguage,
+                    isToggle = false,
                     isFocused = false,
                     showDivider = false,
-                    onClick = openAudioLanguagePicker
+                    onClick = openSecondarySubtitlePicker
                 )
             }
         }
@@ -3748,8 +3774,32 @@ private fun MobileSettingsMainPage(
                     subtitle = "V${BuildConfig.VERSION_NAME}",
                     value = if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable) stringResource(R.string.settings_update_available) else stringResource(R.string.settings_check_updates),
                     isFocused = false,
-                    showDivider = false,
                     onClick = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.Settings,
+                    title = stringResource(R.string.settings_diagnostics_sharing),
+                    subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
+                    value = if (uiState.diagnosticsSharingEnabled) "On" else "Off",
+                    isFocused = false,
+                    onClick = { viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled) }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.Link,
+                    title = stringResource(R.string.settings_privacy_policy),
+                    subtitle = stringResource(R.string.settings_privacy_policy_desc),
+                    value = stringResource(R.string.settings_open),
+                    isFocused = false,
+                    onClick = { openExternalUrl(context, PRIVACY_POLICY_URL) }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.Delete,
+                    title = stringResource(R.string.settings_account_data_deletion),
+                    subtitle = stringResource(R.string.settings_account_data_deletion_desc),
+                    value = stringResource(R.string.settings_open),
+                    isFocused = false,
+                    showDivider = false,
+                    onClick = { openExternalUrl(context, ACCOUNT_DELETION_URL) }
                 )
             }
         }
@@ -3924,14 +3974,35 @@ private fun MobileSettingsSubPage(
                         title = stringResource(R.string.subtitle_stylized),
                         subtitle = stringResource(R.string.subtitle_stylized_desc),
                         value = if (uiState.subtitleStylized) "On" else "Off",
+                        isToggle = true,
                         isFocused = false,
                         onClick = { viewModel.toggleSubtitleStylized() }
+                    )
+                    // AI-independent: the timing-based match scan needs no API key.
+                    MobileSettingsRow(
+                        icon = Icons.Default.Subtitles,
+                        title = stringResource(R.string.ai_find_best_match_title),
+                        subtitle = stringResource(R.string.ai_find_best_match_desc),
+                        value = if (uiState.subtitleAiFindBestMatch) "On" else "Off",
+                        isToggle = true,
+                        isFocused = false,
+                        onClick = { viewModel.setSubtitleAiFindBestMatch(!uiState.subtitleAiFindBestMatch) }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Subtitles,
+                        title = stringResource(R.string.subtitle_preload_title),
+                        subtitle = stringResource(R.string.subtitle_preload_desc),
+                        value = if (uiState.subtitlePreloadEnabled) "On" else "Off",
+                        isToggle = true,
+                        isFocused = false,
+                        onClick = { viewModel.setSubtitlePreloadEnabled(!uiState.subtitlePreloadEnabled) }
                     )
                     MobileSettingsRow(
                         icon = Icons.Default.Subtitles,
                         title = stringResource(R.string.filter_subtitles),
                         subtitle = stringResource(R.string.filter_subtitles_desc),
                         value = if (uiState.filterSubtitlesByLanguage) "On" else "Off",
+                        isToggle = true,
                         isFocused = false,
                         showDivider = false,
                         onClick = { viewModel.setFilterSubtitlesByLanguage(!uiState.filterSubtitlesByLanguage) }
@@ -4092,13 +4163,15 @@ private fun MobileSettingsSubPage(
             "Addons" -> {
                 StremioAddonsSettings(
                     addons = stremioAddons,
+                    isRefreshingAddons = uiState.isRefreshingAddons,
                     focusedIndex = -1,
                     focusedActionIndex = 0,
                     onToggleAddon = { viewModel.toggleAddon(it) },
                     onMoveAddonUp = { viewModel.moveAddonUp(it) },
                     onMoveAddonDown = { viewModel.moveAddonDown(it) },
                     onDeleteAddon = { viewModel.removeAddon(it) },
-                    onAddCustomAddon = onAddCustomAddonClick
+                    onAddCustomAddon = onAddCustomAddonClick,
+                    onRefreshAddons = { viewModel.refreshAddons() }
                 )
             }
             "Plugins & Extensions" -> {
@@ -4206,122 +4279,6 @@ private fun MobileSettingsSubPage(
                     onDisconnect = { viewModel.disconnectHomeServer() }
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun MobileSettingsCategory(
-    title: String,
-    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Text(
-            text = title,
-            style = ArflixTypography.caption.copy(fontSize = 12.sp, letterSpacing = 1.sp),
-            color = TextSecondary,
-            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
-        )
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(BackgroundElevated)
-        ) {
-            content()
-        }
-    }
-}
-
-@Composable
-private fun MobileSettingsRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String = "",
-    value: String?,
-    isFocused: Boolean = false,
-    showDivider: Boolean = true,
-    onClick: () -> Unit
-) {
-    Column {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onClick() }
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = TextSecondary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(16.dp))
-                Column {
-                    Text(
-                        text = title,
-                        style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
-                        color = TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (subtitle.isNotEmpty()) {
-                        Text(
-                            text = subtitle,
-                            style = ArflixTypography.caption.copy(fontSize = 13.sp),
-                            color = TextSecondary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-            val safeValue = value.orEmpty()
-            if (safeValue.isNotEmpty()) {
-                Spacer(modifier = Modifier.width(16.dp))
-                if (safeValue == "On" || safeValue == "Off") {
-                    val isChecked = safeValue == "On"
-                    Box(
-                        modifier = Modifier
-                            .width(44.dp)
-                            .height(24.dp)
-                            .background(
-                                color = if (isChecked) SuccessGreen else Color.White.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(13.dp)
-                            )
-                            .padding(3.dp),
-                        contentAlignment = if (isChecked) Alignment.CenterEnd else Alignment.CenterStart
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(18.dp)
-                                .background(
-                                    color = Color.White,
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                        )
-                    }
-                } else {
-                    Text(
-                        text = localizeSettingValue(safeValue),
-                        style = ArflixTypography.caption.copy(
-                            fontSize = 13.sp,
-                            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
-                        ),
-                        color = TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-        if (showDivider) {
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).padding(horizontal = 16.dp).background(Color.White.copy(alpha = 0.05f)))
         }
     }
 }
@@ -7543,20 +7500,47 @@ private fun CatalogActionChip(
 @Composable
 private fun StremioAddonsSettings(
     addons: List<com.arflix.tv.data.model.Addon> = emptyList(),
+    isRefreshingAddons: Boolean = false,
     focusedIndex: Int = -1,
     focusedActionIndex: Int = 0,
     onToggleAddon: (String) -> Unit = {},
     onMoveAddonUp: (String) -> Unit = {},
     onMoveAddonDown: (String) -> Unit = {},
     onDeleteAddon: (String) -> Unit = {},
-    onAddCustomAddon: () -> Unit = {}
+    onAddCustomAddon: () -> Unit = {},
+    onRefreshAddons: () -> Unit = {}
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
 
     if (isMobile) {
-        Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
             MobileSettingsCategory(title = stringResource(R.string.settings_section_add_addon)) {
-                MobileSettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_addon), subtitle = stringResource(R.string.settings_install_custom_addon), value = "", isFocused = false, showDivider = false, onClick = onAddCustomAddon)
+                MobileSettingsRow(
+                    icon = Icons.Default.Refresh,
+                    title = stringResource(R.string.refresh_addons),
+                    subtitle = stringResource(R.string.settings_refresh_addons_desc),
+                    value = if (isRefreshingAddons) {
+                        stringResource(R.string.settings_pulling_latest_addon)
+                    } else {
+                        ""
+                    },
+                    isFocused = false,
+                    onClick = {
+                        if (!isRefreshingAddons) onRefreshAddons()
+                    }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.Add,
+                    title = stringResource(R.string.add_addon),
+                    subtitle = stringResource(R.string.settings_install_custom_addon),
+                    value = "",
+                    isFocused = false,
+                    showDivider = false,
+                    onClick = onAddCustomAddon
+                )
             }
             MobileSettingsCategory(title = stringResource(R.string.settings_section_my_addons)) {
                 if (addons.isEmpty()) {
@@ -7649,7 +7633,43 @@ private fun StremioAddonsSettings(
                 }
             }
             Spacer(modifier = Modifier.height(24.dp))
-            Row(modifier = Modifier.settingsFocusSlot(addons.size).fillMaxWidth().clickable(onClick = onAddCustomAddon).background(if (focusedIndex == addons.size) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp)).border(width = if (focusedIndex == addons.size) 2.dp else 0.dp, color = if (focusedIndex == addons.size) Pink else Color.Transparent, shape = RoundedCornerShape(12.dp)).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Row(
+                modifier = Modifier
+                    .settingsFocusSlot(addons.size)
+                    .fillMaxWidth()
+                    .clickable(enabled = !isRefreshingAddons, onClick = onRefreshAddons)
+                    .background(if (focusedIndex == addons.size) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+                    .border(width = if (focusedIndex == addons.size) 2.dp else 0.dp, color = if (focusedIndex == addons.size) Pink else Color.Transparent, shape = RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(Icons.Default.Refresh, contentDescription = null, tint = Pink, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = stringResource(
+                        if (isRefreshingAddons) {
+                            R.string.settings_pulling_latest_addon
+                        } else {
+                            R.string.refresh_addons
+                        }
+                    ),
+                    style = ArflixTypography.button,
+                    color = Pink
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .settingsFocusSlot(addons.size + 1)
+                    .fillMaxWidth()
+                    .clickable(onClick = onAddCustomAddon)
+                    .background(if (focusedIndex == addons.size + 1) Color.White.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f), RoundedCornerShape(12.dp))
+                    .border(width = if (focusedIndex == addons.size + 1) 2.dp else 0.dp, color = if (focusedIndex == addons.size + 1) Pink else Color.Transparent, shape = RoundedCornerShape(12.dp))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
                 Icon(Icons.Default.Widgets, contentDescription = null, tint = Pink, modifier = Modifier.size(20.dp))
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(stringResource(R.string.add_addon), style = ArflixTypography.button, color = Pink)
@@ -7841,6 +7861,7 @@ private fun AccountsSettings(
     onDisconnectMdbList: () -> Unit,
     isForceCloudSyncing: Boolean,
     lastCloudSyncStatus: String?,
+    diagnosticsSharingEnabled: Boolean,
     isSelfUpdateSupported: Boolean,
     updateStatus: com.arflix.tv.updater.UpdateStatus,
     focusedIndex: Int,
@@ -7853,6 +7874,8 @@ private fun AccountsSettings(
     onSwitchProfile: () -> Unit,
     onCheckUpdates: () -> Unit,
     onInstallUpdate: () -> Unit,
+    onDiagnosticsSharingToggle: (Boolean) -> Unit,
+    onOpenPrivacy: () -> Unit,
     onOpenDataDeletion: () -> Unit,
     onNavigateToTelegram: () -> Unit = {}
 ) {
@@ -7975,13 +7998,35 @@ private fun AccountsSettings(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        SettingsActionRow(
-            title = stringResource(R.string.settings_privacy_data_deletion),
-            description = stringResource(R.string.settings_privacy_data_deletion_desc),
-            actionLabel = stringResource(R.string.settings_badge_open),
+        SettingsToggleRow(
+            title = stringResource(R.string.settings_diagnostics_sharing),
+            subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
+            isEnabled = diagnosticsSharingEnabled,
             isFocused = focusedIndex == 6,
-            onClick = onOpenDataDeletion,
+            onToggle = onDiagnosticsSharingToggle,
             modifier = Modifier.settingsFocusSlot(6)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SettingsActionRow(
+            title = stringResource(R.string.settings_privacy_policy),
+            description = stringResource(R.string.settings_privacy_policy_desc),
+            actionLabel = stringResource(R.string.settings_badge_open),
+            isFocused = focusedIndex == 7,
+            onClick = onOpenPrivacy,
+            modifier = Modifier.settingsFocusSlot(7)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SettingsActionRow(
+            title = stringResource(R.string.settings_account_data_deletion),
+            description = stringResource(R.string.settings_account_data_deletion_desc),
+            actionLabel = stringResource(R.string.settings_badge_open),
+            isFocused = focusedIndex == 8,
+            onClick = onOpenDataDeletion,
+            modifier = Modifier.settingsFocusSlot(8)
         )
     }
 }
@@ -9512,57 +9557,62 @@ private fun UiModeWarningDialog(
 }
 
 val TMDB_LANGUAGES = listOf(
-    "en-US" to "English",
-    "nl-NL" to "Dutch (Nederlands)",
-    "fr-FR" to "French (Francais)",
-    "de-DE" to "German (Deutsch)",
-    "es-ES" to "Spanish (Espanol)",
-    "pt-PT" to "Portuguese (Portugues)",
-    "pt-BR" to "Portuguese - Brazil",
-    "it-IT" to "Italian (Italiano)",
-    "ru-RU" to "Russian",
-    "ja-JP" to "Japanese",
-    "ko-KR" to "Korean",
+    "af-ZA" to "Afrikaans",
+    "sq-AL" to "Albanian (Shqip)",
+    "ar-SA" to "Arabic",
+    "eu-ES" to "Basque (Euskara)",
+    "bn-BD" to "Bengali",
+    "bg-BG" to "Bulgarian",
+    "ca-ES" to "Catalan",
     "zh-CN" to "Chinese (Simplified)",
     "zh-TW" to "Chinese (Traditional)",
-    "ar-SA" to "Arabic",
-    "hi-IN" to "Hindi",
-    "tr-TR" to "Turkish (Turkce)",
-    "pl-PL" to "Polish (Polski)",
-    "sv-SE" to "Swedish (Svenska)",
-    "da-DK" to "Danish (Dansk)",
-    "no-NO" to "Norwegian (Norsk)",
-    "fi-FI" to "Finnish (Suomi)",
-    "el-GR" to "Greek",
-    "cs-CZ" to "Czech (Cesky)",
-    "hu-HU" to "Hungarian (Magyar)",
-    "ro-RO" to "Romanian (Romana)",
-    "th-TH" to "Thai",
-    "vi-VN" to "Vietnamese",
-    "id-ID" to "Indonesian",
-    "ms-MY" to "Malay",
-    "tl-PH" to "Filipino/Tagalog",
-    "uk-UA" to "Ukrainian",
-    "bg-BG" to "Bulgarian",
     "hr-HR" to "Croatian (Hrvatski)",
+    "cs-CZ" to "Czech (Cesky)",
+    "da-DK" to "Danish (Dansk)",
+    "nl-NL" to "Dutch (Nederlands)",
+    "en-US" to "English",
+    "et-EE" to "Estonian",
+    "tl-PH" to "Filipino/Tagalog",
+    "fi-FI" to "Finnish (Suomi)",
+    "fr-FR" to "French (Francais)",
+    "gl-ES" to "Galician (Galego)",
+    "de-DE" to "German (Deutsch)",
+    "el-GR" to "Greek",
+    "gu-IN" to "Gujarati",
+    "he-IL" to "Hebrew",
+    "hi-IN" to "Hindi",
+    "hu-HU" to "Hungarian (Magyar)",
+    "id-ID" to "Indonesian",
+    "it-IT" to "Italian (Italiano)",
+    "ja-JP" to "Japanese",
+    "kn-IN" to "Kannada",
+    "ko-KR" to "Korean",
+    "lv-LV" to "Latvian",
+    "lt-LT" to "Lithuanian",
+    "ms-MY" to "Malay",
+    "ml-IN" to "Malayalam",
+    "mr-IN" to "Marathi",
+    "no-NO" to "Norwegian (Norsk)",
+    "fa-IR" to "Persian (Farsi)",
+    "pl-PL" to "Polish (Polski)",
+    "pt-PT" to "Portuguese (Portugues)",
+    "pt-BR" to "Portuguese - Brazil",
+    "pa-IN" to "Punjabi",
+    "ro-RO" to "Romanian (Romana)",
+    "ru-RU" to "Russian",
     "sr-RS" to "Serbian (Srpski)",
     "sk-SK" to "Slovak (Slovensky)",
     "sl-SI" to "Slovenian (Slovenscina)",
-    "he-IL" to "Hebrew",
-    "fa-IR" to "Persian (Farsi)",
-    "bn-BD" to "Bengali",
+    "es-ES" to "Spanish (Espanol)",
+    "sw-KE" to "Swahili",
+    "sv-SE" to "Swedish (Svenska)",
     "ta-IN" to "Tamil",
     "te-IN" to "Telugu",
+    "th-TH" to "Thai",
+    "tr-TR" to "Turkish (Turkce)",
+    "uk-UA" to "Ukrainian",
     "ur-PK" to "Urdu",
-    "ca-ES" to "Catalan",
-    "eu-ES" to "Basque (Euskara)",
-    "gl-ES" to "Galician (Galego)",
-    "lt-LT" to "Lithuanian",
-    "lv-LV" to "Latvian",
-    "et-EE" to "Estonian",
-    "af-ZA" to "Afrikaans",
-    "sw-KE" to "Swahili",
-    "sq-AL" to "Albanian (Shqip)"
+    "vi-VN" to "Vietnamese"
 )
 
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)

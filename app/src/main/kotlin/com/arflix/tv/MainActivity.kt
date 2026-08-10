@@ -302,7 +302,7 @@ class MainActivity : ComponentActivity() {
                 }
             }.collectAsStateWithLifecycle(initialValue = "en-US")
             LaunchedEffect(appLanguage) {
-                mediaRepository.get().contentLanguage = if (appLanguage == "en-US") null else appLanguage
+                mediaRepository.get().contentLanguage = appLanguage
             }
             val deviceType = when (deviceModeOverride) {
                 "tv" -> DeviceType.TV
