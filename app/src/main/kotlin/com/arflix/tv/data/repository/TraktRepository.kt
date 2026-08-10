@@ -491,6 +491,22 @@ class TraktRepository @Inject constructor(
         return "Bearer $token"
     }
 
+    /**
+     * Fetches the Trakt username for the currently authenticated profile.
+     * Returns null gracefully if not authenticated or if the request fails — a
+     * failed username fetch must never break the auth or sync flow.
+     */
+    suspend fun fetchUsername(): String? = withContext(Dispatchers.IO) {
+        try {
+            val auth = getAuthHeader() ?: return@withContext null
+            traktApi.getMe(auth = auth, clientId = clientId).username
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private suspend fun hasStoredTraktTokenForCurrentProfile(): Boolean {
         ensureProfileCacheScope()
         val prefs = context.traktDataStore.data.first()
@@ -501,6 +517,7 @@ class TraktRepository @Inject constructor(
 
     private suspend fun getAllWatchedMovies(auth: String): List<TraktWatchedMovie> {
         val all = mutableListOf<TraktWatchedMovie>()
+        val seen = LinkedHashSet<String>()
         var page = 1
         val limit = 250
 
@@ -512,9 +529,7 @@ class TraktRepository @Inject constructor(
                 page = page,
                 limit = limit
             )
-            if (pageItems.isEmpty()) break
-            all.addAll(pageItems)
-            if (pageItems.size < limit) break
+            if (appendUniqueTraktPage(all, seen, pageItems, ::watchedMovieIdentity) == 0) break
             page++
         }
 
@@ -523,6 +538,7 @@ class TraktRepository @Inject constructor(
 
     private suspend fun getAllWatchedShows(auth: String): List<TraktWatchedShow> {
         val all = mutableListOf<TraktWatchedShow>()
+        val seen = LinkedHashSet<String>()
         var page = 1
         val limit = 250
 
@@ -535,9 +551,7 @@ class TraktRepository @Inject constructor(
                 limit = limit,
                 extended = "progress"
             )
-            if (pageItems.isEmpty()) break
-            all.addAll(pageItems)
-            if (pageItems.size < limit) break
+            if (appendUniqueTraktPage(all, seen, pageItems, ::watchedShowIdentity) == 0) break
             page++
         }
 
@@ -2725,8 +2739,7 @@ class TraktRepository @Inject constructor(
             return false to null
         }
         val watchlist = fetchAllWatchlistItems(auth)
-        val items = watchlist
-            .mapIndexedNotNull { index, item -> mapWatchlistItemFast(item, sourceOrder = index) }
+        val items = mapWatchlistItemsFastWithFallback(watchlist)
             .sortedWith(compareBy<MediaItem> { it.sourceOrder }.thenByDescending { it.addedAt })
         AppLogger.breadcrumb(
             tag = "Trakt",
@@ -2734,6 +2747,35 @@ class TraktRepository @Inject constructor(
             severity = if (watchlist.isNotEmpty() && items.isEmpty()) "warning" else "info"
         )
         return true to WatchlistSyncResult(items = items, rawCount = watchlist.size)
+    }
+
+    private suspend fun mapWatchlistItemsFastWithFallback(
+        watchlist: List<TraktWatchlistItem>
+    ): List<MediaItem> = coroutineScope {
+        val mapped = MutableList<MediaItem?>(watchlist.size) { null }
+        val unresolved = mutableListOf<Pair<Int, TraktWatchlistItem>>()
+
+        watchlist.forEachIndexed { index, item ->
+            val fast = mapWatchlistItemFast(item, sourceOrder = index)
+            if (fast != null) {
+                mapped[index] = fast
+            } else {
+                unresolved += index to item
+            }
+        }
+
+        if (unresolved.isNotEmpty()) {
+            val semaphore = Semaphore(4)
+            unresolved.map { (index, item) ->
+                async {
+                    semaphore.withPermit {
+                        index to hydrateWatchlistItem(item, sourceOrder = index)
+                    }
+                }
+            }.awaitAll().forEach { (index, item) -> mapped[index] = item }
+        }
+
+        mapped.filterNotNull()
     }
 
     private suspend fun getWatchlistFromTrakt(auth: String): List<MediaItem> {

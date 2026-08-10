@@ -1137,28 +1137,35 @@ class TraktSyncService @Inject constructor(
     }
 
     /**
-     * Get last sync time
+     * Get the persisted sync summary for the active profile.
      */
-    suspend fun getLastSyncTime(): String? = withContext(Dispatchers.IO) {
+    suspend fun getLastSyncSummary(): TraktSyncSummary? = withContext(Dispatchers.IO) {
         try {
             val userId = getUserId() ?: return@withContext null
             if (getSupabaseAuth() == null) return@withContext null
 
-            // PostgREST requires "eq." prefix for equality filtering
-            val syncStates = executeSupabaseCall("get sync state (last sync)") { auth ->
+            val syncStates = executeSupabaseCall("get sync state summary") { auth ->
                 supabaseApi.getSyncState(
                     auth,
                     userId = "eq.$userId",
                     profileId = "eq.${activeProfileId()}"
                 )
             }
-            syncStates.firstOrNull()?.lastSyncAt
+            syncStates.firstOrNull()?.let { state ->
+                TraktSyncSummary(
+                    lastSyncAt = state.lastSyncAt,
+                    moviesSynced = state.moviesSynced,
+                    episodesSynced = state.episodesSynced
+                )
+            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
             null
         }
     }
+
+    suspend fun getLastSyncTime(): String? = getLastSyncSummary()?.lastSyncAt
 
     // ========== Private Helpers ==========
 
@@ -1197,6 +1204,7 @@ class TraktSyncService @Inject constructor(
 
     private suspend fun fetchAllWatchedMovies(): List<TraktWatchedMovie> {
         val all = mutableListOf<TraktWatchedMovie>()
+        val seen = LinkedHashSet<String>()
         var page = 1
         val limit = 250
 
@@ -1210,9 +1218,7 @@ class TraktSyncService @Inject constructor(
                     limit = limit
                 )
             }
-            if (pageItems.isEmpty()) break
-            all.addAll(pageItems)
-            if (pageItems.size < limit) break
+            if (appendUniqueTraktPage(all, seen, pageItems, ::watchedMovieIdentity) == 0) break
             page++
         }
 
@@ -1221,6 +1227,7 @@ class TraktSyncService @Inject constructor(
 
     private suspend fun fetchAllWatchedShows(): List<TraktWatchedShow> {
         val all = mutableListOf<TraktWatchedShow>()
+        val seen = LinkedHashSet<String>()
         var page = 1
         val limit = 250
 
@@ -1235,9 +1242,7 @@ class TraktSyncService @Inject constructor(
                     extended = "progress"
                 )
             }
-            if (pageItems.isEmpty()) break
-            all.addAll(pageItems)
-            if (pageItems.size < limit) break
+            if (appendUniqueTraktPage(all, seen, pageItems, ::watchedShowIdentity) == 0) break
             page++
         }
 
@@ -2040,6 +2045,12 @@ class TraktSyncService @Inject constructor(
 }
 
 // ========== Data Classes ==========
+
+data class TraktSyncSummary(
+    val lastSyncAt: String?,
+    val moviesSynced: Int,
+    val episodesSynced: Int
+)
 
 data class SyncProgress(
     val status: SyncStatus = SyncStatus.IDLE,
