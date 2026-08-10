@@ -211,6 +211,7 @@ class SettingsFocusTracker {
 val LocalSettingsFocusTracker = compositionLocalOf<SettingsFocusTracker?> { null }
 
 private const val ACCOUNT_DELETION_URL = "https://auth.arvio.tv/delete"
+private const val PRIVACY_POLICY_URL = "https://arvio.tv/privacy"
 
 private val tvGeneralSectionIds = setOf(
     "language",
@@ -455,7 +456,7 @@ fun SettingsScreen(
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
             "stremio" -> stremioAddons.size + 1 // rows + refresh + add button
             "plugins" -> pluginsMaxIndex
-            "accounts" -> 6 // Cloud + Trakt + Telegram + Force Sync + App Update + Privacy/Data + MDBList
+            "accounts" -> 8 // Cloud, integrations, sync, update, diagnostics, privacy, deletion
             else -> 0
         }
     }
@@ -1153,6 +1154,9 @@ fun SettingsScreen(
                                                         viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true)
                                                     }
                                                 }
+                                                6 -> viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled)
+                                                7 -> openExternalUrl(context, PRIVACY_POLICY_URL)
+                                                8 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
                                             }
                                         }
                                         "plugins" -> {
@@ -1659,6 +1663,7 @@ fun SettingsScreen(
                             isTraktPolling = uiState.isTraktPolling,
                             isForceCloudSyncing = uiState.isForceCloudSyncing,
                             lastCloudSyncStatus = uiState.lastCloudSyncStatus,
+                            diagnosticsSharingEnabled = uiState.diagnosticsSharingEnabled,
                             isSelfUpdateSupported = uiState.isSelfUpdateSupported,
                             updateStatus = uiState.updateStatus,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
@@ -1680,6 +1685,8 @@ fun SettingsScreen(
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
                             onInstallUpdate = { viewModel.installAppUpdateOrRequestPermission() },
+                            onDiagnosticsSharingToggle = viewModel::setDiagnosticsSharingEnabled,
+                            onOpenPrivacy = { openExternalUrl(context, PRIVACY_POLICY_URL) },
                             onOpenDataDeletion = { openExternalUrl(context, ACCOUNT_DELETION_URL) },
                             onNavigateToTelegram = onNavigateToTelegramSettings
                         )
@@ -2175,7 +2182,8 @@ fun SettingsScreen(
                 onPasswordChange = { cloudDialogPassword = it },
                 onDismiss = { viewModel.closeCloudEmailPasswordDialog() },
                 onSignIn = { viewModel.completeCloudAuthWithEmailPassword(cloudDialogEmail, cloudDialogPassword, createAccount = false) },
-                onCreateAccount = { viewModel.completeCloudAuthWithEmailPassword(cloudDialogEmail, cloudDialogPassword, createAccount = true) }
+                onCreateAccount = { viewModel.completeCloudAuthWithEmailPassword(cloudDialogEmail, cloudDialogPassword, createAccount = true) },
+                onOpenPrivacy = { openExternalUrl(context, PRIVACY_POLICY_URL) }
             )
         }
 
@@ -2702,9 +2710,10 @@ private fun CloudEmailPasswordModal(
     onPasswordChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onSignIn: () -> Unit,
-    onCreateAccount: () -> Unit
+    onCreateAccount: () -> Unit,
+    onOpenPrivacy: () -> Unit
 ) {
-    // Focus order: 0 email, 1 password, 2 cancel, 3 sign in, 4 create
+    // Focus order: 0 email, 1 password, 2 cancel, 3 sign in, 4 create, 5 privacy
     var focusedIndex by remember { mutableIntStateOf(0) }
     val emailRequester = remember { FocusRequester() }
     val passwordRequester = remember { FocusRequester() }
@@ -2743,6 +2752,7 @@ private fun CloudEmailPasswordModal(
                                     focusedIndex = when (focusedIndex) {
                                         1 -> 0
                                         2, 3, 4 -> 1
+                                        5 -> 3
                                         else -> focusedIndex
                                     }
                                     true
@@ -2751,7 +2761,7 @@ private fun CloudEmailPasswordModal(
                                     focusedIndex = when (focusedIndex) {
                                         0 -> 1
                                         1 -> 2
-                                        2 -> 3
+                                        2, 3, 4 -> 5
                                         else -> focusedIndex
                                     }
                                     true
@@ -2777,6 +2787,7 @@ private fun CloudEmailPasswordModal(
                                         2 -> { onDismiss(); true }
                                         3 -> { onSignIn(); true }
                                         4 -> { onCreateAccount(); true }
+                                        5 -> { onOpenPrivacy(); true }
                                         else -> false
                                     }
                                 }
@@ -2937,6 +2948,33 @@ private fun CloudEmailPasswordModal(
                             color = Color.White
                         )
                     }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = stringResource(R.string.login_privacy_notice),
+                    style = ArflixTypography.caption,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onOpenPrivacy)
+                        .border(
+                            width = if (focusedIndex == 5) 2.dp else 1.dp,
+                            color = if (focusedIndex == 5) Pink else Color.White.copy(alpha = 0.14f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.login_read_privacy_policy),
+                        style = ArflixTypography.button,
+                        color = if (focusedIndex == 5) TextPrimary else TextSecondary
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -3579,6 +3617,7 @@ private fun MobileSettingsMainPage(
     onNavigateToTelegram: () -> Unit = {},
     onDisconnectTrakt: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     var showMdbListConnect by remember { mutableStateOf(false) }
     var showMdbListDisconnectConfirm by remember { mutableStateOf(false) }
     if (showMdbListConnect) {
@@ -3735,8 +3774,32 @@ private fun MobileSettingsMainPage(
                     subtitle = "V${BuildConfig.VERSION_NAME}",
                     value = if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable) stringResource(R.string.settings_update_available) else stringResource(R.string.settings_check_updates),
                     isFocused = false,
-                    showDivider = false,
                     onClick = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.Settings,
+                    title = stringResource(R.string.settings_diagnostics_sharing),
+                    subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
+                    value = if (uiState.diagnosticsSharingEnabled) "On" else "Off",
+                    isFocused = false,
+                    onClick = { viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled) }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.Link,
+                    title = stringResource(R.string.settings_privacy_policy),
+                    subtitle = stringResource(R.string.settings_privacy_policy_desc),
+                    value = stringResource(R.string.settings_open),
+                    isFocused = false,
+                    onClick = { openExternalUrl(context, PRIVACY_POLICY_URL) }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.Delete,
+                    title = stringResource(R.string.settings_account_data_deletion),
+                    subtitle = stringResource(R.string.settings_account_data_deletion_desc),
+                    value = stringResource(R.string.settings_open),
+                    isFocused = false,
+                    showDivider = false,
+                    onClick = { openExternalUrl(context, ACCOUNT_DELETION_URL) }
                 )
             }
         }
@@ -7798,6 +7861,7 @@ private fun AccountsSettings(
     onDisconnectMdbList: () -> Unit,
     isForceCloudSyncing: Boolean,
     lastCloudSyncStatus: String?,
+    diagnosticsSharingEnabled: Boolean,
     isSelfUpdateSupported: Boolean,
     updateStatus: com.arflix.tv.updater.UpdateStatus,
     focusedIndex: Int,
@@ -7810,6 +7874,8 @@ private fun AccountsSettings(
     onSwitchProfile: () -> Unit,
     onCheckUpdates: () -> Unit,
     onInstallUpdate: () -> Unit,
+    onDiagnosticsSharingToggle: (Boolean) -> Unit,
+    onOpenPrivacy: () -> Unit,
     onOpenDataDeletion: () -> Unit,
     onNavigateToTelegram: () -> Unit = {}
 ) {
@@ -7932,13 +7998,35 @@ private fun AccountsSettings(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        SettingsActionRow(
-            title = stringResource(R.string.settings_privacy_data_deletion),
-            description = stringResource(R.string.settings_privacy_data_deletion_desc),
-            actionLabel = stringResource(R.string.settings_badge_open),
+        SettingsToggleRow(
+            title = stringResource(R.string.settings_diagnostics_sharing),
+            subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
+            isEnabled = diagnosticsSharingEnabled,
             isFocused = focusedIndex == 6,
-            onClick = onOpenDataDeletion,
+            onToggle = onDiagnosticsSharingToggle,
             modifier = Modifier.settingsFocusSlot(6)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SettingsActionRow(
+            title = stringResource(R.string.settings_privacy_policy),
+            description = stringResource(R.string.settings_privacy_policy_desc),
+            actionLabel = stringResource(R.string.settings_badge_open),
+            isFocused = focusedIndex == 7,
+            onClick = onOpenPrivacy,
+            modifier = Modifier.settingsFocusSlot(7)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SettingsActionRow(
+            title = stringResource(R.string.settings_account_data_deletion),
+            description = stringResource(R.string.settings_account_data_deletion_desc),
+            actionLabel = stringResource(R.string.settings_badge_open),
+            isFocused = focusedIndex == 8,
+            onClick = onOpenDataDeletion,
+            modifier = Modifier.settingsFocusSlot(8)
         )
     }
 }
