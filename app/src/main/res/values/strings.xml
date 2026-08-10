@@ -647,6 +647,12 @@
     <string name="settings_badge_checking">CHECKING</string>
     <string name="settings_badge_update">UPDATE</string>
     <string name="settings_badge_check">CHECK</string>
+    <string name="settings_diagnostics_sharing">Share diagnostics and usage</string>
+    <string name="settings_diagnostics_sharing_desc">Send limited crash diagnostics and one pseudonymous app-open event per day. Screenshots and view hierarchy are disabled.</string>
+    <string name="settings_privacy_policy">Privacy policy</string>
+    <string name="settings_privacy_policy_desc">Read what ARVIO processes, why it is needed, retention, providers, and your rights</string>
+    <string name="settings_account_data_deletion">Delete cloud account and data</string>
+    <string name="settings_account_data_deletion_desc">Open the secure ARVIO Cloud account deletion page</string>
     <string name="settings_privacy_data_deletion">Privacy and data deletion</string>
     <string name="settings_privacy_data_deletion_desc">Open privacy and ARVIO Cloud account deletion instructions</string>
     <string name="settings_go_to">Go to: %1$s</string>
@@ -754,6 +760,8 @@
     <string name="login_sign_up">Sign Up</string>
     <string name="login_have_account">Already have an account? Sign In</string>
     <string name="login_no_account">Don\'t have an account? Sign Up</string>
+    <string name="login_privacy_notice">Creating an account stores your email and the cloud data you choose to sync.</string>
+    <string name="login_read_privacy_policy">Read Privacy Policy</string>
     <string name="collection_empty">Nothing to show here yet.</string>
 
     <!-- Extracted from code: Details, Home, Search and Player -->

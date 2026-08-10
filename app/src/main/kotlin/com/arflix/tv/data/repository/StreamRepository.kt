@@ -102,6 +102,16 @@ internal fun buildEpisodeIdCandidates(
     return ordered.distinctBy { "${it.contentId}|${it.preferAnimePath}" }
 }
 
+internal fun buildTmdbEpisodeIdCandidate(
+    tmdbId: Int?,
+    season: Int,
+    episode: Int,
+    supportsTmdbIds: Boolean
+): String? {
+    if (tmdbId == null || !supportsTmdbIds) return null
+    return "tmdb:$tmdbId:$season:$episode"
+}
+
 internal fun buildNativeAnimeRetryCandidates(
     seriesId: String,
     animeQuery: String?,
@@ -1986,9 +1996,12 @@ class StreamRepository @Inject constructor(
                     return emptyList()
                 }
 
-                val tmdbEpisodeId = if (resolveAsAnime && tmdbId != null && addonSupportsIdFamily(addon, "tmdb")) {
-                    "tmdb:$tmdbId:$season:$episode"
-                } else null
+                val tmdbEpisodeId = buildTmdbEpisodeIdCandidate(
+                    tmdbId = tmdbId,
+                    season = season,
+                    episode = episode,
+                    supportsTmdbIds = addonSupportsIdFamily(addon, "tmdb")
+                )
 
                 var addonStreams = emptyList<StreamSource>()
                 val attemptedEpisodeCandidateKeys = linkedSetOf<String>()

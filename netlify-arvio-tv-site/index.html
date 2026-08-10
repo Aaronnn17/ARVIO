@@ -2939,7 +2939,15 @@
           <span>Is ARVIO free? Are there ads?</span>
           <span class="faq-q-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
         </summary>
-        <div class="faq-a">The Android/TV app: free, open source. No ads, no analytics, no upsells — nothing in the app is gated. The one optional paid thing is <a href="https://web.arvio.tv">ARVIO Web</a>, the browser version, at $2.99/month — because web streaming runs on real servers and bandwidth. The app never needs it.</div>
+        <div class="faq-a">The Android/TV app is free and open source, with no ads, marketing analytics, or gated app features. Release builds can send limited crash diagnostics and one pseudonymous daily app-open event to help maintain reliability. This can be disabled per device in Settings. The one optional paid service is <a href="https://web.arvio.tv">ARVIO Web</a>, the browser version, at $2.99/month because browser streaming uses hosted servers and bandwidth. The Android app never requires it.</div>
+      </details>
+
+      <details class="faq-item reveal">
+        <summary class="faq-q">
+          <span>What data does ARVIO collect, and can I opt out?</span>
+          <span class="faq-q-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
+        </summary>
+        <div class="faq-a">An ARVIO Cloud account is optional. If you create one, ARVIO stores your email, a password hash, and the profiles and settings you choose to sync. Release builds can also send limited crash diagnostics and a pseudonymous app-open event at most once per day. Screenshots, view hierarchy, network breadcrumbs, and user-interaction breadcrumbs are disabled, and app diagnostic logs are sanitized. Crash transport can still involve an IP address, so reports are not described as anonymous. You can turn diagnostics and usage reporting off in Settings without affecting playback or cloud sync. Read the complete <a href="/privacy">Privacy Policy</a> or delete cloud data at <a href="https://auth.arvio.tv/delete">auth.arvio.tv/delete</a>.</div>
       </details>
 
       <details class="faq-item reveal">
@@ -3047,7 +3055,7 @@
       <div class="foot-col">
         <h4>Legal</h4>
         <a href="https://github.com/ProdigyV21/ARVIO/blob/main/LICENSE">License</a>
-        <a href="https://github.com/ProdigyV21/ARVIO/blob/main/PRIVACY.md">Privacy</a>
+        <a href="/privacy">Privacy</a>
         <a href="https://github.com/ProdigyV21/ARVIO/tree/main/LICENSES">Third-party</a>
       </div>
     </div>

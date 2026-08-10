@@ -12,6 +12,7 @@ import com.arflix.tv.R
 import com.arflix.tv.server.AiKeyConfigServer
 import com.arflix.tv.ui.screens.player.SubtitleAiModel
 import com.arflix.tv.util.DeviceIpAddress
+import com.arflix.tv.util.DiagnosticsManager
 import com.arflix.tv.util.QrCodeGenerator
 import com.arflix.tv.data.api.TraktDeviceCode
 import com.arflix.tv.data.model.Addon
@@ -119,6 +120,7 @@ data class SettingsUiState(
     // attached to the ExoPlayer audio session. Issue #88.
     val volumeBoostDb: Int = 0,
     val showLoadingStats: Boolean = true,
+    val diagnosticsSharingEnabled: Boolean = true,
     val includeSpecials: Boolean = false,
     val isLoggedIn: Boolean = false,
     val accountEmail: String? = null,
@@ -318,6 +320,8 @@ class SettingsViewModel @Inject constructor(
     private var traktPollingJob: Job? = null
     private var traktStartupJob: Job? = null
     private var loadSettingsJob: Job? = null
+    private var integrationMetadataJob: Job? = null
+    private var syncSummaryJob: Job? = null
     private var plexHomeServerPollingJob: Job? = null
     private var plexHomeServerUrl: String? = null
     private var plexHomeServerDisplayName: String? = null
@@ -379,6 +383,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     init {
+        _uiState.value = _uiState.value.copy(
+            diagnosticsSharingEnabled = DiagnosticsManager.isReportingEnabled(context)
+        )
         loadSettings()
         observeProfileChanges()
         observeAddons()
@@ -436,8 +443,15 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setDiagnosticsSharingEnabled(enabled: Boolean) {
+        DiagnosticsManager.setReportingEnabled(context, enabled)
+        _uiState.value = _uiState.value.copy(diagnosticsSharingEnabled = enabled)
+    }
+
     private fun loadSettings() {
         loadSettingsJob?.cancel()
+        integrationMetadataJob?.cancel()
+        syncSummaryJob?.cancel()
         loadSettingsJob = viewModelScope.launch {
             val loadProfileId = profileManager.getProfileIdSync()
             // Load local preferences first
@@ -451,7 +465,7 @@ class SettingsViewModel @Inject constructor(
             val oledBlackBackground = prefs[com.arflix.tv.util.OLED_BLACK_BACKGROUND_KEY] ?: false
             val contentLang = prefs[contentLanguageKey()] ?: "en-US"
             // Apply content language to MediaRepository immediately
-            mediaRepository.contentLanguage = if (contentLang == "en-US") null else contentLang
+            mediaRepository.contentLanguage = contentLang
             var autoPlay = prefs[autoPlayNextKey()] ?: true
             var autoPlaySingleSource = prefs[autoPlaySingleSourceKey()] ?: true
             // Ensure defaults are persisted on first launch so they're never ambiguous
@@ -530,27 +544,6 @@ class SettingsViewModel @Inject constructor(
             val isTrakt = traktRepository.hasTrakt()
             val isMdbList = mdbListRepository.isConnected()
 
-            // Fetch usernames for connected integrations (best-effort, non-blocking)
-            val traktUsername = if (isTrakt) {
-                try {
-                    traktRepository.fetchUsername()
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    null
-                }
-            } else null
-
-            val mdbListUsername = if (isMdbList) {
-                try {
-                    mdbListRepository.fetchUsername()
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    null
-                }
-            } else null
-
             if (profileManager.getProfileIdSync() != loadProfileId) return@launch
 
             // Get Trakt expiration if authenticated
@@ -600,9 +593,12 @@ class SettingsViewModel @Inject constructor(
                 accountEmail = accountEmail,
                 isTraktAuthenticated = isTrakt,
                 traktExpiration = traktExpiration,
-                traktUsername = traktUsername,
+                traktUsername = null,
                 isMdbListConnected = isMdbList,
-                mdbListUsername = mdbListUsername,
+                mdbListUsername = null,
+                lastSyncTime = null,
+                syncedMovies = 0,
+                syncedEpisodes = 0,
                 catalogs = existingCatalogs,
                 contentLanguage = contentLang,
                 deviceModeOverride = deviceModeOverride,
@@ -621,6 +617,71 @@ class SettingsViewModel @Inject constructor(
                 subtitleAiModel = subtitleAiModel,
                 subtitleRemoveHearingImpaired = subtitleRemoveHearingImpaired,
                 smoothScrolling = smoothScrolling
+            )
+
+            refreshIntegrationUsernames(loadProfileId, isTrakt, isMdbList)
+            if (isTrakt) refreshSyncSummary(loadProfileId)
+        }
+    }
+
+    private fun refreshIntegrationUsernames(
+        profileId: String,
+        isTraktConnected: Boolean,
+        isMdbListConnected: Boolean
+    ) {
+        integrationMetadataJob?.cancel()
+        integrationMetadataJob = viewModelScope.launch {
+            if (isTraktConnected) {
+                launch {
+                    val username = try {
+                        withTimeoutOrNull(5_000L) { traktRepository.fetchUsername() }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (
+                        profileManager.getProfileIdSync() == profileId &&
+                        _uiState.value.isTraktAuthenticated
+                    ) {
+                        _uiState.value = _uiState.value.copy(traktUsername = username)
+                    }
+                }
+            }
+
+            if (isMdbListConnected) {
+                launch {
+                    val username = try {
+                        withTimeoutOrNull(5_000L) { mdbListRepository.fetchUsername() }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (
+                        profileManager.getProfileIdSync() == profileId &&
+                        _uiState.value.isMdbListConnected
+                    ) {
+                        _uiState.value = _uiState.value.copy(mdbListUsername = username)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun refreshSyncSummary(profileId: String) {
+        syncSummaryJob?.cancel()
+        syncSummaryJob = viewModelScope.launch {
+            val previousLastSyncTime = _uiState.value.lastSyncTime
+            val summary = traktSyncService.getLastSyncSummary()
+            if (
+                profileManager.getProfileIdSync() != profileId ||
+                _uiState.value.lastSyncTime != previousLastSyncTime
+            ) return@launch
+            _uiState.value = _uiState.value.copy(
+                lastSyncTime = formatSyncTime(summary?.lastSyncAt),
+                syncedMovies = summary?.moviesSynced ?: 0,
+                syncedEpisodes = summary?.episodesSynced ?: 0
             )
         }
     }
@@ -708,11 +769,6 @@ class SettingsViewModel @Inject constructor(
             }
         }
 
-        // Load last sync time
-        viewModelScope.launch {
-            val lastSync = traktSyncService.getLastSyncTime()
-            _uiState.value = _uiState.value.copy(lastSyncTime = formatSyncTime(lastSync))
-        }
     }
 
     private fun formatSyncTime(isoTime: String?): String? {
@@ -1135,7 +1191,7 @@ class SettingsViewModel @Inject constructor(
             // Mirror to SharedPreferences so attachBaseContext can read it synchronously on next launch
             context.getSharedPreferences("app_locale", android.content.Context.MODE_PRIVATE)
                 .edit().putString("locale_tag", lang).apply()
-            mediaRepository.contentLanguage = if (lang == "en-US") null else lang
+            mediaRepository.contentLanguage = lang
             _uiState.value = _uiState.value.copy(contentLanguage = lang)
             syncLocalStateToCloud(silent = true)
         }
@@ -3188,9 +3244,12 @@ class SettingsViewModel @Inject constructor(
     // ========== Trakt Authentication ==========
 
     fun startTraktAuth() {
-        viewModelScope.launch {
-            cancelTraktAuth()
-            traktPollingJob?.cancel()
+        val current = _uiState.value
+        if (current.isTraktAuthStarting || current.isTraktPolling) return
+
+        traktStartupJob?.cancel()
+        traktPollingJob?.cancel()
+        traktStartupJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 traktCode = null,
                 isTraktAuthStarting = true,
@@ -3267,17 +3326,9 @@ class SettingsViewModel @Inject constructor(
                     // Mutual exclusion: selecting Trakt disconnects MDBList for this profile.
                     syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.TRAKT)
                     syncProviderStore.setMdbListApiKey(null)
-                    // Fetch username best-effort (don't fail the auth flow if it errors)
-                    val username = try {
-                        traktRepository.fetchUsername()
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        null
-                    }
                     _uiState.value = _uiState.value.copy(
                         isTraktAuthenticated = true,
-                        traktUsername = username,
+                        traktUsername = null,
                         isMdbListConnected = false,
                         mdbListUsername = null,
                         traktCode = null,
@@ -3286,6 +3337,11 @@ class SettingsViewModel @Inject constructor(
                         traktExpiration = expirationDate,
                         toastMessage = "Trakt connected successfully",
                         toastType = ToastType.SUCCESS
+                    )
+                    refreshIntegrationUsernames(
+                        profileManager.getProfileIdSync(),
+                        isTraktConnected = true,
+                        isMdbListConnected = false
                     )
                     traktRepository.clearContinueWatchingCache()
                     runCatching { traktRepository.getContinueWatching() }
@@ -3363,6 +3419,9 @@ class SettingsViewModel @Inject constructor(
                 isTraktAuthenticated = false,
                 traktUsername = null,
                 traktExpiration = null,
+                lastSyncTime = null,
+                syncedMovies = 0,
+                syncedEpisodes = 0,
                 toastMessage = "Trakt disconnected",
                 toastType = ToastType.SUCCESS
             )
@@ -3396,23 +3455,23 @@ class SettingsViewModel @Inject constructor(
             runCatching { traktRepository.logout() }
             syncProviderStore.setMdbListApiKey(trimmed)
             syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
-            // Fetch username from the /user endpoint we already called during validateKey
-            val username = try {
-                mdbListRepository.fetchUsername()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            }
             _uiState.value = _uiState.value.copy(
                 mdbListConnecting = false,
                 isMdbListConnected = true,
-                mdbListUsername = username,
+                mdbListUsername = null,
                 isTraktAuthenticated = false,
                 traktUsername = null,
                 traktExpiration = null,
+                lastSyncTime = null,
+                syncedMovies = 0,
+                syncedEpisodes = 0,
                 toastMessage = context.getString(R.string.mdblist_connected),
                 toastType = ToastType.SUCCESS
+            )
+            refreshIntegrationUsernames(
+                profileManager.getProfileIdSync(),
+                isTraktConnected = false,
+                isMdbListConnected = true
             )
             // The MDBList watchlist is pulled when the Watchlist screen next loads.
             syncLocalStateToCloud(silent = true, force = true)
