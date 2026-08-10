@@ -782,14 +782,15 @@
     border-bottom: 1px solid var(--line-soft);
   }
   .nav-inner {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr);
     align-items: center;
-    gap: 16px;
+    gap: 18px;
     padding: 16px 0;
   }
   .brand {
     display: flex; align-items: center; gap: 10px;
+    justify-self: start;
     flex-shrink: 0;
     font-weight: 700; letter-spacing: 0.02em;
     font-size: 15px;
@@ -810,7 +811,8 @@
     filter: drop-shadow(0 0 14px rgba(13, 240, 194, 0.16));
   }
   .nav-links {
-    margin: 0 auto;
+    margin: 0;
+    justify-self: center;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -832,7 +834,7 @@
     display: inline-flex;
     align-items: center;
     min-height: 38px;
-    padding: 9px 15px;
+    padding: 9px;
     border-radius: 999px;
     white-space: nowrap;
     flex-shrink: 0;
@@ -871,6 +873,7 @@
   }
   .nav-links .nav-donate::before { left: 11px; }
   .nav-actions {
+    justify-self: end;
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -1978,6 +1981,10 @@
 
   /* ============ RESPONSIVE ============ */
   @media (max-width: 1400px) {
+    .nav-web { display: none !important; }
+  }
+
+  @media (max-width: 1000px) {
     .nav-links { display: none; }
     .nav-inner {
       display: flex;
