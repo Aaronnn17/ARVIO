@@ -28,6 +28,7 @@ import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.data.repository.WatchlistRepository
+import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.settingsDataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -1076,6 +1077,8 @@ class DetailsViewModel @Inject constructor(
                     toastType = ToastType.SUCCESS
                 )
             } catch (e: Exception) {
+                Log.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
+                AppLogger.e("DetailsViewModel", "Error updating watchlist: ${e.message}", e)
                 _uiState.value = _uiState.value.copy(
                     toastMessage = context.getString(R.string.details_failed_update_watchlist),
                     toastType = ToastType.ERROR

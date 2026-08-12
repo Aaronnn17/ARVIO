@@ -1,11 +1,8 @@
 package com.arflix.tv.data.repository.simkl
 
 import com.arflix.tv.data.api.SimklAddToListBody
-import com.arflix.tv.data.api.SimklAddToListMovie
-import com.arflix.tv.data.api.SimklAddToListShow
 import com.arflix.tv.data.api.SimklAllItemsResponse
 import com.arflix.tv.data.api.SimklApi
-import com.arflix.tv.data.api.SimklDeleteFromListBody
 import com.arflix.tv.data.api.SimklEpisodeRef
 import com.arflix.tv.data.api.SimklIds
 import com.arflix.tv.data.api.SimklMovieRef
@@ -96,7 +93,7 @@ class SimklSyncService @Inject constructor(
         response.movies?.forEach { movieItem ->
             val tmdbId = movieItem.movie?.ids?.tmdb ?: return@forEach
             val status = movieItem.status
-            if (status == "completed" || status == "watching") {
+            if (status == "completed" || status == "watching" || !movieItem.lastWatchedAt.isNullOrBlank()) {
                 cachedWatchedMovies.add(tmdbId)
             }
             if (status == "plantowatch") {
@@ -152,12 +149,12 @@ class SimklSyncService @Inject constructor(
         val token = authManager.getAccessToken() ?: return false
         val authHeader = "Bearer $token"
         val body = if (mediaType == MediaType.MOVIE) {
-            SimklAddToListBody(
-                movies = listOf(SimklAddToListMovie(to = "plantowatch", ids = SimklIds(tmdb = tmdbId)))
+            com.arflix.tv.data.api.SimklAddToListBody(
+                movies = listOf(com.arflix.tv.data.api.SimklAddToListMovie(to = "plantowatch", ids = SimklIds(tmdb = tmdbId)))
             )
         } else {
-            SimklAddToListBody(
-                shows = listOf(SimklAddToListShow(to = "plantowatch", ids = SimklIds(tmdb = tmdbId)))
+            com.arflix.tv.data.api.SimklAddToListBody(
+                shows = listOf(com.arflix.tv.data.api.SimklAddToListShow(to = "plantowatch", ids = SimklIds(tmdb = tmdbId)))
             )
         }
         return try {
@@ -167,6 +164,7 @@ class SimklSyncService @Inject constructor(
                 lastActivityCheckTime = 0L // Request activity refresh on next check
                 true
             } else {
+                AppLogger.e("SimklSyncService", "Failed adding to watchlist: code=${res.code()} msg=${res.message()}")
                 false
             }
         } catch (e: Exception) {
@@ -178,18 +176,42 @@ class SimklSyncService @Inject constructor(
     suspend fun removeFromWatchlist(mediaType: MediaType, tmdbId: Int): Boolean {
         val token = authManager.getAccessToken() ?: return false
         val authHeader = "Bearer $token"
-        val body = if (mediaType == MediaType.MOVIE) {
-            SimklDeleteFromListBody(movies = listOf(SimklMovieRef(ids = SimklIds(tmdb = tmdbId))))
+
+        val isWatched = if (mediaType == MediaType.MOVIE) {
+            cachedWatchedMovies.contains(tmdbId)
         } else {
-            SimklDeleteFromListBody(shows = listOf(SimklShowRef(ids = SimklIds(tmdb = tmdbId))))
+            cachedWatchedEpisodes.any { it.startsWith("${tmdbId}_") }
         }
+
         return try {
-            val res = simklApi.deleteFromList(authHeader, clientId, body)
+            val res = if (isWatched) {
+                // If it was already watched, restore its status to "completed" so watch history is preserved
+                val body = if (mediaType == MediaType.MOVIE) {
+                    com.arflix.tv.data.api.SimklAddToListBody(
+                        movies = listOf(com.arflix.tv.data.api.SimklAddToListMovie(to = "completed", ids = SimklIds(tmdb = tmdbId)))
+                    )
+                } else {
+                    com.arflix.tv.data.api.SimklAddToListBody(
+                        shows = listOf(com.arflix.tv.data.api.SimklAddToListShow(to = "completed", ids = SimklIds(tmdb = tmdbId)))
+                    )
+                }
+                simklApi.addToList(authHeader, clientId, body)
+            } else {
+                // Not watched, remove item completely from Simkl library
+                val body = if (mediaType == MediaType.MOVIE) {
+                    SimklSyncHistoryBody(movies = listOf(SimklMovieRef(ids = SimklIds(tmdb = tmdbId))))
+                } else {
+                    SimklSyncHistoryBody(shows = listOf(SimklShowRef(ids = SimklIds(tmdb = tmdbId))))
+                }
+                simklApi.removeFromHistory(authHeader, clientId, body)
+            }
+
             if (res.isSuccessful) {
                 cachedWatchlist.remove(mediaType to tmdbId)
                 lastActivityCheckTime = 0L
                 true
             } else {
+                AppLogger.e("SimklSyncService", "Failed removing from watchlist: code=${res.code()} msg=${res.message()}")
                 false
             }
         } catch (e: Exception) {
@@ -226,6 +248,7 @@ class SimklSyncService @Inject constructor(
                 lastActivityCheckTime = 0L
                 true
             } else {
+                AppLogger.e("SimklSyncService", "Failed marking watched: code=${res.code()} msg=${res.message()}")
                 false
             }
         } catch (e: Exception) {
@@ -262,6 +285,7 @@ class SimklSyncService @Inject constructor(
                 lastActivityCheckTime = 0L
                 true
             } else {
+                AppLogger.e("SimklSyncService", "Failed marking unwatched: code=${res.code()} msg=${res.message()}")
                 false
             }
         } catch (e: Exception) {

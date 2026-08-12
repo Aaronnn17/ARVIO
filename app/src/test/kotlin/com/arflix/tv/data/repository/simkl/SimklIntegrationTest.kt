@@ -70,7 +70,7 @@ class SimklIntegrationTest {
     fun testAddToWatchlistCallsAddToList() = runBlocking {
         coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
         coEvery { simklApi.addToList(any(), any(), any()) } returns retrofit2.Response.success(
-            com.arflix.tv.data.api.SimklSyncResponse()
+            mockk<okhttp3.ResponseBody>()
         )
 
         val success = syncService.addToWatchlist(com.arflix.tv.data.model.MediaType.MOVIE, 12345)
@@ -79,22 +79,22 @@ class SimklIntegrationTest {
     }
 
     @Test
-    fun testRemoveFromWatchlistCallsDeleteFromList() = runBlocking {
+    fun testRemoveFromWatchlistCallsRemoveFromHistory() = runBlocking {
         coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
-        coEvery { simklApi.deleteFromList(any(), any(), any()) } returns retrofit2.Response.success(
-            com.arflix.tv.data.api.SimklSyncResponse()
+        coEvery { simklApi.removeFromHistory(any(), any(), any()) } returns retrofit2.Response.success(
+            mockk<okhttp3.ResponseBody>()
         )
 
         val success = syncService.removeFromWatchlist(com.arflix.tv.data.model.MediaType.MOVIE, 12345)
         assertTrue(success)
-        coVerify { simklApi.deleteFromList("Bearer token_123", any(), any()) }
+        coVerify { simklApi.removeFromHistory("Bearer token_123", any(), any()) }
     }
 
     @Test
     fun testMarkUnwatchedCallsRemoveFromHistory() = runBlocking {
         coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
         coEvery { simklApi.removeFromHistory(any(), any(), any()) } returns retrofit2.Response.success(
-            com.arflix.tv.data.api.SimklSyncResponse()
+            mockk<okhttp3.ResponseBody>()
         )
 
         val success = syncService.markUnwatched(com.arflix.tv.data.model.MediaType.MOVIE, 12345)

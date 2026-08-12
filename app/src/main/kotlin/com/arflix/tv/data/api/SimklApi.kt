@@ -1,6 +1,7 @@
 package com.arflix.tv.data.api
 
 import com.google.gson.annotations.SerializedName
+import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -81,28 +82,21 @@ interface SimklApi {
         @Header("simkl-api-key") clientId: String,
         @Body body: SimklSyncHistoryBody,
         @Query("allow_rewatch") allowRewatch: String? = null
-    ): Response<SimklSyncResponse>
+    ): Response<ResponseBody>
 
     @POST("sync/history/remove")
     suspend fun removeFromHistory(
         @Header("Authorization") auth: String,
         @Header("simkl-api-key") clientId: String,
         @Body body: SimklSyncHistoryBody
-    ): Response<SimklSyncResponse>
+    ): Response<ResponseBody>
 
     @POST("sync/add-to-list")
     suspend fun addToList(
         @Header("Authorization") auth: String,
         @Header("simkl-api-key") clientId: String,
         @Body body: SimklAddToListBody
-    ): Response<SimklSyncResponse>
-
-    @POST("sync/delete-from-list")
-    suspend fun deleteFromList(
-        @Header("Authorization") auth: String,
-        @Header("simkl-api-key") clientId: String,
-        @Body body: SimklDeleteFromListBody
-    ): Response<SimklSyncResponse>
+    ): Response<ResponseBody>
 }
 
 // Data Transfer Objects
@@ -227,11 +221,6 @@ data class SimklAddToListShow(
 data class SimklAddToListBody(
     @SerializedName("movies") val movies: List<SimklAddToListMovie>? = null,
     @SerializedName("shows") val shows: List<SimklAddToListShow>? = null
-)
-
-data class SimklDeleteFromListBody(
-    @SerializedName("movies") val movies: List<SimklMovieRef>? = null,
-    @SerializedName("shows") val shows: List<SimklShowRef>? = null
 )
 
 data class SimklSyncResponse(
