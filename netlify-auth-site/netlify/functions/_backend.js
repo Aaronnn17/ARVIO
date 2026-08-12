@@ -1390,7 +1390,11 @@ const SIMKL_ALLOWED_PATHS = [
   "/oauth/pin",
   "/oauth/token",
   "/scrobble/",
-  "/sync/"
+  "/sync/",
+  "/search/",
+  "/movies/",
+  "/tv/",
+  "/anime/"
 ];
 
 async function handleSimklProxy(event) {
@@ -1455,7 +1459,8 @@ async function handleSimklProxy(event) {
       body: JSON.stringify(data)
     };
   } catch (error) {
-    return json(502, { error: errorMessage(error) });
+    const status = error.statusCode || 502;
+    return json(status, { error: errorMessage(error) });
   }
 }
 
