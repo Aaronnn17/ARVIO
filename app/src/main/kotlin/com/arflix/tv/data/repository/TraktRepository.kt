@@ -2921,7 +2921,7 @@ class TraktRepository @Inject constructor(
             val body = response.body?.string().orEmpty()
             val listType = TypeToken.getParameterized(List::class.java, TraktWatchlistItem::class.java).type
             val items: List<TraktWatchlistItem> = try {
-                gson.fromJson(body, listType)
+                gson.fromJson<List<TraktWatchlistItem>>(body, listType).orEmpty()
             } catch (e: com.google.gson.JsonSyntaxException) {
                 com.arflix.tv.util.AppLogger.e("Trakt", "Failed to parse watchlist items: ${e.message}")
                 emptyList()
