@@ -459,7 +459,7 @@ fun SettingsScreen(
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
             "stremio" -> stremioAddons.size + 1 // rows + refresh + add button
             "plugins" -> pluginsMaxIndex
-            "accounts" -> 9 // Cloud, Trakt, MDBList, Simkl, Telegram, sync, update, diagnostics, privacy, deletion
+            "accounts" -> 8 // Cloud, integrations, sync, update, diagnostics, privacy, deletion
             else -> 0
         }
     }
@@ -1125,6 +1125,7 @@ fun SettingsScreen(
                                                 }
                                                 contentFocusIndex == stremioAddons.size -> {
                                                     viewModel.refreshAddons()
+                                                }
                                                 else -> {
                                                     showCustomAddonInput = true
                                                 }
@@ -1155,25 +1156,18 @@ fun SettingsScreen(
                                                         showMdbListConnect = true
                                                     }
                                                 }
-                                                3 -> {
-                                                    if (uiState.isSimklConnected || uiState.isSimklPolling) {
-                                                        viewModel.disconnectSimkl()
-                                                    } else {
-                                                        viewModel.startSimklAuth()
-                                                    }
-                                                }
-                                                4 -> onNavigateToTelegramSettings()
-                                                5 -> viewModel.forceCloudSyncNow()
-                                                6 -> {
+                                                3 -> onNavigateToTelegramSettings()
+                                                4 -> viewModel.forceCloudSyncNow()
+                                                5 -> {
                                                     if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) {
                                                         viewModel.installAppUpdateOrRequestPermission()
                                                     } else {
                                                         viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true)
                                                     }
                                                 }
-                                                7 -> viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled)
-                                                8 -> openExternalUrl(context, PRIVACY_POLICY_URL)
-                                                9 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
+                                                6 -> viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled)
+                                                7 -> openExternalUrl(context, PRIVACY_POLICY_URL)
+                                                8 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
                                             }
                                         }
                                         "plugins" -> {
@@ -1700,13 +1694,6 @@ fun SettingsScreen(
                             isMdbListConnected = uiState.isMdbListConnected,
                             onConnectMdbList = { showMdbListConnect = true },
                             onDisconnectMdbList = { showMdbListDisconnectConfirm = true },
-                            isSimklConnected = uiState.isSimklConnected,
-                            simklCode = uiState.simklUserCode,
-                            simklUrl = uiState.simklVerificationUrl,
-                            isSimklAuthStarting = uiState.isSimklAuthStarting,
-                            isSimklPolling = uiState.isSimklPolling,
-                            onConnectSimkl = { viewModel.startSimklAuth() },
-                            onDisconnectSimkl = { viewModel.disconnectSimkl() },
                             onForceCloudSync = { viewModel.forceCloudSyncNow() },
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
@@ -7938,13 +7925,6 @@ private fun AccountsSettings(
     isMdbListConnected: Boolean,
     onConnectMdbList: () -> Unit,
     onDisconnectMdbList: () -> Unit,
-    isSimklConnected: Boolean = false,
-    simklCode: String? = null,
-    simklUrl: String? = null,
-    isSimklAuthStarting: Boolean = false,
-    isSimklPolling: Boolean = false,
-    onConnectSimkl: () -> Unit = {},
-    onDisconnectSimkl: () -> Unit = {},
     isForceCloudSyncing: Boolean,
     lastCloudSyncStatus: String?,
     diagnosticsSharingEnabled: Boolean,
@@ -8027,31 +8007,14 @@ private fun AccountsSettings(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Simkl
-        AccountRow(
-            name = "Simkl",
-            description = stringResource(R.string.settings_simkl_tagline),
-            isConnected = isSimklConnected,
-            isWorking = isSimklAuthStarting || isSimklPolling,
-            authCode = simklCode,
-            authUrl = simklUrl,
-            isFocused = focusedIndex == 3,
-            onConnect = { if (isSimklPolling) onDisconnectSimkl() else onConnectSimkl() },
-            onDisconnect = onDisconnectSimkl,
-            modifier = Modifier.settingsFocusSlot(3),
-            expirationText = null
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
         // Telegram
         SettingsActionRow(
             title = "Telegram",
             description = stringResource(R.string.settings_telegram_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 4,
+            isFocused = focusedIndex == 3,
             onClick = onNavigateToTelegram,
-            modifier = Modifier.settingsFocusSlot(4)
+            modifier = Modifier.settingsFocusSlot(3)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8068,9 +8031,9 @@ private fun AccountsSettings(
                 stringResource(R.string.settings_signin_to_force_sync)
             },
             actionLabel = if (isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else stringResource(R.string.settings_badge_sync),
-            isFocused = focusedIndex == 5,
+            isFocused = focusedIndex == 4,
             onClick = { if (!isForceCloudSyncing) onForceCloudSync() },
-            modifier = Modifier.settingsFocusSlot(5)
+            modifier = Modifier.settingsFocusSlot(4)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8092,11 +8055,11 @@ private fun AccountsSettings(
                 updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable -> stringResource(R.string.settings_badge_update)
                 else -> stringResource(R.string.settings_badge_check)
             },
-            isFocused = focusedIndex == 6,
+            isFocused = focusedIndex == 5,
             onClick = {
                 if (updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) onInstallUpdate() else onCheckUpdates()
             },
-            modifier = Modifier.settingsFocusSlot(6)
+            modifier = Modifier.settingsFocusSlot(5)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8105,9 +8068,9 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_diagnostics_sharing),
             subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
             isEnabled = diagnosticsSharingEnabled,
-            isFocused = focusedIndex == 7,
+            isFocused = focusedIndex == 6,
             onToggle = onDiagnosticsSharingToggle,
-            modifier = Modifier.settingsFocusSlot(7)
+            modifier = Modifier.settingsFocusSlot(6)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8116,9 +8079,9 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_privacy_policy),
             description = stringResource(R.string.settings_privacy_policy_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 8,
+            isFocused = focusedIndex == 7,
             onClick = onOpenPrivacy,
-            modifier = Modifier.settingsFocusSlot(8)
+            modifier = Modifier.settingsFocusSlot(7)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8127,9 +8090,9 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_account_data_deletion),
             description = stringResource(R.string.settings_account_data_deletion_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 9,
+            isFocused = focusedIndex == 8,
             onClick = onOpenDataDeletion,
-            modifier = Modifier.settingsFocusSlot(9)
+            modifier = Modifier.settingsFocusSlot(8)
         )
     }
 }
