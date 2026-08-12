@@ -1409,8 +1409,8 @@ async function handleSimklProxy(event) {
     if (!SIMKL_ALLOWED_PATHS.some((allowed) => pathParam.startsWith(allowed))) {
       return json(403, { error: "Path not allowed" });
     }
-    const clientId = process.env.SIMKL_CLIENT_ID || "";
-    const clientSecret = process.env.SIMKL_CLIENT_SECRET || "";
+    const clientId = process.env.SIMKL_CLIENT_ID || event.queryStringParameters?.client_id || "";
+    const clientSecret = process.env.SIMKL_CLIENT_SECRET || event.queryStringParameters?.client_secret || "";
     if (!clientId) throw new Error("Simkl credentials not configured");
     const simklUrl = new URL(`https://api.simkl.com${pathParam}`);
     Object.entries(event.queryStringParameters || {}).forEach(([key, value]) => {
