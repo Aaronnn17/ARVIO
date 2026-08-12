@@ -1008,7 +1008,10 @@ class DetailsViewModel @Inject constructor(
                                 duration = 0L,
                                 position = 0L
                             )
-                        } catch (_: Exception) {}
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            com.arflix.tv.util.AppLogger.w("DetailsViewModel", "Failed to mark episode watched/save progress: ${e.message}")
+                        }
                     } else {
                         traktRepository.markEpisodeUnwatched(
                             currentMediaId,

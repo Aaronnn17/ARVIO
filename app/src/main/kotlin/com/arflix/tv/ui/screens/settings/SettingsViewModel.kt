@@ -1659,10 +1659,16 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun addQualityFilter(deviceName: String, regexPattern: String) {
+    fun addQualityFilter(deviceName: String, regexPattern: String): Boolean {
         val trimmedRegex = regexPattern.trim()
-        if (trimmedRegex.isBlank()) return
-        if (runCatching { Regex(trimmedRegex) }.isFailure) return
+        if (trimmedRegex.isBlank()) return false
+        try {
+            Regex(trimmedRegex)
+        } catch (_: java.util.regex.PatternSyntaxException) {
+            return false
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
 
         viewModelScope.launch {
             val next = _uiState.value.qualityFilters + QualityFilterConfig(
@@ -1673,12 +1679,19 @@ class SettingsViewModel @Inject constructor(
             )
             saveQualityFilters(next)
         }
+        return true
     }
 
-    fun updateQualityFilter(filterId: String, deviceName: String, regexPattern: String) {
+    fun updateQualityFilter(filterId: String, deviceName: String, regexPattern: String): Boolean {
         val trimmedRegex = regexPattern.trim()
-        if (trimmedRegex.isBlank()) return
-        if (runCatching { Regex(trimmedRegex) }.isFailure) return
+        if (trimmedRegex.isBlank()) return false
+        try {
+            Regex(trimmedRegex)
+        } catch (_: java.util.regex.PatternSyntaxException) {
+            return false
+        } catch (_: IllegalArgumentException) {
+            return false
+        }
 
         viewModelScope.launch {
             val next = _uiState.value.qualityFilters.map { filter ->
@@ -1693,6 +1706,7 @@ class SettingsViewModel @Inject constructor(
             }
             saveQualityFilters(next)
         }
+        return true
     }
 
     fun cycleQualityFilterPreset() {
