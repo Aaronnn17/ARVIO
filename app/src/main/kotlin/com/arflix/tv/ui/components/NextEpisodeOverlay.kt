@@ -8,6 +8,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -83,6 +85,7 @@ fun NextEpisodeOverlay(
     var internalFocusedButton by remember(isVisible) { mutableIntStateOf(0) } // 0 = play, 1 = cancel
     var countdown by remember(isVisible) { mutableIntStateOf(countdownSeconds) }
     var progress by remember(isVisible) { mutableFloatStateOf(1f) }
+    var actionTaken by remember(seasonNumber, episodeNumber) { mutableStateOf(false) }
     val overlayFocusRequester = remember { FocusRequester() }
     val focusedButton = focusedButtonOverride ?: internalFocusedButton
     fun updateFocusedButton(value: Int) {
@@ -92,6 +95,16 @@ fun NextEpisodeOverlay(
         }
         onFocusedButtonChange?.invoke(clamped)
     }
+    fun playNextOnce() {
+        if (actionTaken) return
+        actionTaken = true
+        onPlayNext()
+    }
+    fun cancelOnce() {
+        if (actionTaken) return
+        actionTaken = true
+        onCancel()
+    }
 
     LaunchedEffect(isVisible) {
         if (isVisible) {
@@ -100,16 +113,16 @@ fun NextEpisodeOverlay(
     }
 
     // Countdown timer
-    LaunchedEffect(isVisible) {
+    LaunchedEffect(isVisible, seasonNumber, episodeNumber) {
         if (isVisible) {
             countdown = countdownSeconds
-            while (countdown > 0) {
+            while (countdown > 0 && !actionTaken) {
                 delay(1000)
                 countdown--
                 progress = countdown.toFloat() / countdownSeconds.toFloat()
             }
-            if (countdown == 0) {
-                onPlayNext()
+            if (countdown == 0 && !actionTaken) {
+                playNextOnce()
             }
         }
     }
@@ -132,7 +145,7 @@ fun NextEpisodeOverlay(
                     if (event.type == KeyEventType.KeyDown) {
                         when (event.key) {
                             Key.Back, Key.Escape -> {
-                                onCancel()
+                                cancelOnce()
                                 true
                             }
                             Key.DirectionLeft -> {
@@ -145,8 +158,8 @@ fun NextEpisodeOverlay(
                             }
                             Key.Enter, Key.DirectionCenter -> {
                                 when (focusedButton) {
-                                    0 -> onPlayNext()
-                                    1 -> onCancel()
+                                    0 -> playNextOnce()
+                                    1 -> cancelOnce()
                                 }
                                 true
                             }
@@ -300,7 +313,8 @@ fun NextEpisodeOverlay(
                                     width = if (focusedButton == 0) 0.dp else 1.dp,
                                     color = Color.White.copy(alpha = 0.2f),
                                     shape = RoundedCornerShape(12.dp)
-                                ),
+                                )
+                                .clickable { playNextOnce() },
                             contentAlignment = Alignment.Center
                         ) {
                             Row(
@@ -334,7 +348,8 @@ fun NextEpisodeOverlay(
                                     width = if (focusedButton == 1) 0.dp else 1.dp,
                                     color = Color.White.copy(alpha = 0.2f),
                                     shape = RoundedCornerShape(12.dp)
-                                ),
+                                )
+                                .clickable { cancelOnce() },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(

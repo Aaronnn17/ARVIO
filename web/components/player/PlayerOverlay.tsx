@@ -24,7 +24,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
-import { saveProgress } from "@/lib/cloud";
+import { isLiveStreamOrSportsItem, saveProgress } from "@/lib/cloud";
 import { cachedDebridDirectUrl, invalidateDebridDirectUrl, isUncachedDebridStream, parseDebridStream, resolveDebridDirectUrl } from "@/lib/debrid";
 import type { RemuxAudioTrack } from "@/lib/remux";
 import { copyStreamUrl, externalLaunchMode, openExternalPlayer, openInAnyPlayer } from "@/lib/externalPlayers";
@@ -37,7 +37,7 @@ import { authClient, useApp } from "@/lib/store";
 import { syncClient } from "@/lib/sync";
 import { SubtitleTranslator, subtitleLanguageName } from "@/lib/subtitleAi";
 import { getLogoUrl } from "@/lib/tmdb";
-import type { AppSettings, MediaItem, StreamSource } from "@/lib/types";
+import type { AppSettings, InstalledAddon, MediaItem, StreamSource } from "@/lib/types";
 
 type PlayerPanel = "sources" | "subtitles" | "audio" | "settings" | null;
 
@@ -162,6 +162,7 @@ export function PlayerOverlay() {
     selected,
     selectedEpisode,
     settings,
+    addons,
     updateSettings,
     activeProfile,
     streams,
@@ -214,6 +215,7 @@ export function PlayerOverlay() {
       item={selected}
       selectedEpisode={selectedEpisode}
       settings={settings}
+      addons={addons}
       updateSettings={updateSettings}
       activeProfileId={activeProfile?.id ?? null}
       liveTv={Boolean(activeChannel)}
@@ -234,6 +236,7 @@ function VideoPlayer({
   item,
   selectedEpisode,
   settings,
+  addons,
   updateSettings,
   activeProfileId,
   liveTv,
@@ -250,6 +253,7 @@ function VideoPlayer({
   item: MediaItem | null;
   selectedEpisode: { season: number; episode: number } | null;
   settings: AppSettings;
+  addons: InstalledAddon[];
   updateSettings: (patch: Partial<AppSettings>) => void;
   activeProfileId: string | null;
   liveTv: boolean;
@@ -867,7 +871,38 @@ function VideoPlayer({
     if (!video || !item) return undefined;
     const season = selectedEpisode?.season ?? item.seasonNumber ?? null;
     const episode = selectedEpisode?.episode ?? item.episodeNumber ?? null;
-    void syncClient().scrobble("start", { mediaType: item.mediaType, tmdbId: item.id, season, episode, progress: item.progress ?? 0 }).catch(() => undefined);
+    const isLiveStream = isLiveStreamOrSportsItem({
+      mediaType: item.mediaType,
+      id: item.id,
+      streamAddonId: stream.addonId,
+      title: item.title
+    }, addons);
+    const isAnime = item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16));
+    const scrobble = (action: "start" | "pause" | "stop", progress: number) => {
+      if (isLiveStream) return;
+      void syncClient().scrobble(action, {
+        mediaType: item.mediaType,
+        tmdbId: item.id,
+        season,
+        episode,
+        isAnime,
+        progress
+      }).catch(() => undefined);
+    };
+    const playbackProgress = () => Number.isFinite(video.duration) && video.duration > 0
+      ? Math.min(100, Math.max(0, (video.currentTime / video.duration) * 100))
+      : item.progress ?? 0;
+    let scrobbleActive = false;
+    const onPlaying = () => {
+      if (scrobbleActive) return;
+      scrobbleActive = true;
+      scrobble("start", playbackProgress());
+    };
+    const onPaused = () => {
+      if (!scrobbleActive || video.ended) return;
+      scrobbleActive = false;
+      scrobble("pause", playbackProgress());
+    };
     const save = () => {
       if (!authClient.session || !Number.isFinite(video.duration) || video.duration <= 0) return;
       const now = Date.now();
@@ -890,22 +925,28 @@ function VideoPlayer({
         source: stream.addonName,
         stream_addon_id: stream.addonId ?? null,
         stream_title: stream.source
-      }, activeProfileId).catch(() => undefined);
+      }, activeProfileId, addons).catch(() => undefined);
     };
     const onEnded = () => {
-      void syncClient().scrobble("stop", { mediaType: item.mediaType, tmdbId: item.id, season, episode, progress: 100 }).catch(() => undefined);
+      scrobbleActive = false;
+      scrobble("stop", 100);
       if (settings.autoPlayNext && canAdvance) void onAdvance();
     };
     video.addEventListener("timeupdate", save);
     video.addEventListener("pause", save);
+    video.addEventListener("playing", onPlaying);
+    video.addEventListener("pause", onPaused);
     video.addEventListener("ended", onEnded);
+    if (!video.paused && video.readyState >= 2) onPlaying();
     return () => {
       save();
       video.removeEventListener("timeupdate", save);
       video.removeEventListener("pause", save);
+      video.removeEventListener("playing", onPlaying);
+      video.removeEventListener("pause", onPaused);
       video.removeEventListener("ended", onEnded);
     };
-  }, [item, stream, selectedEpisode, settings.autoPlayNext, activeProfileId, canAdvance, onAdvance]);
+  }, [item, stream, selectedEpisode, settings.autoPlayNext, activeProfileId, addons, canAdvance, onAdvance]);
 
   const flashControls = useCallback(() => {
     setShowControls(true);

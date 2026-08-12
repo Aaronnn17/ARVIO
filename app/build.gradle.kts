@@ -30,8 +30,8 @@ android {
         // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
         minSdk = 23
         targetSdk = 36
-        versionCode = 305
-        versionName = "1.9.982"
+        versionCode = 306
+        versionName = "1.9.983"
         buildConfigField("String", "GITHUB_OWNER", "\"ProdigyV21\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
@@ -44,7 +44,11 @@ android {
         buildConfigField("Boolean", "ENABLE_PERIODIC_CLOUD_PULL", "false")
         buildConfigField("Boolean", "ENABLE_NETLIFY_CLOUD_SYNC", "true")
         buildConfigField("Boolean", "ENABLE_SUPABASE_SYNC_MIRROR", "false")
-        buildConfigField("String", "NETLIFY_BACKEND_URL", "\"https://auth.arvio.tv/.netlify/functions\"")
+        buildConfigField(
+            "String",
+            "NETLIFY_BACKEND_URL",
+            "\"${escapeBuildConfigString(localSecretValue("NETLIFY_BACKEND_URL").ifBlank { "https://auth.arvio.tv/.netlify/functions" })}\""
+        )
         buildConfigField(
             "String",
             "APP_ANON_KEY",
@@ -153,6 +157,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
         isCoreLibraryDesugaringEnabled = true
+    }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
     }
 
     sourceSets {
@@ -408,13 +418,14 @@ secrets {
     // Ignore missing keys to allow builds without secrets file
     ignoreList.add("sdk.*")
     ignoreList.add("APP_ANON_KEY")
+    ignoreList.add("SIMKL_CLIENT_SECRET")
 }
 
 fun localSecretValue(name: String): String {
     val secretsFile = rootProject.file("secrets.properties")
     if (secretsFile.exists()) {
         val properties = Properties()
-        secretsFile.inputStream().use { properties.load(it) }
+        secretsFile.readText(Charsets.UTF_8).removePrefix("\uFEFF").reader().use { properties.load(it) }
         properties.getProperty(name)?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
     }
     providers.gradleProperty(name).orNull?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
@@ -430,12 +441,33 @@ fun escapeBuildConfigString(value: String): String =
 val validateReleaseCloudSecrets = tasks.register("validateReleaseCloudSecrets") {
     doLast {
         val appAnonKey = localSecretValue("APP_ANON_KEY").ifBlank { localSecretValue("SUPABASE_ANON_KEY") }
+        val supabaseUrl = localSecretValue("SUPABASE_URL")
+        val traktClientId = localSecretValue("TRAKT_CLIENT_ID")
+        val traktClientSecret = localSecretValue("TRAKT_CLIENT_SECRET")
+        val supabaseHost = supabaseUrl.substringAfter("://", missingDelimiterValue = "").substringBefore('/')
+        val hasValidSupabaseUrl =
+            (supabaseUrl.startsWith("https://") || supabaseUrl.startsWith("http://")) &&
+                supabaseHost.contains('.') &&
+                '*' !in supabaseUrl
+        require(hasValidSupabaseUrl) {
+            "Release builds require a valid HTTP(S) SUPABASE_URL " +
+                "(length=${supabaseUrl.length}, http=${supabaseUrl.startsWith("http")}, " +
+                "hostPresent=${supabaseHost.isNotBlank()}, hostHasDot=${supabaseHost.contains('.')}, redacted=${'*' in supabaseUrl})."
+        }
         require(
             appAnonKey.length > 40 &&
                 !appAnonKey.equals("your-supabase-anon-key", ignoreCase = true) &&
                 !appAnonKey.startsWith("your-", ignoreCase = true)
         ) {
             "Release builds require a real APP_ANON_KEY in secrets.properties, Gradle properties, or the environment."
+        }
+        require(
+            traktClientId.length > 20 &&
+                !traktClientId.startsWith("your-", ignoreCase = true) &&
+                traktClientSecret.length > 20 &&
+                !traktClientSecret.startsWith("your-", ignoreCase = true)
+        ) {
+            "Release builds require real TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET values."
         }
     }
 }

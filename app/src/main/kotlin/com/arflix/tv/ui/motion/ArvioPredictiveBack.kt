@@ -76,9 +76,8 @@ fun rememberArvioPredictiveBack(
                 motion.touchY = e.touchY
                 anim.snapTo(e.progress)
             }
+            anim.animateTo(1f, tween(commitDurationMs, easing = ArvioStandardDecelerate))
             commit()
-            anim.animateTo(1f, tween(150, easing = ArvioStandardDecelerate))
-            anim.snapTo(0f)
         } catch (e: CancellationException) {
             scope.launch {
                 anim.animateTo(0f, tween(cancelDurationMs, easing = ArvioStandardDecelerate))
