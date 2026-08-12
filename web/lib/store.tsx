@@ -1363,7 +1363,7 @@ export function AppProvider({
 
   const playStream = useCallback((stream: StreamSource, options: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean } = {}) => {
     if (!stream.url) {
-      setToast("This source is not web-playable yet. Browser playback needs a direct HTTP/HLS URL.");
+      setToast("This source has no direct stream URL yet.");
       return;
     }
     // Default external player (VLC / Infuse): hand the source straight to it,

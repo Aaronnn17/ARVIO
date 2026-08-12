@@ -84,7 +84,7 @@ export function WatchlistScreen() {
   }, [activeList, sort, filter]);
 
   return (
-    <div className={`screen ${posterMode ? "poster-results" : ""}`}>
+    <div className={`screen has-section-heading ${posterMode ? "poster-results" : ""}`}>
       <section className="section-heading watchlist-heading">
         <div>
           <p className="eyebrow">

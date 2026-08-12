@@ -591,14 +591,17 @@ function SectionBody({ section }: { section: SectionId }) {
       return (
         <Panel title="Playback">
           <Row
-            label="Play in"
-            hint="VLC/Infuse open the source directly; ARVIO still syncs Trakt when you return"
+            label="Play Live TV in"
+            // Movies and series always open in an external player now, so this
+            // choice only routes Live TV. Saying otherwise here would be the
+            // same broken promise we removed from the source list.
+            hint="Movies and series always open in an external player like VLC. This picks where Live TV channels play; ARVIO still syncs Trakt when you return"
           >
             <Select
               value={settings.defaultPlayer}
               onChange={(v) => set({ defaultPlayer: v })}
               options={[
-                ["browser", "ARVIO player"],
+                ["browser", "ARVIO player (browser)"],
                 ["vlc", "VLC"],
                 ["infuse", "Infuse"],
               ]}
