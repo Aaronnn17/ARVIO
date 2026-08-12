@@ -74,7 +74,8 @@ class TraktRepository @Inject constructor(
     private val syncServiceProvider: Provider<TraktSyncService>,
     private val profileManager: ProfileManager,
     private val mdbListRepository: MdbListRepository,
-    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore
+    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore,
+    private val simklSyncService: com.arflix.tv.data.repository.simkl.SimklSyncService
 ) {
     private val gson = Gson()
     private val watchlistHttpClient by lazy { okHttpClient }
@@ -623,7 +624,11 @@ class TraktRepository @Inject constructor(
 
         // Then sync to backend in background
         try {
-            syncService.markMovieWatched(tmdbId)
+            if (isSimklActive()) {
+                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
+            } else {
+                syncService.markMovieWatched(tmdbId)
+            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -642,7 +647,11 @@ class TraktRepository @Inject constructor(
 
         // Then sync to backend in background
         try {
-            syncService.markMovieUnwatched(tmdbId)
+            if (isSimklActive()) {
+                simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
+            } else {
+                syncService.markMovieUnwatched(tmdbId)
+            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -663,8 +672,12 @@ class TraktRepository @Inject constructor(
 
         // Then sync to backend in background (don't block UI on network)
         try {
-            val traktShowId = tmdbToTraktIdCache[showTmdbId]
-            syncService.markEpisodeWatched(showTmdbId, season, episode, traktShowId)
+            if (isSimklActive()) {
+                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
+            } else {
+                val traktShowId = tmdbToTraktIdCache[showTmdbId]
+                syncService.markEpisodeWatched(showTmdbId, season, episode, traktShowId)
+            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -706,7 +719,11 @@ class TraktRepository @Inject constructor(
         // Then sync to backend in background (skip if batch Trakt removal already handled it)
         if (syncTrakt) {
             try {
-                syncService.markEpisodeUnwatched(showTmdbId, season, episode)
+                if (isSimklActive()) {
+                    simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
+                } else {
+                    syncService.markEpisodeUnwatched(showTmdbId, season, episode)
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -1259,6 +1276,12 @@ class TraktRepository @Inject constructor(
     /** True when the active profile syncs Continue Watching from MDBList (not Trakt). */
     suspend fun isMdbListActive(): Boolean =
         syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST
+
+    suspend fun isSimklActive(): Boolean =
+        syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.SIMKL
+
+    suspend fun isAlternativeRemoteActive(): Boolean =
+        isMdbListActive() || isSimklActive()
 
     suspend fun getContinueWatching(forceRefresh: Boolean = false): List<ContinueWatchingItem> = coroutineScope {
         ensureProfileCacheScope()

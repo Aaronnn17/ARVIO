@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.arflix.tv.R
 import com.arflix.tv.server.AiKeyConfigServer
 import com.arflix.tv.ui.screens.player.SubtitleAiModel
+import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.DeviceIpAddress
 import com.arflix.tv.util.DiagnosticsManager
 import com.arflix.tv.util.QrCodeGenerator
@@ -145,6 +146,13 @@ data class SettingsUiState(
     val isMdbListConnected: Boolean = false,
     val mdbListConnecting: Boolean = false,
     val mdbListUsername: String? = null,
+    // Simkl (alternative remote sync provider)
+    val isSimklConnected: Boolean = false,
+    val isSimklAuthStarting: Boolean = false,
+    val isSimklPolling: Boolean = false,
+    val simklUserCode: String? = null,
+    val simklVerificationUrl: String? = null,
+    val simklUsername: String? = null,
     // Trakt Sync
     val isSyncing: Boolean = false,
     val syncProgress: SyncProgress = SyncProgress(),
@@ -248,7 +256,8 @@ class SettingsViewModel @Inject constructor(
     private val updateStatusManager: com.arflix.tv.updater.UpdateStatusManager,
     private val mdbListRepository: com.arflix.tv.data.repository.MdbListRepository,
     private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore,
-    private val watchHistoryRepository: com.arflix.tv.data.repository.WatchHistoryRepository
+    private val watchHistoryRepository: com.arflix.tv.data.repository.WatchHistoryRepository,
+    private val simklAuthManager: com.arflix.tv.data.repository.simkl.SimklAuthManager
 ) : ViewModel() {
     private fun visibleCatalogs(catalogs: List<CatalogConfig>): List<CatalogConfig> {
         return catalogs.filter { config ->
@@ -322,6 +331,7 @@ class SettingsViewModel @Inject constructor(
     private var lastObservedStalkerUrl: String = ""
 
     private var traktPollingJob: Job? = null
+    private var simklPollingJob: Job? = null
     private var traktStartupJob: Job? = null
     private var loadSettingsJob: Job? = null
     private var integrationMetadataJob: Job? = null
@@ -547,6 +557,7 @@ class SettingsViewModel @Inject constructor(
             val accountEmail = (authState as? AuthState.Authenticated)?.email
             val isTrakt = traktRepository.hasTrakt()
             val isMdbList = mdbListRepository.isConnected()
+            val isSimkl = simklAuthManager.isConnected()
 
             if (profileManager.getProfileIdSync() != loadProfileId) return@launch
 
@@ -616,6 +627,8 @@ class SettingsViewModel @Inject constructor(
                 traktUsername = null,
                 isMdbListConnected = isMdbList,
                 mdbListUsername = null,
+                isSimklConnected = isSimkl,
+                simklUsername = null,
                 lastSyncTime = null,
                 syncedMovies = 0,
                 syncedEpisodes = 0,
@@ -639,7 +652,7 @@ class SettingsViewModel @Inject constructor(
                 smoothScrolling = smoothScrolling
             )
 
-            refreshIntegrationUsernames(loadProfileId, isTrakt, isMdbList)
+            refreshIntegrationUsernames(loadProfileId, isTrakt, isMdbList, isSimkl)
             if (isTrakt) refreshSyncSummary(loadProfileId)
         }
     }
@@ -647,7 +660,8 @@ class SettingsViewModel @Inject constructor(
     private fun refreshIntegrationUsernames(
         profileId: String,
         isTraktConnected: Boolean,
-        isMdbListConnected: Boolean
+        isMdbListConnected: Boolean,
+        isSimklConnected: Boolean = false
     ) {
         integrationMetadataJob?.cancel()
         integrationMetadataJob = viewModelScope.launch {
@@ -683,6 +697,24 @@ class SettingsViewModel @Inject constructor(
                         _uiState.value.isMdbListConnected
                     ) {
                         _uiState.value = _uiState.value.copy(mdbListUsername = username)
+                    }
+                }
+            }
+
+            if (isSimklConnected) {
+                launch {
+                    val username = try {
+                        withTimeoutOrNull(5_000L) { simklAuthManager.fetchUsername() }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (
+                        profileManager.getProfileIdSync() == profileId &&
+                        _uiState.value.isSimklConnected
+                    ) {
+                        _uiState.value = _uiState.value.copy(simklUsername = username)
                     }
                 }
             }
@@ -3607,6 +3639,121 @@ class SettingsViewModel @Inject constructor(
                 toastType = ToastType.SUCCESS
             )
             syncLocalStateToCloud(silent = true, force = true)
+        }
+    }
+
+    // ========== Simkl Authentication ==========
+
+    fun startSimklAuth() {
+        simklPollingJob?.cancel()
+        simklPollingJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSimklAuthStarting = true)
+            runCatching {
+                val pinRes = simklAuthManager.startPinAuth()
+                _uiState.value = _uiState.value.copy(
+                    isSimklAuthStarting = false,
+                    isSimklPolling = true,
+                    simklUserCode = pinRes.userCode,
+                    simklVerificationUrl = pinRes.verificationUrl
+                )
+                startSimklPolling(pinRes.userCode, pinRes.expiresIn, pinRes.interval)
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                _uiState.value = _uiState.value.copy(
+                    isSimklAuthStarting = false,
+                    isSimklPolling = false,
+                    simklUserCode = null,
+                    simklVerificationUrl = null,
+                    toastMessage = "Simkl Auth Error: ${e.message}",
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    private fun startSimklPolling(userCode: String, expiresInSec: Int, intervalSec: Int) {
+        simklPollingJob?.cancel()
+        simklPollingJob = viewModelScope.launch {
+            val expiresAt = System.currentTimeMillis() + (expiresInSec * 1000L)
+            val pollDelayMs = intervalSec.coerceAtLeast(3) * 1000L
+
+            while (System.currentTimeMillis() < expiresAt) {
+                delay(pollDelayMs)
+                try {
+                    val success = simklAuthManager.pollPinAuth(userCode)
+                    if (success) {
+                        syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL)
+                        _uiState.value = _uiState.value.copy(
+                            isSimklPolling = false,
+                            isSimklConnected = true,
+                            simklUserCode = null,
+                            simklVerificationUrl = null,
+                            toastMessage = "Connected to Simkl!",
+                            toastType = ToastType.SUCCESS
+                        )
+                        refreshIntegrationUsernames(
+                            profileManager.getProfileIdSync(),
+                            isTraktConnected = _uiState.value.isTraktAuthenticated,
+                            isMdbListConnected = _uiState.value.isMdbListConnected,
+                            isSimklConnected = true
+                        )
+                        return@launch
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    AppLogger.e("SettingsViewModel", "Simkl polling error: ${e.message}")
+                }
+            }
+            _uiState.value = _uiState.value.copy(
+                isSimklPolling = false,
+                simklUserCode = null,
+                simklVerificationUrl = null,
+                toastMessage = "Simkl authentication timed out",
+                toastType = ToastType.ERROR
+            )
+        }
+    }
+
+    fun pollSimklAuth() {
+        val userCode = _uiState.value.simklUserCode ?: return
+        viewModelScope.launch {
+            runCatching {
+                val success = simklAuthManager.pollPinAuth(userCode)
+                if (success) {
+                    syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL)
+                    _uiState.value = _uiState.value.copy(
+                        isSimklPolling = false,
+                        isSimklConnected = true,
+                        simklUserCode = null,
+                        simklVerificationUrl = null,
+                        toastMessage = "Connected to Simkl!",
+                        toastType = ToastType.SUCCESS
+                    )
+                    refreshIntegrationUsernames(
+                        profileManager.getProfileIdSync(),
+                        isTraktConnected = _uiState.value.isTraktAuthenticated,
+                        isMdbListConnected = _uiState.value.isMdbListConnected,
+                        isSimklConnected = true
+                    )
+                }
+            }
+        }
+    }
+
+    fun disconnectSimkl() {
+        simklPollingJob?.cancel()
+        simklPollingJob = null
+        viewModelScope.launch {
+            simklAuthManager.disconnect()
+            _uiState.value = _uiState.value.copy(
+                isSimklConnected = false,
+                isSimklPolling = false,
+                simklUserCode = null,
+                simklVerificationUrl = null,
+                simklUsername = null,
+                toastMessage = "Disconnected from Simkl",
+                toastType = ToastType.SUCCESS
+            )
         }
     }
 

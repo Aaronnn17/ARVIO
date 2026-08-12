@@ -44,11 +44,43 @@ class ApiProxyInterceptor : Interceptor {
                 // user API key on the query string. Keep it direct, same as Trakt.
                 chain.proceed(originalRequest)
             }
+            "api.simkl.com" -> {
+                // Simkl OAuth and user endpoints must stay direct, same as Trakt and MDBList.
+                chain.proceed(originalRequest)
+            }
             else -> {
                 // Pass through other requests unchanged
                 chain.proceed(originalRequest)
             }
         }
+    }
+
+    private fun rewriteForSimklProxy(originalRequest: Request): Request? {
+        val originalUrl = originalRequest.url
+        val path = originalUrl.encodedPath
+
+        val proxyUrlBuilder = (Constants.SIMKL_PROXY_URL.toHttpUrlOrNull() ?: return null).newBuilder()
+            .addQueryParameter("path", path)
+            .addQueryParameter("method", originalRequest.method)
+
+        for (i in 0 until originalUrl.querySize) {
+            val name = originalUrl.queryParameterName(i)
+            originalUrl.queryParameterValue(i)?.let { value ->
+                proxyUrlBuilder.addQueryParameter(name, value)
+            }
+        }
+
+        val userToken = originalRequest.header("Authorization")?.removePrefix("Bearer ")
+        val builder = originalRequest.newBuilder()
+            .url(proxyUrlBuilder.build())
+            .header("apikey", Constants.APP_ANON_KEY)
+            .header("Authorization", "Bearer ${Constants.APP_ANON_KEY}")
+
+        if (!userToken.isNullOrBlank()) {
+            builder.header("x-user-token", userToken)
+        }
+
+        return builder.build()
     }
 
     private fun rewriteForTmdbProxy(originalRequest: Request): Request? {
@@ -81,11 +113,11 @@ class ApiProxyInterceptor : Interceptor {
 
     private fun hasProxyConfig(): Boolean {
         if (Constants.USE_NETLIFY_CLOUD_SYNC) {
-            return Constants.NETLIFY_BACKEND_URL.startsWith("https://")
+            return Constants.NETLIFY_BACKEND_URL.startsWith("https://") || Constants.NETLIFY_BACKEND_URL.startsWith("http://")
         }
         val supabaseUrl = Constants.SUPABASE_URL.trim()
         val anonKey = Constants.SUPABASE_ANON_KEY.trim()
-        return supabaseUrl.startsWith("https://") &&
+        return (supabaseUrl.startsWith("https://") || supabaseUrl.startsWith("http://")) &&
             !supabaseUrl.contains("your-project", ignoreCase = true) &&
             anonKey.length > 40 &&
             !anonKey.startsWith("your-", ignoreCase = true)
