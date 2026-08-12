@@ -41,6 +41,7 @@ class SimklScrobbler @Inject constructor(
     private val clientId: String get() = Constants.SIMKL_CLIENT_ID
     private val queueScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val queueMutex = Mutex()
+    private var hasWritten = false
     private var lastWriteAt = 0L
     private var pendingCommand: Command? = null
     private var pendingJob: Job? = null
@@ -99,8 +100,13 @@ class SimklScrobbler @Inject constructor(
     private suspend fun submit(command: Command) {
         var immediate: Command? = null
         queueMutex.withLock {
-            val remaining = WRITE_LOCK_MS - (elapsedRealtimeMs() - lastWriteAt)
+            val remaining = if (hasWritten) {
+                WRITE_LOCK_MS - (elapsedRealtimeMs() - lastWriteAt)
+            } else {
+                0L
+            }
             if (remaining <= 0L && pendingJob == null) {
+                hasWritten = true
                 lastWriteAt = elapsedRealtimeMs()
                 immediate = command
             } else {
@@ -110,6 +116,7 @@ class SimklScrobbler @Inject constructor(
                         delay(remaining.coerceAtLeast(1L))
                         val pending = queueMutex.withLock {
                             pendingJob = null
+                            hasWritten = true
                             lastWriteAt = elapsedRealtimeMs()
                             pendingCommand.also { pendingCommand = null }
                         }
@@ -123,6 +130,8 @@ class SimklScrobbler @Inject constructor(
 
     private suspend fun execute(command: Command) {
         try {
+            val activeToken = authManager.getAccessToken() ?: return
+            if (command.authHeader != "Bearer $activeToken") return
             val response = when (command.action) {
                 Action.START -> simklApi.scrobbleStart(command.authHeader, clientId, command.body)
                 Action.PAUSE -> simklApi.scrobblePause(command.authHeader, clientId, command.body)

@@ -8,6 +8,7 @@ import com.arflix.tv.data.api.SimklAllItemsResponse
 import com.arflix.tv.data.api.SimklScrobbleBody
 import com.arflix.tv.data.api.SimklScrobbleResponse
 import com.arflix.tv.data.repository.sync.SyncProviderStore
+import com.google.gson.Gson
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -33,7 +34,7 @@ class SimklIntegrationTest {
         syncProviderStore = mockk(relaxed = true)
         authManager = SimklAuthManager(simklApi, syncProviderStore)
         scrobbler = SimklScrobbler(simklApi, authManager)
-        scrobbler.elapsedRealtimeMs = { 21_000L }
+        scrobbler.elapsedRealtimeMs = { 0L }
         syncService = SimklSyncService(simklApi, authManager)
     }
 
@@ -172,6 +173,29 @@ class SimklIntegrationTest {
                 includeAllEpisodes = "original"
             )
         }
+    }
+
+    @Test
+    fun testEmptyAccountSnapshotIsNotReloadedOnEveryRead() = runBlocking {
+        coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
+        coEvery { simklApi.getActivities(any(), any()) } returns SimklActivitiesResponse(all = null)
+        coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            SimklAllItemsResponse()
+
+        syncService.syncIfNeeded()
+        syncService.syncIfNeeded()
+
+        coVerify(exactly = 3) { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun testActivitiesAcceptsCurrentTvShowsField() {
+        val activities = Gson().fromJson(
+            """{"all":null,"tv_shows":{"all":"2026-08-12T12:00:00Z"}}""",
+            SimklActivitiesResponse::class.java
+        )
+
+        assertEquals("2026-08-12T12:00:00Z", activities.shows?.all)
     }
 
     @Test

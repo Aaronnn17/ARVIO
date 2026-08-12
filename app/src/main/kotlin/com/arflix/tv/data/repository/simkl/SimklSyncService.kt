@@ -13,7 +13,9 @@ import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
@@ -28,6 +30,7 @@ class SimklSyncService @Inject constructor(
 
     private val syncMutex = Mutex()
     private var activeTokenScope: Int? = null
+    private var hasInitialSnapshot = false
     private var lastActivityTimestamp: String? = null
     private var lastActivityCheckTime: Long = 0L
 
@@ -55,57 +58,53 @@ class SimklSyncService @Inject constructor(
         val authHeader = "Bearer $token"
 
         val now = System.currentTimeMillis()
-        if (!force && (now - lastActivityCheckTime < 15 * 60 * 1000L) && lastActivityTimestamp != null) {
+        if (!force && hasInitialSnapshot && now - lastActivityCheckTime < 15 * 60 * 1000L) {
             return@withLock
         }
 
         try {
             val activities = simklApi.getActivities(authHeader, clientId)
-            lastActivityCheckTime = now
-            val currentActivityDate = activities.all ?: activities.movies?.all ?: activities.shows?.all
+            val currentActivityDate = activities.all
+                ?: activities.movies?.all
+                ?: activities.shows?.all
+                ?: activities.anime?.all
 
-            if (lastActivityTimestamp == null) {
-                // PHASE 1: Initial Sync Strategy (fetch sequentially)
-                AppLogger.d("SimklSyncService", "Running Phase 1 Initial Sync sequentially")
-                cachedWatchedMovies.clear()
-                cachedWatchedEpisodes.clear()
-                cachedWatchlist.clear()
-
-                val moviesRes = simklApi.getAllItems(authHeader, clientId, "movies")
-                processMoviesResponse(moviesRes)
-
-                delay(200)
-                val showsRes = simklApi.getAllItems(authHeader, clientId, "shows")
-                processShowsResponse(showsRes)
-
-                delay(200)
-                val animeRes = simklApi.getAllItems(authHeader, clientId, "anime")
-                processShowsResponse(animeRes)
-
-                lastActivityTimestamp = currentActivityDate
-            } else if (currentActivityDate != null && currentActivityDate != lastActivityTimestamp) {
-                // PHASE 2: Continuous Sync Loop (delta sync with date_from)
-                AppLogger.d("SimklSyncService", "Running Phase 2 Delta Sync with date_from=$lastActivityTimestamp")
-                val deltaRes = simklApi.getAllItems(
-                    authHeader,
-                    clientId,
-                    type = "all",
-                    dateFrom = lastActivityTimestamp
-                )
-                processMoviesResponse(deltaRes)
-                processShowsResponse(deltaRes)
-
+            if (force || !hasInitialSnapshot || currentActivityDate != lastActivityTimestamp) {
+                AppLogger.d("SimklSyncService", "Refreshing complete Simkl snapshot")
+                refreshSnapshot(authHeader)
+                hasInitialSnapshot = true
                 lastActivityTimestamp = currentActivityDate
             } else {
                 AppLogger.d("SimklSyncService", "Simkl activities unchanged ($currentActivityDate). Skipping sync.")
             }
+            lastActivityCheckTime = now
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
+            lastActivityCheckTime = 0L
             AppLogger.e("SimklSyncService", "Error during Simkl sync: ${e.message}")
         }
     }
 
+    private suspend fun refreshSnapshot(authHeader: String) = coroutineScope {
+        val movies = async { simklApi.getAllItems(authHeader, clientId, "movies") }
+        val shows = async { simklApi.getAllItems(authHeader, clientId, "shows") }
+        val anime = async { simklApi.getAllItems(authHeader, clientId, "anime") }
+        val stagedMovies = movies.await()
+        val stagedShows = shows.await()
+        val stagedAnime = anime.await()
+
+        cachedWatchedMovies.clear()
+        cachedWatchedEpisodes.clear()
+        cachedWatchlist.clear()
+        processMoviesResponse(stagedMovies)
+        processShowsResponse(stagedShows)
+        processShowsResponse(stagedAnime)
+    }
+
     private fun clearCachedState() {
         activeTokenScope = null
+        hasInitialSnapshot = false
         lastActivityTimestamp = null
         lastActivityCheckTime = 0L
         cachedWatchedMovies.clear()

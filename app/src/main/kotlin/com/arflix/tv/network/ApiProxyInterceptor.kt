@@ -45,8 +45,15 @@ class ApiProxyInterceptor : Interceptor {
                 chain.proceed(originalRequest)
             }
             "api.simkl.com" -> {
-                // Simkl OAuth and user endpoints must stay direct, same as Trakt and MDBList.
-                chain.proceed(originalRequest)
+                // A Simkl client id is public and official builds can call the API
+                // directly. Contributor builds without one fall back to ARVIO's
+                // credential-injecting proxy instead of shipping a broken login.
+                if (Constants.SIMKL_CLIENT_ID.isBlank()) {
+                    val proxyRequest = rewriteForSimklProxy(originalRequest) ?: originalRequest
+                    chain.proceed(proxyRequest)
+                } else {
+                    chain.proceed(originalRequest)
+                }
             }
             else -> {
                 // Pass through other requests unchanged

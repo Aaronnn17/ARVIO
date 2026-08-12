@@ -4,6 +4,21 @@ function envValue(value: string | undefined, fallback = "") {
   return value && !value.startsWith("$") ? value : fallback;
 }
 
+const SIMKL_REQUEST_RULES = [
+  { path: /^\/oauth\/pin(?:\/[A-Za-z0-9-]+)?$/, methods: new Set(["GET"]) },
+  { path: /^\/oauth\/token$/, methods: new Set(["POST"]) },
+  { path: /^\/users\/settings$/, methods: new Set(["POST"]) },
+  { path: /^\/scrobble\/(?:start|pause|stop)$/, methods: new Set(["POST"]) },
+  { path: /^\/sync\/activities$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/all-items\/(?:movies|shows|anime|all)\/(?:watching|plantowatch|hold|completed|dropped|all)$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/playback(?:\/(?:movies|shows|anime|all))?$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/(?:history|history\/remove|add-to-list)$/, methods: new Set(["POST"]) }
+];
+
+function isAllowedSimklRequest(path: string, method: string) {
+  return SIMKL_REQUEST_RULES.some((rule) => rule.path.test(path) && rule.methods.has(method));
+}
+
 async function handler(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const { path } = await context.params;
   const netlifyBackendUrl = (
@@ -17,7 +32,11 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
   const input = new URL(request.url);
   const method = request.method;
   const body = method === "GET" || method === "HEAD" ? undefined : await request.text();
-  const normalizedPath = path.join("/");
+  const normalizedPath = `/${path.join("/")}`;
+
+  if (!isAllowedSimklRequest(normalizedPath, method)) {
+    return NextResponse.json({ error: "Path or method not allowed" }, { status: 403 });
+  }
 
   let target: URL;
   let headers: HeadersInit;
@@ -26,9 +45,11 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
 
   if (usesNetlifyProxy) {
     target = new URL(`${netlifyBackendUrl}/simkl-proxy`);
-    target.searchParams.set("path", `/${normalizedPath}`);
+    target.searchParams.set("path", normalizedPath);
     target.searchParams.set("method", method);
-    input.searchParams.forEach((value, key) => target.searchParams.set(key, value));
+    input.searchParams.forEach((value, key) => {
+      if (key !== "client_id" && key !== "client_secret") target.searchParams.set(key, value);
+    });
     headers = {
       apikey: appAnonKey,
       Authorization: `Bearer ${appAnonKey}`
@@ -36,8 +57,11 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
     const userToken = request.headers.get("x-user-token");
     if (userToken) headers["x-user-token" as keyof HeadersInit] = userToken;
   } else if (simklClientId) {
-    target = new URL(`https://api.simkl.com/${normalizedPath}`);
-    input.searchParams.forEach((value, key) => target.searchParams.set(key, value));
+    target = new URL(`https://api.simkl.com${normalizedPath}`);
+    input.searchParams.forEach((value, key) => {
+      if (key !== "client_id" && key !== "client_secret") target.searchParams.set(key, value);
+    });
+    if (normalizedPath.startsWith("/oauth/pin")) target.searchParams.set("client_id", simklClientId);
     headers = {
       "content-type": "application/json",
       "simkl-api-key": simklClientId
@@ -48,7 +72,7 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
     return NextResponse.json({ error: "Simkl proxy is not configured" }, { status: 500 });
   }
 
-  const parsedBody = body && normalizedPath === "oauth/token" && simklSecret && !usesNetlifyProxy
+  const parsedBody = body && normalizedPath === "/oauth/token" && simklSecret && !usesNetlifyProxy
     ? JSON.stringify({ ...JSON.parse(body), client_id: simklClientId, client_secret: simklSecret })
     : body;
 

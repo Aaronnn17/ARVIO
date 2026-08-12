@@ -4,6 +4,7 @@ import { jsonRequest } from "./http";
 
 const LEGACY_SIMKL_TOKEN_KEY = "arvio.web.simkl.token";
 const SNAPSHOT_TTL_MS = 15 * 60 * 1000;
+const SCROBBLE_WRITE_LOCK_MS = 20_500;
 
 export interface SimklToken {
   access_token: string;
@@ -51,7 +52,7 @@ function activityMarker(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const root = value as Record<string, unknown>;
   if (typeof root.all === "string") return root.all;
-  for (const key of ["movies", "shows", "anime"]) {
+  for (const key of ["movies", "tv_shows", "shows", "anime"]) {
     const group = root[key];
     if (group && typeof group === "object" && typeof (group as Record<string, unknown>).all === "string") {
       return (group as Record<string, string>).all;
@@ -65,6 +66,13 @@ export class SimklClient implements SyncClient {
   private profileId: string | null = null;
   private snapshot: SimklSnapshot | null = null;
   private snapshotPromise: Promise<SimklSnapshot> | null = null;
+  private lastScrobbleWriteAt = 0;
+  private pendingScrobble: {
+    scope: string;
+    action: "start" | "pause" | "stop";
+    item: SyncMediaRef & { progress: number };
+  } | null = null;
+  private scrobbleTimer: ReturnType<typeof setTimeout> | null = null;
 
   get isConnected(): boolean {
     return Boolean(this.token?.access_token);
@@ -77,6 +85,7 @@ export class SimklClient implements SyncClient {
   setProfile(profileId: string | null) {
     const normalized = profileId?.trim() || null;
     if (normalized === this.profileId) return;
+    this.resetScrobbleQueue();
     this.profileId = normalized;
     this.snapshot = null;
     this.snapshotPromise = null;
@@ -98,7 +107,9 @@ export class SimklClient implements SyncClient {
   }
 
   setToken(token: SimklToken | null) {
-    this.token = token?.access_token ? token : null;
+    const next = token?.access_token ? token : null;
+    if (next?.access_token !== this.token?.access_token) this.resetScrobbleQueue();
+    this.token = next;
     this.snapshot = null;
     this.snapshotPromise = null;
     if (!this.profileId) return;
@@ -126,6 +137,13 @@ export class SimklClient implements SyncClient {
   private invalidateSnapshot() {
     this.snapshot = null;
     this.snapshotPromise = null;
+  }
+
+  private resetScrobbleQueue() {
+    if (this.scrobbleTimer) clearTimeout(this.scrobbleTimer);
+    this.scrobbleTimer = null;
+    this.pendingScrobble = null;
+    this.lastScrobbleWriteAt = 0;
   }
 
   private async loadSnapshot(): Promise<SimklSnapshot> {
@@ -266,7 +284,7 @@ export class SimklClient implements SyncClient {
     // SIMKL playback sessions are not currently used as ARVIO's resume source.
   }
 
-  async scrobble(action: "start" | "pause" | "stop", item: SyncMediaRef & { progress: number }): Promise<void> {
+  private async sendScrobble(action: "start" | "pause" | "stop", item: SyncMediaRef & { progress: number }): Promise<void> {
     if (!this.isConnected) return;
     const progress = item.progress <= 1 ? item.progress * 100 : item.progress;
     const body = item.mediaType === "movie"
@@ -281,6 +299,28 @@ export class SimklClient implements SyncClient {
           progress
         };
     await this.simkl(`/scrobble/${action}`, { method: "POST", body: JSON.stringify(body) });
+  }
+
+  async scrobble(action: "start" | "pause" | "stop", item: SyncMediaRef & { progress: number }): Promise<void> {
+    if (!this.isConnected) return;
+    const now = Date.now();
+    const remaining = SCROBBLE_WRITE_LOCK_MS - (now - this.lastScrobbleWriteAt);
+    if (!this.lastScrobbleWriteAt || (remaining <= 0 && !this.scrobbleTimer)) {
+      this.lastScrobbleWriteAt = now;
+      await this.sendScrobble(action, item);
+      return;
+    }
+
+    this.pendingScrobble = { scope: this.scope(), action, item };
+    if (this.scrobbleTimer) return;
+    this.scrobbleTimer = setTimeout(() => {
+      this.scrobbleTimer = null;
+      const pending = this.pendingScrobble;
+      this.pendingScrobble = null;
+      if (!pending || pending.scope !== this.scope()) return;
+      this.lastScrobbleWriteAt = Date.now();
+      void this.sendScrobble(pending.action, pending.item).catch(() => undefined);
+    }, Math.max(1, remaining));
   }
 }
 

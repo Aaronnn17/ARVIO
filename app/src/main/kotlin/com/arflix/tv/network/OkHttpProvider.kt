@@ -283,6 +283,12 @@ object OkHttpProvider {
 
     private fun buildAppClient(): OkHttpClient {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
+            redactHeader("Authorization")
+            redactHeader("apikey")
+            redactHeader("x-user-token")
+            redactHeader("X-Plex-Token")
+            redactHeader("X-Emby-Token")
+            redactHeader("Cookie")
             level = if (BuildConfig.DEBUG) {
                 HttpLoggingInterceptor.Level.HEADERS
             } else {

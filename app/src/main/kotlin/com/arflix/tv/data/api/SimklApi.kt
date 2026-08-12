@@ -161,7 +161,7 @@ data class SimklScrobbleResponse(
 data class SimklActivitiesResponse(
     @SerializedName("all") val all: String? = null,
     @SerializedName("movies") val movies: SimklActivityGroup? = null,
-    @SerializedName("shows") val shows: SimklActivityGroup? = null,
+    @SerializedName(value = "tv_shows", alternate = ["shows"]) val shows: SimklActivityGroup? = null,
     @SerializedName("anime") val anime: SimklActivityGroup? = null
 )
 

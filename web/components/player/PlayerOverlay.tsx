@@ -877,16 +877,32 @@ function VideoPlayer({
       streamAddonId: stream.addonId,
       title: item.title
     }, addons);
-    if (!isLiveStream) {
-      void syncClient().scrobble("start", {
+    const isAnime = item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16));
+    const scrobble = (action: "start" | "pause" | "stop", progress: number) => {
+      if (isLiveStream) return;
+      void syncClient().scrobble(action, {
         mediaType: item.mediaType,
         tmdbId: item.id,
         season,
         episode,
-        isAnime: item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16)),
-        progress: item.progress ?? 0
+        isAnime,
+        progress
       }).catch(() => undefined);
-    }
+    };
+    const playbackProgress = () => Number.isFinite(video.duration) && video.duration > 0
+      ? Math.min(100, Math.max(0, (video.currentTime / video.duration) * 100))
+      : item.progress ?? 0;
+    let scrobbleActive = false;
+    const onPlaying = () => {
+      if (scrobbleActive) return;
+      scrobbleActive = true;
+      scrobble("start", playbackProgress());
+    };
+    const onPaused = () => {
+      if (!scrobbleActive || video.ended) return;
+      scrobbleActive = false;
+      scrobble("pause", playbackProgress());
+    };
     const save = () => {
       if (!authClient.session || !Number.isFinite(video.duration) || video.duration <= 0) return;
       const now = Date.now();
@@ -912,25 +928,22 @@ function VideoPlayer({
       }, activeProfileId, addons).catch(() => undefined);
     };
     const onEnded = () => {
-      if (!isLiveStream) {
-        void syncClient().scrobble("stop", {
-          mediaType: item.mediaType,
-          tmdbId: item.id,
-          season,
-          episode,
-          isAnime: item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16)),
-          progress: 100
-        }).catch(() => undefined);
-      }
+      scrobbleActive = false;
+      scrobble("stop", 100);
       if (settings.autoPlayNext && canAdvance) void onAdvance();
     };
     video.addEventListener("timeupdate", save);
     video.addEventListener("pause", save);
+    video.addEventListener("playing", onPlaying);
+    video.addEventListener("pause", onPaused);
     video.addEventListener("ended", onEnded);
+    if (!video.paused && video.readyState >= 2) onPlaying();
     return () => {
       save();
       video.removeEventListener("timeupdate", save);
       video.removeEventListener("pause", save);
+      video.removeEventListener("playing", onPlaying);
+      video.removeEventListener("pause", onPaused);
       video.removeEventListener("ended", onEnded);
     };
   }, [item, stream, selectedEpisode, settings.autoPlayNext, activeProfileId, addons, canAdvance, onAdvance]);

@@ -75,3 +75,14 @@ test("Simkl OAuth token exchange always uses the server secret", async () => {
     global.fetch = originalFetch;
   }
 });
+
+test("Simkl proxy rejects a method declared differently from the HTTP request", async () => {
+  const response = await backend.handleSimklProxy({
+    httpMethod: "GET",
+    headers: {},
+    queryStringParameters: { path: "/sync/history", method: "POST" }
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(JSON.parse(response.body), { error: "HTTP method mismatch" });
+});
