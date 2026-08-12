@@ -1,10 +1,11 @@
 import { config } from "./config";
 import { apiProxiedUrl, jsonRequest, proxiedUrl } from "./http";
+import { fetchAniZipMappingByTmdbId } from "./metadata/anizip";
 import { MetadataDispatcher } from "./metadata/dispatcher";
-import type { ProviderPriorityConfig } from "./metadata/types";
+import type { MetadataLookupIds, MetadataMediaType, MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { tmdbImageUrl } from "./mediaImages";
 import { loadStored, saveStored } from "./storage";
-import type { CatalogConfig, Category, CollectionSourceConfig, EpisodeInfo, InstalledAddon, MediaItem, MediaType, PersonDetails, ReviewInfo } from "./types";
+import type { CatalogConfig, Category, CollectionSourceConfig, EpisodeInfo, HomeServerConfig, InstalledAddon, MediaItem, MediaType, PersonDetails, ReviewInfo } from "./types";
 
 type TmdbItem = {
   id: number;
@@ -96,7 +97,6 @@ export function genreNamesFromIds(ids?: number[]): string[] {
 
 export function isAnime(item: TmdbItem | Partial<MediaItem>): boolean {
   if ("isAnime" in item && typeof item.isAnime === "boolean") return item.isAnime;
-  if ("mediaType" in item && item.mediaType === "anime") return true;
   const genreIds = ("genre_ids" in item ? item.genre_ids : "genreIds" in item ? item.genreIds : []) ?? [];
   const genres = ("genres" in item ? item.genres : []) ?? [];
   const hasAnimation = genreIds.includes(16) || (genres as any[]).some((g: any) =>
@@ -202,10 +202,15 @@ export async function loadHomeCategories(language = "en-US", catalogs?: CatalogC
   }
 }
 
-export async function loadCatalog(catalog: CatalogConfig, language = "en-US", addons: InstalledAddon[] = []): Promise<Category | null> {
+export async function loadCatalog(
+  catalog: CatalogConfig,
+  language = "en-US",
+  addons: InstalledAddon[] = [],
+  homeServers: HomeServerConfig[] = []
+): Promise<Category | null> {
   if (!catalog.enabled) return null;
   if (isCollectionCatalog(catalog)) {
-    const items = await loadCollectionCatalog(catalog, language, addons);
+    const items = await loadCollectionCatalog(catalog, language, addons, homeServers);
     return {
       id: catalog.id,
       title: catalog.name,
@@ -279,6 +284,32 @@ export async function loadCatalog(catalog: CatalogConfig, language = "en-US", ad
     };
   }
 
+  if (catalog.sourceType === "home-server") {
+    const { loadHomeServerLibraryItems, loadHomeServerRows } = await import("./homeserver");
+    const servers = homeServers ?? [];
+    if (catalog.sourceUrl?.startsWith("hslib:")) {
+      const items = await loadHomeServerLibraryItems(servers, catalog.sourceUrl);
+      return {
+        id: catalog.id,
+        title: catalog.name,
+        items,
+        sourceLabel: "HOME SERVER",
+        sourceUrl: catalog.sourceUrl,
+        layout: catalog.layout ?? "landscape"
+      };
+    }
+    const rows = await loadHomeServerRows(servers);
+    const row = rows.find((r) => r.id === catalog.id || r.title.toLowerCase().includes(catalog.name.toLowerCase()));
+    return {
+      id: catalog.id,
+      title: catalog.name,
+      items: row?.items ?? [],
+      sourceLabel: "HOME SERVER",
+      sourceUrl: catalog.sourceUrl,
+      layout: catalog.layout ?? "landscape"
+    };
+  }
+
   return null;
 }
 
@@ -287,17 +318,29 @@ function isCollectionCatalog(catalog: CatalogConfig) {
   return kind === "COLLECTION" || kind === "COLLECTION_RAIL" || Boolean(catalog.collectionSources?.length);
 }
 
-async function loadCollectionCatalog(catalog: CatalogConfig, language: string, addons: InstalledAddon[]) {
+async function loadCollectionCatalog(
+  catalog: CatalogConfig,
+  language: string,
+  addons: InstalledAddon[],
+  homeServers: HomeServerConfig[] = []
+) {
   const sources = catalog.collectionSources ?? [];
   if (!sources.length) {
     if (catalog.sourceType === "mdblist" && catalog.sourceUrl) return loadMdblist(catalog, language);
     return [];
   }
-  const batches = await Promise.all(sources.map((source) => loadCollectionSource(source, language, addons).catch(() => [])));
+  const batches = await Promise.all(
+    sources.map((source) => loadCollectionSource(source, language, addons, homeServers).catch(() => []))
+  );
   return dedupeItems(batches.flat());
 }
 
-async function loadCollectionSource(source: CollectionSourceConfig, language: string, addons: InstalledAddon[]) {
+async function loadCollectionSource(
+  source: CollectionSourceConfig,
+  language: string,
+  addons: InstalledAddon[],
+  homeServers: HomeServerConfig[] = []
+) {
   const kind = String(source.kind ?? "").toUpperCase();
   const mediaType = sourceMediaType(source);
   if (kind === "CURATED_IDS") {
@@ -384,6 +427,15 @@ async function loadCollectionSource(source: CollectionSourceConfig, language: st
       addonCatalogId: source.addonCatalogId,
       enabled: true
     }, addons, language);
+  }
+  if (kind === "HOME_SERVER" || kind === "HOMESERVER") {
+    const { loadHomeServerLibraryItems, loadHomeServerRows } = await import("./homeserver");
+    const servers = homeServers ?? [];
+    if (source.homeServerLibraryKey) {
+      return loadHomeServerLibraryItems(servers, `hslib:${source.homeServerId ?? ""}:${source.homeServerLibraryKey}`);
+    }
+    const rows = await loadHomeServerRows(servers);
+    return rows.flatMap((r) => r.items);
   }
   return [];
 }
@@ -806,18 +858,76 @@ const seriesEpisodeRatingsCache = new Map<string, Map<string, string>>();
 const SEASON_EPISODE_CACHE_KEY = "arvio.web.seasonEpisodes.v1";
 const SEASON_EPISODE_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 
-export async function getSeasonEpisodes(tvId: number, seasonNumber: number, language = "en-US", priorityConfig?: ProviderPriorityConfig): Promise<EpisodeInfo[]> {
-  if (priorityConfig) {
-    const dispatched = await MetadataDispatcher.getEpisodes(tvId, "tv", seasonNumber, priorityConfig).catch(() => []);
-    if (dispatched.length > 0) return dispatched;
-  }
+export interface SeasonMetadataContext {
+  tvdbId?: number | null;
+  anilistId?: number | null;
+  isAnime?: boolean;
+}
+
+function providersBeforeTmdb(type: MetadataMediaType, configOverride?: ProviderPriorityConfig): ProviderPriorityConfig | null {
+  const priority = MetadataDispatcher.getPriorityList(type, configOverride);
+  const tmdbIndex = priority.indexOf("tmdb");
+  const providers = priority.slice(0, tmdbIndex >= 0 ? tmdbIndex : priority.length);
+  if (providers.length === 0) return null;
+
+  const movieProviders: MetadataProviderId[] = configOverride?.movieProviders ?? ["tmdb"];
+  const tvProviders: MetadataProviderId[] = configOverride?.tvProviders ?? ["tvdb", "tmdb"];
+  const animeProviders: MetadataProviderId[] = configOverride?.animeProviders ?? ["anilist", "tvdb", "tmdb"];
+  return {
+    ...configOverride,
+    movieProviders: type === "movie" ? providers : movieProviders,
+    tvProviders: type === "tv" ? providers : tvProviders,
+    animeProviders: type === "anime" ? providers : animeProviders
+  };
+}
+
+export async function getSeasonEpisodes(
+  tvId: number,
+  seasonNumber: number,
+  language = "en-US",
+  priorityConfig?: ProviderPriorityConfig,
+  metadataContext?: SeasonMetadataContext
+): Promise<EpisodeInfo[]> {
+  const metadataType: MetadataMediaType = metadataContext?.isAnime ? "anime" : "tv";
+  const externalConfig = providersBeforeTmdb(metadataType, priorityConfig);
+  const lookup: MetadataLookupIds = {
+    tmdb: tvId,
+    tvdb: metadataContext?.tvdbId,
+    anilist: metadataContext?.anilistId
+  };
+  // TMDB numbering remains canonical for playback. TVDB metadata can enrich a
+  // matching normal-TV episode, but must never replace the list or its numbers.
+  // Anime numbering differs frequently between providers, so it is deliberately
+  // excluded until a verified per-episode ID mapping exists.
+  const externalEpisodesPromise = externalConfig && metadataType === "tv"
+    ? MetadataDispatcher.getEpisodes(lookup, metadataType, seasonNumber, externalConfig).catch(() => [])
+    : Promise.resolve([] as EpisodeInfo[]);
+  const enrichEpisodes = async (episodes: EpisodeInfo[]) => {
+    const externalEpisodes = await externalEpisodesPromise;
+    if (externalEpisodes.length === 0) return episodes;
+    const externalByNumber = new Map(
+      externalEpisodes.map((episode) => [`${episode.seasonNumber}:${episode.episodeNumber}`, episode])
+    );
+    return episodes.map((episode) => {
+      const external = externalByNumber.get(`${episode.seasonNumber}:${episode.episodeNumber}`);
+      if (!external) return episode;
+      return {
+        ...episode,
+        name: external.name || episode.name,
+        overview: external.overview || episode.overview,
+        still: external.still || episode.still,
+        airDate: external.airDate || episode.airDate,
+        runtime: external.runtime || episode.runtime
+      };
+    });
+  };
   const key = `${tvId}:${seasonNumber}:${language}`;
   const memo = seasonCache.get(key);
-  if (memo?.length) return memo;
+  if (memo?.length) return enrichEpisodes(memo);
   const cached = readSeasonEpisodesCache(key);
   if (cached) {
     seasonCache.set(key, cached);
-    return cached;
+    return enrichEpisodes(cached);
   }
   try {
     // IMDb episode ratings (external_ids + cinemeta) run in parallel but are
@@ -863,7 +973,7 @@ export async function getSeasonEpisodes(tvId: number, seasonNumber: number, lang
       // session then refetches with ratings instead of pinning them missing.
       if (!ratingsTimedOut) writeSeasonEpisodesCache(key, episodes);
     }
-    return episodes;
+    return enrichEpisodes(episodes);
   } catch {
     return [];
   }
@@ -1111,15 +1221,24 @@ export async function getDetails(item: MediaItem, priorityConfig?: ProviderPrior
   try {
     const details = await fetchDetailsPayload(item, priorityConfig?.customTmdbApiKey);
     const mapped = mapTmdbItem({ ...details, media_type: item.mediaType }, item.mediaType);
-    const tvdbId = details.external_ids?.tvdb_id ?? item.tvdbId ?? null;
+    const anime = item.isAnime || isAnime(item) || isAnime(details);
+    const aniZipMapping = anime
+      ? await fetchAniZipMappingByTmdbId(item.id).catch(() => null)
+      : null;
+    const anilistId = item.anilistId ?? aniZipMapping?.anilistId ?? null;
+    const tvdbId = details.external_ids?.tvdb_id ?? item.tvdbId ?? aniZipMapping?.tvdbId ?? null;
     const imdbId = details.external_ids?.imdb_id ?? item.imdbId ?? null;
 
     let resolvedMeta: MediaItem | null = null;
-    if (priorityConfig || item.isAnime || isAnime(item)) {
-      const lookupId: string | number = (item.isAnime || isAnime(item))
-        ? (item.title || details.title || details.name || item.id)
-        : (tvdbId ?? item.id);
-      resolvedMeta = await MetadataDispatcher.getDetails(lookupId, item.mediaType, priorityConfig).catch(() => null);
+    const metadataType: MetadataMediaType = anime ? "anime" : item.mediaType;
+    const externalConfig = providersBeforeTmdb(metadataType, priorityConfig);
+    if (externalConfig) {
+      const lookup: MetadataLookupIds = {
+        tmdb: item.id,
+        tvdb: tvdbId,
+        anilist: anilistId
+      };
+      resolvedMeta = await MetadataDispatcher.getDetails(lookup, metadataType, externalConfig).catch(() => null);
     }
 
     const trailer = details.videos?.results?.find((video) => video.site === "YouTube" && video.type === "Trailer" && video.official)
@@ -1133,7 +1252,7 @@ export async function getDetails(item: MediaItem, priorityConfig?: ProviderPrior
       ...item,
       ...mapped,
       id: item.id, // Preserve canonical TMDB ID
-      anilistId: resolvedMeta?.anilistId ?? item.anilistId ?? null,
+      anilistId: resolvedMeta?.anilistId ?? anilistId,
       tvdbId: tvdbId ?? resolvedMeta?.tvdbId ?? item.tvdbId ?? null,
       ...(resolvedMeta ? {
         title: resolvedMeta.title || mapped.title,

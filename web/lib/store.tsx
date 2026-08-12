@@ -5,21 +5,20 @@ import { getStreams, getStreamsProgressive, installAddon as installAddonManifest
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
-import { getContinueWatching, pullCloudPayload, pullCloudProfiles, pullCloudTraktToken, pullCloudWatchlist, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTraktToken } from "./cloud";
+import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudPayload, pullCloudProfiles, pullCloudSimklToken, pullCloudTraktToken, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudSimklToken, saveCloudTraktToken, saveProgress } from "./cloud";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
 import { canDirectPlayMkvStream, playbackPlan, streamPlayability } from "./streamCompatibility";
 import { loadHomeServerRows } from "./homeserver";
-import { buildXtreamCatchupUrl, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
+import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, loadCatalog, searchMedia } from "./tmdb";
-import { convertAniListToTmdbEpisode, fetchAniZipMapping } from "./metadata/anizip";
-import { aniListResolver } from "./metadata/anilist";
 import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
 import { mdblistClient } from "./mdblist";
+import { simklClient, type SimklPinCode } from "./simkl";
 import { activeSyncProvider, syncClient } from "./sync";
 import type {
   AppSettings,
@@ -70,7 +69,7 @@ function localProfilesMatchAccount(): boolean {
   return owner === email;
 }
 
-function getPriorityConfig(settings: AppSettings): ProviderPriorityConfig {
+export function getPriorityConfig(settings: AppSettings): ProviderPriorityConfig {
   return {
     movieProviders: (settings.metadataMovieProviders as MetadataProviderId[]) ?? ["tmdb"],
     tvProviders: (settings.metadataTvProviders as MetadataProviderId[]) ?? ["tvdb", "tmdb"],
@@ -79,23 +78,6 @@ function getPriorityConfig(settings: AppSettings): ProviderPriorityConfig {
     customTvdbApiKey: settings.customTvdbApiKey,
     customTvdbUserPin: settings.customTvdbUserPin
   };
-}
-
-async function resolveEpisodeTarget(item: MediaItem, season: number, episode: number): Promise<{ season: number; episode: number }> {
-  if (item.isAnime || item.mediaType === "anime" || item.badge === "ANIME") {
-    let anilistId = item.anilistId;
-    if (!anilistId && item.title) {
-      const resolvedAni = await aniListResolver.getDetails(item.title, "anime").catch(() => null);
-      anilistId = resolvedAni?.anilistId ?? resolvedAni?.id ?? null;
-    }
-    if (anilistId) {
-      const mapping = await fetchAniZipMapping(anilistId).catch(() => null);
-      if (mapping) {
-        return convertAniListToTmdbEpisode(mapping, episode);
-      }
-    }
-  }
-  return { season, episode };
 }
 
 // Instant-paint caches for Continue Watching / Watchlist. The TTL is deliberately
@@ -218,7 +200,8 @@ export const defaultSettings: AppSettings = {
   customTvdbUserPin: "",
   metadataMovieProviders: ["tmdb"],
   metadataTvProviders: ["tvdb", "tmdb"],
-  metadataAnimeProviders: ["anilist", "tvdb", "tmdb"]
+  metadataAnimeProviders: ["anilist", "tvdb", "tmdb"],
+  iptvSortOrder: "provider"
 };
 
 
@@ -239,20 +222,25 @@ function mediaWatchKey(item: MediaItem, seasonNumber?: number | null, episodeNum
   if (item.mediaType === "movie") return `movie:${item.id}`;
   const season = seasonNumber ?? item.seasonNumber ?? null;
   const episode = episodeNumber ?? item.episodeNumber ?? null;
-  if (season && episode) return `tv:${item.id}:${season}:${episode}`;
+  if (season !== null && episode !== null && season !== undefined && episode !== undefined) return `tv:${item.id}:${season}:${episode}`;
   return `tv:${item.id}`;
 }
 
 function traktWatchedKeys(movies: unknown[], shows: unknown[]) {
   const keys = new Set<string>();
   movies.forEach((raw) => {
-    const item = raw as { movie?: { ids?: { tmdb?: number } } };
+    const item = raw as { movie?: { ids?: { tmdb?: number } }; status?: string; last_watched_at?: string };
     const tmdb = item.movie?.ids?.tmdb;
-    if (tmdb) keys.add(`movie:${tmdb}`);
+    if (tmdb) {
+      if (item.status === undefined || item.status === "completed" || item.status === "watching" || Boolean(item.last_watched_at)) {
+        keys.add(`movie:${tmdb}`);
+      }
+    }
   });
   shows.forEach((raw) => {
     const item = raw as {
       show?: { ids?: { tmdb?: number }; aired_episodes?: number };
+      status?: string;
       seasons?: Array<{ number?: number; episodes?: Array<{ number?: number }> }>;
     };
     const tmdb = item.show?.ids?.tmdb;
@@ -263,28 +251,29 @@ function traktWatchedKeys(movies: unknown[], shows: unknown[]) {
       // Specials (season 0) don't count toward aired_episodes.
       if (seasonNumber === undefined || seasonNumber === null) return;
       season.episodes?.forEach((episode) => {
-        if (!episode.number) return;
+        if (episode.number === undefined || episode.number === null) return;
         keys.add(`tv:${tmdb}:${seasonNumber}:${episode.number}`);
         if (seasonNumber > 0) watchedEpisodes += 1;
       });
     });
-    // Trakt lists a show here after a single played episode; only badge the
-    // whole show as watched when every aired episode has been seen.
+    // If entire show marked completed, or all aired episodes watched, badge whole show
     const aired = item.show?.aired_episodes;
-    if (typeof aired === "number" && aired > 0 && watchedEpisodes >= aired) {
+    if (item.status === "completed" || (typeof aired === "number" && aired > 0 && watchedEpisodes >= aired)) {
       keys.add(`tv:${tmdb}`);
     }
   });
   return keys;
 }
 
-function filterWatchedContinueWatching(items: MediaItem[], watchedKeys: Set<string>) {
-  if (!watchedKeys.size) return items;
-  return items.filter((item) => {
+function filterWatchedContinueWatching(items: MediaItem[], watchedKeys: Set<string>, addons: InstalledAddon[]) {
+  const nonLive = items.filter((item) => !isLiveStreamOrSportsItem(item, addons));
+  if (!watchedKeys.size) return nonLive;
+  return nonLive.filter((item) => {
     const key = mediaWatchKey(item);
     return !key || !watchedKeys.has(key);
   });
 }
+
 
 function isMediaWatched(item: MediaItem, watchedKeys: Set<string>, seasonNumber?: number | null, episodeNumber?: number | null) {
   if (item.isWatched) return true;
@@ -504,6 +493,7 @@ export interface AppStore {
   activeStream: StreamSource | null;
   activeChannel: IptvChannel | null;
   addons: InstalledAddon[];
+  addonsReady: boolean;
   iptvSnapshot: IptvSnapshot;
   query: string;
   setQuery: (value: string) => void;
@@ -514,7 +504,9 @@ export interface AppStore {
   auth: AuthSession | null;
   traktConnected: boolean;
   mdblistConnected: boolean;
+  simklConnected: boolean;
   deviceCode: TraktDeviceCode | null;
+  simklDeviceCode: SimklPinCode | null;
   busy: string;
   toast: string | null;
   setToast: (value: string | null) => void;
@@ -539,9 +531,34 @@ export interface AppStore {
   disconnectTrakt: () => void;
   connectMdblist: (key: string) => Promise<void>;
   disconnectMdblist: () => void;
+  beginSimkl: () => Promise<void>;
+  pollSimkl: () => Promise<void>;
+  disconnectSimkl: () => void;
   // Watchlist list-source switcher (Trakt custom lists / collection).
   loadTraktLists: () => Promise<Array<{ id: string; name: string }>>;
   loadTraktListItems: (source: string) => Promise<MediaItem[]>;
+
+  toggleWatchlist: (item: MediaItem) => Promise<void>;
+  toggleWatched: (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => Promise<void>;
+  removeFromContinueWatching: (item: MediaItem) => Promise<void>;
+  activeContextMenu: ContextMenuTarget | null;
+  openContextMenu: (target: ContextMenuTarget) => void;
+  closeContextMenu: () => void;
+}
+
+export interface ContextMenuTarget {
+  item?: MediaItem;
+  title?: string;
+  subtitle?: string;
+  isContinueWatching?: boolean;
+  position?: { x: number; y: number } | null;
+  actions?: Array<{
+    id: string;
+    label: string;
+    icon: React.ReactNode;
+    danger?: boolean;
+    action: () => void | Promise<void>;
+  }>;
 }
 
 const AppContext = createContext<AppStore | null>(null);
@@ -590,6 +607,7 @@ export function AppProvider({
   const [activeStream, setActiveStream] = useState<StreamSource | null>(null);
   const [activeChannel, setActiveChannel] = useState<IptvChannel | null>(null);
   const [addons, setAddons] = useState<InstalledAddon[]>([]);
+  const [addonsReady, setAddonsReady] = useState(false);
   const [iptvSnapshot, setIptvSnapshot] = useState<IptvSnapshot>(emptyIptv);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<MediaItem[]>([]);
@@ -605,7 +623,9 @@ export function AppProvider({
   const [auth, setAuth] = useState(() => authClient.session);
   const [traktConnected, setTraktConnected] = useState(() => traktClient.isConnected);
   const [mdblistConnected, setMdblistConnected] = useState(() => mdblistClient.isConnected);
+  const [simklConnected, setSimklConnected] = useState(() => simklClient.isConnected);
   const [deviceCode, setDeviceCode] = useState<TraktDeviceCode | null>(null);
+  const [simklDeviceCode, setSimklDeviceCode] = useState<SimklPinCode | null>(null);
   const [busy, setBusy] = useState("Loading ARVIO");
   const [toast, setToast] = useState<string | null>(null);
   const [cloudProfilesHydrated, setCloudProfilesHydrated] = useState(() => !authClient.session);
@@ -668,6 +688,11 @@ export function AppProvider({
     deviceCodeRef.current = deviceCode;
   }, [deviceCode]);
 
+  const simklDeviceCodeRef = useRef(simklDeviceCode);
+  useEffect(() => {
+    simklDeviceCodeRef.current = simklDeviceCode;
+  }, [simklDeviceCode]);
+
   // Restore a saved Telegram (browser GramJS) session and prep the streaming
   // service worker so a connected user's sources resolve and play after a
   // reload — the browser equivalent of Android re-opening its TDLib database.
@@ -701,8 +726,11 @@ export function AppProvider({
     refreshKeyRef.current = key;
     const existing = refreshInFlightRef.current;
     if (existing?.key === key) return existing.promise;
+    simklClient.setProfile(profileId);
+    setSimklConnected(simklClient.isConnected);
     const run = (async () => {
       const currentSettings = settingsRef.current;
+      setAddonsReady(false);
       setBusy("Syncing catalogs");
       // Paint Continue Watching instantly from the last known list for this
       // profile — the fresh Trakt fetch replaces it seconds later. Without
@@ -732,10 +760,17 @@ export function AppProvider({
       const cloud = authClient.session ? await pullCloudPayload(authClient, profileId).catch(() => null) : null;
       let effectiveSettings = currentSettings;
       if (authClient.session && profileId) {
-        const cloudTraktToken = await pullCloudTraktToken(authClient, profileId).catch(() => null);
+        const [cloudTraktToken, cloudSimklToken] = await Promise.all([
+          pullCloudTraktToken(authClient, profileId).catch(() => null),
+          pullCloudSimklToken(authClient, profileId).catch(() => null)
+        ]);
         if (cloudTraktToken) {
           traktClient.setToken(cloudTraktToken);
           setTraktConnected(true);
+        }
+        if (cloudSimklToken) {
+          simklClient.setToken(cloudSimklToken);
+          setSimklConnected(true);
         }
       }
       if (cloud?.settings) {
@@ -777,6 +812,7 @@ export function AppProvider({
         enabled: !effectiveSettings.disabledAddonIds.includes(addon.id) && addon.enabled !== false
       }));
       setAddons(addonState);
+      setAddonsReady(true);
       // Only persist locally when we actually have addons — an empty list can't
       // overwrite a good one.
       if (addonState.length) saveLocalAddons(addonState);
@@ -791,8 +827,9 @@ export function AppProvider({
 
       const client = syncClient();
       const traktReady = client.isConnected;
+      const currentSyncProvider = activeSyncProvider();
       const [historyRows, traktRows, playbackRows, watchedMoviesRows, watchedShowsRows, cloudWatchlistRows, hiddenShowIds] = await Promise.all([
-        authClient.session ? getContinueWatching(authClient, profileId).catch(() => []) : Promise.resolve([]),
+        authClient.session ? getContinueWatching(authClient, profileId, addonState).catch(() => []) : Promise.resolve([]),
         traktReady ? client.watchlist().catch(() => []) : Promise.resolve([]),
         traktReady ? client.playback().catch(() => []) : Promise.resolve([]),
         traktReady ? client.watched("movies").catch(() => []) : Promise.resolve([]),
@@ -800,7 +837,7 @@ export function AppProvider({
         authClient.session ? pullCloudWatchlist(authClient, profileId).catch(() => []) : Promise.resolve([]),
         // Only Trakt has a hidden-from-progress concept; MDBList reads return an
         // empty set so the filters below are no-ops for it.
-        traktReady && activeSyncProvider() === "trakt"
+        traktReady && currentSyncProvider === "trakt"
           ? traktClient.hiddenProgressShowIds().catch(() => new Set<number>())
           : Promise.resolve(new Set<number>())
       ]);
@@ -867,7 +904,7 @@ export function AppProvider({
       }
       // ───────────────────────────────────────────────────────────────────────
 
-      const upNext = traktReady
+      const upNext = traktReady && currentSyncProvider === "trakt"
         ? await loadTraktUpNext(watchedShowsRows, effectiveSettings.includeSpecials, hiddenShowIds).catch(() => ({ items: [] as MediaItem[], fetchFailures: 1 }))
         : { items: [] as MediaItem[], fetchFailures: 0 };
       const upNextRows = upNext.items;
@@ -882,7 +919,7 @@ export function AppProvider({
       // Order newest-activity-first across playback + up-next (matches the app's
       // updatedAt-descending sort) so the row leads with what you last watched.
       const cwSorted = dedupeMedia(cwBase).sort((a, b) => (b.activityAt ?? 0) - (a.activityAt ?? 0));
-      const cw = await hydrateContinueWatchingItems(filterWatchedContinueWatching(cwSorted, watchedKeys));
+      const cw = await hydrateContinueWatchingItems(filterWatchedContinueWatching(cwSorted, watchedKeys, addonState));
       // Trakt outage guard: when Trakt is connected but every read came back
       // empty, the calls were blocked (Cloudflare challenges the CORS
       // preflight intermittently, especially on VPN/datacenter IPs) — keep
@@ -921,6 +958,7 @@ export function AppProvider({
         saveCachedList(watchlistCacheKey, hydratedWatchlist, 60);
       }
       } catch (error) {
+        setAddonsReady(true);
         setToast(error instanceof Error ? error.message : "Failed to load ARVIO");
       } finally {
         setBusy("");
@@ -945,7 +983,9 @@ export function AppProvider({
         currentSettings.groupOrder,
         { userAgent: currentSettings.customUserAgent }
       );
-      setIptvSnapshot(loadedIptv);
+      // Stamp which playlists this snapshot came from so Live TV can reuse it
+      // on re-entry instead of rebuilding ~139k channels every visit.
+      setIptvSnapshot({ ...loadedIptv, signature: iptvPlaylistSignature(currentSettings.iptvPlaylists) });
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Failed to load Live TV");
     } finally {
@@ -1294,15 +1334,14 @@ export function AppProvider({
     } else if (withResumeEpisode.seasonNumber && withResumeEpisode.episodeNumber) {
       setSelectedEpisode({ season: withResumeEpisode.seasonNumber, episode: withResumeEpisode.episodeNumber });
       setBusy("Finding sources");
-      const target = await resolveEpisodeTarget(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
-      appendVodSources(withResumeEpisode, target.season, target.episode);
-      appendHomeServerSources(withResumeEpisode, target.season, target.episode);
-      appendTelegramSources(withResumeEpisode, target.season, target.episode);
+      appendVodSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
+      appendHomeServerSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
+      appendTelegramSources(withResumeEpisode, withResumeEpisode.seasonNumber, withResumeEpisode.episodeNumber);
       const found = await getStreamsProgressive(
         addonsRef.current,
         withResumeEpisode,
-        target.season,
-        target.episode,
+        withResumeEpisode.seasonNumber,
+        withResumeEpisode.episodeNumber,
         mergeStreams
       ).catch(() => []);
       mergeStreams(found);
@@ -1316,12 +1355,10 @@ export function AppProvider({
     setStreams([]);
     setBusy("Finding sources");
 
-    const target = await resolveEpisodeTarget(item, season, episode);
-
-    appendVodSources(item, target.season, target.episode);
-    appendHomeServerSources(item, target.season, target.episode);
-    appendTelegramSources(item, target.season, target.episode);
-    const found = await getStreamsProgressive(addonsRef.current, item, target.season, target.episode, mergeStreams).catch(() => []);
+    appendVodSources(item, season, episode);
+    appendHomeServerSources(item, season, episode);
+    appendTelegramSources(item, season, episode);
+    const found = await getStreamsProgressive(addonsRef.current, item, season, episode, mergeStreams).catch(() => []);
     mergeStreams(found);
     setBusy("");
     return found;
@@ -1332,8 +1369,7 @@ export function AppProvider({
     if (!selected || selected.mediaType !== "tv" || !selectedEpisode) return false;
     const nextEpisode = selectedEpisode.episode + 1;
     setSelectedEpisode({ season: selectedEpisode.season, episode: nextEpisode });
-    const target = await resolveEpisodeTarget(selected, selectedEpisode.season, nextEpisode);
-    const found = await getStreams(addonsRef.current, selected, target.season, target.episode).catch(() => []);
+    const found = await getStreams(addonsRef.current, selected, selectedEpisode.season, nextEpisode).catch(() => []);
     setStreams(found);
     const best = found.find((stream) => stream.url);
     setActiveStream(best ?? null);
@@ -1348,7 +1384,7 @@ export function AppProvider({
 
   const playStream = useCallback((stream: StreamSource, options: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean } = {}) => {
     if (!stream.url) {
-      setToast("This source is not web-playable yet. Browser playback needs a direct HTTP/HLS URL.");
+      setToast("This source has no direct stream URL yet.");
       return;
     }
     // Default external player (VLC / Infuse): hand the source straight to it,
@@ -1551,7 +1587,7 @@ export function AppProvider({
     setActiveChannel(null);
   }, []);
 
-  const loadCatalogRow = useCallback((catalog: CatalogConfig) => loadCatalog(catalog, settings.language, addonsRef.current), [settings.language]);
+  const loadCatalogRow = useCallback((catalog: CatalogConfig) => loadCatalog(catalog, settings.language, addonsRef.current, settingsRef.current.homeServers), [settings.language]);
 
   const installAddon = useCallback(async (url: string) => {
     const addon = await installAddonManifest(url);
@@ -1603,7 +1639,7 @@ export function AppProvider({
     } finally {
       setBusy("");
     }
-  }, [refreshData]);
+  }, [refreshData, activeProfileId]);
 
   const signOut = useCallback(() => {
     authClient.signOut();
@@ -1622,9 +1658,12 @@ export function AppProvider({
     await traktClient.pollDeviceToken(code.device_code);
     setTraktConnected(true);
     setDeviceCode(null);
-    // Mutual exclusion: connecting Trakt drops MDBList for this profile.
+    // Mutual exclusion: connecting Trakt drops MDBList and Simkl for this profile.
     mdblistClient.disconnect();
     setMdblistConnected(false);
+    simklClient.disconnect();
+    setSimklConnected(false);
+    if (activeProfileId) void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
     // Persist the token to cloud so other devices (and future sessions) see the
     // connection — parity with the Android app's traktTokens payload.
     if (traktClient.token && activeProfileId) {
@@ -1643,17 +1682,52 @@ export function AppProvider({
     if (!ok) throw new Error("Invalid MDBList API key");
     mdblistClient.setKey(key);
     setMdblistConnected(true);
-    // Mutual exclusion: connecting MDBList drops Trakt for this profile.
+    // Mutual exclusion: connecting MDBList drops Trakt and Simkl for this profile.
     traktClient.disconnect();
     setTraktConnected(false);
+    simklClient.disconnect();
+    setSimklConnected(false);
+    if (activeProfileId) void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
     await refreshData();
-  }, [refreshData]);
+  }, [refreshData, activeProfileId]);
 
   const disconnectMdblist = useCallback(() => {
     mdblistClient.disconnect();
     setMdblistConnected(false);
     void refreshData();
   }, [refreshData]);
+
+  const beginSimkl = useCallback(async () => {
+    simklClient.setProfile(activeProfileId);
+    setSimklDeviceCode(await simklClient.beginPinAuth());
+  }, [activeProfileId]);
+
+  const pollSimkl = useCallback(async () => {
+    const code = simklDeviceCodeRef.current;
+    if (!code) return;
+    const ok = await simklClient.pollPinToken(code.user_code);
+    if (!ok) {
+      throw new Error("Simkl has not approved this PIN yet. Please approve the code on Simkl.");
+    }
+    setSimklConnected(true);
+    setSimklDeviceCode(null);
+    // Mutual exclusion: connecting Simkl drops Trakt & MDBList for this profile.
+    traktClient.disconnect();
+    setTraktConnected(false);
+    mdblistClient.disconnect();
+    setMdblistConnected(false);
+    if (simklClient.token && activeProfileId) {
+      await saveCloudSimklToken(authClient, simklClient.token, activeProfileId).catch(() => undefined);
+    }
+    await refreshData();
+  }, [refreshData, activeProfileId]);
+
+  const disconnectSimkl = useCallback(() => {
+    simklClient.disconnect();
+    setSimklConnected(false);
+    if (activeProfileId) void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
+    void refreshData();
+  }, [refreshData, activeProfileId]);
 
   // Watchlist list-source switcher. Returns the user's custom Trakt lists to
   // populate the dropdown (built-in Watchlist/Collection are added by the UI).
@@ -1721,6 +1795,8 @@ export function AppProvider({
     const updated = profiles.map((p) => (p.id === profile.id ? { ...p, lastUsedAt: Date.now() } : p));
     const switching = profile.id !== activeProfileId;
     persistProfiles(updated, profile.id);
+    simklClient.setProfile(profile.id);
+    setSimklConnected(simklClient.isConnected);
     setManageMode(false);
     if (switching) {
       // Drop the previous profile's rows and seed from the new profile's cache
@@ -1767,6 +1843,135 @@ export function AppProvider({
   }, []);
   const backToProfiles = useCallback(() => setView("profiles"), []);
 
+  const [activeContextMenu, setActiveContextMenu] = useState<ContextMenuTarget | null>(null);
+
+  const openContextMenu = useCallback((target: ContextMenuTarget) => {
+    setActiveContextMenu(target);
+  }, []);
+
+  const closeContextMenu = useCallback(() => {
+    setActiveContextMenu(null);
+  }, []);
+
+  const toggleWatchlist = useCallback(async (item: MediaItem) => {
+    const inWatchlist = watchlist.some((entry) => entry.mediaType === item.mediaType && entry.id === item.id);
+    if (activeSyncProvider() === "none") {
+      setToast("Connect Trakt, Simkl, or MDBList in Settings to use Watchlist.");
+      return;
+    }
+    const slim = slimCacheItem(item);
+    const cacheKey = watchlistCacheKeyFor(activeProfileId);
+
+    setWatchlist((prev) => {
+      const next = inWatchlist
+        ? prev.filter((entry) => !(entry.mediaType === item.mediaType && entry.id === item.id))
+        : [slim, ...prev];
+      saveCachedList(cacheKey, next, 60);
+      return next;
+    });
+
+    try {
+      const ref = {
+        mediaType: item.mediaType,
+        tmdbId: item.id,
+        isAnime: item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16))
+      };
+      if (inWatchlist) {
+        await syncClient().removeFromWatchlist(ref);
+        setToast("Removed from watchlist.");
+      } else {
+        await syncClient().addToWatchlist(ref);
+        setToast("Added to watchlist.");
+      }
+    } catch (err) {
+      setWatchlist((prev) => {
+        const next = inWatchlist ? [slim, ...prev] : prev.filter((entry) => !(entry.mediaType === item.mediaType && entry.id === item.id));
+        saveCachedList(cacheKey, next, 60);
+        return next;
+      });
+      setToast(err instanceof Error ? err.message : "Failed to update watchlist.");
+    }
+  }, [watchlist, activeProfileId]);
+
+  const toggleWatched = useCallback(async (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => {
+    const currentlyWatched = isWatched(item, seasonNumber, episodeNumber);
+    markWatchedLocally({ mediaType: item.mediaType, id: item.id, season: seasonNumber, episode: episodeNumber }, !currentlyWatched);
+    setToast(!currentlyWatched ? "Marked as watched." : "Marked as unwatched.");
+
+    if (authClient.session) {
+      try {
+        await saveProgress(
+          authClient,
+          {
+            media_type: item.mediaType,
+            show_tmdb_id: item.id,
+            season: seasonNumber ?? item.seasonNumber ?? null,
+            episode: episodeNumber ?? item.episodeNumber ?? null,
+            title: item.title,
+            duration_seconds: 0,
+            position_seconds: 0,
+            progress: currentlyWatched ? 0 : 1
+          },
+          activeProfileId
+        );
+      } catch {
+        // Cloud sync best effort
+      }
+    }
+
+    if (activeSyncProvider() !== "none") {
+      try {
+        const ref = {
+          mediaType: item.mediaType,
+          tmdbId: item.id,
+          season: typeof seasonNumber === "number" ? seasonNumber : item.seasonNumber ?? undefined,
+          episode: typeof episodeNumber === "number" ? episodeNumber : item.episodeNumber ?? undefined,
+          isAnime: item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16))
+        };
+        if (!currentlyWatched) {
+          await syncClient().addToHistory(ref);
+        } else {
+          await syncClient().removeFromHistory(ref);
+        }
+      } catch {
+        // Sync best effort
+      }
+    }
+  }, [isWatched, markWatchedLocally, authClient, activeProfileId]);
+
+  const removeFromContinueWatching = useCallback(async (item: MediaItem) => {
+    const key = mediaWatchKey(item);
+    const cacheKey = cwCacheKeyFor(activeProfileId);
+
+    setContinueWatching((prev) => {
+      const next = prev.filter((entry) => mediaWatchKey(entry) !== key && mediaWatchKey(entry) !== `${item.mediaType}:${item.id}`);
+      saveCachedList(cacheKey, next, 30);
+      return next;
+    });
+
+    setCategories((prev) => prev.map((cat) => cat.id === "continue_watching"
+      ? { ...cat, items: cat.items.filter((entry) => mediaWatchKey(entry) !== key && mediaWatchKey(entry) !== `${item.mediaType}:${item.id}`) }
+      : cat).filter((cat) => cat.id !== "continue_watching" || cat.items.length));
+
+    setToast("Removed from Continue Watching.");
+
+    if (authClient.session) {
+      try {
+        await removeContinueWatchingProgress(authClient, item, activeProfileId);
+      } catch {
+        // Cloud sync best effort
+      }
+    }
+
+    if (activeSyncProvider() !== "none") {
+      try {
+        await syncClient().dismissFromContinueWatching({ mediaType: item.mediaType, tmdbId: item.id, season: item.seasonNumber, episode: item.episodeNumber });
+      } catch {
+        // Sync best effort
+      }
+    }
+  }, [activeProfileId, authClient]);
+
   const value = useMemo<AppStore>(() => ({
     view,
     cloudLoginRequired,
@@ -1802,6 +2007,7 @@ export function AppProvider({
     activeStream,
     activeChannel,
     addons,
+    addonsReady,
     iptvSnapshot,
     query,
     setQuery,
@@ -1812,7 +2018,9 @@ export function AppProvider({
     auth,
     traktConnected,
     mdblistConnected,
+    simklConnected,
     deviceCode,
+    simklDeviceCode,
     busy,
     toast,
     setToast,
@@ -1836,18 +2044,28 @@ export function AppProvider({
     disconnectTrakt,
     connectMdblist,
     disconnectMdblist,
+    beginSimkl,
+    pollSimkl,
+    disconnectSimkl,
     loadTraktLists,
-    loadTraktListItems
+    loadTraktListItems,
+    toggleWatchlist,
+    toggleWatched,
+    removeFromContinueWatching,
+    activeContextMenu,
+    openContextMenu,
+    closeContextMenu
   }), [
     view, cloudLoginRequired, profiles, activeProfile, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
     section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
-    addons, iptvSnapshot, query, results, settings, auth, traktConnected, mdblistConnected, deviceCode, busy, toast,
+    addons, addonsReady, iptvSnapshot, query, results, settings, auth, traktConnected, mdblistConnected, simklConnected, deviceCode, simklDeviceCode, busy, toast,
     updateSettings, refreshData, openDetails, closeDetails, playStream, playTrailer, playChannel, playCatchup, closePlayer,
     refreshIptv, loadIptvGuide,
     installAddon, removeAddon, setAddonsState, signIn, signOut, beginTrakt, pollTrakt, disconnectTrakt,
-    connectMdblist, disconnectMdblist,
-    loadTraktLists, loadTraktListItems
+    connectMdblist, disconnectMdblist, beginSimkl, pollSimkl, disconnectSimkl,
+    loadTraktLists, loadTraktListItems,
+    toggleWatchlist, toggleWatched, removeFromContinueWatching, activeContextMenu, openContextMenu, closeContextMenu
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

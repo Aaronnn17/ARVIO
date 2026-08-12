@@ -151,12 +151,19 @@ private object IptvIdSentinels {
 private const val LargeIptvListChannelCount = 10_000
 internal const val IPTV_GROUP_ORDER_SCHEMA = 3
 
+internal fun normalizeIptvSortOrder(value: String?): String = when (value?.trim()?.lowercase()) {
+    "number" -> "number"
+    "name" -> "name"
+    else -> "provider"
+}
+
 data class IptvConfig(
     val m3uUrl: String = "",
     val epgUrl: String = "",
     val playlists: List<IptvPlaylistEntry> = emptyList(),
     val stalkerPortalUrl: String = "",
-    val stalkerMacAddress: String = ""
+    val stalkerMacAddress: String = "",
+    val sortOrder: String = "provider"
 )
 
 data class IptvPlaylistEntry(
@@ -181,6 +188,7 @@ data class IptvCloudProfileState(
     val hiddenGroups: List<String> = emptyList(),
     val groupOrder: List<String> = emptyList(),
     val groupOrderSchema: Int = 0,
+    val sortOrder: String = "provider",
     val playlists: List<IptvPlaylistEntry> = emptyList(),
     val tvSession: IptvTvSessionState = IptvTvSessionState()
 )
@@ -218,6 +226,10 @@ class IptvRepository @Inject constructor(
     @Volatile
     private var cachedGroupedChannels: Map<String, List<IptvChannel>> = emptyMap()
     @Volatile var cachedStalkerApi: com.arflix.tv.data.api.StalkerApi? = null
+
+    /** (store key, channel count) — see [pagedChannelStoreCount]. */
+    @Volatile
+    private var cachedPagedChannelStoreCount: Pair<String, Int>? = null
 
     @Volatile
     private var groupOrderLocallyDirty = false
@@ -455,7 +467,8 @@ class IptvRepository @Inject constructor(
                 epgUrl = primary?.epgUrl ?: legacyEpgUrls.firstOrNull().orEmpty(),
                 playlists = playlists,
                 stalkerPortalUrl = decryptConfigValue(prefs[stalkerPortalUrlKey()].orEmpty()),
-                stalkerMacAddress = prefs[stalkerMacAddressKey()].orEmpty()
+                stalkerMacAddress = prefs[stalkerMacAddressKey()].orEmpty(),
+                sortOrder = normalizeIptvSortOrder(prefs[sortOrderKey()])
             )
         }
 
@@ -610,6 +623,14 @@ class IptvRepository @Inject constructor(
         }
         invalidateCache()
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save stalker config")
+    }
+
+    suspend fun saveSortOrder(sortOrder: String) {
+        val normalizedSortOrder = normalizeIptvSortOrder(sortOrder)
+        context.settingsDataStore.edit { prefs ->
+            prefs[sortOrderKey()] = normalizedSortOrder
+        }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save iptv sort order")
     }
 
     /**
@@ -1242,9 +1263,12 @@ class IptvRepository @Inject constructor(
             if (pattern in setOf("Y", "m", "d", "H", "M", "S")) {
                 return@replace match.value
             }
-            try { Result.success(dateTime.format(IptvRepoDateRegexes.formatterFor(pattern))) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e
- Result.failure<String>(e) }
-                .getOrDefault(match.value)
+            try {
+                dateTime.format(IptvRepoDateRegexes.formatterFor(pattern))
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                match.value
+            }
         }
     }
 
@@ -2274,8 +2298,34 @@ class IptvRepository @Inject constructor(
     fun pagedChannelWindow(playlistId: String?, groupTitle: String?, offset: Int, limit: Int): List<IptvChannel> =
         runCatching { channelStore.windowForPlaylistGroup(currentEpgIndexKey, playlistId, groupTitle, offset, limit) }.getOrDefault(emptyList())
 
-    fun pagedChannelStoreCount(): Int =
-        runCatching { channelStore.count(currentEpgIndexKey) }.getOrDefault(0)
+    /**
+     * Number of channels in the paged store.
+     *
+     * Cached per store key. The uncached version ran a `COUNT(*)` over a 90MB
+     * SQLite database, and callers ask this on the main thread on every focus
+     * change (via TvViewModel.isActiveLargeIptvList). Under sustained d-pad
+     * navigation those queries queued on the connection pool until the main
+     * thread blocked past the ANR threshold and Android killed the app —
+     * captured on device: "Waited 10010ms for KeyEvent", main thread parked in
+     * SQLiteConnectionPool.waitForConnection under IptvChannelStore.count.
+     *
+     * The count only changes when the store is rewritten, so [invalidatePagedChannelStoreCount]
+     * clears it there.
+     */
+    fun pagedChannelStoreCount(): Int {
+        val key = currentEpgIndexKey
+        cachedPagedChannelStoreCount?.let { (cachedKey, cachedCount) ->
+            if (cachedKey == key) return cachedCount
+        }
+        val count = runCatching { channelStore.count(key) }.getOrDefault(0)
+        cachedPagedChannelStoreCount = key to count
+        return count
+    }
+
+    /** Drop the cached channel count after the paged store changes. */
+    fun invalidatePagedChannelStoreCount() {
+        cachedPagedChannelStoreCount = null
+    }
 
     fun pagedChannelGroupCounts(): List<Pair<String, Int>> =
         runCatching { channelStore.groupCounts(currentEpgIndexKey) }.getOrDefault(emptyList())
@@ -2796,6 +2846,7 @@ class IptvRepository @Inject constructor(
 
     private fun deletePersistedSourceCaches(sourceKey: String) {
         runCatching { channelStore.deleteSource(sourceKey) }
+        invalidatePagedChannelStoreCount()
         runCatching { epgIndex.deleteSource(sourceKey) }
         runCatching { cacheFile().delete() }
         runCatching { channelCacheFile().delete() }
@@ -2820,6 +2871,9 @@ class IptvRepository @Inject constructor(
     private fun playlistsKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_playlists_json")
     private fun stalkerPortalUrlKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_stalker_portal_url")
     private fun stalkerMacAddressKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_stalker_mac_address")
+    private fun sortOrderKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_sort_order")
+    private fun sortOrderKeyFor(profileId: String): Preferences.Key<String> =
+        profileManager.profileStringKeyFor(profileId, "iptv_sort_order")
     private fun epgUrlKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_epg_url")
     private fun favoriteGroupsKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_favorite_groups")
@@ -3021,6 +3075,7 @@ class IptvRepository @Inject constructor(
                 }.getOrDefault(emptyList())
             } else emptyList(),
             groupOrderSchema = IPTV_GROUP_ORDER_SCHEMA,
+            sortOrder = normalizeIptvSortOrder(prefs[sortOrderKeyFor(safeProfileId)]),
             playlists = playlists,
             tvSession = decodeTvSessionState(tvSessionRaw)
         )
@@ -3063,6 +3118,7 @@ class IptvRepository @Inject constructor(
             if (normalizedGroupOrder.isEmpty()) prefs.remove(groupOrderKeyFor(safeProfileId))
             else prefs[groupOrderKeyFor(safeProfileId)] = gson.toJson(normalizedGroupOrder)
             prefs[groupOrderSchemaKeyFor(safeProfileId)] = IPTV_GROUP_ORDER_SCHEMA.toString()
+            prefs[sortOrderKeyFor(safeProfileId)] = normalizeIptvSortOrder(state.sortOrder)
             if (effectivePlaylists.isEmpty()) prefs.remove(playlistsKeyFor(safeProfileId))
             else prefs[playlistsKeyFor(safeProfileId)] = gson.toJson(effectivePlaylists)
             if (state.tvSession != IptvTvSessionState()) {
@@ -7697,6 +7753,7 @@ class IptvRepository @Inject constructor(
                     System.err.println("[IPTV-Paged] Keeping full channel store ($existingCount); skip partial write ${channels.size}")
                 } else {
                     channelStore.replaceAll(key, channels, loadedAtMs)
+                    invalidatePagedChannelStoreCount()
                 }
             }
 
@@ -7804,6 +7861,7 @@ class IptvRepository @Inject constructor(
             if (count in PARTIAL_PAGED_CACHE_REPAIR_COUNTS && hasAnyConfiguredSource(config)) {
                 System.err.println("[IPTV-Paged] Repairing partial channel store count=$count; forcing playlist cache reload")
                 runCatching { channelStore.deleteSource(key) }
+                invalidatePagedChannelStoreCount()
                 return@runCatching
             }
             if (count > 0) {

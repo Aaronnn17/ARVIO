@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.watchlist
 
+import androidx.activity.compose.BackHandler
 import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -100,6 +101,10 @@ fun WatchlistScreen(
     }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     var isSidebarFocused by remember { mutableStateOf(false) }
+
+    BackHandler {
+        if (isSidebarFocused) onBack() else isSidebarFocused = true
+    }
     val hasProfile = currentProfile != null
     val maxSidebarIndex = topBarMaxIndex(hasProfile)
     var sidebarFocusIndex by remember { mutableIntStateOf(if (hasProfile) 3 else 2) }

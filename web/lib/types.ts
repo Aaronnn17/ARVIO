@@ -1,4 +1,4 @@
-export type MediaType = "movie" | "tv" | "anime";
+export type MediaType = "movie" | "tv";
 
 export type NavSection = "home" | "tv" | "search" | "watchlist" | "addons" | "settings";
 
@@ -165,6 +165,8 @@ export interface CollectionSourceConfig {
   sortBy?: string | null;
   curatedRefs?: string[] | null;
   mdblistSlug?: string | null;
+  homeServerId?: string | null;
+  homeServerLibraryKey?: string | null;
 }
 
 export interface StreamBehaviorHints {
@@ -358,6 +360,12 @@ export interface IptvSnapshot {
   playlistWarnings?: string[];
   epgWarning?: string;
   loadedAt: number;
+  /**
+   * Identifies the playlist set this snapshot was built from, so re-entering
+   * Live TV can reuse it instead of re-parsing every channel. Changing a
+   * playlist changes the signature and forces a rebuild.
+   */
+  signature?: string;
 }
 
 export interface HomeServerCollectionConfig {
@@ -470,4 +478,5 @@ export interface AppSettings {
   metadataMovieProviders: string[];
   metadataTvProviders: string[];
   metadataAnimeProviders: string[];
+  iptvSortOrder?: "provider" | "number" | "name";
 }

@@ -1,11 +1,10 @@
 import { jsonRequest } from "./http";
 import { loadStored, removeStored, saveStored } from "./storage";
-import type { MediaType } from "./types";
 
 const MDBLIST_KEY_STORAGE = "arvio.web.mdblist.key";
 
 export interface MdbMediaRef {
-  mediaType: MediaType;
+  mediaType: "movie" | "tv";
   tmdbId: number;
   season?: number | null;
   episode?: number | null;
@@ -168,7 +167,7 @@ export class MdbListClient {
 
   private async modifyWatchlist(action: "add" | "remove", item: MdbMediaRef) {
     if (!this.key) return;
-    const body = item.mediaType === "tv" || item.mediaType === "anime"
+    const body = item.mediaType === "tv"
       ? { shows: [{ tmdb: item.tmdbId }] }
       : { movies: [{ tmdb: item.tmdbId }] };
     await this.request(`watchlist/items/${action}`, { method: "POST", body: JSON.stringify(body) });
@@ -184,10 +183,14 @@ export class MdbListClient {
     await this.request("sync/watched/remove", { method: "POST", body: JSON.stringify(this.watchedBody(item)) });
   }
 
+  async dismissFromContinueWatching(_item: MdbMediaRef) {
+    // MDBList does not expose paused-playback dismissal. Keep watched history intact.
+  }
+
   private watchedBody(item: MdbMediaRef) {
-    if (item.mediaType === "tv" || item.mediaType === "anime") {
+    if (item.mediaType === "tv") {
       const ids = { tmdb: item.tmdbId };
-      if (item.season != null && item.episode != null) {
+      if (item.season && item.episode) {
         return { shows: [{ ids, seasons: [{ number: item.season, episodes: [{ number: item.episode }] }] }] };
       }
       return { shows: [{ ids }] };
@@ -200,7 +203,7 @@ export class MdbListClient {
     const progress = Math.round(item.progress);
     let body: unknown;
     if (item.mediaType === "tv") {
-      if (item.season == null || item.episode == null) return; // MDBList needs season+episode to scrobble an episode
+      if (!item.season || !item.episode) return; // MDBList needs season+episode to scrobble an episode
       body = {
         progress,
         show: { ids: { tmdb: item.tmdbId }, season: { number: item.season, episode: { number: item.episode } } }

@@ -1,5 +1,5 @@
-import type { MediaItem, MediaType } from "../types";
-import type { MetadataResolver } from "./types";
+import type { MediaItem } from "../types";
+import type { MetadataMediaType, MetadataResolver } from "./types";
 
 const ANILIST_GRAPHQL_ENDPOINT = "https://graphql.anilist.co";
 
@@ -95,7 +95,7 @@ export const aniListResolver: MetadataResolver = {
   name: "AniList",
   supportedTypes: ["anime"],
 
-  async getDetails(id: string | number, _mediaType?: MediaType): Promise<MediaItem | null> {
+  async getDetails(id: string | number, _mediaType?: MetadataMediaType): Promise<MediaItem | null> {
     try {
       const isNumeric = !isNaN(Number(id));
       const variables = isNumeric ? { id: Number(id) } : { search: String(id) };
@@ -116,7 +116,7 @@ export const aniListResolver: MetadataResolver = {
     }
   },
 
-  async search(query: string, _mediaType?: MediaType): Promise<MediaItem[]> {
+  async search(query: string, _mediaType?: MetadataMediaType): Promise<MediaItem[]> {
     try {
       const res = await fetch(ANILIST_GRAPHQL_ENDPOINT, {
         method: "POST",

@@ -16,10 +16,11 @@ object Constants {
     val NETLIFY_BACKEND_URL: String
         get() = BuildConfig.NETLIFY_BACKEND_URL.trim().trimEnd('/')
     val USE_NETLIFY_CLOUD_SYNC: Boolean
-        get() = BuildConfig.ENABLE_NETLIFY_CLOUD_SYNC && NETLIFY_BACKEND_URL.startsWith("https://")
+        get() = BuildConfig.ENABLE_NETLIFY_CLOUD_SYNC && (NETLIFY_BACKEND_URL.startsWith("https://") || NETLIFY_BACKEND_URL.startsWith("http://"))
 
     // Edge Function proxy URLs used by backend/proxy-capable flows.
     val TMDB_PROXY_URL: String get() = "$NETLIFY_BACKEND_URL/tmdb-proxy"
+    val SIMKL_PROXY_URL: String get() = "$NETLIFY_BACKEND_URL/simkl-proxy"
     val TV_AUTH_START_URL: String get() = "$NETLIFY_BACKEND_URL/tv-auth-start"
     val TV_AUTH_STATUS_URL: String get() = "$NETLIFY_BACKEND_URL/tv-auth-status"
     val TV_AUTH_POLL_URL: String get() = "$NETLIFY_BACKEND_URL/tv-auth-poll"
@@ -37,6 +38,7 @@ object Constants {
     // API base URLs.
     const val TMDB_BASE_URL = "https://api.themoviedb.org/3/"
     const val TRAKT_API_URL = "https://api.trakt.tv/"
+    const val SIMKL_BASE_URL = "https://api.simkl.com/"
     // MDBList is an optional per-profile alternative to Trakt. Auth is a static
     // API key passed as an `?apikey=` query parameter (no OAuth), so no client
     // secret needs to ship in the APK.
@@ -53,6 +55,7 @@ object Constants {
     val TRAKT_CLIENT_ID: String get() = usableSecret(BuildConfig.TRAKT_CLIENT_ID)
     val TRAKT_CLIENT_SECRET: String
         get() = usableSecret(BuildConfig.TRAKT_CLIENT_SECRET)
+    val SIMKL_CLIENT_ID: String get() = usableSecret(BuildConfig.SIMKL_CLIENT_ID)
 
     // Image URLs - tuned for TV quality with smooth scrolling/perf.
     const val IMAGE_BASE = "https://image.tmdb.org/t/p/w780"
@@ -85,19 +88,31 @@ object Constants {
  */
 object LanguageMap {
     private val ISO_LANG_MAP = mapOf(
+        "ar" to "Arabic", "ara" to "Arabic",
+        "bn" to "Bengali", "ben" to "Bengali",
+        "zh" to "Chinese", "chi" to "Chinese", "zho" to "Chinese",
+        "nl" to "Dutch", "nld" to "Dutch", "dut" to "Dutch",
         "en" to "English", "eng" to "English",
         "fr" to "French", "fre" to "French", "fra" to "French",
-        "es" to "Spanish", "spa" to "Spanish",
         "de" to "German", "ger" to "German", "deu" to "German",
+        "gu" to "Gujarati", "guj" to "Gujarati",
+        "hi" to "Hindi", "hin" to "Hindi",
         "it" to "Italian", "ita" to "Italian",
-        "pt" to "Portuguese", "por" to "Portuguese",
-        "nl" to "Dutch", "nld" to "Dutch", "dut" to "Dutch",
-        "ru" to "Russian", "rus" to "Russian",
-        "zh" to "Chinese", "chi" to "Chinese", "zho" to "Chinese",
         "ja" to "Japanese", "jpn" to "Japanese",
+        "kn" to "Kannada", "kan" to "Kannada",
         "ko" to "Korean", "kor" to "Korean",
-        "ar" to "Arabic", "ara" to "Arabic",
-        "hi" to "Hindi", "hin" to "Hindi"
+        "ml" to "Malayalam", "mal" to "Malayalam",
+        "mr" to "Marathi", "mar" to "Marathi",
+        "pl" to "Polish", "pol" to "Polish",
+        "pt" to "Portuguese", "por" to "Portuguese",
+        "pa" to "Punjabi", "pan" to "Punjabi",
+        "ru" to "Russian", "rus" to "Russian",
+        "es" to "Spanish", "spa" to "Spanish",
+        "sv" to "Swedish", "swe" to "Swedish",
+        "ta" to "Tamil", "tam" to "Tamil",
+        "te" to "Telugu", "tel" to "Telugu",
+        "th" to "Thai", "tha" to "Thai",
+        "tr" to "Turkish", "tur" to "Turkish"
     )
 
     fun getLanguageName(code: String): String {

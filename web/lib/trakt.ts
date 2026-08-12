@@ -1,7 +1,6 @@
 import { config, hasTraktConfig } from "./config";
 import { HttpError, jsonRequest } from "./http";
 import { loadStored, removeStored, saveStored } from "./storage";
-import type { MediaType } from "./types";
 
 const TRAKT_TOKEN_KEY = "arvio.web.trakt.token";
 // v2: v1 stored FULL progress payloads (every season/episode — ~740KB across a
@@ -243,6 +242,41 @@ export class TraktClient {
     });
   }
 
+  async dismissFromContinueWatching(item: TraktMediaRef) {
+    if (!this.token) return;
+    await this.refreshIfNeeded();
+
+    const playbackRows = await this.playback();
+    const matchingPlaybackIds = playbackRows.flatMap((raw) => {
+      const row = raw as {
+        id?: number;
+        movie?: { ids?: { tmdb?: number } };
+        show?: { ids?: { tmdb?: number } };
+        episode?: { season?: number; number?: number };
+      };
+      const sameTitle = item.mediaType === "movie"
+        ? row.movie?.ids?.tmdb === item.tmdbId
+        : row.show?.ids?.tmdb === item.tmdbId;
+      const sameEpisode = item.mediaType !== "tv" ||
+        ((item.season == null || row.episode?.season === item.season) &&
+          (item.episode == null || row.episode?.number === item.episode));
+      return sameTitle && sameEpisode && typeof row.id === "number" ? [row.id] : [];
+    });
+
+    await Promise.all(matchingPlaybackIds.map((id) => this.trakt(`/sync/playback/${id}`, {
+      method: "DELETE",
+      headers: { "x-user-token": this.token!.access_token }
+    })));
+
+    if (item.mediaType === "tv") {
+      await this.trakt("/users/hidden/progress_watched", {
+        method: "POST",
+        headers: { "x-user-token": this.token.access_token },
+        body: JSON.stringify({ shows: [{ ids: { tmdb: item.tmdbId } }] })
+      });
+    }
+  }
+
   async removeFromWatchlist(item: TraktMediaRef) {
     if (!this.token) return;
     await this.refreshIfNeeded();
@@ -426,7 +460,7 @@ export class TraktClient {
   }
 
   private mediaBody(item: TraktMediaRef) {
-    if (item.mediaType === "tv" || item.mediaType === "anime") {
+    if (item.mediaType === "tv") {
       const show = { ids: { tmdb: item.tmdbId } };
       if (item.season && item.episode) {
         return { shows: [{ ...show, seasons: [{ number: item.season, episodes: [{ number: item.episode }] }] }] };
@@ -438,7 +472,7 @@ export class TraktClient {
 }
 
 interface TraktMediaRef {
-  mediaType: MediaType;
+  mediaType: "movie" | "tv";
   tmdbId: number;
   season?: number | null;
   episode?: number | null;

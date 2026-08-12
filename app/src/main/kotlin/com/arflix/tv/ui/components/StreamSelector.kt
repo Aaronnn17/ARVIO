@@ -1,5 +1,11 @@
 package com.arflix.tv.ui.components
 
+import com.arflix.tv.ui.motion.*
+
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.mutableFloatStateOf
+import kotlinx.coroutines.CancellationException
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -92,6 +98,7 @@ import com.arflix.tv.ui.theme.TextSecondary
 import androidx.compose.ui.res.stringResource
 import coil.compose.AsyncImage
 import com.arflix.tv.R
+import java.util.Locale
 
 // OLED source picker colors. Keep these deliberately monochrome so the sheet
 // feels like the rest of ARVIO instead of a separate dashboard.
@@ -107,6 +114,64 @@ private val AccentGreen = Color.White
 private val AccentBlue = Color.White
 private val AccentPurple = Color.White.copy(alpha = 0.86f)
 private val AccentGold = Color.White
+
+internal data class SourceAddonTab(
+    val id: String,
+    val label: String,
+)
+
+internal fun buildSourceAddonTabs(
+    streams: List<StreamSource>,
+    addonOrderedIds: List<String>,
+): List<SourceAddonTab> {
+    val baseNameById = LinkedHashMap<String, String>()
+    streams.forEach { stream ->
+        val baseName = stream.addonName
+            .split(" - ")
+            .firstOrNull()
+            ?.trim()
+            .orEmpty()
+            .ifBlank { stream.addonName.ifBlank { "Addon" } }
+        baseNameById.putIfAbsent(sourceTabId(stream), baseName)
+    }
+
+    val nameCounts = baseNameById.values
+        .groupingBy { it.lowercase(Locale.ROOT) }
+        .eachCount()
+    val usedLabels = mutableSetOf<String>()
+    val tabs = baseNameById.map { (id, baseName) ->
+        val candidate = if ((nameCounts[baseName.lowercase(Locale.ROOT)] ?: 0) > 1) {
+            val suffix = id.takeLast(4).uppercase(Locale.ROOT).ifBlank { "ADDON" }
+            "$baseName #$suffix"
+        } else {
+            baseName
+        }
+        var label = candidate
+        var occurrence = 2
+        while (!usedLabels.add(label.lowercase(Locale.ROOT))) {
+            label = "$candidate ($occurrence)"
+            occurrence += 1
+        }
+        SourceAddonTab(id = id, label = label)
+    }
+
+    return if (addonOrderedIds.isEmpty()) {
+        tabs
+    } else {
+        tabs.sortedBy { tab ->
+            val position = addonOrderedIds.indexOfFirst {
+                tab.id.contains(it) || it.contains(tab.id)
+            }
+            if (position >= 0) position else Int.MAX_VALUE
+        }
+    }
+}
+
+internal fun sourceAddonTabKeys(tabs: List<SourceAddonTab>): List<String> =
+    listOf("source_addon:all") + tabs.map { tab -> "source_addon:id:${tab.id}" }
+
+internal fun sourceStreamRowKey(stream: StreamSource, index: Int): String =
+    "source_stream:${sourceTabId(stream)}:$index"
 
 /**
  * Scrolls a TvLazyColumn so the focused item stays visible, leaving a one-item
@@ -164,6 +229,8 @@ fun StreamSelector(
     onClose: () -> Unit = {}
 ) {
     val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
+    val backMotion = rememberArvioPredictiveBack(enabled = isVisible, onCommit = onClose)
+
     var focusedIndex by remember { mutableIntStateOf(0) }
     var focusedTabIndex by remember { mutableIntStateOf(0) }
     var selectedTabIndex by remember { mutableIntStateOf(0) }
@@ -200,40 +267,21 @@ fun StreamSelector(
         }
     }
 
-    data class AddonTab(val id: String, val label: String)
     data class SourceFilter(val label: String)
     val sourceFilters = remember { listOf(SourceFilter("All")) }
 
     // Build addon tabs using addonId so multiple instances of the same addon are shown separately.
     val addonTabs = remember(streams, addonOrderedIds) {
-        val baseNameById = LinkedHashMap<String, String>()
-        streams.forEach { stream ->
-            val baseName = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName
-            val addonId = sourceTabId(stream)
-            baseNameById.putIfAbsent(addonId, baseName)
-        }
-        val nameCounts = baseNameById.values.groupingBy { it }.eachCount()
-        baseNameById.map { (id, baseName) ->
-            val label = if ((nameCounts[baseName] ?: 0) > 1) {
-                val shortId = id.takeLast(4).uppercase()
-                "$baseName #$shortId"
-            } else {
-                baseName
-            }
-            AddonTab(id, label)
-        }.let { tabs ->
-            if (addonOrderedIds.isEmpty()) tabs
-            else tabs.sortedBy { tab ->
-                val pos = addonOrderedIds.indexOfFirst { tab.id.contains(it) || it.contains(tab.id) }
-                if (pos >= 0) pos else Int.MAX_VALUE
-            }
-        }
+        buildSourceAddonTabs(streams, addonOrderedIds)
     }
 
     // Tab labels: "All sources" + addon labels
     val allSourcesLabel = stringResource(R.string.stream_tab_all_sources)
     val tabLabels = remember(addonTabs, allSourcesLabel) {
         listOf(allSourcesLabel) + addonTabs.map { it.label }
+    }
+    val tabKeys = remember(addonTabs) {
+        sourceAddonTabKeys(addonTabs)
     }
 
     val presentations = remember(streams) { streams.map(::presentSource) }
@@ -338,15 +386,20 @@ fun StreamSelector(
     AnimatedVisibility(
         visible = isVisible,
         enter = fadeIn(tween(200)) + slideInVertically(tween(300)) { it / 4 },
-        exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 4 }
+        exit = fadeOut(tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing)) + slideOutVertically(tween(250, easing = androidx.compose.animation.core.FastOutSlowInEasing)) { it / 4 }
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .focusRequester(focusRequester)
-                .focusable()
-                .background(Color.Black.copy(alpha = 0.95f))
-                .onKeyEvent { event ->
+                .background(Color.Black.copy(alpha = (0.95f * (1f - backMotion.eased * 0.5f)).coerceIn(0f, 0.95f)))
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .focusRequester(focusRequester)
+                    .focusable()
+                    .arvioBackModal(backMotion)
+                    .onKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown) {
                         val isRtl = isRtlLayoutDirection
                         val actualKey = event.key
@@ -359,7 +412,7 @@ fun StreamSelector(
                         } else actualKey
 
                         when (logicalKey) {
-                            Key.Back, Key.Escape -> {
+                            Key.Escape -> {
                                 onClose()
                                 true
                             }
@@ -436,6 +489,7 @@ fun StreamSelector(
                     focusedFilterIndex = focusedFilterIndex,
                     filterFocused = false,
                     tabLabels = tabLabels,
+                    tabKeys = tabKeys,
                     selectedTabIndex = selectedTabIndex,
                     focusedTabIndex = focusedTabIndex,
                     addonRailFocused = focusZone == "addons",
@@ -650,6 +704,7 @@ fun StreamSelector(
         }
     }
 }
+}
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -664,6 +719,7 @@ private fun OledSourceSelectorTv(
     focusedFilterIndex: Int,
     filterFocused: Boolean,
     tabLabels: List<String>,
+    tabKeys: List<String>,
     selectedTabIndex: Int,
     focusedTabIndex: Int,
     addonRailFocused: Boolean,
@@ -819,7 +875,7 @@ private fun OledSourceSelectorTv(
                             .arvioDpadFocusGroup()
                     ) {
                         flatPresentations.forEachIndexed { index, presentation ->
-                            item(key = presentation.hashCode()) {
+                            item(key = sourceStreamRowKey(presentation.stream, index)) {
                                 OledSourceRow(
                                     presentation = presentation,
                                     isFocused = streamsFocused && index == focusedIndex,
@@ -883,6 +939,7 @@ private fun OledSourceSelectorTv(
 
         SourceAddonRail(
             tabLabels = tabLabels,
+            tabKeys = tabKeys,
             selectedTabIndex = selectedTabIndex,
             focusedTabIndex = focusedTabIndex,
             isFocused = addonRailFocused,
@@ -1011,7 +1068,7 @@ private fun keepsOwnStreamOrder(stream: StreamSource): Boolean =
     stream.addonName.contains("aiostream", ignoreCase = true) ||
         stream.addonId.contains("aiostream", ignoreCase = true)
 
-private fun sourceTabId(stream: StreamSource): String {
+internal fun sourceTabId(stream: StreamSource): String {
     val baseName = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName
     return if (stream.addonId == "home_server" && baseName.isNotBlank()) {
         "${stream.addonId}:$baseName"
@@ -1319,7 +1376,7 @@ private fun presentSource(stream: StreamSource): SourcePresentation {
         upstreamLabel = stream.description.orEmpty().lines()
             .firstOrNull { it.trimStart().startsWith("🔌") }
             // Keep "Torrentio | ThePirateBay", drop the emoji decorations.
-            ?.replace(Regex("""[^\p{L}\p{N} .+|\-]"""), "")
+            ?.replace(StreamSelectorRegexes.CLEAN_TITLE_REGEX, "")
             ?.trim()
             ?.takeIf { it.isNotBlank() },
     )
@@ -1429,7 +1486,7 @@ private fun rowSubtitle(presentation: SourcePresentation): String {
         presentation.editionLabel?.let(::add)
         presentation.bitrateLabel?.let(::add)
     }
-        .distinctBy { it.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), "") }
+        .distinctBy { it.lowercase().replace(StreamSelectorRegexes.DISTINCT_TITLE_REGEX, "") }
         .joinToString(" · ")
 }
 
@@ -1628,6 +1685,7 @@ private fun SourceFilterChip(
 @Composable
 private fun SourceAddonRail(
     tabLabels: List<String>,
+    tabKeys: List<String>,
     selectedTabIndex: Int,
     focusedTabIndex: Int,
     isFocused: Boolean,
@@ -1662,7 +1720,7 @@ private fun SourceAddonRail(
                 modifier = Modifier.fillMaxSize()
             ) {
                 tabLabels.forEachIndexed { index, label ->
-                    item(key = label) {
+                    item(key = tabKeys.getOrElse(index) { "source_addon:fallback:$index" }) {
                         AddonRailItem(
                             text = label,
                             isSelected = index == selectedTabIndex,
@@ -2614,4 +2672,10 @@ private fun qualityScore(quality: String): Int {
         quality.contains("480p", ignoreCase = true) -> 1
         else -> 0
     }
+}
+
+
+private object StreamSelectorRegexes {
+    val CLEAN_TITLE_REGEX = Regex("""[^\p{L}\p{N} .+|\-]""")
+    val DISTINCT_TITLE_REGEX = Regex("[^\\p{L}\\p{N}]+")
 }

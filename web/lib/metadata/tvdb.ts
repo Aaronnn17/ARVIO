@@ -1,5 +1,5 @@
-import type { EpisodeInfo, MediaItem, MediaType } from "../types";
-import type { MetadataResolver, ProviderPriorityConfig } from "./types";
+import type { EpisodeInfo, MediaItem } from "../types";
+import type { MetadataMediaType, MetadataResolver, ProviderPriorityConfig } from "./types";
 
 
 const TVDB_API_BASE = "https://api4.thetvdb.com/v4";
@@ -48,7 +48,7 @@ export const tvdbResolver: MetadataResolver = {
   name: "TheTVDB",
   supportedTypes: ["tv", "anime"],
 
-  async getDetails(id: string | number, _mediaType?: MediaType, options?: ProviderPriorityConfig): Promise<MediaItem | null> {
+  async getDetails(id: string | number, _mediaType?: MetadataMediaType, options?: ProviderPriorityConfig): Promise<MediaItem | null> {
     const token = await getTvdbToken(options?.customTvdbApiKey, options?.customTvdbUserPin);
     if (!token) return null;
 
@@ -131,7 +131,7 @@ export const tvdbResolver: MetadataResolver = {
     }
   },
 
-  async search(query: string, _mediaType?: MediaType, options?: ProviderPriorityConfig): Promise<MediaItem[]> {
+  async search(query: string, _mediaType?: MetadataMediaType, options?: ProviderPriorityConfig): Promise<MediaItem[]> {
     const token = await getTvdbToken(options?.customTvdbApiKey, options?.customTvdbUserPin);
     if (!token) return [];
 

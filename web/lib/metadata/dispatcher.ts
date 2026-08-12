@@ -1,8 +1,8 @@
-import type { EpisodeInfo, MediaItem, MediaType } from "../types";
+import type { EpisodeInfo, MediaItem } from "../types";
 import { aniListResolver } from "./anilist";
 import { tvdbResolver } from "./tvdb";
 import { tmdbResolver } from "./tmdbResolver";
-import type { MetadataProviderId, MetadataResolver, ProviderPriorityConfig } from "./types";
+import type { MetadataLookup, MetadataMediaType, MetadataProviderId, MetadataResolver, ProviderPriorityConfig } from "./types";
 
 export class MetadataDispatcher {
   private static resolvers: Record<string, MetadataResolver> = {
@@ -15,7 +15,7 @@ export class MetadataDispatcher {
     this.resolvers[resolver.id] = resolver;
   }
 
-  static getPriorityList(type: MediaType, config?: ProviderPriorityConfig): MetadataProviderId[] {
+  static getPriorityList(type: MetadataMediaType, config?: ProviderPriorityConfig): MetadataProviderId[] {
     if (type === "anime") {
       return config?.animeProviders ?? ["anilist", "tvdb", "tmdb"];
     }
@@ -26,8 +26,8 @@ export class MetadataDispatcher {
   }
 
   static async getDetails(
-    id: string | number,
-    type: MediaType,
+    lookup: MetadataLookup,
+    type: MetadataMediaType,
     config?: ProviderPriorityConfig
   ): Promise<MediaItem | null> {
     const priority = this.getPriorityList(type, config);
@@ -36,7 +36,9 @@ export class MetadataDispatcher {
       const resolver = this.resolvers[providerId];
       if (!resolver || !resolver.supportedTypes.includes(type)) continue;
 
-      const result = await resolver.getDetails(id, type, config);
+      const id = typeof lookup === "object" ? lookup[providerId] : lookup;
+      if (id == null || id === "") continue;
+      const result = await resolver.getDetails(id, type, config).catch(() => null);
       if (result) {
         return result;
       }
@@ -45,8 +47,8 @@ export class MetadataDispatcher {
   }
 
   static async getEpisodes(
-    id: string | number,
-    type: MediaType,
+    lookup: MetadataLookup,
+    type: MetadataMediaType,
     seasonNumber = 1,
     config?: ProviderPriorityConfig
   ): Promise<EpisodeInfo[]> {
@@ -56,7 +58,9 @@ export class MetadataDispatcher {
       const resolver = this.resolvers[providerId];
       if (!resolver || !resolver.getEpisodes || !resolver.supportedTypes.includes(type)) continue;
 
-      const episodes = await resolver.getEpisodes(id, seasonNumber, config);
+      const id = typeof lookup === "object" ? lookup[providerId] : lookup;
+      if (id == null || id === "") continue;
+      const episodes = await resolver.getEpisodes(id, seasonNumber, config).catch(() => []);
       if (episodes && episodes.length > 0) {
         return episodes;
       }
@@ -66,7 +70,7 @@ export class MetadataDispatcher {
 
   static async search(
     query: string,
-    type: MediaType,
+    type: MetadataMediaType,
     config?: ProviderPriorityConfig
   ): Promise<MediaItem[]> {
     const priority = this.getPriorityList(type, config);
@@ -75,7 +79,7 @@ export class MetadataDispatcher {
       const resolver = this.resolvers[providerId];
       if (!resolver || !resolver.supportedTypes.includes(type)) continue;
 
-      const results = await resolver.search(query, type, config);
+      const results = await resolver.search(query, type, config).catch(() => []);
       if (results && results.length > 0) {
         return results;
       }
