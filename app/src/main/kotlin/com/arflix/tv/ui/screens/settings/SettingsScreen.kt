@@ -86,6 +86,11 @@ import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.SwitchAccount
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -3578,6 +3583,7 @@ private fun MobileSettingsLayout(
                 uiState = uiState,
                 viewModel = viewModel,
                 stremioAddons = stremioAddons,
+                onSwitchProfile = onSwitchProfile,
                 openDnsProviderPicker = openDnsProviderPicker,
                 openUiModeWarningDialog = openUiModeWarningDialog,
                 openQualityFiltersModal = openQualityFiltersModal,
@@ -3618,6 +3624,8 @@ private fun mobileCategoryTitle(page: String): String = when (page) {
     "TV" -> stringResource(R.string.iptv)
     "Home Server" -> stringResource(R.string.settings_home_server)
     "Tracking Integrations" -> stringResource(R.string.settings_tracking_integrations)
+    "Privacy & Data" -> stringResource(R.string.settings_privacy_data_title)
+    "Cloud Sync & Account" -> stringResource(R.string.settings_cloud_account_sub_title)
     else -> page
 }
 
@@ -3716,31 +3724,14 @@ private fun MobileSettingsMainPage(
 
         item {
             MobileSettingsCategory(title = stringResource(R.string.settings_section_user_account)) {
-                if (uiState.isLoggedIn) {
-                    MobileSettingsRow(
-                        icon = Icons.Default.Person,
-                        title = stringResource(R.string.cloud_account),
-                        subtitle = uiState.accountEmail ?: "",
-                        value = stringResource(R.string.settings_force_sync),
-                        isFocused = false,
-                        onClick = { viewModel.forceCloudSyncNow() }
-                    )
-                    MobileSettingsRow(
-                        icon = Icons.Default.SwitchAccount,
-                        title = stringResource(R.string.switch_profile),
-                        value = "",
-                        isFocused = false,
-                        onClick = onSwitchProfile
-                    )
-                } else {
-                    MobileSettingsRow(
-                        icon = Icons.Default.Person,
-                        title = stringResource(R.string.cloud_account),
-                        value = stringResource(R.string.sign_in),
-                        isFocused = false,
-                        onClick = { viewModel.openCloudEmailPasswordDialog() }
-                    )
-                }
+                MobileSettingsRow(
+                    icon = Icons.Default.Person,
+                    title = stringResource(R.string.cloud_account),
+                    subtitle = if (uiState.isLoggedIn) (uiState.accountEmail ?: "") else stringResource(R.string.settings_cloud_account_sub_desc),
+                    value = "",
+                    isFocused = false,
+                    onClick = { onNavigate("Cloud Sync & Account") }
+                )
                 MobileSettingsRow(
                     icon = Icons.Default.Movie,
                     title = stringResource(R.string.settings_tracking_integrations),
@@ -3755,7 +3746,8 @@ private fun MobileSettingsMainPage(
                 MobileSettingsRow(
                     iconRes = R.drawable.ic_telegram,
                     title = "Telegram",
-                    value = stringResource(R.string.settings_open),
+                    value = "",
+                    isExternalLink = true,
                     isFocused = false,
                     onClick = onNavigateToTelegram
                 )
@@ -3768,29 +3760,13 @@ private fun MobileSettingsMainPage(
                     onClick = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) }
                 )
                 MobileSettingsRow(
-                    icon = Icons.Default.Settings,
-                    title = stringResource(R.string.settings_diagnostics_sharing),
-                    subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
-                    value = if (uiState.diagnosticsSharingEnabled) "On" else "Off",
-                    isFocused = false,
-                    onClick = { viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled) }
-                )
-                MobileSettingsRow(
-                    icon = Icons.Default.Link,
-                    title = stringResource(R.string.settings_privacy_policy),
-                    subtitle = stringResource(R.string.settings_privacy_policy_desc),
-                    value = stringResource(R.string.settings_open),
-                    isFocused = false,
-                    onClick = { openExternalUrl(context, PRIVACY_POLICY_URL) }
-                )
-                MobileSettingsRow(
-                    icon = Icons.Default.Delete,
-                    title = stringResource(R.string.settings_account_data_deletion),
-                    subtitle = stringResource(R.string.settings_account_data_deletion_desc),
-                    value = stringResource(R.string.settings_open),
+                    icon = Icons.Default.Security,
+                    title = stringResource(R.string.settings_privacy_data_title),
+                    subtitle = stringResource(R.string.settings_privacy_data_sub_desc),
+                    value = "",
                     isFocused = false,
                     showDivider = false,
-                    onClick = { openExternalUrl(context, ACCOUNT_DELETION_URL) }
+                    onClick = { onNavigate("Privacy & Data") }
                 )
             }
         }
@@ -3824,7 +3800,8 @@ private fun MobileSettingsSubPage(
     onConnectTrakt: () -> Unit = {},
     onDisconnectTrakt: () -> Unit = {},
     onConnectMdbList: (String) -> Unit = {},
-    onDisconnectMdbList: () -> Unit = {}
+    onDisconnectMdbList: () -> Unit = {},
+    onSwitchProfile: () -> Unit = {}
 ) {
 
     val scrollState = rememberScrollState()
@@ -4287,7 +4264,214 @@ private fun MobileSettingsSubPage(
                     onDisconnectMdbList = onDisconnectMdbList
                 )
             }
+            "Privacy & Data" -> {
+                MobilePrivacySubPage(
+                    uiState = uiState,
+                    viewModel = viewModel
+                )
+            }
+            "Cloud Sync & Account" -> {
+                MobileCloudAccountSubPage(
+                    uiState = uiState,
+                    viewModel = viewModel,
+                    stremioAddons = stremioAddons,
+                    onSwitchProfile = onSwitchProfile,
+                    context = LocalContext.current
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun MobilePrivacySubPage(
+    uiState: SettingsUiState,
+    viewModel: SettingsViewModel
+) {
+    val context = LocalContext.current
+    MobileSettingsCategory(title = stringResource(R.string.settings_diagnostics_sharing).uppercase()) {
+        MobileSettingsRow(
+            icon = Icons.Default.Settings,
+            title = stringResource(R.string.settings_diagnostics_sharing),
+            subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
+            value = if (uiState.diagnosticsSharingEnabled) "On" else "Off",
+            isFocused = false,
+            showDivider = false,
+            onClick = { viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled) }
+        )
+    }
+
+    MobileSettingsCategory(title = stringResource(R.string.settings_privacy_policy).uppercase()) {
+        MobileSettingsRow(
+            icon = Icons.Default.Link,
+            title = stringResource(R.string.settings_privacy_policy),
+            subtitle = stringResource(R.string.settings_privacy_policy_desc),
+            value = stringResource(R.string.settings_open),
+            isExternalLink = true,
+            isFocused = false,
+            showDivider = false,
+            onClick = { openExternalUrl(context, PRIVACY_POLICY_URL) }
+        )
+    }
+}
+
+@Composable
+private fun MobileCloudAccountSubPage(
+    uiState: SettingsUiState,
+    viewModel: SettingsViewModel,
+    stremioAddons: List<com.arflix.tv.data.model.Addon>,
+    onSwitchProfile: () -> Unit,
+    context: android.content.Context
+) {
+    val catalogsCount = uiState.catalogs.size
+    val addonsCount = stremioAddons.size
+    val isCloudEnabled = uiState.isLoggedIn
+
+    // Section 1: SYNC STATS (2x2 chip grid like Tracking Integrations)
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.settings_section_sync_stats),
+            style = ArflixTypography.caption.copy(fontSize = 12.sp, letterSpacing = 1.sp),
+            color = TextSecondary,
+            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp)
+        )
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                TrackingStatChip(
+                    label = stringResource(R.string.watchlist),
+                    value = uiState.watchlistCount.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+                TrackingStatChip(
+                    label = stringResource(R.string.continue_watching),
+                    value = uiState.historyCount.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                TrackingStatChip(
+                    label = stringResource(R.string.addons),
+                    value = addonsCount.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+                TrackingStatChip(
+                    label = stringResource(R.string.catalogs),
+                    value = catalogsCount.toString(),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+
+    var showForcePullConfirmDialog by remember { mutableStateOf(false) }
+
+    if (showForcePullConfirmDialog) {
+        AccountDisconnectConfirmDialog(
+            title = stringResource(R.string.settings_cloud_pull_confirm_title),
+            description = stringResource(R.string.settings_cloud_pull_confirm_desc),
+            onConfirm = {
+                showForcePullConfirmDialog = false
+                viewModel.forceCloudPullOnly()
+            },
+            onDismiss = { showForcePullConfirmDialog = false }
+        )
+    }
+
+    // Section 2: ACCOUNT PROFILE & STATUS
+    MobileSettingsCategory(title = stringResource(R.string.cloud_account).uppercase()) {
+        if (uiState.isLoggedIn) {
+            MobileSettingsRow(
+                icon = Icons.Default.Person,
+                title = uiState.accountEmail ?: stringResource(R.string.cloud_account),
+                subtitle = stringResource(R.string.settings_cloud_active),
+                value = "",
+                isFocused = false,
+                showDivider = true,
+                onClick = {}
+            )
+            MobileSettingsRow(
+                icon = Icons.Default.ExitToApp,
+                iconTint = androidx.compose.ui.graphics.Color(0xFFFF5252),
+                title = stringResource(R.string.settings_sign_out),
+                subtitle = stringResource(R.string.settings_sign_out_desc),
+                value = "",
+                isFocused = false,
+                showDivider = false,
+                onClick = { viewModel.logout() }
+            )
+        } else {
+            MobileSettingsRow(
+                icon = Icons.Default.Person,
+                title = stringResource(R.string.sign_in),
+                subtitle = stringResource(R.string.settings_cloud_signin_sub),
+                value = "",
+                isFocused = false,
+                showDivider = false,
+                onClick = { viewModel.openCloudEmailPasswordDialog() }
+            )
+        }
+    }
+
+    val handleCloudAction = { action: () -> Unit ->
+        if (uiState.isLoggedIn) {
+            action()
+        } else {
+            viewModel.openCloudEmailPasswordDialog()
+        }
+    }
+
+    // Section 3: MANUAL CLOUD OPERATIONS
+    MobileSettingsCategory(title = stringResource(R.string.settings_section_cloud_actions)) {
+        MobileSettingsRow(
+            icon = Icons.Default.Sync,
+            title = stringResource(R.string.settings_force_sync),
+            subtitle = uiState.lastCloudSyncStatus ?: stringResource(R.string.settings_cloud_manual_sync_sub),
+            value = if (uiState.isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else stringResource(R.string.settings_badge_sync),
+            isFocused = false,
+            showDivider = true,
+            onClick = { handleCloudAction { viewModel.forceCloudSyncNow() } }
+        )
+        MobileSettingsRow(
+            icon = Icons.Default.Upload,
+            title = stringResource(R.string.settings_force_push),
+            subtitle = stringResource(R.string.settings_force_push_desc),
+            value = if (uiState.isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else "Push",
+            isFocused = false,
+            showDivider = true,
+            onClick = { handleCloudAction { viewModel.forceCloudPushOnly() } }
+        )
+        MobileSettingsRow(
+            icon = Icons.Default.Download,
+            title = stringResource(R.string.settings_force_pull),
+            subtitle = stringResource(R.string.settings_force_pull_desc),
+            value = if (uiState.isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else "Pull",
+            isFocused = false,
+            showDivider = false,
+            onClick = { handleCloudAction { showForcePullConfirmDialog = true } }
+        )
+    }
+
+    // Section 4: ACCOUNT SECURITY & DELETION
+    MobileSettingsCategory(title = stringResource(R.string.settings_section_account_security)) {
+        MobileSettingsRow(
+            icon = Icons.Default.Delete,
+            title = stringResource(R.string.settings_account_data_deletion),
+            subtitle = stringResource(R.string.settings_account_data_deletion_desc),
+            value = stringResource(R.string.settings_open),
+            isExternalLink = true,
+            isFocused = false,
+            showDivider = false,
+            onClick = { openExternalUrl(context, ACCOUNT_DELETION_URL) }
+        )
     }
 }
 

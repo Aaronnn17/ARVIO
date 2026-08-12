@@ -132,6 +132,8 @@ data class SettingsUiState(
     val isForceCloudSyncing: Boolean = false,
     val lastCloudSyncStatus: String? = null,
     val shouldSwitchProfile: Boolean = false,
+    val watchlistCount: Int = 0,
+    val historyCount: Int = 0,
     // Trakt
     val isTraktAuthenticated: Boolean = false,
     val traktCode: TraktDeviceCode? = null,
@@ -245,7 +247,8 @@ class SettingsViewModel @Inject constructor(
     private val apkDownloader: ApkDownloader,
     private val updateStatusManager: com.arflix.tv.updater.UpdateStatusManager,
     private val mdbListRepository: com.arflix.tv.data.repository.MdbListRepository,
-    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore
+    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore,
+    private val watchHistoryRepository: com.arflix.tv.data.repository.WatchHistoryRepository
 ) : ViewModel() {
     private fun visibleCatalogs(catalogs: List<CatalogConfig>): List<CatalogConfig> {
         return catalogs.filter { config ->
@@ -558,6 +561,20 @@ class SettingsViewModel @Inject constructor(
             val existingCatalogs = visibleCatalogs(
                 catalogRepository.ensurePreinstalledDefaults(mediaRepository.getDefaultCatalogConfigs())
             )
+            val watchlistCount = try {
+                watchlistRepository.getLocalWatchlistItems().size
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                0
+            }
+            val historyCount = try {
+                watchHistoryRepository.getContinueWatching().size
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                0
+            }
 
             val currentState = _uiState.value
             _uiState.value = currentState.copy(
@@ -594,6 +611,8 @@ class SettingsViewModel @Inject constructor(
                 accountEmail = accountEmail,
                 isTraktAuthenticated = isTrakt,
                 traktExpiration = traktExpiration,
+                watchlistCount = watchlistCount,
+                historyCount = historyCount,
                 traktUsername = null,
                 isMdbListConnected = isMdbList,
                 mdbListUsername = null,
@@ -3048,6 +3067,96 @@ class SettingsViewModel @Inject constructor(
                 } else {
                     ToastType.SUCCESS
                 }
+            )
+        }
+    }
+
+    fun forceCloudPushOnly() {
+        if (_uiState.value.isForceCloudSyncing) return
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isForceCloudSyncing = true,
+                lastCloudSyncStatus = context.getString(R.string.settings_cloud_push_status_uploading),
+                toastMessage = context.getString(R.string.settings_cloud_push_toast_uploading),
+                toastType = ToastType.INFO
+            )
+
+            if (!ensureCloudSyncSession()) {
+                _uiState.value = _uiState.value.copy(
+                    isForceCloudSyncing = false,
+                    lastCloudSyncStatus = context.getString(R.string.settings_cloud_session_expired_status),
+                    toastMessage = context.getString(R.string.settings_cloud_session_expired_push_toast),
+                    toastType = ToastType.INFO
+                )
+                return@launch
+            }
+
+            cloudSyncRepository.markLocalStateDirtyNow()
+            val pushResult = withTimeoutOrNull(30_000L) {
+                cloudSyncRepository.pushLocalSnapshotToCloud()
+            }
+
+            if (pushResult == null || pushResult.isFailure) {
+                val uploadError = pushResult?.exceptionOrNull()?.message ?: context.getString(R.string.settings_cloud_pull_upload_error_default)
+                _uiState.value = _uiState.value.copy(
+                    isForceCloudSyncing = false,
+                    lastCloudSyncStatus = context.getString(R.string.settings_cloud_push_failed_status, uploadError.take(120)),
+                    toastMessage = uploadError,
+                    toastType = ToastType.ERROR
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(
+                    isForceCloudSyncing = false,
+                    lastCloudSyncStatus = context.getString(R.string.settings_cloud_push_success_status),
+                    toastMessage = context.getString(R.string.settings_cloud_push_success_toast),
+                    toastType = ToastType.SUCCESS
+                )
+            }
+        }
+    }
+
+    fun forceCloudPullOnly() {
+        if (_uiState.value.isForceCloudSyncing) return
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isForceCloudSyncing = true,
+                lastCloudSyncStatus = context.getString(R.string.settings_cloud_pull_status_pulling),
+                toastMessage = context.getString(R.string.settings_cloud_pull_toast_pulling),
+                toastType = ToastType.INFO
+            )
+
+            if (!ensureCloudSyncSession()) {
+                _uiState.value = _uiState.value.copy(
+                    isForceCloudSyncing = false,
+                    lastCloudSyncStatus = context.getString(R.string.settings_cloud_session_expired_status),
+                    toastMessage = context.getString(R.string.settings_cloud_session_expired_pull_toast),
+                    toastType = ToastType.INFO
+                )
+                return@launch
+            }
+
+            val restoreResult = withTimeoutOrNull(30_000L) {
+                restoreCloudStateToLocalInternal(
+                    silent = true,
+                    pushPendingLocalFirst = false
+                )
+            } ?: CloudRestoreResult.FAILED
+
+            _uiState.value = _uiState.value.copy(
+                isForceCloudSyncing = false,
+                lastCloudSyncStatus = when (restoreResult) {
+                    CloudRestoreResult.RESTORED -> context.getString(R.string.settings_cloud_pull_restored_status)
+                    CloudRestoreResult.NO_BACKUP -> context.getString(R.string.settings_cloud_pull_no_backup_status)
+                    CloudRestoreResult.FAILED -> context.getString(R.string.settings_cloud_pull_failed_status)
+                },
+                toastMessage = when (restoreResult) {
+                    CloudRestoreResult.RESTORED -> context.getString(R.string.settings_cloud_pull_restored_toast)
+                    CloudRestoreResult.NO_BACKUP -> context.getString(R.string.settings_cloud_pull_no_backup_toast)
+                    CloudRestoreResult.FAILED -> context.getString(R.string.settings_cloud_pull_failed_status)
+                },
+                toastType = if (restoreResult == CloudRestoreResult.FAILED) ToastType.ERROR else ToastType.SUCCESS
             )
         }
     }
