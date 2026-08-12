@@ -5,7 +5,7 @@ import { getStreams, getStreamsProgressive, installAddon as installAddonManifest
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
-import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudPayload, pullCloudProfiles, pullCloudTraktToken, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTraktToken, saveProgress } from "./cloud";
+import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudPayload, pullCloudProfiles, pullCloudSimklToken, pullCloudTraktToken, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudSimklToken, saveCloudTraktToken, saveProgress } from "./cloud";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
@@ -707,6 +707,8 @@ export function AppProvider({
     refreshKeyRef.current = key;
     const existing = refreshInFlightRef.current;
     if (existing?.key === key) return existing.promise;
+    simklClient.setProfile(profileId);
+    setSimklConnected(simklClient.isConnected);
     const run = (async () => {
       const currentSettings = settingsRef.current;
       setAddonsReady(false);
@@ -739,10 +741,17 @@ export function AppProvider({
       const cloud = authClient.session ? await pullCloudPayload(authClient, profileId).catch(() => null) : null;
       let effectiveSettings = currentSettings;
       if (authClient.session && profileId) {
-        const cloudTraktToken = await pullCloudTraktToken(authClient, profileId).catch(() => null);
+        const [cloudTraktToken, cloudSimklToken] = await Promise.all([
+          pullCloudTraktToken(authClient, profileId).catch(() => null),
+          pullCloudSimklToken(authClient, profileId).catch(() => null)
+        ]);
         if (cloudTraktToken) {
           traktClient.setToken(cloudTraktToken);
           setTraktConnected(true);
+        }
+        if (cloudSimklToken) {
+          simklClient.setToken(cloudSimklToken);
+          setSimklConnected(true);
         }
       }
       if (cloud?.settings) {
@@ -799,6 +808,7 @@ export function AppProvider({
 
       const client = syncClient();
       const traktReady = client.isConnected;
+      const currentSyncProvider = activeSyncProvider();
       const [historyRows, traktRows, playbackRows, watchedMoviesRows, watchedShowsRows, cloudWatchlistRows, hiddenShowIds] = await Promise.all([
         authClient.session ? getContinueWatching(authClient, profileId, addonState).catch(() => []) : Promise.resolve([]),
         traktReady ? client.watchlist().catch(() => []) : Promise.resolve([]),
@@ -808,7 +818,7 @@ export function AppProvider({
         authClient.session ? pullCloudWatchlist(authClient, profileId).catch(() => []) : Promise.resolve([]),
         // Only Trakt has a hidden-from-progress concept; MDBList reads return an
         // empty set so the filters below are no-ops for it.
-        traktReady && activeSyncProvider() === "trakt"
+        traktReady && currentSyncProvider === "trakt"
           ? traktClient.hiddenProgressShowIds().catch(() => new Set<number>())
           : Promise.resolve(new Set<number>())
       ]);
@@ -875,7 +885,7 @@ export function AppProvider({
       }
       // ───────────────────────────────────────────────────────────────────────
 
-      const upNext = traktReady
+      const upNext = traktReady && currentSyncProvider === "trakt"
         ? await loadTraktUpNext(watchedShowsRows, effectiveSettings.includeSpecials, hiddenShowIds).catch(() => ({ items: [] as MediaItem[], fetchFailures: 1 }))
         : { items: [] as MediaItem[], fetchFailures: 0 };
       const upNextRows = upNext.items;
@@ -1607,7 +1617,7 @@ export function AppProvider({
     } finally {
       setBusy("");
     }
-  }, [refreshData]);
+  }, [refreshData, activeProfileId]);
 
   const signOut = useCallback(() => {
     authClient.signOut();
@@ -1631,6 +1641,7 @@ export function AppProvider({
     setMdblistConnected(false);
     simklClient.disconnect();
     setSimklConnected(false);
+    if (activeProfileId) void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
     // Persist the token to cloud so other devices (and future sessions) see the
     // connection — parity with the Android app's traktTokens payload.
     if (traktClient.token && activeProfileId) {
@@ -1654,8 +1665,9 @@ export function AppProvider({
     setTraktConnected(false);
     simklClient.disconnect();
     setSimklConnected(false);
+    if (activeProfileId) void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
     await refreshData();
-  }, [refreshData]);
+  }, [refreshData, activeProfileId]);
 
   const disconnectMdblist = useCallback(() => {
     mdblistClient.disconnect();
@@ -1664,8 +1676,9 @@ export function AppProvider({
   }, [refreshData]);
 
   const beginSimkl = useCallback(async () => {
+    simklClient.setProfile(activeProfileId);
     setSimklDeviceCode(await simklClient.beginPinAuth());
-  }, []);
+  }, [activeProfileId]);
 
   const pollSimkl = useCallback(async () => {
     const code = simklDeviceCodeRef.current;
@@ -1681,14 +1694,18 @@ export function AppProvider({
     setTraktConnected(false);
     mdblistClient.disconnect();
     setMdblistConnected(false);
+    if (simklClient.token && activeProfileId) {
+      await saveCloudSimklToken(authClient, simklClient.token, activeProfileId).catch(() => undefined);
+    }
     await refreshData();
-  }, [refreshData]);
+  }, [refreshData, activeProfileId]);
 
   const disconnectSimkl = useCallback(() => {
     simklClient.disconnect();
     setSimklConnected(false);
+    if (activeProfileId) void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
     void refreshData();
-  }, [refreshData]);
+  }, [refreshData, activeProfileId]);
 
   // Watchlist list-source switcher. Returns the user's custom Trakt lists to
   // populate the dropdown (built-in Watchlist/Collection are added by the UI).
@@ -1756,6 +1773,8 @@ export function AppProvider({
     const updated = profiles.map((p) => (p.id === profile.id ? { ...p, lastUsedAt: Date.now() } : p));
     const switching = profile.id !== activeProfileId;
     persistProfiles(updated, profile.id);
+    simklClient.setProfile(profile.id);
+    setSimklConnected(simklClient.isConnected);
     setManageMode(false);
     if (switching) {
       // Drop the previous profile's rows and seed from the new profile's cache
@@ -1830,11 +1849,16 @@ export function AppProvider({
     });
 
     try {
+      const ref = {
+        mediaType: item.mediaType,
+        tmdbId: item.id,
+        isAnime: item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16))
+      };
       if (inWatchlist) {
-        await syncClient().removeFromWatchlist({ mediaType: item.mediaType, tmdbId: item.id });
+        await syncClient().removeFromWatchlist(ref);
         setToast("Removed from watchlist.");
       } else {
-        await syncClient().addToWatchlist({ mediaType: item.mediaType, tmdbId: item.id });
+        await syncClient().addToWatchlist(ref);
         setToast("Added to watchlist.");
       }
     } catch (err) {
@@ -1879,7 +1903,8 @@ export function AppProvider({
           mediaType: item.mediaType,
           tmdbId: item.id,
           season: typeof seasonNumber === "number" ? seasonNumber : item.seasonNumber ?? undefined,
-          episode: typeof episodeNumber === "number" ? episodeNumber : item.episodeNumber ?? undefined
+          episode: typeof episodeNumber === "number" ? episodeNumber : item.episodeNumber ?? undefined,
+          isAnime: item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16))
         };
         if (!currentlyWatched) {
           await syncClient().addToHistory(ref);

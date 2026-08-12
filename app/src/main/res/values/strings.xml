@@ -679,6 +679,9 @@
     <string name="settings_sign_out_desc">Disconnect this device from your ARVIO Cloud account</string>
     <string name="settings_cloud_pull_confirm_title">Force Cloud Pull?</string>
     <string name="settings_cloud_pull_confirm_desc">Restoring the cloud snapshot will overwrite your local settings, addons, catalogs, and watch state with the data stored on ARVIO Cloud. Are you sure you want to proceed?</string>
+    <string name="settings_cloud_restore">Restore</string>
+    <string name="settings_action_push">Push</string>
+    <string name="settings_action_pull">Pull</string>
     <string name="settings_cloud_active">ARVIO Cloud Active</string>
     <string name="settings_cloud_not_signed_in">Not Signed In</string>
     <string name="settings_cloud_signin_sub">Sign in to backup settings, addons, and watchlist across devices</string>

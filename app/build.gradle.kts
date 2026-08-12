@@ -47,7 +47,7 @@ android {
         buildConfigField(
             "String",
             "NETLIFY_BACKEND_URL",
-            "\"${escapeBuildConfigString(localSecretValue("NETLIFY_BACKEND_URL").ifBlank { "https://simkl-backend--arvio-auth.netlify.app/.netlify/functions" })}\""
+            "\"${escapeBuildConfigString(localSecretValue("NETLIFY_BACKEND_URL").ifBlank { "https://auth.arvio.tv/.netlify/functions" })}\""
         )
         buildConfigField(
             "String",
@@ -418,6 +418,7 @@ secrets {
     // Ignore missing keys to allow builds without secrets file
     ignoreList.add("sdk.*")
     ignoreList.add("APP_ANON_KEY")
+    ignoreList.add("SIMKL_CLIENT_SECRET")
 }
 
 fun localSecretValue(name: String): String {

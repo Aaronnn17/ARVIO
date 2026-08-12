@@ -50,7 +50,7 @@ interface SimklApi {
 
     // ========== Sync & Watch History ==========
 
-    @GET("users/settings")
+    @POST("users/settings")
     suspend fun getUserSettings(
         @Header("Authorization") auth: String,
         @Header("simkl-api-key") clientId: String
@@ -62,18 +62,16 @@ interface SimklApi {
         @Header("simkl-api-key") clientId: String
     ): SimklActivitiesResponse
 
-    @GET("sync/all-items/{type}")
-    suspend fun getAllItemsByType(
-        @Header("Authorization") auth: String,
-        @Header("simkl-api-key") clientId: String,
-        @Path("type") type: String // "movies", "shows", "anime"
-    ): SimklAllItemsResponse
-
-    @GET("sync/all-items")
+    @GET("sync/all-items/{type}/{status}")
     suspend fun getAllItems(
         @Header("Authorization") auth: String,
         @Header("simkl-api-key") clientId: String,
-        @Query("date_from") dateFrom: String? = null
+        @Path("type") type: String,
+        @Path("status") status: String = "all",
+        @Query("date_from") dateFrom: String? = null,
+        @Query("extended") extended: String = "full",
+        @Query("episode_watched_at") episodeWatchedAt: String = "yes",
+        @Query("include_all_episodes") includeAllEpisodes: String = "original"
     ): SimklAllItemsResponse
 
     @POST("sync/history")
@@ -130,6 +128,7 @@ data class SimklMovieRef(
 )
 
 data class SimklEpisodeRef(
+    @SerializedName("season") val season: Int? = null,
     @SerializedName("number") val number: Int? = null,
     @SerializedName("ids") val ids: SimklIds? = null
 )
@@ -149,6 +148,7 @@ data class SimklSeasonRef(
 data class SimklScrobbleBody(
     @SerializedName("movie") val movie: SimklMovieRef? = null,
     @SerializedName("show") val show: SimklShowRef? = null,
+    @SerializedName("anime") val anime: SimklShowRef? = null,
     @SerializedName("episode") val episode: SimklEpisodeRef? = null,
     @SerializedName("progress") val progress: Float // 0.0 - 100.0
 )
@@ -205,6 +205,7 @@ data class SimklHistoryEpisodeItem(
 data class SimklSyncHistoryBody(
     @SerializedName("movies") val movies: List<SimklMovieRef>? = null,
     @SerializedName("shows") val shows: List<SimklShowRef>? = null,
+    @SerializedName("anime") val anime: List<SimklShowRef>? = null,
     @SerializedName("episodes") val episodes: List<SimklEpisodeRef>? = null
 )
 
@@ -220,7 +221,8 @@ data class SimklAddToListShow(
 
 data class SimklAddToListBody(
     @SerializedName("movies") val movies: List<SimklAddToListMovie>? = null,
-    @SerializedName("shows") val shows: List<SimklAddToListShow>? = null
+    @SerializedName("shows") val shows: List<SimklAddToListShow>? = null,
+    @SerializedName("anime") val anime: List<SimklAddToListShow>? = null
 )
 
 data class SimklSyncResponse(

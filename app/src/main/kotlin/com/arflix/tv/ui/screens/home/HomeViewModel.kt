@@ -4247,13 +4247,16 @@ class HomeViewModel @Inject constructor(
                 } catch (e: Exception) {
                     false
                 }
+                val isAnime = item.mediaType == MediaType.TV &&
+                    item.originalLanguage.equals("ja", ignoreCase = true) &&
+                    item.genreIds.contains(16)
                 if (isInWatchlist) {
-                    if (remoteConnected && !remoteSyncManager.removeFromWatchlist(item.mediaType, item.id)) {
+                    if (remoteConnected && !remoteSyncManager.removeFromWatchlist(item.mediaType, item.id, isAnime)) {
                         throw IllegalStateException("Failed to remove from remote watchlist")
                     }
                     watchlistRepository.removeFromWatchlist(item.mediaType, item.id)
                 } else {
-                    if (remoteConnected && !remoteSyncManager.addToWatchlist(item.mediaType, item.id)) {
+                    if (remoteConnected && !remoteSyncManager.addToWatchlist(item.mediaType, item.id, isAnime)) {
                         throw IllegalStateException("Failed to add to remote watchlist")
                     }
                     watchlistRepository.addToWatchlist(item.mediaType, item.id, item)

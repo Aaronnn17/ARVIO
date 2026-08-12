@@ -9,6 +9,7 @@ export interface SyncMediaRef {
   tmdbId: number;
   season?: number | null;
   episode?: number | null;
+  isAnime?: boolean;
 }
 
 /**

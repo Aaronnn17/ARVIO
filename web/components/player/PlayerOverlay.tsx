@@ -878,7 +878,14 @@ function VideoPlayer({
       title: item.title
     }, addons);
     if (!isLiveStream) {
-      void syncClient().scrobble("start", { mediaType: item.mediaType, tmdbId: item.id, season, episode, progress: item.progress ?? 0 }).catch(() => undefined);
+      void syncClient().scrobble("start", {
+        mediaType: item.mediaType,
+        tmdbId: item.id,
+        season,
+        episode,
+        isAnime: item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16)),
+        progress: item.progress ?? 0
+      }).catch(() => undefined);
     }
     const save = () => {
       if (!authClient.session || !Number.isFinite(video.duration) || video.duration <= 0) return;
@@ -906,7 +913,14 @@ function VideoPlayer({
     };
     const onEnded = () => {
       if (!isLiveStream) {
-        void syncClient().scrobble("stop", { mediaType: item.mediaType, tmdbId: item.id, season, episode, progress: 100 }).catch(() => undefined);
+        void syncClient().scrobble("stop", {
+          mediaType: item.mediaType,
+          tmdbId: item.id,
+          season,
+          episode,
+          isAnime: item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16)),
+          progress: 100
+        }).catch(() => undefined);
       }
       if (settings.autoPlayNext && canAdvance) void onAdvance();
     };

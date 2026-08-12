@@ -13,15 +13,27 @@ const RATE_LIMIT = 100
 const RATE_WINDOW_MS = 60 * 1000
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>()
 
-const ALLOWED_PATHS = [
-  '/oauth/pin',
-  '/oauth/token',
-  '/scrobble/',
-  '/sync/'
+const REQUEST_RULES = [
+  { path: /^\/oauth\/pin(?:\/[A-Za-z0-9-]+)?$/, methods: ['GET'] },
+  { path: /^\/oauth\/token$/, methods: ['POST'] },
+  { path: /^\/users\/settings$/, methods: ['POST'] },
+  { path: /^\/scrobble\/(?:start|pause|stop)$/, methods: ['POST'] },
+  { path: /^\/sync\/activities$/, methods: ['GET'] },
+  { path: /^\/sync\/all-items\/(?:movies|shows|anime|all)\/(?:watching|plantowatch|hold|completed|dropped|all)$/, methods: ['GET'] },
+  { path: /^\/sync\/playback(?:\/(?:movies|shows|anime|all))?$/, methods: ['GET'] },
+  { path: /^\/sync\/(?:history|history\/remove|add-to-list)$/, methods: ['POST'] },
 ]
 
-function isPathAllowed(path: string): boolean {
-  return ALLOWED_PATHS.some(allowed => path.startsWith(allowed))
+function isRequestAllowed(path: string, method: string): boolean {
+  return REQUEST_RULES.some(rule => rule.path.test(path) && rule.methods.includes(method))
+}
+
+function isAppAuthorized(req: Request): boolean {
+  const expected = Deno.env.get('APP_ANON_KEY')?.trim() || ''
+  if (!expected) return false
+  const apiKey = req.headers.get('apikey')?.trim() || ''
+  const bearer = req.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || ''
+  return apiKey === expected || bearer === expected
 }
 
 function getClientIP(req: Request): string {
@@ -66,6 +78,13 @@ serve(async (req) => {
   }
 
   try {
+    if (!isAppAuthorized(req)) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        headers: { ...corsHeaders(req), 'Content-Type': 'application/json' },
+        status: 401,
+      })
+    }
+
     const clientIP = getClientIP(req)
     const rateCheck = checkRateLimit(clientIP)
     if (!rateCheck.allowed) {
@@ -82,10 +101,17 @@ serve(async (req) => {
 
     const url = new URL(req.url)
     const path = url.searchParams.get('path')
-    const method = url.searchParams.get('method') || 'GET'
+    const method = (url.searchParams.get('method') || 'GET').toUpperCase()
 
-    if (!path || !isPathAllowed(path)) {
-      return new Response(JSON.stringify({ error: 'Path not allowed' }), {
+    if (req.method.toUpperCase() !== method) {
+      return new Response(JSON.stringify({ error: 'HTTP method mismatch' }), {
+        headers: { ...corsHeaders(req), 'Content-Type': 'application/json' },
+        status: 400,
+      })
+    }
+
+    if (!path || !isRequestAllowed(path, method)) {
+      return new Response(JSON.stringify({ error: 'Path or method not allowed' }), {
         headers: { ...corsHeaders(req), 'Content-Type': 'application/json' },
         status: 403,
       })
@@ -93,10 +119,11 @@ serve(async (req) => {
 
     const simklUrl = new URL(`${SIMKL_BASE_URL}${path}`)
     url.searchParams.forEach((value, key) => {
-      if (key !== 'path' && key !== 'method') {
+      if (!['path', 'method', 'client_id', 'client_secret'].includes(key)) {
         simklUrl.searchParams.set(key, value)
       }
     })
+    if (path.startsWith('/oauth/pin')) simklUrl.searchParams.set('client_id', SIMKL_CLIENT_ID)
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',

@@ -1056,15 +1056,18 @@ class DetailsViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
+                val isAnime = currentItem.mediaType == MediaType.TV &&
+                    currentItem.originalLanguage.equals("ja", ignoreCase = true) &&
+                    currentItem.genreIds.contains(16)
                 val remoteConnected = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
                 if (newInWatchlist) {
-                    if (remoteConnected && !remoteSyncManager.addToWatchlist(currentMediaType, currentMediaId)) {
+                    if (remoteConnected && !remoteSyncManager.addToWatchlist(currentMediaType, currentMediaId, isAnime)) {
                         throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_add))
                     }
                     // Pass the full MediaItem so it appears instantly in watchlist
                     watchlistRepository.addToWatchlist(currentMediaType, currentMediaId, currentItem)
                 } else {
-                    if (remoteConnected && !remoteSyncManager.removeFromWatchlist(currentMediaType, currentMediaId)) {
+                    if (remoteConnected && !remoteSyncManager.removeFromWatchlist(currentMediaType, currentMediaId, isAnime)) {
                         throw IllegalStateException(context.getString(R.string.details_failed_trakt_watchlist_remove))
                     }
                     watchlistRepository.removeFromWatchlist(currentMediaType, currentMediaId)

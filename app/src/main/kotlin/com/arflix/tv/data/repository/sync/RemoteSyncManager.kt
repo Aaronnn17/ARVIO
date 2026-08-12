@@ -43,11 +43,11 @@ class RemoteSyncManager @Inject constructor(
 
     // ===== Watchlist =====
 
-    suspend fun addToWatchlist(mediaType: MediaType, tmdbId: Int): Boolean =
-        active()?.addToWatchlist(mediaType, tmdbId) ?: false
+    suspend fun addToWatchlist(mediaType: MediaType, tmdbId: Int, isAnime: Boolean = false): Boolean =
+        active()?.addToWatchlist(mediaType, tmdbId, isAnime) ?: false
 
-    suspend fun removeFromWatchlist(mediaType: MediaType, tmdbId: Int): Boolean =
-        active()?.removeFromWatchlist(mediaType, tmdbId) ?: false
+    suspend fun removeFromWatchlist(mediaType: MediaType, tmdbId: Int, isAnime: Boolean = false): Boolean =
+        active()?.removeFromWatchlist(mediaType, tmdbId, isAnime) ?: false
 
     suspend fun getWatchlist(): RemoteWatchlistResult? = active()?.getWatchlist()
 
@@ -58,9 +58,10 @@ class RemoteSyncManager @Inject constructor(
         tmdbId: Int,
         progress: Float,
         season: Int? = null,
-        episode: Int? = null
+        episode: Int? = null,
+        isAnime: Boolean = false
     ) {
-        active()?.scrobbleStart(mediaType, tmdbId, progress, season, episode)
+        active()?.scrobbleStart(mediaType, tmdbId, progress, season, episode, isAnime)
     }
 
     suspend fun scrobblePause(
@@ -68,9 +69,21 @@ class RemoteSyncManager @Inject constructor(
         tmdbId: Int,
         progress: Float,
         season: Int? = null,
-        episode: Int? = null
+        episode: Int? = null,
+        isAnime: Boolean = false
     ) {
-        active()?.scrobblePause(mediaType, tmdbId, progress, season, episode)
+        active()?.scrobblePause(mediaType, tmdbId, progress, season, episode, isAnime)
+    }
+
+    suspend fun scrobbleProgress(
+        mediaType: MediaType,
+        tmdbId: Int,
+        progress: Float,
+        season: Int? = null,
+        episode: Int? = null,
+        isAnime: Boolean = false
+    ) {
+        active()?.scrobbleProgress(mediaType, tmdbId, progress, season, episode, isAnime)
     }
 
     suspend fun scrobbleStop(
@@ -78,9 +91,10 @@ class RemoteSyncManager @Inject constructor(
         tmdbId: Int,
         progress: Float,
         season: Int? = null,
-        episode: Int? = null
+        episode: Int? = null,
+        isAnime: Boolean = false
     ) {
-        active()?.scrobbleStop(mediaType, tmdbId, progress, season, episode)
+        active()?.scrobbleStop(mediaType, tmdbId, progress, season, episode, isAnime)
     }
 
     // ===== Watched reads =====

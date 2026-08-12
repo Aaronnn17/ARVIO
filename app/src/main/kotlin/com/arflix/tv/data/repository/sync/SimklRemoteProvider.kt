@@ -22,11 +22,11 @@ class SimklRemoteProvider @Inject constructor(
 
     override suspend fun isConnected(): Boolean = authManager.isConnected()
 
-    override suspend fun addToWatchlist(mediaType: MediaType, tmdbId: Int): Boolean =
-        syncService.addToWatchlist(mediaType, tmdbId)
+    override suspend fun addToWatchlist(mediaType: MediaType, tmdbId: Int, isAnime: Boolean): Boolean =
+        syncService.addToWatchlist(mediaType, tmdbId, isAnime)
 
-    override suspend fun removeFromWatchlist(mediaType: MediaType, tmdbId: Int): Boolean =
-        syncService.removeFromWatchlist(mediaType, tmdbId)
+    override suspend fun removeFromWatchlist(mediaType: MediaType, tmdbId: Int, isAnime: Boolean): Boolean =
+        syncService.removeFromWatchlist(mediaType, tmdbId, isAnime)
 
     override suspend fun getWatchlist(): RemoteWatchlistResult {
         val connected = isConnected()
@@ -44,9 +44,10 @@ class SimklRemoteProvider @Inject constructor(
         tmdbId: Int,
         progress: Float,
         season: Int?,
-        episode: Int?
+        episode: Int?,
+        isAnime: Boolean
     ) {
-        scrobbler.scrobbleStart(mediaType, tmdbId, progress, season, episode)
+        scrobbler.scrobbleStart(mediaType, tmdbId, progress, season, episode, isAnime)
     }
 
     override suspend fun scrobblePause(
@@ -54,19 +55,30 @@ class SimklRemoteProvider @Inject constructor(
         tmdbId: Int,
         progress: Float,
         season: Int?,
-        episode: Int?
+        episode: Int?,
+        isAnime: Boolean
     ) {
-        scrobbler.scrobblePause(mediaType, tmdbId, progress, season, episode)
+        scrobbler.scrobblePause(mediaType, tmdbId, progress, season, episode, isAnime)
     }
+
+    override suspend fun scrobbleProgress(
+        mediaType: MediaType,
+        tmdbId: Int,
+        progress: Float,
+        season: Int?,
+        episode: Int?,
+        isAnime: Boolean
+    ) = Unit
 
     override suspend fun scrobbleStop(
         mediaType: MediaType,
         tmdbId: Int,
         progress: Float,
         season: Int?,
-        episode: Int?
+        episode: Int?,
+        isAnime: Boolean
     ) {
-        scrobbler.scrobbleStop(mediaType, tmdbId, progress, season, episode)
+        scrobbler.scrobbleStop(mediaType, tmdbId, progress, season, episode, isAnime)
     }
 
     override suspend fun getWatchedMovies(): Set<Int> = syncService.getWatchedMovies()

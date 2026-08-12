@@ -1395,16 +1395,62 @@ async function handleTraktProxy(event) {
   }
 }
 
-const SIMKL_ALLOWED_PATHS = [
-  "/oauth/pin",
-  "/oauth/token",
-  "/scrobble/",
-  "/sync/",
-  "/search/",
-  "/movies/",
-  "/tv/",
-  "/anime/"
+const SIMKL_REQUEST_RULES = [
+  { path: /^\/oauth\/pin(?:\/[A-Za-z0-9-]+)?$/, methods: new Set(["GET"]) },
+  { path: /^\/oauth\/token$/, methods: new Set(["POST"]) },
+  { path: /^\/users\/settings$/, methods: new Set(["POST"]) },
+  { path: /^\/scrobble\/(?:start|pause|stop)$/, methods: new Set(["POST"]) },
+  { path: /^\/sync\/activities$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/all-items\/(?:movies|shows|anime|all)\/(?:watching|plantowatch|hold|completed|dropped|all)$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/playback(?:\/(?:movies|shows|anime|all))?$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/(?:history|history\/remove|add-to-list)$/, methods: new Set(["POST"]) }
 ];
+
+function isAllowedSimklRequest(path, method) {
+  return SIMKL_REQUEST_RULES.some((rule) => rule.path.test(path) && rule.methods.has(method));
+}
+
+function requestIp(event) {
+  return getHeader(event.headers, "x-nf-client-connection-ip").trim() ||
+    getHeader(event.headers, "cf-connecting-ip").trim() ||
+    getHeader(event.headers, "x-real-ip").trim() ||
+    getHeader(event.headers, "x-forwarded-for").split(",")[0].trim() ||
+    "unknown";
+}
+
+async function enforceSimklRateLimit(event) {
+  if (process.env.IS_LOCAL_DEV === "true") return { remaining: 999, resetSeconds: 60 };
+  const configuredLimit = Number(process.env.SIMKL_PROXY_RATE_LIMIT || 100);
+  const limit = Number.isFinite(configuredLimit)
+    ? Math.max(10, Math.min(300, configuredLimit))
+    : 100;
+  const keyHash = sha256(`simkl:${requestIp(event)}`);
+  const result = await getPool().query(
+    `INSERT INTO simkl_proxy_rate_limits (key_hash, window_started_at, request_count)
+     VALUES ($1, NOW(), 1)
+     ON CONFLICT (key_hash) DO UPDATE SET
+       window_started_at = CASE
+         WHEN simkl_proxy_rate_limits.window_started_at <= NOW() - INTERVAL '1 minute' THEN NOW()
+         ELSE simkl_proxy_rate_limits.window_started_at
+       END,
+       request_count = CASE
+         WHEN simkl_proxy_rate_limits.window_started_at <= NOW() - INTERVAL '1 minute' THEN 1
+         ELSE simkl_proxy_rate_limits.request_count + 1
+       END
+     RETURNING request_count,
+       GREATEST(1, CEIL(EXTRACT(EPOCH FROM (window_started_at + INTERVAL '1 minute' - NOW()))))::int AS reset_seconds`,
+    [keyHash]
+  );
+  const count = Number(result.rows[0]?.request_count || 1);
+  const resetSeconds = Number(result.rows[0]?.reset_seconds || 60);
+  if (count > limit) {
+    const error = new Error("Rate limit exceeded");
+    error.statusCode = 429;
+    error.retryAfter = resetSeconds;
+    throw error;
+  }
+  return { remaining: Math.max(0, limit - count), resetSeconds };
+}
 
 async function handleSimklProxy(event) {
   const preflight = options(event);
@@ -1414,18 +1460,23 @@ async function handleSimklProxy(event) {
     const pathParam = event.queryStringParameters?.path || "";
     const method = String(event.queryStringParameters?.method || "GET").toUpperCase();
     if (!pathParam) return json(400, { error: "Missing path parameter" });
-    if (!SIMKL_ALLOWED_PATHS.some((allowed) => pathParam.startsWith(allowed))) {
-      return json(403, { error: "Path not allowed" });
+    if (String(event.httpMethod || "GET").toUpperCase() !== method) {
+      return json(400, { error: "HTTP method mismatch" });
     }
-    const clientId = process.env.SIMKL_CLIENT_ID || event.queryStringParameters?.client_id || "";
-    const clientSecret = process.env.SIMKL_CLIENT_SECRET || event.queryStringParameters?.client_secret || "";
+    if (!isAllowedSimklRequest(pathParam, method)) {
+      return json(403, { error: "Path or method not allowed" });
+    }
+    const rate = await enforceSimklRateLimit(event);
+    const clientId = process.env.SIMKL_CLIENT_ID || "";
+    const clientSecret = process.env.SIMKL_CLIENT_SECRET || "";
     if (!clientId) throw new Error("Simkl credentials not configured");
     const simklUrl = new URL(`https://api.simkl.com${pathParam}`);
     Object.entries(event.queryStringParameters || {}).forEach(([key, value]) => {
-      if (key !== "path" && key !== "method" && value !== undefined && value !== null) {
+      if (!["path", "method", "client_id", "client_secret"].includes(key) && value !== undefined && value !== null) {
         simklUrl.searchParams.set(key, String(value));
       }
     });
+    if (pathParam.startsWith("/oauth/pin")) simklUrl.searchParams.set("client_id", clientId);
 
     let requestBody = undefined;
     if (method === "POST" || method === "DELETE") {
@@ -1463,13 +1514,17 @@ async function handleSimklProxy(event) {
       statusCode: response.status,
       headers: {
         ...JSON_HEADERS,
-        "cache-control": "no-store"
+        "cache-control": "no-store",
+        "x-ratelimit-remaining": String(rate.remaining),
+        "x-ratelimit-reset": String(rate.resetSeconds)
       },
       body: JSON.stringify(data)
     };
   } catch (error) {
     const status = error.statusCode || 502;
-    return json(status, { error: errorMessage(error) });
+    const response = json(status, { error: errorMessage(error) });
+    if (error.retryAfter) response.headers = { ...response.headers, "retry-after": String(error.retryAfter) };
+    return response;
   }
 }
 
@@ -2413,6 +2468,7 @@ module.exports = {
     verifyArvioRefreshToken,
     passwordSetupKeyForToken,
     passwordSetupPrefixForAccount,
-    safeTokenEqual
+    safeTokenEqual,
+    isAllowedSimklRequest
   }
 };

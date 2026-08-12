@@ -3,6 +3,7 @@ package com.arflix.tv.data.repository.sync
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import com.arflix.tv.data.repository.ProfileManager
+import com.arflix.tv.util.SecureStorage
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.traktDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -29,6 +30,9 @@ class SyncProviderStore @Inject constructor(
     @ApplicationContext private val context: Context,
     private val profileManager: ProfileManager
 ) {
+    private companion object {
+        const val SIMKL_TOKEN_ALIAS = "arvio_simkl_access_token"
+    }
     private fun providerKey() = profileManager.profileStringKey("sync_provider")
     private fun providerKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "sync_provider")
@@ -61,7 +65,16 @@ class SyncProviderStore @Inject constructor(
 
     suspend fun getSimklAccessToken(): String? {
         val prefs = context.traktDataStore.data.first()
-        return prefs[simklAccessTokenKey()]?.trim()?.takeIf { it.isNotEmpty() }
+        val stored = prefs[simklAccessTokenKey()]
+        val token = SecureStorage.decrypt(stored, SIMKL_TOKEN_ALIAS)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        if (token != null && !SecureStorage.isEncrypted(stored)) {
+            context.traktDataStore.edit { current ->
+                current[simklAccessTokenKey()] = SecureStorage.encrypt(token, SIMKL_TOKEN_ALIAS)
+            }
+        }
+        return token
     }
 
     suspend fun setSimklAccessToken(token: String?) {
@@ -70,7 +83,7 @@ class SyncProviderStore @Inject constructor(
             if (trimmed.isEmpty()) {
                 prefs.remove(simklAccessTokenKey())
             } else {
-                prefs[simklAccessTokenKey()] = trimmed
+                prefs[simklAccessTokenKey()] = SecureStorage.encrypt(trimmed, SIMKL_TOKEN_ALIAS)
             }
         }
     }
@@ -100,8 +113,12 @@ class SyncProviderStore @Inject constructor(
         profileIds.forEach { profileId ->
             val provider = SyncProvider.fromStorage(settingsPrefs[providerKeyFor(profileId)])
             val key = traktPrefs[mdbListKeyFor(profileId)]?.trim()?.takeIf { it.isNotEmpty() }
-            if (provider != SyncProvider.NONE || key != null) {
-                out[profileId] = ProfileSyncSelection(provider, key)
+            val simklToken = SecureStorage.decrypt(
+                traktPrefs[simklAccessTokenKeyFor(profileId)],
+                SIMKL_TOKEN_ALIAS
+            )?.trim()?.takeIf { it.isNotEmpty() }
+            if (provider != SyncProvider.NONE || key != null || simklToken != null) {
+                out[profileId] = ProfileSyncSelection(provider, key, simklToken)
             }
         }
         return out
@@ -126,12 +143,20 @@ class SyncProviderStore @Inject constructor(
                 } else {
                     prefs[mdbListKeyFor(profileId)] = key
                 }
+                val simklToken = selection.simklAccessToken?.trim().orEmpty()
+                if (simklToken.isEmpty()) {
+                    prefs.remove(simklAccessTokenKeyFor(profileId))
+                } else {
+                    prefs[simklAccessTokenKeyFor(profileId)] =
+                        SecureStorage.encrypt(simklToken, SIMKL_TOKEN_ALIAS)
+                }
             }
         }
     }
 
     data class ProfileSyncSelection(
         val provider: SyncProvider,
-        val mdbListApiKey: String?
+        val mdbListApiKey: String? = null,
+        val simklAccessToken: String? = null
     )
 }

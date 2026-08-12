@@ -4354,7 +4354,7 @@ private fun MobileCloudAccountSubPage(
 ) {
     val catalogsCount = uiState.catalogs.size
     val addonsCount = stremioAddons.size
-    val isCloudEnabled = uiState.isLoggedIn
+    var showSignOutConfirmDialog by remember { mutableStateOf(false) }
 
     // Section 1: SYNC STATS (2x2 chip grid like Tracking Integrations)
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -4407,11 +4407,25 @@ private fun MobileCloudAccountSubPage(
         AccountDisconnectConfirmDialog(
             title = stringResource(R.string.settings_cloud_pull_confirm_title),
             description = stringResource(R.string.settings_cloud_pull_confirm_desc),
+            confirmLabel = stringResource(R.string.settings_cloud_restore),
             onConfirm = {
                 showForcePullConfirmDialog = false
                 viewModel.forceCloudPullOnly()
             },
             onDismiss = { showForcePullConfirmDialog = false }
+        )
+    }
+
+    if (showSignOutConfirmDialog) {
+        AccountDisconnectConfirmDialog(
+            title = stringResource(R.string.settings_cloud_disconnect_confirm_title),
+            description = stringResource(R.string.settings_cloud_disconnect_confirm_desc),
+            confirmLabel = stringResource(R.string.settings_sign_out),
+            onConfirm = {
+                showSignOutConfirmDialog = false
+                viewModel.logout()
+            },
+            onDismiss = { showSignOutConfirmDialog = false }
         )
     }
 
@@ -4428,6 +4442,15 @@ private fun MobileCloudAccountSubPage(
                 onClick = {}
             )
             MobileSettingsRow(
+                icon = Icons.Default.SwitchAccount,
+                title = stringResource(R.string.switch_profile),
+                subtitle = "",
+                value = "",
+                isFocused = false,
+                showDivider = true,
+                onClick = onSwitchProfile
+            )
+            MobileSettingsRow(
                 icon = Icons.Default.ExitToApp,
                 iconTint = androidx.compose.ui.graphics.Color(0xFFFF5252),
                 title = stringResource(R.string.settings_sign_out),
@@ -4435,7 +4458,7 @@ private fun MobileCloudAccountSubPage(
                 value = "",
                 isFocused = false,
                 showDivider = false,
-                onClick = { viewModel.logout() }
+                onClick = { showSignOutConfirmDialog = true }
             )
         } else {
             MobileSettingsRow(
@@ -4473,7 +4496,7 @@ private fun MobileCloudAccountSubPage(
             icon = Icons.Default.Upload,
             title = stringResource(R.string.settings_force_push),
             subtitle = stringResource(R.string.settings_force_push_desc),
-            value = if (uiState.isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else "Push",
+            value = if (uiState.isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else stringResource(R.string.settings_action_push),
             isFocused = false,
             showDivider = true,
             onClick = { handleCloudAction { viewModel.forceCloudPushOnly() } }
@@ -4482,7 +4505,7 @@ private fun MobileCloudAccountSubPage(
             icon = Icons.Default.Download,
             title = stringResource(R.string.settings_force_pull),
             subtitle = stringResource(R.string.settings_force_pull_desc),
-            value = if (uiState.isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else "Pull",
+            value = if (uiState.isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else stringResource(R.string.settings_action_pull),
             isFocused = false,
             showDivider = false,
             onClick = { handleCloudAction { showForcePullConfirmDialog = true } }
@@ -8505,6 +8528,7 @@ private fun SettingsActionRow(
 private fun AccountDisconnectConfirmDialog(
     title: String,
     description: String,
+    confirmLabel: String = stringResource(R.string.settings_disconnect),
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -8601,7 +8625,7 @@ private fun AccountDisconnectConfirmDialog(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = stringResource(R.string.settings_disconnect).uppercase(),
+                        text = confirmLabel.uppercase(),
                         style = ArflixTypography.label.copy(fontSize = 12.sp),
                         color = Pink
                     )
