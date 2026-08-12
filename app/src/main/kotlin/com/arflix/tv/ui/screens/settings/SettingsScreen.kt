@@ -1,5 +1,14 @@
 package com.arflix.tv.ui.screens.settings
 
+import androidx.activity.compose.BackHandler
+import com.arflix.tv.ui.motion.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -722,6 +731,19 @@ fun SettingsScreen(
         uiState.packError != null ||
         uiState.pendingPackManifest != null ||
         pluginsModalOpen
+
+    BackHandler(enabled = !isTouchDevice && !hasBlockingModal) {
+        when (activeZone) {
+            Zone.SIDEBAR -> onBack()
+            Zone.SECTION -> {
+                activeZone = Zone.SIDEBAR
+                isSidebarFocused = true
+            }
+            Zone.CONTENT -> {
+                activeZone = Zone.SECTION
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -3536,16 +3558,20 @@ private fun MobileSettingsLayout(
     onDisconnectCloud: () -> Unit = {},
     onDisconnectTrakt: () -> Unit = {}
 ) {
-    BackHandler(enabled = page != "MAIN") {
+    val backMotion = rememberArvioPredictiveBack(enabled = page != "MAIN") {
         onNavigate("MAIN")
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(appBackgroundDark())
     ) {
-        if (page == "MAIN") {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .arvioBackPeek(backMotion, active = page != "MAIN")
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3582,57 +3608,70 @@ private fun MobileSettingsLayout(
                 onSwitchProfile = onSwitchProfile,
                 onNavigateToTelegram = onNavigateToTelegram
             )
-        } else {
-            Row(
+        }
+
+        AnimatedVisibility(
+            visible = page != "MAIN",
+            enter = fadeIn(tween(200)) + slideInHorizontally(tween(250)) { it / 6 },
+            exit = fadeOut(tween(220, easing = FastOutSlowInEasing)) + slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 4 }
+        ) {
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .fillMaxSize()
+                    .arvioBackSurface(backMotion)
+                    .background(appBackgroundDark())
             ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = stringResource(R.string.back),
-                    tint = TextPrimary,
+                Row(
                     modifier = Modifier
-                        .clickable { onNavigate("MAIN") }
-                        .padding(end = 16.dp)
-                        .size(28.dp)
-                )
-                Text(
-                    text = mobileCategoryTitle(page),
-                    style = ArflixTypography.heroTitle.copy(fontSize = 24.sp),
-                    color = TextPrimary,
-                    modifier = Modifier.weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = stringResource(R.string.back),
+                        tint = TextPrimary,
+                        modifier = Modifier
+                            .clickable { onNavigate("MAIN") }
+                            .padding(end = 16.dp)
+                            .size(28.dp)
+                    )
+                    Text(
+                        text = mobileCategoryTitle(page),
+                        style = ArflixTypography.heroTitle.copy(fontSize = 24.sp),
+                        color = TextPrimary,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                MobileSettingsSubPage(
+                    page = page,
+                    onNavigate = onNavigate,
+                    uiState = uiState,
+                    viewModel = viewModel,
+                    stremioAddons = stremioAddons,
+                    onSwitchProfile = onSwitchProfile,
+                    openDnsProviderPicker = openDnsProviderPicker,
+                    openUiModeWarningDialog = openUiModeWarningDialog,
+                    openQualityFiltersModal = openQualityFiltersModal,
+                    onSubtitleAiModelClick = onSubtitleAiModelClick,
+                    onSubtitleAiApiKeyClick = onSubtitleAiApiKeyClick,
+                    onSubtitleAiQrClick = onSubtitleAiQrClick,
+                    onAddIptvClick = onAddIptvClick,
+                    onEditIptvClick = onEditIptvClick,
+                    onAddCatalogClick = onAddCatalogClick,
+                    onImportCatalogPackClick = onImportCatalogPackClick,
+                    onRenameCatalogClick = onRenameCatalogClick,
+                    onDeleteCatalogClick = onDeleteCatalogClick,
+                    onConnectHomeServerClick = onConnectHomeServerClick,
+                    onConnectPlexHomeServerClick = onConnectPlexHomeServerClick,
+                    onAddCustomAddonClick = onAddCustomAddonClick,
+                    openCustomUserAgentDialog = openCustomUserAgentDialog,
+                    onConnectTrakt = { viewModel.startTraktAuth() },
+                    onDisconnectTrakt = onDisconnectTrakt,
+                    onConnectMdbList = viewModel::connectMdbList,
+                    onDisconnectMdbList = { viewModel.disconnectMdbList() }
                 )
             }
-            MobileSettingsSubPage(
-                page = page,
-                onNavigate = onNavigate,
-                uiState = uiState,
-                viewModel = viewModel,
-                stremioAddons = stremioAddons,
-                onSwitchProfile = onSwitchProfile,
-                openDnsProviderPicker = openDnsProviderPicker,
-                openUiModeWarningDialog = openUiModeWarningDialog,
-                openQualityFiltersModal = openQualityFiltersModal,
-                onSubtitleAiModelClick = onSubtitleAiModelClick,
-                onSubtitleAiApiKeyClick = onSubtitleAiApiKeyClick,
-                onSubtitleAiQrClick = onSubtitleAiQrClick,
-                onAddIptvClick = onAddIptvClick,
-                onEditIptvClick = onEditIptvClick,
-                onAddCatalogClick = onAddCatalogClick,
-                onImportCatalogPackClick = onImportCatalogPackClick,
-                onRenameCatalogClick = onRenameCatalogClick,
-                onDeleteCatalogClick = onDeleteCatalogClick,
-                onConnectHomeServerClick = onConnectHomeServerClick,
-                onConnectPlexHomeServerClick = onConnectPlexHomeServerClick,
-                onAddCustomAddonClick = onAddCustomAddonClick,
-                openCustomUserAgentDialog = openCustomUserAgentDialog,
-                onConnectTrakt = { viewModel.startTraktAuth() },
-                onDisconnectTrakt = onDisconnectTrakt,
-                onConnectMdbList = viewModel::connectMdbList,
-                onDisconnectMdbList = { viewModel.disconnectMdbList() }
-            )
         }
     }
 }
@@ -4554,6 +4593,9 @@ private fun UnknownSourcesModal(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
@@ -8544,6 +8586,10 @@ private fun AccountDisconnectConfirmDialog(
     // Disconnect button, or the Box itself). This is intentional: it intercepts key
     // events BEFORE clickable children can handle them, preventing the Cancel button
     // from firing via its own clickable when the user presses OK/Enter to open the dialog.
+    BackHandler {
+        onDismiss()
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -9163,6 +9209,9 @@ private fun InputModalLegacy(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
@@ -9497,6 +9546,10 @@ private fun InputModal(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            hideKeyboardAll()
+            onDismiss()
+        }
         ModalScrim(
             onDismiss = {
                 hideKeyboardAll()
@@ -9936,6 +9989,9 @@ private fun SubtitlePickerModal(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
@@ -10060,6 +10116,9 @@ private fun UiModeWarningDialog(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
@@ -10415,6 +10474,9 @@ private fun CatalogPackImportDialog(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
@@ -10656,6 +10718,9 @@ private fun CatalogPackDeleteConfirmDialog(
             usePlatformDefaultWidth = false
         )
     ) {
+        BackHandler {
+            onDismiss()
+        }
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier

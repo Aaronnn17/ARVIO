@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -117,6 +118,10 @@ fun AppUpdateModal(
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
+    }
+
+    BackHandler {
+        onDismiss()
     }
 
     Dialog(

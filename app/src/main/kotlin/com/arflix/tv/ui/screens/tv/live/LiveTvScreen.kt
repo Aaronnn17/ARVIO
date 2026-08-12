@@ -2649,7 +2649,20 @@ fun LiveTvScreen(
         )
         if (fsProgress > 0f && playingChannel != null) {
             val scale = 0.35f + 0.65f * fsProgress
-            Box(
+    BackHandler(enabled = isFullScreen) {
+        if (fullscreenGuideOpen) {
+            fullscreenGuideOpen = false
+            hudPokeSignal++
+        } else if (!quickZapOpen) {
+            if (playingCatchupProgram != null) {
+                returnCatchupToLive()
+            } else {
+                exitFullScreenPlayback()
+            }
+        }
+    }
+
+    Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
