@@ -942,7 +942,7 @@ class HomeViewModel @Inject constructor(
         val profileId = profileManager.getProfileIdSync()
             .ifBlank { "default" }
             .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
-        val language = (mediaRepository.contentLanguage ?: "en-US")
+        val language = mediaRepository.contentLanguage
             .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
         return java.io.File(context.cacheDir, "home_categories_cache_${profileId}_$language.json")
     }
@@ -953,7 +953,7 @@ class HomeViewModel @Inject constructor(
         val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: "en-US"
         val language = prefs[profileManager.profileStringKeyFor(profileId, "content_language")]
             ?: fallbackLanguage
-        mediaRepository.contentLanguage = if (language == "en-US") null else language
+        mediaRepository.contentLanguage = language
         return language
     }
 
@@ -981,7 +981,20 @@ class HomeViewModel @Inject constructor(
                 .getParameterized(MutableList::class.java, Category::class.java)
                 .type
             val parsed: List<Category> = gson.fromJson(json, type) ?: emptyList()
-            parsed.filter { it.items.isNotEmpty() }
+            var hadBlankTitles = false
+            val sanitized = parsed.map { cat ->
+                val cleanItems = cat.items.filter { item ->
+                    val isValid = item.title.isNotBlank() && item.title != "Unknown"
+                    if (!isValid) hadBlankTitles = true
+                    isValid
+                }
+                cat.copy(items = cleanItems)
+            }.filter { it.items.isNotEmpty() }
+
+            if (hadBlankTitles) {
+                file.delete()
+            }
+            sanitized
         }.getOrDefault(emptyList())
     }
     // IO concurrency for network requests (logo fetches, catalog loads, etc.)
@@ -1022,6 +1035,7 @@ class HomeViewModel @Inject constructor(
     private var watchedBadgesJob: Job? = null
     private var loadHomeRequestId: Long = 0L
     private var activeRuntimeProfileId: String? = null
+    private var observedContentLanguage: String? = null
     private val HERO_DEBOUNCE_MS = 80L // Short debounce; focus idle is handled in HomeScreen
     private val startupCreatedAtMs = SystemClock.elapsedRealtime()
     private val startupSettleMs = if (isLowRamDevice) 5_000L else 4_000L
@@ -1373,6 +1387,21 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private fun invalidateContentLanguageCaches() {
+        heroUpdateJob?.cancel()
+        heroDetailsJob?.cancel()
+        prefetchJob?.cancel()
+        heroDetailsCache.clear()
+        heroDetailsFetchInFlight.clear()
+        lastResolvedBaseCategories = emptyList()
+        mediaRepository.clearMediaCache()
+        _uiState.value = _uiState.value.copy(
+            heroOverviewOverride = null,
+            heroTrailerKey = null,
+            isHeroTransitioning = false
+        )
+    }
+
     init {
         viewModelScope.launch {
             streamRepository.installedAddons.collectLatest { addons ->
@@ -1408,6 +1437,11 @@ class HomeViewModel @Inject constructor(
                 ).collect { preferences ->
                     val previousState = _uiState.value
                     val autoplayJustEnabled = !previousState.trailerAutoPlay && preferences.trailerAutoPlay
+                    mediaRepository.contentLanguage = preferences.contentLanguage
+                    val normalizedLanguage = mediaRepository.contentLanguage
+                    val langChanged = observedContentLanguage?.let { it != normalizedLanguage } ?: false
+                    observedContentLanguage = normalizedLanguage
+
                     _uiState.value = previousState.copy(
                         trailerAutoPlay = preferences.trailerAutoPlay,
                         trailerSoundEnabled = preferences.trailerSoundEnabled,
@@ -1418,7 +1452,10 @@ class HomeViewModel @Inject constructor(
                         smoothScrolling = preferences.smoothScrolling
                     )
 
-                    if (autoplayJustEnabled) {
+                    if (langChanged) {
+                        invalidateContentLanguageCaches()
+                        loadHomeData()
+                    } else if (autoplayJustEnabled) {
                         _uiState.value.heroItem?.let(::hydrateHeroDetailsIfNeeded)
                     }
                 }
@@ -3106,14 +3143,14 @@ class HomeViewModel @Inject constructor(
         }
         // MDBList profiles have no Trakt token but still source CW from a remote provider —
         // route them through the same getContinueWatching() path (it branches to MDBList).
-        val isMdbListActive = try {
-            traktRepository.isMdbListActive()
+        val isAlternativeRemoteActive = try {
+            traktRepository.isAlternativeRemoteActive()
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             false
         }
-        val useRemoteSync = isTraktAuthenticated || isMdbListActive
+        val useRemoteSync = isTraktAuthenticated || isAlternativeRemoteActive
         // Debug: write CW state to a file we can pull via adb
         val items: List<ContinueWatchingItem> = if (useRemoteSync) {
             // When connected to Trakt, use ONLY Trakt as the source of truth for
@@ -3440,14 +3477,14 @@ class HomeViewModel @Inject constructor(
         } catch (e: Exception) {
             false
         }
-        val isMdbListActive = try {
-            traktRepository.isMdbListActive()
+        val isAlternativeRemoteActive = try {
+            traktRepository.isAlternativeRemoteActive()
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             false
         }
-        val useRemoteSync = isTraktAuthenticated || isMdbListActive
+        val useRemoteSync = isTraktAuthenticated || isAlternativeRemoteActive
         val items = if (useRemoteSync) {
             val traktItems = if (forceFresh) {
                 try {
@@ -3546,14 +3583,14 @@ class HomeViewModel @Inject constructor(
         } catch (e: Exception) {
             false
         }
-        val isMdbListActive = try {
-            traktRepository.isMdbListActive()
+        val isAlternativeRemoteActive = try {
+            traktRepository.isAlternativeRemoteActive()
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             false
         }
-        val useRemoteSync = isTraktAuthenticated || isMdbListActive
+        val useRemoteSync = isTraktAuthenticated || isAlternativeRemoteActive
         val items = if (useRemoteSync) {
             try {
                 traktRepository.preloadContinueWatchingCache()
@@ -4210,13 +4247,16 @@ class HomeViewModel @Inject constructor(
                 } catch (e: Exception) {
                     false
                 }
+                val isAnime = item.mediaType == MediaType.TV &&
+                    item.originalLanguage.equals("ja", ignoreCase = true) &&
+                    item.genreIds.contains(16)
                 if (isInWatchlist) {
-                    if (remoteConnected && !remoteSyncManager.removeFromWatchlist(item.mediaType, item.id)) {
+                    if (remoteConnected && !remoteSyncManager.removeFromWatchlist(item.mediaType, item.id, isAnime)) {
                         throw IllegalStateException("Failed to remove from remote watchlist")
                     }
                     watchlistRepository.removeFromWatchlist(item.mediaType, item.id)
                 } else {
-                    if (remoteConnected && !remoteSyncManager.addToWatchlist(item.mediaType, item.id)) {
+                    if (remoteConnected && !remoteSyncManager.addToWatchlist(item.mediaType, item.id, isAnime)) {
                         throw IllegalStateException("Failed to add to remote watchlist")
                     }
                     watchlistRepository.addToWatchlist(item.mediaType, item.id, item)

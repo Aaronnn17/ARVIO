@@ -39,6 +39,7 @@ import {
   hasNetlifyBackendConfig,
   hasSupabaseConfig,
   hasTraktConfig,
+  hasSimklConfig,
   getAuthPortalUrl,
 } from "@/lib/config";
 import {
@@ -1155,17 +1156,24 @@ function AccountsSection() {
     auth,
     traktConnected,
     mdblistConnected,
+    simklConnected,
     deviceCode,
+    simklDeviceCode,
     signOut,
     beginTrakt,
     pollTrakt,
     disconnectTrakt,
     connectMdblist,
     disconnectMdblist,
+    beginSimkl,
+    pollSimkl,
+    disconnectSimkl,
     refreshData,
   } = useApp();
   const [traktError, setTraktError] = useState<string | null>(null);
   const [traktBusy, setTraktBusy] = useState<"start" | "poll" | null>(null);
+  const [simklError, setSimklError] = useState<string | null>(null);
+  const [simklBusy, setSimklBusy] = useState<"start" | "poll" | null>(null);
   const [mdblistKey, setMdblistKey] = useState("");
   const [mdblistError, setMdblistError] = useState<string | null>(null);
   const [mdblistBusy, setMdblistBusy] = useState(false);
@@ -1206,6 +1214,38 @@ function AccountsSection() {
       );
     } finally {
       setTraktBusy(null);
+    }
+  };
+
+  const startSimklLink = async () => {
+    setSimklBusy("start");
+    setSimklError(null);
+    try {
+      await beginSimkl();
+    } catch (error) {
+      setSimklError(
+        error instanceof Error
+          ? error.message
+          : "Could not start Simkl device link.",
+      );
+    } finally {
+      setSimklBusy(null);
+    }
+  };
+
+  const approveSimklLink = async () => {
+    setSimklBusy("poll");
+    setSimklError(null);
+    try {
+      await pollSimkl();
+    } catch (error) {
+      setSimklError(
+        error instanceof Error
+          ? error.message
+          : "Simkl has not approved this device yet.",
+      );
+    } finally {
+      setSimklBusy(null);
     }
   };
 
@@ -1262,6 +1302,20 @@ function AccountsSection() {
                   ? "Not linked"
                   : "Missing config"}
             </strong>
+          </div>
+          <div>
+            <span>Simkl</span>
+            <strong>
+              {simklConnected
+                ? "Connected"
+                : hasSimklConfig()
+                  ? "Not linked"
+                  : "Missing config"}
+            </strong>
+          </div>
+          <div>
+            <span>MDBList</span>
+            <strong>{mdblistConnected ? "Connected" : "Not linked"}</strong>
           </div>
           <div>
             <span>Sync</span>
@@ -1323,6 +1377,54 @@ function AccountsSection() {
                   onClick={() => void approveTraktLink()}
                 >
                   {traktBusy === "poll" ? "Checking..." : "I approved it"}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </Panel>
+
+      <Panel title="Simkl">
+        {!hasSimklConfig() && (
+          <p className="empty">Simkl client configuration is missing.</p>
+        )}
+        {simklError && <p className="login-error">{simklError}</p>}
+        {simklConnected ? (
+          <button type="button" className="secondary" onClick={disconnectSimkl}>
+            Disconnect Simkl
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="primary"
+              disabled={simklBusy === "start" || !hasSimklConfig()}
+              onClick={() => void startSimklLink()}
+            >
+              {simklBusy === "start" ? "Starting..." : "Start device link"}
+            </button>
+            {simklDeviceCode && (
+              <div className="device-code">
+                <span>{simklDeviceCode.user_code}</span>
+                <p>
+                  Open{" "}
+                  <a
+                    href={simklDeviceCode.verification_url || "https://simkl.com/pin"}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "var(--accent)", textDecoration: "underline" }}
+                  >
+                    {simklDeviceCode.verification_url || "https://simkl.com/pin"}
+                  </a>{" "}
+                  and enter the code above
+                </p>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={simklBusy === "poll"}
+                  onClick={() => void approveSimklLink()}
+                >
+                  {simklBusy === "poll" ? "Checking..." : "I approved it"}
                 </button>
               </div>
             )}
@@ -1848,6 +1950,17 @@ function TvSettingsSection() {
 
   return (
     <Panel title="TV (IPTV)">
+      <Row label="Sort order" hint="Choose how live channels and groups are ordered in the list">
+        <Select
+          value={settings.iptvSortOrder ?? "provider"}
+          onChange={(v) => updateSettings({ iptvSortOrder: v as "provider" | "number" | "name" })}
+          options={[
+            ["provider", "Provider Order (Default)"],
+            ["number", "Channel Number"],
+            ["name", "Alphabetical (A-Z)"]
+          ]}
+        />
+      </Row>
       <p className="empty">
         {playlists.length} playlist(s) configured. These are cloud-saved and
         used by the TV page.

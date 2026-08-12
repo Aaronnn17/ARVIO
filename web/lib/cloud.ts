@@ -5,6 +5,7 @@ import { jsonRequest } from "./http";
 import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
 import { tmdbImageUrl } from "./mediaImages";
 import type { TraktToken } from "./trakt";
+import type { SimklToken } from "./simkl";
 import type { AppSettings, InstalledAddon, IptvPlaylistEntry, MediaItem, Profile, QualityFilterConfig, WatchHistoryEntry } from "./types";
 
 export interface CloudPayload {
@@ -60,6 +61,7 @@ interface AndroidIptvProfileState {
   favoriteGroups?: string[];
   hiddenGroups?: string[];
   groupOrder?: string[];
+  sortOrder?: string;
 }
 
 function canUseBackendSync(auth: AuthClient) {
@@ -482,6 +484,7 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
     favoriteGroupIds: stringArray(state.favoriteGroups).length ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
     hiddenGroupIds: stringArray(state.hiddenGroups),
     groupOrder: stringArray(state.groupOrder),
+    iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
     iptvStalkerUrl: stringValue(state.stalkerPortalUrl ?? rootState.iptvStalkerUrl),
     iptvStalkerMac: stringValue(state.stalkerMacAddress ?? rootState.iptvStalkerMac)
   };
@@ -836,7 +839,8 @@ export async function saveCloudSettings(
         favoriteChannels: settings.favoriteChannelIds,
         favoriteGroups: settings.favoriteGroupIds,
         hiddenGroups: settings.hiddenGroupIds,
-        groupOrder: settings.groupOrder
+        groupOrder: settings.groupOrder,
+        sortOrder: settings.iptvSortOrder ?? "provider"
       });
     }
   });
@@ -895,6 +899,50 @@ export async function saveCloudTraktToken(auth: AuthClient, token: TraktToken, p
     };
     root.traktTokens = tokens;
     root.traktLinked = true;
+  });
+}
+
+export async function pullCloudSimklToken(auth: AuthClient, profileId?: string | null): Promise<SimklToken | null> {
+  if (!profileId) return null;
+  const root = await pullRawPayload(auth);
+  const directTokens = objectRecord<{ access_token?: string; accessToken?: string }>(root.simklTokens);
+  const selections = objectRecord<{ provider?: string; simklAccessToken?: string }>(root.mdbListSyncByProfile);
+  const direct = directTokens[profileId];
+  const selection = selections[profileId];
+  const accessToken = direct?.access_token ?? direct?.accessToken ?? selection?.simklAccessToken;
+  return accessToken ? { access_token: accessToken } : null;
+}
+
+export async function saveCloudSimklToken(
+  auth: AuthClient,
+  token: SimklToken | null,
+  profileId?: string | null
+) {
+  if (!profileId) return;
+  await mutateCloudPayload(auth, (root) => {
+    const directTokens = objectRecord<unknown>(root.simklTokens) ?? {};
+    const selections = objectRecord<Record<string, unknown>>(root.mdbListSyncByProfile) ?? {};
+    const currentSelection = selections[profileId] ?? {};
+    if (token?.access_token) {
+      directTokens[profileId] = {
+        access_token: token.access_token,
+        accessToken: token.access_token
+      };
+      selections[profileId] = {
+        ...currentSelection,
+        provider: "SIMKL",
+        simklAccessToken: token.access_token
+      };
+    } else {
+      delete directTokens[profileId];
+      const { simklAccessToken: _removed, ...remaining } = currentSelection;
+      selections[profileId] = {
+        ...remaining,
+        provider: String(currentSelection.provider ?? "").toLowerCase() === "simkl" ? "NONE" : currentSelection.provider
+      };
+    }
+    root.simklTokens = directTokens;
+    root.mdbListSyncByProfile = selections;
   });
 }
 
@@ -1065,6 +1113,46 @@ export async function saveProgress(auth: AuthClient, entry: Omit<WatchHistoryEnt
       updated_at: new Date().toISOString()
     })
   });
+}
+
+export async function removeContinueWatchingProgress(
+  auth: AuthClient,
+  item: Pick<MediaItem, "id" | "mediaType" | "seasonNumber" | "episodeNumber">,
+  profileId?: string | null
+) {
+  if (!auth.session) return;
+  const matches = (candidate: AndroidContinueWatchingItem) => {
+    if (candidate.id !== item.id || String(candidate.mediaType ?? "").toLowerCase() !== item.mediaType) return false;
+    if (item.mediaType !== "tv") return true;
+    if (item.seasonNumber != null && candidate.season !== item.seasonNumber) return false;
+    if (item.episodeNumber != null && candidate.episode !== item.episodeNumber) return false;
+    return true;
+  };
+
+  if (canUseBackendSync(auth)) {
+    await mutateCloudPayload(auth, (root) => {
+      const targetProfileId = profileId ?? "default";
+      for (const key of ["localContinueWatchingByProfile", "continueWatchingByProfile"]) {
+        const byProfile = objectRecord<unknown>(root[key]);
+        byProfile[targetProfileId] = arrayValue<AndroidContinueWatchingItem>(byProfile[targetProfileId]).filter((candidate) => !matches(candidate));
+        root[key] = byProfile;
+      }
+      for (const key of ["localContinueWatching", "continueWatching"]) {
+        root[key] = arrayValue<AndroidContinueWatchingItem>(root[key]).filter((candidate) => !matches(candidate));
+      }
+    });
+    return;
+  }
+
+  const query = new URLSearchParams({
+    user_id: `eq.${auth.session.userId}`,
+    media_type: `eq.${item.mediaType}`,
+    show_tmdb_id: `eq.${item.id}`
+  });
+  query.set("profile_id", profileId ? `eq.${profileId}` : "is.null");
+  if (item.seasonNumber != null) query.set("season", `eq.${item.seasonNumber}`);
+  if (item.episodeNumber != null) query.set("episode", `eq.${item.episodeNumber}`);
+  await auth.supabase(`/rest/v1/watch_history?${query.toString()}`, { method: "DELETE" });
 }
 
 

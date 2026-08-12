@@ -74,7 +74,8 @@ class TraktRepository @Inject constructor(
     private val syncServiceProvider: Provider<TraktSyncService>,
     private val profileManager: ProfileManager,
     private val mdbListRepository: MdbListRepository,
-    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore
+    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore,
+    private val simklSyncService: com.arflix.tv.data.repository.simkl.SimklSyncService
 ) {
     private val gson = Gson()
     private val watchlistHttpClient by lazy { okHttpClient }
@@ -491,6 +492,22 @@ class TraktRepository @Inject constructor(
         return "Bearer $token"
     }
 
+    /**
+     * Fetches the Trakt username for the currently authenticated profile.
+     * Returns null gracefully if not authenticated or if the request fails — a
+     * failed username fetch must never break the auth or sync flow.
+     */
+    suspend fun fetchUsername(): String? = withContext(Dispatchers.IO) {
+        try {
+            val auth = getAuthHeader() ?: return@withContext null
+            traktApi.getMe(auth = auth, clientId = clientId).username
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private suspend fun hasStoredTraktTokenForCurrentProfile(): Boolean {
         ensureProfileCacheScope()
         val prefs = context.traktDataStore.data.first()
@@ -501,6 +518,7 @@ class TraktRepository @Inject constructor(
 
     private suspend fun getAllWatchedMovies(auth: String): List<TraktWatchedMovie> {
         val all = mutableListOf<TraktWatchedMovie>()
+        val seen = LinkedHashSet<String>()
         var page = 1
         val limit = 250
 
@@ -512,9 +530,7 @@ class TraktRepository @Inject constructor(
                 page = page,
                 limit = limit
             )
-            if (pageItems.isEmpty()) break
-            all.addAll(pageItems)
-            if (pageItems.size < limit) break
+            if (appendUniqueTraktPage(all, seen, pageItems, ::watchedMovieIdentity) == 0) break
             page++
         }
 
@@ -523,6 +539,7 @@ class TraktRepository @Inject constructor(
 
     private suspend fun getAllWatchedShows(auth: String): List<TraktWatchedShow> {
         val all = mutableListOf<TraktWatchedShow>()
+        val seen = LinkedHashSet<String>()
         var page = 1
         val limit = 250
 
@@ -535,9 +552,7 @@ class TraktRepository @Inject constructor(
                 limit = limit,
                 extended = "progress"
             )
-            if (pageItems.isEmpty()) break
-            all.addAll(pageItems)
-            if (pageItems.size < limit) break
+            if (appendUniqueTraktPage(all, seen, pageItems, ::watchedShowIdentity) == 0) break
             page++
         }
 
@@ -609,7 +624,11 @@ class TraktRepository @Inject constructor(
 
         // Then sync to backend in background
         try {
-            syncService.markMovieWatched(tmdbId)
+            if (isSimklActive()) {
+                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
+            } else {
+                syncService.markMovieWatched(tmdbId)
+            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -628,7 +647,11 @@ class TraktRepository @Inject constructor(
 
         // Then sync to backend in background
         try {
-            syncService.markMovieUnwatched(tmdbId)
+            if (isSimklActive()) {
+                simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
+            } else {
+                syncService.markMovieUnwatched(tmdbId)
+            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -649,8 +672,12 @@ class TraktRepository @Inject constructor(
 
         // Then sync to backend in background (don't block UI on network)
         try {
-            val traktShowId = tmdbToTraktIdCache[showTmdbId]
-            syncService.markEpisodeWatched(showTmdbId, season, episode, traktShowId)
+            if (isSimklActive()) {
+                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
+            } else {
+                val traktShowId = tmdbToTraktIdCache[showTmdbId]
+                syncService.markEpisodeWatched(showTmdbId, season, episode, traktShowId)
+            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -692,7 +719,11 @@ class TraktRepository @Inject constructor(
         // Then sync to backend in background (skip if batch Trakt removal already handled it)
         if (syncTrakt) {
             try {
-                syncService.markEpisodeUnwatched(showTmdbId, season, episode)
+                if (isSimklActive()) {
+                    simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
+                } else {
+                    syncService.markEpisodeUnwatched(showTmdbId, season, episode)
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -1245,6 +1276,12 @@ class TraktRepository @Inject constructor(
     /** True when the active profile syncs Continue Watching from MDBList (not Trakt). */
     suspend fun isMdbListActive(): Boolean =
         syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST
+
+    suspend fun isSimklActive(): Boolean =
+        syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.SIMKL
+
+    suspend fun isAlternativeRemoteActive(): Boolean =
+        isMdbListActive() || isSimklActive()
 
     suspend fun getContinueWatching(forceRefresh: Boolean = false): List<ContinueWatchingItem> = coroutineScope {
         ensureProfileCacheScope()
@@ -2725,8 +2762,7 @@ class TraktRepository @Inject constructor(
             return false to null
         }
         val watchlist = fetchAllWatchlistItems(auth)
-        val items = watchlist
-            .mapIndexedNotNull { index, item -> mapWatchlistItemFast(item, sourceOrder = index) }
+        val items = mapWatchlistItemsFastWithFallback(watchlist)
             .sortedWith(compareBy<MediaItem> { it.sourceOrder }.thenByDescending { it.addedAt })
         AppLogger.breadcrumb(
             tag = "Trakt",
@@ -2734,6 +2770,35 @@ class TraktRepository @Inject constructor(
             severity = if (watchlist.isNotEmpty() && items.isEmpty()) "warning" else "info"
         )
         return true to WatchlistSyncResult(items = items, rawCount = watchlist.size)
+    }
+
+    private suspend fun mapWatchlistItemsFastWithFallback(
+        watchlist: List<TraktWatchlistItem>
+    ): List<MediaItem> = coroutineScope {
+        val mapped = MutableList<MediaItem?>(watchlist.size) { null }
+        val unresolved = mutableListOf<Pair<Int, TraktWatchlistItem>>()
+
+        watchlist.forEachIndexed { index, item ->
+            val fast = mapWatchlistItemFast(item, sourceOrder = index)
+            if (fast != null) {
+                mapped[index] = fast
+            } else {
+                unresolved += index to item
+            }
+        }
+
+        if (unresolved.isNotEmpty()) {
+            val semaphore = Semaphore(4)
+            unresolved.map { (index, item) ->
+                async {
+                    semaphore.withPermit {
+                        index to hydrateWatchlistItem(item, sourceOrder = index)
+                    }
+                }
+            }.awaitAll().forEach { (index, item) -> mapped[index] = item }
+        }
+
+        mapped.filterNotNull()
     }
 
     private suspend fun getWatchlistFromTrakt(auth: String): List<MediaItem> {
@@ -2920,9 +2985,16 @@ class TraktRepository @Inject constructor(
             }
             val body = response.body?.string().orEmpty()
             val listType = TypeToken.getParameterized(List::class.java, TraktWatchlistItem::class.java).type
-            val items: List<TraktWatchlistItem> = runCatching {
-                gson.fromJson<List<TraktWatchlistItem>>(body, listType)
-            }.getOrNull().orEmpty()
+            val items: List<TraktWatchlistItem> = try {
+                gson.fromJson<List<TraktWatchlistItem>>(body, listType).orEmpty()
+            } catch (e: com.google.gson.JsonSyntaxException) {
+                com.arflix.tv.util.AppLogger.e("Trakt", "Failed to parse watchlist items: ${e.message}")
+                emptyList()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                com.arflix.tv.util.AppLogger.e("Trakt", "Unexpected error parsing watchlist items: ${e.message}")
+                emptyList()
+            }
             WatchlistPageResult(
                 items = items,
                 totalPages = response.header("X-Pagination-Page-Count")?.toIntOrNull(),
@@ -3106,10 +3178,18 @@ class TraktRepository @Inject constructor(
         val imdbId = movie.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
         val ids = buildList {
             imdbId?.let { id ->
-                runCatching {
+                try {
                     tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).movieResults
                         .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
-                }.getOrNull()?.let { addAll(it) }
+                        .let { addAll(it) }
+                } catch (e: retrofit2.HttpException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "HTTP error finding movie by ID: ${e.message}")
+                } catch (e: java.io.IOException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Network error finding movie by ID: ${e.message}")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Unexpected error finding movie by ID: ${e.message}")
+                }
             }
             movie.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
         }.distinct()
@@ -3153,19 +3233,35 @@ class TraktRepository @Inject constructor(
         val imdbId = show.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
         val ids = buildList {
             imdbId?.let { id ->
-                runCatching {
+                try {
                     tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).tvResults
                         .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
-                }.getOrNull()?.let { addAll(it) }
+                        .let { addAll(it) }
+                } catch (e: retrofit2.HttpException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "HTTP error finding show by ID: ${e.message}")
+                } catch (e: java.io.IOException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Network error finding show by ID: ${e.message}")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Unexpected error finding show by ID: ${e.message}")
+                }
             }
             show.ids.tvdb?.takeIf { it > 0 }?.let { tvdbId ->
-                runCatching {
+                try {
                     tmdbApi.findByExternalId(
                         tvdbId.toString(),
                         Constants.TMDB_API_KEY,
                         externalSource = "tvdb_id"
                     ).tvResults.mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
-                }.getOrNull()?.let { addAll(it) }
+                        .let { addAll(it) }
+                } catch (e: retrofit2.HttpException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "HTTP error finding show by TVDB ID: ${e.message}")
+                } catch (e: java.io.IOException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Network error finding show by TVDB ID: ${e.message}")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Unexpected error finding show by TVDB ID: ${e.message}")
+                }
             }
             show.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
         }.distinct()
@@ -3220,7 +3316,7 @@ class TraktRepository @Inject constructor(
         if (normalizedTitle.isBlank()) return null
         if (year == null && !allowTitleOnly) return null
 
-        return runCatching {
+        return try {
             val results = when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.searchMovies(
                     apiKey = Constants.TMDB_API_KEY,
@@ -3262,7 +3358,17 @@ class TraktRepository @Inject constructor(
                 .firstOrNull()
                 ?.id
                 ?.takeIf { it > 0 }
-        }.getOrNull()
+        } catch (e: retrofit2.HttpException) {
+            com.arflix.tv.util.AppLogger.e("Trakt", "HTTP error fuzzy matching TMDB ID: ${e.message}")
+            null
+        } catch (e: java.io.IOException) {
+            com.arflix.tv.util.AppLogger.e("Trakt", "Network error fuzzy matching TMDB ID: ${e.message}")
+            null
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            com.arflix.tv.util.AppLogger.e("Trakt", "Unexpected error fuzzy matching TMDB ID: ${e.message}")
+            null
+        }
     }
 
     private fun isWatchlistMatch(
@@ -4455,7 +4561,7 @@ private fun buildEpisodeKey(
 
 }
 
-private object TraktRepoRegexes {
+internal object TraktRepoRegexes {
     val DIACRITICS_REGEX = Regex("\\p{Mn}+")
     val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
     val HOURS_REGEX = Regex("""(\d+)\s*h""")

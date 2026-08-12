@@ -23,6 +23,7 @@ import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.data.repository.SkipIntroRepository
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.isHubCloudPageUrl
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
@@ -229,6 +230,11 @@ class PlayerViewModel @Inject constructor(
     // A late-arriving embedded preferred-language track overrides auto selections but never this.
     private var userPickedSubtitle: Boolean = false
     private var playbackSessionStartTime: Long = 0L
+
+    private fun isCurrentAnime(): Boolean =
+        currentMediaType == MediaType.TV &&
+            currentOriginalLanguage.equals("ja", ignoreCase = true) &&
+            currentGenreIds.contains(16)
 
     // AI subtitle settings (read once per video load)
     private var aiSubtitleEnabled = false
@@ -589,8 +595,45 @@ class PlayerViewModel @Inject constructor(
                 subtitlePreloadComplete = normalizeLanguage(preferredSub).isBlank()
             )
 
-            // If stream URL provided, use it directly (except magnet links, which require resolution).
-            if (providedStreamUrl != null) {
+            val providedIsMagnet = providedStreamUrl?.startsWith("magnet:", ignoreCase = true) == true
+            val providedStreamCandidate = providedStreamUrl
+                ?.takeUnless { providedIsMagnet }
+                ?.let { url ->
+                    StreamSource(
+                        source = currentPreferredSourceName ?: "Selected source",
+                        addonName = currentPreferredAddonId ?: "",
+                        addonId = currentPreferredAddonId.orEmpty(),
+                        quality = "",
+                        size = "",
+                        url = url
+                    )
+                }
+            val providedIsHubPage = providedStreamCandidate?.url
+                ?.let(::isHubCloudPageUrl) == true
+            val preResolvedHubStream = if (providedIsHubPage) {
+                _uiState.value = _uiState.value.copy(streamLoadPhase = "Preparing stream")
+                providedStreamCandidate?.let { stream ->
+                    runCatching { streamRepository.resolveStreamForPlayback(stream) }.getOrNull()
+                }
+            } else {
+                null
+            }
+            if (providedIsHubPage && preResolvedHubStream == null) {
+                AppLogger.breadcrumb(
+                    tag = "Sources",
+                    message = "provided_hubcloud_unresolved_falling_back_to_source_search",
+                    severity = "warning"
+                )
+            }
+            val effectiveProvidedStreamUrl = when {
+                preResolvedHubStream != null -> preResolvedHubStream.url
+                providedIsHubPage -> null
+                else -> providedStreamUrl
+            }
+
+            // If a playable stream URL was provided, use it directly. An unresolved HubCloud
+            // page deliberately falls through to normal source discovery instead of playing HTML.
+            if (effectiveProvidedStreamUrl != null) {
                 val resumeData = resolveResumeData(
                     mediaType = mediaType,
                     mediaId = mediaId,
@@ -598,29 +641,19 @@ class PlayerViewModel @Inject constructor(
                     episodeNumber = episodeNumber,
                     navigationStartPositionMs = startPositionMs
                 )
-                val isMagnet = providedStreamUrl.startsWith("magnet:", ignoreCase = true)
-                val providedStream = if (isMagnet) {
-                    null
-                } else {
-                    StreamSource(
-                        source = currentPreferredSourceName ?: "Selected source",
-                        addonName = currentPreferredAddonId ?: "",
-                        addonId = currentPreferredAddonId.orEmpty(),
-                        quality = "",
-                        size = "",
-                        url = providedStreamUrl
-                    )
-                }
+                val isMagnet = providedIsMagnet
+                val providedStream = preResolvedHubStream ?: providedStreamCandidate
                 // Show a status while the debrid/source link resolves. Without this the initial-play
                 // path sat 5-10s with no overlay text (selectedStreamUrl not set yet, so startupPhase
                 // is gated off), unlike the manual selectStream() path which already labels this step.
                 if (providedStream != null) {
                     _uiState.value = _uiState.value.copy(streamLoadPhase = "Preparing stream")
                 }
-                val resolvedProvidedStream = providedStream?.let { stream ->
+                val resolvedProvidedStream = preResolvedHubStream ?: providedStream?.let { stream ->
                     runCatching { streamRepository.resolveStreamForPlayback(stream) }.getOrNull() ?: stream
                 }
-                val resolvedProvidedUrl = resolvedProvidedStream?.url ?: if (isMagnet) null else providedStreamUrl
+                val resolvedProvidedUrl = resolvedProvidedStream?.url
+                    ?: if (isMagnet) null else effectiveProvidedStreamUrl
                 playbackDiag(
                     "providedStream resolved=${streamDiag(resolvedProvidedStream)} " +
                         "host=${hostFromUrl(resolvedProvidedUrl)}"
@@ -2268,7 +2301,7 @@ class PlayerViewModel @Inject constructor(
         streamSelectionJob = viewModelScope.launch {
             val selectionStartMs = System.currentTimeMillis()
             val requestedResumePosition = resumePositionMs?.coerceAtLeast(0L)
-            val selectedOriginal = stream
+            var selectedOriginal = stream
             playbackDiag("selectStream request=${streamDiag(stream)}")
             _uiState.value = _uiState.value.copy(
                 selectedStream = stream,
@@ -2288,7 +2321,29 @@ class PlayerViewModel @Inject constructor(
                     context = playbackDiagnosticContext("manual_stream_resolve_exception", stream)
                 )
             }
-            val resolvedStream = resolvedResult.getOrNull() ?: stream
+            val directResolvedStream = resolvedResult.getOrNull()
+            val selection = when {
+                directResolvedStream != null -> ReachableStreamSelection(stream, directResolvedStream)
+                isHubCloudPageUrl(stream.url.orEmpty()) -> findFirstResolvableAlternative(stream)
+                else -> ReachableStreamSelection(stream, stream)
+            }
+            if (selection == null) {
+                AppLogger.recordException(
+                    throwable = IllegalStateException("HubCloud source could not be resolved"),
+                    context = playbackDiagnosticContext("selected_hubcloud_unresolved", stream)
+                )
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    isLoadingStreams = false,
+                    sourceSearchActive = false,
+                    streamProgress = null,
+                    streamLoadPhase = null,
+                    error = "Failed to resolve stream. Try another source."
+                )
+                return@launch
+            }
+            selectedOriginal = selection.original
+            val resolvedStream = selection.resolved
             val resolveMs = System.currentTimeMillis() - selectionStartMs
             val url = resolvedStream.url
             if (url.isNullOrBlank()) {
@@ -2342,7 +2397,7 @@ class PlayerViewModel @Inject constructor(
             }
 
             // Merge stream's embedded subtitles with existing subtitles
-            val streamSubs = stream.subtitles
+            val streamSubs = selectedOriginal.subtitles
             if (streamSubs.isNotEmpty()) {
                 val existingSubs = _uiState.value.subtitles
                 val newSubs = streamSubs.filter { newSub ->
@@ -2434,41 +2489,37 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private suspend fun findFirstReachableStreamInAddon(
+    private suspend fun findFirstResolvableAlternative(
         selected: StreamSource,
-        maxAttempts: Int = 8
+        maxAttempts: Int = 4
     ): ReachableStreamSelection? {
         val streams = _uiState.value.streams
         if (streams.isEmpty()) return null
 
-        val selectedIndex = streams.indexOf(selected).takeIf { it >= 0 } ?: 0
-        val candidateIndexes = (0 until streams.size)
-            .map { offset -> (selectedIndex + offset) % streams.size }
+        val selectedIndex = streams.indexOf(selected)
+        val candidateIndexes = if (selectedIndex >= 0) {
+            (1 until streams.size).map { offset -> (selectedIndex + offset) % streams.size }
+        } else {
+            streams.indices.toList()
+        }
 
         val candidates = candidateIndexes
             .map { idx -> streams[idx] }
             .filter { candidate ->
-                candidate.addonId == selected.addonId &&
-                    !candidate.url.isNullOrBlank()
+                !candidate.url.isNullOrBlank()
             }
             .take(maxAttempts)
 
         for (candidate in candidates) {
             val resolved = runCatching {
                 streamRepository.resolveStreamForPlayback(candidate)
-            }.getOrNull() ?: candidate
+            }.getOrNull()
+            if (resolved != null) return ReachableStreamSelection(candidate, resolved)
 
-            val candidateUrl = resolved.url?.trim().orEmpty()
-            if (candidateUrl.isBlank()) continue
-            if (!(candidateUrl.startsWith("http://", true) || candidateUrl.startsWith("https://", true))) {
-                return ReachableStreamSelection(original = candidate, resolved = resolved)
-            }
-
-            val reachable = runCatching {
-                streamRepository.isHttpStreamReachable(resolved)
-            }.getOrDefault(false)
-            if (reachable) {
-                return ReachableStreamSelection(original = candidate, resolved = resolved)
+            // Preserve the existing raw-URL fallback for ordinary HTTP streams, but never
+            // hand another unresolved HubCloud HTML page to ExoPlayer.
+            if (!isHubCloudPageUrl(candidate.url.orEmpty())) {
+                return ReachableStreamSelection(candidate, candidate)
             }
         }
         return null
@@ -3042,7 +3093,7 @@ class PlayerViewModel @Inject constructor(
 
     /** Whitespace/tag-insensitive form for comparing renderer cue text against parsed file text. */
     private fun normalizeCueTextForCompare(text: String): String =
-        text.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+        text.replace(PlayerViewModelRegexes.HTML_TAG_REGEX, " ").replace(PlayerViewModelRegexes.MULTI_SPACE_REGEX, " ").trim()
 
     /**
      * A scored candidate. [offsetMs] is 0 for a normal (as-authored) match, or the uniform delay
@@ -3892,7 +3943,8 @@ class PlayerViewModel @Inject constructor(
                         tmdbId = currentMediaId,
                         progress = progressPercent.toFloat(),
                         season = currentSeason,
-                        episode = currentEpisode
+                        episode = currentEpisode,
+                        isAnime = isCurrentAnime()
                     )
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
@@ -3907,7 +3959,8 @@ class PlayerViewModel @Inject constructor(
                         tmdbId = currentMediaId,
                         progress = progressPercent.toFloat(),
                         season = currentSeason,
-                        episode = currentEpisode
+                        episode = currentEpisode,
+                        isAnime = isCurrentAnime()
                     )
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
@@ -3916,14 +3969,15 @@ class PlayerViewModel @Inject constructor(
                 }
                 lastScrobbleTime = currentTime
             } else if (!isLiveStreamOrSports && isPlaying && currentTime - lastScrobbleTime >= SCROBBLE_UPDATE_INTERVAL_MS) {
-                // Periodic scrobble update while playing (use scrobbleStart, not pause)
+                // Periodic heartbeat. SIMKL intentionally ignores this because it enforces a strict write lock.
                 try {
-                    remoteSyncManager.scrobbleStart(
+                    remoteSyncManager.scrobbleProgress(
                         mediaType = currentMediaType,
                         tmdbId = currentMediaId,
                         progress = progressPercent.toFloat(),
                         season = currentSeason,
-                        episode = currentEpisode
+                        episode = currentEpisode,
+                        isAnime = isCurrentAnime()
                     )
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
@@ -4018,7 +4072,8 @@ class PlayerViewModel @Inject constructor(
                         tmdbId = currentMediaId,
                         progress = progressPercent.toFloat(),
                         season = currentSeason,
-                        episode = currentEpisode
+                        episode = currentEpisode,
+                        isAnime = isCurrentAnime()
                     )
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
@@ -4530,4 +4585,10 @@ class PlayerViewModel @Inject constructor(
             "offcloud.com",
         )
     }
+}
+
+
+private object PlayerViewModelRegexes {
+    val HTML_TAG_REGEX = Regex("<[^>]*>")
+    val MULTI_SPACE_REGEX = Regex("\\s+")
 }
