@@ -45,8 +45,8 @@ class ApiProxyInterceptor : Interceptor {
                 chain.proceed(originalRequest)
             }
             "api.simkl.com" -> {
-                val proxyRequest = rewriteForSimklProxy(originalRequest) ?: originalRequest
-                chain.proceed(proxyRequest)
+                // Simkl OAuth and user endpoints must stay direct, same as Trakt and MDBList.
+                chain.proceed(originalRequest)
             }
             else -> {
                 // Pass through other requests unchanged

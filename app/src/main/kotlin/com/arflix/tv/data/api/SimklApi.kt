@@ -49,6 +49,12 @@ interface SimklApi {
 
     // ========== Sync & Watch History ==========
 
+    @GET("users/settings")
+    suspend fun getUserSettings(
+        @Header("Authorization") auth: String,
+        @Header("simkl-api-key") clientId: String
+    ): SimklUserSettingsResponse
+
     @GET("sync/activities")
     suspend fun getActivities(
         @Header("Authorization") auth: String,
@@ -56,10 +62,16 @@ interface SimklApi {
     ): SimklActivitiesResponse
 
     @GET("sync/all-items/{type}")
+    suspend fun getAllItemsByType(
+        @Header("Authorization") auth: String,
+        @Header("simkl-api-key") clientId: String,
+        @Path("type") type: String // "movies", "shows", "anime"
+    ): SimklAllItemsResponse
+
+    @GET("sync/all-items")
     suspend fun getAllItems(
         @Header("Authorization") auth: String,
         @Header("simkl-api-key") clientId: String,
-        @Path("type") type: String, // "movies", "shows", "anime"
         @Query("date_from") dateFrom: String? = null
     ): SimklAllItemsResponse
 
@@ -78,18 +90,18 @@ interface SimklApi {
         @Body body: SimklSyncHistoryBody
     ): Response<SimklSyncResponse>
 
-    @POST("sync/watchlist")
-    suspend fun addToWatchlist(
+    @POST("sync/add-to-list")
+    suspend fun addToList(
         @Header("Authorization") auth: String,
         @Header("simkl-api-key") clientId: String,
-        @Body body: SimklSyncWatchlistBody
+        @Body body: SimklAddToListBody
     ): Response<SimklSyncResponse>
 
-    @POST("sync/watchlist/remove")
-    suspend fun removeFromWatchlist(
+    @POST("sync/delete-from-list")
+    suspend fun deleteFromList(
         @Header("Authorization") auth: String,
         @Header("simkl-api-key") clientId: String,
-        @Body body: SimklSyncWatchlistBody
+        @Body body: SimklDeleteFromListBody
     ): Response<SimklSyncResponse>
 }
 
@@ -202,7 +214,22 @@ data class SimklSyncHistoryBody(
     @SerializedName("episodes") val episodes: List<SimklEpisodeRef>? = null
 )
 
-data class SimklSyncWatchlistBody(
+data class SimklAddToListMovie(
+    @SerializedName("to") val to: String = "plantowatch",
+    @SerializedName("ids") val ids: SimklIds
+)
+
+data class SimklAddToListShow(
+    @SerializedName("to") val to: String = "plantowatch",
+    @SerializedName("ids") val ids: SimklIds
+)
+
+data class SimklAddToListBody(
+    @SerializedName("movies") val movies: List<SimklAddToListMovie>? = null,
+    @SerializedName("shows") val shows: List<SimklAddToListShow>? = null
+)
+
+data class SimklDeleteFromListBody(
     @SerializedName("movies") val movies: List<SimklMovieRef>? = null,
     @SerializedName("shows") val shows: List<SimklShowRef>? = null
 )
@@ -218,3 +245,13 @@ data class SimklSyncCount(
     @SerializedName("shows") val shows: Int = 0,
     @SerializedName("episodes") val episodes: Int = 0
 )
+
+data class SimklUserSettingsResponse(
+    @SerializedName("user") val user: SimklUser? = null
+)
+
+data class SimklUser(
+    @SerializedName("name") val name: String? = null,
+    @SerializedName("username") val username: String? = null
+)
+

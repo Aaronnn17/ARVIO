@@ -3,18 +3,16 @@ package com.arflix.tv.data.repository.simkl
 import com.arflix.tv.data.api.SimklApi
 import com.arflix.tv.data.api.SimklPinPollResponse
 import com.arflix.tv.data.api.SimklPinResponse
-import com.arflix.tv.data.model.MediaType
-import com.arflix.tv.data.repository.sync.SyncProvider
 import com.arflix.tv.data.repository.sync.SyncProviderStore
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.ArgumentMatchers.anyString
-import org.mockito.Mockito.`when`
-import org.mockito.Mockito.mock
 
 class SimklIntegrationTest {
 
@@ -26,8 +24,8 @@ class SimklIntegrationTest {
 
     @Before
     fun setUp() {
-        simklApi = mock(SimklApi::class.java)
-        syncProviderStore = mock(SyncProviderStore::class.java)
+        simklApi = mockk(relaxed = true)
+        syncProviderStore = mockk(relaxed = true)
         authManager = SimklAuthManager(simklApi, syncProviderStore)
         scrobbler = SimklScrobbler(simklApi, authManager)
         syncService = SimklSyncService(simklApi, authManager)
@@ -40,7 +38,7 @@ class SimklIntegrationTest {
             verificationUrl = "https://simkl.com/pin",
             expiresIn = 600
         )
-        `when`(simklApi.getPinCode(anyString())).thenReturn(expected)
+        coEvery { simklApi.getPinCode(any()) } returns expected
 
         val result = authManager.startPinAuth()
         assertEquals("SIMKL-123", result.userCode)
@@ -53,16 +51,54 @@ class SimklIntegrationTest {
             result = "OK",
             accessToken = "token_abc123"
         )
-        `when`(simklApi.pollPinToken(anyString(), anyString())).thenReturn(pollRes)
+        coEvery { simklApi.pollPinToken(any(), any()) } returns pollRes
 
         val success = authManager.pollPinAuth("SIMKL-123")
         assertTrue(success)
+        coVerify { syncProviderStore.setSimklAccessToken("token_abc123") }
     }
 
     @Test
     fun testDisconnectClearsToken() = runBlocking {
         authManager.disconnect()
-        `when`(syncProviderStore.getSimklAccessToken()).thenReturn(null)
+        coEvery { syncProviderStore.getSimklAccessToken() } returns null
         assertFalse(authManager.isConnected())
+        coVerify { syncProviderStore.setSimklAccessToken(null) }
+    }
+
+    @Test
+    fun testAddToWatchlistCallsAddToList() = runBlocking {
+        coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
+        coEvery { simklApi.addToList(any(), any(), any()) } returns retrofit2.Response.success(
+            com.arflix.tv.data.api.SimklSyncResponse()
+        )
+
+        val success = syncService.addToWatchlist(com.arflix.tv.data.model.MediaType.MOVIE, 12345)
+        assertTrue(success)
+        coVerify { simklApi.addToList("Bearer token_123", any(), any()) }
+    }
+
+    @Test
+    fun testRemoveFromWatchlistCallsDeleteFromList() = runBlocking {
+        coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
+        coEvery { simklApi.deleteFromList(any(), any(), any()) } returns retrofit2.Response.success(
+            com.arflix.tv.data.api.SimklSyncResponse()
+        )
+
+        val success = syncService.removeFromWatchlist(com.arflix.tv.data.model.MediaType.MOVIE, 12345)
+        assertTrue(success)
+        coVerify { simklApi.deleteFromList("Bearer token_123", any(), any()) }
+    }
+
+    @Test
+    fun testMarkUnwatchedCallsRemoveFromHistory() = runBlocking {
+        coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
+        coEvery { simklApi.removeFromHistory(any(), any(), any()) } returns retrofit2.Response.success(
+            com.arflix.tv.data.api.SimklSyncResponse()
+        )
+
+        val success = syncService.markUnwatched(com.arflix.tv.data.model.MediaType.MOVIE, 12345)
+        assertTrue(success)
+        coVerify { simklApi.removeFromHistory("Bearer token_123", any(), any()) }
     }
 }

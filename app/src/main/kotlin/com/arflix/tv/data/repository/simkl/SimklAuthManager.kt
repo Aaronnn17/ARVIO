@@ -49,6 +49,18 @@ class SimklAuthManager @Inject constructor(
         return false
     }
 
+    suspend fun fetchUsername(): String? {
+        val token = getAccessToken() ?: return null
+        val authHeader = "Bearer $token"
+        val effectiveClientId = clientId.ifBlank { "simkl_proxy" }
+        return try {
+            val res = simklApi.getUserSettings(authHeader, effectiveClientId)
+            res.user?.name ?: res.user?.username
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     suspend fun disconnect() {
         syncProviderStore.setSimklAccessToken(null)
         if (syncProviderStore.getProvider() == SyncProvider.SIMKL) {
@@ -56,3 +68,4 @@ class SimklAuthManager @Inject constructor(
         }
     }
 }
+

@@ -30,10 +30,12 @@ class SimklRemoteProvider @Inject constructor(
 
     override suspend fun getWatchlist(): RemoteWatchlistResult {
         val connected = isConnected()
+        if (!connected) return RemoteWatchlistResult(connected = false, items = emptyList(), rawCount = 0)
+        val items = syncService.getWatchlistItems()
         return RemoteWatchlistResult(
-            connected = connected,
-            items = emptyList(),
-            rawCount = 0
+            connected = true,
+            items = items,
+            rawCount = items.size
         )
     }
 
