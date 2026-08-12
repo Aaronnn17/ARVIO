@@ -138,14 +138,13 @@ android {
             buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "false")
         }
 
-        // Staging build type: release-grade optimizations but signed with the
-        // debug keystore so the APK installs as an update over an existing
-        // debug build (preserves profile/IPTV/DataStore). NO applicationId
-        // suffix — it MUST resolve to the same package as debug/release.
+        // Beta build: release-grade optimizations in a separate package so it
+        // can be tested alongside the Play Store installation.
         create("staging") {
             initWith(getByName("release"))
-            versionNameSuffix = "-rc"
-            signingConfig = signingConfigs.getByName("debug")
+            applicationIdSuffix = ".beta"
+            versionNameSuffix = "-beta"
+            signingConfig = signingConfigs.getByName("release")
             isDebuggable = false
             isJniDebuggable = false
 
