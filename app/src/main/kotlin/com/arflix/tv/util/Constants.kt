@@ -16,7 +16,7 @@ object Constants {
     val NETLIFY_BACKEND_URL: String
         get() = BuildConfig.NETLIFY_BACKEND_URL.trim().trimEnd('/')
     val USE_NETLIFY_CLOUD_SYNC: Boolean
-        get() = BuildConfig.ENABLE_NETLIFY_CLOUD_SYNC && NETLIFY_BACKEND_URL.startsWith("https://")
+        get() = BuildConfig.ENABLE_NETLIFY_CLOUD_SYNC && (NETLIFY_BACKEND_URL.startsWith("https://") || NETLIFY_BACKEND_URL.startsWith("http://"))
 
     // Edge Function proxy URLs used by backend/proxy-capable flows.
     val TMDB_PROXY_URL: String get() = "$NETLIFY_BACKEND_URL/tmdb-proxy"
