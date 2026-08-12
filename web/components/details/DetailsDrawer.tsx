@@ -37,7 +37,7 @@ function needsDetailsHydration(item: MediaItem) {
 }
 
 function DetailsView({ item }: { item: MediaItem }) {
-  const { streams, selectedEpisode, activeProfile, addons: installedAddons, loadEpisodeStreams, openDetails, playStream, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally, openContextMenu, toggleWatched } = useApp();
+  const { streams, selectedEpisode, activeProfile, addons: installedAddons, loadEpisodeStreams, openDetails, playStream, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally, openContextMenu, toggleWatchlist, toggleWatched } = useApp();
   const [detailsItem, setDetailsItem] = useState<MediaItem>(item);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [reviews, setReviews] = useState<ReviewInfo[]>([]);
@@ -139,7 +139,7 @@ function DetailsView({ item }: { item: MediaItem }) {
 
   const addToWatchlist = async () => {
     if (!syncClient().isConnected) {
-      setToast("Connect Trakt or MDBList in Settings to use Watchlist.");
+      setToast("Connect Trakt, Simkl, or MDBList in Settings to use Watchlist.");
       return;
     }
     try {
@@ -153,7 +153,7 @@ function DetailsView({ item }: { item: MediaItem }) {
 
   const removeFromWatchlist = async () => {
     if (!syncClient().isConnected) {
-      setToast("Connect Trakt or MDBList in Settings to remove watchlist items.");
+      setToast("Connect Trakt, Simkl, or MDBList in Settings to remove watchlist items.");
       return;
     }
     try {
@@ -262,9 +262,9 @@ function DetailsView({ item }: { item: MediaItem }) {
               <Play size={18} fill="currentColor" /> {continueLabel}
             </button>
             {inWatchlist ? (
-              <button type="button" className="secondary text-button" onClick={() => void removeFromWatchlist()}><Trash2 size={18} /> Remove</button>
+              <button type="button" className="secondary text-button" onClick={() => void toggleWatchlist(displayItem)}><Trash2 size={18} /> Remove</button>
             ) : (
-              <button type="button" className="secondary text-button" onClick={() => void addToWatchlist()}><Bookmark size={18} /> Watchlist</button>
+              <button type="button" className="secondary text-button" onClick={() => void toggleWatchlist(displayItem)}><Bookmark size={18} /> Watchlist</button>
             )}
             <button type="button" className={`secondary text-button ${detailWatched ? "is-active" : ""}`} onClick={() => void markWatched()}><BadgeCheck size={18} /> {detailWatched ? "Watched" : "Mark Watched"}</button>
             {displayItem.trailerUrl && (
