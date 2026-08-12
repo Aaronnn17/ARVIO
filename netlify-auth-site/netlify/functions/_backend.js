@@ -74,14 +74,22 @@ function appAnonKey() {
   return process.env.APP_ANON_KEY || "";
 }
 
+function getHeader(headers = {}, name = "") {
+  const target = String(name || "").toLowerCase();
+  for (const [k, v] of Object.entries(headers || {})) {
+    if (String(k || "").toLowerCase() === target) return String(v || "");
+  }
+  return "";
+}
+
 function assertAppRequest(event) {
   if (process.env.IS_LOCAL_DEV === "true") return;
   const expected = appAnonKey();
   if (!expected) {
     throw new Error("APP_ANON_KEY is not configured");
   }
-  const apiKey = String(event.headers.apikey || event.headers.Apikey || "").trim();
-  const auth = event.headers.authorization || event.headers.Authorization || "";
+  const apiKey = getHeader(event.headers, "apikey").trim();
+  const auth = getHeader(event.headers, "authorization").trim();
   const bearer = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || "";
   if (apiKey === expected || bearer === expected) return;
   const error = new Error("Unauthorized");
@@ -1440,7 +1448,7 @@ async function handleSimklProxy(event) {
       "content-type": "application/json",
       "simkl-api-key": clientId
     };
-    const userToken = event.headers["x-user-token"] || event.headers["X-User-Token"];
+    const userToken = getHeader(event.headers, "x-user-token").trim();
     if (userToken) headers.authorization = `Bearer ${userToken}`;
 
     const response = await fetch(simklUrl, { method, headers, body: requestBody });
