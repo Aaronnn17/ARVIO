@@ -1418,38 +1418,63 @@ function requestIp(event) {
     "unknown";
 }
 
+async function consumeSimklRateLimit(store, keyHash, limit, now = Date.now()) {
+  const key = `ip/${keyHash}.json`;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const existing = await store.getWithMetadata(key, {
+      type: "json",
+      consistency: "strong"
+    });
+    const previousStart = Date.parse(existing?.data?.windowStartedAt || "");
+    const isCurrentWindow = Number.isFinite(previousStart) && now - previousStart < 60_000;
+    const windowStartedAt = isCurrentWindow ? previousStart : now;
+    const requestCount = isCurrentWindow
+      ? Math.max(0, Number(existing?.data?.requestCount || 0)) + 1
+      : 1;
+    const write = await store.setJSON(
+      key,
+      {
+        windowStartedAt: new Date(windowStartedAt).toISOString(),
+        requestCount
+      },
+      existing?.etag ? { onlyIfMatch: existing.etag } : { onlyIfNew: true }
+    );
+    if (!write.modified) continue;
+
+    const resetSeconds = Math.max(1, Math.ceil((windowStartedAt + 60_000 - now) / 1_000));
+    return {
+      exceeded: requestCount > limit,
+      remaining: Math.max(0, limit - requestCount),
+      resetSeconds
+    };
+  }
+
+  const error = new Error("Rate limit check conflicted; retry shortly");
+  error.statusCode = 429;
+  error.retryAfter = 1;
+  throw error;
+}
+
 async function enforceSimklRateLimit(event) {
   if (process.env.IS_LOCAL_DEV === "true") return { remaining: 999, resetSeconds: 60 };
   const configuredLimit = Number(process.env.SIMKL_PROXY_RATE_LIMIT || 100);
   const limit = Number.isFinite(configuredLimit)
     ? Math.max(10, Math.min(300, configuredLimit))
     : 100;
-  const keyHash = sha256(`simkl:${requestIp(event)}`);
-  const result = await getPool().query(
-    `INSERT INTO simkl_proxy_rate_limits (key_hash, window_started_at, request_count)
-     VALUES ($1, NOW(), 1)
-     ON CONFLICT (key_hash) DO UPDATE SET
-       window_started_at = CASE
-         WHEN simkl_proxy_rate_limits.window_started_at <= NOW() - INTERVAL '1 minute' THEN NOW()
-         ELSE simkl_proxy_rate_limits.window_started_at
-       END,
-       request_count = CASE
-         WHEN simkl_proxy_rate_limits.window_started_at <= NOW() - INTERVAL '1 minute' THEN 1
-         ELSE simkl_proxy_rate_limits.request_count + 1
-       END
-     RETURNING request_count,
-       GREATEST(1, CEIL(EXTRACT(EPOCH FROM (window_started_at + INTERVAL '1 minute' - NOW()))))::int AS reset_seconds`,
-    [keyHash]
+  connectLambda(event);
+  const store = getStore("simkl-proxy-rate-limits");
+  const rate = await consumeSimklRateLimit(
+    store,
+    sha256(`simkl:${requestIp(event)}`),
+    limit
   );
-  const count = Number(result.rows[0]?.request_count || 1);
-  const resetSeconds = Number(result.rows[0]?.reset_seconds || 60);
-  if (count > limit) {
+  if (rate.exceeded) {
     const error = new Error("Rate limit exceeded");
     error.statusCode = 429;
-    error.retryAfter = resetSeconds;
+    error.retryAfter = rate.resetSeconds;
     throw error;
   }
-  return { remaining: Math.max(0, limit - count), resetSeconds };
+  return { remaining: rate.remaining, resetSeconds: rate.resetSeconds };
 }
 
 async function handleSimklProxy(event) {
@@ -2469,6 +2494,7 @@ module.exports = {
     passwordSetupKeyForToken,
     passwordSetupPrefixForAccount,
     safeTokenEqual,
-    isAllowedSimklRequest
+    isAllowedSimklRequest,
+    consumeSimklRateLimit
   }
 };

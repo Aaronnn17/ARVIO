@@ -7,6 +7,32 @@ process.env.SIMKL_CLIENT_SECRET = "server-client-secret";
 
 const backend = require("../netlify/functions/_backend");
 
+class FakeBlobStore {
+  constructor() {
+    this.entry = null;
+    this.version = 0;
+  }
+
+  async getWithMetadata() {
+    if (!this.entry) return null;
+    return {
+      data: structuredClone(this.entry.data),
+      etag: this.entry.etag,
+      metadata: {}
+    };
+  }
+
+  async setJSON(_key, data, options) {
+    if (options.onlyIfNew && this.entry) return { modified: false };
+    if (options.onlyIfMatch && options.onlyIfMatch !== this.entry?.etag) {
+      return { modified: false };
+    }
+    this.version += 1;
+    this.entry = { data: structuredClone(data), etag: `v${this.version}` };
+    return { modified: true, etag: this.entry.etag };
+  }
+}
+
 test("Simkl proxy only allows ARVIO's exact API surface and methods", () => {
   const allowed = backend._test.isAllowedSimklRequest;
   assert.equal(allowed("/oauth/pin", "GET"), true);
@@ -85,4 +111,31 @@ test("Simkl proxy rejects a method declared differently from the HTTP request", 
 
   assert.equal(response.statusCode, 400);
   assert.deepEqual(JSON.parse(response.body), { error: "HTTP method mismatch" });
+});
+
+test("Simkl proxy rate limiting persists counts and resets after one minute", async () => {
+  const store = new FakeBlobStore();
+  const consume = backend._test.consumeSimklRateLimit;
+  const start = Date.parse("2026-08-12T12:00:00.000Z");
+
+  assert.deepEqual(await consume(store, "client", 2, start), {
+    exceeded: false,
+    remaining: 1,
+    resetSeconds: 60
+  });
+  assert.deepEqual(await consume(store, "client", 2, start + 1_000), {
+    exceeded: false,
+    remaining: 0,
+    resetSeconds: 59
+  });
+  assert.deepEqual(await consume(store, "client", 2, start + 2_000), {
+    exceeded: true,
+    remaining: 0,
+    resetSeconds: 58
+  });
+  assert.deepEqual(await consume(store, "client", 2, start + 60_000), {
+    exceeded: false,
+    remaining: 1,
+    resetSeconds: 60
+  });
 });
