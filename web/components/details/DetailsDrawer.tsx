@@ -14,7 +14,7 @@ import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefe
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { getImdbRating } from "@/lib/imdbRatings";
 import { sourcePickerScore } from "@/lib/sourceRank";
-import { authClient, useApp } from "@/lib/store";
+import { authClient, getPriorityConfig, useApp } from "@/lib/store";
 import { syncClient } from "@/lib/sync";
 import { getDetails, getLogoUrl, getPersonDetails, getReviews, getSeasonEpisodes } from "@/lib/tmdb";
 import type { EpisodeInfo, InstalledAddon, MediaItem, PersonCredit, PersonDetails, ReviewInfo, StreamSource, SubtitleTrack } from "@/lib/types";
@@ -46,6 +46,7 @@ function DetailsView({ item }: { item: MediaItem }) {
   const [sourcePickerVisible, setSourcePickerVisible] = useState(false);
   const [logo, setLogo] = useState<string | null>(null);
   const displayItem = detailsItem ?? item;
+  const priorityConfig = useMemo(() => getPriorityConfig(settings), [settings]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -67,7 +68,7 @@ function DetailsView({ item }: { item: MediaItem }) {
       : Boolean(details.cast?.length || details.related?.length || details.trailerUrl);
     void (async () => {
       for (let attempt = 0; attempt < 3 && active; attempt += 1) {
-        const details = await getDetails(item).catch(() => null);
+        const details = await getDetails(item, priorityConfig).catch(() => null);
         if (!active) return;
         if (details) setDetailsItem(details);
         if (details && looksHydrated(details)) break;
@@ -76,7 +77,7 @@ function DetailsView({ item }: { item: MediaItem }) {
       if (active) setDetailsLoading(false);
     })();
     return () => { active = false; };
-  }, [item.id, item.mediaType]);
+  }, [item, priorityConfig]);
 
   useEffect(() => {
     let active = true;
@@ -871,12 +872,18 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
   isWatched: (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => boolean;
   onPlayEpisode: (season: number, episode: number) => void;
 }) {
-  const { openContextMenu, setToast, toggleWatched } = useApp();
+  const { openContextMenu, setToast, settings, toggleWatched } = useApp();
   const seasons = item.seasons ?? [];
   const [season, setSeason] = useState(seasons[0]?.seasonNumber ?? 1);
   const [episodes, setEpisodes] = useState<EpisodeInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
+  const priorityConfig = useMemo(() => getPriorityConfig(settings), [settings]);
+  const metadataContext = useMemo(() => ({
+    tvdbId: item.tvdbId,
+    anilistId: item.anilistId,
+    isAnime: item.isAnime
+  }), [item.anilistId, item.isAnime, item.tvdbId]);
 
   useEffect(() => {
     if (seasons.length && !seasons.some((entry) => entry.seasonNumber === season)) {
@@ -887,16 +894,16 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
   useEffect(() => {
     let active = true;
     setLoading(true);
-    void getSeasonEpisodes(item.id, season)
+    void getSeasonEpisodes(item.id, season, "en-US", priorityConfig, metadataContext)
       .then((eps) => { if (active) setEpisodes(eps); })
       .catch(() => undefined)
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [item.id, season, retryNonce]);
+  }, [item.id, metadataContext, priorityConfig, retryNonce, season]);
 
   const updateSeasonWatched = async (seasonNum: number, watched: boolean) => {
     try {
-      const targetEpisodes = await getSeasonEpisodes(item.id, seasonNum);
+      const targetEpisodes = await getSeasonEpisodes(item.id, seasonNum, "en-US", priorityConfig, metadataContext);
       for (const ep of targetEpisodes) {
         if (isWatched(item, seasonNum, ep.episodeNumber) !== watched) {
           await toggleWatched(item, seasonNum, ep.episodeNumber);

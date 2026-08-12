@@ -109,7 +109,9 @@ const SECTIONS = [
   { id: "telegram", label: "Telegram", icon: Send },
   { id: "catalogs", label: "Catalogs", icon: ListVideo },
   { id: "addons", label: "Addons", icon: Sparkles },
+  { id: "metadata", label: "Metadata & Keys", icon: Sparkles },
 ] as const;
+
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -1125,10 +1127,76 @@ function SectionBody({ section }: { section: SectionId }) {
       return <AddonsSection />;
     case "vlc":
       return <VlcSection />;
+    case "metadata":
+      return <MetadataSection settings={settings} set={set} />;
     default:
       return null;
   }
 }
+
+function MetadataSection({ settings, set }: { settings: AppSettings; set: (patch: Partial<AppSettings>) => void }) {
+  const animeChain = (settings.metadataAnimeProviders || ["anilist", "tvdb", "tmdb"]).join(" → ").toUpperCase();
+  const tvChain = (settings.metadataTvProviders || ["tvdb", "tmdb"]).join(" → ").toUpperCase();
+  const movieChain = (settings.metadataMovieProviders || ["tmdb"]).join(" → ").toUpperCase();
+  const tvdbActive = Boolean(settings.customTvdbApiKey?.trim());
+
+  return (
+    <div className="settings-section">
+      <Panel title="Custom API Keys (Bring Your Own Key)">
+        <Row label="TMDB API Key" hint="Custom v3 API key for TMDB requests">
+          <input
+            type="password"
+            autoComplete="off"
+            className="settings-input"
+            placeholder="System Default Key"
+            value={settings.customTmdbApiKey || ""}
+            onChange={(e) => set({ customTmdbApiKey: e.target.value })}
+          />
+        </Row>
+
+        <Row
+          label="TVDB v4 API Key"
+          hint={tvdbActive ? "Active — TVDB enabled for metadata fallback" : "TVDB is disabled until a custom API key is provided"}
+        >
+          <input
+            type="password"
+            autoComplete="off"
+            className="settings-input"
+            placeholder="Enter Custom TVDB Key to Enable"
+            value={settings.customTvdbApiKey || ""}
+            onChange={(e) => set({ customTvdbApiKey: e.target.value })}
+          />
+        </Row>
+
+        <Row label="TVDB User PIN" hint="Required if using subscriber user key">
+          <input
+            type="password"
+            autoComplete="off"
+            className="settings-input"
+            placeholder="Optional User PIN"
+            value={settings.customTvdbUserPin || ""}
+            onChange={(e) => set({ customTvdbUserPin: e.target.value })}
+          />
+        </Row>
+      </Panel>
+
+      <Panel title="Metadata Provider Priorities">
+        <Row label="Anime Metadata Priority" hint={`Active chain: ${animeChain}`}>
+          <span className="accent-badge">{animeChain}</span>
+        </Row>
+
+        <Row label="TV Shows Metadata Priority" hint={`Active chain: ${tvChain}`}>
+          <span className="accent-badge">{tvChain}</span>
+        </Row>
+
+        <Row label="Movies Metadata Priority" hint={`Active chain: ${movieChain}`}>
+          <span className="accent-badge">{movieChain}</span>
+        </Row>
+      </Panel>
+    </div>
+  );
+}
+
 
 function safeArray<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];

@@ -15,6 +15,7 @@ import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels,
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, loadCatalog, searchMedia } from "./tmdb";
+import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
 import { mdblistClient } from "./mdblist";
 import { simklClient, type SimklPinCode } from "./simkl";
@@ -66,6 +67,17 @@ function localProfilesMatchAccount(): boolean {
   const email = currentAccountEmail();
   if (!email) return true; // signed out: local profiles are fine
   return owner === email;
+}
+
+export function getPriorityConfig(settings: AppSettings): ProviderPriorityConfig {
+  return {
+    movieProviders: (settings.metadataMovieProviders as MetadataProviderId[]) ?? ["tmdb"],
+    tvProviders: (settings.metadataTvProviders as MetadataProviderId[]) ?? ["tvdb", "tmdb"],
+    animeProviders: (settings.metadataAnimeProviders as MetadataProviderId[]) ?? ["anilist", "tvdb", "tmdb"],
+    customTmdbApiKey: settings.customTmdbApiKey,
+    customTvdbApiKey: settings.customTvdbApiKey,
+    customTvdbUserPin: settings.customTvdbUserPin
+  };
 }
 
 // Instant-paint caches for Continue Watching / Watchlist. The TTL is deliberately
@@ -183,8 +195,15 @@ export const defaultSettings: AppSettings = {
   favoriteGroupIds: [],
   hiddenGroupIds: [],
   groupOrder: [],
+  customTmdbApiKey: "",
+  customTvdbApiKey: "",
+  customTvdbUserPin: "",
+  metadataMovieProviders: ["tmdb"],
+  metadataTvProviders: ["tvdb", "tmdb"],
+  metadataAnimeProviders: ["anilist", "tvdb", "tmdb"],
   iptvSortOrder: "provider"
 };
+
 
 const emptyIptv: IptvSnapshot = {
   channels: [],
@@ -1294,7 +1313,8 @@ export function AppProvider({
     }
     setBusy("Opening details");
     setStreams([]);
-    const detailed = await getDetails(item).catch(() => item);
+    const priorityConfig = getPriorityConfig(settingsRef.current);
+    const detailed = await getDetails(item, priorityConfig).catch(() => item);
     const withResumeEpisode = {
       ...detailed,
       seasonNumber: item.seasonNumber ?? detailed.seasonNumber ?? null,
@@ -1334,6 +1354,7 @@ export function AppProvider({
     setSelectedEpisode({ season, episode });
     setStreams([]);
     setBusy("Finding sources");
+
     appendVodSources(item, season, episode);
     appendHomeServerSources(item, season, episode);
     appendTelegramSources(item, season, episode);
@@ -1485,7 +1506,8 @@ export function AppProvider({
   const playTrailer = useCallback(async (item: MediaItem) => {
     let url = item.trailerUrl ?? null;
     if (!url) {
-      const detailed = await getDetails(item).catch(() => item);
+      const priorityConfig = getPriorityConfig(settingsRef.current);
+      const detailed = await getDetails(item, priorityConfig).catch(() => item);
       url = detailed.trailerUrl ?? null;
       setSelected((current) => current ?? detailed);
     }
