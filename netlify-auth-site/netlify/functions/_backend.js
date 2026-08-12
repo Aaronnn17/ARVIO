@@ -1421,10 +1421,7 @@ function requestIp(event) {
 async function consumeSimklRateLimit(store, keyHash, limit, now = Date.now()) {
   const key = `ip/${keyHash}.json`;
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const existing = await store.getWithMetadata(key, {
-      type: "json",
-      consistency: "strong"
-    });
+    const existing = await store.getWithMetadata(key, { type: "json" });
     const previousStart = Date.parse(existing?.data?.windowStartedAt || "");
     const isCurrentWindow = Number.isFinite(previousStart) && now - previousStart < 60_000;
     const windowStartedAt = isCurrentWindow ? previousStart : now;
