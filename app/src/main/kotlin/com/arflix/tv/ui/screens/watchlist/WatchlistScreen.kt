@@ -416,6 +416,7 @@ fun WatchlistScreen(
             if (isLibraryMode) {
                 HomeLibraryContent(
                     state = libraryState,
+                    logoUrls = logoUrls,
                     libraries = providerLibraries,
                     selectedLibraryIndex = selectedLibraryIndex,
                     focusedLibraryIndex = if (focusZone == WatchlistFocusZone.LIBRARIES) libraryFocusIndex else -1,
@@ -437,6 +438,7 @@ fun WatchlistScreen(
                         activateFilter(index)
                     },
                     onItemFocused = { focusedItemIndex = it },
+                    onItemVisible = viewModel::ensureLogo,
                     onItemClick = { onNavigateToDetails(it.mediaType, it.id) },
                     onLoadMore = viewModel::loadMoreLibrary
                 )
@@ -528,6 +530,7 @@ private fun ProviderTabs(
 @Composable
 private fun ColumnScope.HomeLibraryContent(
     state: HomeLibraryUiState,
+    logoUrls: Map<String, String>,
     libraries: List<HomeServerCatalogCandidate>,
     selectedLibraryIndex: Int,
     focusedLibraryIndex: Int,
@@ -542,6 +545,7 @@ private fun ColumnScope.HomeLibraryContent(
     onLibrarySelect: (Int, HomeServerCatalogCandidate) -> Unit,
     onFilterSelect: (Int) -> Unit,
     onItemFocused: (Int) -> Unit,
+    onItemVisible: (MediaItem) -> Unit,
     onItemClick: (MediaItem) -> Unit,
     onLoadMore: () -> Unit
 ) {
@@ -621,10 +625,14 @@ private fun ColumnScope.HomeLibraryContent(
                     key = { _, item -> "${item.homeServerSourceRef}-${item.homeServerItemId}-${item.mediaType}-${item.id}" },
                     contentType = { _, item -> "library-${item.mediaType}" }
                 ) { index, item ->
+                    LaunchedEffect(watchlistLogoKey(item)) {
+                        onItemVisible(item)
+                    }
                     MediaCard(
                         item = item,
                         width = cardWidth,
                         isLandscape = isLandscape,
+                        logoImageUrl = logoUrls[watchlistLogoKey(item)],
                         showTitle = true,
                         titleMaxLines = 2,
                         isFocusedOverride = index == focusedItemIndex,
@@ -850,7 +858,7 @@ private fun WatchlistItemsSection(
                     item = item,
                     width = cardWidth,
                     isLandscape = isLandscape,
-                    logoImageUrl = logoUrls["${item.mediaType}_${item.id}"],
+                    logoImageUrl = logoUrls[watchlistLogoKey(item)],
                     showTitle = true,
                     titleMaxLines = 2,
                     isFocusedOverride = index == focusedItemIndex && focusedItemIndex >= 0,

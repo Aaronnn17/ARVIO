@@ -23,7 +23,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
@@ -58,6 +63,14 @@ data class HomeLibraryUiState(
     val error: String? = null
 )
 
+internal fun watchlistLogoKey(item: MediaItem): String {
+    return if (item.id > 0) {
+        "tmdb:${item.mediaType.name}:${item.id}"
+    } else {
+        "home:${item.homeServerSourceRef.orEmpty()}:${item.homeServerItemId.orEmpty()}:${item.mediaType.name}"
+    }
+}
+
 @HiltViewModel
 class WatchlistViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -83,6 +96,7 @@ class WatchlistViewModel @Inject constructor(
     private var initialLoadComplete = false
     private var enrichmentInFlight = false
     private var enrichmentRequested = false
+    private val logoRequestsInFlight = mutableSetOf<String>()
 
     private fun watchlistDiagnosticContext(
         phase: String,
@@ -140,18 +154,38 @@ class WatchlistViewModel @Inject constructor(
 
     private fun fetchLogos(items: List<MediaItem>) {
         viewModelScope.launch {
-            val currentLogos = _logoUrls.value.toMutableMap()
-            for (item in items.filterNot { it.isHomeServer }) {
-                val key = "${item.mediaType}_${item.id}"
-                if (key in currentLogos) continue
-                val url = runCatching { mediaRepository.getLogoUrl(item.mediaType, item.id) }.getOrNull()
-                if (url != null) {
-                    currentLogos[key] = url
-                    _logoUrls.value = currentLogos.toMap()
+            val pending = items
+                .distinctBy(::watchlistLogoKey)
+                .filter { item ->
+                    val key = watchlistLogoKey(item)
+                    key !in _logoUrls.value && logoRequestsInFlight.add(key)
                 }
+            if (pending.isEmpty()) return@launch
+
+            val limiter = Semaphore(5)
+            val resolved = try {
+                coroutineScope {
+                    pending.map { item ->
+                        async {
+                            limiter.withPermit {
+                                watchlistLogoKey(item) to runCatching {
+                                    mediaRepository.getLogoUrl(item)
+                                }.getOrNull()
+                            }
+                        }
+                    }.awaitAll()
+                }
+            } finally {
+                pending.forEach { logoRequestsInFlight.remove(watchlistLogoKey(it)) }
+            }
+            val found = resolved.mapNotNull { (key, url) -> url?.let { key to it } }.toMap()
+            if (found.isNotEmpty()) {
+                _logoUrls.value = _logoUrls.value + found
             }
         }
     }
+
+    fun ensureLogo(item: MediaItem) = fetchLogos(listOf(item))
 
     private fun observeHomeServers() {
         viewModelScope.launch {
@@ -288,6 +322,7 @@ class WatchlistViewModel @Inject constructor(
                     isLoadingMore = false,
                     error = null
                 )
+                fetchLogos(page.items.take(LIBRARY_LOGO_INITIAL_PREFETCH))
             }.onFailure { error ->
                 if (requestId != libraryRequestId) return@onFailure
                 _libraryState.value = _libraryState.value.copy(
@@ -325,6 +360,7 @@ class WatchlistViewModel @Inject constructor(
                 val next = current.copy(items = merged, hasMore = page.hasMore, isLoadingMore = false)
                 _libraryState.value = next
                 libraryCache[cacheKey] = merged to page.hasMore
+                fetchLogos(fresh.take(LIBRARY_LOGO_INITIAL_PREFETCH))
             }.onFailure {
                 if (requestId == libraryRequestId) {
                     _libraryState.value = _libraryState.value.copy(isLoadingMore = false)
@@ -625,6 +661,7 @@ class WatchlistViewModel @Inject constructor(
 
     companion object {
         private const val LIBRARY_PAGE_SIZE = 60
+        private const val LIBRARY_LOGO_INITIAL_PREFETCH = 12
         private val BROWSABLE_LIBRARY_TYPES = setOf(
             "",
             "movie",
