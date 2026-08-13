@@ -2,6 +2,8 @@ package com.arflix.tv.ui.screens.watchlist
 
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,10 +32,14 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Bookmark
 import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -51,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -110,9 +117,10 @@ private enum class WatchlistFocusZone {
 private data class LibraryFilter(
     val label: String,
     val mediaType: MediaType? = null,
-    val sort: HomeServerLibrarySort? = null,
+    val isSort: Boolean = false,
     val isSearch: Boolean = false,
-    val isRefresh: Boolean = false
+    val isRefresh: Boolean = false,
+    val iconOnly: Boolean = false
 )
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -139,7 +147,8 @@ fun WatchlistScreen(
     } else {
         if (isMobile) ((screenWidth - 62.dp) / 2).coerceIn(138.dp, 210.dp) else 210.dp
     }
-    val libraryColumns = if (isMobile) 2 else if (usePosterCards) 6 else 3
+    val libraryCardWidth = if (!isMobile && !usePosterCards) 160.dp else cardWidth
+    val libraryColumns = if (isMobile) 2 else if (usePosterCards) 6 else 4
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val rootFocusRequester = remember { FocusRequester() }
     val hasProfile = currentProfile != null
@@ -153,6 +162,8 @@ fun WatchlistScreen(
     var focusedItemIndex by remember { mutableIntStateOf(0) }
     var enterKeyDownTimeMs by remember { mutableLongStateOf(-1L) }
     var showSearchModal by remember { mutableStateOf(false) }
+    var showSortMenu by remember { mutableStateOf(false) }
+    var sortFocusIndex by remember { mutableIntStateOf(0) }
     val longPressThresholdMs = 500L
     val watchlistColumnState = rememberLazyListState()
     val libraryGridState = rememberLazyGridState()
@@ -170,11 +181,14 @@ fun WatchlistScreen(
         LibraryFilter(tr("All"), mediaType = null),
         LibraryFilter(tr("Movies"), mediaType = MediaType.MOVIE),
         LibraryFilter(tr("Series"), mediaType = MediaType.TV),
-        LibraryFilter(tr("Recently added"), sort = HomeServerLibrarySort.RECENTLY_ADDED),
-        LibraryFilter(tr("Highest rated"), sort = HomeServerLibrarySort.RATING),
-        LibraryFilter(tr("Title"), sort = HomeServerLibrarySort.TITLE),
-        LibraryFilter(tr("Search"), isSearch = true),
-        LibraryFilter(tr("Refresh"), isRefresh = true)
+        LibraryFilter(tr("Sort"), isSort = true),
+        LibraryFilter(tr("Search"), isSearch = true, iconOnly = true),
+        LibraryFilter(tr("Refresh"), isRefresh = true, iconOnly = true)
+    )
+    val sortOptions = listOf(
+        tr("Recently added") to HomeServerLibrarySort.RECENTLY_ADDED,
+        tr("Highest rated") to HomeServerLibrarySort.RATING,
+        tr("Title A-Z") to HomeServerLibrarySort.TITLE
     )
     val watchlistSections = listOf(
         "movies" to uiState.movies,
@@ -205,13 +219,20 @@ fun WatchlistScreen(
         when {
             filter.isSearch -> showSearchModal = true
             filter.isRefresh -> viewModel.refreshLibrary()
-            filter.sort != null -> viewModel.setLibrarySort(filter.sort)
+            filter.isSort -> {
+                sortFocusIndex = sortOptions.indexOfFirst { it.second == libraryState.sort }.coerceAtLeast(0)
+                showSortMenu = true
+            }
             else -> viewModel.setLibraryMediaType(filter.mediaType)
         }
         focusedItemIndex = 0
     }
 
-    BackHandler(enabled = !showSearchModal) {
+    BackHandler(enabled = showSortMenu) {
+        showSortMenu = false
+        focusZone = WatchlistFocusZone.FILTERS
+    }
+    BackHandler(enabled = !showSearchModal && !showSortMenu) {
         if (focusZone == WatchlistFocusZone.TOP_BAR) onBack() else focusZone = WatchlistFocusZone.TOP_BAR
     }
 
@@ -230,6 +251,15 @@ fun WatchlistScreen(
     LaunchedEffect(Unit) { rootFocusRequester.requestFocus() }
     LaunchedEffect(selectedProviderIndex) { providerFocusIndex = selectedProviderIndex }
     LaunchedEffect(selectedLibraryIndex) { libraryFocusIndex = selectedLibraryIndex }
+    LaunchedEffect(
+        libraryState.selectedSourceRef,
+        libraryState.mediaType,
+        libraryState.sort,
+        libraryState.searchQuery
+    ) {
+        focusedItemIndex = 0
+        if (isLibraryMode) libraryGridState.scrollToItem(0)
+    }
     LaunchedEffect(watchlistSections.size, uiState.movies.size, uiState.series.size) {
         if (watchlistSections.isNotEmpty() && focusedSectionIndex >= watchlistSections.size) {
             focusedSectionIndex = 0
@@ -269,6 +299,31 @@ fun WatchlistScreen(
                     Key.DirectionLeft -> if (isRtl) Key.DirectionRight else Key.DirectionLeft
                     Key.DirectionRight -> if (isRtl) Key.DirectionLeft else Key.DirectionRight
                     else -> event.key
+                }
+                if (showSortMenu) {
+                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent true
+                    return@onKeyEvent when (effectiveKey) {
+                        Key.Back, Key.Escape -> {
+                            showSortMenu = false
+                            focusZone = WatchlistFocusZone.FILTERS
+                            true
+                        }
+                        Key.DirectionUp, Key.DirectionLeft -> {
+                            sortFocusIndex = (sortFocusIndex - 1).coerceAtLeast(0)
+                            true
+                        }
+                        Key.DirectionDown, Key.DirectionRight -> {
+                            sortFocusIndex = (sortFocusIndex + 1).coerceAtMost(sortOptions.lastIndex)
+                            true
+                        }
+                        Key.Enter, Key.DirectionCenter -> {
+                            sortOptions.getOrNull(sortFocusIndex)?.second?.let(viewModel::setLibrarySort)
+                            showSortMenu = false
+                            focusZone = WatchlistFocusZone.FILTERS
+                            true
+                        }
+                        else -> true
+                    }
                 }
                 if (event.type == KeyEventType.KeyDown) {
                     when (effectiveKey) {
@@ -442,7 +497,7 @@ fun WatchlistScreen(
                     focusedItemIndex = if (focusZone == WatchlistFocusZone.CONTENT) focusedItemIndex else -1,
                     gridState = libraryGridState,
                     columns = libraryColumns,
-                    cardWidth = cardWidth,
+                    cardWidth = libraryCardWidth,
                     isLandscape = !usePosterCards,
                     isMobile = isMobile,
                     onLibrarySelect = { index, library ->
@@ -505,6 +560,25 @@ fun WatchlistScreen(
                 focusZone = WatchlistFocusZone.FILTERS
             }
         )
+
+        if (showSortMenu) {
+            SortSelectionOverlay(
+                options = sortOptions,
+                selectedSort = libraryState.sort,
+                focusedIndex = sortFocusIndex,
+                isMobile = isMobile,
+                onFocus = { sortFocusIndex = it },
+                onSelect = { sort ->
+                    viewModel.setLibrarySort(sort)
+                    showSortMenu = false
+                    focusZone = WatchlistFocusZone.FILTERS
+                },
+                onDismiss = {
+                    showSortMenu = false
+                    focusZone = WatchlistFocusZone.FILTERS
+                }
+            )
+        }
     }
 }
 
@@ -519,8 +593,8 @@ private fun ProviderTabs(
 ) {
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp)
     ) {
         itemsIndexed(providers, key = { _, provider -> provider?.name ?: "watchlist" }) { index, provider ->
             val label = when (provider) {
@@ -537,7 +611,8 @@ private fun ProviderTabs(
                 focused = index == focusedIndex,
                 accent = accent,
                 modifier = Modifier.clickable(enabled = isMobile) { onSelect(index) },
-                leading = if (provider == null) null else accent
+                leading = if (provider == null) null else accent,
+                compact = true
             )
         }
     }
@@ -642,11 +717,11 @@ private fun MobileLibrarySelector(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val selected = libraries.getOrNull(selectedIndex) ?: libraries.first()
-    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 5.dp)) {
+    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 3.dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(46.dp)
+                .height(48.dp)
                 .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
                 .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(6.dp))
                 .clickable { expanded = true }
@@ -658,14 +733,22 @@ private fun MobileLibrarySelector(
                     .size(8.dp)
                     .background(providerAccent(selected.serverKind), RoundedCornerShape(2.dp))
             )
-            Text(
-                text = selected.collectionName.ifBlank { selected.title },
-                style = ArflixTypography.body.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 10.dp).weight(1f)
-            )
+            Column(modifier = Modifier.padding(start = 10.dp).weight(1f)) {
+                Text(
+                    text = selected.collectionName.ifBlank { selected.title },
+                    style = ArflixTypography.body.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = selected.serverName,
+                    style = ArflixTypography.caption.copy(fontSize = 10.sp),
+                    color = Color.White.copy(alpha = 0.45f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Icon(Icons.Outlined.ArrowDropDown, contentDescription = tr("Choose library"), tint = Color.White.copy(alpha = 0.72f))
         }
         DropdownMenu(
@@ -709,15 +792,27 @@ private fun LibrarySidebar(
 ) {
     Column(
         modifier = Modifier
-            .width(196.dp)
+            .width(184.dp)
             .fillMaxHeight()
             .padding(start = 24.dp, bottom = 24.dp)
     ) {
+        val activeServerName = libraries.getOrNull(selectedIndex)?.serverName
+            ?: libraries.firstOrNull()?.serverName
+            ?: tr("Home server")
+        Text(
+            text = activeServerName,
+            style = ArflixTypography.body.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+            color = Color.White.copy(alpha = 0.92f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            lineHeight = 16.sp,
+            modifier = Modifier.padding(start = 10.dp, top = 6.dp, end = 8.dp)
+        )
         Text(
             text = tr("Libraries"),
-            style = ArflixTypography.caption.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
-            color = Color.White.copy(alpha = 0.46f),
-            modifier = Modifier.padding(start = 12.dp, top = 9.dp, bottom = 8.dp)
+            style = ArflixTypography.caption.copy(fontSize = 10.sp, fontWeight = FontWeight.Bold),
+            color = Color.White.copy(alpha = 0.4f),
+            modifier = Modifier.padding(start = 10.dp, top = 2.dp, bottom = 7.dp)
         )
         LazyColumn(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             itemsIndexed(libraries, key = { _, item -> item.sourceRef }) { index, library ->
@@ -729,33 +824,39 @@ private fun LibrarySidebar(
                         .height(44.dp)
                         .background(
                             when {
-                                focused -> Color.White
-                                selected -> Color.White.copy(alpha = 0.12f)
+                                selected -> Color.White.copy(alpha = if (focused) 0.14f else 0.1f)
+                                focused -> Color.White.copy(alpha = 0.06f)
                                 else -> Color.Transparent
                             },
                             RoundedCornerShape(6.dp)
                         )
                         .border(
-                            1.dp,
-                            if (selected && !focused) Color.White.copy(alpha = 0.26f) else Color.Transparent,
+                            if (focused) 2.dp else 1.dp,
+                            when {
+                                focused -> Color.White
+                                selected -> providerAccent(library.serverKind).copy(alpha = 0.56f)
+                                else -> Color.Transparent
+                            },
                             RoundedCornerShape(6.dp)
                         )
                         .clickable(enabled = false) { onSelect(index, library) }
                         .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .background(
-                                if (focused) Color.Black.copy(alpha = 0.7f) else providerAccent(library.serverKind),
-                                RoundedCornerShape(2.dp)
-                            )
+                    Icon(
+                        imageVector = if (library.collectionType.lowercase().let { "movie" in it || "film" in it }) {
+                            Icons.Outlined.Movie
+                        } else {
+                            Icons.Outlined.Tv
+                        },
+                        contentDescription = null,
+                        tint = providerAccent(library.serverKind),
+                        modifier = Modifier.size(17.dp)
                     )
                     Text(
                         text = library.collectionName.ifBlank { library.title },
                         style = ArflixTypography.body.copy(fontSize = 14.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium),
-                        color = if (focused) Color.Black else Color.White.copy(alpha = if (selected) 1f else 0.68f),
+                        color = Color.White.copy(alpha = if (selected || focused) 1f else 0.66f),
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         lineHeight = 16.sp,
@@ -775,32 +876,147 @@ private fun LibraryFilterRow(
     isMobile: Boolean,
     onFilterSelect: (Int) -> Unit
 ) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        itemsIndexed(filters, key = { index, item -> "$index-${item.label}" }) { index, filter ->
-            val selected = when {
-                filter.mediaType != null -> state.mediaType == filter.mediaType
-                index == 0 -> state.mediaType == null
-                filter.sort != null -> state.sort == filter.sort
-                filter.isSearch -> state.searchQuery.isNotBlank()
-                else -> false
+    if (isMobile) {
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 3.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            itemsIndexed(filters, key = { index, item -> "$index-${item.label}" }) { index, filter ->
+                LibraryFilterControl(state, filter, index, focusedFilterIndex, true) { onFilterSelect(index) }
             }
-            SelectablePill(
-                label = if (filter.isSearch && state.searchQuery.isNotBlank()) state.searchQuery else filter.label,
-                selected = selected,
-                focused = index == focusedFilterIndex,
-                accent = Color.White,
-                compact = true,
-                icon = when {
-                    filter.isSearch -> Icons.Outlined.Search
-                    filter.isRefresh -> Icons.Outlined.Refresh
-                    else -> null
-                },
-                modifier = Modifier.clickable(enabled = isMobile) { onFilterSelect(index) }
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 3.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            filters.forEachIndexed { index, filter ->
+                if (filter.isSearch) Spacer(modifier = Modifier.weight(1f))
+                LibraryFilterControl(state, filter, index, focusedFilterIndex, false) { onFilterSelect(index) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryFilterControl(
+    state: HomeLibraryUiState,
+    filter: LibraryFilter,
+    index: Int,
+    focusedFilterIndex: Int,
+    isMobile: Boolean,
+    onSelect: () -> Unit
+) {
+    val selected = when {
+        filter.mediaType != null -> state.mediaType == filter.mediaType
+        index == 0 -> state.mediaType == null
+        filter.isSearch -> state.searchQuery.isNotBlank()
+        else -> false
+    }
+    val label = when {
+        filter.isSort -> when (state.sort) {
+            HomeServerLibrarySort.RECENTLY_ADDED -> tr("Recently added")
+            HomeServerLibrarySort.RATING -> tr("Highest rated")
+            HomeServerLibrarySort.TITLE -> tr("Title A-Z")
+        }
+        filter.isSearch && state.searchQuery.isNotBlank() -> state.searchQuery
+        else -> filter.label
+    }
+    SelectablePill(
+        label = label,
+        selected = selected,
+        focused = index == focusedFilterIndex,
+        accent = Color.White,
+        compact = true,
+        iconOnly = filter.iconOnly,
+        icon = when {
+            filter.isSort -> Icons.AutoMirrored.Outlined.Sort
+            filter.isSearch -> Icons.Outlined.Search
+            filter.isRefresh -> Icons.Outlined.Refresh
+            else -> null
+        },
+        modifier = Modifier.clickable(enabled = isMobile) { onSelect() }
+    )
+}
+
+@Composable
+private fun SortSelectionOverlay(
+    options: List<Pair<String, HomeServerLibrarySort>>,
+    selectedSort: HomeServerLibrarySort,
+    focusedIndex: Int,
+    isMobile: Boolean,
+    onFocus: (Int) -> Unit,
+    onSelect: (HomeServerLibrarySort) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.62f))
+            .clickable(enabled = isMobile) { onDismiss() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .width(if (isMobile) 304.dp else 330.dp)
+                .background(Color(0xFF151719), RoundedCornerShape(8.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(8.dp))
+                .clickable(enabled = isMobile) { }
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            Text(
+                text = tr("Sort library"),
+                style = ArflixTypography.sectionTitle.copy(fontSize = 18.sp),
+                color = Color.White,
+                modifier = Modifier.padding(start = 10.dp, top = 4.dp, bottom = 7.dp)
             )
+            options.forEachIndexed { index, (label, sort) ->
+                val focused = index == focusedIndex
+                val selected = sort == selectedSort
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                        .background(
+                            when {
+                                selected -> Color.White.copy(alpha = if (focused) 0.15f else 0.1f)
+                                focused -> Color.White.copy(alpha = 0.06f)
+                                else -> Color.Transparent
+                            },
+                            RoundedCornerShape(6.dp)
+                        )
+                        .border(
+                            if (focused) 2.dp else 1.dp,
+                            if (focused) Color.White else Color.Transparent,
+                            RoundedCornerShape(6.dp)
+                        )
+                        .clickable(enabled = isMobile) {
+                            onFocus(index)
+                            onSelect(sort)
+                        }
+                        .padding(horizontal = 13.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = label,
+                        style = ArflixTypography.body.copy(fontSize = 14.sp),
+                        color = Color.White.copy(alpha = if (focused || selected) 1f else 0.7f),
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (selected) {
+                        Icon(
+                            imageVector = Icons.Outlined.Check,
+                            contentDescription = tr("Selected"),
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -831,47 +1047,66 @@ private fun ColumnScope.LibraryResults(
             subtitle = if (state.searchQuery.isBlank()) tr("Choose another library") else tr("Try a different search")
         )
         else -> {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(columns),
-                state = gridState,
+            val contentAlpha by animateFloatAsState(
+                targetValue = if (state.isLoading) 0.56f else 1f,
+                animationSpec = tween(durationMillis = 140),
+                label = "library-content-alpha"
+            )
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(horizontal = 24.dp),
-                contentPadding = PaddingValues(top = 9.dp, bottom = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
-                userScrollEnabled = isMobile
             ) {
-                gridItemsIndexed(
-                    items = state.items,
-                    key = { _, item -> "${item.homeServerSourceRef}-${item.homeServerItemId}-${item.mediaType}-${item.id}" },
-                    contentType = { _, item -> "library-${item.mediaType}" }
-                ) { index, item ->
-                    LaunchedEffect(watchlistLogoKey(item)) {
-                        onItemVisible(item)
-                    }
-                    MediaCard(
-                        item = item,
-                        width = cardWidth,
-                        isLandscape = isLandscape,
-                        logoImageUrl = logoUrls[watchlistLogoKey(item)],
-                        showTitle = true,
-                        titleMaxLines = 2,
-                        isFocusedOverride = index == focusedItemIndex,
-                        enableSystemFocus = false,
-                        onFocused = { onItemFocused(index) },
-                        onClick = { onItemClick(item) }
-                    )
-                }
-                if (state.isLoadingMore) {
-                    item(key = "library-loading-more", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            LoadingIndicator(color = Pink, size = 34.dp)
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(columns),
+                    state = gridState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = contentAlpha }
+                        .padding(horizontal = 24.dp),
+                    contentPadding = PaddingValues(top = 6.dp, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(15.dp),
+                    userScrollEnabled = isMobile && !state.isLoading
+                ) {
+                    gridItemsIndexed(
+                        items = state.items,
+                        key = { _, item -> "${item.homeServerSourceRef}-${item.homeServerItemId}-${item.mediaType}-${item.id}" },
+                        contentType = { _, item -> "library-${item.mediaType}" }
+                    ) { index, item ->
+                        LaunchedEffect(watchlistLogoKey(item)) {
+                            onItemVisible(item)
                         }
+                        MediaCard(
+                            item = item,
+                            width = cardWidth,
+                            isLandscape = isLandscape,
+                            logoImageUrl = logoUrls[watchlistLogoKey(item)],
+                            showTitle = true,
+                            titleMaxLines = 2,
+                            isFocusedOverride = index == focusedItemIndex,
+                            enableSystemFocus = false,
+                            onFocused = { onItemFocused(index) },
+                            onClick = { onItemClick(item) }
+                        )
+                    }
+                    if (state.isLoadingMore) {
+                        item(key = "library-loading-more", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                LoadingIndicator(color = Pink, size = 34.dp)
+                            }
+                        }
+                    }
+                }
+                if (state.isLoading) {
+                    Box(
+                        modifier = Modifier.align(Alignment.TopEnd).padding(top = 12.dp, end = 34.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        LoadingIndicator(color = Color.White, size = 25.dp)
                     }
                 }
             }
@@ -965,29 +1200,39 @@ private fun SelectablePill(
     modifier: Modifier = Modifier,
     leading: Color? = null,
     compact: Boolean = false,
-    icon: androidx.compose.ui.graphics.vector.ImageVector? = null
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    iconOnly: Boolean = false
 ) {
     val shape = RoundedCornerShape(6.dp)
+    val scale by animateFloatAsState(
+        targetValue = if (focused) 1.018f else 1f,
+        animationSpec = tween(durationMillis = 110),
+        label = "pill-focus-scale"
+    )
     val background = when {
-        focused -> Color.White
-        selected -> Color.White.copy(alpha = 0.14f)
+        selected -> Color.White.copy(alpha = if (focused) 0.16f else 0.11f)
+        focused -> Color.White.copy(alpha = 0.065f)
         else -> Color.White.copy(alpha = 0.045f)
     }
-    val foreground = if (focused) Color.Black else if (selected) Color.White else Color.White.copy(alpha = 0.66f)
+    val foreground = if (selected || focused) Color.White else Color.White.copy(alpha = 0.66f)
     Row(
         modifier = modifier
             .height(if (compact) 34.dp else 40.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .background(background, shape)
             .border(
-                width = if (focused || selected) 1.dp else 0.5.dp,
+                width = if (focused) 2.dp else if (selected) 1.dp else 0.5.dp,
                 color = when {
                     focused -> Color.White
-                    selected -> accent.copy(alpha = 0.8f)
+                    selected -> accent.copy(alpha = 0.62f)
                     else -> Color.White.copy(alpha = 0.08f)
                 },
                 shape = shape
             )
-            .padding(horizontal = if (compact) 13.dp else 16.dp),
+            .padding(horizontal = if (iconOnly) 9.dp else if (compact) 12.dp else 15.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -995,16 +1240,18 @@ private fun SelectablePill(
             Box(modifier = Modifier.size(7.dp).background(leading, RoundedCornerShape(2.dp)))
         }
         if (icon != null) {
-            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(16.dp))
+            Icon(icon, contentDescription = if (iconOnly) label else null, tint = foreground, modifier = Modifier.size(16.dp))
         }
-        Text(
-            text = label,
-            color = foreground,
-            fontSize = if (compact) 13.sp else 14.sp,
-            fontWeight = if (selected || focused) FontWeight.SemiBold else FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        if (!iconOnly) {
+            Text(
+                text = label,
+                color = foreground,
+                fontSize = if (compact) 13.sp else 14.sp,
+                fontWeight = if (selected || focused) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 

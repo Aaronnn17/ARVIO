@@ -243,7 +243,6 @@ class WatchlistViewModel @Inject constructor(
         _libraryState.value = current.copy(
             selectedProvider = provider,
             selectedSourceRef = firstLibrary?.sourceRef,
-            items = emptyList(),
             error = null
         )
         if (firstLibrary != null) loadLibraryFirstPage()
@@ -251,19 +250,19 @@ class WatchlistViewModel @Inject constructor(
 
     fun selectLibrary(sourceRef: String) {
         if (_libraryState.value.selectedSourceRef == sourceRef) return
-        _libraryState.value = _libraryState.value.copy(selectedSourceRef = sourceRef, items = emptyList(), error = null)
+        _libraryState.value = _libraryState.value.copy(selectedSourceRef = sourceRef, error = null)
         loadLibraryFirstPage()
     }
 
     fun setLibrarySort(sort: HomeServerLibrarySort) {
         if (_libraryState.value.sort == sort) return
-        _libraryState.value = _libraryState.value.copy(sort = sort, items = emptyList())
+        _libraryState.value = _libraryState.value.copy(sort = sort, error = null)
         loadLibraryFirstPage()
     }
 
     fun setLibraryMediaType(mediaType: com.arflix.tv.data.model.MediaType?) {
         if (_libraryState.value.mediaType == mediaType) return
-        _libraryState.value = _libraryState.value.copy(mediaType = mediaType, items = emptyList())
+        _libraryState.value = _libraryState.value.copy(mediaType = mediaType, error = null)
         loadLibraryFirstPage()
     }
 
@@ -275,7 +274,6 @@ class WatchlistViewModel @Inject constructor(
         librarySearchJob?.cancel()
         librarySearchJob = viewModelScope.launch {
             delay(300)
-            _libraryState.value = _libraryState.value.copy(items = emptyList())
             loadLibraryFirstPage()
         }
     }
@@ -297,7 +295,7 @@ class WatchlistViewModel @Inject constructor(
         if (cached != null && !force) {
             _libraryState.value = snapshot.copy(items = cached.first, hasMore = cached.second, isLoading = false, error = null)
         } else {
-            _libraryState.value = snapshot.copy(items = emptyList(), isLoading = true, isLoadingMore = false, error = null)
+            _libraryState.value = snapshot.copy(isLoading = true, isLoadingMore = false, error = null)
         }
         val requestId = ++libraryRequestId
         libraryLoadJob?.cancel()
@@ -326,6 +324,7 @@ class WatchlistViewModel @Inject constructor(
             }.onFailure { error ->
                 if (requestId != libraryRequestId) return@onFailure
                 _libraryState.value = _libraryState.value.copy(
+                    items = if (cached == null) emptyList() else _libraryState.value.items,
                     isLoading = false,
                     isLoadingMore = false,
                     error = if (cached == null) error.message ?: context.getString(R.string.homeserver_connection_failed) else null

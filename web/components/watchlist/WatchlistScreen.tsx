@@ -1,6 +1,6 @@
 "use client";
 
-import { Bookmark, LoaderCircle, RefreshCw, Search, Server } from "lucide-react";
+import { Bookmark, Film, LoaderCircle, RefreshCw, Search, Server, Tv } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MediaCard } from "@/components/media/MediaCard";
 import type { HomeServerLibraryOption, HomeServerLibraryPage, HomeServerLibrarySort } from "@/lib/homeserver";
@@ -182,6 +182,7 @@ export function WatchlistScreen() {
   }, [filter, libraryPage.items, sort, tab, watchlistList]);
 
   const activeLibrary = libraries.find((library) => library.value === selectedLibrary);
+  const activeServerName = activeLibrary?.serverName ?? visibleLibraries[0]?.serverName ?? "Home server";
   const heading = tab === "watchlist" ? "Watchlist" : `${PROVIDER_LABELS[tab]} Library`;
   const eyebrow = tab === "watchlist"
     ? traktConnected ? "Synced with Trakt" : simklConnected ? "Synced with Simkl" : mdblistConnected ? "Synced with MDBList" : "Saved across your ARVIO devices"
@@ -209,12 +210,15 @@ export function WatchlistScreen() {
       <div className={`library-workspace ${tab !== "watchlist" && visibleLibraries.length ? "has-library-sidebar" : ""}`}>
         {tab !== "watchlist" && visibleLibraries.length > 0 && (
           <aside className="library-sidebar" aria-label={`${PROVIDER_LABELS[tab]} libraries`}>
+            <strong className="library-sidebar-server">{activeServerName}</strong>
             <span className="library-sidebar-label">Libraries</span>
             <div role="tablist">
               {visibleLibraries.map((library) => (
                 <button key={library.value} type="button" role="tab" aria-selected={selectedLibrary === library.value}
                   className={selectedLibrary === library.value ? "is-active" : ""} onClick={() => setSelectedLibrary(library.value)}>
-                  <span className={`library-provider-mark is-${library.serverType}`} aria-hidden="true" />
+                  {library.mediaType === "movie"
+                    ? <Film className={`library-type-icon is-${library.serverType}`} size={17} aria-hidden="true" />
+                    : <Tv className={`library-type-icon is-${library.serverType}`} size={17} aria-hidden="true" />}
                   <span>{library.libraryName}</span>
                   {visibleLibraries.filter((item) => item.libraryName === library.libraryName).length > 1 && <small>{library.serverName}</small>}
                 </button>
@@ -222,10 +226,10 @@ export function WatchlistScreen() {
             </div>
           </aside>
         )}
-        <div className="library-main">
+        <div className={`library-main ${loading && items.length > 0 ? "is-refreshing" : ""}`}>
           {tab !== "watchlist" && visibleLibraries.length > 0 && (
             <label className="library-mobile-select">
-              <Server size={16} />
+              {activeLibrary?.mediaType === "movie" ? <Film size={16} /> : <Tv size={16} />}
               <select value={selectedLibrary} onChange={(event) => setSelectedLibrary(event.target.value)} aria-label="Choose library">
                 {visibleLibraries.map((library) => (
                   <option key={library.value} value={library.value}>
@@ -244,12 +248,6 @@ export function WatchlistScreen() {
             {customLists.map((list) => <option key={list.id} value={`list:${list.id}`}>{list.name}</option>)}
           </select>
         )}
-        {tab !== "watchlist" && (
-          <label className="library-search">
-            <Search size={17} />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${PROVIDER_LABELS[tab]}`} />
-          </label>
-        )}
         <div className="watchlist-pills" role="group" aria-label="Filter titles">
           {([["all", "All"], ["movie", "Movies"], ["tv", "Series"]] as const).map(([value, label]) => (
             <button key={value} type="button" className={`watchlist-pill ${filter === value ? "is-active" : ""}`} onClick={() => setFilter(value)}>{label}</button>
@@ -260,6 +258,12 @@ export function WatchlistScreen() {
           <option value="rating">Highest rated</option>
           <option value="title">Title A-Z</option>
         </select>
+        {tab !== "watchlist" && (
+          <label className="library-search">
+            <Search size={17} />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${PROVIDER_LABELS[tab]}`} />
+          </label>
+        )}
         {tab !== "watchlist" && (
           <button type="button" className="library-refresh" title="Refresh library" aria-label="Refresh library" onClick={() => void loadLibrary(true)} disabled={loading}>
             <RefreshCw size={17} />
@@ -278,6 +282,7 @@ export function WatchlistScreen() {
               <div className="grid-results library-grid">
                 {items.map((item) => <MediaCard key={itemKey(item)} item={item} onOpen={openDetails} posterMode={posterMode} />)}
               </div>
+              {loading && items.length > 0 && <div className="library-refreshing-indicator" aria-label="Updating library"><LoaderCircle size={24} /></div>}
               {tab !== "watchlist" && <div ref={loadMoreRef} className="library-load-more">{loadingMore && <LoaderCircle size={26} />}</div>}
             </>
           )}
