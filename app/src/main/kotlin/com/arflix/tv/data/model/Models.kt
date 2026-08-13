@@ -55,6 +55,12 @@ data class MediaItem(
     val timeRemainingLabel: String? = null,
     // Continue Watching: true only when progress represents current movie/episode playback.
     val showPlaybackProgress: Boolean = true,
+    // Native home-server identity. The TMDB id remains `id` when available;
+    // unmatched server items use a stable negative id and still render/open.
+    val isHomeServer: Boolean = false,
+    val homeServerItemId: String? = null,
+    val homeServerSourceRef: String? = null,
+    val homeServerProvider: String? = null,
 ) : Serializable
 
 enum class MediaType {

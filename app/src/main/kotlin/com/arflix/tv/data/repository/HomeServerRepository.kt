@@ -40,6 +40,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.text.Normalizer
+import java.time.Instant
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -98,7 +99,9 @@ data class HomeServerCatalogCandidate(
     val sourceRef: String,
     val serverName: String,
     val collectionName: String,
-    val collectionType: String
+    val collectionType: String,
+    val serverKind: HomeServerKind = HomeServerKind.UNKNOWN,
+    val connectionId: String = ""
 )
 
 data class HomeServerCatalogItem(
@@ -106,8 +109,21 @@ data class HomeServerCatalogItem(
     val title: String,
     val mediaType: MediaType,
     val year: Int?,
-    val providerIds: Map<String, String>
+    val providerIds: Map<String, String>,
+    val overview: String = "",
+    val rating: Double? = null,
+    val imageUrl: String = "",
+    val backdropUrl: String? = null,
+    val addedAt: Long = 0L,
+    val sourceRef: String = "",
+    val providerName: String = ""
 )
+
+enum class HomeServerLibrarySort {
+    RECENTLY_ADDED,
+    TITLE,
+    RATING
+}
 
 data class HomeServerCatalogPage(
     val items: List<HomeServerCatalogItem>,
@@ -579,7 +595,11 @@ class HomeServerRepository @Inject constructor(
     suspend fun loadCatalogItems(
         sourceRef: String?,
         offset: Int,
-        limit: Int
+        limit: Int,
+        sort: HomeServerLibrarySort = HomeServerLibrarySort.TITLE,
+        mediaType: MediaType? = null,
+        searchQuery: String = "",
+        propagateErrors: Boolean = false
     ): HomeServerCatalogPage = withContext(Dispatchers.IO) {
         if (limit <= 0 || offset < 0) return@withContext HomeServerCatalogPage(emptyList(), hasMore = false)
         val parsed = parseCatalogSourceRef(sourceRef)
@@ -588,9 +608,11 @@ class HomeServerRepository @Inject constructor(
         val connection = currentConnections()
             .firstOrNull { it.isUsable && catalogServerKey(it) == serverKey }
             ?: return@withContext HomeServerCatalogPage(emptyList(), hasMore = false)
-        runCatching {
-            loadConnectionCatalogItems(connection, collectionId, collectionType, offset, limit)
-        }.getOrDefault(HomeServerCatalogPage(emptyList(), hasMore = false))
+        val loader = {
+            loadConnectionCatalogItems(connection, collectionId, collectionType, offset, limit, sort, mediaType, searchQuery)
+        }
+        if (propagateErrors) loader() else runCatching(loader)
+            .getOrDefault(HomeServerCatalogPage(emptyList(), hasMore = false))
     }
 
     suspend fun resolveMovieSources(
@@ -1474,7 +1496,9 @@ class HomeServerRepository @Inject constructor(
             sourceRef = buildCatalogSourceRef(this, collection),
             serverName = connectionLabel,
             collectionName = collection.name,
-            collectionType = collection.type
+            collectionType = collection.type,
+            serverKind = serverKind,
+            connectionId = connectionId
         )
     }
 
@@ -1551,12 +1575,15 @@ class HomeServerRepository @Inject constructor(
         collectionId: String,
         collectionType: String,
         offset: Int,
-        limit: Int
+        limit: Int,
+        sort: HomeServerLibrarySort,
+        mediaType: MediaType?,
+        searchQuery: String
     ): HomeServerCatalogPage {
         return if (connection.serverKind == HomeServerKind.PLEX) {
-            loadPlexCatalogItems(connection, collectionId, collectionType, offset, limit)
+            loadPlexCatalogItems(connection, collectionId, collectionType, offset, limit, sort, mediaType, searchQuery)
         } else {
-            loadJellyfinCatalogItems(connection, collectionId, offset, limit)
+            loadJellyfinCatalogItems(connection, collectionId, offset, limit, sort, mediaType, searchQuery)
         }
     }
 
@@ -1565,7 +1592,10 @@ class HomeServerRepository @Inject constructor(
         collectionId: String,
         collectionType: String,
         offset: Int,
-        limit: Int
+        limit: Int,
+        sort: HomeServerLibrarySort,
+        mediaType: MediaType?,
+        searchQuery: String
     ): HomeServerCatalogPage {
         val collectionParts = collectionId.split(":")
         val path = if (collectionParts.firstOrNull() == "collection" && collectionParts.size >= 3) {
@@ -1573,10 +1603,14 @@ class HomeServerRepository @Inject constructor(
         } else {
             "/library/sections/$collectionId/all"
         }
-        val plexType = when (collectionType.lowercase(Locale.US)) {
+        val plexType = when (mediaType) {
+            MediaType.MOVIE -> "1"
+            MediaType.TV -> "2"
+            null -> when (collectionType.lowercase(Locale.US)) {
             "movie", "movies" -> "1"
             "show", "shows", "series", "tvshows" -> "2"
             else -> null
+            }
         }
         val response = getJson(
             buildUrl(
@@ -1585,6 +1619,12 @@ class HomeServerRepository @Inject constructor(
                 mapOf(
                     "type" to plexType,
                     "includeGuids" to "1",
+                    "sort" to when (sort) {
+                        HomeServerLibrarySort.RECENTLY_ADDED -> "addedAt:desc"
+                        HomeServerLibrarySort.RATING -> "rating:desc"
+                        HomeServerLibrarySort.TITLE -> "titleSort:asc"
+                    },
+                    "title" to searchQuery.trim().takeIf { it.isNotBlank() },
                     "X-Plex-Container-Start" to offset.toString(),
                     "X-Plex-Container-Size" to limit.toString()
                 )
@@ -1596,7 +1636,7 @@ class HomeServerRepository @Inject constructor(
             ?: container?.int("size")
             ?: response.metadataItems(connection.serverKind).size
         val items = response.metadataItems(connection.serverKind)
-            .mapNotNull { it.toCatalogItem() }
+            .mapNotNull { it.toCatalogItem(connection, buildCatalogSourceRef(connection, HomeServerCollection(collectionId, type = collectionType))) }
         return HomeServerCatalogPage(
             items = items,
             hasMore = offset + items.size < total
@@ -1607,7 +1647,10 @@ class HomeServerRepository @Inject constructor(
         connection: HomeServerConnection,
         collectionId: String,
         offset: Int,
-        limit: Int
+        limit: Int,
+        sort: HomeServerLibrarySort,
+        mediaType: MediaType?,
+        searchQuery: String
     ): HomeServerCatalogPage {
         val parentId = collectionId.removePrefix("collection:").trim()
         val response = getJson(
@@ -1617,10 +1660,19 @@ class HomeServerRepository @Inject constructor(
                 mapOf(
                     "ParentId" to parentId,
                     "Recursive" to "true",
-                    "IncludeItemTypes" to "Movie,Series",
-                    "Fields" to itemFields(),
-                    "SortBy" to "SortName",
-                    "SortOrder" to "Ascending",
+                    "IncludeItemTypes" to when (mediaType) {
+                        MediaType.MOVIE -> "Movie"
+                        MediaType.TV -> "Series"
+                        null -> "Movie,Series"
+                    },
+                    "Fields" to catalogItemFields(),
+                    "SortBy" to when (sort) {
+                        HomeServerLibrarySort.RECENTLY_ADDED -> "DateCreated"
+                        HomeServerLibrarySort.RATING -> "CommunityRating"
+                        HomeServerLibrarySort.TITLE -> "SortName"
+                    },
+                    "SortOrder" to if (sort == HomeServerLibrarySort.TITLE) "Ascending" else "Descending",
+                    "SearchTerm" to searchQuery.trim().takeIf { it.isNotBlank() },
                     "StartIndex" to offset.toString(),
                     "Limit" to limit.toString()
                 )
@@ -1628,7 +1680,9 @@ class HomeServerRepository @Inject constructor(
             connection
         )
         val total = response.int("TotalRecordCount") ?: response.items().size
-        val items = response.items().mapNotNull { it.toCatalogItem() }
+        val items = response.items().mapNotNull {
+            it.toCatalogItem(connection, buildCatalogSourceRef(connection, HomeServerCollection(collectionId, type = "mixed")))
+        }
         return HomeServerCatalogPage(
             items = items,
             hasMore = offset + items.size < total
@@ -2027,7 +2081,12 @@ class HomeServerRepository @Inject constructor(
             }
     }
 
-    private fun itemFields(): String = "ProviderIds,MediaSources,MediaStreams,Path,PremiereDate,ProductionYear,RunTimeTicks"
+    private fun itemFields(): String =
+        "ProviderIds,MediaSources,MediaStreams,Path,PremiereDate,ProductionYear,RunTimeTicks," +
+            "Overview,CommunityRating,ImageTags,BackdropImageTags,DateCreated"
+
+    private fun catalogItemFields(): String =
+        "ProviderIds,ProductionYear,Overview,CommunityRating,ImageTags,BackdropImageTags,DateCreated"
 
     private fun buildStreamSources(
         connection: HomeServerConnection,
@@ -2362,6 +2421,11 @@ class HomeServerRepository @Inject constructor(
                 type = string("type"),
                 productionYear = int("year") ?: string("originallyAvailableAt").take(4).toIntOrNull(),
                 providerIds = providerIds,
+                overview = string("summary"),
+                rating = string("rating").toDoubleOrNull(),
+                primaryImageTag = string("thumb"),
+                backdropImageTag = string("art"),
+                addedAt = (long("addedAt") ?: 0L) * 1000L,
                 librarySectionId = string("librarySectionID"),
                 indexNumber = int("index"),
                 parentIndexNumber = int("parentIndex"),
@@ -2385,6 +2449,11 @@ class HomeServerRepository @Inject constructor(
             type = string("Type"),
             productionYear = year,
             providerIds = providerIds,
+            overview = string("Overview"),
+            rating = string("CommunityRating").toDoubleOrNull(),
+            primaryImageTag = obj("ImageTags")?.string("Primary").orEmpty().ifBlank { string("PrimaryImageTag") },
+            backdropImageTag = array("BackdropImageTags").firstOrNull()?.asStringOrNull().orEmpty(),
+            addedAt = runCatching { Instant.parse(string("DateCreated")).toEpochMilli() }.getOrDefault(0L),
             librarySectionId = "",
             indexNumber = int("IndexNumber"),
             parentIndexNumber = int("ParentIndexNumber"),
@@ -2527,6 +2596,11 @@ class HomeServerRepository @Inject constructor(
         val type: String,
         val productionYear: Int?,
         val providerIds: Map<String, String>,
+        val overview: String = "",
+        val rating: Double? = null,
+        val primaryImageTag: String = "",
+        val backdropImageTag: String = "",
+        val addedAt: Long = 0L,
         val librarySectionId: String,
         val indexNumber: Int?,
         val parentIndexNumber: Int?,
@@ -2538,18 +2612,39 @@ class HomeServerRepository @Inject constructor(
             providerIds = providerIds
         )
 
-        fun toCatalogItem(): HomeServerCatalogItem? {
+        fun toCatalogItem(connection: HomeServerConnection, sourceRef: String): HomeServerCatalogItem? {
             val mediaType = when (type.lowercase(Locale.US)) {
                 "movie" -> MediaType.MOVIE
                 "series", "show", "tv", "tvshow" -> MediaType.TV
                 else -> return null
+            }
+            val base = connection.serverUrl.trimEnd('/')
+            val token = URLEncoder.encode(connection.accessToken, Charsets.UTF_8.name())
+            val imageUrl = when {
+                primaryImageTag.isBlank() -> ""
+                connection.serverKind == HomeServerKind.PLEX -> "$base$primaryImageTag?X-Plex-Token=$token"
+                else -> "$base/Items/$id/Images/Primary?maxWidth=600&tag=${URLEncoder.encode(primaryImageTag, Charsets.UTF_8.name())}&api_key=$token"
+            }
+            val backdropUrl = when {
+                backdropImageTag.isBlank() -> null
+                connection.serverKind == HomeServerKind.PLEX -> "$base$backdropImageTag?X-Plex-Token=$token"
+                else -> "$base/Items/$id/Images/Backdrop/0?maxWidth=1280&tag=${URLEncoder.encode(backdropImageTag, Charsets.UTF_8.name())}&api_key=$token"
             }
             return HomeServerCatalogItem(
                 id = id,
                 title = name,
                 mediaType = mediaType,
                 year = productionYear,
-                providerIds = providerIds.mapKeys { it.key.lowercase(Locale.US) }
+                providerIds = providerIds.mapKeys { it.key.lowercase(Locale.US) },
+                overview = overview,
+                rating = rating,
+                imageUrl = imageUrl,
+                backdropUrl = backdropUrl,
+                addedAt = addedAt,
+                sourceRef = sourceRef,
+                providerName = connection.displayName.ifBlank {
+                    connection.serverName.ifBlank { connection.serverKind.name.lowercase().replaceFirstChar { it.uppercase() } }
+                }
             )
         }
     }
