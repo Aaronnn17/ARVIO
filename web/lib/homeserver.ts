@@ -399,7 +399,13 @@ export function clearHomeServerSessions() {
 // so users adding a server directly (no Android app) get confirmation.
 export async function testHomeServerConnection(
   server: HomeServerConfig
-): Promise<{ ok: boolean; serverName?: string; libraryCount?: number; error?: string }> {
+): Promise<{
+  ok: boolean;
+  serverName?: string;
+  libraryCount?: number;
+  connection?: HomeServerConfig;
+  error?: string;
+}> {
   const base = trimUrl(server.url);
   if (!base) return { ok: false, error: "Missing server URL" };
   try {
@@ -411,19 +417,61 @@ export async function testHomeServerConnection(
         { Accept: "application/json", "X-Plex-Token": token }
       );
       const libs = sections?.MediaContainer?.Directory ?? [];
-      return { ok: true, serverName: sections?.MediaContainer?.friendlyName, libraryCount: libs.length };
+      const serverName = sections?.MediaContainer?.friendlyName;
+      return {
+        ok: true,
+        serverName,
+        libraryCount: libs.length,
+        connection: {
+          ...server,
+          name: server.name || serverName || "Plex",
+          url: base,
+          password: undefined,
+          collections: libs.map((library) => ({
+            id: library.key,
+            name: library.title,
+            type: library.type,
+            enabled: true
+          })),
+          lastConnectedAt: Date.now()
+        }
+      };
     }
     // Reset any cached (possibly stale) session so the test really re-auths.
     sessionCache.delete(server.id);
     const session = await ensureSession(server);
     if (!session) return { ok: false, error: "Authentication failed — check token or username/password" };
-    const views = await proxiedGet<{ Items?: unknown[] }>(
+    const views = await proxiedGet<{ Items?: Array<{ Id: string; Name: string; CollectionType?: string }> }>(
       `${base}/Users/${session.userId}/Views?api_key=${session.token}`
     ).catch(() => null);
-    const info = await proxiedGet<{ ServerName?: string }>(
+    const info = await proxiedGet<{ Id?: string; ServerName?: string }>(
       `${base}/System/Info?api_key=${session.token}`
     ).catch(() => null);
-    return { ok: true, serverName: info?.ServerName, libraryCount: (views?.Items ?? []).length };
+    const libraries = (views?.Items ?? [])
+      .filter((view) => isBrowsableLibraryType(view.CollectionType))
+      .map((view) => ({
+        id: view.Id,
+        name: view.Name,
+        type: view.CollectionType ?? "mixed",
+        enabled: true
+      }));
+    return {
+      ok: true,
+      serverName: info?.ServerName,
+      libraryCount: libraries.length,
+      connection: {
+        ...server,
+        name: server.name || info?.ServerName || (server.type === "emby" ? "Emby" : "Jellyfin"),
+        url: base,
+        token: session.token,
+        userId: session.userId,
+        userName: server.username,
+        password: undefined,
+        serverId: info?.Id,
+        collections: libraries,
+        lastConnectedAt: Date.now()
+      }
+    };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Connection failed" };
   }

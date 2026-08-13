@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -30,8 +31,11 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bookmark
+import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -53,6 +57,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -128,12 +133,13 @@ fun WatchlistScreen(
     val logoUrls by viewModel.logoUrls.collectAsStateWithLifecycle()
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val usePosterCards = rememberCardLayoutMode() == CardLayoutMode.POSTER
+    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
     val cardWidth: Dp = if (usePosterCards) {
-        if (isMobile) 120.dp else 110.dp
+        if (isMobile) ((screenWidth - 62.dp) / 2).coerceIn(112.dp, 150.dp) else 110.dp
     } else {
-        if (isMobile) 176.dp else 210.dp
+        if (isMobile) ((screenWidth - 62.dp) / 2).coerceIn(138.dp, 210.dp) else 210.dp
     }
-    val libraryColumns = if (isMobile) 2 else if (usePosterCards) 7 else 4
+    val libraryColumns = if (isMobile) 2 else if (usePosterCards) 6 else 3
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val rootFocusRequester = remember { FocusRequester() }
     val hasProfile = currentProfile != null
@@ -274,11 +280,18 @@ fun WatchlistScreen(
                             when (focusZone) {
                                 WatchlistFocusZone.TOP_BAR -> sidebarFocusIndex = (sidebarFocusIndex - 1).coerceAtLeast(0)
                                 WatchlistFocusZone.PROVIDERS -> providerFocusIndex = (providerFocusIndex - 1).coerceAtLeast(0)
-                                WatchlistFocusZone.LIBRARIES -> libraryFocusIndex = (libraryFocusIndex - 1).coerceAtLeast(0)
-                                WatchlistFocusZone.FILTERS -> filterFocusIndex = (filterFocusIndex - 1).coerceAtLeast(0)
+                                WatchlistFocusZone.LIBRARIES -> Unit
+                                WatchlistFocusZone.FILTERS -> {
+                                    if (isLibraryMode && filterFocusIndex == 0 && providerLibraries.isNotEmpty()) {
+                                        focusZone = WatchlistFocusZone.LIBRARIES
+                                    } else {
+                                        filterFocusIndex = (filterFocusIndex - 1).coerceAtLeast(0)
+                                    }
+                                }
                                 WatchlistFocusZone.CONTENT -> {
                                     if (isLibraryMode) {
                                         if (focusedItemIndex % libraryColumns > 0) focusedItemIndex--
+                                        else if (providerLibraries.isNotEmpty()) focusZone = WatchlistFocusZone.LIBRARIES
                                     } else if (focusedItemIndex > 0) focusedItemIndex--
                                 }
                             }
@@ -288,7 +301,7 @@ fun WatchlistScreen(
                             when (focusZone) {
                                 WatchlistFocusZone.TOP_BAR -> sidebarFocusIndex = (sidebarFocusIndex + 1).coerceAtMost(maxSidebarIndex)
                                 WatchlistFocusZone.PROVIDERS -> providerFocusIndex = (providerFocusIndex + 1).coerceAtMost(providers.lastIndex)
-                                WatchlistFocusZone.LIBRARIES -> libraryFocusIndex = (libraryFocusIndex + 1).coerceAtMost((providerLibraries.size - 1).coerceAtLeast(0))
+                                WatchlistFocusZone.LIBRARIES -> focusZone = WatchlistFocusZone.FILTERS
                                 WatchlistFocusZone.FILTERS -> filterFocusIndex = (filterFocusIndex + 1).coerceAtMost(filters.lastIndex)
                                 WatchlistFocusZone.CONTENT -> {
                                     val max = if (isLibraryMode) visibleLibraryItems.lastIndex else watchlistSections.getOrNull(focusedSectionIndex)?.second?.lastIndex ?: -1
@@ -301,7 +314,9 @@ fun WatchlistScreen(
                             when (focusZone) {
                                 WatchlistFocusZone.TOP_BAR -> Unit
                                 WatchlistFocusZone.PROVIDERS -> focusZone = WatchlistFocusZone.TOP_BAR
-                                WatchlistFocusZone.LIBRARIES -> focusZone = WatchlistFocusZone.PROVIDERS
+                                WatchlistFocusZone.LIBRARIES -> {
+                                    if (libraryFocusIndex > 0) libraryFocusIndex-- else focusZone = WatchlistFocusZone.PROVIDERS
+                                }
                                 WatchlistFocusZone.FILTERS -> focusZone = if (providerLibraries.isEmpty()) WatchlistFocusZone.PROVIDERS else WatchlistFocusZone.LIBRARIES
                                 WatchlistFocusZone.CONTENT -> {
                                     if (isLibraryMode) {
@@ -322,7 +337,9 @@ fun WatchlistScreen(
                                 WatchlistFocusZone.PROVIDERS -> {
                                     focusZone = if (isLibraryMode && providerLibraries.isNotEmpty()) WatchlistFocusZone.LIBRARIES else WatchlistFocusZone.CONTENT
                                 }
-                                WatchlistFocusZone.LIBRARIES -> focusZone = WatchlistFocusZone.FILTERS
+                                WatchlistFocusZone.LIBRARIES -> {
+                                    if (libraryFocusIndex < providerLibraries.lastIndex) libraryFocusIndex++
+                                }
                                 WatchlistFocusZone.FILTERS -> if (visibleLibraryItems.isNotEmpty()) moveToContent()
                                 WatchlistFocusZone.CONTENT -> {
                                     if (isLibraryMode) {
@@ -549,25 +566,215 @@ private fun ColumnScope.HomeLibraryContent(
     onItemClick: (MediaItem) -> Unit,
     onLoadMore: () -> Unit
 ) {
-    if (libraries.isNotEmpty()) {
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 5.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
+    if (isMobile && libraries.isNotEmpty()) {
+        MobileLibrarySelector(
+            libraries = libraries,
+            selectedIndex = selectedLibraryIndex,
+            onSelect = onLibrarySelect
+        )
+    }
+
+    if (isMobile) {
+        LibraryFilterRow(
+            state = state,
+            filters = filters,
+            focusedFilterIndex = focusedFilterIndex,
+            isMobile = true,
+            onFilterSelect = onFilterSelect
+        )
+        LibraryResults(
+            state = state,
+            logoUrls = logoUrls,
+            focusedItemIndex = focusedItemIndex,
+            gridState = gridState,
+            columns = columns,
+            cardWidth = cardWidth,
+            isLandscape = isLandscape,
+            isMobile = true,
+            onItemFocused = onItemFocused,
+            onItemVisible = onItemVisible,
+            onItemClick = onItemClick,
+            onLoadMore = onLoadMore
+        )
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            itemsIndexed(libraries, key = { _, item -> item.sourceRef }) { index, library ->
-                SelectablePill(
-                    label = library.collectionName.ifBlank { library.title },
-                    selected = index == selectedLibraryIndex,
-                    focused = index == focusedLibraryIndex,
-                    accent = providerAccent(library.serverKind),
-                    compact = true,
-                    modifier = Modifier.clickable(enabled = isMobile) { onLibrarySelect(index, library) }
+            LibrarySidebar(
+                libraries = libraries,
+                selectedIndex = selectedLibraryIndex,
+                focusedIndex = focusedLibraryIndex,
+                onSelect = onLibrarySelect
+            )
+            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                LibraryFilterRow(
+                    state = state,
+                    filters = filters,
+                    focusedFilterIndex = focusedFilterIndex,
+                    isMobile = false,
+                    onFilterSelect = onFilterSelect
+                )
+                LibraryResults(
+                    state = state,
+                    logoUrls = logoUrls,
+                    focusedItemIndex = focusedItemIndex,
+                    gridState = gridState,
+                    columns = columns,
+                    cardWidth = cardWidth,
+                    isLandscape = isLandscape,
+                    isMobile = false,
+                    onItemFocused = onItemFocused,
+                    onItemVisible = onItemVisible,
+                    onItemClick = onItemClick,
+                    onLoadMore = onLoadMore
                 )
             }
         }
     }
+}
 
+@Composable
+private fun MobileLibrarySelector(
+    libraries: List<HomeServerCatalogCandidate>,
+    selectedIndex: Int,
+    onSelect: (Int, HomeServerCatalogCandidate) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = libraries.getOrNull(selectedIndex) ?: libraries.first()
+    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 5.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp)
+                .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(6.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(6.dp))
+                .clickable { expanded = true }
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(providerAccent(selected.serverKind), RoundedCornerShape(2.dp))
+            )
+            Text(
+                text = selected.collectionName.ifBlank { selected.title },
+                style = ArflixTypography.body.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 10.dp).weight(1f)
+            )
+            Icon(Icons.Outlined.ArrowDropDown, contentDescription = tr("Choose library"), tint = Color.White.copy(alpha = 0.72f))
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(Color(0xFF151719)).width(280.dp)
+        ) {
+            libraries.forEachIndexed { index, library ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = library.collectionName.ifBlank { library.title },
+                            color = if (index == selectedIndex) Color.White else Color.White.copy(alpha = 0.72f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(index, library)
+                    },
+                    leadingIcon = {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(providerAccent(library.serverKind), RoundedCornerShape(2.dp))
+                        )
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibrarySidebar(
+    libraries: List<HomeServerCatalogCandidate>,
+    selectedIndex: Int,
+    focusedIndex: Int,
+    onSelect: (Int, HomeServerCatalogCandidate) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(196.dp)
+            .fillMaxHeight()
+            .padding(start = 24.dp, bottom = 24.dp)
+    ) {
+        Text(
+            text = tr("Libraries"),
+            style = ArflixTypography.caption.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+            color = Color.White.copy(alpha = 0.46f),
+            modifier = Modifier.padding(start = 12.dp, top = 9.dp, bottom = 8.dp)
+        )
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            itemsIndexed(libraries, key = { _, item -> item.sourceRef }) { index, library ->
+                val selected = index == selectedIndex
+                val focused = index == focusedIndex
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .background(
+                            when {
+                                focused -> Color.White
+                                selected -> Color.White.copy(alpha = 0.12f)
+                                else -> Color.Transparent
+                            },
+                            RoundedCornerShape(6.dp)
+                        )
+                        .border(
+                            1.dp,
+                            if (selected && !focused) Color.White.copy(alpha = 0.26f) else Color.Transparent,
+                            RoundedCornerShape(6.dp)
+                        )
+                        .clickable(enabled = false) { onSelect(index, library) }
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .background(
+                                if (focused) Color.Black.copy(alpha = 0.7f) else providerAccent(library.serverKind),
+                                RoundedCornerShape(2.dp)
+                            )
+                    )
+                    Text(
+                        text = library.collectionName.ifBlank { library.title },
+                        style = ArflixTypography.body.copy(fontSize = 14.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium),
+                        color = if (focused) Color.Black else Color.White.copy(alpha = if (selected) 1f else 0.68f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.padding(start = 10.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryFilterRow(
+    state: HomeLibraryUiState,
+    filters: List<LibraryFilter>,
+    focusedFilterIndex: Int,
+    isMobile: Boolean,
+    onFilterSelect: (Int) -> Unit
+) {
     LazyRow(
         contentPadding = PaddingValues(horizontal = 24.dp, vertical = 5.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -596,7 +803,23 @@ private fun ColumnScope.HomeLibraryContent(
             )
         }
     }
+}
 
+@Composable
+private fun ColumnScope.LibraryResults(
+    state: HomeLibraryUiState,
+    logoUrls: Map<String, String>,
+    focusedItemIndex: Int,
+    gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
+    columns: Int,
+    cardWidth: Dp,
+    isLandscape: Boolean,
+    isMobile: Boolean,
+    onItemFocused: (Int) -> Unit,
+    onItemVisible: (MediaItem) -> Unit,
+    onItemClick: (MediaItem) -> Unit,
+    onLoadMore: () -> Unit
+) {
     when {
         state.isLoading && state.items.isEmpty() -> CenteredLoading()
         state.error != null && state.items.isEmpty() -> LibraryMessage(

@@ -206,20 +206,37 @@ export function WatchlistScreen() {
         </nav>
       </section>
 
-      {tab !== "watchlist" && visibleLibraries.length > 0 && (
-        <div className="library-shelf-tabs" role="tablist" aria-label={`${PROVIDER_LABELS[tab]} libraries`}>
-          {visibleLibraries.map((library) => (
-            <button key={library.value} type="button" role="tab" aria-selected={selectedLibrary === library.value}
-              className={selectedLibrary === library.value ? "is-active" : ""} onClick={() => setSelectedLibrary(library.value)}>
-              <Server size={15} />
-              <span>{library.libraryName}</span>
-              {visibleLibraries.filter((item) => item.libraryName === library.libraryName).length > 1 && <small>{library.serverName}</small>}
-            </button>
-          ))}
-        </div>
-      )}
+      <div className={`library-workspace ${tab !== "watchlist" && visibleLibraries.length ? "has-library-sidebar" : ""}`}>
+        {tab !== "watchlist" && visibleLibraries.length > 0 && (
+          <aside className="library-sidebar" aria-label={`${PROVIDER_LABELS[tab]} libraries`}>
+            <span className="library-sidebar-label">Libraries</span>
+            <div role="tablist">
+              {visibleLibraries.map((library) => (
+                <button key={library.value} type="button" role="tab" aria-selected={selectedLibrary === library.value}
+                  className={selectedLibrary === library.value ? "is-active" : ""} onClick={() => setSelectedLibrary(library.value)}>
+                  <span className={`library-provider-mark is-${library.serverType}`} aria-hidden="true" />
+                  <span>{library.libraryName}</span>
+                  {visibleLibraries.filter((item) => item.libraryName === library.libraryName).length > 1 && <small>{library.serverName}</small>}
+                </button>
+              ))}
+            </div>
+          </aside>
+        )}
+        <div className="library-main">
+          {tab !== "watchlist" && visibleLibraries.length > 0 && (
+            <label className="library-mobile-select">
+              <Server size={16} />
+              <select value={selectedLibrary} onChange={(event) => setSelectedLibrary(event.target.value)} aria-label="Choose library">
+                {visibleLibraries.map((library) => (
+                  <option key={library.value} value={library.value}>
+                    {library.libraryName}{visibleLibraries.filter((item) => item.libraryName === library.libraryName).length > 1 ? ` — ${library.serverName}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
-      <div className="library-toolbar">
+          <div className="library-toolbar">
         {tab === "watchlist" && (customLists.length > 0 || watchlistSource !== "watchlist") && (
           <select className="watchlist-source" value={watchlistSource} onChange={(event) => setWatchlistSource(event.target.value)} aria-label="Choose list">
             {traktConnected && BUILTIN_SOURCES.map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}
@@ -248,22 +265,24 @@ export function WatchlistScreen() {
             <RefreshCw size={17} />
           </button>
         )}
-      </div>
-
-      {loading && items.length === 0 ? (
-        <div className="library-loading" aria-label="Loading library"><LoaderCircle size={34} /></div>
-      ) : libraryError ? (
-        <div className="watchlist-empty"><Server size={42} /><p>Server unavailable</p><span>Check the server connection and try again.</span><button type="button" onClick={() => void loadLibrary(true)}>Retry</button></div>
-      ) : items.length === 0 ? (
-        <div className="watchlist-empty"><Bookmark size={42} /><p>{searchQuery ? "No matching titles" : "This library is empty"}</p><span>{tab === "watchlist" ? "Add movies and series from their details page." : "Try another library or filter."}</span></div>
-      ) : (
-        <>
-          <div className="grid-results library-grid">
-            {items.map((item) => <MediaCard key={itemKey(item)} item={item} onOpen={openDetails} posterMode={posterMode} />)}
           </div>
-          {tab !== "watchlist" && <div ref={loadMoreRef} className="library-load-more">{loadingMore && <LoaderCircle size={26} />}</div>}
-        </>
-      )}
+
+          {loading && items.length === 0 ? (
+            <div className="library-loading" aria-label="Loading library"><LoaderCircle size={34} /></div>
+          ) : libraryError ? (
+            <div className="watchlist-empty"><Server size={42} /><p>Server unavailable</p><span>Check the server connection and try again.</span><button type="button" onClick={() => void loadLibrary(true)}>Retry</button></div>
+          ) : items.length === 0 ? (
+            <div className="watchlist-empty"><Bookmark size={42} /><p>{searchQuery ? "No matching titles" : "This library is empty"}</p><span>{tab === "watchlist" ? "Add movies and series from their details page." : "Try another library or filter."}</span></div>
+          ) : (
+            <>
+              <div className="grid-results library-grid">
+                {items.map((item) => <MediaCard key={itemKey(item)} item={item} onOpen={openDetails} posterMode={posterMode} />)}
+              </div>
+              {tab !== "watchlist" && <div ref={loadMoreRef} className="library-load-more">{loadingMore && <LoaderCircle size={26} />}</div>}
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
