@@ -82,6 +82,7 @@ class WatchlistViewModel @Inject constructor(
     private var traktSyncInFlight = false
     private var initialLoadComplete = false
     private var enrichmentInFlight = false
+    private var enrichmentRequested = false
 
     private fun watchlistDiagnosticContext(
         phase: String,
@@ -97,6 +98,10 @@ class WatchlistViewModel @Inject constructor(
             compareBy<MediaItem> { it.sourceOrder }
                 .thenByDescending { it.addedAt }
         )
+    }
+
+    private fun List<MediaItem>.needsArtworkEnrichment(): Boolean {
+        return any { item -> item.image.isBlank() && item.backdrop.isNullOrBlank() }
     }
 
     private fun List<MediaItem>.toSplitState(
@@ -366,6 +371,7 @@ class WatchlistViewModel @Inject constructor(
             val visibleItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
             _uiState.value = visibleItems.toSplitState(isLoading = visibleItems.isEmpty())
             if (visibleItems.isNotEmpty()) fetchLogos(visibleItems)
+            if (visibleItems.needsArtworkEnrichment()) enrichLocalWatchlistInBackground()
             initialLoadComplete = true
 
             // Trakt is authoritative when connected, but it must not hold the page hostage.
@@ -392,17 +398,23 @@ class WatchlistViewModel @Inject constructor(
     }
 
     private fun enrichLocalWatchlistInBackground() {
-        if (enrichmentInFlight) return
+        if (enrichmentInFlight) {
+            enrichmentRequested = true
+            return
+        }
         enrichmentInFlight = true
         viewModelScope.launch {
             try {
-                val enrichedItems = watchlistRepository.refreshWatchlistItems().watchlistDisplayOrder()
-                if (enrichedItems.isNotEmpty()) {
-                    _uiState.value = enrichedItems.toSplitState(isLoading = false)
-                    fetchLogos(enrichedItems)
-                } else if (_uiState.value.isLoading) {
-                    _uiState.value = WatchlistUiState(isLoading = false)
-                }
+                do {
+                    enrichmentRequested = false
+                    val enrichedItems = watchlistRepository.refreshWatchlistItems().watchlistDisplayOrder()
+                    if (enrichedItems.isNotEmpty()) {
+                        _uiState.value = enrichedItems.toSplitState(isLoading = false)
+                        fetchLogos(enrichedItems)
+                    } else if (_uiState.value.isLoading) {
+                        _uiState.value = WatchlistUiState(isLoading = false)
+                    }
+                } while (enrichmentRequested)
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 AppLogger.recordException(
@@ -551,11 +563,10 @@ class WatchlistViewModel @Inject constructor(
                 if (traktItems.isNotEmpty()) {
                     watchlistRepository.clearWatchlistCache()
                     val orderedTraktItems = traktItems.watchlistDisplayOrder()
-                    _uiState.value = orderedTraktItems.toSplitState(isLoading = false)
-                    fetchLogos(orderedTraktItems)
-
                     watchlistRepository.syncFromTraktOrder(orderedTraktItems)
-                    _uiState.value = orderedTraktItems.toSplitState(isLoading = false)
+                    val mergedItems = watchlistRepository.getLocalWatchlistItems().watchlistDisplayOrder()
+                    _uiState.value = mergedItems.toSplitState(isLoading = false)
+                    fetchLogos(mergedItems)
                     runCatching { cloudSyncRepository.pushToCloud() }
                         .onFailure { error ->
                             AppLogger.recordException(
