@@ -101,6 +101,15 @@ export function WatchlistScreen() {
   }, [tab, visibleLibraries, selectedLibrary]);
 
   useEffect(() => {
+    if (tab !== "watchlist" && filter !== "all") setFilter("all");
+  }, [filter, tab]);
+
+  const activeLibrary = useMemo(
+    () => libraries.find((library) => library.value === selectedLibrary),
+    [libraries, selectedLibrary]
+  );
+
+  useEffect(() => {
     if (tab !== "watchlist" || watchlistSource === "watchlist") {
       setSourceItems(null);
       return;
@@ -113,7 +122,8 @@ export function WatchlistScreen() {
       .finally(() => { if (requestId === requestRef.current) setLoading(false); });
   }, [tab, watchlistSource, loadTraktListItems]);
 
-  const cacheKey = `${selectedLibrary}|${sort}|${filter}|${searchQuery.toLowerCase()}`;
+  const libraryFilter: WatchlistFilter = "all";
+  const cacheKey = `${selectedLibrary}|${sort}|${searchQuery.toLowerCase()}`;
   const loadLibrary = useCallback(async (force = false) => {
     if (tab === "watchlist" || !selectedLibrary) return;
     const requestId = ++requestRef.current;
@@ -124,7 +134,13 @@ export function WatchlistScreen() {
     const { loadHomeServerLibraryPage } = await import("@/lib/homeserver");
     try {
       const page = await loadHomeServerLibraryPage(homeServers, selectedLibrary, {
-        offset: 0, limit: PAGE_SIZE, sort, filter, search: searchQuery, throwOnError: true
+        offset: 0,
+        limit: PAGE_SIZE,
+        sort,
+        filter: libraryFilter,
+        libraryMediaType: activeLibrary?.mediaType,
+        search: searchQuery,
+        throwOnError: true
       });
       if (requestId !== requestRef.current) return;
       libraryCache.set(cacheKey, page);
@@ -134,7 +150,7 @@ export function WatchlistScreen() {
     } finally {
       if (requestId === requestRef.current) setLoading(false);
     }
-  }, [cacheKey, filter, homeServers, searchQuery, selectedLibrary, sort, tab]);
+  }, [activeLibrary?.mediaType, cacheKey, homeServers, libraryFilter, searchQuery, selectedLibrary, sort, tab]);
 
   useEffect(() => { void loadLibrary(); }, [loadLibrary]);
 
@@ -145,7 +161,13 @@ export function WatchlistScreen() {
     const { loadHomeServerLibraryPage } = await import("@/lib/homeserver");
     try {
       const next = await loadHomeServerLibraryPage(homeServers, selectedLibrary, {
-        offset: libraryPage.items.length, limit: PAGE_SIZE, sort, filter, search: searchQuery, throwOnError: true
+        offset: libraryPage.items.length,
+        limit: PAGE_SIZE,
+        sort,
+        filter: libraryFilter,
+        libraryMediaType: activeLibrary?.mediaType,
+        search: searchQuery,
+        throwOnError: true
       });
       if (requestId !== requestRef.current) return;
       setLibraryPage((current) => {
@@ -158,7 +180,7 @@ export function WatchlistScreen() {
     } finally {
       setLoadingMore(false);
     }
-  }, [cacheKey, filter, homeServers, libraryPage.hasMore, libraryPage.items.length, loading, loadingMore, searchQuery, selectedLibrary, sort, tab]);
+  }, [activeLibrary?.mediaType, cacheKey, homeServers, libraryFilter, libraryPage.hasMore, libraryPage.items.length, loading, loadingMore, searchQuery, selectedLibrary, sort, tab]);
 
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -181,7 +203,6 @@ export function WatchlistScreen() {
     });
   }, [filter, libraryPage.items, sort, tab, watchlistList]);
 
-  const activeLibrary = libraries.find((library) => library.value === selectedLibrary);
   const activeServerName = activeLibrary?.serverName ?? visibleLibraries[0]?.serverName ?? "Home server";
   const heading = tab === "watchlist" ? "Watchlist" : `${PROVIDER_LABELS[tab]} Library`;
   const eyebrow = tab === "watchlist"
@@ -204,6 +225,13 @@ export function WatchlistScreen() {
               <span className={`library-provider-mark is-${type}`} aria-hidden="true" /> {PROVIDER_LABELS[type]}
             </button>
           ))}
+          {tab !== "watchlist" && (
+            <select className="library-provider-sort" value={sort} onChange={(event) => setSort(event.target.value as HomeServerLibrarySort)} aria-label="Sort titles">
+              <option value="added">Recently added</option>
+              <option value="rating">Highest rated</option>
+              <option value="title">Title A-Z</option>
+            </select>
+          )}
         </nav>
       </section>
 
@@ -248,16 +276,20 @@ export function WatchlistScreen() {
             {customLists.map((list) => <option key={list.id} value={`list:${list.id}`}>{list.name}</option>)}
           </select>
         )}
-        <div className="watchlist-pills" role="group" aria-label="Filter titles">
-          {([["all", "All"], ["movie", "Movies"], ["tv", "Series"]] as const).map(([value, label]) => (
-            <button key={value} type="button" className={`watchlist-pill ${filter === value ? "is-active" : ""}`} onClick={() => setFilter(value)}>{label}</button>
-          ))}
-        </div>
-        <select className="watchlist-sort" value={sort} onChange={(event) => setSort(event.target.value as HomeServerLibrarySort)} aria-label="Sort titles">
-          <option value="added">Recently added</option>
-          <option value="rating">Highest rated</option>
-          <option value="title">Title A-Z</option>
-        </select>
+        {tab === "watchlist" && (
+          <div className="watchlist-pills" role="group" aria-label="Filter titles">
+            {([["all", "All"], ["movie", "Movies"], ["tv", "Series"]] as const).map(([value, label]) => (
+              <button key={value} type="button" className={`watchlist-pill ${filter === value ? "is-active" : ""}`} onClick={() => setFilter(value)}>{label}</button>
+            ))}
+          </div>
+        )}
+        {tab === "watchlist" && (
+          <select className="watchlist-sort" value={sort} onChange={(event) => setSort(event.target.value as HomeServerLibrarySort)} aria-label="Sort titles">
+            <option value="added">Recently added</option>
+            <option value="rating">Highest rated</option>
+            <option value="title">Title A-Z</option>
+          </select>
+        )}
         {tab !== "watchlist" && (
           <label className="library-search">
             <Search size={17} />

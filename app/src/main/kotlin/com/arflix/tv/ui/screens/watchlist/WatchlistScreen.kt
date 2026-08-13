@@ -87,7 +87,7 @@ import com.arflix.tv.data.repository.HomeServerCatalogCandidate
 import com.arflix.tv.data.repository.HomeServerKind
 import com.arflix.tv.data.repository.HomeServerLibrarySort
 import com.arflix.tv.ui.components.AppTopBar
-import com.arflix.tv.ui.components.AppTopBarContentTopInset
+import com.arflix.tv.ui.components.AppTopBarHeight
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.LoadingIndicator
 import com.arflix.tv.ui.components.MediaCard
@@ -116,7 +116,6 @@ private enum class WatchlistFocusZone {
 
 private data class LibraryFilter(
     val label: String,
-    val mediaType: MediaType? = null,
     val isSort: Boolean = false,
     val isSearch: Boolean = false,
     val isRefresh: Boolean = false,
@@ -178,9 +177,6 @@ fun WatchlistScreen(
     val selectedLibraryIndex = providerLibraries.indexOfFirst { it.sourceRef == libraryState.selectedSourceRef }
         .coerceAtLeast(0)
     val filters = listOf(
-        LibraryFilter(tr("All"), mediaType = null),
-        LibraryFilter(tr("Movies"), mediaType = MediaType.MOVIE),
-        LibraryFilter(tr("Series"), mediaType = MediaType.TV),
         LibraryFilter(tr("Sort"), isSort = true),
         LibraryFilter(tr("Search"), isSearch = true, iconOnly = true),
         LibraryFilter(tr("Refresh"), isRefresh = true, iconOnly = true)
@@ -223,7 +219,6 @@ fun WatchlistScreen(
                 sortFocusIndex = sortOptions.indexOfFirst { it.second == libraryState.sort }.coerceAtLeast(0)
                 showSortMenu = true
             }
-            else -> viewModel.setLibraryMediaType(filter.mediaType)
         }
         focusedItemIndex = 0
     }
@@ -253,7 +248,6 @@ fun WatchlistScreen(
     LaunchedEffect(selectedLibraryIndex) { libraryFocusIndex = selectedLibraryIndex }
     LaunchedEffect(
         libraryState.selectedSourceRef,
-        libraryState.mediaType,
         libraryState.sort,
         libraryState.searchQuery
     ) {
@@ -337,8 +331,9 @@ fun WatchlistScreen(
                                 WatchlistFocusZone.PROVIDERS -> providerFocusIndex = (providerFocusIndex - 1).coerceAtLeast(0)
                                 WatchlistFocusZone.LIBRARIES -> Unit
                                 WatchlistFocusZone.FILTERS -> {
-                                    if (isLibraryMode && filterFocusIndex == 0 && providerLibraries.isNotEmpty()) {
-                                        focusZone = WatchlistFocusZone.LIBRARIES
+                                    if (filterFocusIndex == 0) {
+                                        providerFocusIndex = providers.lastIndex.coerceAtLeast(0)
+                                        focusZone = WatchlistFocusZone.PROVIDERS
                                     } else {
                                         filterFocusIndex = (filterFocusIndex - 1).coerceAtLeast(0)
                                     }
@@ -355,7 +350,14 @@ fun WatchlistScreen(
                         Key.DirectionRight -> {
                             when (focusZone) {
                                 WatchlistFocusZone.TOP_BAR -> sidebarFocusIndex = (sidebarFocusIndex + 1).coerceAtMost(maxSidebarIndex)
-                                WatchlistFocusZone.PROVIDERS -> providerFocusIndex = (providerFocusIndex + 1).coerceAtMost(providers.lastIndex)
+                                WatchlistFocusZone.PROVIDERS -> {
+                                    if (isLibraryMode && providerFocusIndex >= providers.lastIndex) {
+                                        filterFocusIndex = 0
+                                        focusZone = WatchlistFocusZone.FILTERS
+                                    } else {
+                                        providerFocusIndex = (providerFocusIndex + 1).coerceAtMost(providers.lastIndex)
+                                    }
+                                }
                                 WatchlistFocusZone.LIBRARIES -> focusZone = WatchlistFocusZone.FILTERS
                                 WatchlistFocusZone.FILTERS -> filterFocusIndex = (filterFocusIndex + 1).coerceAtMost(filters.lastIndex)
                                 WatchlistFocusZone.CONTENT -> {
@@ -372,7 +374,7 @@ fun WatchlistScreen(
                                 WatchlistFocusZone.LIBRARIES -> {
                                     if (libraryFocusIndex > 0) libraryFocusIndex-- else focusZone = WatchlistFocusZone.PROVIDERS
                                 }
-                                WatchlistFocusZone.FILTERS -> focusZone = if (providerLibraries.isEmpty()) WatchlistFocusZone.PROVIDERS else WatchlistFocusZone.LIBRARIES
+                                WatchlistFocusZone.FILTERS -> focusZone = WatchlistFocusZone.TOP_BAR
                                 WatchlistFocusZone.CONTENT -> {
                                     if (isLibraryMode) {
                                         if (focusedItemIndex >= libraryColumns) focusedItemIndex -= libraryColumns else focusZone = WatchlistFocusZone.FILTERS
@@ -465,8 +467,7 @@ fun WatchlistScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = if (isMobile) 0.dp else AppTopBarContentTopInset)
-                .padding(top = 4.dp)
+                .padding(top = if (isMobile) 0.dp else AppTopBarHeight - 10.dp)
         ) {
             if (isMobile) {
                 Text(
@@ -481,8 +482,16 @@ fun WatchlistScreen(
                 providers = providers,
                 selectedIndex = selectedProviderIndex,
                 focusedIndex = if (focusZone == WatchlistFocusZone.PROVIDERS) providerFocusIndex else -1,
+                libraryState = libraryState,
+                filters = filters,
+                focusedFilterIndex = if (focusZone == WatchlistFocusZone.FILTERS) filterFocusIndex else -1,
+                showLibraryControls = isLibraryMode,
                 isMobile = isMobile,
-                onSelect = ::activateProvider
+                onSelect = ::activateProvider,
+                onFilterSelect = { index ->
+                    filterFocusIndex = index
+                    activateFilter(index)
+                }
             )
 
             if (isLibraryMode) {
@@ -492,8 +501,6 @@ fun WatchlistScreen(
                     libraries = providerLibraries,
                     selectedLibraryIndex = selectedLibraryIndex,
                     focusedLibraryIndex = if (focusZone == WatchlistFocusZone.LIBRARIES) libraryFocusIndex else -1,
-                    filters = filters,
-                    focusedFilterIndex = if (focusZone == WatchlistFocusZone.FILTERS) filterFocusIndex else -1,
                     focusedItemIndex = if (focusZone == WatchlistFocusZone.CONTENT) focusedItemIndex else -1,
                     gridState = libraryGridState,
                     columns = libraryColumns,
@@ -504,10 +511,6 @@ fun WatchlistScreen(
                         libraryFocusIndex = index
                         viewModel.selectLibrary(library.sourceRef)
                         focusedItemIndex = 0
-                    },
-                    onFilterSelect = { index ->
-                        filterFocusIndex = index
-                        activateFilter(index)
                     },
                     onItemFocused = { focusedItemIndex = it },
                     onItemVisible = viewModel::ensureLogo,
@@ -588,12 +591,17 @@ private fun ProviderTabs(
     providers: List<HomeServerKind?>,
     selectedIndex: Int,
     focusedIndex: Int,
+    libraryState: HomeLibraryUiState,
+    filters: List<LibraryFilter>,
+    focusedFilterIndex: Int,
+    showLibraryControls: Boolean,
     isMobile: Boolean,
-    onSelect: (Int) -> Unit
+    onSelect: (Int) -> Unit,
+    onFilterSelect: (Int) -> Unit
 ) {
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 3.dp),
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 1.dp),
         horizontalArrangement = Arrangement.spacedBy(7.dp)
     ) {
         itemsIndexed(providers, key = { _, provider -> provider?.name ?: "watchlist" }) { index, provider ->
@@ -615,6 +623,18 @@ private fun ProviderTabs(
                 compact = true
             )
         }
+        if (showLibraryControls) {
+            itemsIndexed(filters, key = { index, filter -> "library-control-$index-${filter.label}" }) { index, filter ->
+                LibraryFilterControl(
+                    state = libraryState,
+                    filter = filter,
+                    index = index,
+                    focusedFilterIndex = focusedFilterIndex,
+                    isMobile = isMobile,
+                    onSelect = { onFilterSelect(index) }
+                )
+            }
+        }
     }
 }
 
@@ -626,8 +646,6 @@ private fun ColumnScope.HomeLibraryContent(
     libraries: List<HomeServerCatalogCandidate>,
     selectedLibraryIndex: Int,
     focusedLibraryIndex: Int,
-    filters: List<LibraryFilter>,
-    focusedFilterIndex: Int,
     focusedItemIndex: Int,
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     columns: Int,
@@ -635,7 +653,6 @@ private fun ColumnScope.HomeLibraryContent(
     isLandscape: Boolean,
     isMobile: Boolean,
     onLibrarySelect: (Int, HomeServerCatalogCandidate) -> Unit,
-    onFilterSelect: (Int) -> Unit,
     onItemFocused: (Int) -> Unit,
     onItemVisible: (MediaItem) -> Unit,
     onItemClick: (MediaItem) -> Unit,
@@ -650,13 +667,6 @@ private fun ColumnScope.HomeLibraryContent(
     }
 
     if (isMobile) {
-        LibraryFilterRow(
-            state = state,
-            filters = filters,
-            focusedFilterIndex = focusedFilterIndex,
-            isMobile = true,
-            onFilterSelect = onFilterSelect
-        )
         LibraryResults(
             state = state,
             logoUrls = logoUrls,
@@ -683,13 +693,6 @@ private fun ColumnScope.HomeLibraryContent(
                 onSelect = onLibrarySelect
             )
             Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                LibraryFilterRow(
-                    state = state,
-                    filters = filters,
-                    focusedFilterIndex = focusedFilterIndex,
-                    isMobile = false,
-                    onFilterSelect = onFilterSelect
-                )
                 LibraryResults(
                     state = state,
                     logoUrls = logoUrls,
@@ -717,7 +720,7 @@ private fun MobileLibrarySelector(
 ) {
     var expanded by remember { mutableStateOf(false) }
     val selected = libraries.getOrNull(selectedIndex) ?: libraries.first()
-    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 3.dp)) {
+    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 1.dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -731,7 +734,7 @@ private fun MobileLibrarySelector(
             Box(
                 modifier = Modifier
                     .size(8.dp)
-                    .background(providerAccent(selected.serverKind), RoundedCornerShape(2.dp))
+                    .background(Color.White.copy(alpha = 0.7f), RoundedCornerShape(2.dp))
             )
             Column(modifier = Modifier.padding(start = 10.dp).weight(1f)) {
                 Text(
@@ -774,7 +777,7 @@ private fun MobileLibrarySelector(
                         Box(
                             modifier = Modifier
                                 .size(8.dp)
-                                .background(providerAccent(library.serverKind), RoundedCornerShape(2.dp))
+                                .background(Color.White.copy(alpha = 0.7f), RoundedCornerShape(2.dp))
                         )
                     }
                 )
@@ -834,7 +837,7 @@ private fun LibrarySidebar(
                             if (focused) 2.dp else 1.dp,
                             when {
                                 focused -> Color.White
-                                selected -> providerAccent(library.serverKind).copy(alpha = 0.56f)
+                                selected -> Color.White.copy(alpha = 0.3f)
                                 else -> Color.Transparent
                             },
                             RoundedCornerShape(6.dp)
@@ -850,7 +853,7 @@ private fun LibrarySidebar(
                             Icons.Outlined.Tv
                         },
                         contentDescription = null,
-                        tint = providerAccent(library.serverKind),
+                        tint = Color.White.copy(alpha = if (selected || focused) 0.92f else 0.62f),
                         modifier = Modifier.size(17.dp)
                     )
                     Text(
@@ -869,38 +872,6 @@ private fun LibrarySidebar(
 }
 
 @Composable
-private fun LibraryFilterRow(
-    state: HomeLibraryUiState,
-    filters: List<LibraryFilter>,
-    focusedFilterIndex: Int,
-    isMobile: Boolean,
-    onFilterSelect: (Int) -> Unit
-) {
-    if (isMobile) {
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 24.dp, vertical = 3.dp),
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            itemsIndexed(filters, key = { index, item -> "$index-${item.label}" }) { index, filter ->
-                LibraryFilterControl(state, filter, index, focusedFilterIndex, true) { onFilterSelect(index) }
-            }
-        }
-    } else {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 3.dp),
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            filters.forEachIndexed { index, filter ->
-                if (filter.isSearch) Spacer(modifier = Modifier.weight(1f))
-                LibraryFilterControl(state, filter, index, focusedFilterIndex, false) { onFilterSelect(index) }
-            }
-        }
-    }
-}
-
-@Composable
 private fun LibraryFilterControl(
     state: HomeLibraryUiState,
     filter: LibraryFilter,
@@ -910,8 +881,7 @@ private fun LibraryFilterControl(
     onSelect: () -> Unit
 ) {
     val selected = when {
-        filter.mediaType != null -> state.mediaType == filter.mediaType
-        index == 0 -> state.mediaType == null
+        filter.isSort -> true
         filter.isSearch -> state.searchQuery.isNotBlank()
         else -> false
     }

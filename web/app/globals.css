@@ -9948,7 +9948,11 @@ button,
   grid-template-columns: minmax(180px, 1fr) auto;
   align-items: end;
   gap: 24px;
-  padding-bottom: 20px;
+  padding-bottom: 10px;
+}
+
+.library-screen > .library-heading {
+  padding-top: clamp(88px, 10.5vh, 112px);
 }
 
 .library-title-block { min-width: 0; }
@@ -9995,6 +9999,25 @@ button,
 }
 .library-provider-tabs button:focus-visible {
   color: #fff;
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
+.library-provider-sort {
+  height: 34px;
+  min-width: 142px;
+  padding: 0 30px 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.library-provider-sort:focus-visible {
   outline: 2px solid #fff;
   outline-offset: 1px;
 }
@@ -10093,10 +10116,10 @@ button,
   outline-offset: 0;
 }
 
-.library-type-icon { color: rgba(255, 255, 255, 0.72); }
-.library-type-icon.is-plex { color: #e5a00d; }
-.library-type-icon.is-jellyfin { color: #a970ff; }
-.library-type-icon.is-emby { color: #52b54b; }
+.library-type-icon,
+.library-type-icon.is-plex,
+.library-type-icon.is-jellyfin,
+.library-type-icon.is-emby { color: rgba(255, 255, 255, 0.72); }
 
 .library-sidebar button > span:not(.library-provider-mark) {
   min-width: 0;
@@ -10119,11 +10142,11 @@ button,
 }
 
 .library-toolbar {
-  min-height: 48px;
+  min-height: 42px;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 clamp(20px, 4vw, 64px) 18px;
+  margin: 0 clamp(20px, 4vw, 64px) 8px;
   flex-wrap: wrap;
 }
 
@@ -10188,7 +10211,7 @@ button,
 .library-refreshing-indicator svg { animation: library-spin 900ms linear infinite; }
 @keyframes library-spin { to { transform: rotate(360deg); } }
 
-.library-grid { padding-top: 2px; transition: opacity 140ms ease; }
+.library-grid { padding-top: 6px; transition: opacity 140ms ease; }
 .library-main.is-refreshing .library-grid { opacity: 0.58; pointer-events: none; }
 .library-refreshing-indicator {
   position: absolute;
@@ -10251,7 +10274,7 @@ button,
     font-size: 14px;
     font-weight: 650;
   }
-  .library-toolbar { margin-inline: 20px; margin-bottom: 22px; }
+  .library-toolbar { margin-inline: 20px; margin-bottom: 10px; }
   .library-search { width: 100%; margin-left: 0; }
   .library-workspace.has-library-sidebar .library-toolbar { margin-inline: 20px; }
   .library-workspace.has-library-sidebar .library-grid {

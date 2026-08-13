@@ -125,6 +125,18 @@ enum class HomeServerLibrarySort {
     RATING
 }
 
+internal fun homeServerCatalogMediaType(
+    collectionType: String,
+    explicitMediaType: MediaType? = null
+): MediaType? {
+    explicitMediaType?.let { return it }
+    return when (collectionType.trim().lowercase(Locale.US)) {
+        "movie", "movies", "film", "films" -> MediaType.MOVIE
+        "show", "shows", "series", "tv", "tvshow", "tvshows" -> MediaType.TV
+        else -> null
+    }
+}
+
 data class HomeServerCatalogPage(
     val items: List<HomeServerCatalogItem>,
     val hasMore: Boolean
@@ -1583,7 +1595,7 @@ class HomeServerRepository @Inject constructor(
         return if (connection.serverKind == HomeServerKind.PLEX) {
             loadPlexCatalogItems(connection, collectionId, collectionType, offset, limit, sort, mediaType, searchQuery)
         } else {
-            loadJellyfinCatalogItems(connection, collectionId, offset, limit, sort, mediaType, searchQuery)
+            loadJellyfinCatalogItems(connection, collectionId, collectionType, offset, limit, sort, mediaType, searchQuery)
         }
     }
 
@@ -1603,14 +1615,10 @@ class HomeServerRepository @Inject constructor(
         } else {
             "/library/sections/$collectionId/all"
         }
-        val plexType = when (mediaType) {
+        val plexType = when (homeServerCatalogMediaType(collectionType, mediaType)) {
             MediaType.MOVIE -> "1"
             MediaType.TV -> "2"
-            null -> when (collectionType.lowercase(Locale.US)) {
-            "movie", "movies" -> "1"
-            "show", "shows", "series", "tvshows" -> "2"
-            else -> null
-            }
+            null -> null
         }
         val response = getJson(
             buildUrl(
@@ -1646,6 +1654,7 @@ class HomeServerRepository @Inject constructor(
     private fun loadJellyfinCatalogItems(
         connection: HomeServerConnection,
         collectionId: String,
+        collectionType: String,
         offset: Int,
         limit: Int,
         sort: HomeServerLibrarySort,
@@ -1660,7 +1669,7 @@ class HomeServerRepository @Inject constructor(
                 mapOf(
                     "ParentId" to parentId,
                     "Recursive" to "true",
-                    "IncludeItemTypes" to when (mediaType) {
+                    "IncludeItemTypes" to when (homeServerCatalogMediaType(collectionType, mediaType)) {
                         MediaType.MOVIE -> "Movie"
                         MediaType.TV -> "Series"
                         null -> "Movie,Series"

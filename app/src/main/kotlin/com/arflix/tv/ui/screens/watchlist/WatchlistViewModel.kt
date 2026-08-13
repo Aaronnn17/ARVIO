@@ -58,7 +58,6 @@ data class HomeLibraryUiState(
     val isLoadingMore: Boolean = false,
     val hasMore: Boolean = false,
     val sort: HomeServerLibrarySort = HomeServerLibrarySort.RECENTLY_ADDED,
-    val mediaType: com.arflix.tv.data.model.MediaType? = null,
     val searchQuery: String = "",
     val error: String? = null
 )
@@ -260,12 +259,6 @@ class WatchlistViewModel @Inject constructor(
         loadLibraryFirstPage()
     }
 
-    fun setLibraryMediaType(mediaType: com.arflix.tv.data.model.MediaType?) {
-        if (_libraryState.value.mediaType == mediaType) return
-        _libraryState.value = _libraryState.value.copy(mediaType = mediaType, error = null)
-        loadLibraryFirstPage()
-    }
-
     fun setLibrarySearch(query: String) {
         if (_libraryState.value.searchQuery == query) return
         libraryRequestId++
@@ -283,7 +276,6 @@ class WatchlistViewModel @Inject constructor(
     private fun libraryCacheKey(state: HomeLibraryUiState): String = listOf(
         state.selectedSourceRef.orEmpty(),
         state.sort.name,
-        state.mediaType?.name.orEmpty(),
         state.searchQuery.trim().lowercase()
     ).joinToString("|")
 
@@ -306,7 +298,6 @@ class WatchlistViewModel @Inject constructor(
                     offset = 0,
                     limit = LIBRARY_PAGE_SIZE,
                     sort = snapshot.sort,
-                    mediaType = snapshot.mediaType,
                     searchQuery = snapshot.searchQuery
                 )
             }.onSuccess { page ->
@@ -347,7 +338,6 @@ class WatchlistViewModel @Inject constructor(
                     offset = snapshot.items.size,
                     limit = LIBRARY_PAGE_SIZE,
                     sort = snapshot.sort,
-                    mediaType = snapshot.mediaType,
                     searchQuery = snapshot.searchQuery
                 )
             }.onSuccess { page ->

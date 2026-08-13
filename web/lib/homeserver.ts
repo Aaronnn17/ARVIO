@@ -959,6 +959,13 @@ function libraryValue(serverId: string, libraryId: string): string {
   return `hslib:${encodeURIComponent(serverId)}:${encodeURIComponent(libraryId)}`;
 }
 
+export function homeServerLibraryMediaFilter(mediaType: HomeServerLibraryOption["mediaType"] | string | undefined): "movie" | "tv" | "all" {
+  const normalized = mediaType?.trim().toLowerCase();
+  if (["movie", "movies", "film", "films"].includes(normalized ?? "")) return "movie";
+  if (["tv", "show", "shows", "series", "tvshow", "tvshows"].includes(normalized ?? "")) return "tv";
+  return "all";
+}
+
 function parseLibraryValue(value: string): { serverId: string; libraryId: string } | null {
   const match = value.match(/^hslib:([^:]+):(.+)$/);
   if (!match) return null;
@@ -1033,7 +1040,15 @@ export async function loadHomeServerLibraryItems(
 export async function loadHomeServerLibraryPage(
   servers: HomeServerConfig[],
   source: string,
-  options: { offset?: number; limit?: number; sort?: HomeServerLibrarySort; filter?: "all" | "movie" | "tv"; search?: string; throwOnError?: boolean } = {}
+  options: {
+    offset?: number;
+    limit?: number;
+    sort?: HomeServerLibrarySort;
+    filter?: "all" | "movie" | "tv";
+    libraryMediaType?: HomeServerLibraryOption["mediaType"];
+    search?: string;
+    throwOnError?: boolean;
+  } = {}
 ): Promise<HomeServerLibraryPage> {
   const parsed = parseLibraryValue(source);
   if (!parsed) return { items: [], hasMore: false, total: 0 };
@@ -1045,6 +1060,7 @@ export async function loadHomeServerLibraryPage(
   const search = options.search?.trim() ?? "";
   const server = servers.find((s) => s.id === serverId && s.enabled && s.url);
   if (!server) return { items: [], hasMore: false, total: 0 };
+  const effectiveFilter = filter === "all" ? homeServerLibraryMediaFilter(options.libraryMediaType) : filter;
   try {
     if (server.type === "plex") {
       const base = trimUrl(server.url);
@@ -1056,7 +1072,7 @@ export async function loadHomeServerLibraryPage(
         "X-Plex-Container-Size": String(limit),
         includeGuids: "1"
       });
-      if (filter !== "all") params.set("type", filter === "movie" ? "1" : "2");
+      if (effectiveFilter !== "all") params.set("type", effectiveFilter === "movie" ? "1" : "2");
       if (search) params.set("title", search);
       const res = await proxiedGet<{ MediaContainer?: { Metadata?: PlexItem[]; totalSize?: number; size?: number } }>(
         `${base}/library/sections/${libraryKey}/all?${params.toString()}`,
@@ -1074,7 +1090,7 @@ export async function loadHomeServerLibraryPage(
     const params = new URLSearchParams({
       ParentId: libraryKey,
       Recursive: "true",
-      IncludeItemTypes: filter === "movie" ? "Movie" : filter === "tv" ? "Series" : "Movie,Series",
+      IncludeItemTypes: effectiveFilter === "movie" ? "Movie" : effectiveFilter === "tv" ? "Series" : "Movie,Series",
       SortBy: sort === "title" ? "SortName" : sort === "rating" ? "CommunityRating" : "DateCreated",
       SortOrder: sort === "title" ? "Ascending" : "Descending",
       StartIndex: String(offset),
