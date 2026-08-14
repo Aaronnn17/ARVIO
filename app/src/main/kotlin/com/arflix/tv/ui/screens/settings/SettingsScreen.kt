@@ -3562,6 +3562,11 @@ private fun MobileSettingsLayout(
         onNavigate("MAIN")
     }
 
+    var displayedSubPage by remember { mutableStateOf(if (page != "MAIN") page else "") }
+    if (page != "MAIN") {
+        displayedSubPage = page
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -3637,14 +3642,14 @@ private fun MobileSettingsLayout(
                             .size(28.dp)
                     )
                     Text(
-                        text = mobileCategoryTitle(page),
+                        text = mobileCategoryTitle(displayedSubPage),
                         style = ArflixTypography.heroTitle.copy(fontSize = 24.sp),
                         color = TextPrimary,
                         modifier = Modifier.weight(1f)
                     )
                 }
                 MobileSettingsSubPage(
-                    page = page,
+                    page = displayedSubPage,
                     onNavigate = onNavigate,
                     uiState = uiState,
                     viewModel = viewModel,

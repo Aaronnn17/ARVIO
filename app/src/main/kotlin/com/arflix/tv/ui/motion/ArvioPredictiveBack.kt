@@ -69,16 +69,6 @@ fun rememberArvioPredictiveBack(
         snapshotFlow { anim.value }.collect { motion.progress = it }
     }
 
-    // Modal composables often stay in composition while hidden. Reset the completed
-    // dismiss animation so reopening them cannot inherit a scaled or faded state.
-    LaunchedEffect(enabled) {
-        if (!enabled) {
-            anim.stop()
-            anim.snapTo(0f)
-            motion.touchY = Float.NaN
-        }
-    }
-
     PredictiveBackHandler(enabled = enabled) { events ->
         try {
             events.collect { e ->
@@ -86,8 +76,9 @@ fun rememberArvioPredictiveBack(
                 motion.touchY = e.touchY
                 anim.snapTo(e.progress)
             }
-            anim.animateTo(1f, tween(commitDurationMs, easing = ArvioStandardDecelerate))
             commit()
+            anim.animateTo(1f, tween(150, easing = ArvioStandardDecelerate))
+            anim.snapTo(0f)
         } catch (e: CancellationException) {
             scope.launch {
                 anim.animateTo(0f, tween(cancelDurationMs, easing = ArvioStandardDecelerate))
