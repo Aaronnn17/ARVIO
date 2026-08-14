@@ -52,6 +52,7 @@ import {
   VLC_SETUP_SH_URL,
   VLC_SETUP_URL,
 } from "@/lib/externalPlayers";
+import { buildHomeServerCatalogConfigs } from "@/lib/homeserver";
 import { defaultSettings, useApp } from "@/lib/store";
 import type {
   AppSettings,
@@ -2180,17 +2181,39 @@ function TvSettingsSection() {
 
 function CatalogsSection() {
   const { settings, updateSettings, setToast } = useApp();
-  const catalogs = mergeCatalogs(
+  const standardCatalogs = mergeCatalogs(
     safeArray(settings.catalogs),
     safeArray(settings.hiddenCatalogIds),
-  );
+  ).filter((catalog) => catalog.sourceType !== "home-server");
+  const [homeServerCatalogs, setHomeServerCatalogs] = useState<CatalogConfig[]>([]);
   const [customCatalogUrl, setCustomCatalogUrl] = useState("");
+  const catalogs = [...homeServerCatalogs, ...standardCatalogs];
 
-  const updateCatalogs = (next: CatalogConfig[]) =>
+  useEffect(() => {
+    let cancelled = false;
+    void buildHomeServerCatalogConfigs(
+      safeArray(settings.homeServers),
+      safeArray(settings.catalogs),
+      safeArray(settings.hiddenHomeServerCatalogIds),
+    ).then((next) => {
+      if (!cancelled) setHomeServerCatalogs(next);
+    }).catch(() => {
+      if (!cancelled) setHomeServerCatalogs([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.catalogs, settings.hiddenHomeServerCatalogIds, settings.homeServers]);
+
+  const updateCatalogs = (next: CatalogConfig[]) => {
+    const homeServer = next.filter((catalog) => catalog.sourceType === "home-server");
+    const standard = next.filter((catalog) => catalog.sourceType !== "home-server");
     updateSettings({
       catalogs: next,
-      hiddenCatalogIds: next.filter((c) => !c.enabled).map((c) => c.id),
+      hiddenCatalogIds: standard.filter((catalog) => !catalog.enabled).map((catalog) => catalog.id),
+      hiddenHomeServerCatalogIds: homeServer.filter((catalog) => !catalog.enabled).map((catalog) => catalog.id),
     });
+  };
   const moveCatalog = (id: string, offset: number) => {
     const index = catalogs.findIndex((c) => c.id === id);
     const target = index + offset;
@@ -2236,7 +2259,7 @@ function CatalogsSection() {
         <button
           type="button"
           className="secondary text-button"
-          onClick={() => updateCatalogs(defaultCatalogs)}
+          onClick={() => updateCatalogs([...homeServerCatalogs, ...defaultCatalogs])}
         >
           <RotateCcw size={18} /> Reset
         </button>
@@ -2303,7 +2326,7 @@ function CatalogsSection() {
             >
               <ArrowDown size={18} />
             </button>
-            {!catalog.isPreinstalled && (
+            {!catalog.isPreinstalled && catalog.sourceType !== "home-server" && (
               <button
                 type="button"
                 className="icon-button danger"

@@ -664,6 +664,7 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
   const iptvSettings = iptvFromAndroid(scopedValue(root, "iptvByProfile", profileId), root);
   const profileCatalogs = scopedValue<AppSettings["catalogs"]>(root, "catalogsByProfile", profileId);
   const hiddenCatalogIds = scopedValue<string[]>(root, "hiddenPreinstalledByProfile", profileId);
+  const hiddenHomeServerCatalogIds = scopedValue<string[]>(root, "hiddenHomeServerByProfile", profileId);
   const profileAddons = scopedValue<InstalledAddon[]>(root, "addonsByProfile", profileId);
   const legacySettings = objectRecord<unknown>(root.settings) as Partial<AppSettings>;
   delete legacySettings.customTmdbApiKey;
@@ -700,7 +701,8 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
       ...globalSettings,
       ...iptvSettings,
       ...(arrayValue(profileCatalogs).length ? { catalogs: arrayValue(profileCatalogs) as AppSettings["catalogs"] } : legacyCatalogs.length ? { catalogs: legacyCatalogs } : {}),
-      ...(arrayValue(hiddenCatalogIds).length ? { hiddenCatalogIds: arrayValue<string>(hiddenCatalogIds) } : legacyHiddenCatalogIds.length ? { hiddenCatalogIds: legacyHiddenCatalogIds } : {})
+      ...(hiddenCatalogIds !== undefined ? { hiddenCatalogIds: arrayValue<string>(hiddenCatalogIds) } : legacyHiddenCatalogIds.length ? { hiddenCatalogIds: legacyHiddenCatalogIds } : {}),
+      ...(hiddenHomeServerCatalogIds !== undefined ? { hiddenHomeServerCatalogIds: arrayValue<string>(hiddenHomeServerCatalogIds) } : {})
     },
     updatedAt: typeof root.updatedAt === "number" ? root.updatedAt : 0
   };
@@ -837,6 +839,7 @@ export async function saveCloudSettings(
       // add-on installed on another device. Add-ons are written exclusively by saveCloudAddons().
       setScopedValue(root, "catalogsByProfile", profileId, settings.catalogs);
       setScopedValue(root, "hiddenPreinstalledByProfile", profileId, settings.hiddenCatalogIds);
+      setScopedValue(root, "hiddenHomeServerByProfile", profileId, settings.hiddenHomeServerCatalogIds);
       setScopedValue(root, "iptvByProfile", profileId, {
         m3uUrl: settings.iptvPlaylists[0]?.m3uUrl ?? "",
         epgUrl: settings.iptvPlaylists[0]?.epgUrl ?? "",

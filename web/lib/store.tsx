@@ -186,6 +186,7 @@ export const defaultSettings: AppSettings = {
   cardDensity: "comfortable",
   catalogs: defaultCatalogs,
   hiddenCatalogIds: [],
+  hiddenHomeServerCatalogIds: [],
   disabledAddonIds: [],
   homeServers: [],
   iptvPlaylists: [],
@@ -682,8 +683,25 @@ export function AppProvider({
 
   useEffect(() => {
     const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds);
-    setCatalogConfigs(effectiveCatalogs.filter((catalog) => catalog.enabled));
+    setCatalogConfigs(effectiveCatalogs.filter((catalog) => catalog.enabled && catalog.sourceType !== "home-server"));
   }, [settings.catalogs, settings.hiddenCatalogIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const effectiveCatalogs = mergeCatalogs(settings.catalogs, settings.hiddenCatalogIds);
+    void loadHomeServerRows(
+      settings.homeServers,
+      settings.hiddenHomeServerCatalogIds,
+      effectiveCatalogs
+    ).then((rows) => {
+      if (!cancelled) setHomeServerRows(rows);
+    }).catch(() => {
+      if (!cancelled) setHomeServerRows([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.catalogs, settings.hiddenCatalogIds, settings.hiddenHomeServerCatalogIds, settings.homeServers]);
 
   const deviceCodeRef = useRef(deviceCode);
   useEffect(() => {
@@ -858,9 +876,7 @@ export function AppProvider({
       }
 
       const effectiveCatalogs = mergeCatalogs(effectiveSettings.catalogs, effectiveSettings.hiddenCatalogIds);
-      setCatalogConfigs(effectiveCatalogs.filter((catalog) => catalog.enabled));
-
-      void loadHomeServerRows(effectiveSettings.homeServers).then(setHomeServerRows).catch(() => setHomeServerRows([]));
+      setCatalogConfigs(effectiveCatalogs.filter((catalog) => catalog.enabled && catalog.sourceType !== "home-server"));
 
       const client = syncClient();
       const traktReady = client.isConnected;
