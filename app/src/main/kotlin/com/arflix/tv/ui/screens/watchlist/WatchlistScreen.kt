@@ -471,7 +471,7 @@ fun WatchlistScreen(
         ) {
             if (isMobile) {
                 Text(
-                    text = stringResource(R.string.watchlist),
+                    text = stringResource(R.string.library_default),
                     style = ArflixTypography.heroTitle.copy(fontSize = 28.sp),
                     color = TextPrimary,
                     modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 8.dp)
@@ -540,6 +540,7 @@ fun WatchlistScreen(
                             gridState = gridState,
                             onItemFocused = { index -> focusedItemIndex = index },
                             onItemClick = { item -> openDetails(item) },
+                            onLoadMore = viewModel::loadMoreActiveSource,
                             onItemLongPress = { item ->
                                 if (uiState.selectedSourceId == WatchlistSourceItem.MyWatchlist.id) {
                                     viewModel.removeFromWatchlist(item)
@@ -564,6 +565,7 @@ fun WatchlistScreen(
                                 focusedItemIndex = itemIdx
                             },
                             onItemClick = { item -> openDetails(item) },
+                            onLoadMore = viewModel::loadMoreActiveSource,
                             onItemLongPress = { item ->
                                 if (uiState.selectedSourceId == WatchlistSourceItem.MyWatchlist.id) {
                                     viewModel.removeFromWatchlist(item)
@@ -571,6 +573,15 @@ fun WatchlistScreen(
                             }
                         )
                     }
+                }
+                if (uiState.isLoadingMore) {
+                    LoadingIndicator(
+                        color = Pink,
+                        size = 26.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 12.dp)
+                    )
                 }
             }
         }
@@ -795,6 +806,7 @@ private fun SingleTypeGridView(
     gridState: androidx.compose.foundation.lazy.grid.LazyGridState,
     onItemFocused: (Int) -> Unit,
     onItemClick: (MediaItem) -> Unit,
+    onLoadMore: () -> Unit,
     onItemLongPress: (MediaItem) -> Unit
 ) {
     Column(
@@ -817,9 +829,12 @@ private fun SingleTypeGridView(
         ) {
             gridItemsIndexed(
                 items = items,
-                key = { _, item -> "${item.mediaType.name}-${item.id}" },
+                key = { index, item -> watchlistItemKey(item, index) },
                 contentType = { _, item -> item.mediaType.name }
             ) { index, item ->
+                if (index >= (items.size - columns * 2).coerceAtLeast(0)) {
+                    LaunchedEffect(items.size, index) { onLoadMore() }
+                }
                 MediaCard(
                     item = item,
                     width = cardWidth,
@@ -858,6 +873,7 @@ private fun MultiSectionRowsView(
     columnState: androidx.compose.foundation.lazy.LazyListState,
     onItemFocused: (Int, Int) -> Unit,
     onItemClick: (MediaItem) -> Unit,
+    onLoadMore: () -> Unit,
     onItemLongPress: (MediaItem) -> Unit
 ) {
     LazyColumn(
@@ -889,9 +905,12 @@ private fun MultiSectionRowsView(
                 ) {
                     itemsIndexed(
                         items = items,
-                        key = { _, item -> "${item.mediaType.name}-${item.id}" },
+                        key = { index, item -> watchlistItemKey(item, index) },
                         contentType = { _, item -> item.mediaType.name }
                     ) { itemIdx, item ->
+                        if (itemIdx >= (items.size - 4).coerceAtLeast(0)) {
+                            LaunchedEffect(items.size, itemIdx) { onLoadMore() }
+                        }
                         MediaCard(
                             item = item,
                             width = cardWidth,

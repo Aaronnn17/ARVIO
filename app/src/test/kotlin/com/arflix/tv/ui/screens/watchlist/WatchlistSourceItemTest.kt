@@ -30,7 +30,7 @@ class WatchlistSourceItemTest {
         val source = WatchlistSourceItem.Catalog(traktConfig)
         assertThat(source.id).isEqualTo("catalog_trakt_trending")
         assertThat(source.subtitle).isEqualTo("Trakt")
-        assertThat(source.displayLabel).isEqualTo("Trakt · Trending Movies")
+        assertThat(source.displayLabel).isEqualTo("Trakt / Trending Movies")
     }
 
     @Test
@@ -46,7 +46,32 @@ class WatchlistSourceItemTest {
         val source = WatchlistSourceItem.HomeServer(candidate)
         assertThat(source.id).isEqualTo("server_jellyfin:kids_ref")
         assertThat(source.subtitle).isEqualTo("Jellyfin")
-        assertThat(source.displayLabel).isEqualTo("Jellyfin · Kids")
+        assertThat(source.displayLabel).isEqualTo("Jellyfin / Kids")
+    }
+
+    @Test
+    fun homeServerCatalogsAreRepresentedOnlyByNativeLibrarySources() {
+        val mirroredCatalog = CatalogConfig(
+            id = "home_jellyfin_kids",
+            title = "Kids",
+            sourceType = CatalogSourceType.HOME_SERVER,
+            sourceUrl = "jellyfin:kids_ref"
+        )
+        val candidate = HomeServerCatalogCandidate(
+            serverKind = HomeServerKind.JELLYFIN,
+            serverName = "Jellyfin",
+            collectionName = "Kids",
+            collectionType = "movies",
+            title = "Kids Movies",
+            sourceRef = "jellyfin:kids_ref"
+        )
+
+        val sources = buildWatchlistSources(listOf(mirroredCatalog), listOf(candidate))
+
+        assertThat(sources.filterIsInstance<WatchlistSourceItem.Catalog>()).isEmpty()
+        assertThat(sources.filterIsInstance<WatchlistSourceItem.HomeServer>()).containsExactly(
+            WatchlistSourceItem.HomeServer(candidate)
+        )
     }
 
     @Test

@@ -229,6 +229,7 @@ class SimklIntegrationTest {
         val movie = items.first { it.id == 100 }
         assertEquals(42, movie.progress)
         assertEquals(3_024L, movie.resumePositionSeconds)
+        assertFalse(syncService.getWatchedMovies().contains(100))
         val show = items.first { it.id == 200 }
         assertTrue(show.isUpNext)
         assertEquals(2, show.season)
@@ -236,6 +237,32 @@ class SimklIntegrationTest {
         assertEquals("The Return", show.episodeTitle)
         assertEquals(12, show.watchedEpisodes)
         assertEquals(20, show.totalEpisodes)
+    }
+
+    @Test
+    fun testMyListSeparatesPlannedTitlesAndMarksPreviousEpisodesWatched() = runBlocking {
+        coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
+        coEvery { simklApi.getActivities(any(), any()) } returns
+            SimklActivitiesResponse(all = "2026-08-14T12:00:00Z")
+        coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            SimklAllItemsResponse()
+        coEvery {
+            simklApi.getAllItems(any(), any(), "shows", any(), any(), any(), any(), any(), any())
+        } returns Gson().fromJson(
+            """{"shows":[{"status":"watching","last_watched_at":"2026-08-14T11:00:00Z","show":{"title":"Current Show","ids":{"tmdb":200}},"seasons":[{"number":1,"episodes":[{"number":1},{"number":2}]}],"next_to_watch":"S01E03"},{"status":"plantowatch","show":{"title":"Planned Show","ids":{"tmdb":300}}}]}""",
+            SimklAllItemsResponse::class.java
+        )
+        coEvery { simklApi.getPlayback(any(), any()) } returns emptyList()
+
+        val watchlist = syncService.getWatchlistItems()
+        val continueWatching = syncService.getContinueWatching()
+        val watchedEpisodes = syncService.getWatchedEpisodes()
+
+        assertEquals(listOf(300), watchlist.map { it.id })
+        assertEquals(200, continueWatching.single().id)
+        assertEquals(3, continueWatching.single().episode)
+        assertTrue("show_tmdb:200:1:1" in watchedEpisodes)
+        assertTrue("show_tmdb:200:1:2" in watchedEpisodes)
     }
 
     @Test
