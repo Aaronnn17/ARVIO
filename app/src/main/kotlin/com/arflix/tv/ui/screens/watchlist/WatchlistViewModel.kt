@@ -17,6 +17,7 @@ import com.arflix.tv.data.repository.HomeServerKind
 import com.arflix.tv.data.repository.HomeServerLibrarySort
 import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.MediaRepository
+import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.TraktRepository
 import com.arflix.tv.data.repository.WatchHistoryEntry
 import com.arflix.tv.data.repository.WatchHistoryRepository
@@ -34,6 +35,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -190,7 +194,8 @@ class WatchlistViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val watchHistoryRepository: WatchHistoryRepository,
     private val simklAuthManager: SimklAuthManager,
-    private val simklSyncService: SimklSyncService
+    private val simklSyncService: SimklSyncService,
+    private val profileManager: ProfileManager
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(WatchlistUiState())
     val uiState: StateFlow<WatchlistUiState> = _uiState.asStateFlow()
@@ -241,7 +246,7 @@ class WatchlistViewModel @Inject constructor(
     init {
         observeWatchlistChanges()
         observeCatalogsAndHomeServers()
-        loadTrackerLibraries()
+        observeTrackerLibraries()
         loadWatchlistInstant()
     }
 
@@ -282,44 +287,66 @@ class WatchlistViewModel @Inject constructor(
         }
     }
 
-    private fun loadTrackerLibraries() {
+    private fun observeTrackerLibraries() {
         viewModelScope.launch {
-            val (traktConnected, simklConnected) = coroutineScope {
-                val trakt = async { runCatching { traktRepository.hasTrakt() }.getOrDefault(false) }
-                val simkl = async { runCatching { simklAuthManager.isConnected() }.getOrDefault(false) }
-                trakt.await() to simkl.await()
-            }
-
-            val trackerLists = buildList {
-                if (traktConnected) {
-                    runCatching { traktRepository.getPersonalLists() }
-                        .getOrDefault(emptyList())
-                        .forEach { list ->
-                            add(
-                                WatchlistSourceItem.TrackerList(
-                                    provider = TrackerLibraryProvider.TRAKT,
-                                    listKey = list.id,
-                                    title = list.title
-                                )
-                            )
-                        }
+            profileManager.activeProfileId
+                .combine(traktRepository.isAuthenticated) { profileId, traktConnected ->
+                    profileId to traktConnected
                 }
-                if (simklConnected) {
-                    SIMKL_LIBRARY_LISTS.forEach { (status, title) ->
+                .distinctUntilChanged()
+                .collectLatest { (_, traktConnected) ->
+                    sourceLoadJob?.cancel()
+                    sourceLoadMoreJob?.cancel()
+                    sourceItemsCache.keys.removeAll { it.startsWith("tracker_") }
+                    sourcePageStates.keys.removeAll { it.startsWith("tracker_") }
+                    currentTrackerLists = emptyList()
+                    updateAvailableSources()
+                    refreshTrackerLibraries(traktConnected)
+                }
+        }
+    }
+
+    private suspend fun refreshTrackerLibraries(traktConnected: Boolean) {
+        val simklConnected = runCatching { simklAuthManager.isConnected() }.getOrDefault(false)
+        val trackerLists = buildList {
+            if (traktConnected) {
+                val personalLists = runCatching { traktRepository.getPersonalLists() }
+                    .getOrDefault(emptyList())
+                if (personalLists.isEmpty()) {
+                    add(
+                        WatchlistSourceItem.TrackerList(
+                            provider = TrackerLibraryProvider.TRAKT,
+                            listKey = TRAKT_WATCHLIST_KEY,
+                            title = "Watchlist"
+                        )
+                    )
+                } else {
+                    personalLists.forEach { list ->
                         add(
                             WatchlistSourceItem.TrackerList(
-                                provider = TrackerLibraryProvider.SIMKL,
-                                listKey = status,
-                                title = title
+                                provider = TrackerLibraryProvider.TRAKT,
+                                listKey = list.id,
+                                title = list.title
                             )
                         )
                     }
                 }
             }
-
-            currentTrackerLists = trackerLists
-            updateAvailableSources()
+            if (simklConnected) {
+                SIMKL_LIBRARY_LISTS.forEach { (status, title) ->
+                    add(
+                        WatchlistSourceItem.TrackerList(
+                            provider = TrackerLibraryProvider.SIMKL,
+                            listKey = status,
+                            title = title
+                        )
+                    )
+                }
+            }
         }
+
+        currentTrackerLists = trackerLists
+        updateAvailableSources()
     }
 
     private fun updateHomeLibraryState(
@@ -668,7 +695,13 @@ class WatchlistViewModel @Inject constructor(
                 sourceLoadJob = viewModelScope.launch {
                     runCatching {
                         val baseItems = when (activeSource.provider) {
-                            TrackerLibraryProvider.TRAKT -> traktRepository.getPersonalListItems(activeSource.listKey)
+                            TrackerLibraryProvider.TRAKT -> {
+                                if (activeSource.listKey == TRAKT_WATCHLIST_KEY) {
+                                    traktRepository.getWatchlist()
+                                } else {
+                                    traktRepository.getPersonalListItems(activeSource.listKey)
+                                }
+                            }
                             TrackerLibraryProvider.SIMKL -> simklSyncService.getLibraryItems(
                                 status = activeSource.listKey,
                                 forceRefresh = forceRefresh
@@ -1231,6 +1264,7 @@ class WatchlistViewModel @Inject constructor(
         private const val LIBRARY_LOGO_INITIAL_PREFETCH = 12
         private const val LIBRARY_CACHE_ENTRY_LIMIT = 12
         private const val TRACKER_LIST_ITEM_LIMIT = 240
+        private const val TRAKT_WATCHLIST_KEY = "__watchlist__"
         private val SIMKL_LIBRARY_LISTS = listOf(
             "watching" to "Watching",
             "plantowatch" to "Plan to watch",

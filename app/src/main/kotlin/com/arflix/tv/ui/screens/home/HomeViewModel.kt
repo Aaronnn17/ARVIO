@@ -40,6 +40,7 @@ import com.arflix.tv.data.repository.CloudSyncStatus
 import com.arflix.tv.data.repository.CollectionTemplateManifest
 import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.data.repository.WatchlistRepository
+import com.arflix.tv.data.repository.sync.TrackingFeature
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.DeviceType
@@ -1510,12 +1511,13 @@ class HomeViewModel @Inject constructor(
                     val previousProfileId = activeRuntimeProfileId
                     if (previousProfileId == null) {
                         activeRuntimeProfileId = profileId
+                        launchContinueWatchingFetch()
                         return@collect
                     }
                     if (previousProfileId != profileId) {
                         resetProfileRuntimeState(profileId)
                         loadHomeData()
-                        refreshContinueWatchingOnly(force = true)
+                        launchContinueWatchingFetch()
                         startEpgRefreshTimer()
                     }
                 }
@@ -3658,7 +3660,7 @@ class HomeViewModel @Inject constructor(
 
     private suspend fun resolveContinueWatchingItemsStable(forceFresh: Boolean): List<ContinueWatchingItem> {
         val useRemoteSync = try {
-            remoteSyncManager.isRemoteConnected()
+            remoteSyncManager.isRemoteConnected(TrackingFeature.CONTINUE_WATCHING)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

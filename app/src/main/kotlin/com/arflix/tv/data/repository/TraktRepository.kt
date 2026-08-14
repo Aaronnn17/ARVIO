@@ -29,6 +29,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
@@ -155,9 +157,11 @@ class TraktRepository @Inject constructor(
     /**
      * Check if current profile is authenticated with Trakt
      */
-    val isAuthenticated: Flow<Boolean> = context.traktDataStore.data.map { prefs ->
-        prefs[accessTokenKey()] != null
-    }
+    val isAuthenticated: Flow<Boolean> = profileManager.activeProfileId
+        .combine(context.traktDataStore.data) { profileId, prefs ->
+            !prefs[profileManager.profileStringKeyFor(profileId, "trakt_access_token")].isNullOrBlank()
+        }
+        .distinctUntilChanged()
 
     /**
      * Get token expiration timestamp (seconds since epoch) for current profile
