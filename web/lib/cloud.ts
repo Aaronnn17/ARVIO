@@ -1,5 +1,5 @@
 import type { AuthClient } from "./auth";
-import { config, hasNetlifyBackendConfig } from "./config";
+import { config, hasNetlifyBackendUrl } from "./config";
 import { parseHomeServerConnectionJson, serializeHomeServerConnectionJson } from "./homeserver";
 import { jsonRequest } from "./http";
 import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
@@ -65,7 +65,10 @@ interface AndroidIptvProfileState {
 }
 
 function canUseBackendSync(auth: AuthClient) {
-  return Boolean(auth.session?.accessToken && auth.isNetlifySession && hasNetlifyBackendConfig());
+  // Account sync authenticates with the signed-in user's bearer token. The
+  // public app key is only needed to create/refresh a password session, so it
+  // must not disable cloud pulls for sessions returned by auth.arvio.tv.
+  return Boolean(auth.session?.accessToken && auth.isNetlifySession && hasNetlifyBackendUrl());
 }
 
 async function backendRequest<T>(auth: AuthClient, path: string, init: RequestInit = {}) {
