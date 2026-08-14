@@ -63,6 +63,7 @@ class SimklIntegrationTest {
         val success = authManager.pollPinAuth("SIMKL-123")
         assertTrue(success)
         coVerify { syncProviderStore.setSimklAccessToken("token_abc123") }
+        coVerify { syncProviderStore.setMdbListApiKey(null) }
     }
 
     @Test

@@ -57,6 +57,24 @@ class SyncProviderStore @Inject constructor(
                 prefs[providerKey()] = provider.toStorage()
             }
         }
+        context.traktDataStore.edit { prefs ->
+            when (provider) {
+                SyncProvider.TRAKT -> {
+                    prefs.remove(mdbListKey())
+                    prefs.remove(simklAccessTokenKey())
+                }
+                SyncProvider.MDBLIST -> {
+                    prefs.remove(simklAccessTokenKey())
+                }
+                SyncProvider.SIMKL -> {
+                    prefs.remove(mdbListKey())
+                }
+                SyncProvider.NONE -> {
+                    prefs.remove(mdbListKey())
+                    prefs.remove(simklAccessTokenKey())
+                }
+            }
+        }
     }
 
     private fun simklAccessTokenKey() = profileManager.profileStringKey("simkl_access_token")
@@ -137,13 +155,13 @@ class SyncProviderStore @Inject constructor(
         }
         context.traktDataStore.edit { prefs ->
             values.forEach { (profileId, selection) ->
-                val key = selection.mdbListApiKey?.trim().orEmpty()
+                val key = if (selection.provider == SyncProvider.MDBLIST) selection.mdbListApiKey?.trim().orEmpty() else ""
                 if (key.isEmpty()) {
                     prefs.remove(mdbListKeyFor(profileId))
                 } else {
                     prefs[mdbListKeyFor(profileId)] = key
                 }
-                val simklToken = selection.simklAccessToken?.trim().orEmpty()
+                val simklToken = if (selection.provider == SyncProvider.SIMKL) selection.simklAccessToken?.trim().orEmpty() else ""
                 if (simklToken.isEmpty()) {
                     prefs.remove(simklAccessTokenKeyFor(profileId))
                 } else {

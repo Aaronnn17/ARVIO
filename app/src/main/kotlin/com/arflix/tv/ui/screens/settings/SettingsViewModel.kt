@@ -3486,7 +3486,10 @@ class SettingsViewModel @Inject constructor(
                     val expirationDate = traktRepository.getTokenExpirationDate()
 
                     // Success!
-                    // Mutual exclusion: selecting Trakt disconnects MDBList for this profile.
+                    // Mutual exclusion: selecting Trakt disconnects MDBList and Simkl for this profile.
+                    simklPollingJob?.cancel()
+                    simklPollingJob = null
+                    runCatching { simklAuthManager.disconnect() }
                     syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.TRAKT)
                     syncProviderStore.setMdbListApiKey(null)
                     _uiState.value = _uiState.value.copy(
@@ -3494,6 +3497,11 @@ class SettingsViewModel @Inject constructor(
                         traktUsername = null,
                         isMdbListConnected = false,
                         mdbListUsername = null,
+                        isSimklConnected = false,
+                        simklUsername = null,
+                        isSimklPolling = false,
+                        simklUserCode = null,
+                        simklVerificationUrl = null,
                         traktCode = null,
                         isTraktAuthStarting = false,
                         isTraktPolling = false,
@@ -3504,7 +3512,8 @@ class SettingsViewModel @Inject constructor(
                     refreshIntegrationUsernames(
                         profileManager.getProfileIdSync(),
                         isTraktConnected = true,
-                        isMdbListConnected = false
+                        isMdbListConnected = false,
+                        isSimklConnected = false
                     )
                     traktRepository.clearContinueWatchingCache()
                     runCatching { traktRepository.getContinueWatching() }
@@ -3613,9 +3622,12 @@ class SettingsViewModel @Inject constructor(
                 )
                 return@launch
             }
-            // Mutual exclusion: drop Trakt for this profile.
+            // Mutual exclusion: drop Trakt and Simkl for this profile.
             cancelTraktAuth()
             runCatching { traktRepository.logout() }
+            simklPollingJob?.cancel()
+            simklPollingJob = null
+            runCatching { simklAuthManager.disconnect() }
             syncProviderStore.setMdbListApiKey(trimmed)
             syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
             _uiState.value = _uiState.value.copy(
@@ -3625,6 +3637,11 @@ class SettingsViewModel @Inject constructor(
                 isTraktAuthenticated = false,
                 traktUsername = null,
                 traktExpiration = null,
+                isSimklConnected = false,
+                simklUsername = null,
+                isSimklPolling = false,
+                simklUserCode = null,
+                simklVerificationUrl = null,
                 lastSyncTime = null,
                 syncedMovies = 0,
                 syncedEpisodes = 0,
@@ -3634,7 +3651,8 @@ class SettingsViewModel @Inject constructor(
             refreshIntegrationUsernames(
                 profileManager.getProfileIdSync(),
                 isTraktConnected = false,
-                isMdbListConnected = true
+                isMdbListConnected = true,
+                isSimklConnected = false
             )
             // The MDBList watchlist is pulled when the Watchlist screen next loads.
             syncLocalStateToCloud(silent = true, force = true)
@@ -3696,21 +3714,31 @@ class SettingsViewModel @Inject constructor(
                 try {
                     val success = simklAuthManager.pollPinAuth(userCode)
                     if (success) {
+                        cancelTraktAuth()
+                        runCatching { traktRepository.logout() }
+                        syncProviderStore.setMdbListApiKey(null)
                         syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL)
                         _uiState.value = _uiState.value.copy(
                             isSimklPolling = false,
                             isSimklConnected = true,
                             simklUserCode = null,
                             simklVerificationUrl = null,
+                            isTraktAuthenticated = false,
+                            traktUsername = null,
+                            traktExpiration = null,
+                            isMdbListConnected = false,
+                            mdbListUsername = null,
                             toastMessage = "Connected to Simkl!",
                             toastType = ToastType.SUCCESS
                         )
                         refreshIntegrationUsernames(
                             profileManager.getProfileIdSync(),
-                            isTraktConnected = _uiState.value.isTraktAuthenticated,
-                            isMdbListConnected = _uiState.value.isMdbListConnected,
+                            isTraktConnected = false,
+                            isMdbListConnected = false,
                             isSimklConnected = true
                         )
+                        syncLocalStateToCloud(silent = true, force = true)
+                        runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                         return@launch
                     }
                 } catch (e: Exception) {
@@ -3730,25 +3758,36 @@ class SettingsViewModel @Inject constructor(
 
     fun pollSimklAuth() {
         val userCode = _uiState.value.simklUserCode ?: return
-        viewModelScope.launch {
+        simklPollingJob?.cancel()
+        simklPollingJob = viewModelScope.launch {
             runCatching {
                 val success = simklAuthManager.pollPinAuth(userCode)
                 if (success) {
+                    cancelTraktAuth()
+                    runCatching { traktRepository.logout() }
+                    syncProviderStore.setMdbListApiKey(null)
                     syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL)
                     _uiState.value = _uiState.value.copy(
                         isSimklPolling = false,
                         isSimklConnected = true,
                         simklUserCode = null,
                         simklVerificationUrl = null,
+                        isTraktAuthenticated = false,
+                        traktUsername = null,
+                        traktExpiration = null,
+                        isMdbListConnected = false,
+                        mdbListUsername = null,
                         toastMessage = "Connected to Simkl!",
                         toastType = ToastType.SUCCESS
                     )
                     refreshIntegrationUsernames(
                         profileManager.getProfileIdSync(),
-                        isTraktConnected = _uiState.value.isTraktAuthenticated,
-                        isMdbListConnected = _uiState.value.isMdbListConnected,
+                        isTraktConnected = false,
+                        isMdbListConnected = false,
                         isSimklConnected = true
                     )
+                    syncLocalStateToCloud(silent = true, force = true)
+                    runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                 }
             }
         }
