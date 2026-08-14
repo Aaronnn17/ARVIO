@@ -283,7 +283,7 @@ export class SimklClient implements SyncClient {
     const snapshot = await this.loadSnapshot();
     if (type === "movies") {
       return (await Promise.all(snapshot.movies.filter((item) =>
-        item.status === "completed" || item.status === "watching" || Boolean(item.last_watched_at)
+        item.status === "completed"
       ).map(async (item) => ({ ...item, movie: await this.resolveMedia(item.movie, "movie") }))))
         .filter((item) => item.movie?.ids?.tmdb);
     }

@@ -5,7 +5,7 @@ import { getStreams, getStreamsProgressive, installAddon as installAddonManifest
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
-import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveWatchedState } from "./cloud";
+import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
@@ -240,7 +240,7 @@ function traktWatchedKeys(movies: unknown[], shows: unknown[]) {
     const item = raw as { movie?: { ids?: { tmdb?: number } }; status?: string; last_watched_at?: string };
     const tmdb = item.movie?.ids?.tmdb;
     if (tmdb) {
-      if (item.status === undefined || item.status === "completed" || item.status === "watching" || Boolean(item.last_watched_at)) {
+      if (item.status === undefined || item.status === "completed") {
         keys.add(`movie:${tmdb}`);
       }
     }
@@ -2135,14 +2135,11 @@ export function AppProvider({
     }
     const slim = slimCacheItem(item);
     const cacheKey = watchlistCacheKeyFor(activeProfileId);
-
-    setWatchlist((prev) => {
-      const next = inWatchlist
-        ? prev.filter((entry) => !(entry.mediaType === item.mediaType && entry.id === item.id))
-        : [slim, ...prev];
-      saveCachedList(cacheKey, next, 60);
-      return next;
-    });
+    const nextWatchlist = inWatchlist
+      ? watchlist.filter((entry) => !(entry.mediaType === item.mediaType && entry.id === item.id))
+      : [slim, ...watchlist];
+    setWatchlist(nextWatchlist);
+    saveCachedList(cacheKey, nextWatchlist, 60);
 
     try {
       const ref = {
@@ -2157,6 +2154,9 @@ export function AppProvider({
         await syncClient().addToWatchlist(ref);
         setToast("Added to watchlist.");
       }
+      if (authClient.session) {
+        await saveCloudWatchlist(authClient, nextWatchlist, activeProfileId).catch(() => undefined);
+      }
     } catch (err) {
       setWatchlist((prev) => {
         const next = inWatchlist ? [slim, ...prev] : prev.filter((entry) => !(entry.mediaType === item.mediaType && entry.id === item.id));
@@ -2165,7 +2165,7 @@ export function AppProvider({
       });
       setToast(err instanceof Error ? err.message : "Failed to update watchlist.");
     }
-  }, [watchlist, activeProfileId]);
+  }, [watchlist, activeProfileId, authClient]);
 
   const toggleWatched = useCallback(async (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => {
     const currentlyWatched = isWatched(item, seasonNumber, episodeNumber);

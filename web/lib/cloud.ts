@@ -1146,6 +1146,27 @@ export async function pullCloudWatchlist(auth: AuthClient, profileId?: string | 
     .filter((item): item is MediaItem => Boolean(item));
 }
 
+export async function saveCloudWatchlist(
+  auth: AuthClient,
+  items: MediaItem[],
+  profileId?: string | null
+) {
+  if (!profileId) return;
+  await mutateCloudPayload(auth, (root) => {
+    const byProfile = objectRecord<unknown>(root.watchlistByProfile);
+    byProfile[profileId] = items.map((item, index): AndroidWatchlistItem => ({
+      tmdbId: item.id,
+      mediaType: item.mediaType,
+      title: item.title,
+      posterPath: item.image || null,
+      backdropPath: item.backdrop || null,
+      addedAt: item.activityAt ?? Date.now(),
+      sourceOrder: index
+    }));
+    root.watchlistByProfile = byProfile;
+  });
+}
+
 export async function pullCloudWatchedKeys(auth: AuthClient, profileId?: string | null): Promise<Set<string>> {
   const root = await pullRawPayload(auth);
   const keys = new Set<string>();

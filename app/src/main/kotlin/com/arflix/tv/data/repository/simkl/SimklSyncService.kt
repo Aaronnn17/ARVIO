@@ -48,6 +48,11 @@ class SimklSyncService @Inject constructor(
     private val resolvedExternalIds = ConcurrentHashMap<String, Int>()
     private val unresolvedExternalIds = ConcurrentHashMap.newKeySet<String>()
 
+    private fun episodeKey(tmdbId: Int, season: Int, episode: Int): String =
+        "show_tmdb:$tmdbId:$season:$episode"
+
+    private fun episodePrefix(tmdbId: Int): String = "show_tmdb:$tmdbId:"
+
     /**
      * Follows official Simkl sync guidelines:
      * Phase 1: Fetch libraries separately and sequentially without date_from on initial load.
@@ -138,7 +143,7 @@ class SimklSyncService @Inject constructor(
             val movie = movieItem.movie ?: return@forEach
             val tmdbId = resolvedTmdbId(movie.ids, MediaType.MOVIE) ?: return@forEach
             val status = movieItem.status
-            if (status == "completed" || status == "watching" || !movieItem.lastWatchedAt.isNullOrBlank()) {
+            if (status == "completed") {
                 cachedWatchedMovies.add(tmdbId)
             }
             if (status == "plantowatch") {
@@ -170,7 +175,7 @@ class SimklSyncService @Inject constructor(
             }
             showItem.seasons?.forEach { season ->
                 season.episodes.forEach { episode ->
-                    cachedWatchedEpisodes.add("${showTmdb}_S${season.number}_E${episode.number}")
+                    cachedWatchedEpisodes.add(episodeKey(showTmdb, season.number, episode.number))
                 }
             }
             val next = showItem.nextToWatchInfo ?: parseNextToWatch(showItem.nextToWatch)
@@ -379,7 +384,7 @@ class SimklSyncService @Inject constructor(
         val isWatched = if (mediaType == MediaType.MOVIE) {
             cachedWatchedMovies.contains(tmdbId)
         } else {
-            cachedWatchedEpisodes.any { it.startsWith("${tmdbId}_") }
+            cachedWatchedEpisodes.any { it.startsWith(episodePrefix(tmdbId)) }
         }
 
         return try {
@@ -448,7 +453,7 @@ class SimklSyncService @Inject constructor(
                 if (mediaType == MediaType.MOVIE) {
                     cachedWatchedMovies.add(tmdbId)
                 } else if (season != null && episode != null) {
-                    cachedWatchedEpisodes.add("${tmdbId}_S${season}_E${episode}")
+                    cachedWatchedEpisodes.add(episodeKey(tmdbId, season, episode))
                 }
                 lastActivityCheckTime = 0L
                 true
@@ -485,7 +490,7 @@ class SimklSyncService @Inject constructor(
                 if (mediaType == MediaType.MOVIE) {
                     cachedWatchedMovies.remove(tmdbId)
                 } else if (season != null && episode != null) {
-                    cachedWatchedEpisodes.remove("${tmdbId}_S${season}_E${episode}")
+                    cachedWatchedEpisodes.remove(episodeKey(tmdbId, season, episode))
                 }
                 lastActivityCheckTime = 0L
                 true
@@ -529,7 +534,7 @@ class SimklSyncService @Inject constructor(
             }
             if (response.isSuccessful) {
                 episodes.forEach { episode ->
-                    val key = "${showTmdbId}_S${season}_E${episode}"
+                    val key = episodeKey(showTmdbId, season, episode)
                     if (watched) cachedWatchedEpisodes.add(key) else cachedWatchedEpisodes.remove(key)
                 }
                 cachedContinueWatching.remove(MediaType.TV to showTmdbId)
