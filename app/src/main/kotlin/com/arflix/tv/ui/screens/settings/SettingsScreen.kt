@@ -3562,9 +3562,12 @@ private fun MobileSettingsLayout(
         onNavigate("MAIN")
     }
 
-    var displayedSubPage by remember { mutableStateOf(if (page != "MAIN") page else "") }
-    if (page != "MAIN") {
-        displayedSubPage = page
+    var lastSubPage by remember { mutableStateOf(if (page != "MAIN") page else "") }
+    val displayedSubPage = if (page != "MAIN") page else lastSubPage
+    LaunchedEffect(page) {
+        if (page != "MAIN") {
+            lastSubPage = page
+        }
     }
 
     Box(

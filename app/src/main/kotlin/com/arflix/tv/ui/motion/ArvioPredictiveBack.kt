@@ -47,8 +47,8 @@ class ArvioBackMotion internal constructor() {
 /**
  * PredictiveBackHandler with real settle animations.
  *
- * Commit: animates the remaining travel to 1f *before* invoking [onCommit], so releasing
- * at 80% is never a jump cut. Cancel: animates back to 0f.
+ * Commit: invokes [onCommit] immediately while the visual state settles to 1f in the
+ * composition scope. Cancel: animates back to 0f.
  *
  * The settle is launched on [rememberCoroutineScope] because on cancel the handler's own
  * coroutine is already cancelled — suspending in the catch block would throw immediately.
@@ -76,12 +76,16 @@ fun rememberArvioPredictiveBack(
                 motion.touchY = e.touchY
                 anim.snapTo(e.progress)
             }
+            scope.launch {
+                anim.animateTo(1f, tween(commitDurationMs, easing = ArvioStandardDecelerate))
+                anim.snapTo(0f)
+                motion.touchY = Float.NaN
+            }
             commit()
-            anim.animateTo(1f, tween(150, easing = ArvioStandardDecelerate))
-            anim.snapTo(0f)
         } catch (e: CancellationException) {
             scope.launch {
                 anim.animateTo(0f, tween(cancelDurationMs, easing = ArvioStandardDecelerate))
+                motion.touchY = Float.NaN
             }
             throw e
         }
