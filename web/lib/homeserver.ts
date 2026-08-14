@@ -432,9 +432,14 @@ async function loadPlexRows(server: HomeServerConfig, hiddenCatalogIds: Set<stri
   ).catch(() => null);
   const libraries = (sections?.MediaContainer?.Directory ?? [])
     .filter((section) => section.type === "movie" || section.type === "show")
+    .filter((section) => {
+      if (!server.collections?.length) return true;
+      return server.collections.some((collection) => collection.id === section.key && collection.enabled !== false);
+    })
     .slice(0, 6);
   const rows = await Promise.all(libraries.map(async (library) => {
     const configured = server.collections?.find((collection) => collection.id === library.key);
+    if (server.collections?.length && !configured) return null;
     if (configured?.enabled === false) return null;
     const identity = await homeServerCatalogIdentity(server, {
       id: library.key,
@@ -475,9 +480,16 @@ export async function loadHomeServerRows(
       const views = await proxiedGet<{ Items?: Array<{ Id: string; Name: string; CollectionType?: string }> }>(
         `${base}/Users/${userId}/Views?api_key=${token}`
       );
-      const libraries = (views.Items ?? []).filter((v) => isVideoCollectionType(v.CollectionType)).slice(0, 6);
+      const libraries = (views.Items ?? [])
+        .filter((view) => isVideoCollectionType(view.CollectionType))
+        .filter((view) => {
+          if (!server.collections?.length) return true;
+          return server.collections.some((collection) => collection.id === view.Id && collection.enabled !== false);
+        })
+        .slice(0, 6);
       const rows = await Promise.all(libraries.map(async (library) => {
         const configured = server.collections?.find((collection) => collection.id === library.Id);
+        if (server.collections?.length && !configured) return null;
         if (configured?.enabled === false) return null;
         const identity = await homeServerCatalogIdentity(server, {
           id: library.Id,

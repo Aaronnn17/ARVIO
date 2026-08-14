@@ -2273,6 +2273,7 @@ function CatalogsSection() {
             <button
               type="button"
               className="icon-button"
+              aria-label={`${catalog.enabled ? "Hide" : "Show"} ${catalog.name}`}
               onClick={() =>
                 updateCatalogs(
                   catalogs.map((c) =>
