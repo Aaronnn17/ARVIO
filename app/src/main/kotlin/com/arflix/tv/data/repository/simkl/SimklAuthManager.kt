@@ -43,6 +43,7 @@ class SimklAuthManager @Inject constructor(
         val response = simklApi.pollPinToken(userCode, effectiveClientId)
         if (response.result.equals("OK", ignoreCase = true) && !response.accessToken.isNullOrBlank()) {
             syncProviderStore.setSimklAccessToken(response.accessToken)
+            syncProviderStore.setMdbListApiKey(null)
             syncProviderStore.setProvider(SyncProvider.SIMKL)
             return true
         }

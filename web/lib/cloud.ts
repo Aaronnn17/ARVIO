@@ -888,21 +888,26 @@ export async function pullCloudTraktToken(auth: AuthClient, profileId?: string |
   };
 }
 
-export async function saveCloudTraktToken(auth: AuthClient, token: TraktToken, profileId?: string | null) {
+export async function saveCloudTraktToken(auth: AuthClient, token: TraktToken | null, profileId?: string | null) {
   if (!profileId) return;
   await mutateCloudPayload(auth, (root) => {
     const tokens = objectRecord<unknown>(root.traktTokens) ?? {};
-    // Write both key styles so the Android app and web read it either way.
-    tokens[profileId] = {
-      accessToken: token.access_token,
-      refreshToken: token.refresh_token,
-      expiresAt: token.expires_at,
-      access_token: token.access_token,
-      refresh_token: token.refresh_token,
-      expires_at: token.expires_at
-    };
-    root.traktTokens = tokens;
-    root.traktLinked = true;
+    if (token) {
+      tokens[profileId] = {
+        accessToken: token.access_token,
+        refreshToken: token.refresh_token,
+        expiresAt: token.expires_at,
+        access_token: token.access_token,
+        refresh_token: token.refresh_token,
+        expires_at: token.expires_at
+      };
+      root.traktTokens = tokens;
+      root.traktLinked = true;
+    } else {
+      delete tokens[profileId];
+      root.traktTokens = tokens;
+      if (Object.keys(tokens).length === 0) root.traktLinked = false;
+    }
   });
 }
 

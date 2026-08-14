@@ -767,10 +767,13 @@ export function AppProvider({
         if (cloudTraktToken) {
           traktClient.setToken(cloudTraktToken);
           setTraktConnected(true);
-        }
-        if (cloudSimklToken) {
+          simklClient.disconnect();
+          setSimklConnected(false);
+        } else if (cloudSimklToken) {
           simklClient.setToken(cloudSimklToken);
           setSimklConnected(true);
+          traktClient.disconnect();
+          setTraktConnected(false);
         }
       }
       if (cloud?.settings) {
@@ -1686,7 +1689,8 @@ export function AppProvider({
   const disconnectTrakt = useCallback(() => {
     traktClient.disconnect();
     setTraktConnected(false);
-  }, []);
+    if (activeProfileId) void saveCloudTraktToken(authClient, null, activeProfileId).catch(() => undefined);
+  }, [activeProfileId]);
 
   const connectMdblist = useCallback(async (key: string) => {
     const ok = await mdblistClient.validateKey(key);
@@ -1698,7 +1702,10 @@ export function AppProvider({
     setTraktConnected(false);
     simklClient.disconnect();
     setSimklConnected(false);
-    if (activeProfileId) void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
+    if (activeProfileId) {
+      void saveCloudTraktToken(authClient, null, activeProfileId).catch(() => undefined);
+      void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
+    }
     await refreshData();
   }, [refreshData, activeProfileId]);
 
@@ -1727,6 +1734,9 @@ export function AppProvider({
     setTraktConnected(false);
     mdblistClient.disconnect();
     setMdblistConnected(false);
+    if (activeProfileId) {
+      void saveCloudTraktToken(authClient, null, activeProfileId).catch(() => undefined);
+    }
     if (simklClient.token && activeProfileId) {
       await saveCloudSimklToken(authClient, simklClient.token, activeProfileId).catch(() => undefined);
     }
