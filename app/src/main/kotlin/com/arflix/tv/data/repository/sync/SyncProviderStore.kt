@@ -69,7 +69,10 @@ class SyncProviderStore @Inject constructor(
                 SyncProvider.SIMKL -> {
                     prefs.remove(mdbListKey())
                 }
-                SyncProvider.NONE -> {}
+                SyncProvider.NONE -> {
+                    prefs.remove(mdbListKey())
+                    prefs.remove(simklAccessTokenKey())
+                }
             }
         }
     }

@@ -3737,6 +3737,8 @@ class SettingsViewModel @Inject constructor(
                             isMdbListConnected = false,
                             isSimklConnected = true
                         )
+                        syncLocalStateToCloud(silent = true, force = true)
+                        runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                         return@launch
                     }
                 } catch (e: Exception) {
@@ -3756,7 +3758,8 @@ class SettingsViewModel @Inject constructor(
 
     fun pollSimklAuth() {
         val userCode = _uiState.value.simklUserCode ?: return
-        viewModelScope.launch {
+        simklPollingJob?.cancel()
+        simklPollingJob = viewModelScope.launch {
             runCatching {
                 val success = simklAuthManager.pollPinAuth(userCode)
                 if (success) {
@@ -3783,6 +3786,8 @@ class SettingsViewModel @Inject constructor(
                         isMdbListConnected = false,
                         isSimklConnected = true
                     )
+                    syncLocalStateToCloud(silent = true, force = true)
+                    runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                 }
             }
         }

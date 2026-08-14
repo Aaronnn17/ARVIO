@@ -645,6 +645,8 @@ export function AppProvider({
   const [activeProfileId, setActiveProfileId] = useState<string | null>(() =>
     localProfilesMatchAccount() ? loadStored<string | null>(ACTIVE_PROFILE_KEY, null) : null
   );
+  const activeProfileIdRef = useRef(activeProfileId);
+  activeProfileIdRef.current = activeProfileId;
   // Hydrate cached custom-avatar images synchronously so profile tiles paint the
   // real avatar on first render instead of flashing the letter fallback.
   const [avatarImages, setAvatarImagesState] = useState<Record<string, string>>(() => loadStored<Record<string, string>>(AVATAR_IMAGES_KEY, {}));
@@ -764,16 +766,29 @@ export function AppProvider({
           pullCloudTraktToken(authClient, profileId).catch(() => null),
           pullCloudSimklToken(authClient, profileId).catch(() => null)
         ]);
+        if (refreshKeyRef.current !== key) return;
         if (cloudTraktToken) {
           traktClient.setToken(cloudTraktToken);
           setTraktConnected(true);
           simklClient.disconnect();
           setSimklConnected(false);
+          mdblistClient.disconnect();
+          setMdblistConnected(false);
+          if (cloudSimklToken) {
+            void saveCloudSimklToken(authClient, null, profileId).catch(() => undefined);
+          }
         } else if (cloudSimklToken) {
           simklClient.setToken(cloudSimklToken);
           setSimklConnected(true);
           traktClient.disconnect();
           setTraktConnected(false);
+          mdblistClient.disconnect();
+          setMdblistConnected(false);
+        } else if (!mdblistClient.isConnected) {
+          traktClient.disconnect();
+          setTraktConnected(false);
+          simklClient.disconnect();
+          setSimklConnected(false);
         }
       }
       if (cloud?.settings) {
@@ -1667,9 +1682,11 @@ export function AppProvider({
   }, []);
 
   const pollTrakt = useCallback(async () => {
+    const targetProfileId = activeProfileIdRef.current;
     const code = deviceCodeRef.current;
     if (!code) return;
     await traktClient.pollDeviceToken(code.device_code);
+    if (activeProfileIdRef.current !== targetProfileId) return;
     setTraktConnected(true);
     setDeviceCode(null);
     // Mutual exclusion: connecting Trakt drops MDBList and Simkl for this profile.
@@ -1677,24 +1694,34 @@ export function AppProvider({
     setMdblistConnected(false);
     simklClient.disconnect();
     setSimklConnected(false);
-    if (activeProfileId) void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
-    // Persist the token to cloud so other devices (and future sessions) see the
-    // connection — parity with the Android app's traktTokens payload.
-    if (traktClient.token && activeProfileId) {
-      void saveCloudTraktToken(authClient, traktClient.token, activeProfileId).catch(() => undefined);
+    if (targetProfileId) {
+      await saveCloudSimklToken(authClient, null, targetProfileId).catch(() => undefined);
+      if (traktClient.token) {
+        await saveCloudTraktToken(authClient, traktClient.token, targetProfileId).catch(() => undefined);
+      }
     }
-    await refreshData();
-  }, [refreshData, activeProfileId]);
+    if (activeProfileIdRef.current === targetProfileId) {
+      await refreshData();
+    }
+  }, [refreshData]);
 
-  const disconnectTrakt = useCallback(() => {
+  const disconnectTrakt = useCallback(async () => {
+    const targetProfileId = activeProfileIdRef.current;
     traktClient.disconnect();
     setTraktConnected(false);
-    if (activeProfileId) void saveCloudTraktToken(authClient, null, activeProfileId).catch(() => undefined);
-  }, [activeProfileId]);
+    if (targetProfileId) {
+      await saveCloudTraktToken(authClient, null, targetProfileId).catch(() => undefined);
+    }
+    if (activeProfileIdRef.current === targetProfileId) {
+      await refreshData();
+    }
+  }, [refreshData]);
 
   const connectMdblist = useCallback(async (key: string) => {
+    const targetProfileId = activeProfileIdRef.current;
     const ok = await mdblistClient.validateKey(key);
     if (!ok) throw new Error("Invalid MDBList API key");
+    if (activeProfileIdRef.current !== targetProfileId) return;
     mdblistClient.setKey(key);
     setMdblistConnected(true);
     // Mutual exclusion: connecting MDBList drops Trakt and Simkl for this profile.
@@ -1702,12 +1729,16 @@ export function AppProvider({
     setTraktConnected(false);
     simklClient.disconnect();
     setSimklConnected(false);
-    if (activeProfileId) {
-      void saveCloudTraktToken(authClient, null, activeProfileId).catch(() => undefined);
-      void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
+    if (targetProfileId) {
+      await Promise.all([
+        saveCloudTraktToken(authClient, null, targetProfileId).catch(() => undefined),
+        saveCloudSimklToken(authClient, null, targetProfileId).catch(() => undefined)
+      ]);
     }
-    await refreshData();
-  }, [refreshData, activeProfileId]);
+    if (activeProfileIdRef.current === targetProfileId) {
+      await refreshData();
+    }
+  }, [refreshData]);
 
   const disconnectMdblist = useCallback(() => {
     mdblistClient.disconnect();
@@ -1721,12 +1752,14 @@ export function AppProvider({
   }, [activeProfileId]);
 
   const pollSimkl = useCallback(async () => {
+    const targetProfileId = activeProfileIdRef.current;
     const code = simklDeviceCodeRef.current;
     if (!code) return;
     const ok = await simklClient.pollPinToken(code.user_code);
     if (!ok) {
       throw new Error("Simkl has not approved this PIN yet. Please approve the code on Simkl.");
     }
+    if (activeProfileIdRef.current !== targetProfileId) return;
     setSimklConnected(true);
     setSimklDeviceCode(null);
     // Mutual exclusion: connecting Simkl drops Trakt & MDBList for this profile.
@@ -1734,21 +1767,28 @@ export function AppProvider({
     setTraktConnected(false);
     mdblistClient.disconnect();
     setMdblistConnected(false);
-    if (activeProfileId) {
-      void saveCloudTraktToken(authClient, null, activeProfileId).catch(() => undefined);
+    if (targetProfileId) {
+      await saveCloudTraktToken(authClient, null, targetProfileId).catch(() => undefined);
+      if (simklClient.token) {
+        await saveCloudSimklToken(authClient, simklClient.token, targetProfileId).catch(() => undefined);
+      }
     }
-    if (simklClient.token && activeProfileId) {
-      await saveCloudSimklToken(authClient, simklClient.token, activeProfileId).catch(() => undefined);
+    if (activeProfileIdRef.current === targetProfileId) {
+      await refreshData();
     }
-    await refreshData();
-  }, [refreshData, activeProfileId]);
+  }, [refreshData]);
 
-  const disconnectSimkl = useCallback(() => {
+  const disconnectSimkl = useCallback(async () => {
+    const targetProfileId = activeProfileIdRef.current;
     simklClient.disconnect();
     setSimklConnected(false);
-    if (activeProfileId) void saveCloudSimklToken(authClient, null, activeProfileId).catch(() => undefined);
-    void refreshData();
-  }, [refreshData, activeProfileId]);
+    if (targetProfileId) {
+      await saveCloudSimklToken(authClient, null, targetProfileId).catch(() => undefined);
+    }
+    if (activeProfileIdRef.current === targetProfileId) {
+      await refreshData();
+    }
+  }, [refreshData]);
 
   // Watchlist list-source switcher. Returns the user's custom Trakt lists to
   // populate the dropdown (built-in Watchlist/Collection are added by the UI).
