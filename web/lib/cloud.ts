@@ -6,6 +6,7 @@ import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
 import { tmdbImageUrl } from "./mediaImages";
 import type { TraktToken } from "./trakt";
 import type { SimklToken } from "./simkl";
+import type { TrackingPreferences, TrackingReadMode } from "./sync";
 import type { AppSettings, InstalledAddon, IptvPlaylistEntry, MediaItem, Profile, QualityFilterConfig, WatchHistoryEntry } from "./types";
 
 export interface CloudPayload {
@@ -878,6 +879,7 @@ export interface CloudTrackingSelection {
   traktToken: TraktToken | null;
   mdbListApiKey: string | null;
   simklToken: SimklToken | null;
+  trackingPreferences?: TrackingPreferences;
 }
 
 export interface CloudTrackingSnapshot extends CloudTrackingSelection {
@@ -890,6 +892,12 @@ function normalizeCloudTrackingProvider(value: unknown): CloudTrackingProvider |
   return normalized === "NONE" || normalized === "TRAKT" || normalized === "MDBLIST" || normalized === "SIMKL"
     ? normalized
     : null;
+}
+
+function normalizeTrackingReadMode(value: unknown, fallback: TrackingReadMode): TrackingReadMode {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "auto" || normalized === "trakt" || normalized === "simkl" ||
+    normalized === "both" || normalized === "mdblist" ? normalized : fallback;
 }
 
 function readCloudTraktToken(root: RawPayload, profileId: string): TraktToken | null {
@@ -933,6 +941,13 @@ export async function pullCloudTrackingSelection(
       traktToken: null,
       mdbListApiKey: null,
       simklToken: null,
+      trackingPreferences: {
+        watchlistReadMode: "auto",
+        continueWatchingReadMode: "auto",
+        watchedReadMode: "auto",
+        writeToTrakt: false,
+        writeToSimkl: false
+      },
       hasCloudState: false,
       needsCleanup: false
     };
@@ -961,18 +976,35 @@ export async function pullCloudTrackingSelection(
         ? "MDBLIST"
         : "NONE";
   const storedProviderCount = Number(Boolean(traktToken)) + Number(Boolean(simklToken)) + Number(Boolean(mdbListApiKey));
+  const defaultMode: TrackingReadMode = mdbListApiKey
+    ? "mdblist"
+    : traktToken && simklToken
+      ? "both"
+      : traktToken
+        ? "trakt"
+        : simklToken
+          ? "simkl"
+          : "auto";
+  const trackingPreferences: TrackingPreferences = {
+    watchlistReadMode: normalizeTrackingReadMode(selection.watchlistReadMode, defaultMode),
+    continueWatchingReadMode: normalizeTrackingReadMode(selection.continueWatchingReadMode, defaultMode),
+    watchedReadMode: normalizeTrackingReadMode(selection.watchedReadMode, defaultMode),
+    writeToTrakt: typeof selection.writeToTrakt === "boolean" ? selection.writeToTrakt : Boolean(traktToken),
+    writeToSimkl: typeof selection.writeToSimkl === "boolean" ? selection.writeToSimkl : Boolean(simklToken)
+  };
   const hasCloudState = explicitProvider !== null || storedProviderCount > 0;
   const needsCleanup = !hasCloudState
     ? false
     : explicitProvider === null
     ? storedProviderCount > 0
-    : explicitProvider !== provider || storedProviderCount !== (provider === "NONE" ? 0 : 1);
+    : explicitProvider !== provider;
 
   return {
     provider,
-    traktToken: provider === "TRAKT" ? traktToken : null,
-    mdbListApiKey: provider === "MDBLIST" ? mdbListApiKey : null,
-    simklToken: provider === "SIMKL" ? simklToken : null,
+    traktToken,
+    mdbListApiKey,
+    simklToken,
+    trackingPreferences,
     hasCloudState,
     needsCleanup
   };
@@ -988,11 +1020,24 @@ export async function saveCloudTrackingSelection(
     const traktTokens = objectRecord<unknown>(root.traktTokens);
     const simklTokens = objectRecord<unknown>(root.simklTokens);
     const selections = objectRecord<Record<string, unknown>>(root.mdbListSyncByProfile);
+    const defaultMode: TrackingReadMode = selection.mdbListApiKey
+      ? "mdblist"
+      : selection.traktToken && selection.simklToken
+        ? "both"
+        : selection.traktToken
+          ? "trakt"
+          : selection.simklToken
+            ? "simkl"
+            : "auto";
+    const preferences = selection.trackingPreferences ?? {
+      watchlistReadMode: defaultMode,
+      continueWatchingReadMode: defaultMode,
+      watchedReadMode: defaultMode,
+      writeToTrakt: Boolean(selection.traktToken),
+      writeToSimkl: Boolean(selection.simklToken)
+    };
 
-    delete traktTokens[profileId];
-    delete simklTokens[profileId];
-
-    if (selection.provider === "TRAKT" && selection.traktToken) {
+    if (selection.traktToken) {
       const token = selection.traktToken;
       traktTokens[profileId] = {
         accessToken: token.access_token,
@@ -1002,25 +1047,29 @@ export async function saveCloudTrackingSelection(
         refresh_token: token.refresh_token,
         expires_at: token.expires_at
       };
-      selections[profileId] = { provider: "TRAKT" };
-    } else if (selection.provider === "MDBLIST" && selection.mdbListApiKey?.trim()) {
-      selections[profileId] = {
-        provider: "MDBLIST",
-        mdbListApiKey: selection.mdbListApiKey.trim()
-      };
-    } else if (selection.provider === "SIMKL" && selection.simklToken?.access_token) {
+    } else {
+      delete traktTokens[profileId];
+    }
+    if (selection.simklToken?.access_token) {
       const token = selection.simklToken;
       simklTokens[profileId] = {
         access_token: token.access_token,
         accessToken: token.access_token
       };
-      selections[profileId] = {
-        provider: "SIMKL",
-        simklAccessToken: token.access_token
-      };
     } else {
-      selections[profileId] = { provider: "NONE" };
+      delete simklTokens[profileId];
     }
+
+    selections[profileId] = {
+      provider: selection.provider,
+      ...(selection.mdbListApiKey?.trim() ? { mdbListApiKey: selection.mdbListApiKey.trim() } : {}),
+      ...(selection.simklToken?.access_token ? { simklAccessToken: selection.simklToken.access_token } : {}),
+      watchlistReadMode: preferences.watchlistReadMode.toUpperCase(),
+      continueWatchingReadMode: preferences.continueWatchingReadMode.toUpperCase(),
+      watchedReadMode: preferences.watchedReadMode.toUpperCase(),
+      writeToTrakt: preferences.writeToTrakt,
+      writeToSimkl: preferences.writeToSimkl
+    };
 
     root.traktTokens = traktTokens;
     root.traktLinked = Object.keys(traktTokens).length > 0;

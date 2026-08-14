@@ -1226,6 +1226,8 @@ function AccountsSection() {
     traktConnected,
     mdblistConnected,
     simklConnected,
+    trackingPreferences,
+    updateTrackingPreferences,
     deviceCode,
     simklDeviceCode,
     signOut,
@@ -1248,6 +1250,14 @@ function AccountsSection() {
   const [mdblistBusy, setMdblistBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const cloudConfigured = hasNetlifyBackendConfig() || hasSupabaseConfig();
+  const routingOptions: Array<[typeof trackingPreferences.watchlistReadMode, string]> = [];
+  if (mdblistConnected) {
+    routingOptions.push(["mdblist", "MDBList"]);
+  } else {
+    if (traktConnected && simklConnected) routingOptions.push(["both", "Trakt + Simkl"]);
+    if (traktConnected) routingOptions.push(["trakt", "Trakt"]);
+    if (simklConnected) routingOptions.push(["simkl", "Simkl"]);
+  }
 
   const redirectToAuthPortal = () => {
     const redirectUri = window.location.origin + "/";
@@ -1500,6 +1510,48 @@ function AccountsSection() {
           </>
         )}
       </Panel>
+
+      {(traktConnected || simklConnected || mdblistConnected) && (
+        <Panel title="Tracking behavior">
+          <Row label="Watchlist source" hint="Choose which connected service fills your watchlist.">
+            <Select
+              value={trackingPreferences.watchlistReadMode}
+              options={routingOptions}
+              onChange={(watchlistReadMode) => void updateTrackingPreferences({ watchlistReadMode })}
+            />
+          </Row>
+          <Row label="Continue Watching source" hint="Choose one service or merge progress from both.">
+            <Select
+              value={trackingPreferences.continueWatchingReadMode}
+              options={routingOptions}
+              onChange={(continueWatchingReadMode) => void updateTrackingPreferences({ continueWatchingReadMode })}
+            />
+          </Row>
+          <Row label="Watched history source" hint="Watched badges merge safely when both is selected.">
+            <Select
+              value={trackingPreferences.watchedReadMode}
+              options={routingOptions}
+              onChange={(watchedReadMode) => void updateTrackingPreferences({ watchedReadMode })}
+            />
+          </Row>
+          {traktConnected && (
+            <Row label="Update Trakt while watching">
+              <Toggle
+                value={trackingPreferences.writeToTrakt}
+                onChange={(writeToTrakt) => void updateTrackingPreferences({ writeToTrakt })}
+              />
+            </Row>
+          )}
+          {simklConnected && (
+            <Row label="Update Simkl while watching">
+              <Toggle
+                value={trackingPreferences.writeToSimkl}
+                onChange={(writeToSimkl) => void updateTrackingPreferences({ writeToSimkl })}
+              />
+            </Row>
+          )}
+        </Panel>
+      )}
 
       <Panel title="MDBList">
         {mdblistError && <p className="login-error">{mdblistError}</p>}

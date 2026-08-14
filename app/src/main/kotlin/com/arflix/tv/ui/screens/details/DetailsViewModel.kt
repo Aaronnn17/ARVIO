@@ -2120,7 +2120,7 @@ class DetailsViewModel @Inject constructor(
                 ).dropIfWatchedEpisode()
             } else null
 
-            val hasTrakt = runCatching { traktRepository.hasTrakt() }.getOrDefault(false)
+            val hasRemoteTracking = runCatching { remoteSyncManager.isRemoteConnected() }.getOrDefault(false)
             val localItem = runCatching {
                 traktRepository.getLocalContinueWatchingEntry(
                     mediaType = mediaType,
@@ -2140,24 +2140,10 @@ class DetailsViewModel @Inject constructor(
                 null
             }
 
-            val cachedTraktItem = if (hasTrakt) {
-                runCatching {
-                    traktRepository.getCachedContinueWatching()
-                        .firstOrNull {
-                            it.id == tmdbId &&
-                                it.mediaType == mediaType &&
-                                it.progress > 0 &&
-                                (preferredSeason == null || preferredEpisode == null || mediaType != MediaType.TV ||
-                                    (it.season == preferredSeason && it.episode == preferredEpisode))
-                        }
-                }.getOrNull()
-            } else {
-                null
-            }
-            val fetchedTraktItem = if (hasTrakt && cachedTraktItem == null) {
+            val remoteItem = if (hasRemoteTracking) {
                 withTimeoutOrNull(4_000L) {
                     runCatching {
-                        traktRepository.getContinueWatching()
+                        remoteSyncManager.getContinueWatching()
                             .firstOrNull {
                                 it.id == tmdbId &&
                                     it.mediaType == mediaType &&
@@ -2171,7 +2157,7 @@ class DetailsViewModel @Inject constructor(
                 null
             }
 
-            val resumeCandidate = fetchedTraktItem ?: cachedTraktItem ?: localItem ?: localFallbackItem
+            val resumeCandidate = remoteItem ?: localItem ?: localFallbackItem
             val localResume = if (resumeCandidate != null) {
                 buildResumeFromProgress(
                     mediaType = mediaType,

@@ -3511,25 +3511,17 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun resolveContinueWatchingItemsStable(forceFresh: Boolean): List<ContinueWatchingItem> {
-        val isTraktAuthenticated = try {
-            traktRepository.isAuthenticated.first()
+        val useRemoteSync = try {
+            remoteSyncManager.isRemoteConnected()
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             false
         }
-        val isAlternativeRemoteActive = try {
-            traktRepository.isAlternativeRemoteActive()
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            false
-        }
-        val useRemoteSync = isTraktAuthenticated || isAlternativeRemoteActive
         val items = if (useRemoteSync) {
-            val traktItems = if (forceFresh) {
+            val remoteItems = if (forceFresh) {
                 try {
-                    traktRepository.getContinueWatching(forceRefresh = true)
+                    remoteSyncManager.getContinueWatching(forceRefresh = true)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (error: Exception) {
@@ -3537,31 +3529,26 @@ class HomeViewModel @Inject constructor(
                         throwable = error,
                         context = mapOf(
                             "error_area" to "ContinueWatching",
-                            "cw_phase" to "trakt_fresh",
+                            "cw_phase" to "remote_fresh",
                             "force_fresh" to forceFresh.toString()
                         )
                     )
                     emptyList()
                 }
             } else {
-                val cached = traktRepository.getCachedContinueWatching()
-                if (cached.isNotEmpty()) {
-                    cached
-                } else {
-                    try {
-                        traktRepository.getContinueWatching()
-                    } catch (e: kotlinx.coroutines.CancellationException) {
-                        throw e
-                    } catch (error: Exception) {
-                        AppLogger.recordException(
-                            throwable = error,
-                            context = mapOf(
-                                "error_area" to "ContinueWatching",
-                                "cw_phase" to "trakt_cached_miss"
-                            )
+                try {
+                    remoteSyncManager.getContinueWatching()
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (error: Exception) {
+                    AppLogger.recordException(
+                        throwable = error,
+                        context = mapOf(
+                            "error_area" to "ContinueWatching",
+                            "cw_phase" to "remote_cached_miss"
                         )
-                        emptyList()
-                    }
+                    )
+                    emptyList()
                 }
             }
             val localItems = try {
@@ -3572,11 +3559,11 @@ class HomeViewModel @Inject constructor(
                 emptyList()
             }
             val historyItems = loadContinueWatchingFromHistoryStable()
-            if (traktItems.isEmpty() && historyItems.isNotEmpty()) {
+            if (remoteItems.isEmpty() && historyItems.isNotEmpty()) {
                 historyItems
             } else {
                 mergeTraktAndRecentLocalContinueWatching(
-                    traktItems = traktItems,
+                    traktItems = remoteItems,
                     localItems = localItems,
                     historyItems = historyItems
                 )
@@ -3617,24 +3604,16 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun preloadStartupContinueWatchingItems(): List<ContinueWatchingItem> {
-        val isTraktAuthenticated = try {
-            traktRepository.isAuthenticated.first()
+        val useRemoteSync = try {
+            remoteSyncManager.isRemoteConnected()
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             false
         }
-        val isAlternativeRemoteActive = try {
-            traktRepository.isAlternativeRemoteActive()
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            false
-        }
-        val useRemoteSync = isTraktAuthenticated || isAlternativeRemoteActive
         val items = if (useRemoteSync) {
             try {
-                traktRepository.preloadContinueWatchingCache()
+                remoteSyncManager.getContinueWatching(forceRefresh = false)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (error: Exception) {

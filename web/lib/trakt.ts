@@ -36,6 +36,10 @@ export class TraktClient {
   token: TraktToken | null = null;
   private profileId: string | null = null;
 
+  get currentProfileId(): string | null {
+    return this.profileId;
+  }
+
   get isConnected() {
     return Boolean(this.token?.access_token);
   }

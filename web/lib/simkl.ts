@@ -1,6 +1,7 @@
 import { SyncClient, SyncMediaRef } from "./sync";
 import { loadStored, removeStored, saveStored } from "./storage";
 import { jsonRequest } from "./http";
+import { resolveTmdbId } from "./tmdb";
 
 const LEGACY_SIMKL_TOKEN_KEY = "arvio.web.simkl.token";
 const SNAPSHOT_TTL_MS = 15 * 60 * 1000;
@@ -28,6 +29,16 @@ type SimklShowRow = {
   status?: string;
   last_watched_at?: string;
   seasons?: Array<{ number?: number; episodes?: Array<{ number?: number; watched_at?: string }> }>;
+  next_to_watch?: { season?: number; number?: number; episode?: number; title?: string };
+};
+type SimklPlaybackRow = {
+  id?: number;
+  progress?: number;
+  paused_at?: string;
+  movie?: { title?: string; year?: number; ids?: SimklIds };
+  show?: { title?: string; year?: number; ids?: SimklIds };
+  anime?: { title?: string; year?: number; ids?: SimklIds };
+  episode?: { season?: number; number?: number; episode?: number; title?: string };
 };
 type SimklSnapshot = {
   scope: string;
@@ -64,6 +75,10 @@ function activityMarker(value: unknown): string | null {
 export class SimklClient implements SyncClient {
   token: SimklToken | null = null;
   private profileId: string | null = null;
+
+  get currentProfileId(): string | null {
+    return this.profileId;
+  }
   private snapshot: SimklSnapshot | null = null;
   private snapshotPromise: Promise<SimklSnapshot> | null = null;
   private lastScrobbleWriteAt = 0;
@@ -204,27 +219,65 @@ export class SimklClient implements SyncClient {
 
   async watchlist(): Promise<unknown[]> {
     const snapshot = await this.loadSnapshot();
-    const movies = snapshot.movies
-      .filter((item) => item.status === "plantowatch" && item.movie?.ids?.tmdb)
-      .map((item) => ({ type: "movie", movie: item.movie, listed_at: item.last_watched_at }));
-    const shows = [...snapshot.shows, ...snapshot.anime]
-      .filter((item) => item.status === "plantowatch" && item.show?.ids?.tmdb)
-      .map((item) => ({ type: "show", show: item.show, listed_at: item.last_watched_at }));
+    const movies = (await Promise.all(snapshot.movies
+      .filter((item) => item.status === "plantowatch")
+      .map(async (item) => ({
+        type: "movie",
+        movie: await this.resolveMedia(item.movie, "movie"),
+        listed_at: item.last_watched_at
+      })))).filter((item) => item.movie?.ids?.tmdb);
+    const shows = (await Promise.all([...snapshot.shows, ...snapshot.anime]
+      .filter((item) => item.status === "plantowatch")
+      .map(async (item) => ({
+        type: "show",
+        show: await this.resolveMedia(item.show, "tv"),
+        listed_at: item.last_watched_at
+      })))).filter((item) => item.show?.ids?.tmdb);
     return [...movies, ...shows];
   }
 
   async playback(): Promise<unknown[]> {
-    return [];
+    if (!this.isConnected) return [];
+    const [rows, snapshot] = await Promise.all([
+      this.simkl<SimklPlaybackRow[]>("/sync/playback"),
+      this.loadSnapshot()
+    ]);
+    const normalized = (await Promise.all(rows.map(async (row) => ({
+      ...row,
+      movie: await this.resolveMedia(row.movie, "movie"),
+      show: await this.resolveMedia(row.show ?? row.anime, "tv"),
+      episode: row.episode
+        ? { ...row.episode, number: row.episode.number ?? row.episode.episode }
+        : undefined
+    })))).filter((row) => row.movie?.ids?.tmdb || row.show?.ids?.tmdb);
+    const pausedShows = new Set(normalized.map((row) => row.show?.ids?.tmdb).filter(Boolean));
+    const upNext = (await Promise.all([...snapshot.shows, ...snapshot.anime].map(async (row) => {
+      const show = await this.resolveMedia(row.show, "tv");
+      const episode = row.next_to_watch;
+      const number = episode?.number ?? episode?.episode;
+      if (!show?.ids?.tmdb || !episode?.season || !number || pausedShows.has(show.ids.tmdb)) return null;
+      return {
+        progress: 0,
+        paused_at: row.last_watched_at,
+        show,
+        episode: { ...episode, number },
+        is_up_next: true
+      };
+    }))).filter(Boolean);
+    return [...normalized, ...upNext];
   }
 
   async watched(type: "movies" | "shows"): Promise<unknown[]> {
     const snapshot = await this.loadSnapshot();
     if (type === "movies") {
-      return snapshot.movies.filter((item) =>
-        item.movie?.ids?.tmdb && (item.status === "completed" || item.status === "watching" || Boolean(item.last_watched_at))
-      );
+      return (await Promise.all(snapshot.movies.filter((item) =>
+        item.status === "completed" || item.status === "watching" || Boolean(item.last_watched_at)
+      ).map(async (item) => ({ ...item, movie: await this.resolveMedia(item.movie, "movie") }))))
+        .filter((item) => item.movie?.ids?.tmdb);
     }
-    return [...snapshot.shows, ...snapshot.anime];
+    return (await Promise.all([...snapshot.shows, ...snapshot.anime]
+      .map(async (item) => ({ ...item, show: await this.resolveMedia(item.show, "tv") }))))
+      .filter((item) => item.show?.ids?.tmdb);
   }
 
   async addToWatchlist(item: SyncMediaRef): Promise<void> {
@@ -280,8 +333,35 @@ export class SimklClient implements SyncClient {
     this.invalidateSnapshot();
   }
 
-  async dismissFromContinueWatching(): Promise<void> {
-    // SIMKL playback sessions are not currently used as ARVIO's resume source.
+  async dismissFromContinueWatching(item: SyncMediaRef): Promise<void> {
+    if (!this.isConnected) return;
+    const rows = await this.simkl<SimklPlaybackRow[]>("/sync/playback");
+    const matching = rows.filter((row) => {
+      const media = row.movie ?? row.show ?? row.anime;
+      if (media?.ids?.tmdb !== item.tmdbId) return false;
+      if (item.mediaType === "movie") return Boolean(row.movie);
+      const number = row.episode?.number ?? row.episode?.episode;
+      return (item.season == null || row.episode?.season === item.season) &&
+        (item.episode == null || number === item.episode);
+    });
+    await Promise.all(matching.map((row) => row.id
+      ? this.simkl(`/sync/playback/${row.id}`, { method: "DELETE" })
+      : Promise.resolve()
+    ));
+  }
+
+  private async resolveMedia<T extends { ids?: SimklIds }>(
+    media: T | undefined,
+    mediaType: "movie" | "tv"
+  ): Promise<T | undefined> {
+    if (!media || media.ids?.tmdb) return media;
+    const tmdbId = await resolveTmdbId({
+      mediaType,
+      id: null,
+      tmdbId: null,
+      imdbId: media.ids?.imdb ?? null
+    });
+    return tmdbId ? { ...media, ids: { ...media.ids, tmdb: tmdbId } } : media;
   }
 
   private async sendScrobble(action: "start" | "pause" | "stop", item: SyncMediaRef & { progress: number }): Promise<void> {

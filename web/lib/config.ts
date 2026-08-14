@@ -39,7 +39,8 @@ export function hasResolverConfig() {
 }
 
 export function hasTraktConfig() {
-  return config.traktClientId.length > 10 && !config.traktClientId.startsWith("__");
+  return hasNetlifyBackendConfig() ||
+    (config.traktClientId.length > 10 && !config.traktClientId.startsWith("__"));
 }
 
 export function hasSimklConfig() {

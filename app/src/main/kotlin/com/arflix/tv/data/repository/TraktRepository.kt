@@ -625,10 +625,9 @@ class TraktRepository @Inject constructor(
 
         // Then sync to backend in background
         try {
-            if (isSimklActive()) {
+            syncService.markMovieWatched(tmdbId)
+            if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
                 simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
-            } else {
-                syncService.markMovieWatched(tmdbId)
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -648,10 +647,9 @@ class TraktRepository @Inject constructor(
 
         // Then sync to backend in background
         try {
-            if (isSimklActive()) {
+            syncService.markMovieUnwatched(tmdbId)
+            if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
                 simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
-            } else {
-                syncService.markMovieUnwatched(tmdbId)
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -673,11 +671,10 @@ class TraktRepository @Inject constructor(
 
         // Then sync to backend in background (don't block UI on network)
         try {
-            if (isSimklActive()) {
+            val traktShowId = tmdbToTraktIdCache[showTmdbId]
+            syncService.markEpisodeWatched(showTmdbId, season, episode, traktShowId)
+            if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
                 simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
-            } else {
-                val traktShowId = tmdbToTraktIdCache[showTmdbId]
-                syncService.markEpisodeWatched(showTmdbId, season, episode, traktShowId)
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -720,10 +717,9 @@ class TraktRepository @Inject constructor(
         // Then sync to backend in background (skip if batch Trakt removal already handled it)
         if (syncTrakt) {
             try {
-                if (isSimklActive()) {
+                syncService.markEpisodeUnwatched(showTmdbId, season, episode)
+                if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
                     simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
-                } else {
-                    syncService.markEpisodeUnwatched(showTmdbId, season, episode)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -4185,7 +4181,11 @@ class TraktRepository @Inject constructor(
         }
         cacheInitializing = true
         try {
-            val hasTraktAuth = refreshTokenIfNeeded() != null
+            val readProviders = syncProviderStore.readProviders(
+                com.arflix.tv.data.repository.sync.TrackingFeature.WATCHED
+            )
+            val hasTraktAuth = com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in readProviders &&
+                refreshTokenIfNeeded() != null
             val (localSnapshotMovies, localSnapshotEpisodes) = loadLocalWatchedSnapshotForCurrentProfile()
 
             // Try to load from Supabase first (works for both Trakt and non-Trakt Cloud profiles)
@@ -4194,12 +4194,17 @@ class TraktRepository @Inject constructor(
 
             // MDBList profiles: also pull watched state marked outside Arvio (e.g. the
             // MDBList website) so those badges show up. Keys are already cache-compatible.
-            val useMdbList = syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST
+            val useMdbList = com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in readProviders
             val mdbMovies = if (useMdbList) mdbListRepository.getWatchedMovies() else emptySet()
             val mdbEpisodes = if (useMdbList) mdbListRepository.getWatchedEpisodes() else emptySet()
+            val useSimkl = com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in readProviders
+            val simklMovies = if (useSimkl) simklSyncService.getWatchedMovies() else emptySet()
+            val simklEpisodes = if (useSimkl) simklSyncService.getWatchedEpisodes() else emptySet()
 
             // If no Trakt auth AND no Supabase/MDBList data, leave caches empty
-            if (!hasTraktAuth && supabaseMovies.isEmpty() && supabaseEpisodes.isEmpty() && mdbMovies.isEmpty() && mdbEpisodes.isEmpty()) {
+            if (!hasTraktAuth && supabaseMovies.isEmpty() && supabaseEpisodes.isEmpty() &&
+                mdbMovies.isEmpty() && mdbEpisodes.isEmpty() && simklMovies.isEmpty() && simklEpisodes.isEmpty()
+            ) {
                 watchedMoviesCache.clear()
                 watchedMoviesCache.addAll(localSnapshotMovies)
                 watchedEpisodesCache.clear()
@@ -4216,11 +4221,13 @@ class TraktRepository @Inject constructor(
             watchedMoviesCache.addAll(localSnapshotMovies)
             watchedMoviesCache.addAll(if (supabaseMovies.isNotEmpty()) supabaseMovies else traktMovies)
             watchedMoviesCache.addAll(mdbMovies)
+            watchedMoviesCache.addAll(simklMovies)
 
             watchedEpisodesCache.clear()
             watchedEpisodesCache.addAll(localSnapshotEpisodes)
             watchedEpisodesCache.addAll(if (supabaseEpisodes.isNotEmpty()) supabaseEpisodes else traktEpisodes)
             watchedEpisodesCache.addAll(mdbEpisodes)
+            watchedEpisodesCache.addAll(simklEpisodes)
 
             cacheInitialized = true
         } catch (e: Exception) {

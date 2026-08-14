@@ -44,7 +44,7 @@ class SimklAuthManager @Inject constructor(
         if (response.result.equals("OK", ignoreCase = true) && !response.accessToken.isNullOrBlank()) {
             syncProviderStore.setSimklAccessToken(response.accessToken)
             syncProviderStore.setMdbListApiKey(null)
-            syncProviderStore.setProvider(SyncProvider.SIMKL)
+            syncProviderStore.onProviderConnected(SyncProvider.SIMKL)
             return true
         }
         return false
@@ -64,9 +64,7 @@ class SimklAuthManager @Inject constructor(
 
     suspend fun disconnect() {
         syncProviderStore.setSimklAccessToken(null)
-        if (syncProviderStore.getProvider() == SyncProvider.SIMKL) {
-            syncProviderStore.setProvider(SyncProvider.NONE)
-        }
+        syncProviderStore.onProviderDisconnected(SyncProvider.SIMKL)
     }
 }
 

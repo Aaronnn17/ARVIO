@@ -7,6 +7,7 @@ import com.arflix.tv.data.api.SimklActivitiesResponse
 import com.arflix.tv.data.api.SimklAllItemsResponse
 import com.arflix.tv.data.api.SimklScrobbleBody
 import com.arflix.tv.data.api.SimklScrobbleResponse
+import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.repository.sync.SyncProviderStore
 import com.google.gson.Gson
 import io.mockk.coEvery
@@ -27,6 +28,7 @@ class SimklIntegrationTest {
     private lateinit var authManager: SimklAuthManager
     private lateinit var scrobbler: SimklScrobbler
     private lateinit var syncService: SimklSyncService
+    private lateinit var tmdbApi: TmdbApi
 
     @Before
     fun setUp() {
@@ -35,7 +37,8 @@ class SimklIntegrationTest {
         authManager = SimklAuthManager(simklApi, syncProviderStore)
         scrobbler = SimklScrobbler(simklApi, authManager)
         scrobbler.elapsedRealtimeMs = { 0L }
-        syncService = SimklSyncService(simklApi, authManager)
+        tmdbApi = mockk(relaxed = true)
+        syncService = SimklSyncService(simklApi, authManager, tmdbApi)
     }
 
     @Test
@@ -64,6 +67,7 @@ class SimklIntegrationTest {
         assertTrue(success)
         coVerify { syncProviderStore.setSimklAccessToken("token_abc123") }
         coVerify { syncProviderStore.setMdbListApiKey(null) }
+        coVerify { syncProviderStore.onProviderConnected(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL) }
     }
 
     @Test
@@ -72,6 +76,7 @@ class SimklIntegrationTest {
         coEvery { syncProviderStore.getSimklAccessToken() } returns null
         assertFalse(authManager.isConnected())
         coVerify { syncProviderStore.setSimklAccessToken(null) }
+        coVerify { syncProviderStore.onProviderDisconnected(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL) }
     }
 
     @Test
@@ -197,6 +202,38 @@ class SimklIntegrationTest {
         )
 
         assertEquals("2026-08-12T12:00:00Z", activities.shows?.all)
+    }
+
+    @Test
+    fun testContinueWatchingIncludesPausedPlaybackAndUpNext() = runBlocking {
+        coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
+        coEvery { simklApi.getActivities(any(), any()) } returns
+            SimklActivitiesResponse(all = "2026-08-12T12:00:00Z")
+        coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            SimklAllItemsResponse()
+        coEvery {
+            simklApi.getAllItems(any(), any(), "shows", any(), any(), any(), any(), any())
+        } returns Gson().fromJson(
+            """{"shows":[{"status":"watching","last_watched_at":"2026-08-11T20:00:00Z","show":{"title":"Up Next Show","year":2025,"runtime":45,"ids":{"tmdb":200}},"next_to_watch":{"season":2,"number":4},"watched_episodes_count":12,"total_episodes_count":20}]}""",
+            SimklAllItemsResponse::class.java
+        )
+        coEvery { simklApi.getPlayback(any(), any()) } returns Gson().fromJson(
+            """[{"id":7,"progress":42.5,"paused_at":"2026-08-12T11:00:00Z","type":"movie","movie":{"title":"Paused Movie","year":2024,"runtime":120,"ids":{"tmdb":100}}}]""",
+            Array<com.arflix.tv.data.api.SimklPlaybackItem>::class.java
+        ).toList()
+
+        val items = syncService.getContinueWatching(forceRefresh = true)
+
+        assertEquals(2, items.size)
+        val movie = items.first { it.id == 100 }
+        assertEquals(42, movie.progress)
+        assertEquals(3_024L, movie.resumePositionSeconds)
+        val show = items.first { it.id == 200 }
+        assertTrue(show.isUpNext)
+        assertEquals(2, show.season)
+        assertEquals(4, show.episode)
+        assertEquals(12, show.watchedEpisodes)
+        assertEquals(20, show.totalEpisodes)
     }
 
     @Test

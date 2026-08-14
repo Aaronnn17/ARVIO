@@ -153,6 +153,14 @@ data class SettingsUiState(
     val simklUserCode: String? = null,
     val simklVerificationUrl: String? = null,
     val simklUsername: String? = null,
+    val trackingWatchlistReadMode: com.arflix.tv.data.repository.sync.TrackingReadMode =
+        com.arflix.tv.data.repository.sync.TrackingReadMode.AUTO,
+    val trackingContinueReadMode: com.arflix.tv.data.repository.sync.TrackingReadMode =
+        com.arflix.tv.data.repository.sync.TrackingReadMode.AUTO,
+    val trackingWatchedReadMode: com.arflix.tv.data.repository.sync.TrackingReadMode =
+        com.arflix.tv.data.repository.sync.TrackingReadMode.AUTO,
+    val trackingWriteToTrakt: Boolean = false,
+    val trackingWriteToSimkl: Boolean = false,
     // Trakt Sync
     val isSyncing: Boolean = false,
     val syncProgress: SyncProgress = SyncProgress(),
@@ -558,6 +566,7 @@ class SettingsViewModel @Inject constructor(
             val isTrakt = traktRepository.hasTrakt()
             val isMdbList = mdbListRepository.isConnected()
             val isSimkl = simklAuthManager.isConnected()
+            val trackingPreferences = syncProviderStore.getTrackingPreferences()
 
             if (profileManager.getProfileIdSync() != loadProfileId) return@launch
 
@@ -629,6 +638,11 @@ class SettingsViewModel @Inject constructor(
                 mdbListUsername = null,
                 isSimklConnected = isSimkl,
                 simklUsername = null,
+                trackingWatchlistReadMode = trackingPreferences.watchlistReadMode,
+                trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
+                trackingWatchedReadMode = trackingPreferences.watchedReadMode,
+                trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                 lastSyncTime = null,
                 syncedMovies = 0,
                 syncedEpisodes = 0,
@@ -3486,19 +3500,19 @@ class SettingsViewModel @Inject constructor(
                     val expirationDate = traktRepository.getTokenExpirationDate()
 
                     // Success!
-                    // Mutual exclusion: selecting Trakt disconnects MDBList and Simkl for this profile.
+                    // Trakt and Simkl can coexist. MDBList remains an exclusive legacy provider.
                     simklPollingJob?.cancel()
                     simklPollingJob = null
-                    runCatching { simklAuthManager.disconnect() }
-                    syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.TRAKT)
                     syncProviderStore.setMdbListApiKey(null)
+                    syncProviderStore.onProviderConnected(com.arflix.tv.data.repository.sync.SyncProvider.TRAKT)
+                    val simklStillConnected = simklAuthManager.isConnected()
+                    val trackingPreferences = syncProviderStore.getTrackingPreferences()
                     _uiState.value = _uiState.value.copy(
                         isTraktAuthenticated = true,
                         traktUsername = null,
                         isMdbListConnected = false,
                         mdbListUsername = null,
-                        isSimklConnected = false,
-                        simklUsername = null,
+                        isSimklConnected = simklStillConnected,
                         isSimklPolling = false,
                         simklUserCode = null,
                         simklVerificationUrl = null,
@@ -3506,6 +3520,11 @@ class SettingsViewModel @Inject constructor(
                         isTraktAuthStarting = false,
                         isTraktPolling = false,
                         traktExpiration = expirationDate,
+                        trackingWatchlistReadMode = trackingPreferences.watchlistReadMode,
+                        trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
+                        trackingWatchedReadMode = trackingPreferences.watchedReadMode,
+                        trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                        trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                         toastMessage = "Trakt connected successfully",
                         toastType = ToastType.SUCCESS
                     )
@@ -3513,7 +3532,7 @@ class SettingsViewModel @Inject constructor(
                         profileManager.getProfileIdSync(),
                         isTraktConnected = true,
                         isMdbListConnected = false,
-                        isSimklConnected = false
+                        isSimklConnected = simklStillConnected
                     )
                     traktRepository.clearContinueWatchingCache()
                     runCatching { traktRepository.getContinueWatching() }
@@ -3586,7 +3605,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             cancelTraktAuth()
             traktRepository.logout()
-            syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.NONE)
+            syncProviderStore.onProviderDisconnected(com.arflix.tv.data.repository.sync.SyncProvider.TRAKT)
+            val preferences = syncProviderStore.getTrackingPreferences()
             _uiState.value = _uiState.value.copy(
                 isTraktAuthenticated = false,
                 traktUsername = null,
@@ -3594,6 +3614,11 @@ class SettingsViewModel @Inject constructor(
                 lastSyncTime = null,
                 syncedMovies = 0,
                 syncedEpisodes = 0,
+                trackingWatchlistReadMode = preferences.watchlistReadMode,
+                trackingContinueReadMode = preferences.continueWatchingReadMode,
+                trackingWatchedReadMode = preferences.watchedReadMode,
+                trackingWriteToTrakt = false,
+                trackingWriteToSimkl = preferences.writeToSimkl == true,
                 toastMessage = "Trakt disconnected",
                 toastType = ToastType.SUCCESS
             )
@@ -3629,7 +3654,8 @@ class SettingsViewModel @Inject constructor(
             simklPollingJob = null
             runCatching { simklAuthManager.disconnect() }
             syncProviderStore.setMdbListApiKey(trimmed)
-            syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
+            syncProviderStore.onProviderConnected(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
+            val trackingPreferences = syncProviderStore.getTrackingPreferences()
             _uiState.value = _uiState.value.copy(
                 mdbListConnecting = false,
                 isMdbListConnected = true,
@@ -3645,6 +3671,11 @@ class SettingsViewModel @Inject constructor(
                 lastSyncTime = null,
                 syncedMovies = 0,
                 syncedEpisodes = 0,
+                trackingWatchlistReadMode = trackingPreferences.watchlistReadMode,
+                trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
+                trackingWatchedReadMode = trackingPreferences.watchedReadMode,
+                trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                 toastMessage = context.getString(R.string.mdblist_connected),
                 toastType = ToastType.SUCCESS
             )
@@ -3663,10 +3694,16 @@ class SettingsViewModel @Inject constructor(
     fun disconnectMdbList() {
         viewModelScope.launch {
             syncProviderStore.setMdbListApiKey(null)
-            syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.NONE)
+            syncProviderStore.onProviderDisconnected(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
+            val trackingPreferences = syncProviderStore.getTrackingPreferences()
             _uiState.value = _uiState.value.copy(
                 isMdbListConnected = false,
                 mdbListUsername = null,
+                trackingWatchlistReadMode = trackingPreferences.watchlistReadMode,
+                trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
+                trackingWatchedReadMode = trackingPreferences.watchedReadMode,
+                trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                 toastMessage = context.getString(R.string.mdblist_disconnected),
                 toastType = ToastType.SUCCESS
             )
@@ -3714,26 +3751,28 @@ class SettingsViewModel @Inject constructor(
                 try {
                     val success = simklAuthManager.pollPinAuth(userCode)
                     if (success) {
-                        cancelTraktAuth()
-                        runCatching { traktRepository.logout() }
                         syncProviderStore.setMdbListApiKey(null)
-                        syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL)
+                        val traktStillConnected = traktRepository.hasTrakt()
+                        val trackingPreferences = syncProviderStore.getTrackingPreferences()
                         _uiState.value = _uiState.value.copy(
                             isSimklPolling = false,
                             isSimklConnected = true,
                             simklUserCode = null,
                             simklVerificationUrl = null,
-                            isTraktAuthenticated = false,
-                            traktUsername = null,
-                            traktExpiration = null,
+                            isTraktAuthenticated = traktStillConnected,
                             isMdbListConnected = false,
                             mdbListUsername = null,
+                            trackingWatchlistReadMode = trackingPreferences.watchlistReadMode,
+                            trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
+                            trackingWatchedReadMode = trackingPreferences.watchedReadMode,
+                            trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                            trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                             toastMessage = "Connected to Simkl!",
                             toastType = ToastType.SUCCESS
                         )
                         refreshIntegrationUsernames(
                             profileManager.getProfileIdSync(),
-                            isTraktConnected = false,
+                            isTraktConnected = traktStillConnected,
                             isMdbListConnected = false,
                             isSimklConnected = true
                         )
@@ -3763,26 +3802,28 @@ class SettingsViewModel @Inject constructor(
             runCatching {
                 val success = simklAuthManager.pollPinAuth(userCode)
                 if (success) {
-                    cancelTraktAuth()
-                    runCatching { traktRepository.logout() }
                     syncProviderStore.setMdbListApiKey(null)
-                    syncProviderStore.setProvider(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL)
+                    val traktStillConnected = traktRepository.hasTrakt()
+                    val trackingPreferences = syncProviderStore.getTrackingPreferences()
                     _uiState.value = _uiState.value.copy(
                         isSimklPolling = false,
                         isSimklConnected = true,
                         simklUserCode = null,
                         simklVerificationUrl = null,
-                        isTraktAuthenticated = false,
-                        traktUsername = null,
-                        traktExpiration = null,
+                        isTraktAuthenticated = traktStillConnected,
                         isMdbListConnected = false,
                         mdbListUsername = null,
+                        trackingWatchlistReadMode = trackingPreferences.watchlistReadMode,
+                        trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
+                        trackingWatchedReadMode = trackingPreferences.watchedReadMode,
+                        trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                        trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                         toastMessage = "Connected to Simkl!",
                         toastType = ToastType.SUCCESS
                     )
                     refreshIntegrationUsernames(
                         profileManager.getProfileIdSync(),
-                        isTraktConnected = false,
+                        isTraktConnected = traktStillConnected,
                         isMdbListConnected = false,
                         isSimklConnected = true
                     )
@@ -3798,15 +3839,49 @@ class SettingsViewModel @Inject constructor(
         simklPollingJob = null
         viewModelScope.launch {
             simklAuthManager.disconnect()
+            val preferences = syncProviderStore.getTrackingPreferences()
             _uiState.value = _uiState.value.copy(
                 isSimklConnected = false,
                 isSimklPolling = false,
                 simklUserCode = null,
                 simklVerificationUrl = null,
                 simklUsername = null,
+                trackingWatchlistReadMode = preferences.watchlistReadMode,
+                trackingContinueReadMode = preferences.continueWatchingReadMode,
+                trackingWatchedReadMode = preferences.watchedReadMode,
+                trackingWriteToTrakt = preferences.writeToTrakt == true,
+                trackingWriteToSimkl = false,
                 toastMessage = "Disconnected from Simkl",
                 toastType = ToastType.SUCCESS
             )
+        }
+    }
+
+    fun setTrackingReadMode(
+        feature: com.arflix.tv.data.repository.sync.TrackingFeature,
+        mode: com.arflix.tv.data.repository.sync.TrackingReadMode
+    ) {
+        viewModelScope.launch {
+            syncProviderStore.setReadMode(feature, mode)
+            val preferences = syncProviderStore.getTrackingPreferences()
+            _uiState.value = _uiState.value.copy(
+                trackingWatchlistReadMode = preferences.watchlistReadMode,
+                trackingContinueReadMode = preferences.continueWatchingReadMode,
+                trackingWatchedReadMode = preferences.watchedReadMode
+            )
+            syncLocalStateToCloud(silent = true, force = true)
+        }
+    }
+
+    fun setTrackingWriteTarget(provider: com.arflix.tv.data.repository.sync.SyncProvider, enabled: Boolean) {
+        viewModelScope.launch {
+            syncProviderStore.setWriteTarget(provider, enabled)
+            val preferences = syncProviderStore.getTrackingPreferences()
+            _uiState.value = _uiState.value.copy(
+                trackingWriteToTrakt = preferences.writeToTrakt == true,
+                trackingWriteToSimkl = preferences.writeToSimkl == true
+            )
+            syncLocalStateToCloud(silent = true, force = true)
         }
     }
 
