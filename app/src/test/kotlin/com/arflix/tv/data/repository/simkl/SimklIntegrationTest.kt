@@ -162,7 +162,7 @@ class SimklIntegrationTest {
     fun testInitialSyncRequestsFullEpisodeHistory() = runBlocking {
         coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
         coEvery { simklApi.getActivities(any(), any()) } returns SimklActivitiesResponse(all = "2026-08-12T10:00:00Z")
-        coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
             SimklAllItemsResponse()
 
         syncService.syncIfNeeded(force = true)
@@ -176,7 +176,8 @@ class SimklIntegrationTest {
                 dateFrom = null,
                 extended = "full",
                 episodeWatchedAt = "yes",
-                includeAllEpisodes = "original"
+                includeAllEpisodes = "yes",
+                nextWatchInfo = "yes"
             )
         }
     }
@@ -185,13 +186,13 @@ class SimklIntegrationTest {
     fun testEmptyAccountSnapshotIsNotReloadedOnEveryRead() = runBlocking {
         coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
         coEvery { simklApi.getActivities(any(), any()) } returns SimklActivitiesResponse(all = null)
-        coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
             SimklAllItemsResponse()
 
         syncService.syncIfNeeded()
         syncService.syncIfNeeded()
 
-        coVerify(exactly = 3) { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 3) { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -209,12 +210,12 @@ class SimklIntegrationTest {
         coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
         coEvery { simklApi.getActivities(any(), any()) } returns
             SimklActivitiesResponse(all = "2026-08-12T12:00:00Z")
-        coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any()) } returns
+        coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
             SimklAllItemsResponse()
         coEvery {
-            simklApi.getAllItems(any(), any(), "shows", any(), any(), any(), any(), any())
+            simklApi.getAllItems(any(), any(), "shows", any(), any(), any(), any(), any(), any())
         } returns Gson().fromJson(
-            """{"shows":[{"status":"watching","last_watched_at":"2026-08-11T20:00:00Z","show":{"title":"Up Next Show","year":2025,"runtime":45,"ids":{"tmdb":200}},"next_to_watch":{"season":2,"number":4},"watched_episodes_count":12,"total_episodes_count":20}]}""",
+            """{"shows":[{"status":"watching","last_watched_at":"2026-08-11T20:00:00Z","show":{"title":"Up Next Show","year":2025,"runtime":45,"ids":{"tmdb":200}},"next_to_watch":"S02E04","next_to_watch_info":{"title":"The Return","season":2,"episode":4,"date":"2026-08-12T20:00:00Z"},"watched_episodes_count":12,"total_episodes_count":20}]}""",
             SimklAllItemsResponse::class.java
         )
         coEvery { simklApi.getPlayback(any(), any()) } returns Gson().fromJson(
@@ -232,8 +233,23 @@ class SimklIntegrationTest {
         assertTrue(show.isUpNext)
         assertEquals(2, show.season)
         assertEquals(4, show.episode)
+        assertEquals("The Return", show.episodeTitle)
         assertEquals(12, show.watchedEpisodes)
         assertEquals(20, show.totalEpisodes)
+    }
+
+    @Test
+    fun testDismissContinueWatchingDeletesMatchingPlayback() = runBlocking {
+        coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
+        coEvery { simklApi.getPlayback(any(), any()) } returns Gson().fromJson(
+            """[{"id":77,"progress":35,"type":"episode","show":{"ids":{"tmdb":200}},"episode":{"season":2,"number":4}}]""",
+            Array<com.arflix.tv.data.api.SimklPlaybackItem>::class.java
+        ).toList()
+        coEvery { simklApi.deletePlayback(any(), any(), 77L) } returns
+            retrofit2.Response.success(mockk<okhttp3.ResponseBody>())
+
+        assertTrue(syncService.dismissContinueWatching(com.arflix.tv.data.model.MediaType.TV, 200, 2, 4))
+        coVerify(exactly = 1) { simklApi.deletePlayback("Bearer token_123", any(), 77L) }
     }
 
     @Test

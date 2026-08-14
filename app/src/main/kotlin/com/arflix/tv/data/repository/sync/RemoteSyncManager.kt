@@ -204,4 +204,13 @@ class RemoteSyncManager @Inject constructor(
             }
             .sortedByDescending { it.updatedAtMs }
     }
+
+    suspend fun dismissContinueWatching(
+        mediaType: MediaType,
+        tmdbId: Int,
+        season: Int? = null,
+        episode: Int? = null
+    ): Boolean = writeResults {
+        it.dismissContinueWatching(mediaType, tmdbId, season, episode)
+    }
 }

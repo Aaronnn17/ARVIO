@@ -626,13 +626,15 @@ class TraktRepository @Inject constructor(
         // Then sync to backend in background
         try {
             syncService.markMovieWatched(tmdbId)
-            if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
-                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
-            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-
-            // Sync failed, but local cache is already updated
+        }
+        if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
+            try {
+                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
         }
     }
 
@@ -648,13 +650,15 @@ class TraktRepository @Inject constructor(
         // Then sync to backend in background
         try {
             syncService.markMovieUnwatched(tmdbId)
-            if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
-                simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
-            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-
-            // Sync failed, but local cache is already updated
+        }
+        if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
+            try {
+                simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
         }
     }
 
@@ -673,13 +677,17 @@ class TraktRepository @Inject constructor(
         try {
             val traktShowId = tmdbToTraktIdCache[showTmdbId]
             syncService.markEpisodeWatched(showTmdbId, season, episode, traktShowId)
-            if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
-                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
-            }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-
-            AppLogger.e("TraktRepository", "Failed to mark episode watched", e)
+            AppLogger.e("TraktRepository", "Failed to persist episode watched state", e)
+        }
+        if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
+            try {
+                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLogger.e("TraktRepository", "Failed to mirror episode watched state to Simkl", e)
+            }
         }
     }
 
@@ -718,13 +726,15 @@ class TraktRepository @Inject constructor(
         if (syncTrakt) {
             try {
                 syncService.markEpisodeUnwatched(showTmdbId, season, episode)
-                if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
-                    simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
-                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-
-                // Sync failed, but local cache is already updated
+            }
+            if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
+                try {
+                    simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
         }
     }
@@ -2269,6 +2279,7 @@ class TraktRepository @Inject constructor(
         context.traktDataStore.edit { prefs ->
             prefs[saveKey] = json
         }
+        clearDismissedContinueWatching(mediaType, tmdbId, season, episode)
 
         // Only update the in-memory CW cache for non-Trakt profiles.
         // When Trakt is connected, the cache must only be populated by
@@ -2630,12 +2641,42 @@ class TraktRepository @Inject constructor(
         return parseDismissedMap(raw)
     }
 
-    private suspend fun persistDismissedContinueWatching(map: Map<String, Long>) {
+    private suspend fun persistDismissedContinueWatching(
+        map: Map<String, Long>,
+        profileId: String? = null
+    ) {
+        val storageKey = if (profileId.isNullOrBlank()) {
+            dismissedContinueWatchingKey()
+        } else {
+            profileManager.profileStringKeyFor(profileId, "trakt_dismissed_continue_watching_v1")
+        }
         context.settingsDataStore.edit { prefs ->
             if (map.isEmpty()) {
-                prefs.remove(dismissedContinueWatchingKey())
+                prefs.remove(storageKey)
             } else {
-                prefs[dismissedContinueWatchingKey()] = encodeDismissedMap(map)
+                prefs[storageKey] = encodeDismissedMap(map)
+            }
+        }
+    }
+
+    private suspend fun clearDismissedContinueWatching(
+        mediaType: MediaType,
+        tmdbId: Int,
+        season: Int?,
+        episode: Int?
+    ) {
+        val exactKey = buildContinueWatchingKey(mediaType, tmdbId, season, episode)
+        val showKey = buildContinueWatchingShowKey(mediaType, tmdbId)
+        context.settingsDataStore.edit { prefs ->
+            val map = parseDismissedMap(prefs[dismissedContinueWatchingKey()])
+            val exactRemoved = map.remove(exactKey) != null
+            val showRemoved = map.remove(showKey) != null
+            if (exactRemoved || showRemoved) {
+                if (map.isEmpty()) {
+                    prefs.remove(dismissedContinueWatchingKey())
+                } else {
+                    prefs[dismissedContinueWatchingKey()] = encodeDismissedMap(map)
+                }
             }
         }
     }
@@ -2732,7 +2773,7 @@ class TraktRepository @Inject constructor(
         return map.entries.joinToString("|") { (key, value) -> "$key,$value" }
     }
 
-    private suspend fun filterDismissedContinueWatchingItems(
+    suspend fun filterDismissedContinueWatchingItems(
         items: List<ContinueWatchingItem>,
         profileId: String? = null
     ): List<ContinueWatchingItem> {
@@ -2747,11 +2788,27 @@ class TraktRepository @Inject constructor(
         }
         if (dismissed.isEmpty()) return items
 
-        return items.filterNot { item ->
+        val updatedDismissed = dismissed.toMutableMap()
+        val visible = items.filter { item ->
             val exactKey = buildContinueWatchingKey(item)
             val showKey = buildContinueWatchingShowKey(item.mediaType, item.id)
-            dismissed.containsKey(showKey) || (exactKey != null && dismissed.containsKey(exactKey))
+            val dismissedAt = listOfNotNull(
+                dismissed[showKey],
+                exactKey?.let(dismissed::get)
+            ).maxOrNull() ?: return@filter true
+
+            if (item.updatedAtMs > dismissedAt) {
+                updatedDismissed.remove(showKey)
+                exactKey?.let(updatedDismissed::remove)
+                true
+            } else {
+                false
+            }
         }
+        if (updatedDismissed.size != dismissed.size) {
+            persistDismissedContinueWatching(updatedDismissed, profileId)
+        }
+        return visible
     }
 
     private suspend fun persistContinueWatchingCache(items: List<ContinueWatchingItem>) {
@@ -3940,14 +3997,12 @@ class TraktRepository @Inject constructor(
      * Mark entire season as watched
      */
     suspend fun markSeasonWatched(showTmdbId: Int, seasonNumber: Int, episodes: List<Int>): Boolean {
-        // MDBList profiles mirror the batch to MDBList's /sync/watched.
-        if (syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST) {
-            val ok = mdbListRepository.markSeasonWatched(showTmdbId, seasonNumber, episodes)
-            episodes.forEach { ep -> updateWatchedCache(showTmdbId, seasonNumber, ep, true) }
-            return ok
-        }
-        val auth = getAuthHeader() ?: return false
-        return try {
+        if (episodes.isEmpty()) return true
+        val providers = syncProviderStore.writeProviders()
+        var synced = false
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in providers) {
+            val auth = getAuthHeader()
             val episodeIds = episodes.map {
                 TraktEpisodeId(
                     ids = TraktIds(tmdb = showTmdbId),
@@ -3955,20 +4010,30 @@ class TraktRepository @Inject constructor(
                     number = it
                 )
             }
-            traktApi.addToHistory(
-                auth, clientId, "2",
-                TraktHistoryBody(episodes = episodeIds)
-            )
-            // Update cache for all episodes
-            episodes.forEach { ep ->
-                updateWatchedCache(showTmdbId, seasonNumber, ep, true)
+            if (auth != null) {
+                try {
+                    traktApi.addToHistory(auth, clientId, "2", TraktHistoryBody(episodes = episodeIds))
+                    synced = true
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
-            true
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-
-            false
         }
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in providers) {
+            synced = mdbListRepository.markSeasonWatched(showTmdbId, seasonNumber, episodes) || synced
+        }
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in providers) {
+            synced = simklSyncService.markSeasonWatched(showTmdbId, seasonNumber, episodes, watched = true) || synced
+        }
+
+        episodes.forEach { ep ->
+            updateWatchedCache(showTmdbId, seasonNumber, ep, true)
+            updateShowWatchedCache(showTmdbId, seasonNumber, ep, true)
+        }
+        persistLocalWatchedSnapshotForCurrentProfile()
+        return synced || providers.isEmpty()
     }
 
     /**
@@ -4037,8 +4102,12 @@ class TraktRepository @Inject constructor(
      * Remove season from history
      */
     suspend fun removeSeasonFromHistory(showTmdbId: Int, seasonNumber: Int, episodes: List<Int>): Boolean {
-        val auth = getAuthHeader() ?: return false
-        return try {
+        if (episodes.isEmpty()) return true
+        val providers = syncProviderStore.writeProviders()
+        var synced = false
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in providers) {
+            val auth = getAuthHeader()
             val episodeIds = episodes.map {
                 TraktEpisodeId(
                     ids = TraktIds(tmdb = showTmdbId),
@@ -4046,20 +4115,32 @@ class TraktRepository @Inject constructor(
                     number = it
                 )
             }
-            traktApi.removeFromHistory(
-                auth, clientId, "2",
-                TraktHistoryBody(episodes = episodeIds)
-            )
-            // Update cache
-            episodes.forEach { ep ->
-                updateWatchedCache(showTmdbId, seasonNumber, ep, false)
+            if (auth != null) {
+                try {
+                    traktApi.removeFromHistory(auth, clientId, "2", TraktHistoryBody(episodes = episodeIds))
+                    synced = true
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
-            true
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-
-            false
         }
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in providers) {
+            episodes.forEach { episode ->
+                synced = mdbListRepository.markEpisodeUnwatched(showTmdbId, seasonNumber, episode) || synced
+            }
+        }
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in providers) {
+            synced = simklSyncService.markSeasonWatched(showTmdbId, seasonNumber, episodes, watched = false) || synced
+        }
+
+        episodes.forEach { ep ->
+            updateWatchedCache(showTmdbId, seasonNumber, ep, false)
+            updateShowWatchedCache(showTmdbId, seasonNumber, ep, false)
+        }
+        persistLocalWatchedSnapshotForCurrentProfile()
+        return synced || providers.isEmpty()
     }
 
     /**

@@ -173,9 +173,10 @@ class SimklSyncService @Inject constructor(
                     cachedWatchedEpisodes.add("${showTmdb}_S${season.number}_E${episode.number}")
                 }
             }
-            showItem.nextToWatch?.let { next ->
-                val season = next.season ?: return@let
-                val episode = next.number ?: return@let
+            val next = showItem.nextToWatchInfo ?: parseNextToWatch(showItem.nextToWatch)
+            if (next != null && status == "watching") {
+                val season = next.season ?: 1
+                val episode = next.episode ?: return@forEach
                 cachedContinueWatching[MediaType.TV to showTmdb] = ContinueWatchingItem(
                     id = showTmdb,
                     title = show.title.orEmpty(),
@@ -183,7 +184,7 @@ class SimklSyncService @Inject constructor(
                     progress = 0,
                     season = season,
                     episode = episode,
-                    episodeTitle = "Episode $episode",
+                    episodeTitle = next.title?.takeIf { it.isNotBlank() } ?: "Episode $episode",
                     year = show.year?.toString().orEmpty(),
                     durationSeconds = show.runtime?.times(60L) ?: 0L,
                     isUpNext = true,
@@ -193,6 +194,15 @@ class SimklSyncService @Inject constructor(
                 )
             }
         }
+    }
+
+    private fun parseNextToWatch(value: String?): com.arflix.tv.data.api.SimklNextToWatchInfo? {
+        val raw = value?.trim()?.uppercase().orEmpty()
+        if (raw.isBlank()) return null
+        val match = Regex("^(?:S(\\d+))?E(\\d+)$").matchEntire(raw) ?: return null
+        val season = match.groupValues[1].toIntOrNull() ?: 1
+        val episode = match.groupValues[2].toIntOrNull() ?: return null
+        return com.arflix.tv.data.api.SimklNextToWatchInfo(season = season, episode = episode)
     }
 
     private fun processPlayback(items: List<com.arflix.tv.data.api.SimklPlaybackItem>) {
@@ -485,6 +495,91 @@ class SimklSyncService @Inject constructor(
             }
         } catch (e: Exception) {
             AppLogger.e("SimklSyncService", "Error marking unwatched: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun markSeasonWatched(
+        showTmdbId: Int,
+        season: Int,
+        episodes: List<Int>,
+        watched: Boolean
+    ): Boolean {
+        if (episodes.isEmpty()) return true
+        val token = authManager.getAccessToken() ?: return false
+        val authHeader = "Bearer $token"
+        val body = SimklSyncHistoryBody(
+            shows = listOf(
+                SimklShowRef(
+                    ids = SimklIds(tmdb = showTmdbId),
+                    seasons = listOf(
+                        SimklSeasonRef(
+                            number = season,
+                            episodes = episodes.distinct().map { SimklEpisodeRef(number = it) }
+                        )
+                    )
+                )
+            )
+        )
+        return try {
+            val response = if (watched) {
+                simklApi.addToHistory(authHeader, clientId, body)
+            } else {
+                simklApi.removeFromHistory(authHeader, clientId, body)
+            }
+            if (response.isSuccessful) {
+                episodes.forEach { episode ->
+                    val key = "${showTmdbId}_S${season}_E${episode}"
+                    if (watched) cachedWatchedEpisodes.add(key) else cachedWatchedEpisodes.remove(key)
+                }
+                cachedContinueWatching.remove(MediaType.TV to showTmdbId)
+                lastActivityCheckTime = 0L
+                true
+            } else {
+                AppLogger.e(
+                    "SimklSyncService",
+                    "Failed marking season ${if (watched) "watched" else "unwatched"}: code=${response.code()}"
+                )
+                false
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.e("SimklSyncService", "Error updating season history: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun dismissContinueWatching(
+        mediaType: MediaType,
+        tmdbId: Int,
+        season: Int? = null,
+        episode: Int? = null
+    ): Boolean {
+        val token = authManager.getAccessToken() ?: return false
+        val authHeader = "Bearer $token"
+        return try {
+            val playback = simklApi.getPlayback(authHeader, clientId)
+            val matches = playback.filter { row ->
+                val ids = if (mediaType == MediaType.MOVIE) row.movie?.ids else (row.show ?: row.anime)?.ids
+                if (resolvedTmdbId(ids ?: return@filter false, mediaType) != tmdbId) return@filter false
+                if (mediaType == MediaType.MOVIE) return@filter true
+                val rowEpisode = row.episode ?: return@filter false
+                (season == null || rowEpisode.season == season) &&
+                    (episode == null || rowEpisode.number == episode)
+            }
+            val successful = matches.mapNotNull { it.id }.all { id ->
+                simklApi.deletePlayback(authHeader, clientId, id).isSuccessful
+            }
+            if (successful) {
+                cachedContinueWatching.remove(mediaType to tmdbId)
+                lastActivityCheckTime = 0L
+            }
+            successful
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.e("SimklSyncService", "Error deleting playback: ${e.message}")
             false
         }
     }

@@ -72,7 +72,8 @@ interface SimklApi {
         @Query("date_from") dateFrom: String? = null,
         @Query("extended") extended: String = "full",
         @Query("episode_watched_at") episodeWatchedAt: String = "yes",
-        @Query("include_all_episodes") includeAllEpisodes: String = "original"
+        @Query("include_all_episodes") includeAllEpisodes: String = "yes",
+        @Query("next_watch_info") nextWatchInfo: String = "yes"
     ): SimklAllItemsResponse
 
     @GET("sync/playback")
@@ -211,9 +212,17 @@ data class SimklHistoryShowItem(
     @SerializedName("status") val status: String? = null,
     @SerializedName("show") val show: SimklShowRef? = null,
     @SerializedName("seasons") val seasons: List<SimklHistorySeasonItem>? = null,
-    @SerializedName("next_to_watch") val nextToWatch: SimklEpisodeRef? = null,
+    @SerializedName("next_to_watch") val nextToWatch: String? = null,
+    @SerializedName("next_to_watch_info") val nextToWatchInfo: SimklNextToWatchInfo? = null,
     @SerializedName("watched_episodes_count") val watchedEpisodesCount: Int? = null,
     @SerializedName("total_episodes_count") val totalEpisodesCount: Int? = null
+)
+
+data class SimklNextToWatchInfo(
+    @SerializedName("title") val title: String? = null,
+    @SerializedName("season") val season: Int? = null,
+    @SerializedName("episode") val episode: Int? = null,
+    @SerializedName("date") val date: String? = null
 )
 
 data class SimklPlaybackItem(

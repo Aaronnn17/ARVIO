@@ -78,4 +78,15 @@ class RemoteSyncManagerTest {
         assertEquals(1, result.size)
         assertEquals(55, result.single().progress)
     }
+
+    @Test
+    fun dismissContinueWatchingReachesEveryWriteProvider() = runBlocking {
+        coEvery { store.writeProviders() } returns setOf(SyncProvider.TRAKT, SyncProvider.SIMKL)
+        coEvery { trakt.dismissContinueWatching(any(), any(), any(), any()) } throws IllegalStateException("offline")
+        coEvery { simkl.dismissContinueWatching(any(), any(), any(), any()) } returns true
+
+        assertTrue(manager.dismissContinueWatching(MediaType.TV, 99, 2, 4))
+        coVerify(exactly = 1) { trakt.dismissContinueWatching(MediaType.TV, 99, 2, 4) }
+        coVerify(exactly = 1) { simkl.dismissContinueWatching(MediaType.TV, 99, 2, 4) }
+    }
 }
