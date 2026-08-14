@@ -122,6 +122,18 @@ data class HomeCollectionRow(
     val items: List<CatalogConfig>
 )
 
+internal fun compactHomeCategoriesForCache(
+    categories: List<Category>,
+    maxItemsPerCategory: Int
+): List<Category> = categories.mapNotNull { category ->
+    val items = category.items
+        .asSequence()
+        .filter { item -> !item.isPlaceholder && item.title.isNotBlank() && item.title != "Unknown" }
+        .take(maxItemsPerCategory)
+        .toList()
+    category.copy(items = items).takeIf { items.isNotEmpty() }
+}
+
 enum class ToastType {
     SUCCESS, ERROR, INFO
 }
@@ -972,6 +984,15 @@ class HomeViewModel @Inject constructor(
         return java.io.File(context.cacheDir, "home_categories_cache_${profileId}_$language.json")
     }
 
+    private fun continueWatchingCacheFile(): java.io.File {
+        val profileId = profileManager.getProfileIdSync()
+            .ifBlank { "default" }
+            .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
+        val language = mediaRepository.contentLanguage
+            .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
+        return java.io.File(context.filesDir, "home_continue_watching_${profileId}_$language.json")
+    }
+
     private suspend fun applyContentLanguageFromPrefs(): String {
         val prefs = context.settingsDataStore.data.first()
         val profileId = profileManager.getProfileId()
@@ -983,14 +1004,58 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun persistCategoriesCache(categories: List<Category>) {
-        val cacheable = categories.filter { cat ->
-            cat.items.isNotEmpty() && cat.items.none { it.isPlaceholder }
-        }
+        val cacheable = compactHomeCategoriesForCache(
+            categories = categories,
+            maxItemsPerCategory = homeCacheItemsPerCategory
+        )
         if (cacheable.isEmpty()) return
         runCatching {
-            categoriesCacheFile().writeText(gson.toJson(cacheable))
+            val target = categoriesCacheFile()
+            val temporary = java.io.File(target.parentFile, "${target.name}.tmp")
+            temporary.writeText(gson.toJson(cacheable))
+            if (temporary.length() > maxCategoriesCacheBytes) {
+                temporary.delete()
+                return@runCatching
+            }
+            if (target.exists() && !target.delete()) {
+                temporary.delete()
+                return@runCatching
+            }
+            if (!temporary.renameTo(target)) {
+                temporary.copyTo(target, overwrite = true)
+                temporary.delete()
+            }
         }
     }
+
+    private fun persistContinueWatchingCache(items: List<ContinueWatchingItem>) {
+        if (items.isEmpty()) return
+        runCatching {
+            val target = continueWatchingCacheFile()
+            val temporary = java.io.File(target.parentFile, "${target.name}.tmp")
+            temporary.writeText(gson.toJson(items.take(Constants.MAX_CONTINUE_WATCHING)))
+            if (target.exists() && !target.delete()) {
+                temporary.delete()
+                return@runCatching
+            }
+            if (!temporary.renameTo(target)) {
+                temporary.copyTo(target, overwrite = true)
+                temporary.delete()
+            }
+        }
+    }
+
+    private fun loadContinueWatchingCache(): List<ContinueWatchingItem> = runCatching {
+        val file = continueWatchingCacheFile()
+        if (!file.exists() || file.length() > maxContinueWatchingCacheBytes) return emptyList()
+        val json = file.readText()
+        if (json.isBlank()) return emptyList()
+        val type = com.google.gson.reflect.TypeToken
+            .getParameterized(MutableList::class.java, ContinueWatchingItem::class.java)
+            .type
+        val parsed: List<ContinueWatchingItem> = gson.fromJson(json, type) ?: emptyList()
+        parsed.filter { it.id > 0 && it.title.isNotBlank() }.take(Constants.MAX_CONTINUE_WATCHING)
+    }.getOrDefault(emptyList())
 
     private fun loadCategoriesCache(): List<Category> {
         return runCatching {
@@ -1116,7 +1181,11 @@ class HomeViewModel @Inject constructor(
 
     private val maxLogoCacheEntries = if (isLowRamDevice) 220 else 420
     private val maxLogoCacheJsonChars = if (isLowRamDevice) 250_000 else 500_000
-    private val maxCategoriesCacheBytes = if (isLowRamDevice) 500_000L else 1_000_000L
+    private val homeCacheItemsPerCategory = if (isLowRamDevice) 12 else 16
+    // Older builds persisted complete 40-item rows, so allow one migration read of
+    // those snapshots. New writes are compact and normally stay well below 2 MB.
+    private val maxCategoriesCacheBytes = if (isLowRamDevice) 8_000_000L else 12_000_000L
+    private val maxContinueWatchingCacheBytes = 2_000_000L
     private val logoCacheLock = Any()
     private val logoCache = LinkedHashMap<String, String>(maxLogoCacheEntries + 32, 0.75f, true)
     private var logoCacheRevision: Long = 0L
@@ -2100,6 +2169,9 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun publishContinueWatching(items: List<ContinueWatchingItem>) {
+        withContext(Dispatchers.IO) {
+            persistContinueWatchingCache(items)
+        }
         val continueWatchingCategory = Category(
             id = "continue_watching",
             title = "Continue Watching",
@@ -2261,6 +2333,46 @@ class HomeViewModel @Inject constructor(
                                 category
                             }
                         }
+                    // Publish the built-in rows as soon as TMDB responds. Addon,
+                    // MDBList, home-server and logo enrichment may take longer, but
+                    // they must not hold Trending/Continue Watching in skeleton state.
+                    val currentHasRealBase = _uiState.value.categories.any { category ->
+                        category.id != "continue_watching" &&
+                            !category.id.startsWith("collection_row_") &&
+                            category.items.isNotEmpty() &&
+                            category.items.none { it.isPlaceholder }
+                    }
+                    if (!currentHasRealBase && tmdbPreinstalled.isNotEmpty()) {
+                        val earlyCategories = tmdbPreinstalled.toMutableList()
+                        val existingContinueWatching = _uiState.value.categories.firstOrNull { category ->
+                            category.id == "continue_watching" &&
+                                category.items.isNotEmpty() &&
+                                category.items.none { it.isPlaceholder }
+                        }
+                        when {
+                            existingContinueWatching != null -> earlyCategories.add(0, existingContinueWatching)
+                            cachedContinueWatching.isNotEmpty() -> earlyCategories.add(
+                                0,
+                                Category(
+                                    id = "continue_watching",
+                                    title = "Continue Watching",
+                                    items = cachedContinueWatching.map { it.toMediaItem() }
+                                )
+                            )
+                        }
+                        val earlyHero = chooseInitialHero(earlyCategories)
+                        withContext(Dispatchers.Main.immediate) {
+                            if (requestId == loadHomeRequestId) {
+                                _uiState.value = _uiState.value.copy(
+                                    isLoading = false,
+                                    isInitialLoad = false,
+                                    categories = earlyCategories,
+                                    heroItem = _uiState.value.heroItem ?: earlyHero,
+                                    error = null
+                                )
+                            }
+                        }
+                    }
                     // Load MDBList preinstalled catalogs - first 8 immediately, rest lazily on scroll
                     val mdblistConfigs = savedCatalogs.filter {
                         it.isPreinstalled &&
@@ -2529,6 +2641,20 @@ class HomeViewModel @Inject constructor(
                     chooseInitialHero(categories)
                 }
 
+                // The catalog rows are complete enough to use now. Logo lookups and
+                // image preloads continue below and update decoration independently.
+                // Previously the whole page stayed in skeleton state until every logo
+                // request completed.
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    isInitialLoad = false,
+                    categories = categories,
+                    collectionRows = collectionRows,
+                    heroItem = heroItem,
+                    categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
+                    error = null
+                )
+
                 // Preload logos for the first visible rows so card overlays appear immediately.
                 // Skip IPTV items — their channel logo is already in item.image.
                 // Skip items with disk-cached logos — no network call needed.
@@ -2713,6 +2839,9 @@ class HomeViewModel @Inject constructor(
                     if (continueWatchingUpdates.revision != localUpdateRevision) return@cw
 
                     if (freshContinueWatching.isNotEmpty()) {
+                        withContext(Dispatchers.IO) {
+                            persistContinueWatchingCache(freshContinueWatching)
+                        }
                         val mergedContinueWatching = mergeContinueWatchingResumeData(freshContinueWatching)
                         val continueWatchingCategory = Category(
                             id = "continue_watching",
@@ -3295,6 +3424,11 @@ class HomeViewModel @Inject constructor(
         if (now - lastCloudPullTimestamp < cloudPullThrottleMs) return
         lastCloudPullTimestamp = now
         viewModelScope.launch(Dispatchers.IO) {
+            // Give the local Home/CW snapshots first access to IO and the main
+            // thread. Cloud payloads can exceed 1 MB and used to starve startup.
+            if (_uiState.value.categories.isEmpty() || isStartupSettling()) {
+                delayUntilStartupSettled(extraDelayMs = 750L)
+            }
             // If a previous push failed (dirty flag), retry it now before pulling.
             // This ensures the cloud has our latest state before we pull the other
             // device's state on top of it — preventing stale overwrites.
@@ -3351,6 +3485,9 @@ class HomeViewModel @Inject constructor(
                 if (continueWatchingUpdates.revision != localUpdateRevision) return@launch
 
                 if (resolvedContinueWatching.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        persistContinueWatchingCache(resolvedContinueWatching)
+                    }
                     val mergedContinueWatching = mergeContinueWatchingResumeData(resolvedContinueWatching)
                     val continueWatchingCategory = Category(
                         id = "continue_watching",
@@ -3601,39 +3738,34 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun preloadStartupContinueWatchingItems(): List<ContinueWatchingItem> {
-        val useRemoteSync = try {
-            remoteSyncManager.isRemoteConnected()
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            false
-        }
-        val items = if (useRemoteSync) {
-            try {
-                remoteSyncManager.getContinueWatching(forceRefresh = false)
+        // Startup must never wait for Trakt, Simkl, MDBList, or cloud traffic.
+        // This profile-scoped snapshot is updated after every successful remote
+        // resolution and gives every tracking provider the same instant path.
+        val diskItems = loadContinueWatchingCache()
+        val items = if (diskItems.isNotEmpty()) {
+            diskItems
+        } else {
+            val traktCache = try {
+                traktRepository.loadPersistedContinueWatchingForStartup()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
-            } catch (error: Exception) {
-                AppLogger.recordException(
-                    throwable = error,
-                    context = mapOf(
-                        "error_area" to "ContinueWatching",
-                        "cw_phase" to "preload_trakt_cache"
-                    )
-                )
+            } catch (_: Exception) {
                 emptyList()
             }
-        } else {
-            val historyItems = loadContinueWatchingFromHistoryStable()
-            if (historyItems.isNotEmpty()) {
-                historyItems
+            if (traktCache.isNotEmpty()) {
+                traktCache
             } else {
-                try {
-                    traktRepository.getLocalContinueWatching()
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    emptyList()
+                val historyItems = loadContinueWatchingFromHistoryStable()
+                if (historyItems.isNotEmpty()) {
+                    historyItems
+                } else {
+                    try {
+                        traktRepository.getLocalContinueWatching()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
                 }
             }
         }
@@ -3641,7 +3773,7 @@ class HomeViewModel @Inject constructor(
         val repairedItems = repairContinueWatchingMetadataIfNeeded(items)
         return applyContinueWatchingDismissals(sanitizeContinueWatchingItems(repairedItems))
             .filter { item ->
-                if (useRemoteSync) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
+                item.progress in 0..99 || item.resumePositionSeconds > 0L
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
     }

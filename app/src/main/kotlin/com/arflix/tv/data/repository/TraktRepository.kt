@@ -1989,6 +1989,25 @@ class TraktRepository @Inject constructor(
         }
     }
 
+    /**
+     * Reads only the persisted profile cache. Unlike [getContinueWatching] and
+     * [preloadContinueWatchingCache], this method never contacts a tracking service.
+     * Home startup uses it as a last local fallback before refreshing in background.
+     */
+    suspend fun loadPersistedContinueWatchingForStartup(): List<ContinueWatchingItem> {
+        ensureProfileCacheScope()
+        val profileId = currentProfileId()
+        if (cachedContinueWatchingProfileId == profileId && cachedContinueWatching.isNotEmpty()) {
+            return filterDismissedContinueWatchingItems(cachedContinueWatching)
+        }
+        val cached = filterDismissedContinueWatchingItems(loadContinueWatchingCache())
+        if (cached.isNotEmpty()) {
+            cachedContinueWatching = cached
+            cachedContinueWatchingProfileId = profileId
+        }
+        return cached
+    }
+
     // Cache for preloaded profile data (keyed by profileId)
     private val preloadedProfileCache = ConcurrentHashMap<String, List<ContinueWatchingItem>>()
 
