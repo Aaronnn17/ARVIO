@@ -29,7 +29,8 @@ type SimklShowRow = {
   status?: string;
   last_watched_at?: string;
   seasons?: Array<{ number?: number; episodes?: Array<{ number?: number; watched_at?: string }> }>;
-  next_to_watch?: { season?: number; number?: number; episode?: number; title?: string };
+  next_to_watch?: string | null;
+  next_to_watch_info?: { season?: number; episode?: number; title?: string; date?: string } | null;
 };
 type SimklPlaybackRow = {
   id?: number;
@@ -70,6 +71,15 @@ function activityMarker(value: unknown): string | null {
     }
   }
   return null;
+}
+
+function parseNextToWatch(value?: string | null): NonNullable<SimklShowRow["next_to_watch_info"]> | null {
+  const match = /^(?:S(\d+))?E(\d+)$/i.exec(value?.trim() ?? "");
+  if (!match) return null;
+  const season = Number(match[1] || 1);
+  const episode = Number(match[2]);
+  if (!Number.isFinite(season) || !Number.isFinite(episode) || episode <= 0) return null;
+  return { season, episode };
 }
 
 export class SimklClient implements SyncClient {
@@ -178,7 +188,7 @@ export class SimklClient implements SyncClient {
         return { ...cached, checkedAt: Date.now() };
       }
 
-      const query = "?extended=full&episode_watched_at=yes&include_all_episodes=original";
+      const query = "?extended=full&episode_watched_at=yes&include_all_episodes=yes&next_watch_info=yes";
       const [moviesRes, showsRes, animeRes] = await Promise.all([
         this.simkl<unknown>(`/sync/all-items/movies/all${query}`, {}, accessToken),
         this.simkl<unknown>(`/sync/all-items/shows/all${query}`, {}, accessToken),
@@ -253,14 +263,16 @@ export class SimklClient implements SyncClient {
     const pausedShows = new Set(normalized.map((row) => row.show?.ids?.tmdb).filter(Boolean));
     const upNext = (await Promise.all([...snapshot.shows, ...snapshot.anime].map(async (row) => {
       const show = await this.resolveMedia(row.show, "tv");
-      const episode = row.next_to_watch;
-      const number = episode?.number ?? episode?.episode;
-      if (!show?.ids?.tmdb || !episode?.season || !number || pausedShows.has(show.ids.tmdb)) return null;
+      if (row.status !== "watching") return null;
+      const episode = row.next_to_watch_info ?? parseNextToWatch(row.next_to_watch);
+      const number = episode?.episode;
+      const season = episode?.season ?? 1;
+      if (!show?.ids?.tmdb || !number || pausedShows.has(show.ids.tmdb)) return null;
       return {
         progress: 0,
         paused_at: row.last_watched_at,
         show,
-        episode: { ...episode, number },
+        episode: { ...episode, season, number },
         is_up_next: true
       };
     }))).filter(Boolean);

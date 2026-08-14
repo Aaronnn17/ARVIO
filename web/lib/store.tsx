@@ -5,7 +5,7 @@ import { getStreams, getStreamsProgressive, installAddon as installAddonManifest
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
-import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveProgress } from "./cloud";
+import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveWatchedState } from "./cloud";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
@@ -886,13 +886,15 @@ export function AppProvider({
       const client = syncClient();
       const traktReady = client.isConnected;
       const currentSyncProvider = activeSyncProvider();
-      const [historyRows, traktRows, playbackRows, watchedMoviesRows, watchedShowsRows, cloudWatchlistRows, hiddenShowIds] = await Promise.all([
+      const [historyRows, traktRows, playbackRows, watchedMoviesRows, watchedShowsRows, cloudWatchlistRows, cloudWatchedKeys, cloudDismissals, hiddenShowIds] = await Promise.all([
         authClient.session ? getContinueWatching(authClient, profileId, addonState).catch(() => []) : Promise.resolve([]),
         traktReady ? client.watchlist().catch(() => []) : Promise.resolve([]),
         traktReady ? client.playback().catch(() => []) : Promise.resolve([]),
         traktReady ? client.watched("movies").catch(() => []) : Promise.resolve([]),
         traktReady ? client.watched("shows").catch(() => []) : Promise.resolve([]),
         authClient.session ? pullCloudWatchlist(authClient, profileId).catch(() => []) : Promise.resolve([]),
+        authClient.session ? pullCloudWatchedKeys(authClient, profileId).catch(() => new Set<string>()) : Promise.resolve(new Set<string>()),
+        authClient.session ? pullCloudContinueWatchingDismissals(authClient, profileId).catch(() => new Map<string, number>()) : Promise.resolve(new Map<string, number>()),
         // Only Trakt has a hidden-from-progress concept; MDBList reads return an
         // empty set so the filters below are no-ops for it.
         traktReady && currentSyncProvider === "trakt"
@@ -905,11 +907,19 @@ export function AppProvider({
       // filter them out.
       const isHiddenShow = (item: MediaItem) =>
         item.mediaType === "tv" && typeof item.traktId === "number" && hiddenShowIds.has(item.traktId);
+      const isDismissed = (item: MediaItem) => {
+        const showKey = item.mediaType === "movie" ? `movie:${item.id}` : `tv:${item.id}`;
+        const exactKey = item.mediaType === "tv" && item.seasonNumber != null && item.episodeNumber != null
+          ? `${showKey}:${item.seasonNumber}:${item.episodeNumber}`
+          : showKey;
+        const dismissedAt = Math.max(cloudDismissals.get(showKey) ?? 0, cloudDismissals.get(exactKey) ?? 0);
+        return dismissedAt > 0 && (item.activityAt ?? 0) <= dismissedAt;
+      };
       const cloudCw = historyRows.map(historyToItem);
       const traktPlaybackCw = playbackRows
         .map(traktPlaybackToMedia)
         .filter(isPausedPlaybackItem)
-        .filter((item) => !isHiddenShow(item));
+        .filter((item) => !isHiddenShow(item) && !isDismissed(item));
 
       // ── Fast paint ─────────────────────────────────────────────────────────
       // The cloud watchlist + cloud/playback CW are already available now (the
@@ -934,7 +944,7 @@ export function AppProvider({
       // episode subtitle — which rendered that series twice until the enriched
       // pass tidied up. Trakt playback is the newer truth, so it wins.
       const fastSeen = new Set<string>();
-      const fastCw = [...traktPlaybackCw, ...cloudCw.filter((item) => !isHiddenShow(item))]
+      const fastCw = [...traktPlaybackCw, ...cloudCw.filter((item) => !isHiddenShow(item) && !isDismissed(item))]
         .filter((item) => {
           const key = `${item.mediaType}:${item.id}`;
           if (fastSeen.has(key)) return false;
@@ -973,12 +983,12 @@ export function AppProvider({
         ...traktPlaybackCw,
         ...upNextRows.filter((item) => !playbackShowKeys.has(`${item.mediaType}:${item.id}`))
       ], cloudCw);
-      const watchedKeys = traktWatchedKeys(watchedMoviesRows, watchedShowsRows);
+      const watchedKeys = new Set([...traktWatchedKeys(watchedMoviesRows, watchedShowsRows), ...cloudWatchedKeys]);
       if (refreshKeyRef.current === key) setWatchedKeys(watchedKeys);
       const cwBase = traktReady ? traktCw : cloudCw.filter(isPausedPlaybackItem);
       // Order newest-activity-first across playback + up-next (matches the app's
       // updatedAt-descending sort) so the row leads with what you last watched.
-      const cwSorted = dedupeMedia(cwBase).sort((a, b) => (b.activityAt ?? 0) - (a.activityAt ?? 0));
+      const cwSorted = dedupeMedia(cwBase).filter((item) => !isDismissed(item)).sort((a, b) => (b.activityAt ?? 0) - (a.activityAt ?? 0));
       const cw = await hydrateContinueWatchingItems(filterWatchedContinueWatching(cwSorted, watchedKeys, addonState));
       // Trakt outage guard: when Trakt is connected but every read came back
       // empty, the calls were blocked (Cloudflare challenges the CORS
@@ -1141,6 +1151,24 @@ export function AppProvider({
     if (view === "login") return;
     if (authClient.session && !cloudProfilesHydrated) return;
     void refreshData();
+  }, [cloudProfilesHydrated, refreshData, view]);
+
+  useEffect(() => {
+    if (view === "login" || (authClient.session && !cloudProfilesHydrated)) return undefined;
+    let lastRefreshAt = 0;
+    const refreshOnReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastRefreshAt < 2_000) return;
+      lastRefreshAt = now;
+      void refreshData();
+    };
+    window.addEventListener("focus", refreshOnReturn);
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    return () => {
+      window.removeEventListener("focus", refreshOnReturn);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+    };
   }, [cloudProfilesHydrated, refreshData, view]);
 
   useEffect(() => {
@@ -2146,20 +2174,12 @@ export function AppProvider({
 
     if (authClient.session) {
       try {
-        await saveProgress(
-          authClient,
-          {
-            media_type: item.mediaType,
-            show_tmdb_id: item.id,
-            season: seasonNumber ?? item.seasonNumber ?? null,
-            episode: episodeNumber ?? item.episodeNumber ?? null,
-            title: item.title,
-            duration_seconds: 0,
-            position_seconds: 0,
-            progress: currentlyWatched ? 0 : 1
-          },
-          activeProfileId
-        );
+        await saveWatchedState(authClient, {
+          id: item.id,
+          mediaType: item.mediaType,
+          seasonNumber: seasonNumber ?? item.seasonNumber ?? null,
+          episodeNumber: episodeNumber ?? item.episodeNumber ?? null
+        }, !currentlyWatched, activeProfileId);
       } catch {
         // Cloud sync best effort
       }

@@ -116,6 +116,51 @@ function arrayValue<T = unknown>(value: unknown): T[] {
   return Array.isArray(parsed) ? parsed as T[] : [];
 }
 
+function parseDismissedContinueWatching(value: unknown): Map<string, number> {
+  const result = new Map<string, number>();
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return result;
+  raw.split("|").forEach((entry) => {
+    const split = entry.lastIndexOf(",");
+    if (split <= 0) return;
+    const key = entry.slice(0, split);
+    const timestamp = Number(entry.slice(split + 1));
+    if (key && Number.isFinite(timestamp)) result.set(key, timestamp);
+  });
+  return result;
+}
+
+function encodeDismissedContinueWatching(values: Map<string, number>): string {
+  return [...values.entries()].map(([key, timestamp]) => `${key},${timestamp}`).join("|");
+}
+
+function continueWatchingDismissalKeys(item: {
+  id: number;
+  mediaType: MediaItem["mediaType"];
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+}) {
+  const showKey = item.mediaType === "movie" ? `movie:${item.id}` : `tv:${item.id}`;
+  const exactKey = item.mediaType === "tv" && item.seasonNumber != null && item.episodeNumber != null
+    ? `${showKey}:${item.seasonNumber}:${item.episodeNumber}`
+    : showKey;
+  return { showKey, exactKey };
+}
+
+function updateProfileDismissals(
+  root: RawPayload,
+  profileId: string,
+  update: (values: Map<string, number>) => void
+) {
+  const byProfile = objectRecord<unknown>(root.dismissedContinueWatchingByProfile);
+  const values = parseDismissedContinueWatching(byProfile[profileId]);
+  update(values);
+  const encoded = encodeDismissedContinueWatching(values);
+  if (encoded) byProfile[profileId] = encoded;
+  else delete byProfile[profileId];
+  root.dismissedContinueWatchingByProfile = byProfile;
+}
+
 function scopedValue<T>(root: RawPayload, key: string, profileId?: string | null): T | undefined {
   if (!profileId) return undefined;
   const byProfile = objectRecord<T>(root[key]);
@@ -1101,6 +1146,44 @@ export async function pullCloudWatchlist(auth: AuthClient, profileId?: string | 
     .filter((item): item is MediaItem => Boolean(item));
 }
 
+export async function pullCloudWatchedKeys(auth: AuthClient, profileId?: string | null): Promise<Set<string>> {
+  const root = await pullRawPayload(auth);
+  const keys = new Set<string>();
+  const movieProfiles = objectRecord<unknown>(root.localWatchedMoviesByProfile);
+  const episodeProfiles = objectRecord<unknown>(root.localWatchedEpisodesByProfile);
+  const movies = profileId
+    ? arrayValue<number>(movieProfiles[profileId])
+    : Object.values(movieProfiles).flatMap((value) => arrayValue<number>(value));
+  const episodes = profileId
+    ? arrayValue<string>(episodeProfiles[profileId])
+    : Object.values(episodeProfiles).flatMap((value) => arrayValue<string>(value));
+  movies.forEach((id) => {
+    const value = Number(id);
+    if (value > 0) keys.add(`movie:${value}`);
+  });
+  episodes.forEach((value) => {
+    const match = /^show_tmdb:(\d+):(\d+):(\d+)$/.exec(String(value));
+    if (match) keys.add(`tv:${match[1]}:${match[2]}:${match[3]}`);
+  });
+  return keys;
+}
+
+export async function pullCloudContinueWatchingDismissals(
+  auth: AuthClient,
+  profileId?: string | null
+): Promise<Map<string, number>> {
+  const root = await pullRawPayload(auth);
+  const byProfile = objectRecord<unknown>(root.dismissedContinueWatchingByProfile);
+  if (profileId) return parseDismissedContinueWatching(byProfile[profileId]);
+  const merged = new Map<string, number>();
+  Object.values(byProfile).forEach((value) => {
+    parseDismissedContinueWatching(value).forEach((timestamp, key) => {
+      merged.set(key, Math.max(timestamp, merged.get(key) ?? 0));
+    });
+  });
+  return merged;
+}
+
 export async function saveCloudProfiles(auth: AuthClient, profiles: Profile[], activeProfileId: string | null) {
   await mutateCloudPayload(auth, (root) => {
     root.profiles = profiles;
@@ -1231,6 +1314,19 @@ export async function saveProgress(auth: AuthClient, entry: Omit<WatchHistoryEnt
       });
       byProfile[targetProfileId] = (nextItem.progress ?? 0) >= 90 ? filtered : [nextItem, ...filtered].slice(0, 50);
       root.localContinueWatchingByProfile = byProfile;
+      if ((nextItem.progress ?? 0) > 0 && (nextItem.progress ?? 0) < 90) {
+        const dismissalItem = {
+          id: entry.show_tmdb_id,
+          mediaType: entry.media_type,
+          seasonNumber: entry.season,
+          episodeNumber: entry.episode
+        };
+        const { showKey, exactKey } = continueWatchingDismissalKeys(dismissalItem);
+        updateProfileDismissals(root, targetProfileId, (values) => {
+          values.delete(showKey);
+          values.delete(exactKey);
+        });
+      }
     });
     return;
   }
@@ -1272,6 +1368,12 @@ export async function removeContinueWatchingProgress(
       for (const key of ["localContinueWatching", "continueWatching"]) {
         root[key] = arrayValue<AndroidContinueWatchingItem>(root[key]).filter((candidate) => !matches(candidate));
       }
+      const { showKey, exactKey } = continueWatchingDismissalKeys(item);
+      updateProfileDismissals(root, targetProfileId, (values) => {
+        const now = Date.now();
+        values.set(showKey, now);
+        values.set(exactKey, now);
+      });
     });
     return;
   }
@@ -1285,13 +1387,56 @@ export async function removeContinueWatchingProgress(
   if (item.seasonNumber != null) query.set("season", `eq.${item.seasonNumber}`);
   if (item.episodeNumber != null) query.set("episode", `eq.${item.episodeNumber}`);
   await auth.supabase(`/rest/v1/watch_history?${query.toString()}`, { method: "DELETE" });
+  await mutateCloudPayload(auth, (root) => {
+    const targetProfileId = profileId ?? "default";
+    const { showKey, exactKey } = continueWatchingDismissalKeys(item);
+    updateProfileDismissals(root, targetProfileId, (values) => {
+      const now = Date.now();
+      values.set(showKey, now);
+      values.set(exactKey, now);
+    });
+  });
 }
 
+export async function saveWatchedState(
+  auth: AuthClient,
+  item: Pick<MediaItem, "id" | "mediaType" | "seasonNumber" | "episodeNumber">,
+  watched: boolean,
+  profileId?: string | null
+) {
+  if (!auth.session) return;
+  const targetProfileId = profileId ?? "default";
+  await mutateCloudPayload(auth, (root) => {
+    if (item.mediaType === "movie") {
+      const byProfile = objectRecord<unknown>(root.localWatchedMoviesByProfile);
+      const ids = new Set(arrayValue<number>(byProfile[targetProfileId]).map(Number).filter((id) => id > 0));
+      if (watched) ids.add(item.id); else ids.delete(item.id);
+      byProfile[targetProfileId] = [...ids].sort((a, b) => a - b);
+      root.localWatchedMoviesByProfile = byProfile;
+    } else if (item.seasonNumber != null && item.episodeNumber != null) {
+      const byProfile = objectRecord<unknown>(root.localWatchedEpisodesByProfile);
+      const episodeKey = `show_tmdb:${item.id}:${item.seasonNumber}:${item.episodeNumber}`;
+      const keys = new Set(arrayValue<string>(byProfile[targetProfileId]).map(String).filter(Boolean));
+      if (watched) keys.add(episodeKey); else keys.delete(episodeKey);
+      byProfile[targetProfileId] = [...keys].sort();
+      root.localWatchedEpisodesByProfile = byProfile;
+    }
+
+    if (watched) {
+      const matches = (candidate: AndroidContinueWatchingItem) =>
+        candidate.id === item.id && String(candidate.mediaType ?? "").toLowerCase() === item.mediaType;
+      const byProfile = objectRecord<unknown>(root.localContinueWatchingByProfile);
+      byProfile[targetProfileId] = arrayValue<AndroidContinueWatchingItem>(byProfile[targetProfileId]).filter((candidate) => !matches(candidate));
+      root.localContinueWatchingByProfile = byProfile;
+    }
+  });
+}
 
 export async function markWatched(auth: AuthClient, entry: Omit<WatchHistoryEntry, "user_id" | "progress" | "position_seconds">, profileId?: string | null) {
-  await saveProgress(auth, {
-    ...entry,
-    progress: 1,
-    position_seconds: entry.duration_seconds
-  }, profileId);
+  await saveWatchedState(auth, {
+    id: entry.show_tmdb_id,
+    mediaType: entry.media_type,
+    seasonNumber: entry.season,
+    episodeNumber: entry.episode
+  }, true, profileId);
 }
