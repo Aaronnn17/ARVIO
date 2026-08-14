@@ -865,8 +865,28 @@ export async function pullCloudProfiles(auth: AuthClient): Promise<CloudProfiles
   };
 }
 
-export async function pullCloudTraktToken(auth: AuthClient, profileId?: string | null): Promise<TraktToken | null> {
-  const root = await pullRawPayload(auth);
+export type CloudTrackingProvider = "NONE" | "TRAKT" | "MDBLIST" | "SIMKL";
+
+export interface CloudTrackingSelection {
+  provider: CloudTrackingProvider;
+  traktToken: TraktToken | null;
+  mdbListApiKey: string | null;
+  simklToken: SimklToken | null;
+}
+
+export interface CloudTrackingSnapshot extends CloudTrackingSelection {
+  hasCloudState: boolean;
+  needsCleanup: boolean;
+}
+
+function normalizeCloudTrackingProvider(value: unknown): CloudTrackingProvider | null {
+  const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return normalized === "NONE" || normalized === "TRAKT" || normalized === "MDBLIST" || normalized === "SIMKL"
+    ? normalized
+    : null;
+}
+
+function readCloudTraktToken(root: RawPayload, profileId: string): TraktToken | null {
   const tokensByProfile = objectRecord<{
     accessToken?: string;
     refreshToken?: string;
@@ -875,7 +895,7 @@ export async function pullCloudTraktToken(auth: AuthClient, profileId?: string |
     refresh_token?: string;
     expires_at?: number;
   }>(root.traktTokens);
-  const token = profileId ? tokensByProfile?.[profileId] : undefined;
+  const token = tokensByProfile[profileId];
   const accessToken = token?.accessToken ?? token?.access_token;
   const refreshToken = token?.refreshToken ?? token?.refresh_token;
   const rawExpiresAt = token?.expiresAt ?? token?.expires_at ?? 0;
@@ -888,32 +908,7 @@ export async function pullCloudTraktToken(auth: AuthClient, profileId?: string |
   };
 }
 
-export async function saveCloudTraktToken(auth: AuthClient, token: TraktToken | null, profileId?: string | null) {
-  if (!profileId) return;
-  await mutateCloudPayload(auth, (root) => {
-    const tokens = objectRecord<unknown>(root.traktTokens) ?? {};
-    if (token) {
-      tokens[profileId] = {
-        accessToken: token.access_token,
-        refreshToken: token.refresh_token,
-        expiresAt: token.expires_at,
-        access_token: token.access_token,
-        refresh_token: token.refresh_token,
-        expires_at: token.expires_at
-      };
-      root.traktTokens = tokens;
-      root.traktLinked = true;
-    } else {
-      delete tokens[profileId];
-      root.traktTokens = tokens;
-      if (Object.keys(tokens).length === 0) root.traktLinked = false;
-    }
-  });
-}
-
-export async function pullCloudSimklToken(auth: AuthClient, profileId?: string | null): Promise<SimklToken | null> {
-  if (!profileId) return null;
-  const root = await pullRawPayload(auth);
+function readCloudSimklToken(root: RawPayload, profileId: string): SimklToken | null {
   const directTokens = objectRecord<{ access_token?: string; accessToken?: string }>(root.simklTokens);
   const selections = objectRecord<{ provider?: string; simklAccessToken?: string }>(root.mdbListSyncByProfile);
   const direct = directTokens[profileId];
@@ -922,35 +917,108 @@ export async function pullCloudSimklToken(auth: AuthClient, profileId?: string |
   return accessToken ? { access_token: accessToken } : null;
 }
 
-export async function saveCloudSimklToken(
+export async function pullCloudTrackingSelection(
   auth: AuthClient,
-  token: SimklToken | null,
   profileId?: string | null
+): Promise<CloudTrackingSnapshot> {
+  if (!profileId) {
+    return {
+      provider: "NONE",
+      traktToken: null,
+      mdbListApiKey: null,
+      simklToken: null,
+      hasCloudState: false,
+      needsCleanup: false
+    };
+  }
+  const root = await pullRawPayload(auth);
+  const selections = objectRecord<Record<string, unknown>>(root.mdbListSyncByProfile);
+  const selection = selections[profileId] ?? {};
+  const traktToken = readCloudTraktToken(root, profileId);
+  const simklToken = readCloudSimklToken(root, profileId);
+  const rawMdbListKey = selection.mdbListApiKey ?? selection.mdblistApiKey;
+  const mdbListApiKey = typeof rawMdbListKey === "string" ? rawMdbListKey.trim() || null : null;
+  const explicitProvider = normalizeCloudTrackingProvider(selection.provider);
+  const inferredProvider: CloudTrackingProvider = traktToken
+    ? "TRAKT"
+    : simklToken
+      ? "SIMKL"
+      : mdbListApiKey
+        ? "MDBLIST"
+        : "NONE";
+  const requestedProvider = explicitProvider ?? inferredProvider;
+  const provider: CloudTrackingProvider = requestedProvider === "TRAKT" && traktToken
+    ? "TRAKT"
+    : requestedProvider === "SIMKL" && simklToken
+      ? "SIMKL"
+      : requestedProvider === "MDBLIST" && mdbListApiKey
+        ? "MDBLIST"
+        : "NONE";
+  const storedProviderCount = Number(Boolean(traktToken)) + Number(Boolean(simklToken)) + Number(Boolean(mdbListApiKey));
+  const hasCloudState = explicitProvider !== null || storedProviderCount > 0;
+  const needsCleanup = !hasCloudState
+    ? false
+    : explicitProvider === null
+    ? storedProviderCount > 0
+    : explicitProvider !== provider || storedProviderCount !== (provider === "NONE" ? 0 : 1);
+
+  return {
+    provider,
+    traktToken: provider === "TRAKT" ? traktToken : null,
+    mdbListApiKey: provider === "MDBLIST" ? mdbListApiKey : null,
+    simklToken: provider === "SIMKL" ? simklToken : null,
+    hasCloudState,
+    needsCleanup
+  };
+}
+
+export async function saveCloudTrackingSelection(
+  auth: AuthClient,
+  profileId: string | null | undefined,
+  selection: CloudTrackingSelection
 ) {
   if (!profileId) return;
   await mutateCloudPayload(auth, (root) => {
-    const directTokens = objectRecord<unknown>(root.simklTokens) ?? {};
-    const selections = objectRecord<Record<string, unknown>>(root.mdbListSyncByProfile) ?? {};
-    const currentSelection = selections[profileId] ?? {};
-    if (token?.access_token) {
-      directTokens[profileId] = {
+    const traktTokens = objectRecord<unknown>(root.traktTokens);
+    const simklTokens = objectRecord<unknown>(root.simklTokens);
+    const selections = objectRecord<Record<string, unknown>>(root.mdbListSyncByProfile);
+
+    delete traktTokens[profileId];
+    delete simklTokens[profileId];
+
+    if (selection.provider === "TRAKT" && selection.traktToken) {
+      const token = selection.traktToken;
+      traktTokens[profileId] = {
+        accessToken: token.access_token,
+        refreshToken: token.refresh_token,
+        expiresAt: token.expires_at,
+        access_token: token.access_token,
+        refresh_token: token.refresh_token,
+        expires_at: token.expires_at
+      };
+      selections[profileId] = { provider: "TRAKT" };
+    } else if (selection.provider === "MDBLIST" && selection.mdbListApiKey?.trim()) {
+      selections[profileId] = {
+        provider: "MDBLIST",
+        mdbListApiKey: selection.mdbListApiKey.trim()
+      };
+    } else if (selection.provider === "SIMKL" && selection.simklToken?.access_token) {
+      const token = selection.simklToken;
+      simklTokens[profileId] = {
         access_token: token.access_token,
         accessToken: token.access_token
       };
       selections[profileId] = {
-        ...currentSelection,
         provider: "SIMKL",
         simklAccessToken: token.access_token
       };
     } else {
-      delete directTokens[profileId];
-      const { simklAccessToken: _removed, ...remaining } = currentSelection;
-      selections[profileId] = {
-        ...remaining,
-        provider: String(currentSelection.provider ?? "").toLowerCase() === "simkl" ? "NONE" : currentSelection.provider
-      };
+      selections[profileId] = { provider: "NONE" };
     }
-    root.simklTokens = directTokens;
+
+    root.traktTokens = traktTokens;
+    root.traktLinked = Object.keys(traktTokens).length > 0;
+    root.simklTokens = simklTokens;
     root.mdbListSyncByProfile = selections;
   });
 }

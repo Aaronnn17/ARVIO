@@ -121,12 +121,12 @@ export class SimklClient implements SyncClient {
     this.setToken(null);
   }
 
-  private async simkl<T>(path: string, options: RequestInit = {}): Promise<T> {
+  private async simkl<T>(path: string, options: RequestInit = {}, accessToken = this.token?.access_token): Promise<T> {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       ...(options.headers as Record<string, string>)
     };
-    if (this.token?.access_token) headers["x-user-token"] = this.token.access_token;
+    if (accessToken) headers["x-user-token"] = accessToken;
     return jsonRequest<T>(`/api/simkl${path}`, { ...options, headers });
   }
 
@@ -151,12 +151,13 @@ export class SimklClient implements SyncClient {
       return { scope: this.scope(), activity: null, checkedAt: Date.now(), movies: [], shows: [], anime: [] };
     }
     const scope = this.scope();
+    const accessToken = this.token?.access_token;
     const cached = this.snapshot?.scope === scope ? this.snapshot : null;
     if (cached && Date.now() - cached.checkedAt < SNAPSHOT_TTL_MS) return cached;
     if (this.snapshotPromise) return this.snapshotPromise;
 
     const request = (async () => {
-      const activities = await this.simkl<unknown>("/sync/activities").catch(() => null);
+      const activities = await this.simkl<unknown>("/sync/activities", {}, accessToken).catch(() => null);
       const marker = activityMarker(activities);
       if (cached && marker && marker === cached.activity) {
         return { ...cached, checkedAt: Date.now() };
@@ -164,9 +165,9 @@ export class SimklClient implements SyncClient {
 
       const query = "?extended=full&episode_watched_at=yes&include_all_episodes=original";
       const [moviesRes, showsRes, animeRes] = await Promise.all([
-        this.simkl<unknown>(`/sync/all-items/movies/all${query}`),
-        this.simkl<unknown>(`/sync/all-items/shows/all${query}`),
-        this.simkl<unknown>(`/sync/all-items/anime/all${query}`)
+        this.simkl<unknown>(`/sync/all-items/movies/all${query}`, {}, accessToken),
+        this.simkl<unknown>(`/sync/all-items/shows/all${query}`, {}, accessToken),
+        this.simkl<unknown>(`/sync/all-items/anime/all${query}`, {}, accessToken)
       ]);
       return {
         scope,
@@ -192,14 +193,13 @@ export class SimklClient implements SyncClient {
     return this.simkl<SimklPinCode>("/oauth/pin");
   }
 
-  async pollPinToken(userCode: string): Promise<boolean> {
+  async pollPinToken(userCode: string): Promise<SimklToken | null> {
     type PollRes = { result: string; access_token?: string };
     const res = await this.simkl<PollRes>(`/oauth/pin/${encodeURIComponent(userCode)}`);
     if (res.result === "OK" && res.access_token) {
-      this.setToken({ access_token: res.access_token });
-      return true;
+      return { access_token: res.access_token };
     }
-    return false;
+    return null;
   }
 
   async watchlist(): Promise<unknown[]> {
