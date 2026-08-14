@@ -243,6 +243,8 @@ fun PlayerScreen(
     mediaId: Int,
     seasonNumber: Int? = null,
     episodeNumber: Int? = null,
+    tmdbSeasonNumber: Int? = seasonNumber,
+    tmdbEpisodeNumber: Int? = episodeNumber,
     imdbId: String? = null,
     streamUrl: String? = null,
     preferredAddonId: String? = null,
@@ -252,7 +254,7 @@ fun PlayerScreen(
     isLiveStream: Boolean = false,
     viewModel: PlayerViewModel = hiltViewModel(),
     onBack: () -> Unit = {},
-    onPlayNext: (Int, Int, String?, String?, String?) -> Unit = { _, _, _, _, _ -> }
+    onPlayNext: (Int, Int, Int, Int, String?, String?, String?) -> Unit = { _, _, _, _, _, _, _ -> }
 ) {
     val playerAccent = LocalAccentColorOverride.current ?: Color.White
     val context = LocalContext.current
@@ -402,6 +404,8 @@ fun PlayerScreen(
     var showNextEpisodePrompt by remember { mutableStateOf(false) }
     var pendingNextSeason by remember { mutableIntStateOf(0) }
     var pendingNextEpisode by remember { mutableIntStateOf(0) }
+    var pendingNextTmdbSeason by remember { mutableIntStateOf(0) }
+    var pendingNextTmdbEpisode by remember { mutableIntStateOf(0) }
     var pendingNextAddonId by remember { mutableStateOf<String?>(null) }
     var pendingNextSourceName by remember { mutableStateOf<String?>(null) }
     var pendingNextBingeGroup by remember { mutableStateOf<String?>(null) }
@@ -412,6 +416,8 @@ fun PlayerScreen(
         onPlayNext(
             pendingNextSeason,
             pendingNextEpisode,
+            pendingNextTmdbSeason,
+            pendingNextTmdbEpisode,
             pendingNextAddonId,
             pendingNextSourceName,
             pendingNextBingeGroup
@@ -643,7 +649,7 @@ fun PlayerScreen(
     }
 
     // Load media
-    LaunchedEffect(mediaType, mediaId, seasonNumber, episodeNumber, imdbId, preferredAddonId, preferredSourceName, preferredBingeGroup, startPositionMs, isLiveStream) {
+    LaunchedEffect(mediaType, mediaId, seasonNumber, episodeNumber, tmdbSeasonNumber, tmdbEpisodeNumber, imdbId, preferredAddonId, preferredSourceName, preferredBingeGroup, startPositionMs, isLiveStream) {
         playbackIssueReported = false
         startupRecoverAttempted = false
         startupHardFailureReported = false
@@ -667,8 +673,8 @@ fun PlayerScreen(
         viewModel.loadMedia(
             mediaType = mediaType,
             mediaId = mediaId,
-            seasonNumber = seasonNumber,
-            episodeNumber = episodeNumber,
+            seasonNumber = tmdbSeasonNumber,
+            episodeNumber = tmdbEpisodeNumber,
             providedImdbId = imdbId,
             providedStreamUrl = streamUrl,
             preferredAddonId = preferredAddonId,
@@ -2350,6 +2356,8 @@ fun PlayerScreen(
                 val selected = uiState.selectedStream
                 pendingNextSeason = endedEpisodeKey.seasonNumber
                 pendingNextEpisode = endedEpisodeKey.episodeNumber + 1
+                pendingNextTmdbSeason = tmdbSeasonNumber ?: endedEpisodeKey.seasonNumber
+                pendingNextTmdbEpisode = (tmdbEpisodeNumber ?: endedEpisodeKey.episodeNumber) + 1
                 pendingNextAddonId = selected?.addonId?.takeIf { it.isNotBlank() }
                 pendingNextSourceName = selected?.source?.takeIf { it.isNotBlank() }
                 pendingNextBingeGroup = selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
@@ -2613,6 +2621,8 @@ fun PlayerScreen(
                                 onPlayNext(
                                     seasonNumber,
                                     episodeNumber + 1,
+                                    tmdbSeasonNumber ?: seasonNumber,
+                                    (tmdbEpisodeNumber ?: episodeNumber) + 1,
                                     selected?.addonId?.takeIf { it.isNotBlank() },
                                     selected?.source?.takeIf { it.isNotBlank() },
                                     selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
@@ -2627,6 +2637,8 @@ fun PlayerScreen(
                                 onPlayNext(
                                     seasonNumber,
                                     episodeNumber - 1,
+                                    tmdbSeasonNumber ?: seasonNumber,
+                                    (tmdbEpisodeNumber ?: episodeNumber) - 1,
                                     selected?.addonId?.takeIf { it.isNotBlank() },
                                     selected?.source?.takeIf { it.isNotBlank() },
                                     selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
@@ -3612,7 +3624,15 @@ fun PlayerScreen(
                                     val season = seasonNumber ?: return@PlayerIconButton
                                     val episode = episodeNumber ?: return@PlayerIconButton
                                     val selected = uiState.selectedStream
-                                    onPlayNext(season, episode + 1, selected?.addonId?.takeIf { it.isNotBlank() }, selected?.source?.takeIf { it.isNotBlank() }, selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() })
+                                    onPlayNext(
+                                        season,
+                                        episode + 1,
+                                        tmdbSeasonNumber ?: season,
+                                        (tmdbEpisodeNumber ?: episode) + 1,
+                                        selected?.addonId?.takeIf { it.isNotBlank() },
+                                        selected?.source?.takeIf { it.isNotBlank() },
+                                        selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                                    )
                                 },
                                 onLeftKey = { aspectButtonFocusRequester.requestFocus() },
                                 onRightKey = { subtitleButtonFocusRequester.requestFocus() },
