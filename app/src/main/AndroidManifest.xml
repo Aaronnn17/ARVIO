@@ -91,6 +91,14 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="arvio" android:host="install-pack" />
             </intent-filter>
+
+            <!-- Discord Auth Callback Deep-Link -->
+            <intent-filter android:label="Discord Auth Callback">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="arvio" android:host="discord" android:path="/auth" />
+            </intent-filter>
         </activity>
 
         <!-- Crash Report Activity -->
