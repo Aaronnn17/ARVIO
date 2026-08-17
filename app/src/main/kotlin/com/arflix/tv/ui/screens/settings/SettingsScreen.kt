@@ -1646,7 +1646,9 @@ fun SettingsScreen(
                             },
                             onRefresh = { viewModel.refreshIptv() },
                             onDelete = { viewModel.clearIptvConfig() },
-                            onManageCategories = openIptvCategories
+                            onManageCategories = openIptvCategories,
+                            sortOrder = uiState.iptvSortOrder,
+                            onSortOrderChange = { viewModel.setIptvSortOrder(it) }
                         )
                         "home_server" -> HomeServerSettings(
                             connections = uiState.homeServerConnections,
