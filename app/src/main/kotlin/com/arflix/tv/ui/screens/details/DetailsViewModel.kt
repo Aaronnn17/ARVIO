@@ -1333,8 +1333,12 @@ class DetailsViewModel @Inject constructor(
             // Force-refresh watched episodes from backend (not just in-memory cache)
             // to pick up episodes marked watched during playback.
             val watchedKeys = if (mediaType == MediaType.TV) {
-                runCatching { traktRepository.getWatchedEpisodesForShow(tmdbId) }
-                    .getOrDefault(traktRepository.getWatchedEpisodesFromCache())
+                try {
+                    traktRepository.getWatchedEpisodesForShow(tmdbId)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    traktRepository.getWatchedEpisodesFromCache()
+                }
             } else {
                 emptySet()
             }
@@ -1422,9 +1426,12 @@ class DetailsViewModel @Inject constructor(
         return try {
             val tvDetails = tmdbApi.getTvDetails(tmdbId, Constants.TMDB_API_KEY)
             for (seasonNum in 1..tvDetails.numberOfSeasons) {
-                val seasonDetails = runCatching {
+                val seasonDetails = try {
                     tmdbApi.getTvSeason(tmdbId, seasonNum, Constants.TMDB_API_KEY)
-                }.getOrNull() ?: continue
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    null
+                } ?: continue
                 val firstUnwatched = seasonDetails.episodes.firstOrNull { episode ->
                     val key = "show_tmdb:$tmdbId:$seasonNum:${episode.episodeNumber}"
                     !watchedKeys.contains(key)
@@ -1439,7 +1446,8 @@ class DetailsViewModel @Inject constructor(
             }
             // All episodes watched — offer restart
             PlayTarget(season = 1, episode = 1, label = context.getString(R.string.play_start_s1e1))
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
             null
         }
     }
@@ -2451,6 +2459,7 @@ class DetailsViewModel @Inject constructor(
                 else -> cloudResume
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             null
         }
     }
@@ -2460,10 +2469,13 @@ class DetailsViewModel @Inject constructor(
             val entry = watchHistoryRepository.getLatestProgress(mediaType, tmdbId) ?: return null
             if (mediaType == MediaType.TV && entry.season != null && entry.episode != null) {
                 val watchedKey = "show_tmdb:$tmdbId:${entry.season}:${entry.episode}"
-                val isWatched = runCatching {
+                val isWatched = try {
                     traktRepository.getWatchedEpisodesFromCache().contains(watchedKey) ||
                         traktRepository.getWatchedEpisodesForShow(tmdbId).contains(watchedKey)
-                }.getOrDefault(false)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    false
+                }
                 if (isWatched) return null
             }
             buildResumeFromProgress(
@@ -2475,7 +2487,8 @@ class DetailsViewModel @Inject constructor(
                 positionSeconds = entry.position_seconds,
                 durationSeconds = entry.duration_seconds
             )
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
             null
         }
     }

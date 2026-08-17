@@ -409,6 +409,7 @@ class TvViewModel @Inject constructor(
                 startCompleteEpgBackfill()
                 warmXtreamVodCache()
             }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 logIptvRefreshFailure(
                     error = error,
                     phase = "load_snapshot",
@@ -416,9 +417,12 @@ class TvViewModel @Inject constructor(
                     forceEpg = forceEpg,
                     hasExistingChannels = hasExistingChannels
                 )
-                val fallback = runCatching {
+                val fallback = try {
                     iptvRepository.getMemoryCachedSnapshot() ?: iptvRepository.getCachedSnapshotOrNull()
-                }.getOrNull()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    null
+                }
                 if (fallback != null && fallback.channels.isNotEmpty()) {
                     val currentState = _uiState.value
                     val mergedFallback = mergeIncomingSnapshotWithCurrentGuide(fallback, currentState)
@@ -478,7 +482,7 @@ class TvViewModel @Inject constructor(
     private fun warmXtreamVodCache() {
         if (warmVodJob?.isActive == true) return
         warmVodJob = viewModelScope.launch(Dispatchers.IO) {
-            runCatching { iptvRepository.warmXtreamVodCachesIfPossible() }
+            try { iptvRepository.warmXtreamVodCachesIfPossible() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
         }.also { job ->
             job.invokeOnCompletion { warmVodJob = null }
         }
@@ -728,7 +732,7 @@ class TvViewModel @Inject constructor(
     private fun isActiveLargeIptvList(): Boolean {
         val snapshotCount = _uiState.value.snapshot.channels.size
         if (isLargeIptvList(snapshotCount)) return true
-        return runCatching { iptvRepository.pagedChannelStoreCount() }.getOrDefault(0) > 10_000
+        return try { iptvRepository.pagedChannelStoreCount() > 10_000 } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
     }
 
     /**
@@ -739,7 +743,7 @@ class TvViewModel @Inject constructor(
     private fun lookupChannelById(state: TvUiState, id: String): IptvChannel? {
         if (id.isBlank()) return null
         return if (isLargeIptvList(state.snapshot.channels.size) ||
-            runCatching { iptvRepository.pagedChannelStoreCount() }.getOrDefault(0) > 10_000
+            try { iptvRepository.pagedChannelStoreCount() > 10_000 } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
         ) {
             iptvRepository.pagedChannelsByIds(listOf(id)).firstOrNull()
         } else {
