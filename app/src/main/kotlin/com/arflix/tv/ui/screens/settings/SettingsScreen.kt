@@ -1222,10 +1222,12 @@ fun SettingsScreen(
                                                 }
                                                 9 -> onNavigateToTelegramSettings()
                                                 10 -> {
-                                                    if (com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isLoggedInFlow.value) {
-                                                        com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.logout()
-                                                    } else {
-                                                        com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.login(context)
+                                                    if (com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isSupported) {
+                                                        if (com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isLoggedInFlow.value) {
+                                                            com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.logout()
+                                                        } else {
+                                                            com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.login(context)
+                                                        }
                                                     }
                                                 }
                                                 11 -> viewModel.forceCloudSyncNow()
@@ -4431,12 +4433,22 @@ private fun MobileSettingsMainPage(
                 )
                 val isDiscordLoggedIn by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isLoggedInFlow.collectAsStateWithLifecycle(initialValue = false)
                 val discordUsername by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.usernameFlow.collectAsStateWithLifecycle(initialValue = null)
+                val isDiscordSupported = com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isSupported
                 val context = LocalContext.current
                 MobileSettingsRow(
                     icon = Icons.Default.Link,
                     title = "Discord RPC",
-                    subtitle = if (isDiscordLoggedIn && !discordUsername.isNullOrBlank()) "Connected as $discordUsername" else "",
-                    value = if (isDiscordLoggedIn) "Disconnect" else "Connect",
+                    subtitle = when {
+                        !isDiscordSupported -> "Not included in this build"
+                        isDiscordLoggedIn && !discordUsername.isNullOrBlank() -> "Connected as $discordUsername"
+                        else -> ""
+                    },
+                    value = when {
+                        !isDiscordSupported -> "Unavailable"
+                        isDiscordLoggedIn -> "Disconnect"
+                        else -> "Connect"
+                    },
+                    enabled = isDiscordSupported,
                     isFocused = false,
                     onClick = {
                         if (isDiscordLoggedIn) {
@@ -9026,11 +9038,17 @@ private fun AccountsSettings(
         val context = LocalContext.current
         val isDiscordLoggedIn by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isLoggedInFlow.collectAsStateWithLifecycle(initialValue = false)
         val discordUsername by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.usernameFlow.collectAsStateWithLifecycle(initialValue = null)
+        val isDiscordSupported = com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isSupported
         AccountRow(
             name = "Discord Rich Presence",
-            description = if (isDiscordLoggedIn && !discordUsername.isNullOrBlank()) "Connected as $discordUsername" else "",
+            description = when {
+                !isDiscordSupported -> "Not included in this build"
+                isDiscordLoggedIn && !discordUsername.isNullOrBlank() -> "Connected as $discordUsername"
+                else -> ""
+            },
             isConnected = isDiscordLoggedIn,
             isWorking = false,
+            isEnabled = isDiscordSupported,
             authCode = null,
             authUrl = null,
             isFocused = focusedIndex == 10,
@@ -9861,6 +9879,7 @@ private fun AccountRow(
     description: String,
     isConnected: Boolean,
     isWorking: Boolean,
+    isEnabled: Boolean = true,
     authCode: String?,
     authUrl: String?,
     isFocused: Boolean,
@@ -9874,7 +9893,7 @@ private fun AccountRow(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(enabled = !isWorking) {
+            .clickable(enabled = isEnabled && !isWorking) {
                 if (isConnected) onDisconnect() else onConnect()
             }
             .background(
@@ -9934,7 +9953,7 @@ private fun AccountRow(
                     size = 24.dp,
                     strokeWidth = 2.dp
                 )
-            } else {
+            } else if (isEnabled) {
                 Box(
                     modifier = Modifier
                         .background(Pink.copy(alpha = 0.15f), RoundedCornerShape(999.dp))
@@ -9949,6 +9968,13 @@ private fun AccountRow(
                         maxLines = 1
                     )
                 }
+            } else {
+                Text(
+                    text = "UNAVAILABLE",
+                    style = ArflixTypography.label.copy(fontSize = 11.sp, letterSpacing = 0.5.sp),
+                    color = TextSecondary,
+                    maxLines = 1
+                )
             }
         }
 
