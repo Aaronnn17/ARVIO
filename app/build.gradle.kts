@@ -121,11 +121,20 @@ android {
         }
     }
 
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = true
+        }
+    }
+
     buildTypes {
         release {
             // Full release optimization for TV smoothness.
             isMinifyEnabled = true
-            isShrinkResources = false
+            isShrinkResources = true
             // Use release signing if configured, otherwise fall back to debug
             val releaseSigningConfig = signingConfigs.findByName("release")
             signingConfig = if (releaseSigningConfig?.storeFile != null) {
