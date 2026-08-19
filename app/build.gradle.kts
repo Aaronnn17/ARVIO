@@ -18,6 +18,9 @@ plugins {
     // id("com.google.firebase.crashlytics")
 }
 
+val discordSdkAar = layout.projectDirectory.file("libs/discord_partner_sdk.aar").asFile
+val hasDiscordSdk = discordSdkAar.isFile
+
 android {
     namespace = "com.arflix.tv"
     compileSdk = 36
@@ -44,6 +47,12 @@ android {
         buildConfigField("Boolean", "ENABLE_PERIODIC_CLOUD_PULL", "false")
         buildConfigField("Boolean", "ENABLE_NETLIFY_CLOUD_SYNC", "true")
         buildConfigField("Boolean", "ENABLE_SUPABASE_SYNC_MIRROR", "false")
+        buildConfigField("Boolean", "DISCORD_RICH_PRESENCE_AVAILABLE", hasDiscordSdk.toString())
+        buildConfigField(
+            "String",
+            "DISCORD_APPLICATION_ID",
+            "\"${escapeBuildConfigString(localSecretValue("DISCORD_CLIENT_ID").ifBlank { "1501197333826637835" })}\""
+        )
         buildConfigField(
             "String",
             "NETLIFY_BACKEND_URL",
@@ -59,6 +68,14 @@ android {
         // Support both 32-bit and 64-bit devices (required for Google Play since 2019)
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+
+        if (hasDiscordSdk) {
+            externalNativeBuild {
+                cmake {
+                    arguments += "-DANDROID_STL=c++_shared"
+                }
+            }
         }
 
         vectorDrawables {
@@ -181,6 +198,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        prefab = hasDiscordSdk
     }
 
     packaging {
@@ -195,6 +213,15 @@ android {
         }
         jniLibs {
             useLegacyPackaging = false  // Required for 16KB page size support
+        }
+    }
+
+    if (hasDiscordSdk) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
     }
 
@@ -239,6 +266,13 @@ ksp {
     }
 
     dependencies {
+    // Discord Partner SDK is licensed separately and intentionally not committed.
+    if (hasDiscordSdk) {
+        implementation(files(discordSdkAar))
+    } else {
+        logger.warn("Discord Partner SDK AAR not found. Discord Rich Presence will be unavailable.")
+    }
+
     // Gson explicit pin to keep `JsonParser`/AST extension API stable with current sources.
     implementation("com.google.code.gson:gson:2.10.1")
 

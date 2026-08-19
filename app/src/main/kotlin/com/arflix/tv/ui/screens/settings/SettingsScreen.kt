@@ -111,6 +111,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.Icon
@@ -474,7 +479,7 @@ fun SettingsScreen(
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
             "stremio" -> stremioAddons.size + 1 // rows + refresh + add button
             "plugins" -> pluginsMaxIndex
-            "accounts" -> 14 // Accounts, tracking routing, sync/update, privacy and deletion
+            "accounts" -> 15 // Accounts, tracking routing, telegram, discord, sync/update, privacy and deletion
             else -> 0
         }
     }
@@ -1216,17 +1221,26 @@ fun SettingsScreen(
                                                     )
                                                 }
                                                 9 -> onNavigateToTelegramSettings()
-                                                10 -> viewModel.forceCloudSyncNow()
-                                                11 -> {
+                                                10 -> {
+                                                    if (com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isSupported) {
+                                                        if (com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isLoggedInFlow.value) {
+                                                            com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.logout()
+                                                        } else {
+                                                            com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.login(context)
+                                                        }
+                                                    }
+                                                }
+                                                11 -> viewModel.forceCloudSyncNow()
+                                                12 -> {
                                                     if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) {
                                                         viewModel.installAppUpdateOrRequestPermission()
                                                     } else {
                                                         viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true)
                                                     }
                                                 }
-                                                12 -> viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled)
-                                                13 -> openExternalUrl(context, PRIVACY_POLICY_URL)
-                                                14 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
+                                                13 -> viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled)
+                                                14 -> openExternalUrl(context, PRIVACY_POLICY_URL)
+                                                15 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
                                             }
                                         }
                                         "plugins" -> {
@@ -2318,6 +2332,23 @@ fun SettingsScreen(
                 userCode = plexAuth.code,
                 onOpenUrl = { openExternalUrl(context, plexAuth.verificationUrl) },
                 onDismiss = { viewModel.cancelPlexHomeServerAuth() }
+            )
+        }
+
+        val isDiscordDialogVisible by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isAuthDialogVisibleFlow.collectAsStateWithLifecycle()
+        val discordAuthUrl by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.authUrlFlow.collectAsStateWithLifecycle()
+        val isDiscordAuthLoading by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isAuthLoadingFlow.collectAsStateWithLifecycle()
+
+        if (isDiscordDialogVisible && !discordAuthUrl.isNullOrBlank()) {
+            DiscordActivationModal(
+                authUrl = discordAuthUrl!!,
+                isLoading = isDiscordAuthLoading,
+                onDismiss = {
+                    com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.closeAuthDialog()
+                },
+                onCompleteWithCode = { code ->
+                    com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.completeAuthWithCode(code)
+                }
             )
         }
 
@@ -3557,6 +3588,549 @@ private fun TraktActivationModal(
     }
 }
 
+@Composable
+private fun DiscordWebViewModal(
+    authUrl: String,
+    onDismiss: () -> Unit,
+    onCompleteWithCode: (String) -> Unit
+) {
+    val accentColor = Color(0xFF5865F2) // Discord Blurple
+    val focusRequester = remember { FocusRequester() }
+    var cursorX by remember { mutableStateOf(400f) }
+    var cursorY by remember { mutableStateOf(300f) }
+    var webViewRef by remember { mutableStateOf<android.webkit.WebView?>(null) }
+    var containerWidth by remember { mutableStateOf(1280f) }
+    var containerHeight by remember { mutableStateOf(720f) }
+    val step = 40f
+    val edgeThreshold = 80f
+
+    fun scrollPage(scrollDown: Boolean) {
+        val wv = webViewRef ?: return
+        val delta = if (scrollDown) 350 else -350
+
+        // 1. Universal JavaScript scroll: scrolls window and any internal scrollable containers (e.g. Discord OAuth card)
+        val js = """
+            (function() {
+                window.scrollBy({top: $delta, behavior: 'smooth'});
+                var els = document.querySelectorAll('*');
+                for (var i = 0; i < els.length; i++) {
+                    var el = els[i];
+                    if (el.scrollHeight > el.clientHeight + 5) {
+                        el.scrollTop += $delta;
+                        el.dispatchEvent(new Event('scroll', { bubbles: true }));
+                    }
+                }
+            })();
+        """.trimIndent()
+        wv.evaluateJavascript(js, null)
+
+        // 2. Android WebView view-level scroll
+        wv.scrollBy(0, delta)
+
+        // 3. Dispatch simulated touch fling drag
+        val now = android.os.SystemClock.uptimeMillis()
+        val midX = (containerWidth / 2f).coerceAtLeast(100f)
+        val startY = if (scrollDown) containerHeight * 0.75f else containerHeight * 0.25f
+        val endY = if (scrollDown) containerHeight * 0.25f else containerHeight * 0.75f
+
+        val down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, midX, startY, 0)
+        wv.dispatchTouchEvent(down)
+
+        for (stepIdx in 1..4) {
+            val curY = startY + (endY - startY) * (stepIdx / 4f)
+            val move = android.view.MotionEvent.obtain(now, now + (stepIdx * 15), android.view.MotionEvent.ACTION_MOVE, midX, curY, 0)
+            wv.dispatchTouchEvent(move)
+            move.recycle()
+        }
+
+        val up = android.view.MotionEvent.obtain(now, now + 80, android.view.MotionEvent.ACTION_UP, midX, endY, 0)
+        wv.dispatchTouchEvent(up)
+        down.recycle()
+        up.recycle()
+    }
+
+    LaunchedEffect(Unit) {
+        runCatching { focusRequester.requestFocus() }
+    }
+
+    BackHandler {
+        if (webViewRef?.canGoBack() == true) {
+            webViewRef?.goBack()
+        } else {
+            onDismiss()
+        }
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.96f))
+                .focusRequester(focusRequester)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionUp -> {
+                            if (cursorY <= edgeThreshold) {
+                                scrollPage(false)
+                            } else {
+                                cursorY = (cursorY - step).coerceAtLeast(0f)
+                            }
+                            true
+                        }
+                        Key.DirectionDown -> {
+                            if (cursorY >= containerHeight - edgeThreshold) {
+                                scrollPage(true)
+                            } else {
+                                cursorY = (cursorY + step).coerceAtMost(containerHeight)
+                            }
+                            true
+                        }
+                        Key.DirectionLeft -> {
+                            cursorX = (cursorX - step).coerceAtLeast(0f)
+                            true
+                        }
+                        Key.DirectionRight -> {
+                            cursorX = (cursorX + step).coerceAtMost(containerWidth)
+                            true
+                        }
+                        Key.PageUp, Key.ChannelUp, Key.MediaRewind -> {
+                            scrollPage(false)
+                            true
+                        }
+                        Key.PageDown, Key.ChannelDown, Key.MediaFastForward -> {
+                            scrollPage(true)
+                            true
+                        }
+                        Key.Enter, Key.DirectionCenter, Key.NumPadEnter -> {
+                            val wv = webViewRef
+                            if (wv != null) {
+                                val now = android.os.SystemClock.uptimeMillis()
+                                val down = android.view.MotionEvent.obtain(
+                                    now, now, android.view.MotionEvent.ACTION_DOWN, cursorX, cursorY, 0
+                                )
+                                val up = android.view.MotionEvent.obtain(
+                                    now, now + 50, android.view.MotionEvent.ACTION_UP, cursorX, cursorY, 0
+                                )
+                                wv.dispatchTouchEvent(down)
+                                wv.dispatchTouchEvent(up)
+                                down.recycle()
+                                up.recycle()
+                            }
+                            true
+                        }
+                        Key.Back, Key.Escape -> {
+                            if (webViewRef?.canGoBack() == true) {
+                                webViewRef?.goBack()
+                            } else {
+                                onDismiss()
+                            }
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                .padding(20.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Top Navigation Bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (webViewRef?.canGoBack() == true) webViewRef?.goBack() else onDismiss()
+                                }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.ArrowBack,
+                                    contentDescription = "Back",
+                                    tint = TextPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Back", color = TextPrimary, style = ArflixTypography.caption)
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            text = "Discord TV Login",
+                            style = ArflixTypography.sectionTitle,
+                            color = TextPrimary
+                        )
+                    }
+
+                    // Action / Scroll Buttons
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                                .clickable { scrollPage(false) }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Text("▲ Scroll Up", color = TextPrimary, style = ArflixTypography.caption)
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .background(accentColor.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                .border(1.dp, accentColor, RoundedCornerShape(8.dp))
+                                .clickable { scrollPage(true) }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Text("▼ Scroll Down", color = Color.White, style = ArflixTypography.caption)
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .background(Color.White.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                                .clickable { onDismiss() }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close",
+                                    tint = TextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Close", color = TextSecondary, style = ArflixTypography.caption)
+                            }
+                        }
+                    }
+                }
+
+                // WebView and Pointer Box
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+                        .onGloballyPositioned { coordinates ->
+                            containerWidth = coordinates.size.width.toFloat()
+                            containerHeight = coordinates.size.height.toFloat()
+                        }
+                ) {
+                    androidx.compose.ui.viewinterop.AndroidView(
+                        factory = { ctx ->
+                            android.webkit.WebView(ctx).apply {
+                                webViewRef = this
+                                layoutParams = android.view.ViewGroup.LayoutParams(
+                                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                    android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                                )
+                                isFocusable = true
+                                isFocusableInTouchMode = true
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                settings.databaseEnabled = true
+                                settings.useWideViewPort = true
+                                settings.loadWithOverviewMode = true
+                                settings.userAgentString = "Mozilla/5.0 (Linux; Android 12; Pixel 6 Build/SD1A.210817.037) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.144 Mobile Safari/537.36"
+                                webViewClient = object : android.webkit.WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(
+                                        view: android.webkit.WebView?,
+                                        request: android.webkit.WebResourceRequest?
+                                    ): Boolean {
+                                        val url = request?.url ?: return false
+                                        android.util.Log.i("DiscordWebView", "shouldOverrideUrlLoading: $url")
+                                        if (url.scheme == "arvio" && url.host == "discord" && url.path == "/auth") {
+                                            com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.onLoginDeepLink(url)
+                                            onDismiss()
+                                            return true
+                                        }
+                                        val code = url.getQueryParameter("code")
+                                        if (code != null && (url.host == "auth.arvio.tv" || url.host == "localhost" || url.scheme == "arvio")) {
+                                            onCompleteWithCode(code)
+                                            onDismiss()
+                                            return true
+                                        }
+                                        return false
+                                    }
+                                }
+                                loadUrl(authUrl)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Virtual Mouse Cursor Overlay
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset(cursorX.roundToInt(), cursorY.roundToInt()) }
+                            .size(26.dp)
+                    ) {
+                        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                            val path = androidx.compose.ui.graphics.Path().apply {
+                                moveTo(0f, 0f)
+                                lineTo(0f, size.height * 0.85f)
+                                lineTo(size.width * 0.28f, size.height * 0.62f)
+                                lineTo(size.width * 0.58f, size.height)
+                                lineTo(size.width * 0.74f, size.height * 0.88f)
+                                lineTo(size.width * 0.44f, size.height * 0.52f)
+                                lineTo(size.width * 0.82f, size.height * 0.52f)
+                                close()
+                            }
+                            drawPath(
+                                path = path,
+                                color = Color.Black,
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f)
+                            )
+                            drawPath(
+                                path = path,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun DiscordActivationModal(
+    authUrl: String,
+    isLoading: Boolean,
+    onDismiss: () -> Unit,
+    onCompleteWithCode: (String) -> Unit
+) {
+    val accentColor = Color(0xFF5865F2) // Discord Blurple
+    val focusRequester = remember { FocusRequester() }
+    val isMobile = LocalDeviceType.current.isTouchDevice()
+    val qrContainerSize = if (isMobile) 0.dp else 190.dp
+    val qrBitmapSizePx = if (isMobile) 0 else 512
+    var showInAppWebView by remember { mutableStateOf(false) }
+    var focusedButton by remember { mutableIntStateOf(0) } // 0 = Log in directly on TV, 1 = Cancel
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+
+    LaunchedEffect(Unit) {
+        runCatching { focusRequester.requestFocus() }
+    }
+
+    if (showInAppWebView) {
+        DiscordWebViewModal(
+            authUrl = authUrl,
+            onDismiss = { showInAppWebView = false },
+            onCompleteWithCode = onCompleteWithCode
+        )
+        return
+    }
+
+    BackHandler {
+        onDismiss()
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        ModalScrim(onDismiss = onDismiss) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .focusRequester(focusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            Key.Back, Key.Escape -> { onDismiss(); true }
+                            Key.DirectionLeft  -> { focusedButton = if (isRtl) 1 else 0; true }
+                            Key.DirectionRight -> { focusedButton = if (isRtl) 0 else 1; true }
+                            Key.Enter, Key.DirectionCenter -> {
+                                if (focusedButton == 0) {
+                                    showInAppWebView = true
+                                } else {
+                                    onDismiss()
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                    .clickable(onClick = onDismiss),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    modifier = Modifier
+                        .then(
+                            if (isMobile) Modifier.fillMaxWidth(0.92f).widthIn(max = 520.dp)
+                            else Modifier.width(580.dp)
+                        )
+                        .background(BackgroundElevated, RoundedCornerShape(16.dp))
+                        .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
+                        .clickable(enabled = false) {}
+                        .padding(if (isMobile) 20.dp else 28.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(accentColor.copy(alpha = 0.2f), RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = null,
+                                tint = accentColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Connect Discord",
+                            style = ArflixTypography.sectionTitle,
+                            color = TextPrimary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Scan this QR code with your phone camera to authorize Discord Rich Presence for your profile.",
+                        style = ArflixTypography.body,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(20.dp)
+                    ) {
+                        if (authUrl.isNotBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .size(qrContainerSize)
+                                    .background(Color.White, RoundedCornerShape(14.dp))
+                                    .padding(12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                QrCodeImage(
+                                    data = authUrl,
+                                    sizePx = qrBitmapSizePx,
+                                    modifier = Modifier.fillMaxSize(),
+                                    foreground = android.graphics.Color.BLACK,
+                                    background = android.graphics.Color.WHITE
+                                )
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            if (isLoading) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    LoadingIndicator(size = 20.dp, color = accentColor)
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "Connecting...",
+                                        style = ArflixTypography.body,
+                                        color = TextPrimary
+                                    )
+                                }
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    LoadingIndicator(size = 18.dp, color = accentColor)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Waiting for approval...",
+                                        style = ArflixTypography.caption,
+                                        color = TextSecondary.copy(alpha = 0.85f)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Text(
+                                    text = "1. Scan QR code on your phone\n2. Tap 'Authorize' on Discord\n3. Connects automatically",
+                                    style = ArflixTypography.caption.copy(fontSize = 12.sp, lineHeight = 18.sp),
+                                    color = TextSecondary.copy(alpha = 0.7f)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // "Log in directly on TV" button
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (focusedButton == 0) accentColor.copy(alpha = 0.25f) else Color.Transparent,
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (focusedButton == 0) accentColor else Color.White.copy(alpha = 0.15f),
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .clickable { showInAppWebView = true }
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                        ) {
+                            Text(
+                                text = "Log in directly on TV",
+                                color = if (focusedButton == 0) Color.White else accentColor,
+                                style = ArflixTypography.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                            )
+                        }
+
+                        // "Cancel" button
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    if (focusedButton == 1) Color.White.copy(alpha = 0.15f) else Color.Transparent,
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (focusedButton == 1) Color.White.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.15f),
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .clickable { onDismiss() }
+                                .padding(horizontal = 18.dp, vertical = 10.dp)
+                        ) {
+                            Text(
+                                text = stringResource(R.string.cancel),
+                                color = if (focusedButton == 1) TextPrimary else TextSecondary,
+                                style = ArflixTypography.caption.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun MobileSettingsLayout(
@@ -3858,6 +4432,33 @@ private fun MobileSettingsMainPage(
                     isExternalLink = true,
                     isFocused = false,
                     onClick = onNavigateToTelegram
+                )
+                val isDiscordLoggedIn by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isLoggedInFlow.collectAsStateWithLifecycle(initialValue = false)
+                val discordUsername by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.usernameFlow.collectAsStateWithLifecycle(initialValue = null)
+                val isDiscordSupported = com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isSupported
+                val context = LocalContext.current
+                MobileSettingsRow(
+                    icon = Icons.Default.Link,
+                    title = "Discord RPC",
+                    subtitle = when {
+                        !isDiscordSupported -> "Not included in this build"
+                        isDiscordLoggedIn && !discordUsername.isNullOrBlank() -> "Connected as $discordUsername"
+                        else -> ""
+                    },
+                    value = when {
+                        !isDiscordSupported -> "Unavailable"
+                        isDiscordLoggedIn -> "Disconnect"
+                        else -> "Connect"
+                    },
+                    enabled = isDiscordSupported,
+                    isFocused = false,
+                    onClick = {
+                        if (isDiscordLoggedIn) {
+                            com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.logout()
+                        } else {
+                            com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.login(context)
+                        }
+                    }
                 )
                 MobileSettingsRow(
                     icon = Icons.Default.SystemUpdate,
@@ -5202,8 +5803,11 @@ private fun tvSettingsFocusedHelp(section: String, focusedIndex: Int): TvSetting
         "accounts" -> when (focusedIndex) {
             0 -> TvSettingsHelp(stringResource(R.string.cloud_account), stringResource(R.string.settings_help_cloud_account_desc))
             1 -> TvSettingsHelp(stringResource(R.string.settings_help_trakt), stringResource(R.string.settings_help_trakt_desc))
-            2 -> TvSettingsHelp(stringResource(R.string.force_cloud_sync), stringResource(R.string.settings_help_force_sync_desc))
-            3 -> TvSettingsHelp(stringResource(R.string.settings_help_app_updates), stringResource(R.string.settings_help_app_updates_desc))
+            10 -> TvSettingsHelp("Discord RPC", "Show your watch status on your Discord profile.")
+            11 -> TvSettingsHelp(stringResource(R.string.force_cloud_sync), stringResource(R.string.settings_help_force_sync_desc))
+            12 -> TvSettingsHelp(stringResource(R.string.settings_help_app_updates), stringResource(R.string.settings_help_app_updates_desc))
+            13 -> TvSettingsHelp(stringResource(R.string.settings_diagnostics_sharing), stringResource(R.string.settings_diagnostics_sharing_desc))
+            14 -> TvSettingsHelp(stringResource(R.string.settings_privacy_policy), stringResource(R.string.settings_privacy_policy_desc))
             else -> TvSettingsHelp(stringResource(R.string.settings_help_account_data), stringResource(R.string.settings_help_account_data_desc))
         }
         else -> TvSettingsHelp(stringResource(R.string.settings_help_setting), stringResource(R.string.settings_help_setting_desc))
@@ -8441,6 +9045,35 @@ private fun AccountsSettings(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Discord RPC
+        val context = LocalContext.current
+        val isDiscordLoggedIn by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isLoggedInFlow.collectAsStateWithLifecycle(initialValue = false)
+        val discordUsername by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.usernameFlow.collectAsStateWithLifecycle(initialValue = null)
+        val isDiscordSupported = com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isSupported
+        AccountRow(
+            name = "Discord Rich Presence",
+            description = when {
+                !isDiscordSupported -> "Not included in this build"
+                isDiscordLoggedIn && !discordUsername.isNullOrBlank() -> "Connected as $discordUsername"
+                else -> ""
+            },
+            isConnected = isDiscordLoggedIn,
+            isWorking = false,
+            isEnabled = isDiscordSupported,
+            authCode = null,
+            authUrl = null,
+            isFocused = focusedIndex == 10,
+            onConnect = {
+                com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.login(context)
+            },
+            onDisconnect = {
+                com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.logout()
+            },
+            modifier = Modifier.settingsFocusSlot(10)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         SettingsActionRow(
             title = stringResource(R.string.force_cloud_sync),
             description = if (isForceCloudSyncing) {
@@ -8453,9 +9086,9 @@ private fun AccountsSettings(
                 stringResource(R.string.settings_signin_to_force_sync)
             },
             actionLabel = if (isForceCloudSyncing) stringResource(R.string.settings_badge_syncing) else stringResource(R.string.settings_badge_sync),
-            isFocused = focusedIndex == 10,
+            isFocused = focusedIndex == 11,
             onClick = { if (!isForceCloudSyncing) onForceCloudSync() },
-            modifier = Modifier.settingsFocusSlot(10)
+            modifier = Modifier.settingsFocusSlot(11)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8477,11 +9110,11 @@ private fun AccountsSettings(
                 updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable -> stringResource(R.string.settings_badge_update)
                 else -> stringResource(R.string.settings_badge_check)
             },
-            isFocused = focusedIndex == 11,
+            isFocused = focusedIndex == 12,
             onClick = {
                 if (updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) onInstallUpdate() else onCheckUpdates()
             },
-            modifier = Modifier.settingsFocusSlot(11)
+            modifier = Modifier.settingsFocusSlot(12)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8490,9 +9123,9 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_diagnostics_sharing),
             subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
             isEnabled = diagnosticsSharingEnabled,
-            isFocused = focusedIndex == 12,
+            isFocused = focusedIndex == 13,
             onToggle = onDiagnosticsSharingToggle,
-            modifier = Modifier.settingsFocusSlot(12)
+            modifier = Modifier.settingsFocusSlot(13)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8501,9 +9134,9 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_privacy_policy),
             description = stringResource(R.string.settings_privacy_policy_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 13,
+            isFocused = focusedIndex == 14,
             onClick = onOpenPrivacy,
-            modifier = Modifier.settingsFocusSlot(13)
+            modifier = Modifier.settingsFocusSlot(14)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -8512,9 +9145,9 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_account_data_deletion),
             description = stringResource(R.string.settings_account_data_deletion_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 14,
+            isFocused = focusedIndex == 15,
             onClick = onOpenDataDeletion,
-            modifier = Modifier.settingsFocusSlot(14)
+            modifier = Modifier.settingsFocusSlot(15)
         )
     }
 }
@@ -9257,6 +9890,7 @@ private fun AccountRow(
     description: String,
     isConnected: Boolean,
     isWorking: Boolean,
+    isEnabled: Boolean = true,
     authCode: String?,
     authUrl: String?,
     isFocused: Boolean,
@@ -9270,7 +9904,7 @@ private fun AccountRow(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(enabled = !isWorking) {
+            .clickable(enabled = isEnabled && !isWorking) {
                 if (isConnected) onDisconnect() else onConnect()
             }
             .background(
@@ -9330,7 +9964,7 @@ private fun AccountRow(
                     size = 24.dp,
                     strokeWidth = 2.dp
                 )
-            } else {
+            } else if (isEnabled) {
                 Box(
                     modifier = Modifier
                         .background(Pink.copy(alpha = 0.15f), RoundedCornerShape(999.dp))
@@ -9345,6 +9979,13 @@ private fun AccountRow(
                         maxLines = 1
                     )
                 }
+            } else {
+                Text(
+                    text = "UNAVAILABLE",
+                    style = ArflixTypography.label.copy(fontSize = 11.sp, letterSpacing = 0.5.sp),
+                    color = TextSecondary,
+                    maxLines = 1
+                )
             }
         }
 
