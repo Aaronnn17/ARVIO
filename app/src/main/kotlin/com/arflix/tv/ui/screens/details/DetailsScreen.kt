@@ -204,7 +204,7 @@ fun DetailsScreen(
     initialEpisode: Int? = null,
     viewModel: DetailsViewModel = hiltViewModel(),
     currentProfile: com.arflix.tv.data.model.Profile? = null,
-    onNavigateToPlayer: (MediaType, Int, Int?, Int?, Int?, Int?, String?, String?, String?, String?, Long?) -> Unit,
+    onNavigateToPlayer: (MediaType, Int, EpisodeIdentity?, String?, String?, String?, String?, Long?) -> Unit,
     onNavigateToDetails: (MediaType, Int) -> Unit,
     onNavigateToCollection: (String) -> Unit = {},
     onNavigateToHome: () -> Unit = {},
@@ -266,16 +266,16 @@ fun DetailsScreen(
         showStreamSelector = false
         val identity = uiState.episodes.firstOrNull {
             it.seasonNumber == displaySeason && it.episodeNumber == displayEpisode
-        }?.identity ?: if (displaySeason != null && displayEpisode != null && tmdbSeason != null && tmdbEpisode != null) {
-            EpisodeIdentity(displaySeason, displayEpisode, tmdbSeason, tmdbEpisode)
-        } else null
-        viewModel.loadStreams(imdbId, identity)
-        autoPlayWaitTick = 0
-        pendingAutoPlayRequest = PendingAutoPlayRequest(
+        }?.identity ?: viewModel.resolveEpisodeIdentity(
             displaySeason = displaySeason,
             displayEpisode = displayEpisode,
             tmdbSeason = tmdbSeason,
-            tmdbEpisode = tmdbEpisode,
+            tmdbEpisode = tmdbEpisode
+        )
+        viewModel.loadStreams(imdbId, identity)
+        autoPlayWaitTick = 0
+        pendingAutoPlayRequest = PendingAutoPlayRequest(
+            identity = identity,
             startPositionMs = startPositionMs,
             requestedAtMs = SystemClock.elapsedRealtime()
         )
@@ -368,27 +368,12 @@ fun DetailsScreen(
 
         when {
             selectedStream != null && !shouldWaitForSources -> {
-                val identity = uiState.episodes.firstOrNull {
-                    it.seasonNumber == request.displaySeason && it.episodeNumber == request.displayEpisode
-                }?.identity ?: if (
-                    request.displaySeason != null && request.displayEpisode != null &&
-                    request.tmdbSeason != null && request.tmdbEpisode != null
-                ) {
-                    EpisodeIdentity(
-                        request.displaySeason,
-                        request.displayEpisode,
-                        request.tmdbSeason,
-                        request.tmdbEpisode
-                    )
-                } else null
+                val identity = request.identity
                 viewModel.recordPlayedEpisode(mediaId, identity)
                 onNavigateToPlayer(
                     mediaType,
                     mediaId,
-                    request.displaySeason,
-                    request.displayEpisode,
-                    request.tmdbSeason,
-                    request.tmdbEpisode,
+                    identity,
                     uiState.imdbId,
                     selectedStream.url?.takeIf { it.isNotBlank() },
                     selectedStream.addonId.takeIf { it.isNotBlank() },
@@ -1113,8 +1098,7 @@ fun DetailsScreen(
                 viewModel.recordPlayedEpisode(mediaId, ep?.identity)
                 onNavigateToPlayer(
                     mediaType, mediaId,
-                    ep?.seasonNumber, ep?.episodeNumber,
-                    ep?.tmdbSeasonNumber, ep?.tmdbEpisodeNumber,
+                    ep?.identity,
                     uiState.imdbId,
                     stream.url?.takeIf { it.isNotBlank() },
                     stream.addonId.takeIf { it.isNotBlank() },
@@ -1194,10 +1178,7 @@ private enum class FocusSection {
 }
 
 private data class PendingAutoPlayRequest(
-    val displaySeason: Int?,
-    val displayEpisode: Int?,
-    val tmdbSeason: Int?,
-    val tmdbEpisode: Int?,
+    val identity: EpisodeIdentity?,
     val startPositionMs: Long?,
     val requestedAtMs: Long
 )

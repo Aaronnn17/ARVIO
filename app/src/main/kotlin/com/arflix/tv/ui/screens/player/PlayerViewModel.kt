@@ -34,6 +34,7 @@ import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.util.AnimeMapper
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
+import com.arflix.tv.util.fallbackAdjacentEpisodeIdentity
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.weightedSubtitleScore
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -208,6 +209,7 @@ class PlayerViewModel @Inject constructor(
     private var currentEpisode: Int? = null
     private var currentDisplaySeason: Int? = null
     private var currentDisplayEpisode: Int? = null
+    private var currentAnimeQueryOverride: String? = null
     private var currentTitle: String = ""
     private var currentPoster: String? = null
     private var currentBackdrop: String? = null
@@ -254,10 +256,7 @@ class PlayerViewModel @Inject constructor(
                 structure.previousBeforeDisplay(current.displaySeason, current.displayEpisode)
             }
         }
-        val nextEpisode = current.tmdbEpisode + if (forward) 1 else -1
-        return nextEpisode.takeIf { it > 0 }?.let {
-            EpisodeIdentity.canonical(current.tmdbSeason, it)
-        }
+        return fallbackAdjacentEpisodeIdentity(current, forward)
     }
 
     // AI subtitle settings (read once per video load)
@@ -472,6 +471,7 @@ class PlayerViewModel @Inject constructor(
         episodeNumber: Int?,
         displaySeasonNumber: Int? = seasonNumber,
         displayEpisodeNumber: Int? = episodeNumber,
+        animeQueryOverride: String? = null,
         providedImdbId: String?,
         providedStreamUrl: String?,
         preferredAddonId: String?,
@@ -488,6 +488,7 @@ class PlayerViewModel @Inject constructor(
         currentEpisode = episodeNumber
         currentDisplaySeason = displaySeasonNumber
         currentDisplayEpisode = displayEpisodeNumber
+        currentAnimeQueryOverride = animeQueryOverride
         currentStartPositionMs = startPositionMs
         currentPreferredAddonId = preferredAddonId?.trim()?.takeIf { it.isNotBlank() }
         currentPreferredSourceName = preferredSourceName?.trim()?.takeIf { it.isNotBlank() }
@@ -966,6 +967,7 @@ class PlayerViewModel @Inject constructor(
                         genreIds = currentGenreIds,
                         originalLanguage = currentOriginalLanguage,
                         title = currentItemTitle,
+                        animeQueryOverride = animeQueryOverride,
                         airDate = currentAirDate
                     )
                 }
@@ -3778,6 +3780,7 @@ class PlayerViewModel @Inject constructor(
             episodeNumber = currentEpisode,
             displaySeasonNumber = currentDisplaySeason,
             displayEpisodeNumber = currentDisplayEpisode,
+            animeQueryOverride = currentAnimeQueryOverride,
             providedImdbId = currentImdbId,
             providedStreamUrl = null,
             preferredAddonId = currentPreferredAddonId,
@@ -4419,7 +4422,8 @@ class PlayerViewModel @Inject constructor(
                     tvdbId = currentTvdbId,
                     genreIds = currentGenreIds,
                     originalLanguage = currentOriginalLanguage,
-                    title = currentItemTitle
+                    title = currentItemTitle,
+                    animeQueryOverride = currentAnimeQueryOverride
                 )
             }
 

@@ -358,6 +358,7 @@ class StreamRepository @Inject constructor(
                 genreIds = request.genreIds,
                 originalLanguage = request.originalLanguage,
                 title = request.title,
+                animeQueryOverride = request.animeQueryOverride,
                 airDate = request.airDate
             )
         }
@@ -1642,9 +1643,11 @@ class StreamRepository @Inject constructor(
         imdbId: String,
         season: Int? = null,
         episode: Int? = null,
+        providerEpisodeId: String? = null,
         addonRevision: String
     ): String {
-        return "$profileId|$type|$imdbId|${season ?: 0}|${episode ?: 0}|addons:$addonRevision"
+        val providerPart = providerEpisodeId?.let { "|provider:$it" }.orEmpty()
+        return "$profileId|$type|$imdbId|${season ?: 0}|${episode ?: 0}$providerPart|addons:$addonRevision"
     }
 
     private fun cacheTtlMsFor(result: StreamResult): Long {
@@ -2593,6 +2596,7 @@ class StreamRepository @Inject constructor(
         originalLanguage: String? = null,
         title: String = "",
         forceRefresh: Boolean = false,
+        animeQueryOverride: String? = null,
         airDate: String? = null
     ): StreamResult = withContext(Dispatchers.IO) {
         ensureAddonHealthLoaded()
@@ -2613,6 +2617,7 @@ class StreamRepository @Inject constructor(
             imdbId = imdbId,
             season = season,
             episode = episode,
+            providerEpisodeId = animeQueryOverride,
             addonRevision = streamAddonConfigurationRevision(streamAddons)
         )
         if (!forceRefresh) {
@@ -2634,7 +2639,8 @@ class StreamRepository @Inject constructor(
             genreIds = genreIds,
             originalLanguage = originalLanguage,
             title = title,
-            airDate = airDate
+            airDate = airDate,
+            animeQueryOverride = animeQueryOverride
         )
         val streams = addonRuntimeAggregator.resolveEpisodeStreams(
             stremioAddons = prioritizedAddons,
@@ -2683,6 +2689,7 @@ class StreamRepository @Inject constructor(
                 imdbId = imdbId,
                 season = season,
                 episode = episode,
+                providerEpisodeId = animeQueryOverride,
                 addonRevision = streamAddonConfigurationRevision(streamAddons)
             )
             if (!forceRefresh) {
