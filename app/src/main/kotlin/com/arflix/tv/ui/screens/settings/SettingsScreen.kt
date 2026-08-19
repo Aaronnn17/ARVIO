@@ -5980,7 +5980,10 @@ private fun AiModelDialog(
                     Surface(
                         onClick = { onModelSelected(model) },
                         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                            .focusRequester(focusRequester),
+                            .focusRequester(focusRequester)
+                            .pointerInput(Unit) {
+                                detectTapGestures(onTap = { onModelSelected(model) })
+                            },
                         colors = ClickableSurfaceDefaults.colors(
                             containerColor = if (isSelected) Pink.copy(alpha = 0.15f) else BackgroundElevated,
                             focusedContainerColor = Pink.copy(alpha = 0.25f)
@@ -6069,7 +6072,9 @@ private fun AiApiKeyDialog(
                     val saveFocus = remember { FocusRequester() }
                     Surface(
                         onClick = onDismiss,
-                        modifier = Modifier.weight(1f).focusRequester(cancelFocus),
+                        modifier = Modifier.weight(1f).focusRequester(cancelFocus).pointerInput(Unit) {
+                            detectTapGestures(onTap = { onDismiss() })
+                        },
                         colors = ClickableSurfaceDefaults.colors(
                             containerColor = BackgroundElevated,
                             focusedContainerColor = BackgroundElevated.copy(alpha = 0.8f)
@@ -6090,7 +6095,9 @@ private fun AiApiKeyDialog(
                     }
                     Surface(
                         onClick = { onSave(value) },
-                        modifier = Modifier.weight(1f).focusRequester(saveFocus),
+                        modifier = Modifier.weight(1f).focusRequester(saveFocus).pointerInput(Unit) {
+                            detectTapGestures(onTap = { onSave(value) })
+                        },
                         colors = ClickableSurfaceDefaults.colors(
                             containerColor = Pink.copy(alpha = 0.15f),
                             focusedContainerColor = Pink.copy(alpha = 0.3f)
@@ -6268,7 +6275,9 @@ private fun AiKeyQrOverlay(
                 Spacer(modifier = Modifier.height(24.dp))
                 Surface(
                     onClick = onClose,
-                    modifier = Modifier.focusRequester(focusRequester),
+                    modifier = Modifier.focusRequester(focusRequester).pointerInput(Unit) {
+                        detectTapGestures(onTap = { onClose() })
+                    },
                     colors = ClickableSurfaceDefaults.colors(
                         containerColor = BackgroundElevated,
                         contentColor = TextPrimary,
