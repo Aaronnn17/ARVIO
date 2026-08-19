@@ -84,6 +84,29 @@ data class NextEpisode(
  * Episode details
  */
 @Immutable
+data class EpisodeIdentity(
+    val displaySeason: Int,
+    val displayEpisode: Int,
+    val tmdbSeason: Int,
+    val tmdbEpisode: Int,
+    val kitsuId: Int? = null,
+    val kitsuEpisode: Int? = null,
+    val armEpisodeId: Int? = null
+) : Serializable {
+    val kitsuQuery: String?
+        get() = kitsuId?.let { id -> kitsuEpisode?.let { episode -> "kitsu:$id:$episode" } }
+
+    companion object {
+        fun canonical(season: Int, episode: Int) = EpisodeIdentity(
+            displaySeason = season,
+            displayEpisode = episode,
+            tmdbSeason = season,
+            tmdbEpisode = episode
+        )
+    }
+}
+
+@Immutable
 data class Episode(
     val id: Int,
     val episodeNumber: Int,
@@ -95,8 +118,15 @@ data class Episode(
     val imdbRating: String = "",
     val runtime: Int = 0,
     val airDate: String = "",
-    val isWatched: Boolean = false
-) : Serializable
+    val isWatched: Boolean = false,
+    /** Single source of truth for display, TMDB and anime-provider coordinates. */
+    val identity: EpisodeIdentity = EpisodeIdentity.canonical(seasonNumber, episodeNumber)
+) : Serializable {
+    val tmdbSeasonNumber: Int get() = identity.tmdbSeason
+    val tmdbEpisodeNumber: Int get() = identity.tmdbEpisode
+    val kitsuId: Int? get() = identity.kitsuId
+    val kitsuEpisodeNumber: Int? get() = identity.kitsuEpisode
+}
 
 /**
  * Cast member
