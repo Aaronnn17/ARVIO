@@ -368,6 +368,8 @@ fun PlayerScreen(
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var progress by remember { mutableFloatStateOf(0f) }
+    var currentPlaybackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
+    var nextEpisodeTransitionInProgress by remember { mutableStateOf(false) }
 
     // Skip overlay state - shows +10/-10 without showing full controls
     var skipAmount by remember { mutableIntStateOf(0) }
@@ -437,10 +439,47 @@ fun PlayerScreen(
     }
     var nextEpisodePromptButton by remember { mutableIntStateOf(0) } // 0 = next, 1 = cancel
     val nextEpisodePromptGate = remember { NextEpisodePromptGate() }
+    val playNextEpisode: (EpisodeIdentity, String?, String?, String?) -> Unit =
+        { nextIdentity, nextAddonId, nextSourceName, nextBingeGroup ->
+            if (!nextEpisodeTransitionInProgress) {
+                nextEpisodeTransitionInProgress = true
+
+                val positionSnapshot = currentPosition
+                val durationSnapshot = duration
+                val playbackStateSnapshot = currentPlaybackState
+                val progressPercentSnapshot = if (durationSnapshot > 0L) {
+                    ((positionSnapshot.toDouble() / durationSnapshot.toDouble()) * 100.0)
+                        .toInt()
+                        .coerceIn(0, 100)
+                } else {
+                    0
+                }
+
+                coroutineScope.launch {
+                    runCatching {
+                        viewModel.saveProgressAndWait(
+                            position = positionSnapshot,
+                            duration = durationSnapshot,
+                            progressPercent = progressPercentSnapshot,
+                            isPlaying = false,
+                            playbackState = playbackStateSnapshot
+                        )
+                    }
+
+                    onPlayNext(
+                        nextIdentity,
+                        nextAddonId,
+                        nextSourceName,
+                        nextBingeGroup
+                    )
+                }
+            }
+        }
+
     val playPendingNextEpisode: () -> Unit = playNext@{
         showNextEpisodePrompt = false
         val identity = pendingNextIdentity ?: return@playNext
-        onPlayNext(
+        playNextEpisode(
             identity,
             pendingNextAddonId,
             pendingNextSourceName,
@@ -1027,6 +1066,7 @@ fun PlayerScreen(
                 // Add error listener to try next stream on codec errors
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
+                        currentPlaybackState = playbackState
                         val stateStr = when (playbackState) {
                             Player.STATE_IDLE -> "IDLE"
                             Player.STATE_BUFFERING -> "BUFFERING"
@@ -2450,22 +2490,24 @@ fun PlayerScreen(
             controlsSeekJob?.cancel()
             playerReleasedAtomic.set(true)
             playerReleased = true
-            runCatching {
-                val safeDuration = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
-                val safeProgressPercent = if (safeDuration > 0L) {
-                    ((exoPlayer.currentPosition.toDouble() / safeDuration.toDouble()) * 100.0)
-                        .toInt()
-                        .coerceIn(0, 100)
-                } else {
-                    0
+            if (!nextEpisodeTransitionInProgress) {
+                runCatching {
+                    val safeDuration = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
+                    val safeProgressPercent = if (safeDuration > 0L) {
+                        ((exoPlayer.currentPosition.toDouble() / safeDuration.toDouble()) * 100.0)
+                            .toInt()
+                            .coerceIn(0, 100)
+                    } else {
+                        0
+                    }
+                    viewModel.saveProgress(
+                        exoPlayer.currentPosition,
+                        safeDuration,
+                        safeProgressPercent,
+                        isPlaying = exoPlayer.isPlaying,
+                        playbackState = exoPlayer.playbackState
+                    )
                 }
-                viewModel.saveProgress(
-                    exoPlayer.currentPosition,
-                    safeDuration,
-                    safeProgressPercent,
-                    isPlaying = exoPlayer.isPlaying,
-                    playbackState = exoPlayer.playbackState
-                )
             }
             runCatching { exoPlayer.release() }
             // Restore the system stream volume if the player left it at zero.
@@ -2690,7 +2732,7 @@ fun PlayerScreen(
                             if (mediaType == MediaType.TV && nextEpisodeIdentity != null) {
                                 val selected = uiState.selectedStream
                                 val next = nextEpisodeIdentity ?: return@onKeyEvent true
-                                onPlayNext(
+                                playNextEpisode(
                                     next,
                                     selected?.addonId?.takeIf { it.isNotBlank() },
                                     selected?.source?.takeIf { it.isNotBlank() },
@@ -3690,7 +3732,7 @@ fun PlayerScreen(
                                 onClick = {
                                     val next = nextEpisodeIdentity ?: return@PlayerIconButton
                                     val selected = uiState.selectedStream
-                                    onPlayNext(
+                                    playNextEpisode(
                                         next,
                                         selected?.addonId?.takeIf { it.isNotBlank() },
                                         selected?.source?.takeIf { it.isNotBlank() },
