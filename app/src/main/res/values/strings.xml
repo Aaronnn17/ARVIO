@@ -576,6 +576,17 @@
     <string name="settings_badge_delete">DELETE</string>
     <string name="settings_n_selected">%1$d selected</string>
     <string name="settings_section_playlists">PLAYLISTS</string>
+    <string name="settings_stalker_title">Stalker portal</string>
+    <string name="settings_stalker_value_configured">Configured</string>
+    <string name="settings_stalker_value_unconfigured">Not configured</string>
+    <string name="settings_stalker_label_portal_url">Portal URL</string>
+    <string name="settings_stalker_ph_portal_url">e.g. http://portal.example.com/c/</string>
+    <string name="settings_stalker_label_mac">MAC address</string>
+    <string name="settings_stalker_ph_mac">e.g. 00:1A:79:XX:XX:XX</string>
+    <string name="settings_help_stalker">Stalker portal</string>
+    <string name="settings_help_stalker_desc">Connect a Stalker/Ministra portal with its portal URL and your MAC address. Live channels are added to your TV playlists.</string>
+    <string name="settings_add_stalker_portal">Add Stalker portal</string>
+    <string name="settings_stalker_middleware_hint">Stalker / Ministra middleware</string>
     <string name="settings_section_options">OPTIONS</string>
     <string name="settings_iptv_channel_order">Channel order</string>
     <string name="settings_iptv_channel_order_description">Choose how channels are ordered within each group</string>
