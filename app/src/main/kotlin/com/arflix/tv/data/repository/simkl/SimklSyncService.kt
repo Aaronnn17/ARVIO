@@ -4,6 +4,8 @@ import com.arflix.tv.data.api.SimklAddToListBody
 import com.arflix.tv.data.api.SimklAllItemsResponse
 import com.arflix.tv.data.api.SimklApi
 import com.arflix.tv.data.api.SimklEpisodeRef
+import com.arflix.tv.data.api.SimklHistoryMovieItem
+import com.arflix.tv.data.api.SimklHistoryShowItem
 import com.arflix.tv.data.api.SimklIds
 import com.arflix.tv.data.api.SimklMovieRef
 import com.arflix.tv.data.api.SimklSeasonRef
@@ -15,6 +17,8 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.repository.ContinueWatchingItem
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
+import com.google.gson.Gson
+import com.google.gson.JsonElement
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -44,6 +48,7 @@ class SimklSyncService @Inject constructor(
     }
 
     private val clientId: String get() = Constants.SIMKL_CLIENT_ID
+    private val gson = Gson()
 
     private val syncMutex = Mutex()
     private var activeTokenScope: Int? = null
@@ -146,13 +151,19 @@ class SimklSyncService @Inject constructor(
 
     private suspend fun refreshSnapshot(authHeader: String): SnapshotRefreshOutcome = coroutineScope {
         val moviesRequest = async {
-            fetchSnapshotPart("Movies") { simklApi.getAllItems(authHeader, clientId, "movies") }
+            fetchSnapshotPart("Movies") {
+                decodeAllItems("movies", simklApi.getAllItems(authHeader, clientId, "movies"))
+            }
         }
         val showsRequest = async {
-            fetchSnapshotPart("Shows") { simklApi.getAllItems(authHeader, clientId, "shows") }
+            fetchSnapshotPart("Shows") {
+                decodeAllItems("shows", simklApi.getAllItems(authHeader, clientId, "shows"))
+            }
         }
         val animeRequest = async {
-            fetchSnapshotPart("Anime") { simklApi.getAllItems(authHeader, clientId, "anime") }
+            fetchSnapshotPart("Anime") {
+                decodeAllItems("anime", simklApi.getAllItems(authHeader, clientId, "anime"))
+            }
         }
         val playbackRequest = async {
             fetchSnapshotPart("Playback") { simklApi.getPlayback(authHeader, clientId) }
@@ -184,6 +195,28 @@ class SimklSyncService @Inject constructor(
             hasUsableSnapshot = hasUsableSnapshot,
             complete = movies.succeeded && shows.succeeded && anime.succeeded
         )
+    }
+
+    private fun decodeAllItems(type: String, payload: JsonElement): SimklAllItemsResponse {
+        if (payload.isJsonObject) {
+            return gson.fromJson(payload, SimklAllItemsResponse::class.java)
+        }
+        if (!payload.isJsonArray) {
+            throw IllegalStateException("Unexpected Simkl $type library response")
+        }
+
+        return when (type) {
+            "movies" -> SimklAllItemsResponse(
+                movies = payload.asJsonArray.map { gson.fromJson(it, SimklHistoryMovieItem::class.java) }
+            )
+            "shows" -> SimklAllItemsResponse(
+                shows = payload.asJsonArray.map { gson.fromJson(it, SimklHistoryShowItem::class.java) }
+            )
+            "anime" -> SimklAllItemsResponse(
+                anime = payload.asJsonArray.map { gson.fromJson(it, SimklHistoryShowItem::class.java) }
+            )
+            else -> throw IllegalArgumentException("Unsupported Simkl library type: $type")
+        }
     }
 
     private fun rebuildCaches(

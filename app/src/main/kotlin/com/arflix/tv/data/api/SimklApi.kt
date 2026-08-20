@@ -1,5 +1,6 @@
 package com.arflix.tv.data.api
 
+import com.google.gson.JsonElement
 import com.google.gson.annotations.SerializedName
 import okhttp3.ResponseBody
 import retrofit2.Response
@@ -74,7 +75,7 @@ interface SimklApi {
         @Query("episode_watched_at") episodeWatchedAt: String = "yes",
         @Query("include_all_episodes") includeAllEpisodes: String = "yes",
         @Query("next_watch_info") nextWatchInfo: String = "yes"
-    ): SimklAllItemsResponse
+    ): JsonElement
 
     @GET("sync/playback")
     suspend fun getPlayback(

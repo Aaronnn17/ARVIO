@@ -13,6 +13,7 @@ import com.arflix.tv.data.api.TmdbMediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.repository.sync.SyncProviderStore
 import com.google.gson.Gson
+import com.google.gson.JsonElement
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -33,6 +34,11 @@ class SimklIntegrationTest {
     private lateinit var scrobbler: SimklScrobbler
     private lateinit var syncService: SimklSyncService
     private lateinit var tmdbApi: TmdbApi
+
+    private fun emptyLibraryPayload(): JsonElement = Gson().toJsonTree(SimklAllItemsResponse())
+
+    private fun libraryPayload(json: String): JsonElement =
+        Gson().fromJson(json, JsonElement::class.java)
 
     @Before
     fun setUp() {
@@ -167,7 +173,7 @@ class SimklIntegrationTest {
         coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
         coEvery { simklApi.getActivities(any(), any()) } returns SimklActivitiesResponse(all = "2026-08-12T10:00:00Z")
         coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
-            SimklAllItemsResponse()
+            emptyLibraryPayload()
 
         syncService.syncIfNeeded(force = true)
 
@@ -187,11 +193,30 @@ class SimklIntegrationTest {
     }
 
     @Test
+    fun testPlainArrayLibraryResponseIsAccepted() = runBlocking {
+        coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
+        coEvery { simklApi.getActivities(any(), any()) } returns
+            SimklActivitiesResponse(all = "2026-08-20T10:00:00Z")
+        coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
+            libraryPayload("[]")
+        coEvery {
+            simklApi.getAllItems(any(), any(), "movies", any(), any(), any(), any(), any(), any())
+        } returns libraryPayload(
+            """[{"status":"plantowatch","movie":{"title":"Live Shape Movie","year":2026,"ids":{"tmdb":880}}}]"""
+        )
+        coEvery { simklApi.getPlayback(any(), any()) } returns emptyList()
+
+        val library = syncService.getLibraryItems("plantowatch", forceRefresh = true)
+
+        assertEquals(listOf(880), library.map { it.id })
+    }
+
+    @Test
     fun testEmptyAccountSnapshotIsNotReloadedOnEveryRead() = runBlocking {
         coEvery { syncProviderStore.getSimklAccessToken() } returns "token_123"
         coEvery { simklApi.getActivities(any(), any()) } returns SimklActivitiesResponse(all = null)
         coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
-            SimklAllItemsResponse()
+            emptyLibraryPayload()
 
         syncService.syncIfNeeded()
         syncService.syncIfNeeded()
@@ -205,15 +230,14 @@ class SimklIntegrationTest {
         coEvery { simklApi.getActivities(any(), any()) } returns
             SimklActivitiesResponse(all = "2026-08-16T10:00:00Z")
         coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
-            SimklAllItemsResponse()
+            emptyLibraryPayload()
         coEvery {
             simklApi.getAllItems(any(), any(), "movies", any(), any(), any(), any(), any(), any())
         } throws IOException("temporary Simkl failure")
         coEvery {
             simklApi.getAllItems(any(), any(), "shows", any(), any(), any(), any(), any(), any())
-        } returns Gson().fromJson(
-            """{"shows":[{"status":"watching","show":{"title":"Available Show","year":2025,"ids":{"tmdb":440}} ,"next_to_watch":"S01E02"}]}""",
-            SimklAllItemsResponse::class.java
+        } returns libraryPayload(
+            """{"shows":[{"status":"watching","show":{"title":"Available Show","year":2025,"ids":{"tmdb":440}} ,"next_to_watch":"S01E02"}]}"""
         )
         coEvery { simklApi.getPlayback(any(), any()) } returns emptyList()
 
@@ -234,12 +258,11 @@ class SimklIntegrationTest {
         coEvery { simklApi.getActivities(any(), any()) } returns
             SimklActivitiesResponse(all = "2026-08-16T11:00:00Z")
         coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
-            SimklAllItemsResponse()
+            emptyLibraryPayload()
         coEvery {
             simklApi.getAllItems(any(), any(), "movies", any(), any(), any(), any(), any(), any())
-        } returns Gson().fromJson(
-            """{"movies":[{"status":"plantowatch","movie":{"title":"Saved Movie","year":2024,"ids":{"tmdb":550}}}]}""",
-            SimklAllItemsResponse::class.java
+        } returns libraryPayload(
+            """{"movies":[{"status":"plantowatch","movie":{"title":"Saved Movie","year":2024,"ids":{"tmdb":550}}}]}"""
         )
         coEvery { simklApi.getPlayback(any(), any()) } returns emptyList()
 
@@ -260,12 +283,11 @@ class SimklIntegrationTest {
         coEvery { simklApi.getActivities(any(), any()) } returns
             SimklActivitiesResponse(all = "2026-08-16T12:00:00Z")
         coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
-            SimklAllItemsResponse()
+            emptyLibraryPayload()
         coEvery {
             simklApi.getAllItems(any(), any(), "anime", any(), any(), any(), any(), any(), any())
-        } returns Gson().fromJson(
-            """{"anime":[{"status":"plantowatch","show":{"title":"Simkl Anime","year":2025,"ids":{"simkl":98765}}}]}""",
-            SimklAllItemsResponse::class.java
+        } returns libraryPayload(
+            """{"anime":[{"status":"plantowatch","show":{"title":"Simkl Anime","year":2025,"ids":{"simkl":98765}}}]}"""
         )
         coEvery { simklApi.getPlayback(any(), any()) } returns emptyList()
         coEvery {
@@ -303,12 +325,11 @@ class SimklIntegrationTest {
         coEvery { simklApi.getActivities(any(), any()) } returns
             SimklActivitiesResponse(all = "2026-08-12T12:00:00Z")
         coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
-            SimklAllItemsResponse()
+            emptyLibraryPayload()
         coEvery {
             simklApi.getAllItems(any(), any(), "shows", any(), any(), any(), any(), any(), any())
-        } returns Gson().fromJson(
-            """{"shows":[{"status":"watching","last_watched_at":"2026-08-11T20:00:00Z","show":{"title":"Up Next Show","year":2025,"runtime":45,"ids":{"tmdb":200}},"next_to_watch":"S02E04","next_to_watch_info":{"title":"The Return","season":2,"episode":4,"date":"2026-08-12T20:00:00Z"},"watched_episodes_count":12,"total_episodes_count":20}]}""",
-            SimklAllItemsResponse::class.java
+        } returns libraryPayload(
+            """{"shows":[{"status":"watching","last_watched_at":"2026-08-11T20:00:00Z","show":{"title":"Up Next Show","year":2025,"runtime":45,"ids":{"tmdb":200}},"next_to_watch":"S02E04","next_to_watch_info":{"title":"The Return","season":2,"episode":4,"date":"2026-08-12T20:00:00Z"},"watched_episodes_count":12,"total_episodes_count":20}]}"""
         )
         coEvery { simklApi.getPlayback(any(), any()) } returns Gson().fromJson(
             """[{"id":7,"progress":42.5,"paused_at":"2026-08-12T11:00:00Z","type":"movie","movie":{"title":"Paused Movie","year":2024,"runtime":120,"ids":{"tmdb":100}}}]""",
@@ -337,12 +358,11 @@ class SimklIntegrationTest {
         coEvery { simklApi.getActivities(any(), any()) } returns
             SimklActivitiesResponse(all = "2026-08-14T12:00:00Z")
         coEvery { simklApi.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
-            SimklAllItemsResponse()
+            emptyLibraryPayload()
         coEvery {
             simklApi.getAllItems(any(), any(), "shows", any(), any(), any(), any(), any(), any())
-        } returns Gson().fromJson(
-            """{"shows":[{"status":"watching","last_watched_at":"2026-08-14T11:00:00Z","show":{"title":"Current Show","ids":{"tmdb":200}},"seasons":[{"number":1,"episodes":[{"number":1},{"number":2}]}],"next_to_watch":"S01E03"},{"status":"plantowatch","show":{"title":"Planned Show","ids":{"tmdb":300}}}]}""",
-            SimklAllItemsResponse::class.java
+        } returns libraryPayload(
+            """{"shows":[{"status":"watching","last_watched_at":"2026-08-14T11:00:00Z","show":{"title":"Current Show","ids":{"tmdb":200}},"seasons":[{"number":1,"episodes":[{"number":1},{"number":2}]}],"next_to_watch":"S01E03"},{"status":"plantowatch","show":{"title":"Planned Show","ids":{"tmdb":300}}}]}"""
         )
         coEvery { simklApi.getPlayback(any(), any()) } returns emptyList()
 
