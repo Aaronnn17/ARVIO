@@ -2,6 +2,9 @@
 
 This update improves tracking libraries, anime episode identity, playback finalization, Discord integration, IPTV settings, AI subtitles, profile selection, and the ARVIO web experience.
 
+## Compatibility
+- Added 16 KB memory-page support to the Play release native libraries.
+
 ## Tracking and Library
 - Fixed SIMKL libraries appearing empty by accepting the live list response used for Movies, Shows, and Anime while retaining compatibility with wrapped responses.
 - Restored Trakt personal and custom list contents in Library and kept list loading isolated to the active profile.

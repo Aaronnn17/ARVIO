@@ -24,6 +24,7 @@ val hasDiscordSdk = discordSdkAar.isFile
 android {
     namespace = "com.arflix.tv"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
 
     flavorDimensions += "distribution"
 
@@ -33,7 +34,7 @@ android {
         // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
         minSdk = 23
         targetSdk = 36
-        versionCode = 309
+        versionCode = 310
         versionName = "1.9.995"
         buildConfigField("String", "GITHUB_OWNER", "\"ProdigyV21\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
@@ -74,6 +75,7 @@ android {
             externalNativeBuild {
                 cmake {
                     arguments += "-DANDROID_STL=c++_shared"
+                    arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
                 }
             }
         }

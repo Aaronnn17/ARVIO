@@ -9,6 +9,8 @@ All notable changes to this project are documented in this file.
 
 ## [1.9.995] - 2026-08-20
 
+- Added 16 KB memory-page support to the Play release native libraries.
+
 ### Tracking and Library
 - Fixed SIMKL libraries appearing empty by accepting the live list response used for Movies, Shows, and Anime while retaining compatibility with wrapped responses.
 - Restored Trakt personal and custom list contents in Library and kept list loading isolated to the active profile.
