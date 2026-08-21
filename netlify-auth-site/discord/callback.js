@@ -9,8 +9,22 @@
   var message = document.getElementById("message");
   var codeContainer = document.getElementById("code-container");
   var codeVal = document.getElementById("code-val");
+  var mobilePrefix = "mobile_";
+  var tvPrefix = "tv_";
+  var isMobileFlow = Boolean(state && state.indexOf(mobilePrefix) === 0);
+  var isTvFlow = Boolean(state && state.indexOf(tvPrefix) === 0);
+  var deepLink = null;
 
-  function renderSuccessLink(textPrefix, linkText) {
+  function buildDeepLink() {
+    var query = code
+      ? "code=" + encodeURIComponent(code)
+      : "error=" + encodeURIComponent(error || "authorization_failed");
+    if (state) query += "&state=" + encodeURIComponent(state);
+    if (errorDesc) query += "&error_description=" + encodeURIComponent(errorDesc);
+    return "arvio://discord/auth?" + query;
+  }
+
+  function renderDeepLink(textPrefix, linkText) {
     message.textContent = textPrefix;
     var link = document.createElement("a");
     link.href = deepLink;
@@ -25,7 +39,15 @@
   if (error) {
     heading.textContent = "Authorization Failed";
     heading.style.color = "#ff8a76";
-    message.textContent = errorDesc || error;
+    if (isMobileFlow) {
+      deepLink = buildDeepLink();
+      try {
+        window.location.href = deepLink;
+      } catch (e) {}
+      renderDeepLink((errorDesc || error) + ". If ARVIO did not open automatically, ", "tap here to return to ARVIO");
+    } else {
+      message.textContent = errorDesc || error;
+    }
     return;
   }
 
@@ -38,40 +60,53 @@
   if (codeVal) {
     codeVal.textContent = code;
   }
-  var deepLink = "arvio://discord/auth?code=" + encodeURIComponent(code) + (state ? "&state=" + encodeURIComponent(state) : "");
-  try {
-    window.location.href = deepLink;
-  } catch (e) {}
 
-  // If we have a TV session ID / state, notify the backend
-  if (state && /^[A-Za-z0-9_-]{40,128}$/.test(state)) {
+  if (isMobileFlow) {
+    deepLink = buildDeepLink();
+    try {
+      window.location.href = deepLink;
+    } catch (e) {}
+    heading.textContent = "Discord Connected! 🎉";
+    heading.style.color = "#6ee7a3";
+    renderDeepLink("Authorized! If ARVIO did not open automatically, ", "tap here to return to ARVIO");
+    return;
+  }
+
+  if (isTvFlow) {
+    var deviceCode = state.substring(tvPrefix.length);
+    if (!/^[A-Za-z0-9_-]{40,128}$/.test(deviceCode)) {
+      heading.textContent = "Invalid Pairing Session";
+      heading.style.color = "#ff8a76";
+      message.textContent = "Please scan the QR code on your TV again.";
+      return;
+    }
+
     try {
       var response = await fetch("/.netlify/functions/discord-auth-callback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ device_code: state, code: code })
+        body: JSON.stringify({ device_code: deviceCode, code: code })
       });
 
       if (response.ok) {
         heading.textContent = "Discord Connected! 🎉";
         heading.style.color = "#6ee7a3";
-        renderSuccessLink("Authorized successfully! If ARVIO did not open automatically, ", "tap here to return to ARVIO");
+        message.textContent = "Your TV is connected. You can close this page.";
       } else {
         heading.textContent = "Could Not Notify TV";
         heading.style.color = "#ff8a76";
-        renderSuccessLink("Authorized with Discord, but the pairing session could not be delivered to your TV. If you are on your device, ", "tap here to return to ARVIO");
+        message.textContent = "Authorized with Discord, but the pairing session could not be delivered to your TV. Please scan the QR code again.";
       }
     } catch (e) {
       console.error(e);
       heading.textContent = "Could Not Notify TV";
       heading.style.color = "#ff8a76";
-      renderSuccessLink("Authorized with Discord, but network delivery to your TV failed. If you are on your device, ", "tap here to return to ARVIO");
+      message.textContent = "Authorized with Discord, but network delivery to your TV failed. Please scan the QR code again.";
     }
     return;
   }
 
-  // Direct / no-state flow (e.g. mobile deep link handoff)
-  heading.textContent = "Discord Connected! 🎉";
-  heading.style.color = "#6ee7a3";
-  renderSuccessLink("Authorized! If ARVIO did not open automatically, ", "tap here to return to ARVIO");
+  heading.textContent = "Invalid Authorization Session";
+  heading.style.color = "#ff8a76";
+  message.textContent = "Please start Discord authorization from ARVIO again.";
 })();

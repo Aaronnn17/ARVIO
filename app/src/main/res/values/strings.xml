@@ -1236,7 +1236,6 @@
     <string name="live_menu_unhide_category">Unhide category</string>
     <string name="ratings">Episode Ratings</string>
 
-    
     <!-- Discord Rich Presence -->
     <string name="discord_connect_title">Connect Discord</string>
     <string name="discord_rpc_subtitle">Rich Presence Integration</string>

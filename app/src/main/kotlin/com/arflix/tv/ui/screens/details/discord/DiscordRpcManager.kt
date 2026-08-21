@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.details.discord
 
 import android.app.Activity
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Base64
 import android.util.Log
@@ -26,6 +27,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+
+internal const val DISCORD_MOBILE_OAUTH_STATE_PREFIX = "mobile_"
+
+internal fun isValidDiscordMobileOAuthState(storedState: String?, callbackState: String?): Boolean =
+    !storedState.isNullOrBlank() &&
+        storedState.startsWith(DISCORD_MOBILE_OAUTH_STATE_PREFIX) &&
+        callbackState == storedState
 
 object DiscordRpcManager {
     private const val TAG = "DiscordRpcManager"
@@ -184,7 +192,7 @@ object DiscordRpcManager {
     fun getDirectOAuthUrl(): String? {
         if (!::appContext.isInitialized) return null
         val verifier = PkceUtil.generateCodeVerifier()
-        val state = PkceUtil.generateCodeVerifier()
+        val state = DISCORD_MOBILE_OAUTH_STATE_PREFIX + PkceUtil.generateCodeVerifier()
         val saved = runCatching {
             appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
@@ -295,6 +303,7 @@ object DiscordRpcManager {
             val tokens = exchangeCodeForToken(code, verifier)
             if (tokens == null) {
                 Log.e(TAG, "Discord token exchange failed.")
+                clearPendingOAuth(prefs)
                 _isAuthLoading.value = false
                 return@launch
             }
@@ -312,26 +321,43 @@ object DiscordRpcManager {
     }
 
     fun onLoginDeepLink(uri: Uri) {
-        val error = uri.getQueryParameter("error")
-        if (error != null) {
-            Log.e(TAG, "Discord authorization failed: $error")
+        if (!::appContext.isInitialized) return
+
+        val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val storedState = prefs.getString(KEY_OAUTH_STATE, null)
+        val callbackState = uri.getQueryParameter("state")
+        if (!isValidDiscordMobileOAuthState(storedState, callbackState)) {
+            Log.w(TAG, "Missing or mismatched OAuth state in Discord deep link; ignoring.")
+            clearPendingOAuth(prefs)
             _isAuthLoading.value = false
             return
         }
-        if (::appContext.isInitialized) {
-            val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val storedState = prefs.getString(KEY_OAUTH_STATE, null)
-            val callbackState = uri.getQueryParameter("state")
-            if (!storedState.isNullOrBlank()) {
-                if (callbackState != storedState) {
-                    Log.w(TAG, "OAuth state mismatch in Discord deep link; ignoring.")
-                    prefs.edit().remove(KEY_OAUTH_STATE).apply()
-                    return
-                }
-                prefs.edit().remove(KEY_OAUTH_STATE).apply()
-            }
+
+        val error = uri.getQueryParameter("error")
+        if (error != null) {
+            Log.e(TAG, "Discord authorization failed: $error")
+            clearPendingOAuth(prefs)
+            _isAuthLoading.value = false
+            return
         }
-        uri.getQueryParameter("code")?.let(::completeAuthWithCode)
+
+        val code = uri.getQueryParameter("code")
+        if (code.isNullOrBlank() || code.length > 2048) {
+            Log.w(TAG, "Missing or invalid Discord authorization code; ignoring.")
+            clearPendingOAuth(prefs)
+            _isAuthLoading.value = false
+            return
+        }
+
+        prefs.edit().remove(KEY_OAUTH_STATE).apply()
+        completeAuthWithCode(code)
+    }
+
+    private fun clearPendingOAuth(prefs: SharedPreferences) {
+        prefs.edit()
+            .remove(KEY_CODE_VERIFIER)
+            .remove(KEY_OAUTH_STATE)
+            .apply()
     }
 
     private suspend fun startCloudSession(challenge: String): PairingSession? =
