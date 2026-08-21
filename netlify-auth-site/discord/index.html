@@ -56,7 +56,7 @@
         "&response_type=code" +
         "&redirect_uri=" + encodeURIComponent(redirectUri) +
         "&scope=" + encodeURIComponent("identify sdk.social_layer_presence") +
-        "&state=" + encodeURIComponent(session) +
+        "&state=" + encodeURIComponent("tv_" + session) +
         "&code_challenge=" + encodeURIComponent(challenge) +
         "&code_challenge_method=S256";
 
