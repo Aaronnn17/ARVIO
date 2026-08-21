@@ -34,6 +34,7 @@ object DiscordRpcManager {
     private const val KEY_REFRESH_TOKEN = "refresh_token"
     private const val KEY_ACCESS_TOKEN_EXPIRES_AT = "access_token_expires_at"
     private const val KEY_CODE_VERIFIER = "code_verifier"
+    private const val KEY_OAUTH_STATE = "oauth_state"
     private const val KEY_USERNAME = "username"
     private const val REDIRECT_URI_WEB = "https://auth.arvio.tv/discord/callback"
     private const val TOKEN_REFRESH_MARGIN_MS = 60_000L
@@ -172,7 +173,52 @@ object DiscordRpcManager {
             Log.w(TAG, "Discord Rich Presence is unavailable in this build.")
             return
         }
-        openAuthDialog()
+        val isTv = com.arflix.tv.util.detectDeviceType(context) == com.arflix.tv.util.DeviceType.TV
+        if (isTv) {
+            openAuthDialog()
+        } else {
+            startBrowserAuth(context)
+        }
+    }
+
+    fun getDirectOAuthUrl(): String? {
+        if (!::appContext.isInitialized) return null
+        val verifier = PkceUtil.generateCodeVerifier()
+        val state = PkceUtil.generateCodeVerifier()
+        val saved = runCatching {
+            appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_CODE_VERIFIER, verifier)
+                .putString(KEY_OAUTH_STATE, state)
+                .commit()
+        }.getOrDefault(false)
+        if (!saved) return null
+
+        val challenge = PkceUtil.generateCodeChallenge(verifier)
+        return "https://discord.com/api/oauth2/authorize?" +
+            "client_id=$discordClientId" +
+            "&response_type=code" +
+            "&redirect_uri=${URLEncoder.encode(REDIRECT_URI_WEB, "UTF-8")}" +
+            "&scope=${URLEncoder.encode("identify sdk.social_layer_presence", "UTF-8")}" +
+            "&state=$state" +
+            "&code_challenge=$challenge" +
+            "&code_challenge_method=S256" +
+            "&prompt=consent"
+    }
+
+    fun startBrowserAuth(context: Context) {
+        if (!initialized) init(context)
+        if (!isSupported) return
+        val url = getDirectOAuthUrl() ?: return
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching {
+            context.startActivity(intent)
+        }.onFailure { error ->
+            Log.e(TAG, "Failed to launch browser for Discord OAuth", error)
+            openAuthDialog()
+        }
     }
 
     private fun openAuthDialog() {
@@ -230,6 +276,7 @@ object DiscordRpcManager {
             appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .remove(KEY_CODE_VERIFIER)
+                .remove(KEY_OAUTH_STATE)
                 .apply()
         }
     }
@@ -253,7 +300,10 @@ object DiscordRpcManager {
             }
 
             saveTokens(tokens)
-            prefs.edit().remove(KEY_CODE_VERIFIER).apply()
+            prefs.edit()
+                .remove(KEY_CODE_VERIFIER)
+                .remove(KEY_OAUTH_STATE)
+                .apply()
             _isLoggedIn.value = true
             updateUsername(tokens.accessToken)
             connectInternal(tokens.accessToken)
@@ -267,6 +317,19 @@ object DiscordRpcManager {
             Log.e(TAG, "Discord authorization failed: $error")
             _isAuthLoading.value = false
             return
+        }
+        if (::appContext.isInitialized) {
+            val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val storedState = prefs.getString(KEY_OAUTH_STATE, null)
+            val callbackState = uri.getQueryParameter("state")
+            if (!storedState.isNullOrBlank()) {
+                if (callbackState != storedState) {
+                    Log.w(TAG, "OAuth state mismatch in Discord deep link; ignoring.")
+                    prefs.edit().remove(KEY_OAUTH_STATE).apply()
+                    return
+                }
+                prefs.edit().remove(KEY_OAUTH_STATE).apply()
+            }
         }
         uri.getQueryParameter("code")?.let(::completeAuthWithCode)
     }

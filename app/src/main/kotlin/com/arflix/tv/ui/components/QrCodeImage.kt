@@ -19,18 +19,25 @@ fun QrCodeImage(
     foreground: Int = android.graphics.Color.BLACK,
     background: Int = android.graphics.Color.WHITE,
 ) {
+    if (sizePx <= 0 || data.isBlank()) return
+
     val bitmap = remember(data, sizePx, foreground, background) {
-        val writer = QRCodeWriter()
-        val matrix = writer.encode(data, BarcodeFormat.QR_CODE, sizePx, sizePx)
-        val pixels = IntArray(sizePx * sizePx)
-        for (y in 0 until sizePx) {
-            val offset = y * sizePx
-            for (x in 0 until sizePx) {
-                pixels[offset + x] = if (matrix[x, y]) foreground else background
+        try {
+            val writer = QRCodeWriter()
+            val matrix = writer.encode(data, BarcodeFormat.QR_CODE, sizePx, sizePx)
+            val pixels = IntArray(sizePx * sizePx)
+            for (y in 0 until sizePx) {
+                val offset = y * sizePx
+                for (x in 0 until sizePx) {
+                    pixels[offset + x] = if (matrix[x, y]) foreground else background
+                }
             }
+            Bitmap.createBitmap(pixels, sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        } catch (e: Exception) {
+            android.util.Log.e("QrCodeImage", "Failed to generate QR code bitmap", e)
+            null
         }
-        Bitmap.createBitmap(pixels, sizePx, sizePx, Bitmap.Config.ARGB_8888)
-    }
+    } ?: return
 
     Image(
         bitmap = bitmap.asImageBitmap(),

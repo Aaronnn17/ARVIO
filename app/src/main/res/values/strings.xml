@@ -1235,4 +1235,13 @@
     <string name="live_menu_hide_category">Hide category</string>
     <string name="live_menu_unhide_category">Unhide category</string>
     <string name="ratings">Episode Ratings</string>
+
+    
+    <!-- Discord Rich Presence -->
+    <string name="discord_connect_title">Connect Discord</string>
+    <string name="discord_rpc_subtitle">Rich Presence Integration</string>
+    <string name="discord_qr_explanation">Scan this QR code with your phone camera to authorize Discord Rich Presence for your profile.</string>
+    <string name="discord_connecting">Connecting...</string>
+    <string name="discord_waiting_approval">Waiting for approval...</string>
+    <string name="discord_qr_instructions">1. Scan QR code on your phone\n2. Tap \'Authorize\' on Discord\n3. Connects automatically</string>
 </resources>
