@@ -1389,7 +1389,31 @@ fun PlayerScreen(
                                         trackTexts.any { it.contains("songs", ignoreCase = true) && it.contains("sign", ignoreCase = true) }
                                     // Image-based subtitle tracks (PGS/VOBSUB/DVB) carry no text — they
                                     // can't be AI-translated, so flag them to exclude as a translation source.
-                                    val isBitmap = isBitmapSubtitleMime(format.sampleMimeType)
+                                    // MIME is the primary signal, but some containers report a
+                                    // null/generic sampleMimeType for PGS/VOBSUB tracks. Cross-check
+                                    // the label/id the same way isForced does, so an image track can
+                                    // never be picked as the AI translation source.
+                                    // Media3 parses subtitles during extraction and rewrites the
+                                    // sample MIME to application/x-media3-cues, stashing the REAL
+                                    // one in Format.codecs. Reading sampleMimeType alone therefore
+                                    // reports every track as text and lets a PGS/VOBSUB image track
+                                    // be picked as the AI translation source.
+                                    val originalSubtitleMime =
+                                        if (format.sampleMimeType == MimeTypes.APPLICATION_MEDIA3_CUES) {
+                                            format.codecs ?: format.sampleMimeType
+                                        } else {
+                                            format.sampleMimeType
+                                        }
+                                    // Label cross-check only for EMBEDDED tracks: addon labels carry
+                                    // release names (".BluRay.AVC.DTS-HD.MA-PGS"), and a false positive
+                                    // there would drop a perfectly good text sub from the find-best-match
+                                    // candidates, which also consult isBitmap.
+                                    val isBitmap = isBitmapSubtitleMime(originalSubtitleMime) ||
+                                        (!isAddon && trackTexts.any { t ->
+                                            t.contains("pgs", ignoreCase = true) ||
+                                                t.contains("vobsub", ignoreCase = true) ||
+                                                t.contains("dvbsub", ignoreCase = true)
+                                        })
                                     textTracks.add(Subtitle(
                                         id = if (isAddon) {
                                             matched?.id ?: formatTrackId.substringAfter(ADDON_SUB_ID_PREFIX)

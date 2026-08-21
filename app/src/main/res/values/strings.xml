@@ -980,6 +980,7 @@
     <string name="player_ai_rate_limited">AI subtitles: rate limit hit — translation paused.</string>
     <string name="player_ai_invalid_key">AI subtitles: invalid API key.</string>
     <string name="player_ai_translation_error">AI subtitles: translation error — %1$s</string>
+    <string name="player_ai_no_text_source">AI subtitles: this file only has image-based subtitles (PGS) — there is no text to translate.</string>
     <string name="player_error_imdb_resolve">Unable to resolve IMDB ID. Try again.</string>
     <string name="details_error_load_failed">Failed to load details</string>
 
@@ -1220,6 +1221,9 @@
     <string name="iptv_xtream_detected">Detected Xtream provider. Loading live channels...</string>
     <string name="iptv_xtream_timeout">Xtream provider timed out while loading live channels.</string>
     <string name="library_default">Library</string>
+    <!-- Bottom bar / sidebar entry for the watchlist destination. Separate from
+         library_default, which names an unnamed home-server collection. -->
+    <string name="nav_library">Library</string>
     <string name="library_named">Library %1$s</string>
     <string name="program_no_title">No Title</string>
     <string name="program_unknown">Unknown program</string>

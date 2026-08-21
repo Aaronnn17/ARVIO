@@ -301,6 +301,9 @@ class PlayerViewModel @Inject constructor(
     private var aiErrorToastShown = false
     // The source subtitle used for AI translation — retained so the user can re-activate AI after switching away.
     private var aiSourceSubtitle: Subtitle? = null
+    // AI sources proven at runtime to carry no text (image tracks whose MIME/label didn't say so).
+    // Per-file state: cleared on every new media/stream so it can't leak across sources.
+    private val untranslatableSourceIds = mutableSetOf<String>()
 
     val translationManager: SubtitleTranslationManager = SubtitleTranslationManager(
         service = SubtitleTranslationService(
@@ -311,6 +314,7 @@ class PlayerViewModel @Inject constructor(
         scope = viewModelScope
     ).also { mgr ->
         mgr.onTranslatingChanged = { isTranslating -> _isTranslatingLive.value = isTranslating }
+        mgr.onUntranslatableSource = { viewModelScope.launch { onAiSourceUntranslatable() } }
         mgr.onBatchResult = { success, errorMessage ->
             // Content-policy blocks are not actionable (Gemini's non-configurable output filter
             // on raw movie dialogue) and don't stop translation of other windows — the service
@@ -596,6 +600,7 @@ class PlayerViewModel @Inject constructor(
             translationManager.updateService(apiKey = aiApiKey, model = aiModel)
             translationManager.removeHearingImpaired = aiRemoveHearingImpaired
             translationManager.isEnabled = false
+            untranslatableSourceIds.clear()
             translationManager.reset()
 
             _uiState.value = PlayerUiState(
@@ -1653,7 +1658,7 @@ class PlayerViewModel @Inject constructor(
         fun Subtitle.isEffectivelyForced() = isForced || label.contains("forced", ignoreCase = true)
         // Bitmap subtitles (PGS/VOBSUB) are images with no text — they can't be translated,
         // so they must never be chosen as the AI source (would render a blank screen).
-        fun Subtitle.isUsableSource() = !isEffectivelyForced() && !isBitmap
+        fun Subtitle.isUsableSource() = !isEffectivelyForced() && !isBitmap && id !in untranslatableSourceIds
         fun List<Subtitle>.bestEmbedded(): Subtitle? {
             val embedded = filter { it.isEmbedded }
             // Prefer plain > SDH/CC; never use forced-only or image-based tracks as AI source
@@ -2452,6 +2457,7 @@ class PlayerViewModel @Inject constructor(
             userPickedSubtitle = false
             autoMatchAttempted = false
             aiSourceSubtitle = null
+            untranslatableSourceIds.clear()
             translationManager.isEnabled = false
 
             // Direct URL - use immediately (ExoPlayer handles redirects)
@@ -2816,6 +2822,32 @@ class PlayerViewModel @Inject constructor(
         activateAiTranslation()
         showMatchToast("No well-synced subtitle found — using AI translation")
         return true
+    }
+
+    /**
+     * The active AI source turned out to carry no text (image/PGS track). Move to another embedded
+     * text source if one exists; otherwise stop AI rather than leave the untranslated source
+     * language on screen pretending to be a translation.
+     */
+    private fun onAiSourceUntranslatable() {
+        if (!_uiState.value.isAiTranslating) return
+        val current = aiSourceSubtitle ?: return
+        // add() is false when already flagged — keeps this to one pass per source.
+        if (!untranslatableSourceIds.add(current.id)) return
+        val next = findAiSourceSubtitle(_uiState.value.subtitles)
+        if (next != null && next.id != current.id) {
+            android.util.Log.i("SubMatch", "AI source '${current.label}' has no text (image track) - switching to '${next.label}'")
+            activateAiTranslation()
+        } else {
+            android.util.Log.i("SubMatch", "AI source '${current.label}' has no text (image track) - no text source available, AI off")
+            translationManager.isEnabled = false
+            aiSourceSubtitle = null
+            _uiState.value = _uiState.value.copy(
+                isAiTranslating = false,
+                isAiAvailable = false,
+                aiErrorToast = context.getString(R.string.player_ai_no_text_source)
+            )
+        }
     }
 
     /** Existing behavior: translate the built-in/source subtitle to the target language. */
