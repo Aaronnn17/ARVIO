@@ -142,6 +142,9 @@ import com.arflix.tv.ui.components.TrailerPlayer
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
+import com.arflix.tv.data.model.SportsAddonCapabilities
+import com.arflix.tv.ui.components.SkeletonMobileHeroBanner
+import androidx.compose.material3.TextButton
 import com.arflix.tv.ui.components.MobileHeroBanner
 import com.arflix.tv.ui.components.ProfileAvatarVisual
 import com.arflix.tv.util.LocalDeviceType
@@ -1203,6 +1206,8 @@ fun HomeScreen(
             hasUpdateBadge = uiState.hasUpdateBadge,
             categoryHasMoreMap = uiState.categoryHasMoreMap,
             smoothScrolling = uiState.smoothScrolling,
+            isSlowLoading = uiState.isMobileSlowLoading,
+            onRetry = { viewModel.retryMobileHomeLoading() },
             onLoadMoreCategory = { viewModel.loadNextPageForCategory(it) },
             onItemFocusedPrefetch = {},
             onMobileCategoryVisiblePosition = { categoryId, lastVisibleItemIndex ->
@@ -2055,12 +2060,17 @@ private fun MobileHeroCarousel(
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit
 ) {
     val heroItems = remember(categories) {
-        val nonCwCats = categories.filter { it.id != "continue_watching" }
-        val firstCat = nonCwCats.getOrNull(0)
-            ?.items?.filter { it.id > 0 && !it.isPlaceholder }?.take(5)
+        val eligibleRows = categories.filter {
+            it.id != "continue_watching" &&
+                !it.id.startsWith("collection_row_") &&
+                it.id != SportsAddonCapabilities.SPORTS_CATEGORY_ROW_ID &&
+                it.id != SportsAddonCapabilities.POPULAR_LIVE_TV_ROW_ID
+        }
+        val firstCat = eligibleRows.getOrNull(0)
+            ?.items?.filter { !it.isPlaceholder && it.id > 0 && !SportsAddonCapabilities.isSportsHomeStatus(it.status) && !SportsAddonCapabilities.isSportsLockedStatus(it.status) }?.take(5)
             .orEmpty()
-        val secondCat = nonCwCats.getOrNull(1)
-            ?.items?.filter { it.id > 0 && !it.isPlaceholder }?.take(5)
+        val secondCat = eligibleRows.getOrNull(1)
+            ?.items?.filter { !it.isPlaceholder && it.id > 0 && !SportsAddonCapabilities.isSportsHomeStatus(it.status) && !SportsAddonCapabilities.isSportsLockedStatus(it.status) }?.take(5)
             .orEmpty()
         // Interleave: first[0], second[0], first[1], second[1], …
         buildList {
@@ -2072,7 +2082,53 @@ private fun MobileHeroCarousel(
         }.distinctBy { "${it.mediaType}_${it.id}" }
     }
 
-    if (heroItems.isEmpty()) return
+    if (heroItems.isEmpty()) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Profile avatar + search icon row — above the pager, respects status bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(start = 26.dp, end = 26.dp, top = 12.dp, bottom = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (currentProfile != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .clickable { onSwitchProfile() }
+                    ) {
+                        ProfileAvatarVisual(
+                            profile = currentProfile,
+                            letterFontSize = 15.sp,
+                            iconPadding = 5.dp
+                        )
+                    }
+                } else {
+                    Spacer(modifier = Modifier.size(38.dp))
+                }
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = stringResource(R.string.search),
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clickable { onNavigateToSearch() }
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 64.dp)
+            ) {
+                SkeletonMobileHeroBanner()
+            }
+        }
+        return
+    }
 
     // Circular paging: use a large virtual page count that's a multiple of heroItems.size
     // so page % heroItems.size always maps correctly and starts at item[0].
@@ -2242,6 +2298,8 @@ private fun HomeInputLayer(
     hasUpdateBadge: Boolean = false,
     categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
     smoothScrolling: Boolean = true,
+    isSlowLoading: Boolean = false,
+    onRetry: () -> Unit = {},
     onLoadMoreCategory: (String) -> Unit = {},
     onItemFocusedPrefetch: (MediaItem) -> Unit = {},
     onMobileCategoryVisiblePosition: (String, Int) -> Unit = { _, _ -> },
@@ -2664,6 +2722,8 @@ private fun HomeInputLayer(
             isMobile = isMobile,
             categoryHasMoreMap = categoryHasMoreMap,
             smoothScrolling = smoothScrolling,
+            isSlowLoading = isSlowLoading,
+            onRetry = onRetry,
             onLoadMoreCategory = onLoadMoreCategory,
             onItemFocusedPrefetch = onItemFocusedPrefetch,
             heroItem = heroItem,
@@ -2721,6 +2781,8 @@ private fun HomeRowsLayer(
     isMobile: Boolean = false,
     categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
     smoothScrolling: Boolean = true,
+    isSlowLoading: Boolean = false,
+    onRetry: () -> Unit = {},
     onLoadMoreCategory: (String) -> Unit = {},
     onItemFocusedPrefetch: (MediaItem) -> Unit = {},
     heroItem: MediaItem? = null,
@@ -2748,6 +2810,8 @@ private fun HomeRowsLayer(
             onSwitchProfile = onSwitchProfile,
             usePosterCards = usePosterCards,
             categoryHasMoreMap = categoryHasMoreMap,
+            isSlowLoading = isSlowLoading,
+            onRetry = onRetry,
             onLoadMoreCategory = onLoadMoreCategory,
             onNavigateToDetails = onNavigateToDetails,
             onItemClick = onItemClick,
@@ -2794,6 +2858,8 @@ private fun MobileHomeRowsLayer(
     onNavigateToSearch: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
     categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
+    isSlowLoading: Boolean = false,
+    onRetry: () -> Unit = {},
     onLoadMoreCategory: (String) -> Unit = {},
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit = { _, _, _, _ -> },
     onItemClick: (MediaItem) -> Unit,
@@ -2982,6 +3048,27 @@ private fun MobileHomeRowsLayer(
                                 onLongClick = onCardLongClick,
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        if (isSlowLoading) {
+            item(key = "mobile_slow_loading_indicator", contentType = "mobile_slow_loading") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Still loading your catalogue…",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 14.sp
+                    )
+                    TextButton(onClick = onRetry) {
+                        Text("Retry", color = Color(0xFF00F0D0), fontWeight = FontWeight.Bold)
                     }
                 }
             }

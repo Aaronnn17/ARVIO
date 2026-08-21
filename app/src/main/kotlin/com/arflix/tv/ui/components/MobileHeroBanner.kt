@@ -82,21 +82,24 @@ fun MobileHeroBanner(
             .aspectRatio(3f / 4f)
             .shadow(elevation = 8.dp, shape = BannerShape, clip = false)
             .clip(BannerShape)
+            .background(Color(0xFF141419))
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .border(width = 1.dp, color = CardBorder, shape = BannerShape)
     ) {
         // ── Layer 1: Full-bleed background image ────────────────────────────
-        AsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(imageUrl)
-                .precision(Precision.INEXACT)
-                .allowHardware(true)
-                .crossfade(400)
-                .build(),
-            contentDescription = title,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
+        if (imageUrl.isNotBlank()) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(imageUrl)
+                    .precision(Precision.INEXACT)
+                    .allowHardware(true)
+                    .crossfade(300)
+                    .build(),
+                contentDescription = title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
 
         // ── Layer 2: Bottom scrim spanning the lower 65% of the card ────────
         Spacer(

@@ -1753,6 +1753,22 @@ class MediaRepository @Inject constructor(
         )
     }
 
+    suspend fun loadSingleBuiltinCategory(categoryId: String): Category? {
+        val pageResult = loadHomeCategoryPage(categoryId, 1)
+        if (pageResult.items.isEmpty()) return null
+        val title = when (categoryId) {
+            "trending_movies" -> context.getString(R.string.trending_movies)
+            "trending_tv" -> context.getString(R.string.trending_series)
+            "trending_anime" -> context.getString(R.string.trending_anime)
+            else -> categoryId
+        }
+        return Category(
+            id = categoryId,
+            title = title,
+            items = pageResult.items
+        )
+    }
+
     suspend fun loadCustomCatalog(catalog: CatalogConfig, maxItems: Int = 40): Category? = coroutineScope {
         if (catalog.kind == CatalogKind.COLLECTION) {
             val page = loadCollectionCatalogPage(catalog = catalog, offset = 0, limit = maxItems)

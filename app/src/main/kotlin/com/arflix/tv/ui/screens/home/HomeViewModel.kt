@@ -113,7 +113,8 @@ data class HomeUiState(
     val showAppUpdateDialog: Boolean = false,
     val hasUpdateBadge: Boolean = false,
     val categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
-    val smoothScrolling: Boolean = false
+    val smoothScrolling: Boolean = false,
+    val isMobileSlowLoading: Boolean = false
 )
 
 @androidx.compose.runtime.Immutable
@@ -866,15 +867,26 @@ class HomeViewModel @Inject constructor(
         return category?.items?.any { !it.isPlaceholder } == true
     }
 
+    private fun isEligibleHeroItem(item: MediaItem?): Boolean {
+        if (item == null) return false
+        if (item.id <= 0 || item.isPlaceholder) return false
+        if (item.title.isBlank() || item.title.equals("Unknown", ignoreCase = true)) return false
+        if (isSportsHomeItem(item) || SportsAddonCapabilities.isSportsLockedStatus(item.status)) return false
+        if (isIptvItem(item) || isCollectionItem(item)) return false
+        return true
+    }
+
     private fun chooseInitialHero(categories: List<Category>): MediaItem? {
         val preferredRow = categories.firstOrNull { category ->
-            !category.id.startsWith("collection_row_") && category.items.any { !it.isPlaceholder }
+            !category.id.startsWith("collection_row_") &&
+                !isSportsCatalogRow(category.id) &&
+                category.items.any { isEligibleHeroItem(it) }
         }
-        return preferredRow?.items?.firstOrNull { !it.isPlaceholder }
+        return preferredRow?.items?.firstOrNull { isEligibleHeroItem(it) }
             ?: categories.asSequence()
+                .filterNot { isSportsCatalogRow(it.id) || it.id.startsWith("collection_row_") }
                 .flatMap { it.items.asSequence() }
-                .firstOrNull { !it.isPlaceholder }
-            ?: categories.firstOrNull()?.items?.firstOrNull()
+                .firstOrNull { isEligibleHeroItem(it) }
     }
 
     /**
@@ -2274,6 +2286,11 @@ class HomeViewModel @Inject constructor(
                 savedCatalogs.forEach { savedCatalogById[it.id] = it }
                 categoryPaginationStates.clear()
 
+                if (!isTvDevice) {
+                    loadMobileHomeDataProgressive(requestId, savedCatalogs, cachedContinueWatching)
+                    return@loadHome
+                }
+
                 // When Home is opened from profile selection, avoid an empty frame by showing
                 // profile-ordered skeleton rows immediately while real catalogs load.
                 if (_uiState.value.categories.isEmpty()) {
@@ -2878,6 +2895,217 @@ class HomeViewModel @Inject constructor(
                     error = if (_uiState.value.categories.isEmpty()) e.message ?: context.getString(R.string.home_failed_load_content) else null
                 )
             } finally {
+            }
+        }
+    }
+
+    private fun updateMobileCategoryRow(
+        categoryId: String,
+        newCategory: Category,
+        hasMore: Boolean = false
+    ) {
+        val currentCategories = _uiState.value.categories.toMutableList()
+        val index = currentCategories.indexOfFirst { it.id == categoryId }
+        if (index >= 0) {
+            currentCategories[index] = newCategory
+        } else {
+            currentCategories.add(newCategory)
+        }
+        categoryPaginationStates[categoryId] = CategoryPaginationState(
+            loadedCount = newCategory.items.size,
+            hasMore = hasMore
+        )
+        val currentHero = _uiState.value.heroItem
+        val newHero = if (currentHero == null || !isEligibleHeroItem(currentHero)) {
+            chooseInitialHero(currentCategories)
+        } else {
+            currentHero
+        }
+        val heroLogo = newHero?.let { getCachedLogo("${it.mediaType}_${it.id}") }
+
+        _uiState.value = _uiState.value.copy(
+            isLoading = false,
+            isInitialLoad = false,
+            categories = currentCategories,
+            heroItem = newHero,
+            heroLogoUrl = heroLogo ?: _uiState.value.heroLogoUrl,
+            categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
+            error = null,
+            isMobileSlowLoading = false
+        )
+        if (newHero != null && _uiState.value.heroLogoUrl == null) {
+            hydrateHeroDetailsIfNeeded(newHero)
+        }
+        preloadLogosForCategoryItems(newCategory.items.take(8))
+    }
+
+    private fun preloadLogosForCategoryItems(items: List<MediaItem>) {
+        viewModelScope.launch(networkDispatcher) {
+            items.filter { isActionableMediaItem(it) && !isIptvItem(it) }.forEach { item ->
+                val key = "${item.mediaType}_${item.id}"
+                if (!cardLogoUrls.containsKey(key)) {
+                    val cached = getCachedLogo(key)
+                    if (cached != null) {
+                        withContext(Dispatchers.Main.immediate) {
+                            cardLogoUrls[key] = cached
+                        }
+                    } else {
+                        try {
+                            val url = mediaRepository.getLogoUrl(item.mediaType, item.id)
+                            if (url != null) {
+                                withContext(Dispatchers.Main.immediate) {
+                                    cardLogoUrls[key] = url
+                                }
+                            }
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun retryMobileHomeLoading() {
+        _uiState.value = _uiState.value.copy(isMobileSlowLoading = false, isLoading = true)
+        loadHomeData()
+    }
+
+    private fun loadMobileHomeDataProgressive(
+        requestId: Long,
+        savedCatalogs: List<CatalogConfig>,
+        cachedContinueWatching: List<ContinueWatchingItem>
+    ) {
+        // 1. Initial Skeleton Setup: render structured skeletons in saved catalog order immediately
+        val skeletonCategories = buildProfileSkeletonCategories(
+            savedCatalogs = savedCatalogs,
+            cachedContinueWatching = cachedContinueWatching
+        )
+        if (_uiState.value.categories.isEmpty()) {
+            val skeletonHero = chooseInitialHero(skeletonCategories)
+            _uiState.value = _uiState.value.copy(
+                isLoading = true,
+                isInitialLoad = false,
+                categories = skeletonCategories,
+                heroItem = skeletonHero,
+                heroLogoUrl = null,
+                error = null,
+                isMobileSlowLoading = false
+            )
+        } else {
+            _uiState.value = _uiState.value.copy(isLoading = false, error = null, isMobileSlowLoading = false)
+        }
+
+        // 2. Resolve Collection Rails immediately (Services, Franchises, Genres)
+        val collectionConfigs = savedCatalogs.filter { cfg ->
+            isCollectionTileConfig(cfg) && CollectionTemplateManifest.isValidCollectionConfig(cfg)
+        }
+        val collectionRows = savedCatalogs.mapNotNull { cfg ->
+            if (!isCollectionRailConfig(cfg) || !CollectionTemplateManifest.isValidCollectionConfig(cfg)) null
+            else {
+                val group = cfg.collectionGroup ?: return@mapNotNull null
+                val items = collectionConfigs.filter { it.collectionGroup == group }
+                if (items.isEmpty()) null
+                else HomeCollectionRow(id = collectionRowId(group), title = cfg.title, items = items)
+            }
+        }
+        _uiState.value = _uiState.value.copy(collectionRows = collectionRows)
+        collectionRows.forEach { colRow ->
+            updateMobileCategoryRow(colRow.id, toCollectionCategory(colRow))
+        }
+
+        // 3. Resolve Continue Watching from cache & launch live sync
+        if (cachedContinueWatching.isNotEmpty()) {
+            viewModelScope.launch {
+                val merged = mergeContinueWatchingResumeData(cachedContinueWatching)
+                val cwCat = Category(
+                    id = "continue_watching",
+                    title = "Continue Watching",
+                    items = merged.map { it.toMediaItem() }
+                )
+                withContext(Dispatchers.Main.immediate) {
+                    if (requestId == loadHomeRequestId) {
+                        updateMobileCategoryRow("continue_watching", cwCat)
+                    }
+                }
+            }
+        }
+        launchContinueWatchingFetch()
+
+        // 4. Favorite TV (IPTV) on IO
+        viewModelScope.launch(Dispatchers.IO) {
+            val favCat = runCatching { buildFavoriteTvCategory() }.getOrNull()
+            if (favCat != null && favCat.items.isNotEmpty()) {
+                withContext(Dispatchers.Main.immediate) {
+                    if (requestId == loadHomeRequestId) {
+                        updateMobileCategoryRow(FAVORITE_TV_CATEGORY_ID, favCat)
+                    }
+                }
+            }
+        }
+
+        // 5. TMDB Built-in Categories (Trending Movies, Shows, Anime) - independent fetches
+        val tmdbConfigs = savedCatalogs.filter {
+            it.isPreinstalled && it.sourceUrl.isNullOrBlank() && !isCollectionRailConfig(it) && !isCollectionTileConfig(it)
+        }
+        tmdbConfigs.forEach { cfg ->
+            viewModelScope.launch(networkDispatcher) {
+                val category = runCatching {
+                    mediaRepository.loadSingleBuiltinCategory(cfg.id)
+                }.getOrNull()
+                if (category != null && category.items.isNotEmpty()) {
+                    val titled = if (cfg.title.isNotBlank() && cfg.title != category.title) {
+                        category.copy(title = cfg.title)
+                    } else {
+                        category
+                    }
+                    withContext(Dispatchers.Main.immediate) {
+                        if (requestId == loadHomeRequestId) {
+                            updateMobileCategoryRow(cfg.id, titled.withTop10CapIfNeeded(), hasMore = true)
+                            persistCategoriesCache(_uiState.value.categories)
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. MDBList and Custom/Addon Catalogs - progressive fetch with semaphore
+        val customConfigs = savedCatalogs.filter { cfg ->
+            isCustomCatalogConfig(cfg) || (cfg.isPreinstalled && !cfg.sourceUrl.isNullOrBlank() && !isCollectionRailConfig(cfg) && !isCollectionTileConfig(cfg))
+        }
+        val customSemaphore = Semaphore(if (isLowRamDevice) 2 else 3)
+        customConfigs.forEach { cfg ->
+            viewModelScope.launch(networkDispatcher) {
+                customSemaphore.withPermit {
+                    try {
+                        val limit = if (isHardCappedTop10Catalog(cfg.id)) TOP_10_ITEM_LIMIT else catalogInitialLimit(cfg)
+                        val result = mediaRepository.loadCustomCatalogPage(catalog = cfg, offset = 0, limit = limit)
+                        if (result.items.isNotEmpty()) {
+                            val category = Category(id = cfg.id, title = cfg.title, items = result.items).withTop10CapIfNeeded()
+                            withContext(Dispatchers.Main.immediate) {
+                                if (requestId == loadHomeRequestId) {
+                                    updateMobileCategoryRow(cfg.id, category, hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id))
+                                    persistCategoriesCache(_uiState.value.categories)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                    }
+                }
+            }
+        }
+
+        // 7. Slow loading watcher for first cold start
+        viewModelScope.launch {
+            delay(8000L)
+            if (requestId == loadHomeRequestId) {
+                val hasReal = _uiState.value.categories.any { cat ->
+                    cat.id != "continue_watching" && cat.items.any { !it.isPlaceholder }
+                }
+                if (!hasReal) {
+                    _uiState.value = _uiState.value.copy(isMobileSlowLoading = true)
+                }
             }
         }
     }

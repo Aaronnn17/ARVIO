@@ -390,7 +390,8 @@ class SportsRepository @Inject constructor(
         overview = overview,
         mediaType = MediaType.TV,
         badge = badge,
-        status = "${SportsAddonCapabilities.SPORTS_LOCKED_STATUS_PREFIX}$key"
+        status = "${SportsAddonCapabilities.SPORTS_LOCKED_STATUS_PREFIX}$key",
+        isPlaceholder = true
     )
 
     private fun candidateCatalogs(addon: Addon, selectedSportId: String?): List<AddonCatalog> {
