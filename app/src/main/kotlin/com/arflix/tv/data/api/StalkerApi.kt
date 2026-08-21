@@ -11,7 +11,7 @@ import java.util.concurrent.TimeUnit
  * Stalker/Ministra portal API client for MAC-based IPTV authentication.
  * Converts Stalker portal channels into the same IptvChannel format as Xtream/M3U.
  */
-class StalkerApi(
+open class StalkerApi(
     private val portalUrl: String,
     private val macAddress: String
 ) {
@@ -160,7 +160,7 @@ class StalkerApi(
         }
     }
 
-    private fun doGet(url: String): String {
+    open fun doGet(url: String): String {
         val builder = Request.Builder().url(url)
         baseHeaders.forEach { (k, v) -> builder.addHeader(k, v) }
         val response = client.newCall(builder.build()).execute()
