@@ -61,6 +61,25 @@ for (const file of pages) {
   if (!sitemapUrls.includes(url)) errors.push(`sitemap: missing ${url}`);
 }
 
+const englishHome = fs.readFileSync(path.join(siteRoot, "index.html"), "utf8");
+const englishBody = englishHome.match(/<body>[\s\S]*<\/body>/u)?.[0] ?? "";
+const englishBodyTags = [...englishBody.matchAll(/<([a-z][a-z0-9-]*)\b/giu)].map((match) => match[1]).join(",");
+const englishCss = englishHome.match(/<style>([\s\S]*?)<\/style>/u)?.[1].replaceAll("/assets/", "assets/");
+
+for (const [directory, language] of [["pt-br", "pt-BR"], ["es", "es"]]) {
+  const file = path.join(siteRoot, directory, "index.html");
+  const html = fs.readFileSync(file, "utf8");
+  const body = html.match(/<body>[\s\S]*<\/body>/u)?.[0] ?? "";
+  const bodyTags = [...body.matchAll(/<([a-z][a-z0-9-]*)\b/giu)].map((match) => match[1]).join(",");
+  const css = html.match(/<style>([\s\S]*?)<\/style>/u)?.[1].replaceAll("/assets/", "assets/");
+
+  if (!html.includes(`<html lang="${language}">`)) errors.push(`/${directory}/: incorrect document language`);
+  if (html.includes('href="/guides/guide.css"')) errors.push(`/${directory}/: simplified guide template was generated instead of the main site`);
+  if (bodyTags !== englishBodyTags) errors.push(`/${directory}/: homepage structure differs from the English production homepage`);
+  if (css !== englishCss) errors.push(`/${directory}/: homepage styles differ from the English production homepage`);
+  if (html.includes('src="assets/') || html.includes('url("assets/')) errors.push(`/${directory}/: contains a locale-relative asset path`);
+}
+
 if (errors.length) {
   console.error(errors.join("\n"));
   process.exit(1);

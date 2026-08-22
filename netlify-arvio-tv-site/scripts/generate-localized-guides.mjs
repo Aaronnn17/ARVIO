@@ -995,7 +995,6 @@ function writeSitemap() {
 }
 
 for (const localeKey of ["pt", "es"]) {
-  writeRoute(pageMap.home[localeKey], renderDirectory(localeKey, true));
   writeRoute(pageMap.guides[localeKey], renderDirectory(localeKey, false));
   for (const key of Object.keys(locales[localeKey].pageData)) {
     writeRoute(pageMap[key][localeKey], renderFeaturePage(localeKey, key));
@@ -1004,5 +1003,6 @@ for (const localeKey of ["pt", "es"]) {
 
 for (const key of Object.keys(pageMap)) addEnglishHreflang(key);
 writeSitemap();
+await import("./generate-localized-homepages.mjs");
 
-console.log("Generated 22 localized pages, reciprocal hreflang links, and sitemap entries.");
+console.log("Generated 22 localized pages, matching localized homepages, reciprocal hreflang links, and sitemap entries.");
