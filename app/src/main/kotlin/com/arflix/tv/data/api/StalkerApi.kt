@@ -54,26 +54,33 @@ open class StalkerApi(
     }
 
     /**
-     * Try candidate portal base paths until the stalker API responds with JSON
-     * (or an authorization error, which still means the endpoint exists).
+     * Try candidate portal base paths until one responds to the handshake with
+     * a valid token. HTML 404 pages (e.g. served on /c/ portal URLs) or empty
+     * bodies must not stop the probing early.
      * Order: / (root), /stalker_portal, /portal, /c
      */
     private suspend fun resolveApiBase() {
         val cleanPortal = portalUrl.trim().trimEnd('/')
+        // Common portals serve the UI under /c/ while the API lives at the
+        // root or a root subpath, so probe both the raw URL and its /c-stripped root.
+        val root = cleanPortal.removeSuffix("/c").removeSuffix("/")
         val candidates = listOf(
             cleanPortal,
-            "$cleanPortal/stalker_portal",
-            "$cleanPortal/portal",
-            "$cleanPortal/ministra",
-            cleanPortal.removeSuffix("/c").removeSuffix("/")
+            root,
+            "$root/stalker_portal",
+            "$root/portal",
+            "$root/ministra"
         ).distinct()
         for (base in candidates) {
             try {
                 val url = "$base/server/load.php?type=stb&action=handshake"
                 val response = doGet(url)
-                val isValid = !response.startsWith("<html>") && !response.contains("404 Not Found")
-                if (isValid) {
+                val probeToken = try {
+                    gson.fromJson(response, StalkerHandshakeResponse::class.java)?.js?.token
+                } catch (_: Exception) { null }
+                if (!probeToken.isNullOrBlank()) {
                     apiBase = base
+                    token = probeToken
                     apiBaseResolved = true
                     return
                 }

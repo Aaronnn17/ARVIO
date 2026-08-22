@@ -818,7 +818,7 @@ fun SettingsScreen(
                                         iptvActionIndex > 0 &&
                                         (
                                             showIptvCategoriesSettings && contentFocusIndex > 0 ||
-                                                !showIptvCategoriesSettings && contentFocusIndex in 1..uiState.iptvPlaylists.size
+                                                !showIptvCategoriesSettings && contentFocusIndex in 2..(uiState.iptvPlaylists.size + 1)
                                             )
                                     ) {
                                         iptvActionIndex--
@@ -863,7 +863,7 @@ fun SettingsScreen(
                                         addonActionIndex++
                                     } else if (currentSection == "iptv" && showIptvCategoriesSettings && contentFocusIndex > 0 && iptvActionIndex < 2) {
                                         iptvActionIndex++
-                                    } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 1..uiState.iptvPlaylists.size && iptvActionIndex < 5) {
+                                    } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 2..(uiState.iptvPlaylists.size + 1) && iptvActionIndex < 5) {
                                         iptvActionIndex++
                                     } else if (currentSection == "catalogs" && contentFocusIndex > 1 && catalogActionIndex < 5) {
                                         catalogActionIndex++
@@ -1988,6 +1988,7 @@ fun SettingsScreen(
         if (showStalkerInput) {
             InputModal(
                 title = stringResource(R.string.settings_stalker_title),
+                supportingText = if (uiState.iptvStalkerUrl.isNotBlank()) stringResource(R.string.settings_stalker_remove_hint) else null,
                 fields = listOf(
                     InputField(
                         label = stringResource(R.string.settings_stalker_label_portal_url),
