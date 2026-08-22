@@ -2288,20 +2288,42 @@ class SettingsViewModel @Inject constructor(
             // Push to cloud AFTER the DataStore write is confirmed, so all profiles
             // (not just the active one) have their latest IPTV config captured.
             syncLocalStateToCloud(silent = true)
-            refreshIptv(showToast = true, configured = true, force = false)
+            refreshIptv(showToast = true, configured = true, force = true)
         }
     }
 
     fun saveStalkerConfig(portalUrl: String, macAddress: String) {
         viewModelScope.launch {
-            if (portalUrl.isBlank() || macAddress.isBlank()) {
+            val trimmedUrl = portalUrl.trim()
+            val trimmedMac = macAddress.trim()
+            if (trimmedUrl.isBlank() && trimmedMac.isBlank()) {
+                removeStalkerConfigInternal()
+                return@launch
+            }
+            if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
                 _uiState.value = _uiState.value.copy(toastMessage = "Portal URL and MAC address are required", toastType = ToastType.ERROR)
                 return@launch
             }
-            iptvRepository.saveStalkerConfig(portalUrl, macAddress)
+            iptvRepository.saveStalkerConfig(trimmedUrl, trimmedMac)
             syncLocalStateToCloud(silent = true)
             refreshIptv(showToast = true, configured = true, force = true)
         }
+    }
+
+    fun removeStalkerConfig() {
+        viewModelScope.launch { removeStalkerConfigInternal() }
+    }
+
+    private suspend fun removeStalkerConfigInternal() {
+        iptvRepository.clearStalkerConfig()
+        _uiState.value = _uiState.value.copy(
+            iptvStalkerUrl = "",
+            iptvStalkerMac = "",
+            toastMessage = "Stalker portal removed",
+            toastType = ToastType.SUCCESS
+        )
+        syncLocalStateToCloud(silent = true)
+        refreshIptv(showToast = false, configured = true, force = true)
     }
 
     /**
@@ -2343,11 +2365,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             iptvRepository.savePlaylists(playlists)
             _uiState.value = _uiState.value.copy(
-                iptvPlaylists = playlists.filter { it.m3uUrl.isNotBlank() },
-                toastMessage = "IPTV playlists updated",
-                toastType = ToastType.SUCCESS
+                iptvPlaylists = playlists.filter { it.m3uUrl.isNotBlank() }
             )
             syncLocalStateToCloud(silent = true)
+            refreshIptv(showToast = true, configured = true, force = true)
         }
     }
 
@@ -2356,11 +2377,15 @@ class SettingsViewModel @Inject constructor(
             val currentConfig = iptvRepository.observeConfig().first()
             // Check legacy m3uUrl, multi-playlist entries, and Stalker portal
             val hasPlaylists = currentConfig.playlists.any { it.m3uUrl.isNotBlank() && it.enabled }
-            if (currentConfig.m3uUrl.isBlank() && currentConfig.stalkerPortalUrl.isBlank() && !hasPlaylists) return@launch
+            if (currentConfig.m3uUrl.isBlank() && currentConfig.stalkerPortalUrl.isBlank() && !hasPlaylists) {
+                return@launch
+            }
 
             val runningJob = iptvLoadJob
             if (runningJob?.isActive == true) {
-                if (!force) return@launch
+                if (!force) {
+                    return@launch
+                }
                 runningJob.cancelAndJoin()
             }
 
@@ -2466,11 +2491,11 @@ class SettingsViewModel @Inject constructor(
                 isIptvLoading = false,
                 iptvChannelCount = 0,
                 iptvError = null,
-                iptvStatusMessage = "IPTV playlist removed",
+                iptvStatusMessage = "IPTV configuration removed",
                 iptvStatusType = ToastType.SUCCESS,
                 iptvProgressText = null,
                 iptvProgressPercent = 0,
-                toastMessage = "IPTV playlist removed",
+                toastMessage = "IPTV configuration removed",
                 toastType = ToastType.SUCCESS
             )
             syncLocalStateToCloud(silent = true)

@@ -61,4 +61,16 @@
     <string name="add_later">Füge Filme und Serien für später hinzu</string>
     <string name="sources_available">Quellen verfügbar</string>
     <string name="ends_at">Endet um</string>
+    <string name="settings_stalker_title">Stalker-Portal</string>
+    <string name="settings_stalker_value_configured">Eingerichtet</string>
+    <string name="settings_stalker_value_unconfigured">Nicht eingerichtet</string>
+    <string name="settings_stalker_label_portal_url">Portal-URL</string>
+    <string name="settings_stalker_ph_portal_url">z.B. http://portal.beispiel.de/c/</string>
+    <string name="settings_stalker_label_mac">MAC-Adresse</string>
+    <string name="settings_stalker_ph_mac">z.B. 00:1A:79:XX:XX:XX</string>
+    <string name="settings_help_stalker">Stalker-Portal</string>
+    <string name="settings_help_stalker_desc">Verbinde ein Stalker/Ministra-Portal mit Portal-URL und deiner MAC-Adresse. Die Live-Kanäle werden zu deinen TV-Listen hinzugefügt.</string>
+    <string name="settings_add_stalker_portal">Stalker-Portal hinzufügen</string>
+    <string name="settings_stalker_middleware_hint">Stalker / Ministra-Middleware</string>
+    <string name="settings_stalker_remove_hint">Zum Entfernen beide Felder leeren und bestätigen.</string>
 </resources>

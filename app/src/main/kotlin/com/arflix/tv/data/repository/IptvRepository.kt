@@ -183,6 +183,8 @@ data class IptvLoadProgress(
 data class IptvCloudProfileState(
     val m3uUrl: String = "",
     val epgUrl: String = "",
+    val stalkerPortalUrl: String = "",
+    val stalkerMacAddress: String = "",
     val favoriteGroups: List<String> = emptyList(),
     val favoriteChannels: List<String> = emptyList(),
     val hiddenGroups: List<String> = emptyList(),
@@ -210,6 +212,7 @@ class IptvRepository @Inject constructor(
 ) {
     private val gson = Gson()
     private val loadMutex = Mutex()
+    private val stalkerApiMutex = Mutex()
     private val xtreamDataMutex = Mutex()
     private val xtreamSeriesEpisodeCacheMutex = Mutex()
     private val xtreamSeriesEpisodeInFlightMutex = Mutex()
@@ -617,12 +620,44 @@ class IptvRepository @Inject constructor(
             prefs[stalkerPortalUrlKey()] = encryptConfigValue(normalizedUrl)
             prefs[stalkerMacAddressKey()] = normalizedMac
         }
+        cachedStalkerApi = null
         groupOrderLocallyDirty = true
         if (sourceChanged) {
             withContext(Dispatchers.IO) { deletePersistedSourceCaches(previousSourceKey) }
         }
         invalidateCache()
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save stalker config")
+    }
+
+    suspend fun clearStalkerConfig() {
+        val profileId = profileManager.getProfileIdSync()
+        val previousConfig = observeConfig().first()
+        val previousSourceKey = epgIndexKey(profileId, previousConfig)
+        val sourceChanged = previousConfig.stalkerPortalUrl.isNotBlank() || previousConfig.stalkerMacAddress.isNotBlank()
+        context.settingsDataStore.edit { prefs ->
+            prefs.remove(stalkerPortalUrlKey())
+            prefs.remove(stalkerMacAddressKey())
+        }
+        cachedStalkerApi = null
+        groupOrderLocallyDirty = true
+        if (sourceChanged) {
+            withContext(Dispatchers.IO) { deletePersistedSourceCaches(previousSourceKey) }
+        }
+        invalidateCache()
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "clear stalker config")
+    }
+
+    suspend fun resolveStalkerStreamUrl(command: String): String? {
+        val config = observeConfig().first()
+        if (config.stalkerPortalUrl.isBlank() || config.stalkerMacAddress.isBlank()) return null
+
+        val stalker = cachedStalkerApi ?: stalkerApiMutex.withLock {
+            cachedStalkerApi ?: com.arflix.tv.data.api.StalkerApi(
+                config.stalkerPortalUrl,
+                config.stalkerMacAddress,
+            ).takeIf { it.handshake() }?.also { cachedStalkerApi = it }
+        }
+        return stalker?.resolveStreamUrl(command)
     }
 
     suspend fun saveSortOrder(sortOrder: String) {
@@ -1379,6 +1414,8 @@ class IptvRepository @Inject constructor(
             prefs.remove(m3uUrlKey())
             prefs.remove(epgUrlKey())
             prefs.remove(playlistsKey())
+            prefs.remove(stalkerPortalUrlKey())
+            prefs.remove(stalkerMacAddressKey())
             prefs.remove(favoriteGroupsKey())
             prefs.remove(favoriteChannelsKey())
             prefs.remove(hiddenGroupsKey())
@@ -1588,26 +1625,50 @@ class IptvRepository @Inject constructor(
             }
 
             // ── Stalker Portal path ──
-            if (config.m3uUrl.isBlank() && config.stalkerPortalUrl.isNotBlank()) {
-                onProgress(IptvLoadProgress(context.getString(R.string.iptv_connecting_stalker), 10))
-                val stalker = com.arflix.tv.data.api.StalkerApi(config.stalkerPortalUrl, config.stalkerMacAddress)
-                if (!stalker.handshake()) {
-                    return@withContext IptvSnapshot(epgWarning = "Stalker handshake failed. Check Portal URL and MAC.", loadedAt = Instant.now())
+            // Load Stalker in parallel with M3U/Xtream playlists when both are configured (hybrid mode).
+            // Stalker-only (no playlists) keeps the legacy early-return behavior.
+            val stalkerConfigured = config.stalkerPortalUrl.isNotBlank()
+            val stalkerChannelsDeferred = if (stalkerConfigured) {
+                async {
+                    runCatching {
+                        onProgress(IptvLoadProgress(context.getString(R.string.iptv_connecting_stalker), 10))
+                        val stalker = com.arflix.tv.data.api.StalkerApi(config.stalkerPortalUrl, config.stalkerMacAddress)
+                        if (!stalker.handshake()) {
+                            return@runCatching null to emptyList<IptvChannel>()
+                        }
+                        onProgress(IptvLoadProgress(context.getString(R.string.iptv_progress_loading_channels), 30))
+                        stalker.getProfile()
+                        val channels = stalker.getChannels()
+                        // Prefix IDs to avoid collisions with M3U/Xtream channel IDs.
+                        stalker to channels.map { it.copy(id = "stalker:${it.id}") }
+                    }.getOrElse { e ->
+                        null to emptyList()
+                    }
                 }
-                onProgress(IptvLoadProgress(context.getString(R.string.iptv_progress_loading_channels), 30))
-                stalker.getProfile()
-                val channels = stalker.getChannels()
-                onProgress(IptvLoadProgress(context.getString(R.string.iptv_loaded_channels, channels.size), 80))
-                val grouped = buildGroupedChannels(channels)
+            } else {
+                null
+            }
+
+            // Stalker-only mode: no playlists configured → return Stalker channels directly.
+            if (activePlaylists.isEmpty() && stalkerConfigured) {
+                val (stalkerApi, stalkerChannels) = stalkerChannelsDeferred?.await() ?: (null to emptyList())
+                if (stalkerChannels.isEmpty()) {
+                    return@withContext IptvSnapshot(
+                        epgWarning = "Stalker handshake failed. Check Portal URL and MAC.",
+                        loadedAt = Instant.now()
+                    )
+                }
+                onProgress(IptvLoadProgress(context.getString(R.string.iptv_loaded_channels, stalkerChannels.size), 80))
+                val grouped = buildGroupedChannels(stalkerChannels)
                 val favGroups = observeFavoriteGroups().first()
                 val favChannels = observeFavoriteChannels().first()
                 val hiddenGroups = observeHiddenGroups().first()
                 val groupOrder = observeGroupOrder().first()
-                cachedChannels = channels
+                cachedChannels = stalkerChannels
                 cachedGroupedChannels = grouped
-                cachedStalkerApi = stalker
+                cachedStalkerApi = stalkerApi
                 val snapshot = IptvSnapshot(
-                    channels = channels,
+                    channels = stalkerChannels,
                     grouped = grouped,
                     nowNext = emptyMap(),
                     favoriteGroups = favGroups,
@@ -1654,7 +1715,26 @@ class IptvRepository @Inject constructor(
                         80
                     )
                 )
-                cachedChannels
+                // If Stalker is configured but not yet in cache, await and merge.
+                if (stalkerChannelsDeferred != null) {
+                    val (stalkerApi, stalkerChannels) = stalkerChannelsDeferred.await()
+                    if (stalkerApi != null) {
+                        cachedStalkerApi = stalkerApi
+                    }
+                    if (stalkerChannels.isNotEmpty()) {
+                        // cachedChannels may already contain Stalker entries merged by a
+                        // previous load (memory) or read from the disk cache — drop those
+                        // first so repeated cached loads don't duplicate them.
+                        (cachedChannels.filterNot { it.id.startsWith("stalker:") } + stalkerChannels).also { merged ->
+                            cachedChannels = merged
+                            cachedGroupedChannels = buildGroupedChannels(merged)
+                        }
+                    } else {
+                        cachedChannels
+                    }
+                } else {
+                    cachedChannels
+                }
             } else {
                 coroutineScope {
                     val playlistResults = Array<MutableList<IptvChannel>?>(activePlaylists.size) { null }
@@ -1688,10 +1768,17 @@ class IptvRepository @Inject constructor(
                     synchronized(playlistResultsLock) {
                         playlistResults.flatMap { it.orEmpty() }
                     }
-                }.also {
-                    cachedChannels = it
-                    cachedGroupedChannels = buildGroupedChannels(it)
+                }.let { playlistChannels ->
+                    // Merge Stalker channels (if configured) into the final list.
+                    val (stalkerApi, stalkerChannels) = stalkerChannelsDeferred?.await() ?: (null to emptyList())
+                    if (stalkerApi != null) {
+                        cachedStalkerApi = stalkerApi
+                    }
+                    val merged = playlistChannels + stalkerChannels
+                    cachedChannels = merged
+                    cachedGroupedChannels = buildGroupedChannels(merged)
                     cachedPlaylistAt = System.currentTimeMillis()
+                    merged
                 }
             }
 
@@ -2725,16 +2812,30 @@ class IptvRepository @Inject constructor(
         val activeLists = activePlaylists(config)
         if (activeLists.isEmpty() && config.stalkerPortalUrl.isBlank()) return null
 
-        if (config.m3uUrl.isBlank() && config.stalkerPortalUrl.isNotBlank()) {
+        // Stalker-only mode: no playlists configured.
+        if (activeLists.isEmpty() && config.stalkerPortalUrl.isNotBlank()) {
             val stalker = com.arflix.tv.data.api.StalkerApi(config.stalkerPortalUrl, config.stalkerMacAddress)
             if (!stalker.handshake()) return null
             stalker.getProfile()
-            val channels = stalker.getChannels()
+            val channels = stalker.getChannels().map { it.copy(id = "stalker:${it.id}") }
             return if (channels.isNotEmpty()) channels to stalker else null
         }
 
-        val channels = coroutineScope {
-            activeLists.map { playlist ->
+        // Load playlists and Stalker in parallel when both are configured.
+        val (playlistChannels, stalkerApi, stalkerChannels) = coroutineScope {
+            val stalkerDeferred = if (config.stalkerPortalUrl.isNotBlank()) {
+                async {
+                    runCatching {
+                        val stalker = com.arflix.tv.data.api.StalkerApi(config.stalkerPortalUrl, config.stalkerMacAddress)
+                        if (!stalker.handshake()) return@runCatching null to emptyList<IptvChannel>()
+                        stalker.getProfile()
+                        stalker to stalker.getChannels().map { it.copy(id = "stalker:${it.id}") }
+                    }.getOrElse { null to emptyList() }
+                }
+            } else {
+                null
+            }
+            val playlists = activeLists.map { playlist ->
                 async {
                     fetchChannelsForPlaylistWithRetries(playlist) { }
                         .map { channel ->
@@ -2745,8 +2846,12 @@ class IptvRepository @Inject constructor(
                         }
                 }
             }.awaitAll().flatten()
+            val (sa, sc) = stalkerDeferred?.await() ?: (null to emptyList())
+            Triple(playlists, sa, sc)
         }
-        return if (channels.isNotEmpty()) channels to null else null
+
+        val merged = playlistChannels + stalkerChannels
+        return if (merged.isNotEmpty()) merged to stalkerApi else null
     }
 
     private suspend fun storeStartupChannels(
@@ -2870,7 +2975,11 @@ class IptvRepository @Inject constructor(
     private fun epgUrlKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_epg_url")
     private fun playlistsKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_playlists_json")
     private fun stalkerPortalUrlKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_stalker_portal_url")
+    private fun stalkerPortalUrlKeyFor(profileId: String): Preferences.Key<String> =
+        profileManager.profileStringKeyFor(profileId, "iptv_stalker_portal_url")
     private fun stalkerMacAddressKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_stalker_mac_address")
+    private fun stalkerMacAddressKeyFor(profileId: String): Preferences.Key<String> =
+        profileManager.profileStringKeyFor(profileId, "iptv_stalker_mac_address")
     private fun sortOrderKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_sort_order")
     private fun sortOrderKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_sort_order")
@@ -3060,6 +3169,8 @@ class IptvRepository @Inject constructor(
         return IptvCloudProfileState(
             m3uUrl = primary?.m3uUrl ?: legacyM3uUrl,
             epgUrl = primary?.epgUrl ?: legacyEpgUrls.firstOrNull().orEmpty(),
+            stalkerPortalUrl = decryptConfigValue(prefs[stalkerPortalUrlKeyFor(safeProfileId)].orEmpty()),
+            stalkerMacAddress = prefs[stalkerMacAddressKeyFor(safeProfileId)].orEmpty(),
             favoriteGroups = decodeFavoriteGroups(prefs[favoriteGroupsKeyFor(safeProfileId)].orEmpty()),
             favoriteChannels = decodeFavoriteChannels(prefs[favoriteChannelsKeyFor(safeProfileId)].orEmpty()),
             hiddenGroups = if (hiddenRaw.isNotBlank()) {
@@ -3086,6 +3197,8 @@ class IptvRepository @Inject constructor(
         val normalizedM3u = normalizeStoredIptvUrl(state.m3uUrl)
         val normalizedEpgUrls = normalizeStoredEpgInputs(state.epgUrl)
         val normalizedEpg = normalizedEpgUrls.firstOrNull().orEmpty()
+        val normalizedStalkerPortal = state.stalkerPortalUrl.trim().trimEnd('/')
+        val normalizedStalkerMac = state.stalkerMacAddress.trim().uppercase()
         val normalizedPlaylists = state.playlists.mapIndexed { index, playlist ->
             normalizePlaylistEntry(playlist, index)
         }.filterNotNull().take(3)
@@ -3110,6 +3223,10 @@ class IptvRepository @Inject constructor(
         context.settingsDataStore.edit { prefs ->
             prefs[m3uUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedM3u)
             prefs[epgUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedEpg)
+            if (normalizedStalkerPortal.isBlank()) prefs.remove(stalkerPortalUrlKeyFor(safeProfileId))
+            else prefs[stalkerPortalUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedStalkerPortal)
+            if (normalizedStalkerMac.isBlank()) prefs.remove(stalkerMacAddressKeyFor(safeProfileId))
+            else prefs[stalkerMacAddressKeyFor(safeProfileId)] = normalizedStalkerMac
             prefs[favoriteGroupsKeyFor(safeProfileId)] = gson.toJson(state.favoriteGroups.distinct())
             prefs[favoriteChannelsKeyFor(safeProfileId)] = gson.toJson(state.favoriteChannels.distinct())
             if (state.hiddenGroups.isNotEmpty()) {
@@ -3140,6 +3257,7 @@ class IptvRepository @Inject constructor(
         }
         groupOrderLocallyDirty = false
         if (profileManager.getProfileIdSync() == safeProfileId) {
+            cachedStalkerApi = null
             invalidateCache()
         }
     }
