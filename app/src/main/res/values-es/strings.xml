@@ -1138,6 +1138,7 @@
     <string name="iptv_xtream_detected">Proveedor Xtream detectado. Cargando canales en vivo...</string>
     <string name="iptv_xtream_timeout">El proveedor Xtream agotó el tiempo de espera al cargar canales en vivo.</string>
     <string name="library_default">Biblioteca</string>
+    <string name="nav_library">Biblioteca</string>
     <string name="library_named">Biblioteca %1$s</string>
     <string name="program_no_title">Sin Título</string>
     <string name="program_unknown">Programa desconocido</string>

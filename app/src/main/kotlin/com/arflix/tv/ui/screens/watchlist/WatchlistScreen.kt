@@ -615,7 +615,7 @@ fun WatchlistScreen(
         ) {
             if (isMobile) {
                 Text(
-                    text = stringResource(R.string.library_default),
+                    text = stringResource(R.string.nav_library),
                     style = ArflixTypography.heroTitle.copy(fontSize = 28.sp),
                     color = TextPrimary,
                     modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 12.dp)
