@@ -2,23 +2,23 @@
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ARVIO for Android TV - Open Source Media Hub</title>
-<meta name="description" content="ARVIO is a free, open-source media hub for Android TV and Google TV. Live TV, Plex, Emby, Jellyfin, Telegram, addons, watchlists, subtitles, plus Trakt and Simkl integration in one fast, ad-free home built for the remote.">
+<title>ARVIO for Android TV - Open Source Media Management Hub</title>
+<meta name="description" content="ARVIO is a free, open-source media management hub for Android TV and Google TV. Organize your authorized home servers, live TV provider, personal integrations, watchlists, subtitles, Trakt and Simkl in one remote-first interface.">
 <link rel="canonical" href="https://arvio.tv/">
 <link rel="icon" href="/assets/arvio-icon-512.png" type="image/png">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="ARVIO">
 <meta property="og:title" content="ARVIO for Android TV">
-<meta property="og:description" content="Live TV, Plex, Emby, Jellyfin, Telegram, addons, watchlists, subtitles, plus Trakt and Simkl integration in one fast, ad-free home built for Android TV.">
+<meta property="og:description" content="A free, open-source media management hub for your authorized servers, services and personal integrations, built for Android TV.">
 <meta property="og:url" content="https://arvio.tv/">
 <meta property="og:image" content="https://arvio.tv/assets/arvio-social.webp">
 <meta property="og:image:width" content="1536">
 <meta property="og:image:height" content="1024">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="ARVIO for Android TV">
-<meta name="twitter:description" content="Live TV, Plex, Emby, Jellyfin, Telegram, addons, watchlists, subtitles, plus Trakt and Simkl integration in one fast, ad-free home built for Android TV.">
+<meta name="twitter:description" content="A free, open-source media management hub for your authorized servers, services and personal integrations, built for Android TV.">
 <meta name="twitter:image" content="https://arvio.tv/assets/arvio-social.webp">
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"ARVIO","applicationCategory":"MultimediaApplication","operatingSystem":"Android TV, Google TV, Android","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"downloadUrl":"https://play.google.com/store/apps/details?id=com.arvio.tv","codeRepository":"https://github.com/ProdigyV21/ARVIO","description":"Live TV, Plex, Emby, Jellyfin, Telegram, addons, watchlists, subtitles, plus Trakt and Simkl integration in one fast, ad-free home built for Android TV."}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"ARVIO","applicationCategory":"MultimediaApplication","operatingSystem":"Android TV, Google TV, Android","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"downloadUrl":"https://play.google.com/store/apps/details?id=com.arvio.tv","codeRepository":"https://github.com/ProdigyV21/ARVIO","description":"A free, open-source media management hub for organizing user-authorized home servers, live TV services, personal integrations, watchlists and playback settings on Android TV."}</script>
 <style>/* cyrillic-ext */
 @font-face {
   font-family: 'Inter';
@@ -1079,6 +1079,35 @@
     border-bottom: 1px solid var(--line-soft);
     background: var(--bg-1);
   }
+
+  /* ============ PRODUCT BOUNDARY ============ */
+  .product-boundary {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .product-boundary-inner {
+    display: grid;
+    grid-template-columns: minmax(220px, .8fr) minmax(0, 2fr);
+    gap: 48px;
+    align-items: start;
+    padding: 34px 0;
+  }
+  .product-boundary-label {
+    font-family: var(--mono);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+  .product-boundary-copy {
+    color: var(--ink-2);
+    font-size: 15px;
+    line-height: 1.75;
+    max-width: 920px;
+  }
+  .product-boundary-copy strong { color: var(--ink); }
   .premium-spotlight-inner {
     display: grid;
     grid-template-columns: minmax(0, .82fr) minmax(460px, 1.18fr);
@@ -2154,6 +2183,7 @@
     .foot-top { grid-template-columns: 1fr 1fr; }
     .download { padding: 100px 0; }
     .premium-spotlight-inner { grid-template-columns: 1fr; gap: 36px; }
+    .product-boundary-inner { grid-template-columns: 1fr; gap: 12px; }
     .premium-spotlight h2 { font-size: 40px; }
   }
 
@@ -2228,9 +2258,9 @@
       text-transform: uppercase;
     }
     .compare-cell:nth-child(2)::before { content: "ARVIO"; }
-    .compare-cell:nth-child(3)::before { content: "Stremio"; }
-    .compare-cell:nth-child(4)::before { content: "Plex"; }
-    .compare-cell:nth-child(5)::before { content: "Tivimate"; }
+    .compare-cell:nth-child(3)::before { content: "Other hubs"; }
+    .compare-cell:nth-child(4)::before { content: "Server apps"; }
+    .compare-cell:nth-child(5)::before { content: "TV app"; }
   }
 
   /* ============ CINEMATIC SHOWCASE ============ */
@@ -2431,7 +2461,7 @@
       <a class="nav-donate" href="https://ko-fi.com/arvio" target="_blank" rel="noopener">Donate</a>
     </div>
     <div class="nav-actions">
-      <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle theme">
         <svg id="theme-icon-light" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: block;"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
         <svg id="theme-icon-dark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
       </button>
@@ -2449,11 +2479,11 @@
   <div class="wrap">
     <div class="hero-content-split">
       <div class="hero-left">
-        <div class="reveal in"><span class="eyebrow">Free Android APK · Open source · No ads</span></div>
+        <div class="reveal in"><span class="eyebrow">Free Android media hub · Open source · No ads</span></div>
         <h1 class="hero-h1 reveal in" data-delay="1" id="hero-h1">
-          ARVIO for Android TV,<br><span class="accent">without the clutter.</span>
+          Your media services,<br><span class="accent">one organized home.</span>
         </h1>
-        <p class="hero-sub reveal in" data-delay="2">A completely free, open-source Android app for Live TV, Plex, Emby, Jellyfin, Telegram, addons, subtitles, Trakt and Simkl, built for the remote.</p>
+        <p class="hero-sub reveal in" data-delay="2">A free, open-source media management hub for Android. Connect your authorized Plex, Emby or Jellyfin server, live TV provider, personal integrations, Telegram files, subtitles, Trakt and Simkl in one remote-first interface.</p>
         <div class="hero-ctas reveal in" data-delay="3">
           <a class="google-play-badge" href="https://play.google.com/store/apps/details?id=com.arvio.tv" target="_blank" rel="noopener" aria-label="Get ARVIO on Google Play">
             <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" width="190" height="74">
@@ -2464,7 +2494,7 @@
           </a>
         </div>
         <div class="hero-sideload reveal in" data-delay="4">
-          Android APK is free and open source · <a href="https://github.com/ProdigyV21/ARVIO/releases">Download on GitHub</a> · Premium is never required
+          Android APK is free and open source · <a href="https://github.com/ProdigyV21/ARVIO/releases">View releases on GitHub</a> · ARVIO provides software, not media
         </div>
       </div>
       <div class="hero-right reveal in" data-delay="4">
@@ -2498,16 +2528,16 @@
 
     <div class="hero-meta">
       <div class="reveal in" data-delay="1">
-        <div class="meta-k">IPTV format</div>
-        <div class="meta-v">M3U</div>
+        <div class="meta-k">Live TV playlists</div>
+        <div class="meta-v">M3U · Xtream</div>
       </div>
       <div class="reveal in" data-delay="2">
         <div class="meta-k">Max resolution</div>
         <div class="meta-v">4K HDR</div>
       </div>
       <div class="reveal in" data-delay="3">
-        <div class="meta-k">Collections</div>
-        <div class="meta-v">10+</div>
+        <div class="meta-k">Home servers</div>
+        <div class="meta-v">Plex · Emby · Jellyfin</div>
       </div>
       <div class="reveal in" data-delay="4">
         <div class="meta-k">Surround audio</div>
@@ -2521,19 +2551,27 @@
   </div>
 </header>
 
+<aside class="product-boundary" id="content-policy" aria-labelledby="content-policy-title">
+  <div class="wrap product-boundary-inner">
+    <div class="product-boundary-label" id="content-policy-title">Software, not a content service</div>
+    <div class="product-boundary-copy"><strong>ARVIO does not host, provide, sell, bundle or redistribute movies, series, channels, playlists or streams.</strong> It is a media browser and player interface for services, servers, files and integrations configured by the user. Use only media you own or are authorized to access, and follow the terms of each connected provider.</div>
+  </div>
+</aside>
+
 <section class="premium-spotlight" aria-labelledby="premium-title">
   <div class="wrap premium-spotlight-inner">
     <div class="reveal">
       <div class="premium-kicker">Optional add-on · Open-source web app</div>
-      <h2 id="premium-title">Take free ARVIO beyond Android.</h2>
-      <p class="premium-spotlight-copy">The Android APK stays completely free. Optional Premium adds the open-source ARVIO Web experience, with the same profiles, libraries, addons and progress on Windows, Mac, iPhone, iPad and other browsers.</p>
+      <h2 id="premium-title">Take your media hub beyond Android.</h2>
+      <p class="premium-spotlight-copy">The Android APK stays completely free. Optional Premium adds the open-source ARVIO Web interface, with the same profiles, libraries, personal integrations and progress on Windows, Mac, iPhone, iPad and other browsers.</p>
       <div class="premium-platforms" aria-label="Supported ARVIO Premium platforms">
         <span>Windows</span><span>Mac</span><span>iPhone</span><span>iPad</span><span>Smart-TV browser</span>
       </div>
       <div class="premium-points">
         <span><i class="premium-check">✓</i> Everything stays connected through ARVIO Cloud</span>
-        <span><i class="premium-check">✓</i> Watch and download directly on Windows, Mac, phone or tablet</span>
-        <span><i class="premium-check">✓</i> Browser playback and one-click VLC</span>
+        <span><i class="premium-check">✓</i> Play authorized media from your connected services across devices</span>
+        <span><i class="premium-check">✓</i> Save compatible files when your provider permits downloads</span>
+        <span><i class="premium-check">✓</i> Browser playback and one-click VLC handoff</span>
         <span><i class="premium-check">✓</i> Web app source is public on GitHub</span>
         <span><i class="premium-check">✓</i> Android and TV APK remains completely free</span>
       </div>
@@ -2563,8 +2601,8 @@
 
     <div class="ticker">
       <div class="ticker-track">
-        <span>Live TV<span class="ticker-dot"></span>M3U playlists<span class="ticker-dot"></span>Plex + Emby + Jellyfin<span class="ticker-dot"></span>Telegram<span class="ticker-dot"></span>Trakt + MDBList<span class="ticker-dot"></span>Stremio addons<span class="ticker-dot"></span>ARVIO Cloud<span class="ticker-dot"></span>Dolby Vision<span class="ticker-dot"></span>Dolby Atmos<span class="ticker-dot"></span>4K HDR<span class="ticker-dot"></span>Multi‑profile<span class="ticker-dot"></span>Auto‑play<span class="ticker-dot"></span></span>
-        <span>Live TV<span class="ticker-dot"></span>M3U playlists<span class="ticker-dot"></span>Plex + Emby + Jellyfin<span class="ticker-dot"></span>Telegram<span class="ticker-dot"></span>Trakt + MDBList<span class="ticker-dot"></span>Stremio addons<span class="ticker-dot"></span>ARVIO Cloud<span class="ticker-dot"></span>Dolby Vision<span class="ticker-dot"></span>Dolby Atmos<span class="ticker-dot"></span>4K HDR<span class="ticker-dot"></span>Multi‑profile<span class="ticker-dot"></span>Auto‑play<span class="ticker-dot"></span></span>
+        <span>Media management<span class="ticker-dot"></span>Your live TV provider<span class="ticker-dot"></span>Plex + Emby + Jellyfin<span class="ticker-dot"></span>Your Telegram files<span class="ticker-dot"></span>Trakt + Simkl<span class="ticker-dot"></span>User-configured addons<span class="ticker-dot"></span>ARVIO Cloud<span class="ticker-dot"></span>Dolby Vision<span class="ticker-dot"></span>Dolby Atmos<span class="ticker-dot"></span>4K HDR<span class="ticker-dot"></span>Multi-profile<span class="ticker-dot"></span>Auto-play<span class="ticker-dot"></span></span>
+        <span>Media management<span class="ticker-dot"></span>Your live TV provider<span class="ticker-dot"></span>Plex + Emby + Jellyfin<span class="ticker-dot"></span>Your Telegram files<span class="ticker-dot"></span>Trakt + Simkl<span class="ticker-dot"></span>User-configured addons<span class="ticker-dot"></span>ARVIO Cloud<span class="ticker-dot"></span>Dolby Vision<span class="ticker-dot"></span>Dolby Atmos<span class="ticker-dot"></span>4K HDR<span class="ticker-dot"></span>Multi-profile<span class="ticker-dot"></span>Auto-play<span class="ticker-dot"></span></span>
       </div>
     </div>
   </div>
@@ -2575,7 +2613,7 @@
   <div class="wrap">
     <div class="section-head reveal">
       <div class="section-num">01 / Features</div>
-      <h2 class="section-title">Everything you watch, <span class="accent">organized for TV.</span></h2>
+      <h2 class="section-title">Every library and service, <span class="accent">organized for TV.</span></h2>
     </div>
 
     <div class="feature-grid">
@@ -2585,8 +2623,8 @@
             <span class="feature-num">01</span>
             <span class="feature-num">LIVE TV</span>
           </div>
-          <h3 class="feature-title">Live TV that behaves like TV.</h3>
-          <p class="feature-desc">Import M3U or Xtream playlists, keep channels grouped, add favorites, browse the EPG, and keep a mini-player running while you move.</p>
+          <h3 class="feature-title">Your live TV service, organized.</h3>
+          <p class="feature-desc">Connect an authorized M3U or Xtream provider, preserve provider order, manage groups and favorites, browse EPG data, and use catch-up when the provider supports it.</p>
         </div>
         <div class="feature-visual vis-shot zoom-live" style="background-image:url(&quot;assets/cb602938-0a58-4480-8f8a-f21fac260e1d.webp&quot;)">
           <span class="tag">EPG / Favorites / Mini-player</span>
@@ -2599,8 +2637,8 @@
             <span class="feature-num">02</span>
             <span class="feature-num">CATALOGS</span>
           </div>
-          <h3 class="feature-title">Your catalogs and servers, in your order.</h3>
-          <p class="feature-desc">Connect Plex, Emby, or Jellyfin servers, use built-in rows, or plug in Trakt and MDBList lists, then reorder everything so your TV opens exactly where you start.</p>
+          <h3 class="feature-title">Your servers and libraries, in your order.</h3>
+          <p class="feature-desc">Browse your own Plex, Emby or Jellyfin libraries alongside metadata collections and public Trakt or MDBList lists, then choose the order for every profile.</p>
         </div>
         <div class="feature-visual vis-shot zoom-catalogs" style="background-image:url(&quot;assets/0db5f9ea-38ef-43d3-b57c-99c6ff9e7436.webp&quot;)">
           <span class="tag">Plex / Emby / Jellyfin / Trakt</span>
@@ -2613,8 +2651,8 @@
             <span class="feature-num">03</span>
             <span class="feature-num">ADDONS</span>
           </div>
-          <h3 class="feature-title">Stremio addons, native on TV.</h3>
-          <p class="feature-desc">Bring familiar Stremio sources into a remote-first interface with metadata, subtitles, and providers already close at hand.</p>
+          <h3 class="feature-title">Compatible addons, configured by you.</h3>
+          <p class="feature-desc">Connect compatible addon manifests for metadata, subtitles or media locations. ARVIO does not operate, endorse or bundle third-party content providers.</p>
         </div>
         <div class="feature-visual vis-addons">
           <span class="pill">Cinemeta</span>
@@ -2632,8 +2670,8 @@
             <span class="feature-num">04</span>
             <span class="feature-num">TELEGRAM</span>
           </div>
-          <h3 class="feature-title">Telegram sources, connected privately.</h3>
-          <p class="feature-desc">Sign in by QR code or phone, then search your own Telegram channels and groups for video files right from movie and show pages.</p>
+          <h3 class="feature-title">Your Telegram files, connected privately.</h3>
+          <p class="feature-desc">Sign in by QR code or phone, then search video files in channels and groups accessible through your own Telegram account.</p>
         </div>
         <div class="feature-visual vis-addons">
           <span class="pill">QR sign-in</span>
@@ -2662,13 +2700,13 @@
         <div>
           <div class="feature-top">
             <span class="feature-num">06</span>
-            <span class="feature-num">TRAKT</span>
+            <span class="feature-num">TRACKING</span>
           </div>
-          <h3 class="feature-title">Trakt progress that follows you.</h3>
-          <p class="feature-desc">Resume points, history, watchlists, and scrobbling stay aligned so every profile can pick up from the right spot.</p>
+          <h3 class="feature-title">Trakt and Simkl that follow you.</h3>
+          <p class="feature-desc">Choose either tracker for watchlists, history, progress, Continue Watching and scrobbling, or keep both services aligned across devices.</p>
         </div>
         <div class="feature-visual vis-shot zoom-details" style="background-image:url(&quot;assets/58a51fcb-b75b-4891-82f3-f797e12afdc1.webp&quot;)">
-          <span class="tag">Resume / Scrobble / Watchlist</span>
+          <span class="tag">Trakt / Simkl / Scrobble</span>
         </div>
       </article>
 
@@ -2678,8 +2716,8 @@
             <span class="feature-num">07</span>
             <span class="feature-num">COLLECTIONS</span>
           </div>
-          <h3 class="feature-title">Streaming-service rows, already built in.</h3>
-          <p class="feature-desc">Netflix, Disney+, Apple TV, Prime Video, HBO Max, Hulu, Paramount+ and more get first-class rows with artwork, focus states, and genre shortcuts.</p>
+          <h3 class="feature-title">Discovery rows, ready to organize.</h3>
+          <p class="feature-desc">Browse metadata collections for major services and genres, then connect your own authorized service or server separately for playback.</p>
         </div>
         <div class="feature-visual vis-shot zoom-live" style="background-image:url(&quot;assets/a1703ba5-e81a-44fc-a257-52f24cc895f4.webp&quot;);background-position:center">
           <span class="tag">10+ services / Genres / Fast focus</span>
@@ -2697,6 +2735,62 @@
         </div>
         <div class="feature-visual vis-shot zoom-profiles" style="background-image:url(&quot;assets/65a39902-0c4f-4b55-b53e-f0d414404dca.webp&quot;)">
           <span class="tag">Profiles / Watchlists / Up Next</span>
+        </div>
+      </article>
+
+      <article class="feature size-sm reveal">
+        <div>
+          <div class="feature-top">
+            <span class="feature-num">09</span>
+            <span class="feature-num">SUBTITLES</span>
+          </div>
+          <h3 class="feature-title">Subtitles and audio, under control.</h3>
+          <p class="feature-desc">Select embedded or external tracks, filter preferred languages, preload subtitle options, find better timing matches, and optionally use your own API key for AI-assisted translation.</p>
+        </div>
+        <div class="feature-visual vis-addons">
+          <span class="pill">SRT</span><span class="pill">VTT</span><span class="pill">ASS / SSA</span><span class="pill">PGS</span><span class="pill">Audio tracks</span><span class="pill">AI tools</span>
+        </div>
+      </article>
+
+      <article class="feature size-sm reveal" data-delay="1">
+        <div>
+          <div class="feature-top">
+            <span class="feature-num">10</span>
+            <span class="feature-num">SOURCES</span>
+          </div>
+          <h3 class="feature-title">Choose the version that fits.</h3>
+          <p class="feature-desc">Compare available versions by addon order, quality, size, codec, language and cache status, or let autoplay choose the best compatible result.</p>
+        </div>
+        <div class="feature-visual vis-addons">
+          <span class="pill">4K</span><span class="pill">1080p</span><span class="pill">HDR</span><span class="pill">Size</span><span class="pill">Language</span><span class="pill">Autoplay</span>
+        </div>
+      </article>
+
+      <article class="feature size-sm reveal" data-delay="2">
+        <div>
+          <div class="feature-top">
+            <span class="feature-num">11</span>
+            <span class="feature-num">PLAYER</span>
+          </div>
+          <h3 class="feature-title">Native playback across formats.</h3>
+          <p class="feature-desc">Media3 and FFmpeg support modern video, audio and subtitle formats, with frame-rate matching, passthrough, track controls, resume points and TV-remote navigation.</p>
+        </div>
+        <div class="feature-visual vis-addons">
+          <span class="pill">Media3</span><span class="pill">FFmpeg</span><span class="pill">4K HDR</span><span class="pill">Dolby</span><span class="pill">Resume</span>
+        </div>
+      </article>
+
+      <article class="feature size-sm reveal">
+        <div>
+          <div class="feature-top">
+            <span class="feature-num">12</span>
+            <span class="feature-num">PREMIUM WEB</span>
+          </div>
+          <h3 class="feature-title">Browser access and permitted downloads.</h3>
+          <p class="feature-desc">The optional open-source web interface adds Windows, Mac, iPhone and iPad access, VLC handoff, and downloads for compatible files when your connected provider permits them.</p>
+        </div>
+        <div class="feature-visual vis-addons">
+          <span class="pill">Windows</span><span class="pill">Mac</span><span class="pill">iPad</span><span class="pill">VLC</span><span class="pill">Downloads</span>
         </div>
       </article>
     </div>
@@ -2772,15 +2866,15 @@
         <div class="compare-cell"><span class="compare-mark yes">✓</span> Yes</div>
       </div>
       <div class="compare-row">
-        <div class="compare-cell">Stremio addons</div>
-        <div class="compare-cell us"><span class="compare-mark yes">✓</span> Built‑in</div>
+        <div class="compare-cell">User-configured addon manifests</div>
+        <div class="compare-cell us"><span class="compare-mark yes">✓</span> Supported</div>
         <div class="compare-cell"><span class="compare-mark no">✕</span> No</div>
         <div class="compare-cell"><span class="compare-mark no">✕</span> No</div>
         <div class="compare-cell"><span class="compare-mark no">✕</span> No</div>
       </div>
       <div class="compare-row">
-        <div class="compare-cell">Catalogs &amp; collections</div>
-        <div class="compare-cell us"><span class="compare-mark yes">✓</span> 10+ built‑in</div>
+        <div class="compare-cell">Metadata catalogs &amp; collections</div>
+        <div class="compare-cell us"><span class="compare-mark yes">✓</span> 10+ layouts</div>
         <div class="compare-cell"><span class="compare-mark partial">~</span> Manual setup</div>
         <div class="compare-cell"><span class="compare-mark partial">~</span> Manual setup</div>
         <div class="compare-cell"><span class="compare-mark no">✕</span> Single feed</div>
@@ -2807,8 +2901,8 @@
         <div class="compare-cell"><span class="compare-mark no">✕</span> No</div>
       </div>
       <div class="compare-row">
-        <div class="compare-cell">Live TV (M3U / Xtream)</div>
-        <div class="compare-cell us"><span class="compare-mark yes">✓</span> Built‑in</div>
+        <div class="compare-cell">Authorized Live TV (M3U / Xtream)</div>
+        <div class="compare-cell us"><span class="compare-mark yes">✓</span> Provider support</div>
         <div class="compare-cell"><span class="compare-mark partial">~</span> Add‑on</div>
         <div class="compare-cell"><span class="compare-mark partial">~</span> Paid tier</div>
         <div class="compare-cell"><span class="compare-mark no">✕</span> No</div>
@@ -2925,7 +3019,7 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.3-8.8A6 6 0 1 0 6 16.5"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
         </div>
         <div class="setup-title">Synced with the app</div>
-        <div class="setup-desc">Profiles, Library, Continue Watching, Trakt and Simkl stay in sync through ARVIO Cloud. Use connected sources up to 4K, downloads and Live TV across your screens.</div>
+        <div class="setup-desc">Profiles, Library, Continue Watching, Trakt and Simkl stay in sync through ARVIO Cloud. Access authorized connected services across your screens and save compatible files when the provider allows it.</div>
         <div class="setup-time">ARVIO Cloud</div>
       </div>
       <div class="setup-step reveal" data-delay="2">
@@ -2941,12 +3035,12 @@
     <div class="shots-rail" style="margin-top:32px">
       <div class="shot reveal"><img src="assets/web-home.webp" alt="ARVIO Web home on iPad" loading="lazy" decoding="async"><span class="shot-num">01</span><span class="shot-label">Web · Home</span></div>
       <div class="shot reveal" data-delay="1"><img src="assets/web-livetv.webp" alt="ARVIO Web live TV guide on iPad" loading="lazy" decoding="async"><span class="shot-num">02</span><span class="shot-label">Web · Live TV</span></div>
-      <div class="shot reveal" data-delay="2"><img src="assets/web-catalogs.webp" alt="ARVIO Web streaming catalogs on iPad" loading="lazy" decoding="async"><span class="shot-num">03</span><span class="shot-label">Web · Catalogs</span></div>
+      <div class="shot reveal" data-delay="2"><img src="assets/web-catalogs.webp" alt="ARVIO Web media catalogs on iPad" loading="lazy" decoding="async"><span class="shot-num">03</span><span class="shot-label">Web · Catalogs</span></div>
       <div class="shot reveal" data-delay="3"><img src="assets/web-details.webp" alt="ARVIO Web series details on iPad" loading="lazy" decoding="async"><span class="shot-num">04</span><span class="shot-label">Web · Details</span></div>
     </div>
     <p class="reveal" style="font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.1em;margin-top:18px;text-transform:uppercase;font-weight:500">// Captured on iPad — actual ARVIO Web UI</p>
 
-    <div class="guide-warning reveal" data-delay="2" style="margin-top:22px">Browsers only decode a limited set of formats — true for every web streamer. Most sources play directly (use the "Browser playable" filter); heavy 4K HEVC, Dolby Vision and REMUX releases, lossless audio and some Live TV providers don't. That's what the one‑tap "Open in VLC" button is for: it hands the stream to VLC on iPhone, iPad, Android, macOS and Windows (one‑time one‑click setup), which plays everything. The app has none of these limits — its native player decodes it all.</div>
+    <div class="guide-warning reveal" data-delay="2" style="margin-top:22px">Browsers decode fewer formats than a native media player. Compatible media from your connected services can play in the browser; heavy 4K HEVC, Dolby Vision, REMUX files, lossless audio and some live TV providers may require the one-tap VLC handoff on iPhone, iPad, Android, macOS or Windows. Device and provider support varies.</div>
 
     <div class="reveal" data-delay="3" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:24px">
       <a class="btn btn-play" href="/go/premium/details"><strong>Try Premium free for 3 days</strong></a>
@@ -2961,7 +3055,7 @@
   <div class="wrap">
     <div class="section-head reveal">
       <div class="section-num">07 / Setup</div>
-      <h2 class="section-title">From install to <span class="accent">first stream</span> in minutes.</h2>
+      <h2 class="section-title">From install to <span class="accent">your media hub</span> in minutes.</h2>
     </div>
 
     <div class="setup-grid">
@@ -2977,17 +3071,17 @@
         <div class="setup-icon">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
         </div>
-        <div class="setup-title">Add a server, catalog, or source</div>
-        <div class="setup-desc">Connect Plex, Emby, Jellyfin, or Telegram, paste an addon URL, or import an M3U for live TV. Profile presets get you running fast.</div>
+        <div class="setup-title">Connect what you already use</div>
+        <div class="setup-desc">Add your Plex, Emby or Jellyfin server, your Telegram account, an authorized live TV provider, or a compatible addon manifest. ARVIO includes no media service or provider account.</div>
         <div class="setup-time">Two minutes</div>
       </div>
       <div class="setup-step reveal" data-delay="2">
         <div class="setup-icon">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
         </div>
-        <div class="setup-title">Press play</div>
-        <div class="setup-desc">Browse, hit OK on the remote, the player takes over. Trakt picks up watch state. Resume points stay in sync across devices.</div>
-        <div class="setup-time">You're streaming</div>
+        <div class="setup-title">Organize and use your library</div>
+        <div class="setup-desc">Arrange rows and profiles, browse metadata, open authorized media from a connected service, and keep watch state aligned through Trakt, Simkl or ARVIO Cloud.</div>
+        <div class="setup-time">Ready to browse</div>
       </div>
     </div>
   </div>
@@ -3005,7 +3099,7 @@
       <div class="guide-card">
         <div class="guide-kicker">Setup roadmap</div>
         <h3>From fresh install to a synced TV home.</h3>
-        <p>Follow the path in order: create your space, connect sync, add your libraries and legal sources, then tune playback once.</p>
+        <p>Follow the path in order: create your space, connect sync, add your authorized libraries and services, then tune playback once.</p>
         <div class="guide-summary">
           <div class="guide-summary-item">
             <span class="guide-summary-num">01</span>
@@ -3013,17 +3107,16 @@
           </div>
           <div class="guide-summary-item">
             <span class="guide-summary-num">02</span>
-            <span class="guide-summary-label">Servers, Telegram, catalogs, IPTV, and sources</span>
+            <span class="guide-summary-label">Servers, Telegram, catalogs, live TV, and integrations</span>
           </div>
           <div class="guide-summary-item">
             <span class="guide-summary-num">03</span>
             <span class="guide-summary-label">Playback polish and troubleshooting</span>
           </div>
         </div>
-        <div class="guide-warning">Use only sources you are allowed to access. Torrent-based sources are not supported. ARVIO supports HTTP sources and user-configured debrid-compatible sources, but it does not host media, provide streams, or grant rights to third-party content.</div>
+        <div class="guide-warning">ARVIO provides media-management software only. It does not host, sell, bundle or provide media, provider accounts, playlists or streams. Connect only services and files you own or are authorized to access. Torrent-based sources are not supported.</div>
         <div class="guide-actions">
-          <a class="guide-link" href="https://stremio-addons.net/" target="_blank" rel="noopener">Browse compatible source directory</a>
-          <a class="guide-link secondary" href="https://arvio-ui.web.app/" target="_blank" rel="noopener">Manage settings and addons</a>
+          <a class="guide-link" href="https://arvio-ui.web.app/" target="_blank" rel="noopener">Manage settings and integrations</a>
           <a class="guide-link secondary" href="https://web.arvio.tv">Open web app</a>
         </div>
       </div>
@@ -3043,7 +3136,7 @@
           <div>
             <div class="guide-phase">Sync</div>
             <h4>Pair ARVIO Cloud</h4>
-            <p>Go to Settings, Accounts, ARVIO Cloud, then scan the QR code with your phone. This keeps profiles, settings, catalogs, IPTV state, watch state, and profile avatars aligned across your devices.</p>
+            <p>Go to Settings, Accounts, ARVIO Cloud, then scan the QR code with your phone. This keeps profiles, settings, catalogs, live TV state, watch state, and profile avatars aligned across your devices.</p>
             <div class="guide-tags"><span class="guide-tag">QR pair</span><span class="guide-tag">Cloud backup</span></div>
           </div>
         </div>
@@ -3051,9 +3144,9 @@
           <span class="guide-num">03</span>
           <div>
             <div class="guide-phase">Optional</div>
-            <h4>Connect Trakt</h4>
-            <p>Sign in if you want synced watch history, watchlists, scrobbling, and Continue Watching across devices.</p>
-            <div class="guide-tags"><span class="guide-tag">Watch history</span><span class="guide-tag">Watchlists</span></div>
+            <h4>Connect Trakt or Simkl</h4>
+            <p>Choose one or both services for synced watch history, watchlists, scrobbling, Continue Watching and tracker libraries across devices.</p>
+            <div class="guide-tags"><span class="guide-tag">Trakt</span><span class="guide-tag">Simkl</span><span class="guide-tag">Watchlists</span></div>
           </div>
         </div>
         <div class="guide-step">
@@ -3087,8 +3180,8 @@
           <span class="guide-num">07</span>
           <div>
             <div class="guide-phase">Expand</div>
-            <h4>Add catalogs and IPTV</h4>
-            <p>Add public Trakt or MDBList rows from Settings, Catalogs. For live TV, use Settings, IPTV, Add Playlist, then add an M3U URL or Xtream server details with an optional EPG URL.</p>
+            <h4>Add catalogs and your live TV provider</h4>
+            <p>Add public Trakt or MDBList metadata rows from Settings, Catalogs. For live TV, connect an authorized M3U or Xtream provider with an optional EPG URL. ARVIO does not supply channels, playlists or provider credentials.</p>
             <div class="guide-tags"><span class="guide-tag">Catalogs</span><span class="guide-tag">Live TV</span><span class="guide-tag">EPG</span></div>
           </div>
         </div>
@@ -3097,8 +3190,8 @@
           <div>
             <div class="guide-phase">Sources</div>
             <h4>Add compatible sources</h4>
-            <p>Use HTTP sources and user-configured debrid-compatible sources only. Torrent-based sources are not supported. For long URLs, use the Google TV or Google Home phone remote keyboard.</p>
-            <div class="guide-tags"><span class="guide-tag">HTTP</span><span class="guide-tag">Debrid-compatible</span><span class="guide-tag">No torrent sources</span></div>
+            <p>Connect compatible HTTP or account-backed integrations only when you are authorized to access their media. ARVIO supplies no files, links or third-party accounts. Torrent-based sources are not supported.</p>
+            <div class="guide-tags"><span class="guide-tag">User configured</span><span class="guide-tag">Account backed</span><span class="guide-tag">No torrent sources</span></div>
           </div>
         </div>
         <div class="guide-step">
@@ -3155,7 +3248,7 @@
           <span>Is ARVIO free? Are there ads?</span>
           <span class="faq-q-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
         </summary>
-        <div class="faq-a">The Android/TV app is free and open source, with no ads, third-party behavioral analytics, or gated app features. Release builds can send limited crash diagnostics and one pseudonymous daily app-open event to help maintain reliability. This can be disabled per device in Settings. The one optional paid service is <a href="/go/premium/faq">ARVIO Premium</a>, the browser version for Windows, Mac, iPhone, iPad and more, at $2.99/month because browser streaming uses hosted servers and bandwidth. The Android app never requires it.</div>
+        <div class="faq-a">The Android/TV app is free and open source, with no ads, third-party behavioral analytics, or gated app features. Release builds can send limited crash diagnostics and one pseudonymous daily app-open event to help maintain reliability. This can be disabled per device in Settings. The one optional paid service is <a href="/go/premium/faq">ARVIO Premium</a>, the browser interface for Windows, Mac, iPhone, iPad and more, at $2.99/month because it uses hosted infrastructure and bandwidth. The Android app never requires it.</div>
       </details>
 
       <details class="faq-item reveal">
@@ -3171,15 +3264,15 @@
           <span>What is ARVIO Web and what does it cost?</span>
           <span class="faq-q-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
         </summary>
-        <div class="faq-a">The full ARVIO experience in your browser at <a href="/go/premium/faq">web.arvio.tv</a> on Windows, Mac, iPhone, iPad and more. Profiles, Library and progress sync with the app, and sources can be watched or downloaded directly. A one-time 3-day trial starts after you connect ARVIO Cloud. It then costs $2.99/month via <a href="https://ko-fi.com/arvio/tiers">Ko‑fi membership</a>: subscribe with the same email as your ARVIO Cloud account and access unlocks automatically. Paid with a different email? Enter your Ko‑fi email in the Premium screen to link it. Note: browsers can't decode everything — heavy 4K/REMUX releases and some Live TV open in VLC with one tap instead (the app's native player has no such limits).</div>
+        <div class="faq-a">The ARVIO media-management interface in your browser at <a href="/go/premium/faq">web.arvio.tv</a> on Windows, Mac, iPhone, iPad and more. Profiles, Library and progress sync with the app. Compatible media from your authorized connected services can be played or downloaded when the provider permits it. A one-time 3-day trial starts after you connect ARVIO Cloud. It then costs $2.99/month via <a href="https://ko-fi.com/arvio/tiers">Ko-fi membership</a>. Browsers cannot decode every format, so some authorized files may require the one-tap VLC handoff.</div>
       </details>
 
       <details class="faq-item reveal">
         <summary class="faq-q">
-          <span>Does ARVIO host or stream content?</span>
+          <span>Does ARVIO provide media or subscriptions?</span>
           <span class="faq-q-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
         </summary>
-        <div class="faq-a">No. ARVIO is a hub — it talks to the addons, M3U lists and accounts <em>you</em> connect. We ship metadata addons (Cinemeta, TMDB) and subtitle providers (OpenSubtitles) and integrate Trakt, but we don't host video.</div>
+        <div class="faq-a">No. ARVIO is software for organizing and using services configured by the user. It does not host, store, sell, bundle or redistribute movies, series, channels, playlists or streams, and it does not include provider accounts. Built-in integrations are limited to metadata, subtitles and account connections. Users must have permission to access every connected service and file.</div>
       </details>
 
       <details class="faq-item reveal">
@@ -3203,7 +3296,7 @@
           <span>Do I need a media server?</span>
           <span class="faq-q-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
         </summary>
-        <div class="faq-a">No server required. ARVIO runs entirely on the TV. Optional cloud sync (watchlist, resume points) is available via Trakt — your account, your data.</div>
+        <div class="faq-a">A home server is optional. ARVIO can organize metadata, tracker lists and other services you configure, but playback always requires an authorized server, provider, file or integration connected by the user. ARVIO Cloud, Trakt and Simkl sync are optional.</div>
       </details>
 
       <details class="faq-item reveal">
@@ -3222,7 +3315,7 @@
   <div class="wrap">
     <span class="eyebrow reveal" style="justify-content:center">Available now</span>
     <h2 class="reveal" data-delay="1">Install it<br>on your <span class="accent">TV tonight.</span></h2>
-    <p class="download-sub reveal" data-delay="2">Free and open source. No account required — sign in only if you want cloud sync.</p>
+    <p class="download-sub reveal" data-delay="2">Free, open source media-management software. No account required; connect only services and files you are authorized to use.</p>
     <div class="download-primary reveal" data-delay="3">
       <a class="google-play-badge" href="https://play.google.com/store/apps/details?id=com.arvio.tv" target="_blank" rel="noopener" aria-label="Get ARVIO on Google Play">
         <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" width="190" height="74">
@@ -3267,6 +3360,7 @@
         <h4>Legal</h4>
         <a href="https://github.com/ProdigyV21/ARVIO/blob/main/LICENSE">License</a>
         <a href="/privacy">Privacy</a>
+        <a href="#content-policy">Content policy</a>
         <a href="https://github.com/ProdigyV21/ARVIO/tree/main/LICENSES">Third-party</a>
       </div>
     </div>
