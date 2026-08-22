@@ -1,6 +1,9 @@
 [build]
   publish = "."
 
+[[plugins]]
+  package = "./plugins/indexnow"
+
 [[redirects]]
   from = "/privacy"
   to = "https://github.com/ProdigyV21/ARVIO/blob/main/PRIVACY.md"
