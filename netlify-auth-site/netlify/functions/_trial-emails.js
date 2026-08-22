@@ -79,21 +79,21 @@ function trialEmailContent(type, expiresAt) {
   if (type === "welcome") {
     return {
       subject: "Your 3-day ARVIO Web trial is active",
-      text: `Your ARVIO Web trial is ready until ${end}. Open ARVIO Web: ${webUrl}\n\nYour profiles, addons, libraries and watch progress stay connected through ARVIO Cloud. The Android app remains free.`,
-      html: `<p>Your <strong>3-day ARVIO Web trial</strong> is ready until ${end}.</p><p><a href="${webUrl}">Open ARVIO Web</a></p><p>Your profiles, addons, libraries and watch progress stay connected through ARVIO Cloud. The Android app remains free.</p>`
+      text: `Your ARVIO Web trial is ready until ${end}. Open ARVIO Web on Windows, Mac, iPhone, iPad or another browser: ${webUrl}\n\nYour profiles, addons, libraries and watch progress stay connected through ARVIO Cloud. The Android app remains free.`,
+      html: `<p>Your <strong>3-day ARVIO Web trial</strong> is ready until ${end}.</p><p><a href="${webUrl}">Open ARVIO Web on Windows, Mac or mobile</a></p><p>Your profiles, addons, libraries and watch progress stay connected through ARVIO Cloud. The Android app remains free.</p>`
     };
   }
   if (type === "reminder") {
     return {
       subject: "Your ARVIO Web trial ends tomorrow",
-      text: `Your ARVIO Web trial ends at ${end}. Continue using it here: ${webUrl}\n\nTo keep browser, iPhone and iPad access after the trial, membership is $2.99/month: ${membershipUrl}`,
-      html: `<p>Your ARVIO Web trial ends at <strong>${end}</strong>.</p><p><a href="${webUrl}">Continue your trial</a></p><p>To keep browser, iPhone and iPad access after the trial, <a href="${membershipUrl}">membership is $2.99/month</a>.</p>`
+      text: `Your ARVIO Web trial ends at ${end}. Continue using it here: ${webUrl}\n\nTo keep Windows, Mac, browser, iPhone and iPad access after the trial, membership is $2.99/month: ${membershipUrl}`,
+      html: `<p>Your ARVIO Web trial ends at <strong>${end}</strong>.</p><p><a href="${webUrl}">Continue your trial</a></p><p>To keep Windows, Mac and mobile browser access after the trial, <a href="${membershipUrl}">membership is $2.99/month</a>.</p>`
     };
   }
   return {
     subject: "Your ARVIO Web trial has ended",
-    text: `Your ARVIO Web trial has ended. Your ARVIO Cloud account and Android app are unaffected.\n\nKeep browser, iPhone and iPad access for $2.99/month: ${membershipUrl}\n\nThis is the final email for this trial.`,
-    html: `<p>Your ARVIO Web trial has ended. Your ARVIO Cloud account and Android app are unaffected.</p><p><a href="${membershipUrl}">Keep browser, iPhone and iPad access for $2.99/month</a>.</p><p>This is the final email for this trial.</p>`
+    text: `Your ARVIO Web trial has ended. Your ARVIO Cloud account and Android app are unaffected.\n\nKeep Windows, Mac and mobile browser access for $2.99/month: ${membershipUrl}\n\nThis is the final email for this trial.`,
+    html: `<p>Your ARVIO Web trial has ended. Your ARVIO Cloud account and Android app are unaffected.</p><p><a href="${membershipUrl}">Keep Windows, Mac and mobile browser access for $2.99/month</a>.</p><p>This is the final email for this trial.</p>`
   };
 }
 

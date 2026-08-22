@@ -40,6 +40,7 @@ export function capturePremiumAttribution() {
     source: clean(params.get("utm_source") || existing.source || "direct"),
     medium: clean(params.get("utm_medium") || existing.medium || "web"),
     campaign: clean(params.get("utm_campaign") || existing.campaign || "premium"),
+    content: clean(params.get("utm_content") || existing.content || "unspecified"),
     referrer: clean(referrer)
   };
   storageSet(window.localStorage, ATTRIBUTION_KEY, JSON.stringify(next));

@@ -170,13 +170,13 @@ function PaywallScreen({
 
         <h1>{expired ? "Your ARVIO Web membership has ended" : "ARVIO Web is a members feature"}</h1>
         <p className="paywall-sub">
-          Take your existing ARVIO setup to iPhone, iPad, smart-TV browsers and any desktop.
+          Take your existing ARVIO setup to Windows, Mac, iPhone, iPad and smart-TV browsers.
           Your profiles, libraries, addons and progress stay connected through ARVIO Cloud.
         </p>
 
         <div className="paywall-benefits" aria-label="ARVIO Web benefits">
           <span><Check size={15} /> Same profiles, libraries and watch progress</span>
-          <span><Check size={15} /> Download sources directly to your device</span>
+          <span><Check size={15} /> Watch or download directly on Windows, Mac and mobile</span>
           <span><Check size={15} /> Browser playback and one-click VLC</span>
           <span><Check size={15} /> Android and TV app remains completely free</span>
         </div>

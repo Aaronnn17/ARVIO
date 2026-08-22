@@ -35,6 +35,7 @@ test("trial email jobs encrypt addresses and produce exactly three service messa
 
   const expiresAt = "2026-08-22T12:00:00.000Z";
   assert.match(trialEmails._test.trialEmailContent("welcome", expiresAt).subject, /3-day/i);
+  assert.match(trialEmails._test.trialEmailContent("welcome", expiresAt).text, /Windows, Mac/i);
   assert.match(trialEmails._test.trialEmailContent("reminder", expiresAt).subject, /tomorrow/i);
   assert.match(trialEmails._test.trialEmailContent("expired", expiresAt).text, /final email/i);
 });
@@ -58,11 +59,18 @@ test("public Premium presentation has one tracked route and factual social proof
   const root = path.join(__dirname, "..", "..");
   const html = fs.readFileSync(path.join(root, "netlify-arvio-tv-site", "index.html"), "utf8");
   const redirects = fs.readFileSync(path.join(root, "netlify-arvio-tv-site", "netlify.toml"), "utf8");
-  assert.match(html, /Start 3-day free trial/i);
+  assert.match(html, /Try Premium free for 3 days/i);
   assert.match(html, /10,000\+ users/i);
   assert.match(html, /10\+ contributors/i);
-  assert.match(html, /href="\/go\/premium"/);
+  assert.match(html, /Windows, Mac and mobile/i);
+  assert.match(html, /watch and download directly on Windows, Mac/i);
+  assert.match(html, /Android APK is free and open source/i);
+  assert.match(html, /Optional add-on · Open-source web app/i);
+  assert.match(html, /github\.com\/ProdigyV21\/ARVIO\/tree\/main\/web/);
+  assert.match(html, /href="\/go\/premium\/hero"/);
   assert.match(redirects, /from = "\/go\/premium"/);
+  assert.match(redirects, /from = "\/go\/premium\/hero"/);
+  assert.match(redirects, /utm_content=spotlight/);
   assert.match(redirects, /utm_campaign=premium/);
   assert.match(redirects, /intent=trial/);
 

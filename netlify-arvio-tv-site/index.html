@@ -1107,6 +1107,30 @@
     font-size: 16px;
     line-height: 1.65;
   }
+  .premium-platforms {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    margin-top: 18px;
+    font-family: var(--mono);
+    color: var(--ink-2);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .premium-platforms span {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .premium-platforms span:not(:last-child)::after {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--accent);
+    content: "";
+  }
   .premium-points {
     display: grid;
     gap: 10px;
@@ -2412,7 +2436,7 @@
         <svg id="theme-icon-dark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
       </button>
       <a class="nav-web nav-dashboard" href="https://arvio-ui.web.app/" target="_blank" rel="noopener">Dashboard</a>
-      <a class="nav-web nav-premium" href="/go/premium">Try Premium</a>
+      <a class="nav-web nav-premium" href="/go/premium/nav">Try Premium</a>
       <a class="nav-cta" href="https://play.google.com/store/apps/details?id=com.arvio.tv" target="_blank" rel="noopener">Google Play
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"></path></svg>
       </a>
@@ -2425,22 +2449,22 @@
   <div class="wrap">
     <div class="hero-content-split">
       <div class="hero-left">
-        <div class="reveal in"><span class="eyebrow">Media hub · Android TV · Open source</span></div>
+        <div class="reveal in"><span class="eyebrow">Free Android APK · Open source · No ads</span></div>
         <h1 class="hero-h1 reveal in" data-delay="1" id="hero-h1">
           ARVIO for Android TV,<br><span class="accent">without the clutter.</span>
         </h1>
-        <p class="hero-sub reveal in" data-delay="2">Live TV, Plex, Emby, Jellyfin, Telegram, addons, watchlists, subtitles, plus Trakt and Simkl integration in one fast, ad-free home built for the remote.</p>
+        <p class="hero-sub reveal in" data-delay="2">A completely free, open-source Android app for Live TV, Plex, Emby, Jellyfin, Telegram, addons, subtitles, Trakt and Simkl, built for the remote.</p>
         <div class="hero-ctas reveal in" data-delay="3">
           <a class="google-play-badge" href="https://play.google.com/store/apps/details?id=com.arvio.tv" target="_blank" rel="noopener" aria-label="Get ARVIO on Google Play">
             <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" width="190" height="74">
           </a>
-          <a class="btn btn-ghost" href="/go/premium">
+          <a class="btn btn-ghost" href="/go/premium/hero">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"></rect><path d="M8 22h8M12 18v4"></path></svg>
-            Try Premium free
+            Optional Premium Web
           </a>
         </div>
         <div class="hero-sideload reveal in" data-delay="4">
-          APK available on <a href="https://github.com/ProdigyV21/ARVIO/releases">GitHub</a> - Play Store recommended for auto-updates
+          Android APK is free and open source · <a href="https://github.com/ProdigyV21/ARVIO/releases">Download on GitHub</a> · Premium is never required
         </div>
       </div>
       <div class="hero-right reveal in" data-delay="4">
@@ -2500,25 +2524,30 @@
 <section class="premium-spotlight" aria-labelledby="premium-title">
   <div class="wrap premium-spotlight-inner">
     <div class="reveal">
-      <div class="premium-kicker">ARVIO Premium · Web access</div>
-      <h2 id="premium-title">Your ARVIO setup, now on every screen.</h2>
-      <p class="premium-spotlight-copy">Open the same profiles, libraries, addons and watch progress on iPhone, iPad, desktop and smart-TV browsers. Stream sources or download them directly to your device.</p>
+      <div class="premium-kicker">Optional add-on · Open-source web app</div>
+      <h2 id="premium-title">Take free ARVIO beyond Android.</h2>
+      <p class="premium-spotlight-copy">The Android APK stays completely free. Optional Premium adds the open-source ARVIO Web experience, with the same profiles, libraries, addons and progress on Windows, Mac, iPhone, iPad and other browsers.</p>
+      <div class="premium-platforms" aria-label="Supported ARVIO Premium platforms">
+        <span>Windows</span><span>Mac</span><span>iPhone</span><span>iPad</span><span>Smart-TV browser</span>
+      </div>
       <div class="premium-points">
         <span><i class="premium-check">✓</i> Everything stays connected through ARVIO Cloud</span>
-        <span><i class="premium-check">✓</i> Download sources directly to your phone, tablet or computer</span>
+        <span><i class="premium-check">✓</i> Watch and download directly on Windows, Mac, phone or tablet</span>
         <span><i class="premium-check">✓</i> Browser playback and one-click VLC</span>
-        <span><i class="premium-check">✓</i> Android and TV app remains completely free</span>
+        <span><i class="premium-check">✓</i> Web app source is public on GitHub</span>
+        <span><i class="premium-check">✓</i> Android and TV APK remains completely free</span>
       </div>
       <div class="premium-actions">
-        <a class="btn btn-play" href="/go/premium"><strong>Start 3-day free trial</strong></a>
-        <span class="premium-price"><strong>$2.99</strong> / month after trial</span>
+        <a class="btn btn-play" href="/go/premium/spotlight"><strong>Try Premium free for 3 days</strong></a>
+        <a class="btn btn-ghost" href="https://github.com/ProdigyV21/ARVIO/tree/main/web" target="_blank" rel="noopener">View web source</a>
+        <span class="premium-price"><strong>$2.99</strong> / month after · no payment details for trial</span>
       </div>
       <div class="premium-proof">
         <span>10,000+ users</span><span>10+ contributors</span><span>Open source</span>
       </div>
     </div>
-    <a class="premium-preview reveal" data-delay="1" href="/go/premium" aria-label="Try ARVIO Premium">
-      <img src="assets/web-home.webp" alt="ARVIO Web running on an iPad" loading="eager" decoding="async">
+    <a class="premium-preview reveal" data-delay="1" href="/go/premium/preview" aria-label="Try ARVIO Premium on Windows, Mac, iPhone or iPad">
+      <img src="assets/web-home.webp" alt="ARVIO Premium browser interface available on Windows, Mac, iPhone and iPad" loading="eager" decoding="async">
       <span class="premium-preview-label">Actual ARVIO Web interface</span>
     </a>
   </div>
@@ -2887,8 +2916,8 @@
         <div class="setup-icon">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18"></path><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"></path></svg>
         </div>
-        <div class="setup-title">Any device with a browser</div>
-        <div class="setup-desc">iPhone, iPad, MacBook, Windows, Chromebook — the full ARVIO experience at web.arvio.tv. No install, no APK, no sideloading. The screens the app could never reach.</div>
+        <div class="setup-title">Windows, Mac and mobile</div>
+        <div class="setup-desc">Use the open-source ARVIO Web experience on Windows, Mac, iPhone, iPad, Chromebook and smart-TV browsers at web.arvio.tv. No install, APK or sideloading required.</div>
         <div class="setup-time">web.arvio.tv</div>
       </div>
       <div class="setup-step reveal" data-delay="1">
@@ -2896,7 +2925,7 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0-1.3-8.8A6 6 0 1 0 6 16.5"></path><path d="M12 12v9"></path><path d="m8 17 4 4 4-4"></path></svg>
         </div>
         <div class="setup-title">Synced with the app</div>
-        <div class="setup-desc">Profiles, watchlist, Continue Watching and Trakt stay in sync through ARVIO Cloud. Debrid sources — TorBox, Real‑Debrid, Premiumize, AllDebrid — up to 4K, plus downloads and Live TV.</div>
+        <div class="setup-desc">Profiles, Library, Continue Watching, Trakt and Simkl stay in sync through ARVIO Cloud. Use connected sources up to 4K, downloads and Live TV across your screens.</div>
         <div class="setup-time">ARVIO Cloud</div>
       </div>
       <div class="setup-step reveal" data-delay="2">
@@ -2920,9 +2949,9 @@
     <div class="guide-warning reveal" data-delay="2" style="margin-top:22px">Browsers only decode a limited set of formats — true for every web streamer. Most sources play directly (use the "Browser playable" filter); heavy 4K HEVC, Dolby Vision and REMUX releases, lossless audio and some Live TV providers don't. That's what the one‑tap "Open in VLC" button is for: it hands the stream to VLC on iPhone, iPad, Android, macOS and Windows (one‑time one‑click setup), which plays everything. The app has none of these limits — its native player decodes it all.</div>
 
     <div class="reveal" data-delay="3" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:24px">
-      <a class="btn btn-play" href="/go/premium"><strong>Start 3-day free trial</strong></a>
+      <a class="btn btn-play" href="/go/premium/details"><strong>Try Premium free for 3 days</strong></a>
       <a class="btn btn-ghost" href="https://ko-fi.com/arvio/tiers" target="_blank" rel="noopener">Ko‑fi membership</a>
-      <a class="btn btn-ghost" href="https://github.com/ProdigyV21/ARVIO">Source on GitHub</a>
+      <a class="btn btn-ghost" href="https://github.com/ProdigyV21/ARVIO/tree/main/web">Web app source</a>
     </div>
   </div>
 </section>
@@ -3126,7 +3155,7 @@
           <span>Is ARVIO free? Are there ads?</span>
           <span class="faq-q-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
         </summary>
-        <div class="faq-a">The Android/TV app is free and open source, with no ads, third-party behavioral analytics, or gated app features. Release builds can send limited crash diagnostics and one pseudonymous daily app-open event to help maintain reliability. This can be disabled per device in Settings. The one optional paid service is <a href="/go/premium">ARVIO Web</a>, the browser version, at $2.99/month because browser streaming uses hosted servers and bandwidth. The Android app never requires it.</div>
+        <div class="faq-a">The Android/TV app is free and open source, with no ads, third-party behavioral analytics, or gated app features. Release builds can send limited crash diagnostics and one pseudonymous daily app-open event to help maintain reliability. This can be disabled per device in Settings. The one optional paid service is <a href="/go/premium/faq">ARVIO Premium</a>, the browser version for Windows, Mac, iPhone, iPad and more, at $2.99/month because browser streaming uses hosted servers and bandwidth. The Android app never requires it.</div>
       </details>
 
       <details class="faq-item reveal">
@@ -3142,7 +3171,7 @@
           <span>What is ARVIO Web and what does it cost?</span>
           <span class="faq-q-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
         </summary>
-        <div class="faq-a">The full ARVIO experience in your browser at <a href="/go/premium">web.arvio.tv</a> — iPhone, iPad, MacBook, Windows, anything. Profiles, watchlist and progress sync with the app. A one-time 3-day trial starts after you connect ARVIO Cloud. It then costs $2.99/month via <a href="https://ko-fi.com/arvio/tiers">Ko‑fi membership</a>: subscribe with the same email as your ARVIO Cloud account and access unlocks automatically. Paid with a different email? Enter your Ko‑fi email in the Premium screen to link it. Note: browsers can't decode everything — heavy 4K/REMUX releases and some Live TV open in VLC with one tap instead (the app's native player has no such limits).</div>
+        <div class="faq-a">The full ARVIO experience in your browser at <a href="/go/premium/faq">web.arvio.tv</a> on Windows, Mac, iPhone, iPad and more. Profiles, Library and progress sync with the app, and sources can be watched or downloaded directly. A one-time 3-day trial starts after you connect ARVIO Cloud. It then costs $2.99/month via <a href="https://ko-fi.com/arvio/tiers">Ko‑fi membership</a>: subscribe with the same email as your ARVIO Cloud account and access unlocks automatically. Paid with a different email? Enter your Ko‑fi email in the Premium screen to link it. Note: browsers can't decode everything — heavy 4K/REMUX releases and some Live TV open in VLC with one tap instead (the app's native player has no such limits).</div>
       </details>
 
       <details class="faq-item reveal">
@@ -3158,7 +3187,7 @@
           <span>Which devices are supported?</span>
           <span class="faq-q-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></span>
         </summary>
-        <div class="faq-a">Android TV and Google TV are first‑class — Chromecast with Google TV, NVIDIA Shield, Onn 4K, Walmart Onn, most Sony Bravia and TCL sets. Android phones and tablets get the companion UI. There's no native iOS, Apple TV or webOS app — but <a href="https://web.arvio.tv">ARVIO Web</a> runs in any browser, including iPhone, iPad and Mac.</div>
+        <div class="faq-a">Android TV and Google TV are first‑class — Chromecast with Google TV, NVIDIA Shield, Onn 4K, Walmart Onn, most Sony Bravia and TCL sets. Android phones and tablets get the companion UI. ARVIO Premium extends the experience to browsers on Windows, Mac, iPhone, iPad, Chromebook, Apple TV, webOS and more.</div>
       </details>
 
       <details class="faq-item reveal">
@@ -3225,6 +3254,7 @@
         <a href="#player">Player</a>
         <a href="#devices">Devices</a>
         <a href="#screens">Screens</a>
+        <a href="/go/premium/footer">Premium</a>
         <a href="#guide">Guide</a>
       </div>
       <div class="foot-col">

@@ -24,3 +24,45 @@
   to = "https://web.arvio.tv/?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&intent=trial"
   status = 302
   force = true
+
+[[redirects]]
+  from = "/go/premium/nav"
+  to = "https://web.arvio.tv/?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=navigation&intent=trial"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/premium/hero"
+  to = "https://web.arvio.tv/?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=hero&intent=trial"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/premium/spotlight"
+  to = "https://web.arvio.tv/?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=spotlight&intent=trial"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/premium/preview"
+  to = "https://web.arvio.tv/?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=preview&intent=trial"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/premium/details"
+  to = "https://web.arvio.tv/?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=details&intent=trial"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/premium/faq"
+  to = "https://web.arvio.tv/?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=faq&intent=trial"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/go/premium/footer"
+  to = "https://web.arvio.tv/?utm_source=arvio.tv&utm_medium=website&utm_campaign=premium&utm_content=footer&intent=trial"
+  status = 302
+  force = true
