@@ -183,6 +183,8 @@ data class IptvLoadProgress(
 data class IptvCloudProfileState(
     val m3uUrl: String = "",
     val epgUrl: String = "",
+    val stalkerPortalUrl: String = "",
+    val stalkerMacAddress: String = "",
     val favoriteGroups: List<String> = emptyList(),
     val favoriteChannels: List<String> = emptyList(),
     val hiddenGroups: List<String> = emptyList(),
@@ -210,6 +212,7 @@ class IptvRepository @Inject constructor(
 ) {
     private val gson = Gson()
     private val loadMutex = Mutex()
+    private val stalkerApiMutex = Mutex()
     private val xtreamDataMutex = Mutex()
     private val xtreamSeriesEpisodeCacheMutex = Mutex()
     private val xtreamSeriesEpisodeInFlightMutex = Mutex()
@@ -617,6 +620,7 @@ class IptvRepository @Inject constructor(
             prefs[stalkerPortalUrlKey()] = encryptConfigValue(normalizedUrl)
             prefs[stalkerMacAddressKey()] = normalizedMac
         }
+        cachedStalkerApi = null
         groupOrderLocallyDirty = true
         if (sourceChanged) {
             withContext(Dispatchers.IO) { deletePersistedSourceCaches(previousSourceKey) }
@@ -641,6 +645,19 @@ class IptvRepository @Inject constructor(
         }
         invalidateCache()
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "clear stalker config")
+    }
+
+    suspend fun resolveStalkerStreamUrl(command: String): String? {
+        val config = observeConfig().first()
+        if (config.stalkerPortalUrl.isBlank() || config.stalkerMacAddress.isBlank()) return null
+
+        val stalker = cachedStalkerApi ?: stalkerApiMutex.withLock {
+            cachedStalkerApi ?: com.arflix.tv.data.api.StalkerApi(
+                config.stalkerPortalUrl,
+                config.stalkerMacAddress,
+            ).takeIf { it.handshake() }?.also { cachedStalkerApi = it }
+        }
+        return stalker?.resolveStreamUrl(command)
     }
 
     suspend fun saveSortOrder(sortOrder: String) {
@@ -2800,7 +2817,7 @@ class IptvRepository @Inject constructor(
             val stalker = com.arflix.tv.data.api.StalkerApi(config.stalkerPortalUrl, config.stalkerMacAddress)
             if (!stalker.handshake()) return null
             stalker.getProfile()
-            val channels = stalker.getChannels()
+            val channels = stalker.getChannels().map { it.copy(id = "stalker:${it.id}") }
             return if (channels.isNotEmpty()) channels to stalker else null
         }
 
@@ -2958,7 +2975,11 @@ class IptvRepository @Inject constructor(
     private fun epgUrlKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_epg_url")
     private fun playlistsKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_playlists_json")
     private fun stalkerPortalUrlKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_stalker_portal_url")
+    private fun stalkerPortalUrlKeyFor(profileId: String): Preferences.Key<String> =
+        profileManager.profileStringKeyFor(profileId, "iptv_stalker_portal_url")
     private fun stalkerMacAddressKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_stalker_mac_address")
+    private fun stalkerMacAddressKeyFor(profileId: String): Preferences.Key<String> =
+        profileManager.profileStringKeyFor(profileId, "iptv_stalker_mac_address")
     private fun sortOrderKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_sort_order")
     private fun sortOrderKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_sort_order")
@@ -3148,6 +3169,8 @@ class IptvRepository @Inject constructor(
         return IptvCloudProfileState(
             m3uUrl = primary?.m3uUrl ?: legacyM3uUrl,
             epgUrl = primary?.epgUrl ?: legacyEpgUrls.firstOrNull().orEmpty(),
+            stalkerPortalUrl = decryptConfigValue(prefs[stalkerPortalUrlKeyFor(safeProfileId)].orEmpty()),
+            stalkerMacAddress = prefs[stalkerMacAddressKeyFor(safeProfileId)].orEmpty(),
             favoriteGroups = decodeFavoriteGroups(prefs[favoriteGroupsKeyFor(safeProfileId)].orEmpty()),
             favoriteChannels = decodeFavoriteChannels(prefs[favoriteChannelsKeyFor(safeProfileId)].orEmpty()),
             hiddenGroups = if (hiddenRaw.isNotBlank()) {
@@ -3174,6 +3197,8 @@ class IptvRepository @Inject constructor(
         val normalizedM3u = normalizeStoredIptvUrl(state.m3uUrl)
         val normalizedEpgUrls = normalizeStoredEpgInputs(state.epgUrl)
         val normalizedEpg = normalizedEpgUrls.firstOrNull().orEmpty()
+        val normalizedStalkerPortal = state.stalkerPortalUrl.trim().trimEnd('/')
+        val normalizedStalkerMac = state.stalkerMacAddress.trim().uppercase()
         val normalizedPlaylists = state.playlists.mapIndexed { index, playlist ->
             normalizePlaylistEntry(playlist, index)
         }.filterNotNull().take(3)
@@ -3198,6 +3223,10 @@ class IptvRepository @Inject constructor(
         context.settingsDataStore.edit { prefs ->
             prefs[m3uUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedM3u)
             prefs[epgUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedEpg)
+            if (normalizedStalkerPortal.isBlank()) prefs.remove(stalkerPortalUrlKeyFor(safeProfileId))
+            else prefs[stalkerPortalUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedStalkerPortal)
+            if (normalizedStalkerMac.isBlank()) prefs.remove(stalkerMacAddressKeyFor(safeProfileId))
+            else prefs[stalkerMacAddressKeyFor(safeProfileId)] = normalizedStalkerMac
             prefs[favoriteGroupsKeyFor(safeProfileId)] = gson.toJson(state.favoriteGroups.distinct())
             prefs[favoriteChannelsKeyFor(safeProfileId)] = gson.toJson(state.favoriteChannels.distinct())
             if (state.hiddenGroups.isNotEmpty()) {
@@ -3228,6 +3257,7 @@ class IptvRepository @Inject constructor(
         }
         groupOrderLocallyDirty = false
         if (profileManager.getProfileIdSync() == safeProfileId) {
+            cachedStalkerApi = null
             invalidateCache()
         }
     }

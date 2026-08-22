@@ -105,6 +105,7 @@ open class StalkerApi(
     /** Step 3: Get all channels */
     suspend fun getChannels(): List<IptvChannel> {
         val channels = mutableListOf<IptvChannel>()
+        val seenChannelIds = HashSet<String>()
         try {
             // Get genres first for group names
             val genreUrl = "$apiBase/server/load.php?type=itv&action=get_genres&JsHttpRequest=1-xml"
@@ -121,12 +122,16 @@ open class StalkerApi(
                 val parsed = gson.fromJson(response, StalkerChannelResponse::class.java)
                 val data = parsed?.js?.data ?: break
 
+                var newChannelIdCount = 0
                 for (ch in data) {
+                    val channelId = ch.id?.toString() ?: continue
+                    if (!seenChannelIds.add(channelId)) continue
+                    newChannelIdCount++
                     val streamCmd = ch.cmd ?: continue
                     val groupName = ch.tvGenreId?.let { genreMap[it] } ?: "Uncategorized"
                     channels.add(
                         IptvChannel(
-                            id = ch.id?.toString() ?: continue,
+                            id = channelId,
                             name = ch.name ?: "Unknown",
                             logo = ch.logo,
                             group = groupName,
@@ -136,10 +141,13 @@ open class StalkerApi(
                 }
 
                 val totalItems = parsed.js?.totalItems ?: 0
-                val maxPageItems = parsed.js?.maxPageItems ?: 20
+                val maxPageItems = (parsed.js?.maxPageItems ?: 20).coerceAtLeast(1)
                 // Some portals ignore pagination and return all channels in every response.
-                // If data.size equals totalItems, we already have everything.
-                hasMore = page * maxPageItems < totalItems && data.size < totalItems
+                // Stop when a page contains no new IDs as well as when one response
+                // already contains the complete channel list.
+                hasMore = newChannelIdCount > 0 &&
+                    page * maxPageItems < totalItems &&
+                    data.size < totalItems
                 page++
             }
 

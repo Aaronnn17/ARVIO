@@ -706,13 +706,10 @@ fun TvScreen(
     LaunchedEffect(playingChannelId, playingChannel?.streamUrl) {
         var stream = playingChannel?.streamUrl ?: return@LaunchedEffect
         if (isPlayerReleased) return@LaunchedEffect
-        // Resolve Stalker portal cmd to actual stream URL
-        if (stream.startsWith("ffmpeg") || (stream.startsWith("/") && !stream.startsWith("//"))) {
-            val stalker = viewModel.iptvRepository.cachedStalkerApi
-            if (stalker != null) {
-                val resolved = stalker.resolveStreamUrl(stream)
-                if (resolved != null) stream = resolved else return@LaunchedEffect
-            }
+        // Resolve Stalker portal cmd to an authenticated stream URL.
+        if (playingChannel?.id?.startsWith("stalker:") == true) {
+            val resolved = viewModel.iptvRepository.resolveStalkerStreamUrl(stream)
+            if (resolved != null) stream = resolved else return@LaunchedEffect
         }
         if (stream == lastPreparedStreamUrl) return@LaunchedEffect
         if (exoPlayer == null) {

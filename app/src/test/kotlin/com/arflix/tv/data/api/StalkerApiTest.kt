@@ -187,4 +187,33 @@ class StalkerApiTest {
         assertTrue(ok)
         assertTrue(requests.any { it.contains("/stalker_portal/") })
     }
+
+    @Test
+    fun `channel pagination stops and deduplicates when a portal repeats the first page`() = runTest {
+        val requests = mutableListOf<String>()
+        val repeatedPage = """{
+            "js": {
+                "data": [
+                    { "id": 1, "name": "One", "cmd": "ffmpeg http://one", "tv_genre_id": "1" },
+                    { "id": 2, "name": "Two", "cmd": "ffmpeg http://two", "tv_genre_id": "1" }
+                ],
+                "total_items": 6,
+                "max_page_items": 2
+            }
+        }"""
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("action=get_genres") ->
+                    """{ "js": [{ "id": "1", "title": "News" }] }"""
+                url.contains("action=get_all_channels") -> repeatedPage
+                else -> null
+            }
+        }
+
+        val channels = api.getChannels()
+
+        assertEquals(listOf("1", "2"), channels.map { it.id })
+        assertEquals(2, requests.count { it.contains("action=get_all_channels") })
+        assertFalse(requests.any { it.contains("p=3") })
+    }
 }

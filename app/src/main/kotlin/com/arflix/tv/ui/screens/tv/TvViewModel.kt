@@ -1956,7 +1956,11 @@ class TvViewModel @Inject constructor(
         } else {
             channel.streamUrl
         }
-        val resolvedUrl = resolveStalkerStreamIfNeeded(rawUrl, forceRefresh)
+        val resolvedUrl = resolveStalkerStreamIfNeeded(
+            rawUrl = rawUrl,
+            isStalkerChannel = channel.id.startsWith("stalker:"),
+            forceRefresh = forceRefresh,
+        )
         return iptvPlaybackUrlResolver.resolve(
             rawUrl = resolvedUrl,
             headers = channel.requestHeaders,
@@ -1964,9 +1968,13 @@ class TvViewModel @Inject constructor(
         )
     }
 
-    private suspend fun resolveStalkerStreamIfNeeded(rawUrl: String, forceRefresh: Boolean): String {
+    private suspend fun resolveStalkerStreamIfNeeded(
+        rawUrl: String,
+        isStalkerChannel: Boolean,
+        forceRefresh: Boolean,
+    ): String {
         val trimmed = rawUrl.trim()
-        if (!looksLikeStalkerStreamCommand(trimmed)) return trimmed
+        if (!isStalkerChannel) return trimmed
 
         if (!forceRefresh) {
             synchronized(resolvedStalkerStreamCache) {
@@ -1975,7 +1983,7 @@ class TvViewModel @Inject constructor(
         }
 
         val resolved = withContext(Dispatchers.IO) {
-            iptvRepository.cachedStalkerApi?.resolveStreamUrl(trimmed)
+            iptvRepository.resolveStalkerStreamUrl(trimmed)
         }?.trim().orEmpty()
         val playable = resolved.ifBlank { trimmed.removePrefix("ffmpeg").trim() }
         if (playable.isNotBlank()) {
@@ -2325,15 +2333,6 @@ private fun looksLikeXtream(url: String): Boolean {
     return url.contains("player_api.php", ignoreCase = true) ||
         url.contains("get.php", ignoreCase = true) ||
         url.contains("xmltv.php", ignoreCase = true)
-}
-
-private fun looksLikeStalkerStreamCommand(url: String): Boolean {
-    val trimmed = url.trim()
-    if (trimmed.startsWith("ffmpeg", ignoreCase = true)) return true
-    if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return true
-    return trimmed.startsWith("cmd=", ignoreCase = true) ||
-        trimmed.contains("type=itv", ignoreCase = true) &&
-        trimmed.contains("create_link", ignoreCase = true)
 }
 
 internal fun IptvConfig.syncSignature(): String {
