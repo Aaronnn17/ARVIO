@@ -144,6 +144,8 @@ import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
 import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.ui.components.SkeletonMobileHeroBanner
+import com.arflix.tv.ui.components.SkeletonPosterCard
+import com.arflix.tv.ui.components.SkeletonMediaCard
 import androidx.compose.material3.TextButton
 import com.arflix.tv.ui.components.MobileHeroBanner
 import com.arflix.tv.ui.components.ProfileAvatarVisual
@@ -2942,79 +2944,100 @@ private fun MobileHomeRowsLayer(
                 } else {
                     rowUsePosterCards
                 }
-                val itemsToRender = remember(category.items, rowHasMore, isPortrait) {
-                    if (category.items.isEmpty()) {
-                        (1..8).map { index ->
-                            MediaItem(
-                                id = -index,
-                                title = "",
-                                mediaType = MediaType.MOVIE,
-                                isPlaceholder = true
-                            )
-                        }
-                    } else if (rowHasMore) {
-                        val skeletonCount = if (isPortrait) 12 else 7
-                        category.items + List(skeletonCount) { idx ->
-                            MediaItem(
-                                id = -1000 - idx,
-                                title = "",
-                                isPlaceholder = true
-                            )
-                        }
-                    } else {
-                        category.items
-                    }
-                }
-                val itemKeys = remember(category.id, itemsToRender) {
-                    stableHomeRowItemKeys(category.id, itemsToRender)
-                }
+                val isRowSkeleton = category.items.isEmpty() || category.items.all { it.isPlaceholder }
 
-                // Horizontal card row with touch scrolling
-                LazyRow(
-                    state = rowState,
-                    modifier = Modifier.arvioDpadFocusGroup(),
-                    contentPadding = PaddingValues(
-                        start = contentStartPadding,
-                        end = 16.dp,
-                        top = 4.dp,
-                        bottom = 4.dp
-                    ),
-                    horizontalArrangement = Arrangement.spacedBy(mobileItemSpacing)
-                ) {
-                    itemsIndexed(
-                        itemsToRender,
-                        key = { index, _ -> itemKeys[index] },
-                        contentType = { _, item -> if (item.isPlaceholder) "placeholder_card" else "${item.mediaType.name}_mobile_card" }
-                    ) { index, item ->
-                        if (item.isPlaceholder) {
-                            LaunchedEffect(item.id) {
-                                onLoadMoreCategory(category.id)
-                            }
-                        } else if (rowHasMore && index >= category.items.size - 5) {
-                            LaunchedEffect(category.items.size) {
-                                onLoadMoreCategory(category.id)
+                if (isRowSkeleton) {
+                    // Render structured skeleton cards while category metadata is loading
+                    LazyRow(
+                        state = rowState,
+                        modifier = Modifier.arvioDpadFocusGroup(),
+                        contentPadding = PaddingValues(
+                            start = contentStartPadding,
+                            end = 16.dp,
+                            top = 4.dp,
+                            bottom = 4.dp
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(mobileItemSpacing)
+                    ) {
+                        items(8, key = { "skeleton_${category.id}_$it" }) {
+                            if (isPortrait) {
+                                SkeletonPosterCard(width = rowMobileItemWidth)
+                            } else {
+                                SkeletonMediaCard(width = rowMobileItemWidth)
                             }
                         }
-                        val currentItem = rememberUpdatedState(item)
-                        val onCardClick = remember {
-                            { onItemClick(currentItem.value) }
-                        }
-                        val onCardLongClick = if (onItemLongClick != null) {
-                            remember {
-                                { onItemLongClick(currentItem.value, isContinueWatching) }
+                    }
+                } else {
+                    val realItems = remember(category.items) {
+                        category.items.filter { !it.isPlaceholder }
+                    }
+                    val itemKeys = remember(category.id, realItems) {
+                        stableHomeRowItemKeys(category.id, realItems)
+                    }
+
+                    // Horizontal card row with touch scrolling
+                    LazyRow(
+                        state = rowState,
+                        modifier = Modifier.arvioDpadFocusGroup(),
+                        contentPadding = PaddingValues(
+                            start = contentStartPadding,
+                            end = 16.dp,
+                            top = 4.dp,
+                            bottom = 4.dp
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(mobileItemSpacing)
+                    ) {
+                        itemsIndexed(
+                            realItems,
+                            key = { index, _ -> itemKeys[index] },
+                            contentType = { _, item -> "${item.mediaType.name}_mobile_card" }
+                        ) { index, item ->
+                            val currentItem = rememberUpdatedState(item)
+                            val onCardClick = remember {
+                                { onItemClick(currentItem.value) }
                             }
-                        } else null
-                        if (isRanked && index < 10) {
-                            Box(
-                                modifier = Modifier.width(rowMobileItemWidth)
-                            ) {
+                            val onCardLongClick = if (onItemLongClick != null) {
+                                remember {
+                                    { onItemLongClick(currentItem.value, isContinueWatching) }
+                                }
+                            } else null
+
+                            if (isRanked && index < 10) {
+                                Box(
+                                    modifier = Modifier.width(rowMobileItemWidth)
+                                ) {
+                                    val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
+                                    ArvioMediaCard(
+                                        item = item,
+                                        width = rowMobileItemWidth,
+                                        isLandscape = !isPortrait,
+                                        logoImageUrl = cardLogoUrl,
+                                        showProgress = false,
+                                        showTitle = !item.collectionHideTitle,
+                                        isFocusedOverride = false,
+                                        enableSystemFocus = false,
+                                        onFocused = {},
+                                        onClick = onCardClick,
+                                        onLongClick = onCardLongClick,
+                                    )
+                                    TopRankRibbon(
+                                        rank = index + 1,
+                                        isFocused = false,
+                                        compact = true,
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .zIndex(2f)
+                                            .padding(start = 6.dp)
+                                    )
+                                }
+                            } else {
                                 val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
                                 ArvioMediaCard(
                                     item = item,
                                     width = rowMobileItemWidth,
                                     isLandscape = !isPortrait,
                                     logoImageUrl = cardLogoUrl,
-                                    showProgress = false,
+                                    showProgress = isContinueWatching,
                                     showTitle = !item.collectionHideTitle,
                                     isFocusedOverride = false,
                                     enableSystemFocus = false,
@@ -3022,31 +3045,17 @@ private fun MobileHomeRowsLayer(
                                     onClick = onCardClick,
                                     onLongClick = onCardLongClick,
                                 )
-                                TopRankRibbon(
-                                    rank = index + 1,
-                                    isFocused = false,
-                                    compact = true,
-                                    modifier = Modifier
-                                        .align(Alignment.TopStart)
-                                        .zIndex(2f)
-                                        .padding(start = 6.dp)
-                                )
                             }
-                        } else {
-                            val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
-                            ArvioMediaCard(
-                                item = item,
-                                width = rowMobileItemWidth,
-                                isLandscape = !isPortrait,
-                                logoImageUrl = cardLogoUrl,
-                                showProgress = isContinueWatching,
-                                showTitle = !item.collectionHideTitle,
-                                isFocusedOverride = false,
-                                enableSystemFocus = false,
-                                onFocused = {},
-                                onClick = onCardClick,
-                                onLongClick = onCardLongClick,
-                            )
+                        }
+
+                        if (rowHasMore) {
+                            item(key = "${category.id}_loading_more", contentType = "loading_more_card") {
+                                if (isPortrait) {
+                                    SkeletonPosterCard(width = rowMobileItemWidth)
+                                } else {
+                                    SkeletonMediaCard(width = rowMobileItemWidth)
+                                }
+                            }
                         }
                     }
                 }

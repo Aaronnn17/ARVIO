@@ -3327,9 +3327,13 @@ class HomeViewModel @Inject constructor(
 
     fun loadNextPageForCategory(categoryId: String) {
         if (isHardCappedTop10Catalog(categoryId)) return
+        val currentCategory = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        if (currentCategory.items.isEmpty() || currentCategory.items.all { it.isPlaceholder }) return
+
+        val realItemsCount = currentCategory.items.count { !it.isPlaceholder }
         val pagination = categoryPaginationStates.getOrPut(categoryId) {
             CategoryPaginationState(
-                loadedCount = _uiState.value.categories.firstOrNull { it.id == categoryId }?.items?.size ?: 0
+                loadedCount = realItemsCount
             )
         }
         if (!pagination.hasMore || pagination.isLoading) return
@@ -3338,20 +3342,22 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val currentCategories = _uiState.value.categories
-                val currentCategory = currentCategories.firstOrNull { it.id == categoryId } ?: return@launch
+                val latestCategory = currentCategories.firstOrNull { it.id == categoryId } ?: return@launch
+                val realItems = latestCategory.items.filter { !it.isPlaceholder }
+                if (realItems.isEmpty()) return@launch
 
                 val catalog = savedCatalogById[categoryId]
                 val pageSize = getCategoryPageSize(categoryId)
                 val result = if (catalog?.isPreinstalled == true && catalog.sourceUrl.isNullOrBlank()) {
                     // Pure TMDB preinstalled catalog (no MDBList source)
-                    val nextPage = (currentCategory.items.size / 20) + 1
+                    val nextPage = (realItems.size / 20) + 1
                     mediaRepository.loadHomeCategoryPage(categoryId, nextPage)
                 } else {
                     // MDBList/custom catalog (including preinstalled MDBList ones)
                     val cfg = catalog ?: return@launch
                     mediaRepository.loadCustomCatalogPage(
                         catalog = cfg,
-                        offset = currentCategory.items.size,
+                        offset = realItems.size,
                         limit = pageSize
                     )
                 }
@@ -3361,7 +3367,7 @@ class HomeViewModel @Inject constructor(
                     return@launch
                 }
 
-                val seen = currentCategory.items
+                val seen = realItems
                     .map { "${it.mediaType.name}_${it.id}" }
                     .toHashSet()
                 val uniqueNewItems = result.items.filter { item ->
@@ -3374,7 +3380,7 @@ class HomeViewModel @Inject constructor(
 
                 val updatedCategories = currentCategories.map { category ->
                     if (category.id == categoryId) {
-                        category.copy(items = category.items + uniqueNewItems)
+                        category.copy(items = realItems + uniqueNewItems)
                     } else {
                         category
                     }
