@@ -127,11 +127,6 @@ internal class IptvPlaybackUrlResolver(
             null
         }
     }
-
-    private fun looksLikeHlsPlaybackUrl(url: String): Boolean {
-        val clean = url.substringBefore('?').substringBefore('#')
-        return clean.endsWith(".m3u8", ignoreCase = true)
-    }
 }
 
 internal fun shouldResolveIptvPlaybackRedirect(url: String): Boolean {
