@@ -809,8 +809,9 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun buildFavoriteTvCategory(): Category? {
-        // Use non-blocking memory read first; fall back to mutex-guarded disk read
+        // Use non-blocking memory read first; fall back to disk snapshot read
         val snapshot = iptvRepository.getMemoryCachedSnapshot()
+            ?: iptvRepository.getCachedSnapshotOrNull()
             ?: return null
         val favoriteIds = snapshot.favoriteChannels.toHashSet()
         if (favoriteIds.isEmpty()) return null
@@ -821,6 +822,7 @@ class HomeViewModel @Inject constructor(
             .filter { favoriteIds.contains(it.id) }
             .map { it.id }
             .toSet()
+        if (favoriteChannelIds.isEmpty()) return null
         iptvRepository.reDeriveCachedNowNext(favoriteChannelIds)
         // Re-read snapshot after re-derive to get updated nowNext
         val freshSnapshot = iptvRepository.getMemoryCachedSnapshot() ?: snapshot
@@ -1124,6 +1126,7 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
     val cardLogoUrls = mutableStateMapOf<String, String>()
+    val cardImdbRatings = mutableStateMapOf<String, String>()
 
     // Debounce job for hero updates (Phase 6.1)
     private var heroUpdateJob: Job? = null
@@ -2158,6 +2161,8 @@ class HomeViewModel @Inject constructor(
                 continueWatchingUpdates.revision == localUpdateRevision
             ) {
                 publishContinueWatching(fresh)
+            } else if (cached.isEmpty() && instant.isEmpty() && fresh.isEmpty()) {
+                publishContinueWatching(emptyList())
             }
             val traktConnected = try {
             traktRepository.hasTrakt()
@@ -2183,6 +2188,18 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun publishContinueWatching(items: List<ContinueWatchingItem>) {
+        if (items.isEmpty()) {
+            withContext(Dispatchers.IO) {
+                persistContinueWatchingCache(emptyList())
+            }
+            withContext(Dispatchers.Main) {
+                val current = _uiState.value.categories.filterNot { it.id == "continue_watching" }
+                if (current.size != _uiState.value.categories.size) {
+                    _uiState.value = _uiState.value.copy(categories = current)
+                }
+            }
+            return
+        }
         withContext(Dispatchers.IO) {
             persistContinueWatchingCache(items)
         }
@@ -2231,9 +2248,13 @@ class HomeViewModel @Inject constructor(
                     }.getOrDefault(emptySet())
                     val skeletonDefaults = mediaRepository.getDefaultCatalogConfigs()
                         .filterNot { cfg -> cfg.isPreinstalled && cfg.id in hiddenForSkeleton }
+                    val earlyHasRemote = runCatching {
+                        traktRepository.hasTrakt() || traktRepository.isAlternativeRemoteActive()
+                    }.getOrDefault(false)
                     val earlySkeleton = buildProfileSkeletonCategories(
                         savedCatalogs = skeletonDefaults,
-                        cachedContinueWatching = emptyList()
+                        cachedContinueWatching = emptyList(),
+                        hasRemoteContinueWatching = earlyHasRemote
                     )
                     if (requestId != loadHomeRequestId) return@loadHome
                     if (earlySkeleton.isNotEmpty()) {
@@ -2286,8 +2307,12 @@ class HomeViewModel @Inject constructor(
                 savedCatalogs.forEach { savedCatalogById[it.id] = it }
                 categoryPaginationStates.clear()
 
+                val hasRemoteContinueWatching = runCatching {
+                    traktRepository.hasTrakt() || traktRepository.isAlternativeRemoteActive()
+                }.getOrDefault(false)
+
                 if (!isTvDevice) {
-                    loadMobileHomeDataProgressive(requestId, savedCatalogs, cachedContinueWatching)
+                    loadMobileHomeDataProgressive(requestId, savedCatalogs, cachedContinueWatching, hasRemoteContinueWatching)
                     return@loadHome
                 }
 
@@ -2296,7 +2321,8 @@ class HomeViewModel @Inject constructor(
                 if (_uiState.value.categories.isEmpty()) {
                     val skeletonCategories = buildProfileSkeletonCategories(
                         savedCatalogs = savedCatalogs,
-                        cachedContinueWatching = cachedContinueWatching
+                        cachedContinueWatching = cachedContinueWatching,
+                        hasRemoteContinueWatching = hasRemoteContinueWatching
                     )
                     if (requestId != loadHomeRequestId) return@loadHome
                     if (skeletonCategories.isNotEmpty()) {
@@ -2966,6 +2992,26 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun preloadImdbRatingsForHeroItems(items: List<MediaItem>) {
+        viewModelScope.launch(networkDispatcher) {
+            items.filter { isActionableMediaItem(it) && !isIptvItem(it) }.forEach { item ->
+                val key = "${item.mediaType}_${item.id}"
+                if (!cardImdbRatings.containsKey(key)) {
+                    try {
+                        val rating = mediaRepository.getImdbRating(item.mediaType, item.id)
+                        if (!rating.isNullOrBlank()) {
+                            withContext(Dispatchers.Main.immediate) {
+                                cardImdbRatings[key] = rating
+                            }
+                        }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                    }
+                }
+            }
+        }
+    }
+
     fun retryMobileHomeLoading() {
         _uiState.value = _uiState.value.copy(isMobileSlowLoading = false, isLoading = true)
         loadHomeData()
@@ -2974,12 +3020,14 @@ class HomeViewModel @Inject constructor(
     private fun loadMobileHomeDataProgressive(
         requestId: Long,
         savedCatalogs: List<CatalogConfig>,
-        cachedContinueWatching: List<ContinueWatchingItem>
+        cachedContinueWatching: List<ContinueWatchingItem>,
+        hasRemoteContinueWatching: Boolean = false
     ) {
         // 1. Initial Skeleton Setup: render structured skeletons in saved catalog order immediately
         val skeletonCategories = buildProfileSkeletonCategories(
             savedCatalogs = savedCatalogs,
-            cachedContinueWatching = cachedContinueWatching
+            cachedContinueWatching = cachedContinueWatching,
+            hasRemoteContinueWatching = hasRemoteContinueWatching
         )
         if (_uiState.value.categories.isEmpty()) {
             val skeletonHero = chooseInitialHero(skeletonCategories)
@@ -3044,9 +3092,10 @@ class HomeViewModel @Inject constructor(
             }
         }
 
-        // 5. TMDB Built-in Categories (Trending Movies, Shows, Anime) - independent fetches
+        // 5. TMDB Built-in Categories (Trending Movies, Shows, Anime) - fast independent single-request fetches
+        val builtinTmdbIds = setOf("trending_movies", "trending_tv", "trending_anime")
         val tmdbConfigs = savedCatalogs.filter {
-            it.isPreinstalled && it.sourceUrl.isNullOrBlank() && !isCollectionRailConfig(it) && !isCollectionTileConfig(it)
+            (it.id in builtinTmdbIds) || (it.isPreinstalled && it.sourceUrl.isNullOrBlank() && !isCollectionRailConfig(it) && !isCollectionTileConfig(it))
         }
         tmdbConfigs.forEach { cfg ->
             viewModelScope.launch(networkDispatcher) {
@@ -3069,11 +3118,12 @@ class HomeViewModel @Inject constructor(
             }
         }
 
-        // 6. MDBList and Custom/Addon Catalogs - progressive fetch with semaphore
+        // 6. MDBList and Custom/Addon Catalogs - progressive fetch with higher concurrency
         val customConfigs = savedCatalogs.filter { cfg ->
-            isCustomCatalogConfig(cfg) || (cfg.isPreinstalled && !cfg.sourceUrl.isNullOrBlank() && !isCollectionRailConfig(cfg) && !isCollectionTileConfig(cfg))
+            cfg.id !in builtinTmdbIds &&
+                (isCustomCatalogConfig(cfg) || (cfg.isPreinstalled && !cfg.sourceUrl.isNullOrBlank() && !isCollectionRailConfig(cfg) && !isCollectionTileConfig(cfg)))
         }
-        val customSemaphore = Semaphore(if (isLowRamDevice) 2 else 3)
+        val customSemaphore = Semaphore(if (isLowRamDevice) 3 else 6)
         customConfigs.forEach { cfg ->
             viewModelScope.launch(networkDispatcher) {
                 customSemaphore.withPermit {
@@ -3446,31 +3496,37 @@ class HomeViewModel @Inject constructor(
 
     private fun buildProfileSkeletonCategories(
         savedCatalogs: List<com.arflix.tv.data.model.CatalogConfig>,
-        cachedContinueWatching: List<ContinueWatchingItem>
+        cachedContinueWatching: List<ContinueWatchingItem>,
+        hasRemoteContinueWatching: Boolean = false
     ): List<Category> {
         val placeholderItems = createPlaceholderItems()
 
         val rows = mutableListOf<Category>()
-        if (cachedContinueWatching.isNotEmpty()) {
+        // Include Continue Watching in startup skeleton if cached items exist OR user is connected to Trakt / Cloud
+        val hasContinueWatchingPotential = cachedContinueWatching.isNotEmpty() || hasRemoteContinueWatching
+        if (hasContinueWatchingPotential) {
             rows.add(
                 Category(
                     id = "continue_watching",
                     title = "Continue Watching",
-                    items = cachedContinueWatching.map { it.toMediaItem() }
-                )
-            )
-        } else {
-            rows.add(
-                Category(
-                    id = "continue_watching",
-                    title = "Continue Watching",
-                    items = placeholderItems
+                    items = if (cachedContinueWatching.isNotEmpty()) {
+                        cachedContinueWatching.map { it.toMediaItem() }
+                    } else {
+                        placeholderItems
+                    }
                 )
             )
         }
 
         savedCatalogs.forEach { cfg ->
             if (isCollectionTileConfig(cfg)) return@forEach
+            // Omit Favorite TV and Popular Live Sports from initial skeleton
+            if (cfg.id == FAVORITE_TV_CATEGORY_ID) return@forEach
+            if (cfg.id == SportsAddonCapabilities.POPULAR_LIVE_TV_ROW_ID) return@forEach
+            if (cfg.id == SportsAddonCapabilities.SPORTS_CATEGORY_ROW_ID) {
+                rows.add(sportsRepository.sportsCategoryOnlyRow(locked = true))
+                return@forEach
+            }
             val rowItems = if (isCollectionRailConfig(cfg)) {
                 val group = cfg.collectionGroup
                 val matchingConfigs = savedCatalogs.filter {

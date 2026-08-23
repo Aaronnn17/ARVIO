@@ -89,6 +89,8 @@ class SportsRepository @Inject constructor(
 
     fun defaultHomeRows(): List<Category> = buildLockedRows()
 
+    fun sportsCategoryOnlyRow(locked: Boolean = true): Category = sportsCategoryRow(locked = locked)
+
     suspend fun buildHomeRows(
         addons: List<Addon>,
         selectedSportId: String? = null

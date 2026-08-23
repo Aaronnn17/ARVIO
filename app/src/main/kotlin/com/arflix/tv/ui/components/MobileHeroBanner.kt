@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.components
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,9 +15,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.arflix.tv.R
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
@@ -169,6 +173,15 @@ private fun BannerMeta(year: String, rating: String) {
     val hasRating = rating.isNotEmpty()
     if (!hasYear && !hasRating) return
 
+    val context = LocalContext.current
+    val imdbSvgRequest = remember(context) {
+        ImageRequest.Builder(context)
+            .data(R.raw.logo_imdb_rectangle)
+            .bitmapConfig(Bitmap.Config.ARGB_8888)
+            .allowRgb565(false)
+            .build()
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -182,27 +195,20 @@ private fun BannerMeta(year: String, rating: String) {
             )
         }
         if (hasRating) {
-            // IMDb logo pill
-            Box(
+            AsyncImage(
+                model = imdbSvgRequest,
+                contentDescription = "IMDb",
+                contentScale = ContentScale.Fit,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(ImdbYellow)
-                    .padding(horizontal = 5.dp, vertical = 2.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "IMDb",
-                    color = Color.Black,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.3.sp
-                )
-            }
+                    .width(28.dp)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(2.dp))
+            )
             Text(
                 text = rating,
-                color = Color.White.copy(alpha = 0.85f),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold
+                color = Color.White.copy(alpha = 0.9f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
             )
         }
     }

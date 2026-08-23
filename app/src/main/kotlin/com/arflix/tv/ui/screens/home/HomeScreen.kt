@@ -634,6 +634,7 @@ fun HomeScreen(
     // Per-card logo reads now come from a stable snapshotStateMap so a single
     // logo arriving no longer recomposes the full home surface.
     val cardLogoUrls = viewModel.cardLogoUrls
+    val cardImdbRatings = viewModel.cardImdbRatings
     val profileCount = if (currentProfile != null) 1 else 0
     val usePosterCards = rememberCardLayoutMode() == CardLayoutMode.POSTER
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1163,6 +1164,8 @@ fun HomeScreen(
         HomeInputLayer(
             categories = displayCategories,
             cardLogoUrls = cardLogoUrls,
+            cardImdbRatings = cardImdbRatings,
+            onPreloadHeroImdbRatings = viewModel::preloadImdbRatingsForHeroItems,
             focusState = focusState,
             limitRowsDuringStartup = limitRowsDuringStartup,
             suppressSelectUntilMs = suppressSelectUntilMs,
@@ -1742,7 +1745,12 @@ private fun formatBudgetCompact(budget: Long): String {
 
 private fun imdbRatingFor(item: MediaItem): String {
     val imdbValue = parseRatingValue(item.imdbRating)
-    return if (imdbValue > 0f) item.imdbRating else ""
+    if (imdbValue > 0f) return item.imdbRating
+    val tmdbValue = parseRatingValue(item.tmdbRating)
+    if (tmdbValue > 0f) return item.tmdbRating
+    val ratingValue = parseRatingValue(item.rating)
+    if (ratingValue > 0f) return item.rating
+    return ""
 }
 
 @Composable
@@ -2056,10 +2064,12 @@ private fun MobileHeroOverlay(
 private fun MobileHeroCarousel(
     categories: List<Category>,
     cardLogoUrls: Map<String, String> = emptyMap(),
+    cardImdbRatings: Map<String, String> = emptyMap(),
     currentProfile: com.arflix.tv.data.model.Profile? = null,
     onNavigateToSearch: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
-    onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit
+    onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit,
+    onPreloadHeroImdbRatings: (List<MediaItem>) -> Unit = {}
 ) {
     val heroItems = remember(categories) {
         val eligibleRows = categories.filter {
@@ -2082,6 +2092,12 @@ private fun MobileHeroCarousel(
                 if (i < secondCat.size) add(secondCat[i])
             }
         }.distinctBy { "${it.mediaType}_${it.id}" }
+    }
+
+    LaunchedEffect(heroItems) {
+        if (heroItems.isNotEmpty()) {
+            onPreloadHeroImdbRatings(heroItems)
+        }
     }
 
     if (heroItems.isEmpty()) {
@@ -2214,7 +2230,14 @@ private fun MobileHeroCarousel(
                     item.year
                 }
             }
-            val rating = remember(item.id, item.imdbRating) { imdbRatingFor(item) }
+            val dynamicImdb = cardImdbRatings["${item.mediaType}_${item.id}"]
+            val rating = remember(item.id, dynamicImdb, item.imdbRating, item.tmdbRating, item.rating) {
+                if (!dynamicImdb.isNullOrBlank() && parseRatingValue(dynamicImdb) > 0f) {
+                    dynamicImdb
+                } else {
+                    imdbRatingFor(item)
+                }
+            }
             val logoUrl = remember(item.id) { cardLogoUrls["${item.mediaType}_${item.id}"] }
 
             // Scale down cards that aren't in the center; animate smoothly as they scroll in/out
@@ -2279,6 +2302,8 @@ private fun MobileHeroCarousel(
 private fun HomeInputLayer(
     categories: List<Category>,
     cardLogoUrls: Map<String, String>,
+    cardImdbRatings: Map<String, String> = emptyMap(),
+    onPreloadHeroImdbRatings: (List<MediaItem>) -> Unit = {},
     focusState: HomeFocusState,
     limitRowsDuringStartup: Boolean,
     suppressSelectUntilMs: Long,
@@ -2716,6 +2741,8 @@ private fun HomeInputLayer(
         HomeRowsLayer(
             categories = categories,
             cardLogoUrls = cardLogoUrls,
+            cardImdbRatings = cardImdbRatings,
+            onPreloadHeroImdbRatings = onPreloadHeroImdbRatings,
             focusState = focusState,
             limitRowsDuringStartup = limitRowsDuringStartup,
             contentStartPadding = contentStartPadding,
@@ -2775,6 +2802,8 @@ private fun HomeInputLayer(
 private fun HomeRowsLayer(
     categories: List<Category>,
     cardLogoUrls: Map<String, String>,
+    cardImdbRatings: Map<String, String> = emptyMap(),
+    onPreloadHeroImdbRatings: (List<MediaItem>) -> Unit = {},
     focusState: HomeFocusState,
     limitRowsDuringStartup: Boolean,
     contentStartPadding: androidx.compose.ui.unit.Dp,
@@ -2806,6 +2835,8 @@ private fun HomeRowsLayer(
         MobileHomeRowsLayer(
             categories = categories,
             cardLogoUrls = cardLogoUrls,
+            cardImdbRatings = cardImdbRatings,
+            onPreloadHeroImdbRatings = onPreloadHeroImdbRatings,
             contentStartPadding = contentStartPadding,
             currentProfile = currentProfile,
             onNavigateToSearch = onNavigateToSearch,
@@ -2854,6 +2885,8 @@ private fun HomeRowsLayer(
 private fun MobileHomeRowsLayer(
     categories: List<Category>,
     cardLogoUrls: Map<String, String>,
+    cardImdbRatings: Map<String, String> = emptyMap(),
+    onPreloadHeroImdbRatings: (List<MediaItem>) -> Unit = {},
     contentStartPadding: androidx.compose.ui.unit.Dp,
     usePosterCards: Boolean,
     currentProfile: com.arflix.tv.data.model.Profile? = null,
@@ -2880,10 +2913,12 @@ private fun MobileHomeRowsLayer(
             MobileHeroCarousel(
                 categories = categories,
                 cardLogoUrls = cardLogoUrls,
+                cardImdbRatings = cardImdbRatings,
                 currentProfile = currentProfile,
                 onNavigateToSearch = onNavigateToSearch,
                 onSwitchProfile = onSwitchProfile,
-                onNavigateToDetails = onNavigateToDetails
+                onNavigateToDetails = onNavigateToDetails,
+                onPreloadHeroImdbRatings = onPreloadHeroImdbRatings
             )
         }
 
