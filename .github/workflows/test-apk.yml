@@ -21,8 +21,8 @@ jobs:
       - name: Placeholder config
         run: cp secrets.defaults.properties secrets.properties
 
-      - name: Parallel-install app id (.stalker-live)
-        run: sed -i 's/        debug {/        debug {\n            applicationIdSuffix = ".stalker-live"/' app/build.gradle.kts
+      - name: Parallel-install app id (.stalkerlive)
+        run: sed -i 's/        debug {/        debug {\n            applicationIdSuffix = ".stalkerlive"/' app/build.gradle.kts
 
       - name: Build debug APK
         run: ./gradlew assembleSideloadDebug --no-daemon
@@ -30,5 +30,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: arvio-stalker-live-test
+          name: arvio-stalkerlive-test
           path: app/build/outputs/apk/sideload/debug/*.apk
