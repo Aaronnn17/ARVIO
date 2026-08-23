@@ -9491,6 +9491,43 @@ button,
   font-weight: 700;
 }
 
+.detail-external-ratings {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  margin-top: 9px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.detail-external-ratings::-webkit-scrollbar {
+  display: none;
+}
+
+.detail-external-ratings > span {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 27px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.58);
+}
+
+.detail-external-ratings small {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.detail-external-ratings b {
+  color: #fff;
+  font-size: 12px;
+}
+
 /* Genre chips beside the IMDb badge — Android MetaPill look (subtle, uppercase). */
 .detail-rating-line > span:not(.imdb-rating) {
   display: inline-flex;

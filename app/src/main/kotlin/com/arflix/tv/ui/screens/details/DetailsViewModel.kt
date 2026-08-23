@@ -23,6 +23,8 @@ import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.MediaRepository
+import com.arflix.tv.data.repository.MdbExternalRating
+import com.arflix.tv.data.repository.MdbListRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
@@ -64,6 +66,7 @@ data class DetailsUiState(
     val similar: List<MediaItem> = emptyList(),
     val similarLogoUrls: Map<String, String> = emptyMap(),
     val reviews: List<Review> = emptyList(),
+    val externalRatings: List<MdbExternalRating> = emptyList(),
     val error: String? = null,
     // Person modal
     val showPersonModal: Boolean = false,
@@ -193,6 +196,7 @@ private fun Addon.isVodStreamingAddon(): Boolean =
 class DetailsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val mediaRepository: MediaRepository,
+    private val mdbListRepository: MdbListRepository,
     private val pluginManager: PluginManager,
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
@@ -524,6 +528,15 @@ class DetailsViewModel @Inject constructor(
                     showStatus = showStatus
                 )
                 _uiState.value = baseState
+
+                launch {
+                    val externalRatings = runCatching {
+                        mdbListRepository.getExternalRatings(mediaType, mediaId)
+                    }.getOrDefault(emptyList())
+                    if (externalRatings.isNotEmpty()) {
+                        updateState { state -> state.copy(externalRatings = externalRatings) }
+                    }
+                }
 
                 // ARM/Kitsu may expose several anime seasons for a single TMDB season. Resolve this
                 // after the fast TMDB details path and only replace the UI when the mapping is

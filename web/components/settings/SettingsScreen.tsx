@@ -1251,13 +1251,10 @@ function AccountsSection() {
   const [syncBusy, setSyncBusy] = useState(false);
   const cloudConfigured = hasNetlifyBackendConfig() || hasSupabaseConfig();
   const routingOptions: Array<[typeof trackingPreferences.watchlistReadMode, string]> = [];
-  if (mdblistConnected) {
-    routingOptions.push(["mdblist", "MDBList"]);
-  } else {
-    if (traktConnected && simklConnected) routingOptions.push(["both", "Trakt + Simkl"]);
-    if (traktConnected) routingOptions.push(["trakt", "Trakt"]);
-    if (simklConnected) routingOptions.push(["simkl", "Simkl"]);
-  }
+  if (traktConnected && simklConnected) routingOptions.push(["both", "Trakt + Simkl"]);
+  if (traktConnected) routingOptions.push(["trakt", "Trakt"]);
+  if (simklConnected) routingOptions.push(["simkl", "Simkl"]);
+  if (mdblistConnected) routingOptions.push(["mdblist", "MDBList"]);
 
   const redirectToAuthPortal = () => {
     const redirectUri = window.location.origin + "/";

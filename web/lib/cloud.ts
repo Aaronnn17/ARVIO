@@ -1021,15 +1021,15 @@ export async function pullCloudTrackingSelection(
         ? "MDBLIST"
         : "NONE";
   const storedProviderCount = Number(Boolean(traktToken)) + Number(Boolean(simklToken)) + Number(Boolean(mdbListApiKey));
-  const defaultMode: TrackingReadMode = mdbListApiKey
-    ? "mdblist"
-    : traktToken && simklToken
+  const defaultMode: TrackingReadMode = traktToken && simklToken
       ? "both"
       : traktToken
         ? "trakt"
         : simklToken
           ? "simkl"
-          : "auto";
+          : mdbListApiKey
+            ? "mdblist"
+            : "auto";
   const trackingPreferences: TrackingPreferences = {
     watchlistReadMode: normalizeTrackingReadMode(selection.watchlistReadMode, defaultMode),
     continueWatchingReadMode: normalizeTrackingReadMode(selection.continueWatchingReadMode, defaultMode),
@@ -1065,15 +1065,15 @@ export async function saveCloudTrackingSelection(
     const traktTokens = objectRecord<unknown>(root.traktTokens);
     const simklTokens = objectRecord<unknown>(root.simklTokens);
     const selections = objectRecord<Record<string, unknown>>(root.mdbListSyncByProfile);
-    const defaultMode: TrackingReadMode = selection.mdbListApiKey
-      ? "mdblist"
-      : selection.traktToken && selection.simklToken
+    const defaultMode: TrackingReadMode = selection.traktToken && selection.simklToken
         ? "both"
         : selection.traktToken
           ? "trakt"
           : selection.simklToken
             ? "simkl"
-            : "auto";
+            : selection.mdbListApiKey
+              ? "mdblist"
+              : "auto";
     const preferences = selection.trackingPreferences ?? {
       watchlistReadMode: defaultMode,
       continueWatchingReadMode: defaultMode,

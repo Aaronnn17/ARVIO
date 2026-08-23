@@ -1,8 +1,8 @@
 package com.arflix.tv.data.repository.sync
 
 /**
- * The remote sync backend a profile is connected to. Mutually exclusive per
- * profile: a profile uses Trakt, MDBList, or neither (local/Supabase only).
+ * Legacy preferred remote for a profile. Credentials may coexist; read and
+ * write routing is controlled separately by [SyncProviderStore].
  */
 enum class SyncProvider {
     NONE,

@@ -136,6 +136,7 @@ import com.arflix.tv.data.model.EpisodeIdentity
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.Review
+import com.arflix.tv.data.repository.MdbExternalRating
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.ui.components.EpisodeContextMenu
 import com.arflix.tv.ui.components.KeepScreenOn
@@ -989,6 +990,7 @@ fun DetailsScreen(
                     isInWatchlist = uiState.isInWatchlist,
                     genres = uiState.genres,
                     budget = uiState.budget,
+                    externalRatings = uiState.externalRatings,
                     seasonProgress = uiState.seasonProgress,
                     playLabel = uiState.playLabel,
                     showEpisodeRatings = uiState.showEpisodeRatings,
@@ -1261,6 +1263,7 @@ private fun DetailsContent(
     isInWatchlist: Boolean,
     genres: List<String> = emptyList(),
     budget: String? = null,
+    externalRatings: List<MdbExternalRating> = emptyList(),
     seasonProgress: Map<Int, Pair<Int, Int>> = emptyMap(),
     playLabel: String? = null,
     hasTrailer: Boolean = false,
@@ -1477,6 +1480,15 @@ private fun DetailsContent(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
+                        }
+
+                        if (externalRatings.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            MdbExternalRatingsRow(
+                                ratings = externalRatings,
+                                centered = true,
+                                textShadow = textShadow
+                            )
                         }
 
                         if (genreText.isNotEmpty()) {
@@ -2092,6 +2104,15 @@ private fun DetailsContent(
                                 )
                             }
                         }
+                    }
+
+                    if (externalRatings.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(7.dp))
+                        MdbExternalRatingsRow(
+                            ratings = externalRatings,
+                            centered = false,
+                            textShadow = textShadow
+                        )
                     }
                 }
 
@@ -3409,6 +3430,58 @@ private fun DetailsImdbSvgRatingBadge(
             color = Color.White,
             maxLines = 1
         )
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun MdbExternalRatingsRow(
+    ratings: List<MdbExternalRating>,
+    centered: Boolean,
+    textShadow: Shadow
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(
+            6.dp,
+            if (centered) Alignment.CenterHorizontally else Alignment.Start
+        ),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+    ) {
+        ratings.forEach { rating ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.62f))
+                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 7.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = rating.label,
+                    style = ArflixTypography.caption.copy(
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        shadow = textShadow
+                    ),
+                    color = Color.White.copy(alpha = 0.7f),
+                    maxLines = 1
+                )
+                Text(
+                    text = rating.value,
+                    style = ArflixTypography.caption.copy(
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        shadow = textShadow
+                    ),
+                    color = Color.White,
+                    maxLines = 1
+                )
+            }
+        }
     }
 }
 
