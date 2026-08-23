@@ -4087,9 +4087,9 @@ private fun MobileSettingsMainPage(
                     iconRes = R.drawable.ic_telegram,
                     title = "Telegram",
                     value = "",
-                    isExternalLink = true,
+                    isExternalLink = false,
                     isFocused = false,
-                    onClick = onNavigateToTelegram
+                    onClick = { onNavigate("Telegram") }
                 )
                 val isDiscordLoggedIn by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isLoggedInFlow.collectAsStateWithLifecycle(initialValue = false)
                 val discordUsername by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.usernameFlow.collectAsStateWithLifecycle(initialValue = null)
@@ -4655,6 +4655,12 @@ private fun MobileSettingsSubPage(
                     stremioAddons = stremioAddons,
                     onSwitchProfile = onSwitchProfile,
                     context = LocalContext.current
+                )
+            }
+            "Telegram" -> {
+                com.arflix.tv.ui.screens.settings.telegram.TelegramSettingsScreen(
+                    onBack = { onNavigate("MAIN") },
+                    showHeader = false
                 )
             }
         }

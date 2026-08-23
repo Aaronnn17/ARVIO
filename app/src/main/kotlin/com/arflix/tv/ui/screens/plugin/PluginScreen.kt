@@ -124,7 +124,13 @@ fun PluginScreen(
         }
     }
 
-    BackHandler {
+    BackHandler(enabled = modalOpen) {
+        if (showAddDialog) showAddDialog = false
+        else if (showResetDialog) showResetDialog = false
+        else if (repoToDelete != null) repoToDelete = null
+    }
+
+    BackHandler(enabled = !isMobile && !modalOpen) {
         onBackPressed()
     }
 
