@@ -638,6 +638,8 @@ class IptvRepository @Inject constructor(
             prefs.remove(stalkerPortalUrlKey())
             prefs.remove(stalkerMacAddressKey())
         }
+        // Drop Stalker group preferences so re-adding a portal starts clean.
+        clearGroupPreferences(STALKER_PLAYLIST_ID)
         cachedStalkerApi = null
         groupOrderLocallyDirty = true
         if (sourceChanged) {
@@ -1517,6 +1519,57 @@ class IptvRepository @Inject constructor(
             prefs[hiddenGroupsKey()] = gson.toJson(existing)
         }
         invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "toggle hidden group")
+    }
+
+    /**
+     * Show or hide all groups of a playlist in one operation. Used by the
+     * "show all / hide all" bulk toggle in the categories screen. A group is
+     * hidden when its playlistId|groupName key is present in the hidden set;
+     * `hidden=true` adds the missing keys, `hidden=false` removes them.
+     */
+    suspend fun setGroupsHidden(playlistId: String, groups: List<String>, hidden: Boolean) {
+        val trimmedId = playlistId.trim()
+        if (trimmedId.isEmpty()) return
+        val targetKeys = groups
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { PlaylistGroupKey.build(trimmedId, it) }
+            .toHashSet()
+        if (targetKeys.isEmpty()) return
+        context.settingsDataStore.edit { prefs ->
+            val existing = decodeHiddenGroups(prefs).toMutableList()
+            if (hidden) {
+                existing.addAll(targetKeys)
+            } else {
+                existing.removeAll { it in targetKeys }
+            }
+            prefs[hiddenGroupsKey()] = gson.toJson(existing.distinct())
+        }
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "set groups hidden")
+    }
+
+    /**
+     * Remove every hidden-group and group-order entry that belongs to the
+     * given playlist. Called when a Stalker portal is removed so no stale
+     * `stalker|...` preferences linger after the source is gone.
+     */
+    suspend fun clearGroupPreferences(playlistId: String) {
+        val trimmedId = playlistId.trim()
+        if (trimmedId.isEmpty()) return
+        context.settingsDataStore.edit { prefs ->
+            val retainedHidden = decodeHiddenGroups(prefs)
+                .filterNot { PlaylistGroupKey(it).playlistId == trimmedId }
+            if (retainedHidden.isEmpty()) prefs.remove(hiddenGroupsKey())
+            else prefs[hiddenGroupsKey()] = gson.toJson(retainedHidden)
+
+            val retainedOrder = decodeGroupOrder(prefs)
+                .filterNot { PlaylistGroupKey(it).playlistId == trimmedId }
+            if (retainedOrder.isEmpty()) prefs.remove(groupOrderKey())
+            else prefs[groupOrderKey()] = gson.toJson(retainedOrder)
+            prefs[groupOrderSchemaKey()] = IPTV_GROUP_ORDER_SCHEMA.toString()
+        }
+        groupOrderLocallyDirty = true
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "clear group preferences")
     }
 
     suspend fun moveGroupUp(playlistId: String, groupName: String, currentGroups: List<String> = emptyList()) {
@@ -8736,6 +8789,9 @@ class IptvRepository @Inject constructor(
         val PARTIAL_PAGED_CACHE_REPAIR_COUNTS = setOf(144, 240)
         const val IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
         const val BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
+        /** Pseudo playlist id for the Stalker/Ministra portal source. */
+        const val STALKER_PLAYLIST_ID = "stalker"
 
         val BRACKET_CONTENT_REGEX = Regex("""\[[^\]]*]""")
         val PAREN_CONTENT_REGEX = Regex("""\([^\)]*\)""")

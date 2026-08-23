@@ -929,6 +929,20 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Bulk-show or bulk-hide all groups of a playlist at once. Drives the
+     * "show all / hide all" button in the categories screen. The current
+     * available groups are taken from the UI state so the operation only
+     * touches groups that actually belong to the selected playlist.
+     */
+    fun setAllIptvGroupsVisible(playlistId: String, visible: Boolean) {
+        viewModelScope.launch {
+            val groups = _uiState.value.iptvAvailableGroups
+            if (groups.isEmpty()) return@launch
+            iptvRepository.setGroupsHidden(playlistId, groups, hidden = !visible)
+        }
+    }
+
     // ========== App Updates ==========
 
     fun performFullSync(silent: Boolean = false) {
