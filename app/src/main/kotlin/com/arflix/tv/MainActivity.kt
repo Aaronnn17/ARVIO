@@ -647,6 +647,8 @@ fun ArflixApp(
         !currentRoute.contains("profile") &&
         !currentRoute.contains("login")
 
+    val isPlayerRoute = iptvFullscreen || currentRoute?.contains("player") == true
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -668,7 +670,7 @@ fun ArflixApp(
             // Applied AFTER background so the gradient fills behind the bars.
             // systemBarsPadding() reads live WindowInsets, so it automatically
             // becomes 0 when the player hides the bars.
-            .then(if (isMobile) Modifier.systemBarsPadding() else Modifier)
+            .then(if (isMobile && !isPlayerRoute) Modifier.systemBarsPadding() else Modifier)
     ) {
         Box(modifier = Modifier.weight(1f)) {
             AppNavigation(
@@ -697,16 +699,28 @@ fun ArflixApp(
                 onExitApp = onExitApp
             )
         }
-        if (showBottomBar) {
+
+        if (isMobile && !isPlayerRoute) {
+            val bottomBarAlpha by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (showBottomBar) 1f else 0f,
+                animationSpec = androidx.compose.animation.core.tween(250),
+                label = "bottom_bar_alpha"
+            )
             AppBottomBar(
                 currentRoute = currentRoute,
                 onNavigate = { route ->
-                    navController.navigate(route) {
-                        popUpTo("home") { inclusive = false }
-                        launchSingleTop = true
+                    if (showBottomBar) {
+                        navController.navigate(route) {
+                            popUpTo("home") { inclusive = false }
+                            launchSingleTop = true
+                        }
                     }
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        alpha = bottomBarAlpha
+                    }
             )
         }
     }

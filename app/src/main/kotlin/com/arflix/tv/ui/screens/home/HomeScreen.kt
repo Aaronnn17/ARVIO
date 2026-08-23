@@ -2905,7 +2905,7 @@ private fun MobileHomeRowsLayer(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 80.dp),
+        contentPadding = PaddingValues(bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // Hero carousel — profile/search row + banner card pager

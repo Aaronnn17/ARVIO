@@ -946,7 +946,7 @@ private fun RowsLayer(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            contentPadding = PaddingValues(top = focusBleedPadding / 2, bottom = maxHeight * 0.6f),
+            contentPadding = PaddingValues(top = focusBleedPadding / 2, bottom = if (isTouchDevice) 16.dp else maxHeight * 0.6f),
             modifier = Modifier.fillMaxSize().arvioDpadFocusGroup(),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
