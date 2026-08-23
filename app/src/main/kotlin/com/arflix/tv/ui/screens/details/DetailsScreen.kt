@@ -1015,6 +1015,7 @@ fun DetailsScreen(
                         usePosterCards = usePosterCards,
                         isMobile = isMobile,
                         spoilerBlurEnabled = spoilerBlurEnabled,
+                        isLoading = uiState.isLoading,
                         onBack = onBack,
                         onButtonClick = onButtonClickRemembered,
                         onSeasonClick = onSeasonClickRemembered,
@@ -1288,6 +1289,7 @@ private fun DetailsContent(
     usePosterCards: Boolean = false,
     showEpisodeRatings: Boolean = true,
     isMobile: Boolean = false,
+    isLoading: Boolean = false,
     // Persistent back callback used by the phone-layout back button overlay
     // (issue #43). No-op by default so tablet/TV callers don't need to pass it.
     onBack: () -> Unit = {},
@@ -1468,6 +1470,20 @@ private fun DetailsContent(
                                         modifier = Modifier
                                             .fillMaxWidth(0.78f)
                                             .height(86.dp)
+                                    )
+                                } else if (!isLoading) {
+                                    Text(
+                                        text = item.title,
+                                        style = ArflixTypography.heroTitle.copy(
+                                            fontSize = 28.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            shadow = textShadow
+                                        ),
+                                        color = Color.White,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.fillMaxWidth(0.85f)
                                     )
                                 } else {
                                     Spacer(modifier = Modifier.fillMaxWidth(0.78f).height(86.dp))

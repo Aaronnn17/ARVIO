@@ -3199,10 +3199,41 @@ class MediaRepository @Inject constructor(
         return item.mediaType to match.id
     }
 
-    /** Instant synchronous peek into the in-memory logo cache. */
+    /** Instant synchronous peek into the in-memory or persisted logo cache. */
     fun peekCachedLogoUrl(mediaType: MediaType, mediaId: Int): String? {
         val cacheKey = "${mediaType}_logo_$mediaId"
-        return if (logoCache.containsKey(cacheKey)) getFromCache(logoCache, cacheKey) else null
+        if (logoCache.containsKey(cacheKey)) {
+            val cached = getFromCache(logoCache, cacheKey)
+            if (!cached.isNullOrBlank()) return cached
+        }
+        val altKey = "${mediaType}_$mediaId"
+        if (logoCache.containsKey(altKey)) {
+            val cached = getFromCache(logoCache, altKey)
+            if (!cached.isNullOrBlank()) return cached
+        }
+        try {
+            val json = context.getSharedPreferences("logo_cache", Context.MODE_PRIVATE).getString("urls", null)
+            if (!json.isNullOrBlank()) {
+                val jsonObject = org.json.JSONObject(json)
+                val url = when {
+                    jsonObject.has(altKey) -> jsonObject.optString(altKey)
+                    jsonObject.has(cacheKey) -> jsonObject.optString(cacheKey)
+                    jsonObject.has("${mediaType.name.lowercase()}_$mediaId") -> jsonObject.optString("${mediaType.name.lowercase()}_$mediaId")
+                    else -> null
+                }
+                if (!url.isNullOrBlank()) {
+                    logoCache[cacheKey] = CacheEntry(url, System.currentTimeMillis())
+                    return url
+                }
+            }
+        } catch (_: Throwable) {}
+        return null
+    }
+
+    fun cacheLogoUrl(mediaType: MediaType, mediaId: Int, logoUrl: String) {
+        if (logoUrl.isBlank()) return
+        val cacheKey = "${mediaType}_logo_$mediaId"
+        logoCache[cacheKey] = CacheEntry(logoUrl, System.currentTimeMillis())
     }
 
     /** Instant synchronous peek into the in-memory season episodes cache. */
