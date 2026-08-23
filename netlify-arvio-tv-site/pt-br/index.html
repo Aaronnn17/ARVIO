@@ -2151,15 +2151,7 @@
   }
 
   /* ============ RESPONSIVE ============ */
-  @media (max-width: 1700px) {
-    .nav-dashboard { display: none !important; }
-  }
-
-  @media (max-width: 1500px) {
-    .nav-premium { display: none !important; }
-  }
-
-  @media (max-width: 1200px) {
+  @media (max-width: 1450px) {
     .nav-links { display: none; }
     .nav-inner {
       display: flex;
@@ -2196,7 +2188,18 @@
   }
 
   @media (max-width: 768px) {
-    .nav-web { display: none !important; }
+    .theme-toggle,
+    .nav-cta { display: none; }
+    .nav-web {
+      min-height: 36px;
+      padding: 8px 11px;
+      font-size: 12px;
+    }
+    .nav-web::before {
+      width: 6px;
+      height: 6px;
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
   }
 
   @media (max-width: 640px) {
@@ -2470,7 +2473,7 @@
         <svg id="theme-icon-dark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
       </button>
       <a class="nav-web nav-dashboard" href="https://arvio-ui.web.app/" target="_blank" rel="noopener">Painel</a>
-      <a class="nav-web nav-premium" href="/go/premium/nav">Testar Premium</a>
+      <a class="nav-web nav-premium" href="/go/premium/nav">Web App</a>
       <a class="nav-cta" href="https://play.google.com/store/apps/details?id=com.arvio.tv" target="_blank" rel="noopener">Google Play
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"></path></svg>
       </a>
