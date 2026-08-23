@@ -7,8 +7,16 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -1417,6 +1425,7 @@ private fun DetailsContent(
                         val statusBarsTop = WindowInsets.statusBars.getTop(density)
                         Box(
                             modifier = Modifier
+                                .fillMaxWidth()
                                 .zIndex(11f)
                                 .height(86.dp)
                                 .onGloballyPositioned { coords ->
@@ -1442,12 +1451,13 @@ private fun DetailsContent(
                                         scaleX = scale
                                         scaleY = scale
                                     }
-                                }
+                                },
+                            contentAlignment = Alignment.Center
                         ) {
                             Crossfade(
                                 targetState = logoUrl,
                                 animationSpec = tween(300, easing = FastOutSlowInEasing),
-                                label = "tv_logo_crossfade"
+                                label = "mobile_logo_crossfade"
                             ) { currentLogoUrl ->
                                 if (!currentLogoUrl.isNullOrBlank()) {
                                     AsyncImage(
@@ -1460,95 +1470,109 @@ private fun DetailsContent(
                                             .height(86.dp)
                                     )
                                 } else {
-                                    Text(
-                                        text = item.title,
-                                        style = ArflixTypography.heroTitle.copy(
-                                            fontSize = 28.sp,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = Color.White,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.fillMaxWidth(0.85f)
-                                    )
+                                    Spacer(modifier = Modifier.fillMaxWidth(0.78f).height(86.dp))
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                            verticalAlignment = Alignment.CenterVertically,
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState())
+                                .animateContentSize(
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    )
+                                ),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            if (ratingValue > 0f) {
-                                DetailsImdbSvgRatingBadge(
-                                    rating = rating,
-                                    imageLoader = metadataLogoImageLoader,
-                                    ratingFontSize = 13,
-                                    logoWidth = 34.dp,
-                                    logoHeight = 14.dp,
+                            Spacer(modifier = Modifier.height(12.dp))
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                            ) {
+                                AnimatedVisibility(
+                                    visible = ratingValue > 0f,
+                                    enter = fadeIn(tween(250)) + expandHorizontally(tween(250)),
+                                    exit = fadeOut(tween(150)) + shrinkHorizontally(tween(150))
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        DetailsImdbSvgRatingBadge(
+                                            rating = rating,
+                                            imageLoader = metadataLogoImageLoader,
+                                            ratingFontSize = 13,
+                                            logoWidth = 34.dp,
+                                            logoHeight = 14.dp,
+                                            textShadow = textShadow
+                                        )
+                                        if (displayDate.isNotEmpty() || hasDuration) {
+                                            MobileMetadataSeparator()
+                                        }
+                                    }
+                                }
+                                if (displayDate.isNotEmpty()) {
+                                    Text(
+                                        text = displayDate,
+                                        style = ArflixTypography.caption.copy(
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            shadow = textShadow
+                                        ),
+                                        color = Color.White.copy(alpha = 0.78f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (hasDuration) {
+                                    if (displayDate.isNotEmpty()) {
+                                        MobileMetadataSeparator()
+                                    }
+                                    Text(
+                                        text = item.duration,
+                                        style = ArflixTypography.caption.copy(
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            shadow = textShadow
+                                        ),
+                                        color = Color.White.copy(alpha = 0.78f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            if (externalRatings.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                MdbExternalRatingsRow(
+                                    ratings = externalRatings,
+                                    centered = true,
                                     textShadow = textShadow
                                 )
                             }
-                            if (displayDate.isNotEmpty()) {
-                                MobileMetadataSeparator()
+
+                            if (genreText.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = displayDate,
+                                    text = genreText,
                                     style = ArflixTypography.caption.copy(
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         shadow = textShadow
                                     ),
-                                    color = Color.White.copy(alpha = 0.78f),
+                                    color = Color.White.copy(alpha = 0.74f),
+                                    textAlign = TextAlign.Center,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.fillMaxWidth(0.9f)
                                 )
                             }
-                            if (hasDuration) {
-                                MobileMetadataSeparator()
-                                Text(
-                                    text = item.duration,
-                                    style = ArflixTypography.caption.copy(
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        shadow = textShadow
-                                    ),
-                                    color = Color.White.copy(alpha = 0.78f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-
-                        if (externalRatings.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            MdbExternalRatingsRow(
-                                ratings = externalRatings,
-                                centered = true,
-                                textShadow = textShadow
-                            )
-                        }
-
-                        if (genreText.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = genreText,
-                                style = ArflixTypography.caption.copy(
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    shadow = textShadow
-                                ),
-                                color = Color.White.copy(alpha = 0.74f),
-                                textAlign = TextAlign.Center,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth(0.9f)
-                            )
                         }
                     }
 
@@ -3601,14 +3625,18 @@ private fun MobileActionButton(
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(percent = 50)
-    val bgColor = when {
+    val targetBgColor = when {
         isPrimary -> Color.White
         isOutlined -> Color.Transparent
         isActive -> Color.White.copy(alpha = 0.15f)
         else -> Color.White.copy(alpha = 0.08f)
     }
-    val contentColor = if (isPrimary) Color.Black else Color.White.copy(alpha = 0.92f)
-    val borderColor = if (isOutlined) Color.White.copy(alpha = if (isActive) 0.55f else 0.22f) else Color.Transparent
+    val targetContentColor = if (isPrimary) Color.Black else Color.White.copy(alpha = 0.92f)
+    val targetBorderColor = if (isOutlined) Color.White.copy(alpha = if (isActive) 0.55f else 0.22f) else Color.Transparent
+
+    val bgColor by animateColorAsState(targetValue = targetBgColor, animationSpec = tween(200), label = "btn_bg")
+    val contentColor by animateColorAsState(targetValue = targetContentColor, animationSpec = tween(200), label = "btn_content")
+    val borderColor by animateColorAsState(targetValue = targetBorderColor, animationSpec = tween(200), label = "btn_border")
 
     Row(
         modifier = modifier
@@ -3616,29 +3644,37 @@ private fun MobileActionButton(
             .background(bgColor, shape)
             .border(1.dp, borderColor, shape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 10.dp),
+            .padding(horizontal = 18.dp, vertical = 10.dp)
+            .animateContentSize(animationSpec = tween(200)),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = contentColor,
-            modifier = Modifier.size(if (isPrimary) 24.dp else 22.dp)
-        )
+        Crossfade(targetState = icon, animationSpec = tween(200), label = "btn_icon") { currentIcon ->
+            Icon(
+                imageVector = currentIcon,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(if (isPrimary) 24.dp else 22.dp)
+            )
+        }
         Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = text,
-            style = ArvioSkin.typography.button.copy(
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
-            ),
-            color = contentColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.weight(1f, fill = false)
-        )
+        AnimatedContent(
+            targetState = text,
+            transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(150)) },
+            label = "btn_text"
+        ) { currentText ->
+            Text(
+                text = currentText,
+                style = ArvioSkin.typography.button.copy(
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
+            )
+        }
     }
 }
 
@@ -3652,21 +3688,25 @@ private fun MobileIconActionButton(
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(20.dp)
-    val backgroundColor = when {
+    val targetBackgroundColor = when {
         !enabled -> Color.White.copy(alpha = 0.04f)
         isActive -> Color.White.copy(alpha = 0.18f)
         else -> Color.White.copy(alpha = 0.08f)
     }
-    val contentColor = if (enabled) {
+    val targetContentColor = if (enabled) {
         Color.White.copy(alpha = if (isActive) 0.96f else 0.88f)
     } else {
         Color.White.copy(alpha = 0.3f)
     }
-    val borderColor = if (isActive) {
+    val targetBorderColor = if (isActive) {
         Color.White.copy(alpha = 0.28f)
     } else {
         Color.White.copy(alpha = 0.12f)
     }
+
+    val backgroundColor by animateColorAsState(targetValue = targetBackgroundColor, animationSpec = tween(200), label = "icon_btn_bg")
+    val contentColor by animateColorAsState(targetValue = targetContentColor, animationSpec = tween(200), label = "icon_btn_content")
+    val borderColor by animateColorAsState(targetValue = targetBorderColor, animationSpec = tween(200), label = "icon_btn_border")
 
     Box(
         modifier = modifier
@@ -3676,12 +3716,14 @@ private fun MobileIconActionButton(
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = contentColor,
-            modifier = Modifier.size(24.dp)
-        )
+        Crossfade(targetState = icon, animationSpec = tween(200), label = "icon_btn_crossfade") { currentIcon ->
+            Icon(
+                imageVector = currentIcon,
+                contentDescription = contentDescription,
+                tint = contentColor,
+                modifier = Modifier.size(24.dp)
+            )
+        }
     }
 }
 
