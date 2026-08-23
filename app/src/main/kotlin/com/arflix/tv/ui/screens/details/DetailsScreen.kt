@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Animatable
@@ -958,58 +959,64 @@ fun DetailsScreen(
             .then(keyModifier)
     ) {
         // Main content - full screen with sidebar overlay (same as HomeScreen)
-        if (uiState.isLoading || uiState.item == null) {
-            // Use skeleton loader for better UX
-            SkeletonDetailsPage(
-                isTV = mediaType == MediaType.TV,
-                isMobile = isMobile,
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            uiState.item?.let { item ->
-                DetailsContent(
-                    item = item,
-                    logoUrl = uiState.logoUrl,
-                    episodes = uiState.episodes,
-                    totalSeasons = uiState.totalSeasons,
-                    currentSeason = uiState.currentSeason,
-                    cast = uiState.cast,
-                    reviews = uiState.reviews,
-                    similar = uiState.similar,
-                    similarLogoUrls = uiState.similarLogoUrls,
-                    collectionItems = uiState.collectionItems,
-                    collectionName = uiState.collectionName,
-                    hasCollectionAction = uiState.collectionId != null,
-                    collectionIndex = collectionIndex,
-                    focusedSection = focusedSection,
-                    buttonIndex = buttonIndex,
-                    episodeIndex = episodeIndex,
-                    ratingsIndex = ratingsIndex,
-                    seasonIndex = seasonIndex,
-                    castIndex = castIndex,
-                    reviewIndex = reviewIndex,
-                    similarIndex = similarIndex,
-                    isInWatchlist = uiState.isInWatchlist,
-                    genres = uiState.genres,
-                    budget = uiState.budget,
-                    externalRatings = uiState.externalRatings,
-                    seasonProgress = uiState.seasonProgress,
-                    playLabel = uiState.playLabel,
-                    showEpisodeRatings = uiState.showEpisodeRatings,
-                    hasTrailer = uiState.trailerKey != null,
-                    contentHasFocus = !isSidebarFocused,
-                    usePosterCards = usePosterCards,
+        Crossfade(
+            targetState = uiState.isLoading || uiState.item == null,
+            animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+            label = "details_loading_crossfade"
+        ) { loading ->
+            if (loading) {
+                // Use skeleton loader for better UX
+                SkeletonDetailsPage(
+                    isTV = mediaType == MediaType.TV,
                     isMobile = isMobile,
-                    spoilerBlurEnabled = spoilerBlurEnabled,
-                    onBack = onBack,
-                    onButtonClick = onButtonClickRemembered,
-                    onSeasonClick = onSeasonClickRemembered,
-                    onSeasonLongClick = onSeasonLongClickRemembered,
-                    onEpisodeClick = onEpisodeClickRemembered,
-                    onCastClick = onCastClickRemembered,
-                    onSimilarClick = onSimilarClickRemembered,
-                    onCollectionClick = onCollectionClickRemembered
+                    modifier = Modifier.fillMaxSize()
                 )
+            } else {
+                uiState.item?.let { item ->
+                    DetailsContent(
+                        item = item,
+                        logoUrl = uiState.logoUrl,
+                        episodes = uiState.episodes,
+                        totalSeasons = uiState.totalSeasons,
+                        currentSeason = uiState.currentSeason,
+                        cast = uiState.cast,
+                        reviews = uiState.reviews,
+                        similar = uiState.similar,
+                        similarLogoUrls = uiState.similarLogoUrls,
+                        collectionItems = uiState.collectionItems,
+                        collectionName = uiState.collectionName,
+                        hasCollectionAction = uiState.collectionId != null,
+                        collectionIndex = collectionIndex,
+                        focusedSection = focusedSection,
+                        buttonIndex = buttonIndex,
+                        episodeIndex = episodeIndex,
+                        ratingsIndex = ratingsIndex,
+                        seasonIndex = seasonIndex,
+                        castIndex = castIndex,
+                        reviewIndex = reviewIndex,
+                        similarIndex = similarIndex,
+                        isInWatchlist = uiState.isInWatchlist,
+                        genres = uiState.genres,
+                        budget = uiState.budget,
+                        externalRatings = uiState.externalRatings,
+                        seasonProgress = uiState.seasonProgress,
+                        playLabel = uiState.playLabel,
+                        showEpisodeRatings = uiState.showEpisodeRatings,
+                        hasTrailer = uiState.trailerKey != null,
+                        contentHasFocus = !isSidebarFocused,
+                        usePosterCards = usePosterCards,
+                        isMobile = isMobile,
+                        spoilerBlurEnabled = spoilerBlurEnabled,
+                        onBack = onBack,
+                        onButtonClick = onButtonClickRemembered,
+                        onSeasonClick = onSeasonClickRemembered,
+                        onSeasonLongClick = onSeasonLongClickRemembered,
+                        onEpisodeClick = onEpisodeClickRemembered,
+                        onCastClick = onCastClickRemembered,
+                        onSimilarClick = onSimilarClickRemembered,
+                        onCollectionClick = onCollectionClickRemembered
+                    )
+                }
             }
         }
 
@@ -1350,12 +1357,24 @@ private fun DetailsContent(
                         .height(backdropHeight)
                         .zIndex(10f)
                 ) {
-                    AsyncImage(
-                        model = item.backdrop ?: item.image,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    val backdropRequest = remember(item.backdrop, item.image, context) {
+                        val url = item.backdrop ?: item.image
+                        if (url.isNullOrBlank()) null else {
+                            ImageRequest.Builder(context)
+                                .data(url)
+                                .crossfade(250)
+                                .allowHardware(true)
+                                .build()
+                        }
+                    }
+                    if (backdropRequest != null) {
+                        AsyncImage(
+                            model = backdropRequest,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                     // Strong bottom gradient
                     Box(
                         modifier = Modifier
@@ -1425,16 +1444,35 @@ private fun DetailsContent(
                                     }
                                 }
                         ) {
-                            if (logoUrl != null) {
-                                AsyncImage(
-                                    model = logoUrl,
-                                    contentDescription = item.title,
-                                    contentScale = ContentScale.Fit,
-                                    alignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .fillMaxWidth(0.78f)
-                                        .height(86.dp)
-                                )
+                            Crossfade(
+                                targetState = logoUrl,
+                                animationSpec = tween(300, easing = FastOutSlowInEasing),
+                                label = "tv_logo_crossfade"
+                            ) { currentLogoUrl ->
+                                if (!currentLogoUrl.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = currentLogoUrl,
+                                        contentDescription = item.title,
+                                        contentScale = ContentScale.Fit,
+                                        alignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .fillMaxWidth(0.78f)
+                                            .height(86.dp)
+                                    )
+                                } else {
+                                    Text(
+                                        text = item.title,
+                                        style = ArflixTypography.heroTitle.copy(
+                                            fontSize = 28.sp,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = Color.White,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.fillMaxWidth(0.85f)
+                                    )
+                                }
                             }
                         }
 
@@ -1942,16 +1980,33 @@ private fun DetailsContent(
                         modifier = Modifier.height(72.dp),
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        if (logoUrl != null) {
-                            AsyncImage(
-                                model = logoUrl,
-                                contentDescription = item.title,
-                                contentScale = ContentScale.Fit,
-                                alignment = Alignment.CenterStart,
-                                modifier = Modifier
-                                    .height(72.dp)
-                                    .width(320.dp)
-                            )
+                        Crossfade(
+                            targetState = logoUrl,
+                            animationSpec = tween(300, easing = FastOutSlowInEasing),
+                            label = "mobile_logo_crossfade"
+                        ) { currentLogoUrl ->
+                            if (!currentLogoUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = currentLogoUrl,
+                                    contentDescription = item.title,
+                                    contentScale = ContentScale.Fit,
+                                    alignment = Alignment.CenterStart,
+                                    modifier = Modifier
+                                        .height(72.dp)
+                                        .width(320.dp)
+                                )
+                            } else {
+                                Text(
+                                    text = item.title,
+                                    style = ArflixTypography.heroTitle.copy(
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = Color.White,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
 
