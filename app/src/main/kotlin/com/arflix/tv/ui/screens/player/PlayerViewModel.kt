@@ -2971,6 +2971,20 @@ class PlayerViewModel @Inject constructor(
                         normalizeLanguage(it.lang) == targetLang
                 }
                 if (hasEmbedded && hasCandidates) break
+                // The only reason to wait for an embedded track is to give the TIMING SCAN a
+                // reference. An exact release-name match skips the scan entirely, so once one is
+                // on the table there is nothing left to wait for — stop immediately instead of
+                // burning MATCH_SOURCES_WAIT_MS. Matters most on PGS-only files, where no usable
+                // embedded reference will EVER appear and the loop would always run to timeout.
+                if (hasCandidates) {
+                    val srcNow = _uiState.value.selectedStream?.source.orEmpty()
+                    if (srcNow.isNotBlank() && current.any {
+                            !it.isEmbedded && !it.isBitmap && it.url.isNotBlank() &&
+                                normalizeLanguage(it.lang) == targetLang &&
+                                weightedSubtitleScore(srcNow, it.id) >= 100
+                        }
+                    ) break
+                }
                 if (playingFor >= MATCH_SOURCES_WAIT_MS) break
                 // Past the embedded grace period and the addon fetch is done — whatever is missing
                 // now isn't coming; proceed with what we have.
@@ -3040,6 +3054,27 @@ class PlayerViewModel @Inject constructor(
                         return@launch
                     }
                 }
+            }
+
+            // An EXACT release-name match (score 100 = every weighted token AND the release group
+            // agree) means the subtitle was cut for this precise rip, so the timing scan can only
+            // confirm what the name already establishes — at the cost of ~20s of dialogue
+            // collection before playback settles. Take it directly.
+            // Deliberately 100 only: at 95 a single token differs, and that token is often the
+            // source (BluRay vs WEB-DL) or the release group — i.e. a different master whose
+            // timings genuinely drift. Those still earn a full scan.
+            val exactNameMatch = candidates.firstOrNull { weightedSubtitleScore(streamSrc, it.id) >= 100 }
+            if (exactNameMatch != null) {
+                // Serve from a local copy for the same reason the remembered path does: the
+                // MediaItem rebuild would otherwise stall on a slow addon server.
+                val exactRaw = SubtitleSyncMatcher.loadRaw(exactNameMatch.url)
+                val exactLocal = exactRaw?.let { localizeSubtitle(exactNameMatch, it) } ?: exactNameMatch
+                endMatch()
+                selectSubtitle(exactLocal, isUserAction = false)
+                writeCachedMatch(exactNameMatch)
+                Log.i("SubMatch", "exact release-name match — scan skipped: ${exactNameMatch.label}")
+                showMatchToast("Matched: ${exactNameMatch.label} (exact release name)")
+                return@launch
             }
 
             // Prefer any embedded (muxed) track as the sync reference (English first, else any).
