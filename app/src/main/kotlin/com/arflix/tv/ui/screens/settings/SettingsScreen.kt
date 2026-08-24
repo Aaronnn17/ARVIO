@@ -6969,6 +6969,8 @@ private fun IptvSettings(
     val isMobile = LocalDeviceType.current.isTouchDevice()
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIndices by remember { mutableStateOf(setOf<Int>()) }
+    // Tracks which section the current mobile selection belongs to ("m3u" or "stalker")
+    var selectionSection by remember { mutableStateOf("m3u") }
 
     if (!isMobile) {
         LaunchedEffect(focusedIndex) {
@@ -6988,7 +6990,16 @@ private fun IptvSettings(
                     Text(stringResource(R.string.settings_n_selected, selectedIndices.size), style = ArflixTypography.sectionTitle, color = TextPrimary)
                     Spacer(modifier = Modifier.weight(1f))
                     if (selectedIndices.isNotEmpty()) {
-                        Box(modifier = Modifier.size(36.dp).clickable { selectedIndices.sortedDescending().forEach { onDeletePlaylist(it) }; selectionMode = false; selectedIndices = emptySet() }.background(Color(0xFFDC2626), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.size(36.dp).clickable {
+                            selectedIndices.sortedDescending().forEach { i ->
+                                if (selectionSection == "stalker") {
+                                    stalkerPortals.getOrNull(i)?.let { onRemoveStalkerPortal(it.id) }
+                                } else {
+                                    onDeletePlaylist(i)
+                                }
+                            }
+                            selectionMode = false; selectedIndices = emptySet()
+                        }.background(Color(0xFFDC2626), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete), tint = Color.White, modifier = Modifier.size(20.dp))
                         }
                         Spacer(modifier = Modifier.width(12.dp))
@@ -7009,7 +7020,7 @@ private fun IptvSettings(
                                 .background(if (isSelected) Pink.copy(alpha = 0.15f) else Color.Transparent)
                                 .then(Modifier.combinedClickable(
                                     onClick = { if (selectionMode) { selectedIndices = if (isSelected) selectedIndices - index else selectedIndices + index; if (selectedIndices.isEmpty()) selectionMode = false } else onEditPlaylist(index) },
-                                    onLongClick = { if (!selectionMode) { selectionMode = true; selectedIndices = setOf(index) } }
+                                    onLongClick = { if (!selectionMode) { selectionSection = "m3u"; selectionMode = true; selectedIndices = setOf(index) } }
                                 ))
                                 .padding(horizontal = 16.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -7065,52 +7076,48 @@ private fun IptvSettings(
                     onClick = { if (!stalkerFull) onAddStalkerPortal() }
                 )
                 stalkerPortals.forEachIndexed { index, portal ->
+                    val isSelected = selectedIndices.contains(index)
                     Column {
                         Row(
                             modifier = Modifier.fillMaxWidth()
-                                .clickable { onEditStalkerPortal(portal) }
+                                .background(if (isSelected) Pink.copy(alpha = 0.15f) else Color.Transparent)
+                                .then(Modifier.combinedClickable(
+                                    onClick = { if (selectionMode) { selectedIndices = if (isSelected) selectedIndices - index else selectedIndices + index; if (selectedIndices.isEmpty()) selectionMode = false } else onEditStalkerPortal(portal) },
+                                    onLongClick = { if (!selectionMode) { selectionSection = "stalker"; selectionMode = true; selectedIndices = setOf(index) } }
+                                ))
                                 .padding(horizontal = 16.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(imageVector = Icons.Default.Tv, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.width(16.dp))
+                            if (selectionMode) {
+                                Icon(imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, contentDescription = null, tint = if (isSelected) Pink else TextSecondary, modifier = Modifier.size(24.dp))
+                                Spacer(modifier = Modifier.width(16.dp))
+                            } else {
+                                Icon(imageVector = Icons.Default.Tv, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(24.dp))
+                                Spacer(modifier = Modifier.width(16.dp))
+                            }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(stringResource(R.string.settings_stalker_subtitle), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
-                            Icon(
-                                imageVector = Icons.Default.List,
-                                contentDescription = stringResource(R.string.settings_cd_manage_stalker_categories),
-                                tint = TextSecondary,
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clickable { onManageStalkerCategories(portal.id) }
-                                    .padding(6.dp)
-                            )
-                            Spacer(modifier = Modifier.width(16.dp))
-                            // Enable/disable toggle chip (same style as M3U)
-                            Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (portal.enabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).clickable { onToggleStalkerPortal(portal.id) }.padding(3.dp), contentAlignment = if (portal.enabled) Alignment.CenterEnd else Alignment.CenterStart) {
-                                Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Box(modifier = Modifier.size(36.dp).clickable { onEditStalkerPortal(portal) }.background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.settings_cd_edit_stalker_config), tint = Color.White, modifier = Modifier.size(20.dp))
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Box(modifier = Modifier.size(36.dp).clickable { onRenameStalkerPortal(portal) }.background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.TextFields, contentDescription = stringResource(R.string.settings_stalker_rename_title), tint = Color.White, modifier = Modifier.size(20.dp))
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Box(modifier = Modifier.size(36.dp).clickable { onMoveStalkerPortalUp(portal.id) }.background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.ArrowUpward, contentDescription = stringResource(R.string.settings_cd_move_stalker_up), tint = Color.White, modifier = Modifier.size(20.dp))
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Box(modifier = Modifier.size(36.dp).clickable { onMoveStalkerPortalDown(portal.id) }.background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.ArrowDownward, contentDescription = stringResource(R.string.settings_cd_move_stalker_down), tint = Color.White, modifier = Modifier.size(20.dp))
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Box(modifier = Modifier.size(36.dp).clickable { onRemoveStalkerPortal(portal.id) }.background(Color(0xFFDC2626), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
-                                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.settings_cd_remove_stalker_portal), tint = Color.White, modifier = Modifier.size(20.dp))
+                            if (selectionMode && selectedIndices.size == 1 && isSelected) {
+                                Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
+                                    var dragOffset = 0f; val itemHeight = 64.dp.toPx()
+                                    detectVerticalDragGestures(onDragEnd = { dragOffset = 0f }, onDragCancel = { dragOffset = 0f }) { change, dragAmount -> change.consume(); dragOffset += dragAmount; if (dragOffset > itemHeight) { onMoveStalkerPortalDown(portal.id); dragOffset -= itemHeight } else if (dragOffset < -itemHeight) { onMoveStalkerPortalUp(portal.id); dragOffset += itemHeight } }
+                                })
+                            } else if (!selectionMode) {
+                                Icon(
+                                    imageVector = Icons.Default.List,
+                                    contentDescription = stringResource(R.string.settings_cd_manage_stalker_categories),
+                                    tint = TextSecondary,
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clickable { onManageStalkerCategories(portal.id) }
+                                        .padding(6.dp)
+                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (portal.enabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).clickable { onToggleStalkerPortal(portal.id) }.padding(3.dp), contentAlignment = if (portal.enabled) Alignment.CenterEnd else Alignment.CenterStart) {
+                                    Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
+                                }
                             }
                         }
                         if (index < stalkerPortals.size - 1) {
