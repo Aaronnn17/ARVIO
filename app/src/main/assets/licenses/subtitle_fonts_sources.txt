@@ -1,0 +1,23 @@
+Bundled subtitle fonts
+Source repository: https://github.com/google/fonts
+Retrieved from the google/fonts main branch for this build.
+
+Noto Sans
+  https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf
+  SHA-256: bfb7bb691513f12e734dc346c03a03f784912432d7e3fa8e56efcf906fe86b3d
+
+Atkinson Hyperlegible Regular
+  https://raw.githubusercontent.com/google/fonts/main/ofl/atkinsonhyperlegible/AtkinsonHyperlegible-Regular.ttf
+  SHA-256: 7fb917c89019896d0b52ee84b7cbb3304c18cb90b19a62f5e32712bd23e97669
+
+Atkinson Hyperlegible Bold
+  https://raw.githubusercontent.com/google/fonts/main/ofl/atkinsonhyperlegible/AtkinsonHyperlegible-Bold.ttf
+  SHA-256: 5a3b0c8cc8ca545155150b4512a1fa248298df121c50d6557e651e61fbdab92f
+
+Lexend
+  https://raw.githubusercontent.com/google/fonts/main/ofl/lexend/Lexend%5Bwght%5D.ttf
+  SHA-256: 3add53e641fbc81da64da4bb254285e2831b52b029527bc0714e2b9610832ee6
+
+Roboto Condensed
+  https://raw.githubusercontent.com/google/fonts/main/ofl/robotocondensed/RobotoCondensed%5Bwght%5D.ttf
+  SHA-256: dace262afcee68a5276f200d8026c57221735c0118ab5fda8c2c0d3dc409a8d0
