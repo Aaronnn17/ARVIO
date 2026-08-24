@@ -1644,25 +1644,36 @@ fun LiveTvScreen(
         }
     }
 
+    fun isSamePlayingChannel(channel: EnrichedChannel): Boolean {
+        val currentDisplayId = displayChannelIdFor(
+            playingChannelId,
+            visibleEnrichedState.value.index.byId,
+            variantGroups,
+        )
+        return channel.id == playingChannelId || channel.id == currentDisplayId
+    }
+
     fun selectChannel(channel: EnrichedChannel) {
         noteGuideUserNavigation()
         focusedChannelId = channel.id
         epgPrefetchAnchorId = channel.id
         rememberedChannelByCategory[selectedCategoryId] = channel.id
-        val currentDisplayId = displayChannelIdFor(playingChannelId, visibleEnrichedState.value.index.byId, variantGroups)
-        val isSamePlayingChannel = channel.id == playingChannelId || channel.id == currentDisplayId
-        if (isSamePlayingChannel && !isFullScreen) {
-            // Second tap on the already-playing channel → fullscreen
-            playingCatchupProgram = null
-            catchupPlaybackOffsetMs = 0L
-            isFullScreen = true
-            hudPokeSignal++
-        } else {
-            // First tap or different channel → tune in mini-player
-            playingChannelId = channel.id
-            playingCatchupProgram = null
-            catchupPlaybackOffsetMs = 0L
-            fullscreenGuideOpen = false
+        when (channelRowInteractionAction(isSamePlayingChannel(channel))) {
+            EpgInteractionAction.PlayLiveMini -> {
+                playingChannelId = channel.id
+                playingCatchupProgram = null
+                catchupPlaybackOffsetMs = 0L
+                fullscreenGuideOpen = false
+            }
+            EpgInteractionAction.PlayLiveFullscreen -> {
+                playingChannelId = channel.id
+                playingCatchupProgram = null
+                catchupPlaybackOffsetMs = 0L
+                fullscreenGuideOpen = false
+                isFullScreen = true
+                hudPokeSignal++
+            }
+            else -> Unit
         }
     }
 
@@ -1731,6 +1742,40 @@ fun LiveTvScreen(
         fullscreenGuideOpen = false
         isFullScreen = true
         hudPokeSignal++
+    }
+
+    fun selectEpgProgram(
+        channel: EnrichedChannel,
+        program: IptvProgram,
+        fullscreenContext: Boolean = false,
+    ) {
+        val temporalState = when {
+            program.isLive(guideClockMillis) -> EpgTemporalState.Live
+            program.endUtcMillis <= guideClockMillis -> EpgTemporalState.Past
+            else -> EpgTemporalState.Future
+        }
+        val catchupSupported = program.catchupAvailable == true || channel.supportsCatchupHistory()
+        when (
+            epgProgramInteractionAction(
+                temporalState = temporalState,
+                isSamePlayingChannel = isSamePlayingChannel(channel),
+                isCatchupSupported = catchupSupported,
+            )
+        ) {
+            EpgInteractionAction.PlayLiveMini -> {
+                isFullScreen = false
+                playProgramInMini(channel, null)
+            }
+            EpgInteractionAction.PlayLiveFullscreen -> selectChannel(channel)
+            EpgInteractionAction.PlayCatchup -> {
+                if (fullscreenContext) {
+                    playProgramInFullscreen(program, channel)
+                } else {
+                    playProgramInMini(channel, program)
+                }
+            }
+            EpgInteractionAction.NoOp -> Unit
+        }
     }
 
     // ExoPlayer lifecycle — mirrors the legacy screen's setup verbatim so live
@@ -2476,7 +2521,9 @@ fun LiveTvScreen(
                             focusZone = LiveTvFocusZone.CHANNEL_LIST
                             selectChannel(channel)
                         },
-                        onProgramSelect = { channel, program -> playProgramInMini(channel, program) },
+                        onProgramSelect = { channel, program ->
+                            program?.let { selectEpgProgram(channel, it) }
+                        },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
                         onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
                         favorites = favSet,
@@ -2609,7 +2656,9 @@ fun LiveTvScreen(
                         compact = compactTouchLayout,
                         gridFocused = focusZone == LiveTvFocusZone.CHANNEL_LIST || focusZone == LiveTvFocusZone.EPG,
                         onChannelSelect = { channel, _ -> selectChannel(channel) },
-                        onProgramSelect = { channel, program -> playProgramInMini(channel, program) },
+                        onProgramSelect = { channel, program ->
+                            program?.let { selectEpgProgram(channel, it) }
+                        },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
                         onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
                         favorites = favSet,
@@ -2890,6 +2939,7 @@ fun LiveTvScreen(
                     channel = guideChannel ?: playingChannel,
                     guide = guideForChannel(guideChannel ?: playingChannel),
                     selectedProgram = playingCatchupProgram,
+                    clockTickMillis = guideClockMillis,
                     isTouchDevice = isTouchDevice,
                     onDismiss = {
                         fullscreenGuideOpen = false
@@ -2903,7 +2953,9 @@ fun LiveTvScreen(
                     onProgramSelect = { program ->
                         val target = guideChannel ?: playingChannel
                         guideOpenedFromQuickZap = false
-                        playProgramInFullscreen(program, target)
+                        if (program != null && target != null) {
+                            selectEpgProgram(target, program, fullscreenContext = true)
+                        }
                     },
                     onLeftClick = {
                         fullscreenGuideOpen = false

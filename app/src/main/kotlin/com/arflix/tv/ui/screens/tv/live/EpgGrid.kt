@@ -732,11 +732,12 @@ private fun ProgramsRow(
                     focusable = isFocusable,
                     isCatchupSupported = isCatchupSupported,
                     onClick = {
-                        if (placementIsPast && isCatchupSupported) {
-                            onClick(placement.program)
-                        } else if (!placementIsPast) {
-                            onClick(null)
-                        }
+                        epgProgramActionTarget(
+                            program = placement.program,
+                            isPast = placementIsPast,
+                            isLive = placementIsNow,
+                            isCatchupSupported = isCatchupSupported,
+                        )?.let(onClick)
                     },
                     onFocused = onFocused,
                     onMoveLeft = {
@@ -857,6 +858,17 @@ private data class ProgramFocusTarget(val startMin: Int, val endMin: Int) {
         anchorStartMin > endMin -> anchorStartMin - endMin
         else -> 0
     }
+}
+
+internal fun epgProgramActionTarget(
+    program: IptvProgram,
+    isPast: Boolean,
+    isLive: Boolean,
+    isCatchupSupported: Boolean,
+): IptvProgram? = when {
+    isPast && isCatchupSupported -> program
+    isLive -> program
+    else -> null
 }
 
 private fun ProgramPlacement.isCatchupSupported(channel: EnrichedChannel, nowMillis: Long): Boolean {
