@@ -4797,6 +4797,61 @@ private fun MobileSettingsSubPage(
             }
         }
     }
+
+    if (showStalkerInput) {
+        val isEditing = stalkerEditId != null
+        InputModal(
+            title = stringResource(if (isEditing) R.string.settings_cd_edit_stalker_config else R.string.settings_add_stalker_portal_button),
+            fields = listOf(
+                InputField(
+                    label = stringResource(R.string.settings_stalker_portal_name_label),
+                    value = stalkerEditName,
+                    placeholder = stringResource(R.string.settings_stalker_portal_name_placeholder),
+                    onValueChange = { stalkerEditName = it }
+                ),
+                InputField(
+                    label = stringResource(R.string.settings_stalker_label_portal_url),
+                    value = stalkerEditPortal,
+                    placeholder = stringResource(R.string.settings_stalker_ph_portal_url),
+                    onValueChange = { stalkerEditPortal = it }
+                ),
+                InputField(
+                    label = stringResource(R.string.settings_stalker_label_mac),
+                    value = stalkerEditMac,
+                    placeholder = stringResource(R.string.settings_stalker_ph_mac),
+                    onValueChange = { stalkerEditMac = it }
+                )
+            ),
+            onConfirm = {
+                val id = stalkerEditId
+                if (id != null) {
+                    viewModel.onEditStalkerPortal(id, stalkerEditPortal, stalkerEditMac, stalkerEditName)
+                } else {
+                    viewModel.onAddStalkerPortal(stalkerEditPortal, stalkerEditMac, stalkerEditName)
+                }
+                showStalkerInput = false
+            },
+            onDismiss = { showStalkerInput = false }
+        )
+    }
+    if (showStalkerRename) {
+        InputModal(
+            title = stringResource(R.string.settings_stalker_rename_title),
+            fields = listOf(
+                InputField(
+                    label = stringResource(R.string.settings_stalker_portal_name_label),
+                    value = stalkerRenameName,
+                    placeholder = stringResource(R.string.settings_stalker_portal_name_placeholder),
+                    onValueChange = { stalkerRenameName = it }
+                )
+            ),
+            onConfirm = {
+                viewModel.onRenameStalkerPortal(stalkerRenameId, stalkerRenameName)
+                showStalkerRename = false
+            },
+            onDismiss = { showStalkerRename = false }
+        )
+    }
 }
 
 @Composable
@@ -4913,61 +4968,6 @@ private fun MobileCloudAccountSubPage(
                 viewModel.logout()
             },
             onDismiss = { showSignOutConfirmDialog = false }
-        )
-    }
-
-    if (showStalkerInput) {
-        val isEditing = stalkerEditId != null
-        InputModal(
-            title = stringResource(if (isEditing) R.string.settings_cd_edit_stalker_config else R.string.settings_add_stalker_portal_button),
-            fields = listOf(
-                InputField(
-                    label = stringResource(R.string.settings_stalker_portal_name_label),
-                    value = stalkerEditName,
-                    placeholder = stringResource(R.string.settings_stalker_portal_name_placeholder),
-                    onValueChange = { stalkerEditName = it }
-                ),
-                InputField(
-                    label = stringResource(R.string.settings_stalker_label_portal_url),
-                    value = stalkerEditPortal,
-                    placeholder = stringResource(R.string.settings_stalker_ph_portal_url),
-                    onValueChange = { stalkerEditPortal = it }
-                ),
-                InputField(
-                    label = stringResource(R.string.settings_stalker_label_mac),
-                    value = stalkerEditMac,
-                    placeholder = stringResource(R.string.settings_stalker_ph_mac),
-                    onValueChange = { stalkerEditMac = it }
-                )
-            ),
-            onConfirm = {
-                val id = stalkerEditId
-                if (id != null) {
-                    viewModel.onEditStalkerPortal(id, stalkerEditPortal, stalkerEditMac, stalkerEditName)
-                } else {
-                    viewModel.onAddStalkerPortal(stalkerEditPortal, stalkerEditMac, stalkerEditName)
-                }
-                showStalkerInput = false
-            },
-            onDismiss = { showStalkerInput = false }
-        )
-    }
-    if (showStalkerRename) {
-        InputModal(
-            title = stringResource(R.string.settings_stalker_rename_title),
-            fields = listOf(
-                InputField(
-                    label = stringResource(R.string.settings_stalker_portal_name_label),
-                    value = stalkerRenameName,
-                    placeholder = stringResource(R.string.settings_stalker_portal_name_placeholder),
-                    onValueChange = { stalkerRenameName = it }
-                )
-            ),
-            onConfirm = {
-                viewModel.onRenameStalkerPortal(stalkerRenameId, stalkerRenameName)
-                showStalkerRename = false
-            },
-            onDismiss = { showStalkerRename = false }
         )
     }
 
