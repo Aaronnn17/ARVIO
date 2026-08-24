@@ -1212,8 +1212,8 @@ fun LiveTvScreen(
     val actionGuideNowNext = remember(state.snapshot.nowNext, effectiveGuideNowNext) {
         HashMap(state.snapshot.nowNext).apply { putAll(effectiveGuideNowNext) }
     }
-    val guideIdentityKeysByChannelId = remember(visibleChannels) {
-        visibleChannels.associate { channel ->
+    val guideIdentityKeysByChannelId = remember(enrichedState.value.all) {
+        enrichedState.value.all.associate { channel ->
             channel.id to guideIdentityKeys(
                 channel.source.epgId,
                 channel.source.tvgName,
