@@ -476,7 +476,7 @@ fun SettingsScreen(
                     groupOrder = uiState.iptvGroupOrder
                 ).size // Reset row + category rows
             } else {
-                4 + uiState.iptvPlaylists.size // Add + rows + stalker + order + refresh + clear
+                5 + uiState.iptvPlaylists.size // Add + stalker + playlists + order + EPG actions + refresh + clear
             }
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
@@ -1074,9 +1074,12 @@ fun SettingsScreen(
                                                     viewModel.setIptvSortOrder(next)
                                                 }
                                                 contentFocusIndex == uiState.iptvPlaylists.size + 3 -> {
-                                                    viewModel.refreshIptv(force = true)
+                                                    viewModel.setEpgVodActionsEnabled(!uiState.epgVodActionsEnabled)
                                                 }
                                                 contentFocusIndex == uiState.iptvPlaylists.size + 4 -> {
+                                                    viewModel.refreshIptv(force = true)
+                                                }
+                                                contentFocusIndex == uiState.iptvPlaylists.size + 5 -> {
                                                     viewModel.clearIptvConfig()
                                                 }
                                             }
@@ -1628,7 +1631,9 @@ fun SettingsScreen(
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
-                            onSortOrderChange = { viewModel.setIptvSortOrder(it) }
+                            onSortOrderChange = { viewModel.setIptvSortOrder(it) },
+                            epgVodActionsEnabled = uiState.epgVodActionsEnabled,
+                            onEpgVodActionsToggle = viewModel::setEpgVodActionsEnabled,
                         )
                         "TV" -> IptvSettings(
                             playlists = uiState.iptvPlaylists,
@@ -1676,7 +1681,9 @@ fun SettingsScreen(
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
-                            onSortOrderChange = { viewModel.setIptvSortOrder(it) }
+                            onSortOrderChange = { viewModel.setIptvSortOrder(it) },
+                            epgVodActionsEnabled = uiState.epgVodActionsEnabled,
+                            onEpgVodActionsToggle = viewModel::setEpgVodActionsEnabled,
                         )
                         "home_server" -> HomeServerSettings(
                             connections = uiState.homeServerConnections,
@@ -4585,7 +4592,9 @@ private fun MobileSettingsSubPage(
                         onNavigate("IPTV_CATEGORIES")
                     },
                     sortOrder = uiState.iptvSortOrder,
-                    onSortOrderChange = { viewModel.setIptvSortOrder(it) }
+                    onSortOrderChange = { viewModel.setIptvSortOrder(it) },
+                    epgVodActionsEnabled = uiState.epgVodActionsEnabled,
+                    onEpgVodActionsToggle = viewModel::setEpgVodActionsEnabled,
                 )
             }
             "IPTV_CATEGORIES" -> {
@@ -6754,6 +6763,8 @@ private fun IptvSettings(
     onManageCategories: (String) -> Unit = {},
     sortOrder: String = "provider",
     onSortOrderChange: (String) -> Unit = {},
+    epgVodActionsEnabled: Boolean = true,
+    onEpgVodActionsToggle: (Boolean) -> Unit = {},
     onConfigureStalker: () -> Unit = {},
     stalkerSubtitle: String = ""
 ) {
@@ -6866,6 +6877,15 @@ private fun IptvSettings(
                         onSortOrderChange(next)
                     }
                 )
+                MobileSettingsRow(
+                    icon = Icons.Default.LiveTv,
+                    title = stringResource(R.string.settings_epg_vod_actions),
+                    subtitle = stringResource(R.string.settings_epg_vod_actions_desc),
+                    value = stringResource(if (epgVodActionsEnabled) R.string.on else R.string.off),
+                    isFocused = false,
+                    showDivider = false,
+                    onClick = { onEpgVodActionsToggle(!epgVodActionsEnabled) },
+                )
             }
             MobileSettingsCategory(title = stringResource(R.string.settings_section_actions)) {
                 val refreshSubtitle = when { isLoading -> stringResource(R.string.settings_refreshing_channels_epg); error != null -> error; playlists.none { it.epgUrl.isNotBlank() || it.epgUrls.orEmpty().isNotEmpty() } -> stringResource(R.string.settings_reload_playlists_now); else -> stringResource(R.string.settings_reload_playlist_epg_now) }
@@ -6957,10 +6977,19 @@ private fun IptvSettings(
                 modifier = Modifier.settingsFocusSlot(playlists.size + 2)
             )
             Spacer(modifier = Modifier.height(16.dp))
-            val refreshSubtitle = when { isLoading -> stringResource(R.string.settings_refreshing_channels_epg); error != null -> error; playlists.none { it.epgUrl.isNotBlank() || it.epgUrls.orEmpty().isNotEmpty() } -> stringResource(R.string.settings_reload_playlists_now); else -> stringResource(R.string.settings_reload_playlist_epg_now) }
-            SettingsRow(icon = Icons.Default.Link, title = stringResource(R.string.refresh_iptv), subtitle = refreshSubtitle, value = if (isLoading) stringResource(R.string.settings_badge_loading) else stringResource(R.string.settings_badge_refresh), isFocused = focusedIndex == playlists.size + 3, onClick = onRefresh, modifier = Modifier.settingsFocusSlot(playlists.size + 3))
+            SettingsToggleRow(
+                title = stringResource(R.string.settings_epg_vod_actions),
+                subtitle = stringResource(R.string.settings_epg_vod_actions_desc),
+                isEnabled = epgVodActionsEnabled,
+                isFocused = focusedIndex == playlists.size + 3,
+                onToggle = onEpgVodActionsToggle,
+                modifier = Modifier.settingsFocusSlot(playlists.size + 3),
+            )
             Spacer(modifier = Modifier.height(16.dp))
-            SettingsRow(icon = Icons.Default.Delete, title = stringResource(R.string.delete_iptv), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_no_playlists_configured) else stringResource(R.string.settings_remove_playlists_epg), value = if (playlists.isEmpty()) stringResource(R.string.settings_badge_empty) else stringResource(R.string.settings_badge_delete), isFocused = focusedIndex == playlists.size + 4, onClick = onDelete, modifier = Modifier.settingsFocusSlot(playlists.size + 4))
+            val refreshSubtitle = when { isLoading -> stringResource(R.string.settings_refreshing_channels_epg); error != null -> error; playlists.none { it.epgUrl.isNotBlank() || it.epgUrls.orEmpty().isNotEmpty() } -> stringResource(R.string.settings_reload_playlists_now); else -> stringResource(R.string.settings_reload_playlist_epg_now) }
+            SettingsRow(icon = Icons.Default.Link, title = stringResource(R.string.refresh_iptv), subtitle = refreshSubtitle, value = if (isLoading) stringResource(R.string.settings_badge_loading) else stringResource(R.string.settings_badge_refresh), isFocused = focusedIndex == playlists.size + 4, onClick = onRefresh, modifier = Modifier.settingsFocusSlot(playlists.size + 4))
+            Spacer(modifier = Modifier.height(16.dp))
+            SettingsRow(icon = Icons.Default.Delete, title = stringResource(R.string.delete_iptv), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_no_playlists_configured) else stringResource(R.string.settings_remove_playlists_epg), value = if (playlists.isEmpty()) stringResource(R.string.settings_badge_empty) else stringResource(R.string.settings_badge_delete), isFocused = focusedIndex == playlists.size + 5, onClick = onDelete, modifier = Modifier.settingsFocusSlot(playlists.size + 5))
             if (isLoading && !progressText.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(stringResource(R.string.settings_progress_format, progressText, progressPercent.coerceIn(0, 100)), style = ArflixTypography.caption, color = TextSecondary)

@@ -97,8 +97,8 @@ fun EpgGrid(
     focusEpgSignal: Int = 0,
     focusMode: EpgGridFocusMode = EpgGridFocusMode.ChannelList,
     scrollResetKey: String = "",
-    onChannelSelect: (EnrichedChannel, IptvProgram?) -> Unit,
-    onProgramSelect: (EnrichedChannel, IptvProgram?) -> Unit = onChannelSelect,
+    onChannelSelect: (EnrichedChannel) -> Unit,
+    onProgramSelect: (EnrichedChannel, IptvProgram?) -> Unit = { channel, _ -> onChannelSelect(channel) },
     onChannelFocused: (EnrichedChannel) -> Unit = {},
     onChannelFavoriteToggle: (String) -> Unit,
     favorites: Set<String>,
@@ -487,7 +487,7 @@ fun EpgGrid(
                                 nowNext = nowNext[ch.id],
                                 isFavorite = ch.id in favorites,
                                 stripe = idx % 2 == 1,
-                                onClick = { onChannelSelect(ch, null) },
+                                onClick = { onChannelSelect(ch) },
                                 onFocused = {
                                     val pendingId = pendingChannelFocusId
                                     if (pendingId != null && pendingId != ch.id) {
