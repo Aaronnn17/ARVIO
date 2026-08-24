@@ -8,7 +8,9 @@ import android.view.ViewTreeObserver
 import android.view.WindowManager
 import com.arflix.tv.R
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -27,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -72,6 +75,7 @@ import com.arflix.tv.util.LocalAppLanguage
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
 import com.arflix.tv.util.detectDeviceType
 import com.arflix.tv.util.deviceHasTouchScreen
+import com.arflix.tv.util.findActivity
 import com.arflix.tv.util.settingsDataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -239,30 +243,20 @@ class MainActivity : ComponentActivity() {
             DeviceType.PHONE -> ActivityInfo.SCREEN_ORIENTATION_FULL_USER
         }
 
-        // All devices use edge-to-edge (setDecorFitsSystemWindows=false).
-        // TV hides the bars; mobile keeps them visible and Compose handles
-        // insets via systemBarsPadding() in the root layout.
-        WindowCompat.setDecorFitsSystemWindows(window, false)
         if (initialDeviceType == DeviceType.TV) {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
             WindowInsetsControllerCompat(window, window.decorView).apply {
                 systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 hide(WindowInsetsCompat.Type.systemBars())
             }
         } else {
+            enableEdgeToEdge(
+                statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+                navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+            )
             // Clear any FLAG_FULLSCREEN the Leanback theme may have set
             @Suppress("DEPRECATION")
             window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-            // Transparent bars — the dark app background shows through them.
-            // White (light) icons are used since the background is dark.
-            @Suppress("DEPRECATION")
-            window.statusBarColor = android.graphics.Color.TRANSPARENT
-            @Suppress("DEPRECATION")
-            window.navigationBarColor = android.graphics.Color.TRANSPARENT
-            WindowInsetsControllerCompat(window, window.decorView).apply {
-                show(WindowInsetsCompat.Type.systemBars())
-                isAppearanceLightStatusBars = false      // white icons on dark bg
-                isAppearanceLightNavigationBars = false  // white icons on dark bg
-            }
         }
 
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -649,6 +643,23 @@ fun ArflixApp(
 
     val isPlayerRoute = iptvFullscreen || currentRoute?.contains("player") == true
 
+    val hostActivity = remember(context) { context.findActivity() }
+    LaunchedEffect(isPlayerRoute, isMobile) {
+        if (isMobile && !isPlayerRoute) {
+            val win = hostActivity?.window ?: (context as? ComponentActivity)?.window
+            if (win != null) {
+                @Suppress("DEPRECATION")
+                win.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                WindowInsetsControllerCompat(win, win.decorView).apply {
+                    systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+                    show(WindowInsetsCompat.Type.systemBars())
+                    isAppearanceLightStatusBars = false
+                    isAppearanceLightNavigationBars = false
+                }
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -666,11 +677,11 @@ fun ArflixApp(
                     )
                 }
             )
-            // On mobile, push content between the status bar and navigation bar.
+            // On mobile, push content below the status bar (except player).
             // Applied AFTER background so the gradient fills behind the bars.
-            // systemBarsPadding() reads live WindowInsets, so it automatically
+            // statusBarsPadding() reads live WindowInsets, so it automatically
             // becomes 0 when the player hides the bars.
-            .then(if (isMobile && !isPlayerRoute) Modifier.systemBarsPadding() else Modifier)
+            .then(if (isMobile && !isPlayerRoute) Modifier.statusBarsPadding() else Modifier)
     ) {
         Box(modifier = Modifier.weight(1f)) {
             AppNavigation(

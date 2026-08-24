@@ -320,7 +320,58 @@ class MediaRepository @Inject constructor(
 
     fun getCachedItem(mediaType: MediaType, mediaId: Int): MediaItem? {
         val cacheKey = detailsCacheKey(mediaType, mediaId)
-        return getFromCache(detailsCache, cacheKey)
+        val inMemory = getFromCache(detailsCache, cacheKey)
+        if (inMemory != null) return inMemory
+        return peekItemFromDiskCache(mediaType, mediaId)
+    }
+
+    private fun peekItemFromDiskCache(mediaType: MediaType, mediaId: Int): MediaItem? {
+        return try {
+            val cacheFiles = mutableListOf<java.io.File>()
+            context.cacheDir.listFiles { _, name -> name.startsWith("home_categories_cache_") && name.endsWith(".json") }
+                ?.let { cacheFiles.addAll(it) }
+            context.filesDir.listFiles { _, name -> name.startsWith("home_continue_watching_") && name.endsWith(".json") }
+                ?.let { cacheFiles.addAll(it) }
+
+            for (file in cacheFiles) {
+                if (!file.exists() || file.length() > 12_000_000L) continue
+                val json = file.readText()
+                if (json.isBlank()) continue
+                if (!json.contains("\"id\":$mediaId") && !json.contains("\"id\": $mediaId")) continue
+
+                val type = com.google.gson.reflect.TypeToken
+                    .getParameterized(MutableList::class.java, Category::class.java)
+                    .type
+                val categories: List<Category>? = runCatching { gson.fromJson<List<Category>>(json, type) }.getOrNull()
+                if (categories != null) {
+                    for (cat in categories) {
+                        for (item in cat.items) {
+                            if (item.id == mediaId && item.mediaType == mediaType) {
+                                cacheItem(item)
+                                return item
+                            }
+                        }
+                    }
+                }
+
+                val cwType = com.google.gson.reflect.TypeToken
+                    .getParameterized(MutableList::class.java, ContinueWatchingItem::class.java)
+                    .type
+                val cwItems: List<ContinueWatchingItem>? = runCatching { gson.fromJson<List<ContinueWatchingItem>>(json, cwType) }.getOrNull()
+                if (cwItems != null) {
+                    for (cw in cwItems) {
+                        if (cw.id == mediaId && cw.mediaType == mediaType) {
+                            val item = cw.toMediaItem()
+                            cacheItem(item)
+                            return item
+                        }
+                    }
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     fun getCachedFullItem(mediaType: MediaType, mediaId: Int): MediaItem? {
@@ -3201,29 +3252,32 @@ class MediaRepository @Inject constructor(
 
     /** Instant synchronous peek into the in-memory or persisted logo cache. */
     fun peekCachedLogoUrl(mediaType: MediaType, mediaId: Int): String? {
-        val cacheKey = "${mediaType}_logo_$mediaId"
-        if (logoCache.containsKey(cacheKey)) {
-            val cached = getFromCache(logoCache, cacheKey)
-            if (!cached.isNullOrBlank()) return cached
-        }
-        val altKey = "${mediaType}_$mediaId"
-        if (logoCache.containsKey(altKey)) {
-            val cached = getFromCache(logoCache, altKey)
-            if (!cached.isNullOrBlank()) return cached
+        val keys = listOf(
+            "${mediaType}_logo_$mediaId",
+            "${mediaType}_$mediaId",
+            "${mediaType.name.lowercase()}_logo_$mediaId",
+            "${mediaType.name.lowercase()}_$mediaId",
+            "${mediaType.name.uppercase()}_logo_$mediaId",
+            "${mediaType.name.uppercase()}_$mediaId"
+        )
+        for (k in keys) {
+            if (logoCache.containsKey(k)) {
+                val cached = getFromCache(logoCache, k)
+                if (!cached.isNullOrBlank()) return cached
+            }
         }
         try {
             val json = context.getSharedPreferences("logo_cache", Context.MODE_PRIVATE).getString("urls", null)
             if (!json.isNullOrBlank()) {
                 val jsonObject = org.json.JSONObject(json)
-                val url = when {
-                    jsonObject.has(altKey) -> jsonObject.optString(altKey)
-                    jsonObject.has(cacheKey) -> jsonObject.optString(cacheKey)
-                    jsonObject.has("${mediaType.name.lowercase()}_$mediaId") -> jsonObject.optString("${mediaType.name.lowercase()}_$mediaId")
-                    else -> null
-                }
-                if (!url.isNullOrBlank()) {
-                    logoCache[cacheKey] = CacheEntry(url, System.currentTimeMillis())
-                    return url
+                for (k in keys) {
+                    if (jsonObject.has(k)) {
+                        val url = jsonObject.optString(k)
+                        if (!url.isNullOrBlank()) {
+                            logoCache["${mediaType}_logo_$mediaId"] = CacheEntry(url, System.currentTimeMillis())
+                            return url
+                        }
+                    }
                 }
             }
         } catch (_: Throwable) {}

@@ -615,6 +615,14 @@ class HomeViewModel @Inject constructor(
         )
     }
 
+    fun cacheItem(item: MediaItem) {
+        mediaRepository.cacheItem(item)
+    }
+
+    fun cacheLogoUrl(mediaType: MediaType, mediaId: Int, logoUrl: String) {
+        mediaRepository.cacheLogoUrl(mediaType, mediaId, logoUrl)
+    }
+
     private fun getCachedHeroDetailsSnapshot(item: MediaItem): HeroDetailsSnapshot? {
         val key = heroDetailsKey(item)
         return heroDetailsCache[key]
@@ -1091,6 +1099,9 @@ class HomeViewModel @Inject constructor(
                 val cleanItems = cat.items.filter { item ->
                     val isValid = item.title.isNotBlank() && item.title != "Unknown"
                     if (!isValid) hadBlankTitles = true
+                    if (isValid) {
+                        mediaRepository.cacheItem(item)
+                    }
                     isValid
                 }
                 cat.copy(items = cleanItems)
@@ -1371,6 +1382,14 @@ class HomeViewModel @Inject constructor(
                     logoCache[key] = value
                     changed = true
                 }
+                val parts = key.split("_")
+                if (parts.size >= 2) {
+                    val mediaType = if (parts[0].equals("tv", ignoreCase = true)) MediaType.TV else MediaType.MOVIE
+                    val mediaId = parts[1].toIntOrNull()
+                    if (mediaId != null && value.isNotBlank()) {
+                        mediaRepository.cacheLogoUrl(mediaType, mediaId, value)
+                    }
+                }
             }
             if (changed) {
                 while (logoCache.size > maxLogoCacheEntries) {
@@ -1464,10 +1483,19 @@ class HomeViewModel @Inject constructor(
             synchronized(logoCacheLock) {
                 while (keys.hasNext()) {
                     val key = keys.next()
-                    logoCache[key] = map.getString(key)
+                    val url = map.getString(key)
+                    logoCache[key] = url
                     while (logoCache.size > maxLogoCacheEntries) {
                         val eldestKey = logoCache.entries.iterator().next().key
                         logoCache.remove(eldestKey)
+                    }
+                    val parts = key.split("_")
+                    if (parts.size >= 2) {
+                        val mediaType = if (parts[0].equals("tv", ignoreCase = true)) MediaType.TV else MediaType.MOVIE
+                        val mediaId = parts[1].toIntOrNull()
+                        if (mediaId != null && !url.isNullOrBlank()) {
+                            mediaRepository.cacheLogoUrl(mediaType, mediaId, url)
+                        }
                     }
                 }
                 if (logoCache.isNotEmpty()) {
@@ -1934,6 +1962,8 @@ class HomeViewModel @Inject constructor(
 
         usedPreloadedData = true
 
+        categories.forEach { cat -> cat.items.forEach { mediaRepository.cacheItem(it) } }
+        heroItem?.let { mediaRepository.cacheItem(it) }
         putCachedLogos(logoCache)
 
         // Filter out any existing continue_watching from preloaded data

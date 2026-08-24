@@ -577,11 +577,15 @@ class DetailsViewModel @Inject constructor(
                                 playTmdbSeason = canonicalTargetSeason,
                                 playTmdbEpisode = canonicalTargetEpisode,
                                 playLabel = displayTarget?.let {
-                                    context.getString(
-                                        R.string.continue_season_episode,
-                                        it.displaySeason,
-                                        it.displayEpisode
-                                    )
+                                    if (hasExplicitEpisodeTarget || state.episodes.any { ep -> ep.isWatched }) {
+                                        context.getString(
+                                            R.string.continue_season_episode,
+                                            it.displaySeason,
+                                            it.displayEpisode
+                                        )
+                                    } else {
+                                        context.getString(R.string.play_start_s1e1)
+                                    }
                                 } ?: state.playLabel
                             )
                         }
@@ -806,12 +810,10 @@ class DetailsViewModel @Inject constructor(
                                     nextUnwatchedEpisode?.episodeNumber ?: if (hasWatchedEpisodes) 1 else state.playEpisode
                                 } else state.playEpisode,
                                 playLabel = if (shouldUseEpisodeTarget) {
-                                    if (nextUnwatchedEpisode != null) {
+                                    if (hasWatchedEpisodes && nextUnwatchedEpisode != null) {
                                         context.getString(R.string.continue_season_episode, nextUnwatchedEpisode.seasonNumber, nextUnwatchedEpisode.episodeNumber)
-                                    } else if (hasWatchedEpisodes) {
-                                        context.getString(R.string.play_start_s1e1)
                                     } else {
-                                        state.playLabel
+                                        context.getString(R.string.play_start_s1e1)
                                     }
                                 } else state.playLabel
                             )
@@ -912,7 +914,11 @@ class DetailsViewModel @Inject constructor(
                                 playTmdbSeason = playTarget?.season,
                                 playTmdbEpisode = playTarget?.episode,
                                 playLabel = displayTarget?.let {
-                                    context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                                    if (playTarget?.label == context.getString(R.string.play_start_s1e1)) {
+                                        context.getString(R.string.play_start_s1e1)
+                                    } else {
+                                        context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                                    }
                                 } ?: playTarget?.label,
                                 playPositionMs = playTarget?.positionMs
                             )
@@ -932,7 +938,11 @@ class DetailsViewModel @Inject constructor(
                                 playTmdbSeason = playTarget?.season,
                                 playTmdbEpisode = playTarget?.episode,
                                 playLabel = displayTarget?.let {
-                                    context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                                    if (playTarget?.label == context.getString(R.string.play_start_s1e1)) {
+                                        context.getString(R.string.play_start_s1e1)
+                                    } else {
+                                        context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                                    }
                                 } ?: playTarget?.label,
                                 playPositionMs = playTarget?.positionMs
                             )
@@ -1425,7 +1435,11 @@ class DetailsViewModel @Inject constructor(
                 playTmdbSeason = playTarget?.season ?: latestState.playTmdbSeason,
                 playTmdbEpisode = playTarget?.episode ?: latestState.playTmdbEpisode,
                 playLabel = displayPlayTarget?.let {
-                    context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                    if (playTarget?.label == context.getString(R.string.play_start_s1e1)) {
+                        context.getString(R.string.play_start_s1e1)
+                    } else {
+                        context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                    }
                 } ?: playTarget?.label ?: latestState.playLabel,
                 playPositionMs = playTarget?.positionMs ?: 0L
             )
@@ -1438,6 +1452,7 @@ class DetailsViewModel @Inject constructor(
     private suspend fun deriveNextUnwatchedPlayTarget(tmdbId: Int, watchedKeys: Set<String>): PlayTarget? {
         return try {
             val tvDetails = tmdbApi.getTvDetails(tmdbId, Constants.TMDB_API_KEY)
+            val hasWatchedForShow = watchedKeys.any { it.startsWith("show_tmdb:$tmdbId:") }
             for (seasonNum in 1..tvDetails.numberOfSeasons) {
                 val seasonDetails = try {
                     tmdbApi.getTvSeason(tmdbId, seasonNum, Constants.TMDB_API_KEY)
@@ -1450,10 +1465,15 @@ class DetailsViewModel @Inject constructor(
                     !watchedKeys.contains(key)
                 }
                 if (firstUnwatched != null) {
+                    val label = if (hasWatchedForShow) {
+                        context.getString(R.string.continue_season_episode, seasonNum, firstUnwatched.episodeNumber)
+                    } else {
+                        context.getString(R.string.play_start_s1e1)
+                    }
                     return PlayTarget(
                         season = seasonNum,
                         episode = firstUnwatched.episodeNumber,
-                        label = context.getString(R.string.continue_season_episode, seasonNum, firstUnwatched.episodeNumber)
+                        label = label
                     )
                 }
             }
@@ -2152,7 +2172,11 @@ class DetailsViewModel @Inject constructor(
                     playTmdbSeason = playTarget?.season ?: _uiState.value.playTmdbSeason,
                     playTmdbEpisode = playTarget?.episode ?: _uiState.value.playTmdbEpisode,
                     playLabel = displayPlayTarget?.let {
-                        context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                        if (playTarget?.label == context.getString(R.string.play_start_s1e1)) {
+                            context.getString(R.string.play_start_s1e1)
+                        } else {
+                            context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                        }
                     } ?: playTarget?.label ?: _uiState.value.playLabel,
                     playPositionMs = playTarget?.positionMs ?: _uiState.value.playPositionMs,
                     toastMessage = context.getString(R.string.details_season_marked_watched, season),

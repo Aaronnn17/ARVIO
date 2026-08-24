@@ -640,6 +640,23 @@ fun HomeScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     var suppressSelectUntilMs by remember { mutableLongStateOf(0L) }
 
+    val navigateToDetailsWithCache: (MediaType, Int, Int?, Int?) -> Unit = { mediaType, mediaId, initialSeason, initialEpisode ->
+        val matchingItem = uiState.categories.asSequence()
+            .flatMap { it.items.asSequence() }
+            .firstOrNull { it.id == mediaId && it.mediaType == mediaType }
+            ?: uiState.heroItem?.takeIf { it.id == mediaId && it.mediaType == mediaType }
+        if (matchingItem != null) {
+            viewModel.cacheItem(matchingItem)
+        }
+        val matchingLogo = cardLogoUrls["${mediaType}_$mediaId"]
+            ?: cardLogoUrls["${mediaType.name.lowercase()}_$mediaId"]
+            ?: uiState.heroLogoUrl?.takeIf { uiState.heroItem?.id == mediaId && uiState.heroItem?.mediaType == mediaType }
+        if (!matchingLogo.isNullOrBlank()) {
+            viewModel.cacheLogoUrl(mediaType, mediaId, matchingLogo)
+        }
+        onNavigateToDetails(mediaType, mediaId, initialSeason, initialEpisode)
+    }
+
     LaunchedEffect(Unit) {
         // Prevent stale select key events from previous screen from reopening details.
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
@@ -1187,7 +1204,7 @@ fun HomeScreen(
                     } else if (viewModel.isCollectionItem(item)) {
                         onNavigateToCollection(item.status?.removePrefix("collection:").orEmpty())
                     } else {
-                        onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
+                        navigateToDetailsWithCache(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
                     }
                 }
             },
@@ -1200,7 +1217,7 @@ fun HomeScreen(
                     } else if (viewModel.isCollectionItem(item)) {
                         onNavigateToCollection(item.status?.removePrefix("collection:").orEmpty())
                     } else {
-                        onNavigateToDetails(item.mediaType, item.id, null, null)
+                        navigateToDetailsWithCache(item.mediaType, item.id, null, null)
                     }
                 }
             },
@@ -1218,7 +1235,7 @@ fun HomeScreen(
             onMobileCategoryVisiblePosition = { categoryId, lastVisibleItemIndex ->
                 viewModel.onMobileCategoryVisiblePosition(categoryId, lastVisibleItemIndex)
             },
-            onNavigateToDetails = onNavigateToDetails,
+            onNavigateToDetails = navigateToDetailsWithCache,
             onNavigateToCollection = onNavigateToCollection,
             onNavigateToSearch = onNavigateToSearch,
             onNavigateToWatchlist = onNavigateToWatchlist,
@@ -1249,7 +1266,7 @@ fun HomeScreen(
                 contentStartPadding = contentStartPadding,
                 isMobile = isMobile,
                 showBudget = uiState.showBudget,
-                onNavigateToDetails = onNavigateToDetails,
+                onNavigateToDetails = navigateToDetailsWithCache,
                 onNavigateToTv = { channelId, streamUrl -> onNavigateToTv(channelId, streamUrl) },
                 isIptvItem = { item -> viewModel.isIptvItem(item) },
                 getIptvChannelId = { item -> viewModel.getIptvChannelId(item) },
@@ -1310,7 +1327,7 @@ fun HomeScreen(
                         } else if (viewModel.isIptvItem(item)) {
                             onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
                         } else {
-                            onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
+                            navigateToDetailsWithCache(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
                         }
                     },
                     onViewDetails = {
@@ -1319,7 +1336,7 @@ fun HomeScreen(
                         } else if (viewModel.isIptvItem(item)) {
                             onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
                         } else {
-                            onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
+                            navigateToDetailsWithCache(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
                         }
                     },
                     onToggleWatchlist = {
