@@ -751,7 +751,6 @@
     <string name="settings_add_stalker_portal_button">Add Stalker portal</string>
     <string name="settings_stalker_add_hint">Add up to 3 Stalker / Ministra portals</string>
     <string name="settings_stalker_create_another">Add another Stalker portal</string>
-    <string name="settings_stalker_subtitle">Stalker</string>
     <string name="settings_stalker_portal_name_label">Portal name</string>
     <string name="settings_stalker_portal_name_placeholder">e.g. Portal 1</string>
     <string name="settings_cd_toggle_stalker_portal">Enable or disable Stalker portal</string>
