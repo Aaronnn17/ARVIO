@@ -1209,7 +1209,32 @@ fun LiveTvScreen(
             }
         }
     }
-    val currentEffectiveGuideNowNext by rememberUpdatedState(effectiveGuideNowNext)
+    val actionGuideNowNext = remember(state.snapshot.nowNext, effectiveGuideNowNext) {
+        HashMap(state.snapshot.nowNext).apply { putAll(effectiveGuideNowNext) }
+    }
+    val guideIdentityKeysByChannelId = remember(visibleChannels) {
+        visibleChannels.associate { channel ->
+            channel.id to guideIdentityKeys(
+                channel.source.epgId,
+                channel.source.tvgName,
+                channel.source.rawTitle,
+                channel.name,
+            )
+        }
+    }
+    val currentActionGuideNowNext by rememberUpdatedState(actionGuideNowNext)
+    val currentGuideIdentityKeysByChannelId by rememberUpdatedState(guideIdentityKeysByChannelId)
+    fun currentProgramForAction(channel: EnrichedChannel): IptvProgram? = guideProgramForAction(
+        channelId = channel.id,
+        guideIdentityKeys = guideIdentityKeys(
+            channel.source.epgId,
+            channel.source.tvgName,
+            channel.source.rawTitle,
+            channel.name,
+        ),
+        guideByChannelId = currentActionGuideNowNext,
+        guideIdentityKeysByChannelId = currentGuideIdentityKeysByChannelId,
+    )
 
     val epgAnchorChannelId = epgPrefetchAnchorId
         ?: selectedDisplayChannelId
@@ -1763,7 +1788,7 @@ fun LiveTvScreen(
             if (
                 !epgVodLookupCanPublish(
                     selectedProgram = program,
-                    currentProgram = currentEffectiveGuideNowNext[channel.id]?.now,
+                    currentProgram = currentProgramForAction(channel),
                     nowMillis = System.currentTimeMillis(),
                 )
             ) return@launch
@@ -2584,8 +2609,7 @@ fun LiveTvScreen(
                         gridFocused = focusZone == LiveTvFocusZone.EPG,
                         onChannelSelect = { channel ->
                             focusZone = LiveTvFocusZone.CHANNEL_LIST
-                            val currentProgram = effectiveGuideNowNext[channel.id]
-                                ?.now
+                            val currentProgram = currentProgramForAction(channel)
                                 ?.takeIf { it.isLive(guideClockMillis) }
                             selectChannel(channel, currentProgram)
                         },
@@ -2724,8 +2748,7 @@ fun LiveTvScreen(
                         compact = compactTouchLayout,
                         gridFocused = focusZone == LiveTvFocusZone.CHANNEL_LIST || focusZone == LiveTvFocusZone.EPG,
                         onChannelSelect = { channel ->
-                            val currentProgram = effectiveGuideNowNext[channel.id]
-                                ?.now
+                            val currentProgram = currentProgramForAction(channel)
                                 ?.takeIf { it.isLive(guideClockMillis) }
                             selectChannel(channel, currentProgram)
                         },

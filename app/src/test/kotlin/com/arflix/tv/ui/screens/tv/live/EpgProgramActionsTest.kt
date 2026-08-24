@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.tv.live
 
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.google.common.truth.Truth.assertThat
@@ -307,5 +308,48 @@ class EpgProgramActionsTest {
 
         assertThat(epgVodLookupCanPublish(selected, next, nowMillis = 2_100L)).isFalse()
         assertThat(epgVodLookupCanPublish(selected, currentProgram = null, nowMillis = 1_500L)).isFalse()
+    }
+
+    @Test
+    fun secondPlaylistReusesCurrentProgrammeFromMatchingGuideIdentity() {
+        val movie = IptvProgram(
+            title = "Live Movie",
+            startUtcMillis = 1_000L,
+            endUtcMillis = 2_000L,
+        )
+        val identities = mapOf(
+            "playlist-a:101" to guideIdentityKeys("movie-channel", "Movie Channel"),
+            "playlist-b:202" to guideIdentityKeys("other-epg-id", "Movie Channel"),
+        )
+
+        assertThat(
+            guideProgramForAction(
+                channelId = "playlist-b:202",
+                guideIdentityKeys = identities.getValue("playlist-b:202"),
+                guideByChannelId = mapOf("playlist-a:101" to IptvNowNext(now = movie)),
+                guideIdentityKeysByChannelId = identities,
+            )
+        ).isEqualTo(movie)
+    }
+
+    @Test
+    fun unrelatedPlaylistChannelCannotBorrowProgramme() {
+        val movie = IptvProgram(
+            title = "Live Movie",
+            startUtcMillis = 1_000L,
+            endUtcMillis = 2_000L,
+        )
+
+        assertThat(
+            guideProgramForAction(
+                channelId = "playlist-b:news",
+                guideIdentityKeys = guideIdentityKeys("News Channel"),
+                guideByChannelId = mapOf("playlist-a:movie" to IptvNowNext(now = movie)),
+                guideIdentityKeysByChannelId = mapOf(
+                    "playlist-a:movie" to guideIdentityKeys("Movie Channel"),
+                    "playlist-b:news" to guideIdentityKeys("News Channel"),
+                ),
+            )
+        ).isNull()
     }
 }

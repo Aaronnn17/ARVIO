@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.tv.live
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.data.model.IptvNowNext
 
 private val NON_VOD_EPG_CHANNEL_TERMS = setOf(
     "sport",
@@ -111,6 +112,34 @@ internal fun epgVodLookupCanPublish(
     currentProgram.startUtcMillis == selectedProgram.startUtcMillis &&
     currentProgram.endUtcMillis == selectedProgram.endUtcMillis &&
     currentProgram.isLive(nowMillis)
+
+internal fun guideIdentityKeys(vararg values: String?): Set<String> = values
+    .asSequence()
+    .mapNotNull { value ->
+        value
+            ?.trim()
+            ?.lowercase()
+            ?.filter { it.isLetterOrDigit() }
+            ?.takeIf { it.isNotBlank() }
+    }
+    .toSet()
+
+internal fun guideProgramForAction(
+    channelId: String,
+    guideIdentityKeys: Set<String>,
+    guideByChannelId: Map<String, IptvNowNext>,
+    guideIdentityKeysByChannelId: Map<String, Set<String>>,
+): IptvProgram? {
+    guideByChannelId[channelId]?.now?.let { return it }
+    if (guideIdentityKeys.isEmpty()) return null
+    return guideIdentityKeysByChannelId.entries.firstNotNullOfOrNull { (candidateId, candidateKeys) ->
+        if (candidateId != channelId && candidateKeys.any(guideIdentityKeys::contains)) {
+            guideByChannelId[candidateId]?.now
+        } else {
+            null
+        }
+    }
+}
 
 internal fun epgChannelAllowsVodSearch(
     channelName: String,
