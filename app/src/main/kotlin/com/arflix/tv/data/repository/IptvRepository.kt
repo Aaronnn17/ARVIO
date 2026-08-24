@@ -2328,6 +2328,8 @@ class IptvRepository @Inject constructor(
 
                 val favoriteGroups = observeFavoriteGroups().first()
                 val favoriteChannels = observeFavoriteChannels().first()
+                val hiddenGroups = observeHiddenGroups().first()
+                val groupOrder = observeGroupOrder().first()
                 val grouped = cachedGroupedChannels.ifEmpty {
                     buildGroupedChannels(cachedChannels).also { cachedGroupedChannels = it }
                 }
@@ -2339,6 +2341,8 @@ class IptvRepository @Inject constructor(
                     nowNext = cachedNowNext,
                     favoriteGroups = favoriteGroups,
                     favoriteChannels = favoriteChannels,
+                    hiddenGroups = hiddenGroups,
+                    groupOrder = groupOrder,
                     epgWarning = null,
                     loadedAt = Instant.ofEpochMilli(loadedAtMillis)
                 )
@@ -2368,6 +2372,8 @@ class IptvRepository @Inject constructor(
         if (channels.isEmpty()) return null
         val favoriteGroups = observeFavoriteGroups().first()
         val favoriteChannels = observeFavoriteChannels().first()
+        val hiddenGroups = observeHiddenGroups().first()
+        val groupOrder = observeGroupOrder().first()
         val grouped = cachedGroupedChannels.ifEmpty {
             buildGroupedChannels(channels).also { cachedGroupedChannels = it }
         }
@@ -2378,6 +2384,8 @@ class IptvRepository @Inject constructor(
             nowNext = cachedNowNext,
             favoriteGroups = favoriteGroups,
             favoriteChannels = favoriteChannels,
+            hiddenGroups = hiddenGroups,
+            groupOrder = groupOrder,
             epgWarning = null,
             loadedAt = Instant.ofEpochMilli(loadedAtMillis)
         )
