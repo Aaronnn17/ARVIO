@@ -60,6 +60,10 @@ internal fun SubtitleView.applySubtitleAppearance(
         baseSizeSp * (sizePercent.coerceIn(50, 300) / 100f) * pipScale,
     )
     setBottomPaddingFraction((verticalPercent / 100f).coerceIn(0f, 0.5f))
-    setApplyEmbeddedStyles(preserveEmbeddedStyles)
-    setApplyEmbeddedFontSizes(preserveEmbeddedStyles)
+    val applyEmbeddedStyles = shouldPreserveEmbeddedSubtitleStyles(
+        fontPreference = fontPreference,
+        stylizedSubtitlesEnabled = preserveEmbeddedStyles,
+    )
+    setApplyEmbeddedStyles(applyEmbeddedStyles)
+    setApplyEmbeddedFontSizes(applyEmbeddedStyles)
 }

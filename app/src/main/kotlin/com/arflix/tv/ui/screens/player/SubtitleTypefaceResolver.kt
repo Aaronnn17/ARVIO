@@ -18,6 +18,10 @@ internal fun resolveSubtitleTypeface(
         SubtitleFontOption.ATKINSON_HYPERLEGIBLE -> R.font.atkinson_hyperlegible
         SubtitleFontOption.LEXEND -> R.font.lexend_variable
         SubtitleFontOption.ROBOTO_CONDENSED -> R.font.roboto_condensed_variable
+        SubtitleFontOption.NUNITO_SANS -> R.font.nunito_sans_variable
+        SubtitleFontOption.QUICKSAND -> R.font.quicksand_variable
+        SubtitleFontOption.RUBIK -> R.font.rubik_variable
+        SubtitleFontOption.VARELA_ROUND -> R.font.varela_round_regular
     }
     val base = fontRes?.let { ResourcesCompat.getFont(context, it) } ?: Typeface.DEFAULT
     return Typeface.create(base, if (bold) Typeface.BOLD else Typeface.NORMAL)

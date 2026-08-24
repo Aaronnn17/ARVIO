@@ -26,6 +26,10 @@ class SubtitleFontOptionTest {
             "Atkinson Hyperlegible",
             "Lexend",
             "Roboto Condensed",
+            "Nunito Sans",
+            "Quicksand",
+            "Rubik",
+            "Varela Round",
             "System",
         ).inOrder()
     }
@@ -35,5 +39,17 @@ class SubtitleFontOptionTest {
         SubtitleFontOption.entries.forEach { option ->
             assertThat(SubtitleFontOption.fromPreference(option.preferenceValue)).isEqualTo(option)
         }
+    }
+
+    @Test
+    fun previousFromSystemWrapsToVarelaRound() {
+        assertThat(SubtitleFontOption.previousPreference("System")).isEqualTo("Varela Round")
+    }
+
+    @Test
+    fun customFontOverridesEmbeddedAssFontStyling() {
+        assertThat(shouldPreserveEmbeddedSubtitleStyles("Nunito Sans", true)).isFalse()
+        assertThat(shouldPreserveEmbeddedSubtitleStyles("System", true)).isTrue()
+        assertThat(shouldPreserveEmbeddedSubtitleStyles("System", false)).isFalse()
     }
 }
