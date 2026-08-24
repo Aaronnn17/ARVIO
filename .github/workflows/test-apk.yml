@@ -24,6 +24,12 @@ jobs:
       - name: Parallel-install app id (.stalkerlive)
         run: sed -i 's/        debug {/        debug {\n            applicationIdSuffix = ".stalkerlive"/' app/build.gradle.kts
 
+      - name: Bump versionCode so Android allows in-place update
+        run: |
+          BUILD_NUMBER=${{ github.run_number }}
+          sed -i "s/versionCode = [0-9]*/versionCode = $((310 + BUILD_NUMBER))/" app/build.gradle.kts
+          echo "Bumped versionCode to $((310 + BUILD_NUMBER)) for run $BUILD_NUMBER"
+
       - name: Build debug APK
         run: ./gradlew assembleSideloadDebug --no-daemon
 
