@@ -1753,7 +1753,7 @@ class IptvRepository @Inject constructor(
                                 val channels = stalker.getChannels()
                                 // Prefix with stalker:<portalId>:<origId> so the
                                 // portal can be identified for playback routing.
-                                Triple(portal.id, stalker, channels.map { it.copy(id = "stalker:${portal.id}:${it.id}") })
+                                Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, stalker, channels.map { it.copy(id = "stalker:${portal.id}:${it.id}") })
                             }.getOrElse { Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList()) }
                         }
                     }.awaitAll().let { results ->
@@ -1772,7 +1772,8 @@ class IptvRepository @Inject constructor(
 
             // Stalker-only mode: no playlists configured → return Stalker channels directly.
             if (activePlaylists.isEmpty() && stalkerPortals.isNotEmpty()) {
-                val (stalkerApis, stalkerChannels) = stalkerChannelsDeferred?.await() ?: (emptyMap() to emptyList())
+                val (stalkerApis, stalkerChannels) = stalkerChannelsDeferred?.await()
+                    ?: (emptyMap<String, com.arflix.tv.data.api.StalkerApi>() to emptyList<IptvChannel>())
                 if (stalkerChannels.isEmpty()) {
                     return@withContext IptvSnapshot(
                         epgWarning = "Stalker handshake failed. Check Portal URL and MAC.",
@@ -1891,7 +1892,8 @@ class IptvRepository @Inject constructor(
                     }
                 }.let { playlistChannels ->
                     // Merge Stalker channels (if configured) into the final list.
-                    val (stalkerApis, stalkerChannels) = stalkerChannelsDeferred?.await() ?: (emptyMap() to emptyList())
+                    val (stalkerApis, stalkerChannels) = stalkerChannelsDeferred?.await()
+                        ?: (emptyMap<String, com.arflix.tv.data.api.StalkerApi>() to emptyList<IptvChannel>())
                     if (stalkerApis.isNotEmpty()) {
                         cachedStalkerApis = stalkerApis
                     }
@@ -2961,7 +2963,7 @@ class IptvRepository @Inject constructor(
                                 val stalker = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
                                 if (!stalker.handshake()) return@runCatching Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList())
                                 stalker.getProfile()
-                                Triple(portal.id, stalker, stalker.getChannels().map { it.copy(id = "stalker:${portal.id}:${it.id}") })
+                                Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, stalker, stalker.getChannels().map { it.copy(id = "stalker:${portal.id}:${it.id}") })
                             }.getOrElse { Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList()) }
                         }
                     }.awaitAll().let { results ->
@@ -2988,7 +2990,8 @@ class IptvRepository @Inject constructor(
                         }
                 }
             }.awaitAll().flatten()
-            val (sa, sc) = stalkerDeferred?.await() ?: (emptyMap() to emptyList())
+            val (sa, sc) = stalkerDeferred?.await()
+                ?: (emptyMap<String, com.arflix.tv.data.api.StalkerApi>() to emptyList<IptvChannel>())
             Triple(playlists, sa, sc)
         }
 
