@@ -281,7 +281,8 @@ class SettingsViewModel @Inject constructor(
     private val mdbListRepository: com.arflix.tv.data.repository.MdbListRepository,
     private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore,
     private val watchHistoryRepository: com.arflix.tv.data.repository.WatchHistoryRepository,
-    private val simklAuthManager: com.arflix.tv.data.repository.simkl.SimklAuthManager
+    private val simklAuthManager: com.arflix.tv.data.repository.simkl.SimklAuthManager,
+    private val simklSyncService: com.arflix.tv.data.repository.simkl.SimklSyncService
 ) : ViewModel() {
     private fun visibleCatalogs(catalogs: List<CatalogConfig>): List<CatalogConfig> {
         return catalogs.filter { config ->
@@ -685,7 +686,7 @@ class SettingsViewModel @Inject constructor(
             )
 
             refreshIntegrationUsernames(loadProfileId, isTrakt, isMdbList, isSimkl)
-            if (isTrakt) refreshSyncSummary(loadProfileId)
+            if (isTrakt || isMdbList || isSimkl) refreshSyncSummary(loadProfileId)
         }
     }
 
@@ -755,18 +756,50 @@ class SettingsViewModel @Inject constructor(
 
     private fun refreshSyncSummary(profileId: String) {
         syncSummaryJob?.cancel()
-        syncSummaryJob = viewModelScope.launch {
-            val previousLastSyncTime = _uiState.value.lastSyncTime
+        syncSummaryJob = viewModelScope.launch(Dispatchers.IO) {
             val summary = traktSyncService.getLastSyncSummary()
-            if (
-                profileManager.getProfileIdSync() != profileId ||
-                _uiState.value.lastSyncTime != previousLastSyncTime
-            ) return@launch
-            _uiState.value = _uiState.value.copy(
-                lastSyncTime = formatSyncTime(summary?.lastSyncAt),
-                syncedMovies = summary?.moviesSynced ?: 0,
-                syncedEpisodes = summary?.episodesSynced ?: 0
-            )
+            var movies = summary?.moviesSynced ?: 0
+            var episodes = summary?.episodesSynced ?: 0
+            var lastSyncAt = summary?.lastSyncAt
+
+            val isTrakt = _uiState.value.isTraktAuthenticated
+            val isMdbList = _uiState.value.isMdbListConnected
+            val isSimkl = _uiState.value.isSimklConnected
+
+            // If summary has 0/null but a provider is connected, query provider caches directly
+            if (movies == 0 && episodes == 0 && (isTrakt || isMdbList || isSimkl)) {
+                if (isTrakt) {
+                    val traktMovies = runCatching { traktRepository.getWatchedMovies() }.getOrDefault(emptySet())
+                    val traktEpisodes = runCatching { traktRepository.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    movies += traktMovies.size
+                    episodes += traktEpisodes.size
+                }
+                if (isMdbList) {
+                    val mdbMovies = runCatching { mdbListRepository.getWatchedMovies() }.getOrDefault(emptySet())
+                    val mdbEpisodes = runCatching { mdbListRepository.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    movies += mdbMovies.size
+                    episodes += mdbEpisodes.size
+                }
+                if (isSimkl) {
+                    val simklMovies = runCatching { simklSyncService.getWatchedMovies() }.getOrDefault(emptySet())
+                    val simklEpisodes = runCatching { simklSyncService.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    movies += simklMovies.size
+                    episodes += simklEpisodes.size
+                }
+                if (lastSyncAt == null && (movies > 0 || episodes > 0)) {
+                    lastSyncAt = java.time.Instant.now().toString()
+                    traktSyncService.saveLocalSyncSummary(lastSyncAt, movies, episodes)
+                }
+            }
+
+            if (profileManager.getProfileIdSync() != profileId) return@launch
+            withContext(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(
+                    lastSyncTime = formatSyncTime(lastSyncAt),
+                    syncedMovies = movies,
+                    syncedEpisodes = episodes
+                )
+            }
         }
     }
 
@@ -948,62 +981,83 @@ class SettingsViewModel @Inject constructor(
 
     // ========== App Updates ==========
 
-    fun performFullSync(silent: Boolean = false) {
-        viewModelScope.launch {
+    fun syncAllTrackingProviders(silent: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
             if (_uiState.value.isSyncing) return@launch
-            val result = traktSyncService.performFullSync()
-            when (result) {
-                is SyncResult.Success -> {
-                    _uiState.value = _uiState.value.copy(
-                        syncedMovies = result.moviesSynced,
-                        syncedEpisodes = result.episodesSynced,
-                        lastSyncTime = formatSyncTime(java.time.Instant.now().toString()),
-                        toastMessage = "Synced ${result.moviesSynced} movies and ${result.episodesSynced} episodes",
-                        toastType = ToastType.SUCCESS
-                    )
-                    // Invalidate repository cache to pick up new data
+            withContext(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(isSyncing = true)
+            }
+            try {
+                var totalMovies = 0
+                var totalEpisodes = 0
+                var syncedAny = false
+
+                if (_uiState.value.isTraktAuthenticated) {
+                    val result = traktSyncService.performFullSync()
+                    if (result is SyncResult.Success) {
+                        totalMovies += result.moviesSynced
+                        totalEpisodes += result.episodesSynced
+                        syncedAny = true
+                    }
+                }
+                if (_uiState.value.isMdbListConnected) {
+                    val mdbMovies = runCatching { mdbListRepository.getWatchedMovies() }.getOrDefault(emptySet())
+                    val mdbEpisodes = runCatching { mdbListRepository.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    totalMovies += mdbMovies.size
+                    totalEpisodes += mdbEpisodes.size
+                    syncedAny = true
+                }
+                if (_uiState.value.isSimklConnected) {
+                    runCatching { simklSyncService.syncIfNeeded(force = true) }
+                    val simklMovies = runCatching { simklSyncService.getWatchedMovies() }.getOrDefault(emptySet())
+                    val simklEpisodes = runCatching { simklSyncService.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    totalMovies += simklMovies.size
+                    totalEpisodes += simklEpisodes.size
+                    syncedAny = true
+                }
+
+                val nowIso = java.time.Instant.now().toString()
+                if (syncedAny) {
+                    traktSyncService.saveLocalSyncSummary(nowIso, totalMovies, totalEpisodes)
+                    withContext(Dispatchers.Main) {
+                        _uiState.value = _uiState.value.copy(
+                            syncedMovies = totalMovies,
+                            syncedEpisodes = totalEpisodes,
+                            lastSyncTime = formatSyncTime(nowIso),
+                            toastMessage = if (!silent) "Synced $totalMovies movies and $totalEpisodes episodes" else _uiState.value.toastMessage,
+                            toastType = if (!silent) ToastType.SUCCESS else _uiState.value.toastType
+                        )
+                    }
                     traktRepository.invalidateWatchedCache()
                     traktRepository.initializeWatchedCache()
-                }
-                is SyncResult.Error -> {
-                    if (!silent) {
+                } else if (!silent) {
+                    withContext(Dispatchers.Main) {
                         _uiState.value = _uiState.value.copy(
-                            toastMessage = context.getString(R.string.sync_failed, result.message),
+                            toastMessage = "No tracking provider connected",
                             toastType = ToastType.ERROR
                         )
                     }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (!silent) {
+                    withContext(Dispatchers.Main) {
+                        _uiState.value = _uiState.value.copy(
+                            toastMessage = context.getString(R.string.sync_failed, e.message),
+                            toastType = ToastType.ERROR
+                        )
+                    }
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(isSyncing = false)
                 }
             }
         }
     }
 
-    fun performIncrementalSync() {
-        viewModelScope.launch {
-            val result = traktSyncService.performIncrementalSync()
-            when (result) {
-                is SyncResult.Success -> {
-                    _uiState.value = _uiState.value.copy(
-                        syncedMovies = _uiState.value.syncedMovies + result.moviesSynced,
-                        syncedEpisodes = _uiState.value.syncedEpisodes + result.episodesSynced,
-                        lastSyncTime = formatSyncTime(java.time.Instant.now().toString()),
-                        toastMessage = if (result.moviesSynced == 0 && result.episodesSynced == 0)
-                            "Already up to date"
-                        else
-                            "Synced ${result.moviesSynced} movies and ${result.episodesSynced} episodes",
-                        toastType = ToastType.SUCCESS
-                    )
-                    // Invalidate repository cache to pick up new data
-                    traktRepository.invalidateWatchedCache()
-                    traktRepository.initializeWatchedCache()
-                }
-                is SyncResult.Error -> {
-                    _uiState.value = _uiState.value.copy(
-                        toastMessage = context.getString(R.string.sync_failed, result.message),
-                        toastType = ToastType.ERROR
-                    )
-                }
-            }
-        }
+    fun performFullSync(silent: Boolean = false) {
+        syncAllTrackingProviders(silent = silent)
     }
 
     fun setDefaultSubtitle(language: String) {
