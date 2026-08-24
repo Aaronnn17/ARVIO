@@ -34,6 +34,7 @@ import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.PlexPinAuthSession
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.MAX_STALKER_PORTALS
 import com.arflix.tv.data.repository.normalizeIptvSortOrder
 import com.arflix.tv.data.repository.IptvPlaylistEntry
 import com.arflix.tv.data.repository.StalkerPortalEntry
@@ -2319,7 +2320,7 @@ class SettingsViewModel @Inject constructor(
 
     /**
      * Add a new Stalker portal at the end of the list (capped at
-     * [IptvRepository.MAX_STALKER_PORTALS]). Returns false (with a toast) when
+     * [MAX_STALKER_PORTALS]). Returns false (with a toast) when
      * the limit is reached or the URL/MAC are blank.
      */
     fun onAddStalkerPortal(portalUrl: String, macAddress: String, name: String? = null) {
@@ -2333,7 +2334,7 @@ class SettingsViewModel @Inject constructor(
             return
         }
         val current = _uiState.value.iptvStalkerPortals
-        if (current.size >= IptvRepository.MAX_STALKER_PORTALS) {
+        if (current.size >= MAX_STALKER_PORTALS) {
             _uiState.value = _uiState.value.copy(
                 toastMessage = "Maximum number of Stalker portals reached",
                 toastType = ToastType.ERROR

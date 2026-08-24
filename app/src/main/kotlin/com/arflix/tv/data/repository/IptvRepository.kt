@@ -8968,14 +8968,6 @@ class IptvRepository @Inject constructor(
 
     // ════════════════════════════════════════════════════════════════════════
 
-    companion object {
-        /** Pseudo playlist id for the Stalker/Ministra portal source. */
-        const val STALKER_PLAYLIST_ID = "stalker"
-
-        /** Maximum number of Stalker portals a user can configure. */
-        const val MAX_STALKER_PORTALS = 3
-    }
-
     private companion object {
         private val DURATION_SCALE_REGEX = Regex("""\$\{duration:(\d+)\}|\{duration:(\d+)\}""")
         private val URL_QUERY_SECRETS_REGEX = Regex("""(?i)([?&](?:username|user|uname|password|pass|pwd)=)[^&]+""")

@@ -3,6 +3,12 @@ package com.arflix.tv.data.repository
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
+/** Pseudo playlist id for the Stalker/Ministra portal source. */
+const val STALKER_PLAYLIST_ID = "stalker"
+
+/** Maximum number of Stalker portals a user can configure. */
+const val MAX_STALKER_PORTALS = 3
+
 /**
  * Pure helpers for the Stalker multi-portal model. Kept dependency-free so they
  * can be unit-tested without an Android context.

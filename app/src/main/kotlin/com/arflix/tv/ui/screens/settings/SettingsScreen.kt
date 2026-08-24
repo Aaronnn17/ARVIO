@@ -192,7 +192,7 @@ import com.arflix.tv.data.model.RuntimeKind
 import com.arflix.tv.data.repository.HomeServerConnection
 import com.arflix.tv.data.repository.HomeServerKind
 import com.arflix.tv.data.repository.IptvPlaylistEntry
-import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.STALKER_PLAYLIST_ID
 import com.arflix.tv.data.repository.StalkerPortalEntry
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
@@ -248,7 +248,6 @@ private const val PRIVACY_POLICY_URL = "https://arvio.tv/privacy"
  * playlist lets it reuse the same group-management UI as M3U playlists
  * (categories / hide / sort / bulk toggle) without a separate code path.
  */
-private const val STALKER_PLAYLIST_ID = IptvRepository.STALKER_PLAYLIST_ID
 
 private val tvGeneralSectionIds = setOf(
     "language",
