@@ -2980,7 +2980,9 @@ fun LiveTvScreen(
                         .asSequence()
                         .filterNot { channel -> isAdultGroup(channel.group, channel.name) }
                         .filterNot { channel ->
-                            val playlistId = channel.id.substringBefore(':')
+                            val playlistId = com.arflix.tv.data.repository.StalkerPortalSupport
+                                .portalIdFromChannelId(channel.id)
+                                ?: channel.id.substringBefore(':')
                             val groupKey = com.arflix.tv.data.model.PlaylistGroupKey
                                 .build(playlistId, channel.group.ifBlank { "Ungrouped" })
                             groupKey in hiddenGroupSet

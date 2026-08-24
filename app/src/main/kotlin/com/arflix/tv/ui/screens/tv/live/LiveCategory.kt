@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvChannel
+import com.arflix.tv.data.repository.StalkerPortalSupport
 
 /** Broad channel genre derived from M3U group name. */
 enum class Genre {
@@ -394,19 +395,32 @@ private fun playlistGroupLabel(group: String): String {
     return group.trim().ifBlank { "Ungrouped" }
 }
 
+/**
+ * Resolves the playlist id used to build a hidden-group key (`playlistId|group`)
+ * for a given channel id. M3U/Xtream ids are shaped `<playlistId>:<origId>`, so
+ * the first segment is the playlist id. Stalker ids are shaped
+ * `stalker:<portalId>:<origId>`; hidden groups for Stalker portals are stored
+ * under the *portal* id (e.g. `stalker1|group`), not the literal `stalker`
+ * prefix, so the portal segment must be returned for the key to match.
+ */
+private fun hiddenGroupPlaylistId(channelId: String): String {
+    StalkerPortalSupport.portalIdFromChannelId(channelId)?.let { return it }
+    return channelId.substringBefore(':')
+}
+
 private fun playlistGroupKey(playlistId: String, group: String): String {
     return com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, playlistGroupLabel(group))
 }
 
 fun isHiddenPlaylistGroup(channel: EnrichedChannel, hiddenGroups: Set<String>): Boolean {
     if (hiddenGroups.isEmpty()) return false
-    val playlistId = channel.id.substringBefore(':')
+    val playlistId = hiddenGroupPlaylistId(channel.id)
     return playlistGroupKey(playlistId, channel.source.group) in hiddenGroups
 }
 
 private fun isHiddenPlaylistGroup(channel: IptvChannel, hiddenGroups: Set<String>): Boolean {
     if (hiddenGroups.isEmpty()) return false
-    val playlistId = channel.id.substringBefore(':')
+    val playlistId = hiddenGroupPlaylistId(channel.id)
     return playlistGroupKey(playlistId, channel.group) in hiddenGroups
 }
 
@@ -455,8 +469,9 @@ fun buildCategoryTree(
 
     channels.forEach { channel ->
         val playlistId = channel.id.substringBefore(':')
+        val hiddenPlaylistId = hiddenGroupPlaylistId(channel.id)
         val groupLabel = playlistGroupLabel(channel.source.group)
-        val groupKey = playlistGroupKey(playlistId, groupLabel)
+        val groupKey = playlistGroupKey(hiddenPlaylistId, groupLabel)
         val groupId = playlistGroupCategoryId(playlistId, channel.source.group)
         val targetCounts = if (groupKey in hiddenPlaylistGroups) hiddenPlaylistGroupCounts else playlistGroupCounts
         val groupCount = targetCounts[groupId]?.second ?: 0
@@ -631,9 +646,10 @@ fun buildCategoryTree(
 
     channels.forEach { channel ->
         val playlistId = channel.id.substringBefore(':')
+        val hiddenPlaylistId = hiddenGroupPlaylistId(channel.id)
         val traits = channel.traits()
         val groupLabel = playlistGroupLabel(channel.group)
-        val groupKey = playlistGroupKey(playlistId, groupLabel)
+        val groupKey = playlistGroupKey(hiddenPlaylistId, groupLabel)
         val groupId = playlistGroupCategoryId(playlistId, channel.group)
         val targetCounts = if (groupKey in hiddenPlaylistGroups) hiddenPlaylistGroupCounts else playlistGroupCounts
         val groupCount = targetCounts[groupId]?.second ?: 0
@@ -884,8 +900,9 @@ fun buildFastStartupChannelState(
     channels.forEachIndexed { index, rawChannel ->
         val channel = rawChannel.enrichForFastStartup(index + 1)
         val playlistId = rawChannel.id.substringBefore(':')
+        val hiddenPlaylistId = hiddenGroupPlaylistId(rawChannel.id)
         val groupLabel = playlistGroupLabel(rawChannel.group)
-        val groupKey = playlistGroupKey(playlistId, groupLabel)
+        val groupKey = playlistGroupKey(hiddenPlaylistId, groupLabel)
         val groupId = playlistGroupCategoryId(playlistId, rawChannel.group)
         val hidden = groupKey in hiddenPlaylistGroups
 
@@ -1001,7 +1018,7 @@ fun buildPagedStartupChannelState(
         if (channel.id in favorites) add("fav", channel)
         if (channel.id in recents) add("recent", channel)
         val playlistId = channel.source.id.substringBefore(':')
-        val groupKey = playlistGroupKey(playlistId, channel.source.group)
+        val groupKey = playlistGroupKey(hiddenGroupPlaylistId(channel.source.id), channel.source.group)
         val groupId = playlistGroupCategoryId(playlistId, channel.source.group)
         add(groupId, channel)
         if (groupKey in hiddenPlaylistGroups) {

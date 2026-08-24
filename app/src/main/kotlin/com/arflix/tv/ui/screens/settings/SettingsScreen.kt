@@ -7092,12 +7092,12 @@ private fun IptvSettings(
                                 Icon(imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked, contentDescription = null, tint = if (isSelected) Pink else TextSecondary, modifier = Modifier.size(24.dp))
                                 Spacer(modifier = Modifier.width(16.dp))
                             } else {
-                                Icon(imageVector = Icons.Default.Tv, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(24.dp))
+                                Icon(imageVector = Icons.Default.LiveTv, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(24.dp))
                                 Spacer(modifier = Modifier.width(16.dp))
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(stringResource(R.string.settings_stalker_subtitle), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(portal.portalUrl.take(56), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             if (selectionMode && selectedIndices.size == 1 && isSelected) {
                                 Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
