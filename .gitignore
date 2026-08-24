@@ -86,9 +86,6 @@ release.keystore
 upload.keystore
 *.jks
 *.keystore
-# Exception: the committed debug keystore for test APKs (stable signing key
-# so CI test builds can update in place; removed before the upstream PR).
-!.github/test-signing/debug.keystore
 
 # Temporary files
 *.tmp
