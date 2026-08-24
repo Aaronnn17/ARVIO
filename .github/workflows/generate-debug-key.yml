@@ -1,0 +1,28 @@
+name: Generate debug keystore (one-off)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate debug keystore
+        run: |
+          mkdir -p tmp-keystore
+          keytool -genkeypair -v \
+            -keystore tmp-keystore/debug.keystore \
+            -storepass android \
+            -keypass android \
+            -alias arvio-stalker-debug \
+            -keyalg RSA -keysize 2048 -validity 36500 \
+            -dname "CN=ARVIO Stalker Test, OU=Dev, O=ReichiMD, L=Test, ST=Test, C=DE"
+
+      - name: Base64 encode
+        run: base64 -w 0 tmp-keystore/debug.keystore > tmp-keystore/debug.keystore.b64
+
+      - name: Upload as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arvio-debug-keystore
+          path: tmp-keystore/debug.keystore.b64
