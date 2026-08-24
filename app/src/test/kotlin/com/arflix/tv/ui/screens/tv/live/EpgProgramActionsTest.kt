@@ -278,4 +278,34 @@ class EpgProgramActionsTest {
         assertThat(guard.isCurrent(staleLookup)).isFalse()
         assertThat(guard.isCurrent(guard.beginLookup())).isTrue()
     }
+
+    @Test
+    fun vodLookupPublishesOnlyWhileSelectedProgrammeIsStillCurrentAndLive() {
+        val selected = IptvProgram(
+            title = "Live Movie",
+            startUtcMillis = 1_000L,
+            endUtcMillis = 2_000L,
+        )
+        val refreshedSameProgramme = selected.copy(description = "Updated description")
+
+        assertThat(epgVodLookupCanPublish(selected, refreshedSameProgramme, nowMillis = 1_500L)).isTrue()
+        assertThat(epgVodLookupCanPublish(selected, refreshedSameProgramme, nowMillis = 2_000L)).isFalse()
+    }
+
+    @Test
+    fun vodLookupCannotPublishAfterGuideRollsToNextProgramme() {
+        val selected = IptvProgram(
+            title = "Live Movie",
+            startUtcMillis = 1_000L,
+            endUtcMillis = 2_000L,
+        )
+        val next = IptvProgram(
+            title = "Next Movie",
+            startUtcMillis = 2_000L,
+            endUtcMillis = 3_000L,
+        )
+
+        assertThat(epgVodLookupCanPublish(selected, next, nowMillis = 2_100L)).isFalse()
+        assertThat(epgVodLookupCanPublish(selected, currentProgram = null, nowMillis = 1_500L)).isFalse()
+    }
 }

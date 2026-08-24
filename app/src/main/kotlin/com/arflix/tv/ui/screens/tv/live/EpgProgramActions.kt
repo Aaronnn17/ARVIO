@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.tv.live
 
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.IptvProgram
 
 private val NON_VOD_EPG_CHANNEL_TERMS = setOf(
     "sport",
@@ -100,6 +101,16 @@ internal class EpgVodLookupGuard {
 
     fun isCurrent(lookupGeneration: Int): Boolean = lookupGeneration == generation
 }
+
+internal fun epgVodLookupCanPublish(
+    selectedProgram: IptvProgram,
+    currentProgram: IptvProgram?,
+    nowMillis: Long,
+): Boolean = currentProgram != null &&
+    currentProgram.title == selectedProgram.title &&
+    currentProgram.startUtcMillis == selectedProgram.startUtcMillis &&
+    currentProgram.endUtcMillis == selectedProgram.endUtcMillis &&
+    currentProgram.isLive(nowMillis)
 
 internal fun epgChannelAllowsVodSearch(
     channelName: String,
