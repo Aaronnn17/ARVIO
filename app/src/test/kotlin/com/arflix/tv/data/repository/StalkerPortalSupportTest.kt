@@ -138,4 +138,41 @@ class StalkerPortalSupportTest {
         val portalIds = ids.mapNotNull { StalkerPortalSupport.portalIdFromChannelId(it) }
         assertThat(portalIds).containsExactly("stalker1", "stalker2", "stalker3").inOrder()
     }
+
+    @Test
+    fun normalizeStalkerPortalEntryTrimsUrlAndUppercasesMac() {
+        val portal = StalkerPortalEntry("stalker1", "Portal 1", "  http://a/  ", "  00:1a:79:aa:bb:cc  ")
+        val normalized = StalkerPortalSupport.normalizeStalkerPortalEntry(portal, 0)
+        assertThat(normalized).isNotNull()
+        assertThat(normalized!!.portalUrl).isEqualTo("http://a")
+        assertThat(normalized.macAddress).isEqualTo("00:1A:79:AA:BB:CC")
+        assertThat(normalized.enabled).isTrue()
+    }
+
+    @Test
+    fun normalizeStalkerPortalEntryAssignsDefaultIdAndNameByIndex() {
+        val portal = StalkerPortalEntry("", "", "http://a/", "00:1A:79:AA:BB:CC")
+        val normalized = StalkerPortalSupport.normalizeStalkerPortalEntry(portal, 2)
+        assertThat(normalized).isNotNull()
+        assertThat(normalized!!.id).isEqualTo("stalker3")
+        assertThat(normalized.name).isEqualTo("Portal 3")
+    }
+
+    @Test
+    fun normalizeStalkerPortalEntryReturnsNullForBlankFields() {
+        assertThat(StalkerPortalSupport.normalizeStalkerPortalEntry(
+            StalkerPortalEntry("stalker1", "Portal 1", "", "00:1A:79:AA:BB:CC"), 0
+        )).isNull()
+        assertThat(StalkerPortalSupport.normalizeStalkerPortalEntry(
+            StalkerPortalEntry("stalker1", "Portal 1", "http://a/", ""), 0
+        )).isNull()
+    }
+
+    @Test
+    fun normalizeStalkerPortalEntryPreservesEnabledFlag() {
+        val portal = StalkerPortalEntry("stalker1", "Portal 1", "http://a/", "00:1A:79:AA:BB:CC", enabled = false)
+        val normalized = StalkerPortalSupport.normalizeStalkerPortalEntry(portal, 0)
+        assertThat(normalized).isNotNull()
+        assertThat(normalized!!.enabled).isFalse()
+    }
 }

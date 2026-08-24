@@ -239,15 +239,7 @@ data class SettingsUiState(
     val subtitleRemoveHearingImpaired: Boolean = true,
     val aiKeyServerState: AiKeyServerState = AiKeyServerState(),
     val smoothScrolling: Boolean = true
-) {
-    /**
-     * Legacy compatibility: the first Stalker portal's URL. The Settings UI
-     * (still single-row in Session 1) reads this so it keeps working unchanged
-     * while the underlying model is now a list. Session 2 will replace these.
-     */
-    val iptvStalkerUrl: String get() = iptvStalkerPortals.firstOrNull()?.portalUrl.orEmpty()
-    val iptvStalkerMac: String get() = iptvStalkerPortals.firstOrNull()?.macAddress.orEmpty()
-}
+)
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -890,22 +882,33 @@ class SettingsViewModel @Inject constructor(
     }
 
     private suspend fun loadIptvGroupsForPlaylist(playlistId: String): List<String> {
-        val pagedGroups = withContext(Dispatchers.IO) {
-            iptvRepository.pagedPlaylistGroupCounts()
-                .asSequence()
-                .filter { (id, _, count) -> id == playlistId && count > 0 }
-                .map { (_, group, _) -> group.trim().ifBlank { "Ungrouped" } }
-                .distinct()
-                .toList()
+        // Stalker channel ids use the `stalker:<portalId>:<origId>` shape, so the
+        // paged channel store reports them under playlist_id "stalker" (the text
+        // before the first colon) — not the individual portal id. For Stalker
+        // portals we therefore skip the paged path and read groups from the
+        // in-memory snapshot, filtering by the full `stalker:<portalId>:` prefix.
+        val stalkerPortalIds = _uiState.value.iptvStalkerPortals.map { it.id }.toSet()
+        val isStalkerPortal = playlistId in stalkerPortalIds
+
+        if (!isStalkerPortal) {
+            val pagedGroups = withContext(Dispatchers.IO) {
+                iptvRepository.pagedPlaylistGroupCounts()
+                    .asSequence()
+                    .filter { (id, _, count) -> id == playlistId && count > 0 }
+                    .map { (_, group, _) -> group.trim().ifBlank { "Ungrouped" } }
+                    .distinct()
+                    .toList()
+            }
+            if (pagedGroups.isNotEmpty()) return pagedGroups
         }
-        if (pagedGroups.isNotEmpty()) return pagedGroups
 
         val snapshot = iptvRepository.getMemoryCachedSnapshot()
             ?: iptvRepository.getCachedSnapshotOrNull()
+        val prefix = if (isStalkerPortal) "stalker:$playlistId:" else "$playlistId:"
         return withContext(Dispatchers.Default) {
             snapshot?.channels
                 ?.asSequence()
-                ?.filter { it.id.startsWith("$playlistId:") }
+                ?.filter { it.id.startsWith(prefix) }
                 ?.map { it.group.trim().ifBlank { "Ungrouped" } }
                 ?.distinct()
                 ?.toList()
@@ -2314,37 +2317,136 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun saveStalkerConfig(portalUrl: String, macAddress: String) {
+    /**
+     * Add a new Stalker portal at the end of the list (capped at
+     * [IptvRepository.MAX_STALKER_PORTALS]). Returns false (with a toast) when
+     * the limit is reached or the URL/MAC are blank.
+     */
+    fun onAddStalkerPortal(portalUrl: String, macAddress: String, name: String? = null) {
+        val trimmedUrl = portalUrl.trim().trimEnd('/')
+        val trimmedMac = macAddress.trim().uppercase()
+        if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Portal URL and MAC address are required",
+                toastType = ToastType.ERROR
+            )
+            return
+        }
+        val current = _uiState.value.iptvStalkerPortals
+        if (current.size >= IptvRepository.MAX_STALKER_PORTALS) {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Maximum number of Stalker portals reached",
+                toastType = ToastType.ERROR
+            )
+            return
+        }
+        val index = current.size
+        val portal = StalkerPortalEntry(
+            id = "stalker${index + 1}",
+            name = name?.trim()?.ifBlank { null } ?: "Portal ${index + 1}",
+            portalUrl = trimmedUrl,
+            macAddress = trimmedMac
+        )
+        persistStalkerPortals(current + portal)
+    }
+
+    /**
+     * Update an existing portal's URL/MAC (and optionally its name). The edit
+     * dialog calls this with the portal's id.
+     */
+    fun onEditStalkerPortal(portalId: String, portalUrl: String, macAddress: String, name: String? = null) {
+        val trimmedUrl = portalUrl.trim().trimEnd('/')
+        val trimmedMac = macAddress.trim().uppercase()
+        if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Portal URL and MAC address are required",
+                toastType = ToastType.ERROR
+            )
+            return
+        }
+        val updated = _uiState.value.iptvStalkerPortals.map { portal ->
+            if (portal.id == portalId) portal.copy(
+                portalUrl = trimmedUrl,
+                macAddress = trimmedMac,
+                name = name?.trim()?.ifBlank { portal.name } ?: portal.name
+            ) else portal
+        }
+        if (updated == _uiState.value.iptvStalkerPortals) return
+        persistStalkerPortals(updated)
+    }
+
+    /**
+     * Rename a portal without touching its URL/MAC.
+     */
+    fun onRenameStalkerPortal(portalId: String, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        val updated = _uiState.value.iptvStalkerPortals.map { portal ->
+            if (portal.id == portalId) portal.copy(name = trimmed) else portal
+        }
+        if (updated == _uiState.value.iptvStalkerPortals) return
         viewModelScope.launch {
-            val trimmedUrl = portalUrl.trim()
-            val trimmedMac = macAddress.trim()
-            if (trimmedUrl.isBlank() && trimmedMac.isBlank()) {
-                removeStalkerConfigInternal()
-                return@launch
-            }
-            if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
-                _uiState.value = _uiState.value.copy(toastMessage = "Portal URL and MAC address are required", toastType = ToastType.ERROR)
-                return@launch
-            }
-            iptvRepository.saveStalkerConfig(trimmedUrl, trimmedMac)
+            iptvRepository.saveStalkerPortals(updated)
+            _uiState.value = _uiState.value.copy(iptvStalkerPortals = updated)
             syncLocalStateToCloud(silent = true)
-            refreshIptv(showToast = true, configured = true, force = true)
         }
     }
 
-    fun removeStalkerConfig() {
-        viewModelScope.launch { removeStalkerConfigInternal() }
+    /** Enable / disable a portal. */
+    fun onToggleStalkerPortal(portalId: String) {
+        val updated = _uiState.value.iptvStalkerPortals.map { portal ->
+            if (portal.id == portalId) portal.copy(enabled = !portal.enabled) else portal
+        }
+        if (updated == _uiState.value.iptvStalkerPortals) return
+        persistStalkerPortals(updated)
     }
 
-    private suspend fun removeStalkerConfigInternal() {
-        iptvRepository.clearStalkerConfig()
-        _uiState.value = _uiState.value.copy(
-            iptvStalkerPortals = emptyList(),
-            toastMessage = "Stalker portal removed",
-            toastType = ToastType.SUCCESS
-        )
-        syncLocalStateToCloud(silent = true)
-        refreshIptv(showToast = false, configured = true, force = true)
+    fun onMoveStalkerPortalUp(portalId: String) {
+        val current = _uiState.value.iptvStalkerPortals.toMutableList()
+        val idx = current.indexOfFirst { it.id == portalId }
+        if (idx <= 0) return
+        val item = current.removeAt(idx)
+        current.add(idx - 1, item)
+        persistStalkerPortals(current)
+    }
+
+    fun onMoveStalkerPortalDown(portalId: String) {
+        val current = _uiState.value.iptvStalkerPortals.toMutableList()
+        val idx = current.indexOfFirst { it.id == portalId }
+        if (idx !in 0 until current.lastIndex) return
+        val item = current.removeAt(idx)
+        current.add(idx + 1, item)
+        persistStalkerPortals(current)
+    }
+
+    fun onRemoveStalkerPortal(portalId: String) {
+        val updated = _uiState.value.iptvStalkerPortals.filterNot { it.id == portalId }
+        if (updated == _uiState.value.iptvStalkerPortals) return
+        persistStalkerPortals(updated)
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Stalker portal removed",
+                toastType = ToastType.SUCCESS
+            )
+        }
+    }
+
+    /**
+     * Open the categories dialog for a specific Stalker portal. Each portal has
+     * its own independent group set (decision #3) — the portal id is used as
+     * the playlist id for [PlaylistGroupKey] and hidden-group filtering.
+     */
+    fun onManageStalkerCategories(portalId: String) {
+        setIptvSelectedPlaylistId(portalId)
+    }
+
+    private fun persistStalkerPortals(portals: List<StalkerPortalEntry>) {
+        viewModelScope.launch {
+            iptvRepository.saveStalkerPortals(portals)
+            _uiState.value = _uiState.value.copy(iptvStalkerPortals = portals)
+            syncLocalStateToCloud(silent = true)
+            refreshIptv(showToast = true, configured = true, force = true)
+        }
     }
 
     /**

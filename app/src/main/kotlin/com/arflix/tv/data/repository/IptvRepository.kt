@@ -699,6 +699,49 @@ class IptvRepository @Inject constructor(
     }
 
     /**
+     * Persists the full Stalker portal list — the Stalker counterpart of
+     * [savePlaylists]. The caller (SettingsViewModel) builds the mutated list
+     * (add / edit / remove / reorder / toggle / rename) and hands it here.
+     *
+     * - Normalizes every entry (trims URL, uppercases MAC, assigns default
+     *   id/name) and caps the list at [MAX_STALKER_PORTALS].
+     * - Drops group preferences for portals that were removed so no stale
+     *   `stalker<id>|...` keys linger.
+     * - Invalidates the Stalker API cache and persisted source caches when the
+     *   source signature changes.
+     */
+    suspend fun saveStalkerPortals(portals: List<StalkerPortalEntry>) {
+        val profileId = profileManager.getProfileIdSync()
+        val previousConfig = observeConfig().first()
+        val normalized = portals.mapIndexed { index, portal ->
+            normalizeStalkerPortalEntry(portal, index)
+        }.filterNotNull().take(MAX_STALKER_PORTALS)
+        val nextConfig = previousConfig.copy(stalkerPortals = normalized)
+        val previousSourceKey = epgIndexKey(profileId, previousConfig)
+        val sourceChanged = buildSourceSignature(previousConfig) != buildSourceSignature(nextConfig)
+
+        val removedIds = previousConfig.stalkerPortals
+            .map { it.id }
+            .filterNot { id -> normalized.any { it.id == id } }
+
+        context.settingsDataStore.edit { prefs ->
+            prefs[stalkerPortalsKey()] = gson.toJson(normalized)
+            // Clear legacy single-portal keys so the list store stays authoritative.
+            prefs.remove(stalkerPortalUrlKey())
+            prefs.remove(stalkerMacAddressKey())
+        }
+        // Drop group preferences for removed portals (independent sets, decision #3).
+        removedIds.forEach { clearGroupPreferences(it) }
+        cachedStalkerApis = emptyMap()
+        groupOrderLocallyDirty = true
+        if (sourceChanged) {
+            withContext(Dispatchers.IO) { deletePersistedSourceCaches(previousSourceKey) }
+        }
+        invalidateCache()
+        invalidationBus.markDirty(CloudSyncScope.IPTV, profileManager.getProfileIdSync(), "save stalker portals")
+    }
+
+    /**
      * Resolves a Stalker `cmd` stream argument into an authenticated URL. When
      * [channelId] carries the `stalker:<portalId>:` prefix the matching portal
      * API is used; otherwise the first configured portal is used as a fallback
@@ -8925,6 +8968,14 @@ class IptvRepository @Inject constructor(
 
     // ════════════════════════════════════════════════════════════════════════
 
+    companion object {
+        /** Pseudo playlist id for the Stalker/Ministra portal source. */
+        const val STALKER_PLAYLIST_ID = "stalker"
+
+        /** Maximum number of Stalker portals a user can configure. */
+        const val MAX_STALKER_PORTALS = 3
+    }
+
     private companion object {
         private val DURATION_SCALE_REGEX = Regex("""\$\{duration:(\d+)\}|\{duration:(\d+)\}""")
         private val URL_QUERY_SECRETS_REGEX = Regex("""(?i)([?&](?:username|user|uname|password|pass|pwd)=)[^&]+""")
@@ -8939,12 +8990,6 @@ class IptvRepository @Inject constructor(
         val PARTIAL_PAGED_CACHE_REPAIR_COUNTS = setOf(144, 240)
         const val IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
         const val BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-
-        /** Pseudo playlist id for the Stalker/Ministra portal source. */
-        const val STALKER_PLAYLIST_ID = "stalker"
-
-        /** Maximum number of Stalker portals a user can configure. */
-        const val MAX_STALKER_PORTALS = 3
 
         val BRACKET_CONTENT_REGEX = Regex("""\[[^\]]*]""")
         val PAREN_CONTENT_REGEX = Regex("""\([^\)]*\)""")
