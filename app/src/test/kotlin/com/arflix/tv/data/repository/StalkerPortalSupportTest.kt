@@ -1,0 +1,141 @@
+package com.arflix.tv.data.repository
+
+import com.google.common.truth.Truth.assertThat
+import com.google.gson.Gson
+import org.junit.Test
+
+class StalkerPortalSupportTest {
+
+    private val gson = Gson()
+
+    @Test
+    fun portalIdFromChannelIdExtractsPortalSegment() {
+        assertThat(StalkerPortalSupport.portalIdFromChannelId("stalker:stalker1:42"))
+            .isEqualTo("stalker1")
+        assertThat(StalkerPortalSupport.portalIdFromChannelId("stalker:stalker2:abc"))
+            .isEqualTo("stalker2")
+    }
+
+    @Test
+    fun portalIdFromChannelIdReturnsNullForNonStalkerIds() {
+        assertThat(StalkerPortalSupport.portalIdFromChannelId("list_1:42")).isNull()
+        assertThat(StalkerPortalSupport.portalIdFromChannelId("plain")).isNull()
+    }
+
+    @Test
+    fun portalIdFromChannelIdReturnsNullWhenPortalSegmentMissing() {
+        // Legacy single-portal id shape "stalker:42" has no portal segment.
+        assertThat(StalkerPortalSupport.portalIdFromChannelId("stalker:42")).isNull()
+    }
+
+    @Test
+    fun startsWithStalkerStillMatchesNewPrefixedIds() {
+        // The existing checks rely on startsWith("stalker:") and must keep matching.
+        assertThat("stalker:stalker1:42".startsWith("stalker:")).isTrue()
+        assertThat("stalker:stalker2:abc".startsWith("stalker:")).isTrue()
+    }
+
+    @Test
+    fun migratedPortalFromLegacyProducesPortal1() {
+        val portal = StalkerPortalSupport.migratedPortalFromLegacy(
+            "http://portal.example/stalker_portal/",
+            "00:1A:79:12:34:56"
+        )
+        assertThat(portal).isNotNull()
+        assertThat(portal!!.id).isEqualTo("stalker1")
+        assertThat(portal.name).isEqualTo("Portal 1")
+        assertThat(portal.portalUrl).isEqualTo("http://portal.example/stalker_portal")
+        assertThat(portal.macAddress).isEqualTo("00:1A:79:12:34:56")
+    }
+
+    @Test
+    fun migratedPortalFromLegacyReturnsNullWhenFieldsBlank() {
+        assertThat(StalkerPortalSupport.migratedPortalFromLegacy("", "00:1A:79:12:34:56")).isNull()
+        assertThat(StalkerPortalSupport.migratedPortalFromLegacy("http://portal", "")).isNull()
+    }
+
+    @Test
+    fun migrateAndDecodeRoundTripsThroughJson() {
+        val migrated = StalkerPortalSupport.migratedPortalFromLegacy(
+            "http://portal.example/",
+            "00:1a:79:aa:bb:cc"
+        )!!
+        // MAC is uppercased during migration.
+        assertThat(migrated.macAddress).isEqualTo("00:1A:79:AA:BB:CC")
+
+        val json = gson.toJson(listOf(migrated))
+        val decoded = StalkerPortalSupport.decodeStalkerPortals(json, maxPortals = 3)
+        assertThat(decoded).hasSize(1)
+        assertThat(decoded[0].id).isEqualTo("stalker1")
+        assertThat(decoded[0].portalUrl).isEqualTo("http://portal.example")
+        assertThat(decoded[0].macAddress).isEqualTo("00:1A:79:AA:BB:CC")
+    }
+
+    @Test
+    fun decodeStalkerPortalsPreservesMultiplePortalsAndOrder() {
+        val portals = listOf(
+            StalkerPortalEntry("stalker1", "Portal 1", "http://a/", "00:1A:79:11:11:11"),
+            StalkerPortalEntry("stalker2", "Portal 2", "http://b/", "00:1A:79:22:22:22"),
+            StalkerPortalEntry("stalker3", "Portal 3", "http://c/", "00:1A:79:33:33:33")
+        )
+        val json = gson.toJson(portals)
+        val decoded = StalkerPortalSupport.decodeStalkerPortals(json, maxPortals = 3)
+        assertThat(decoded.map { it.id })
+            .containsExactly("stalker1", "stalker2", "stalker3").inOrder()
+        assertThat(decoded.map { it.portalUrl })
+            .containsExactly("http://a", "http://b", "http://c").inOrder()
+    }
+
+    @Test
+    fun decodeStalkerPortalsCapsAtMaxPortals() {
+        val portals = listOf(
+            StalkerPortalEntry("stalker1", "Portal 1", "http://a/", "00:1A:79:11:11:11"),
+            StalkerPortalEntry("stalker2", "Portal 2", "http://b/", "00:1A:79:22:22:22"),
+            StalkerPortalEntry("stalker3", "Portal 3", "http://c/", "00:1A:79:33:33:33"),
+            StalkerPortalEntry("stalker4", "Portal 4", "http://d/", "00:1A:79:44:44:44")
+        )
+        val json = gson.toJson(portals)
+        val decoded = StalkerPortalSupport.decodeStalkerPortals(json, maxPortals = 3)
+        assertThat(decoded).hasSize(3)
+        assertThat(decoded.map { it.id })
+            .containsExactly("stalker1", "stalker2", "stalker3").inOrder()
+    }
+
+    @Test
+    fun decodeStalkerPortalsDropsEntriesWithBlankFields() {
+        val portals = listOf(
+            StalkerPortalEntry("stalker1", "Portal 1", "http://a/", "00:1A:79:11:11:11"),
+            StalkerPortalEntry("stalker2", "Portal 2", "", "00:1A:79:22:22:22"),
+            StalkerPortalEntry("stalker3", "Portal 3", "http://c/", "")
+        )
+        val json = gson.toJson(portals)
+        val decoded = StalkerPortalSupport.decodeStalkerPortals(json, maxPortals = 3)
+        assertThat(decoded).hasSize(1)
+        assertThat(decoded[0].id).isEqualTo("stalker1")
+    }
+
+    @Test
+    fun decodeStalkerPortalsAssignsDefaultIdAndNameWhenBlank() {
+        val portals = listOf(
+            StalkerPortalEntry("", "", "http://a/", "00:1A:79:11:11:11")
+        )
+        val json = gson.toJson(portals)
+        val decoded = StalkerPortalSupport.decodeStalkerPortals(json, maxPortals = 3)
+        assertThat(decoded).hasSize(1)
+        assertThat(decoded[0].id).isEqualTo("stalker1")
+        assertThat(decoded[0].name).isEqualTo("Portal 1")
+    }
+
+    @Test
+    fun decodeStalkerPortalsReturnsEmptyForBlankOrMalformedInput() {
+        assertThat(StalkerPortalSupport.decodeStalkerPortals("", maxPortals = 3)).isEmpty()
+        assertThat(StalkerPortalSupport.decodeStalkerPortals("not json", maxPortals = 3)).isEmpty()
+    }
+
+    @Test
+    fun multiPortalChannelIdsResolveToDistinctPortals() {
+        val ids = listOf("stalker:stalker1:10", "stalker:stalker2:20", "stalker:stalker3:30")
+        val portalIds = ids.mapNotNull { StalkerPortalSupport.portalIdFromChannelId(it) }
+        assertThat(portalIds).containsExactly("stalker1", "stalker2", "stalker3").inOrder()
+    }
+}

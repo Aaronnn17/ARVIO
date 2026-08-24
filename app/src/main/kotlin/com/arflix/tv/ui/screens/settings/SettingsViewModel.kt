@@ -36,6 +36,7 @@ import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.normalizeIptvSortOrder
 import com.arflix.tv.data.repository.IptvPlaylistEntry
+import com.arflix.tv.data.repository.StalkerPortalEntry
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
@@ -172,8 +173,7 @@ data class SettingsUiState(
     val iptvM3uUrl: String = "",
     val iptvEpgUrl: String = "",
     val iptvPlaylists: List<IptvPlaylistEntry> = emptyList(),
-    val iptvStalkerUrl: String = "",
-    val iptvStalkerMac: String = "",
+    val iptvStalkerPortals: List<StalkerPortalEntry> = emptyList(),
     val iptvSortOrder: String = "provider",
     val iptvChannelCount: Int = 0,
     val isIptvLoading: Boolean = false,
@@ -239,7 +239,15 @@ data class SettingsUiState(
     val subtitleRemoveHearingImpaired: Boolean = true,
     val aiKeyServerState: AiKeyServerState = AiKeyServerState(),
     val smoothScrolling: Boolean = true
-)
+) {
+    /**
+     * Legacy compatibility: the first Stalker portal's URL. The Settings UI
+     * (still single-row in Session 1) reads this so it keeps working unchanged
+     * while the underlying model is now a list. Session 2 will replace these.
+     */
+    val iptvStalkerUrl: String get() = iptvStalkerPortals.firstOrNull()?.portalUrl.orEmpty()
+    val iptvStalkerMac: String get() = iptvStalkerPortals.firstOrNull()?.macAddress.orEmpty()
+}
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -1954,23 +1962,23 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             iptvRepository.observeConfig().collect { config ->
                 val current = _uiState.value
-                if (current.iptvM3uUrl != config.m3uUrl || current.iptvEpgUrl != config.epgUrl || current.iptvStalkerUrl != config.stalkerPortalUrl || current.iptvStalkerMac != config.stalkerMacAddress || current.iptvPlaylists != config.playlists || current.iptvSortOrder != config.sortOrder) {
+                val stalkerConfigured = config.stalkerPortals.any { it.portalUrl.isNotBlank() }
+                if (current.iptvM3uUrl != config.m3uUrl || current.iptvEpgUrl != config.epgUrl || current.iptvStalkerPortals != config.stalkerPortals || current.iptvPlaylists != config.playlists || current.iptvSortOrder != config.sortOrder) {
                     _uiState.value = current.copy(
                         iptvM3uUrl = config.m3uUrl,
                         iptvEpgUrl = config.epgUrl,
                         iptvPlaylists = config.playlists,
-                        iptvStalkerUrl = config.stalkerPortalUrl,
-                        iptvStalkerMac = config.stalkerMacAddress,
+                        iptvStalkerPortals = config.stalkerPortals,
                         iptvSortOrder = config.sortOrder
                     )
                 }
                 if (!hasObservedIptvConfig) {
                     hasObservedIptvConfig = true
                     lastObservedIptvM3u = config.m3uUrl
-                    lastObservedStalkerUrl = config.stalkerPortalUrl
+                    lastObservedStalkerUrl = if (stalkerConfigured) "stalker" else ""
                     lastObservedIptvConfigSignature = config.syncSignature()
                     val hasAnyIptvConfig = config.m3uUrl.isNotBlank() ||
-                        config.stalkerPortalUrl.isNotBlank() ||
+                        stalkerConfigured ||
                         config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
                     if (!hasAnyIptvConfig) {
                         _uiState.value = _uiState.value.copy(
@@ -1987,12 +1995,12 @@ class SettingsViewModel @Inject constructor(
                 }
 
                 val hasAnyConfig = config.m3uUrl.isNotBlank() ||
-                    config.stalkerPortalUrl.isNotBlank() ||
+                    stalkerConfigured ||
                     config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
                 val configSignature = config.syncSignature()
                 if (hasAnyConfig && configSignature != lastObservedIptvConfigSignature) {
                     lastObservedIptvM3u = config.m3uUrl
-                    lastObservedStalkerUrl = config.stalkerPortalUrl
+                    lastObservedStalkerUrl = if (stalkerConfigured) "stalker" else ""
                     lastObservedIptvConfigSignature = configSignature
                     if (iptvLoadJob?.isActive != true) {
                         refreshIptv(showToast = false, force = false)
@@ -2331,8 +2339,7 @@ class SettingsViewModel @Inject constructor(
     private suspend fun removeStalkerConfigInternal() {
         iptvRepository.clearStalkerConfig()
         _uiState.value = _uiState.value.copy(
-            iptvStalkerUrl = "",
-            iptvStalkerMac = "",
+            iptvStalkerPortals = emptyList(),
             toastMessage = "Stalker portal removed",
             toastType = ToastType.SUCCESS
         )
@@ -2389,9 +2396,10 @@ class SettingsViewModel @Inject constructor(
     fun refreshIptv(showToast: Boolean = true, configured: Boolean = false, force: Boolean = true) {
         viewModelScope.launch {
             val currentConfig = iptvRepository.observeConfig().first()
-            // Check legacy m3uUrl, multi-playlist entries, and Stalker portal
+            // Check legacy m3uUrl, multi-playlist entries, and Stalker portals
             val hasPlaylists = currentConfig.playlists.any { it.m3uUrl.isNotBlank() && it.enabled }
-            if (currentConfig.m3uUrl.isBlank() && currentConfig.stalkerPortalUrl.isBlank() && !hasPlaylists) {
+            val hasStalker = currentConfig.stalkerPortals.any { it.portalUrl.isNotBlank() }
+            if (currentConfig.m3uUrl.isBlank() && !hasStalker && !hasPlaylists) {
                 return@launch
             }
 
@@ -3967,11 +3975,20 @@ private fun IptvConfig.syncSignature(): String {
                 playlist.enabled.toString()
             ).joinToString("~")
         }
+    val stalkerSignature = stalkerPortals
+        .joinToString("|") { portal ->
+            listOf(
+                portal.id,
+                portal.name,
+                portal.portalUrl,
+                portal.macAddress,
+                portal.enabled.toString()
+            ).joinToString("~")
+        }
     return listOf(
         m3uUrl,
         epgUrl,
-        stalkerPortalUrl,
-        stalkerMacAddress,
+        stalkerSignature,
         playlistsSignature
     ).joinToString("||")
 }

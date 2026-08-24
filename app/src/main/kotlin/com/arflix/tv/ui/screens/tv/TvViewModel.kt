@@ -76,7 +76,7 @@ data class TvUiState(
 ) {
     val isConfigured: Boolean get() =
         config.m3uUrl.isNotBlank() ||
-            config.stalkerPortalUrl.isNotBlank() ||
+            config.stalkerPortals.any { it.enabled && it.portalUrl.isNotBlank() } ||
             config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
 
     val hasPotentialGuideSource: Boolean get() = config.hasConfiguredEpgSource()
@@ -273,7 +273,7 @@ class TvViewModel @Inject constructor(
                 startFullEpgWarmup()
 
                 val hasAnyIptvConfig = config.m3uUrl.isNotBlank() ||
-                    config.stalkerPortalUrl.isNotBlank() ||
+                    config.stalkerPortals.any { it.enabled && it.portalUrl.isNotBlank() } ||
                     config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
 
                 // Auto-heal cases where the app has IPTV config but an empty in-memory snapshot.
@@ -1963,6 +1963,7 @@ class TvViewModel @Inject constructor(
         }
         val resolvedUrl = resolveStalkerStreamIfNeeded(
             rawUrl = rawUrl,
+            channelId = channel.id,
             isStalkerChannel = channel.id.startsWith("stalker:"),
             forceRefresh = forceRefresh,
         )
@@ -1975,6 +1976,7 @@ class TvViewModel @Inject constructor(
 
     private suspend fun resolveStalkerStreamIfNeeded(
         rawUrl: String,
+        channelId: String,
         isStalkerChannel: Boolean,
         forceRefresh: Boolean,
     ): String {
@@ -1988,7 +1990,7 @@ class TvViewModel @Inject constructor(
         }
 
         val resolved = withContext(Dispatchers.IO) {
-            iptvRepository.resolveStalkerStreamUrl(trimmed)
+            iptvRepository.resolveStalkerStreamUrl(channelId, trimmed)
         }?.trim().orEmpty()
         val playable = resolved.ifBlank { trimmed.removePrefix("ffmpeg").trim() }
         if (playable.isNotBlank()) {
@@ -2310,7 +2312,7 @@ private fun filterTvChannels(
 
 private fun hasNetworkEpgSource(config: IptvConfig): Boolean {
     return config.epgUrl.isNotBlank() ||
-        config.stalkerPortalUrl.isNotBlank() ||
+        config.stalkerPortals.any { it.portalUrl.isNotBlank() } ||
         config.m3uUrl.isNotBlank() ||
         looksLikeXtream(config.m3uUrl) ||
         config.playlists.any { playlist ->
@@ -2326,7 +2328,7 @@ private fun hasNetworkEpgSource(config: IptvConfig): Boolean {
 
 private fun IptvConfig.hasConfiguredEpgSource(): Boolean {
     return epgUrl.isNotBlank() ||
-        stalkerPortalUrl.isNotBlank() ||
+        stalkerPortals.any { it.portalUrl.isNotBlank() } ||
         m3uUrl.isNotBlank() ||
         looksLikeXtream(m3uUrl) ||
         playlists.any { playlist ->
@@ -2358,11 +2360,20 @@ internal fun IptvConfig.syncSignature(): String {
                 playlist.enabled.toString()
             ).joinToString("~")
         }
+    val stalkerSignature = stalkerPortals
+        .joinToString("|") { portal ->
+            listOf(
+                portal.id,
+                portal.name,
+                portal.portalUrl,
+                portal.macAddress,
+                portal.enabled.toString()
+            ).joinToString("~")
+        }
     return listOf(
         m3uUrl,
         epgUrl,
-        stalkerPortalUrl,
-        stalkerMacAddress,
+        stalkerSignature,
         playlistsSignature
     ).joinToString("||")
 }
