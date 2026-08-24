@@ -21,6 +21,12 @@ jobs:
       - name: Placeholder config
         run: cp secrets.defaults.properties secrets.properties
 
+      - name: Use committed debug keystore (stable signing key)
+        run: |
+          mkdir -p ~/.android
+          cp .github/test-signing/debug.keystore ~/.android/debug.keystore
+          echo "Using fixed debug keystore so test APKs can update in place."
+
       - name: Parallel-install app id (.stalkerlive)
         run: sed -i 's/        debug {/        debug {\n            applicationIdSuffix = ".stalkerlive"/' app/build.gradle.kts
 
