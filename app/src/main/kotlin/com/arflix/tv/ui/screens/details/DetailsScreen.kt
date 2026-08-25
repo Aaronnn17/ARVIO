@@ -148,6 +148,7 @@ import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.PersonModal
 import com.arflix.tv.ui.components.PosterCard
+import com.arflix.tv.ui.components.resolveDetailsBackdropHeightDp
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.SkeletonDetailsPage
@@ -178,6 +179,7 @@ import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.Purple
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
+import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.formatGenreName
 import com.arflix.tv.util.isInCinema
@@ -1296,8 +1298,11 @@ private fun DetailsContent(
     // ===================== MOBILE LAYOUT =====================
     if (isMobile) {
         val configuration = LocalConfiguration.current
-        val screenHeightDp = configuration.screenHeightDp.dp
-        val backdropHeight = (screenHeightDp * 0.53f).coerceAtLeast(400.dp)
+        val backdropHeight = resolveDetailsBackdropHeightDp(
+            screenWidthDp = configuration.screenWidthDp,
+            screenHeightDp = configuration.screenHeightDp,
+            isPhone = LocalDeviceType.current == DeviceType.PHONE,
+        ).dp
         val mobileScrollState = rememberScrollState()
         val density = LocalDensity.current
         var stickyThreshold by remember { mutableStateOf(-1f) }
