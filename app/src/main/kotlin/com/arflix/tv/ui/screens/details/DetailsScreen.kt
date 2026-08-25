@@ -16,7 +16,10 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -60,6 +63,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.runtime.mutableStateMapOf
 import com.arflix.tv.util.settingsDataStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -161,6 +166,7 @@ import com.arflix.tv.ui.components.resolveDetailsBackdropHeightDp
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.SkeletonDetailsPage
+import com.arflix.tv.ui.components.SkeletonEpisodeCard
 import com.arflix.tv.ui.components.StreamSelector
 import com.arflix.tv.ui.components.TrailerPlayer
 import androidx.activity.compose.BackHandler
@@ -446,7 +452,7 @@ fun DetailsScreen(
     // and cancels a superseded load, so overlapping requests can't display a stale season. Episode
     // focus is reset by the currentSeason-driven effect above once the new season's episodes arrive.
     LaunchedEffect(seasonIndex) {
-        if (uiState.totalSeasons > 1) {
+        if (uiState.totalSeasons > 1 && uiState.currentSeason != seasonIndex + 1) {
             delay(100)
             viewModel.loadSeason(seasonIndex + 1)
         }
@@ -1016,6 +1022,7 @@ fun DetailsScreen(
                         isMobile = isMobile,
                         spoilerBlurEnabled = spoilerBlurEnabled,
                         isLoading = uiState.isLoading,
+                        isSeasonLoading = uiState.isSeasonLoading,
                         onBack = onBack,
                         onButtonClick = onButtonClickRemembered,
                         onSeasonClick = onSeasonClickRemembered,
@@ -1290,6 +1297,7 @@ private fun DetailsContent(
     showEpisodeRatings: Boolean = true,
     isMobile: Boolean = false,
     isLoading: Boolean = false,
+    isSeasonLoading: Boolean = false,
     // Persistent back callback used by the phone-layout back button overlay
     // (issue #43). No-op by default so tablet/TV callers don't need to pass it.
     onBack: () -> Unit = {},
@@ -1332,6 +1340,13 @@ private fun DetailsContent(
                 } else {
                     0f
                 }
+            }
+        }
+
+        val cachedSeasonEpisodes = remember { mutableStateMapOf<Int, List<Episode>>() }
+        LaunchedEffect(currentSeason, episodes) {
+            if (episodes.isNotEmpty() && episodes.all { it.seasonNumber == currentSeason }) {
+                cachedSeasonEpisodes[currentSeason] = episodes
             }
         }
 
@@ -1675,7 +1690,7 @@ private fun DetailsContent(
                     )
 
                     // --- TV Show: Season selector & Episodes ---
-                    if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
+                    if (item.mediaType == MediaType.TV && (episodes.isNotEmpty() || isSeasonLoading)) {
                         if (totalSeasons > 1) {
                             Spacer(modifier = Modifier.height(20.dp))
                             Text(
@@ -1722,39 +1737,100 @@ private fun DetailsContent(
                     }
                 }
 
-                // Episodes LazyRow (outside the inner Column to allow independent horizontal scroll)
-                if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
-                    LazyRow(
-                        modifier = Modifier.arvioDpadFocusGroup(),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                // Episodes & Ratings sliding viewport container (Apple TV-style horizontal content transition)
+                if (item.mediaType == MediaType.TV && (episodes.isNotEmpty() || isSeasonLoading)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clipToBounds()
                     ) {
-                        standardItemsIndexed(
-                            episodes,
-                            key = { index, ep -> "mob_ep_${ep.seasonNumber}_${ep.episodeNumber}_$index" },
-                            contentType = { _, _ -> "episode" }
-                        ) { index, episode ->
-                            EpisodeCard(
-                                episode = episode,
-                                isFocused = false,
-                                spoilerBlurEnabled = spoilerBlurEnabled,
-                                onClick = { onEpisodeClick(index) }
-                            )
+                        val appleEase = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1.0f)
+                        AnimatedContent(
+                            targetState = currentSeason,
+                            transitionSpec = {
+                                val animDuration = 340
+                                val slideSpec = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(
+                                    durationMillis = animDuration,
+                                    easing = appleEase
+                                )
+                                val fadeSpec = androidx.compose.animation.core.tween<Float>(
+                                    durationMillis = animDuration,
+                                    easing = appleEase
+                                )
+                                if (targetState > initialState) {
+                                    // Moving forward (e.g. S1 -> S2):
+                                    // Old content exits completely to the left, New content enters from the right
+                                    (slideInHorizontally(animationSpec = slideSpec) { fullWidth -> fullWidth } +
+                                     fadeIn(animationSpec = fadeSpec)) togetherWith
+                                    (slideOutHorizontally(animationSpec = slideSpec) { fullWidth -> -fullWidth } +
+                                     fadeOut(animationSpec = fadeSpec))
+                                } else {
+                                    // Moving backward (e.g. S2 -> S1):
+                                    // Old content exits completely to the right, New content enters from the left
+                                    (slideInHorizontally(animationSpec = slideSpec) { fullWidth -> -fullWidth } +
+                                     fadeIn(animationSpec = fadeSpec)) togetherWith
+                                    (slideOutHorizontally(animationSpec = slideSpec) { fullWidth -> fullWidth } +
+                                     fadeOut(animationSpec = fadeSpec))
+                                }
+                            },
+                            label = "mobile_season_viewport_anim"
+                        ) { season ->
+                            val seasonEpisodes = cachedSeasonEpisodes[season]
+                                ?: episodes.takeIf { it.isNotEmpty() && it.all { ep -> ep.seasonNumber == season } }
+                                ?: emptyList()
+                            val isCurrentSeasonLoading = (isSeasonLoading && season == currentSeason) || seasonEpisodes.isEmpty()
+
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                if (isCurrentSeasonLoading || seasonEpisodes.isEmpty()) {
+                                    LazyRow(
+                                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        items(4) {
+                                            SkeletonEpisodeCard()
+                                        }
+                                    }
+                                } else {
+                                    LazyRow(
+                                        modifier = Modifier.arvioDpadFocusGroup(),
+                                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        standardItemsIndexed(
+                                            seasonEpisodes,
+                                            key = { index, ep -> "mob_ep_${ep.seasonNumber}_${ep.episodeNumber}_$index" },
+                                            contentType = { _, _ -> "episode" }
+                                        ) { index, episode ->
+                                            EpisodeCard(
+                                                episode = episode,
+                                                isFocused = false,
+                                                spoilerBlurEnabled = spoilerBlurEnabled,
+                                                onClick = { onEpisodeClick(index) }
+                                            )
+                                        }
+                                    }
+                                }
+
+                                val hasValidRating = remember(seasonEpisodes) {
+                                    seasonEpisodes.any { (it.imdbRating.toFloatOrNull() ?: 0f) > 0f }
+                                }
+                                AnimatedVisibility(
+                                    visible = showEpisodeRatings && hasValidRating,
+                                    enter = fadeIn(animationSpec = androidx.compose.animation.core.tween(250)),
+                                    exit = fadeOut(animationSpec = androidx.compose.animation.core.tween(150))
+                                ) {
+                                    DetailsEpisodeRatingsRail(
+                                        episodes = seasonEpisodes,
+                                        totalSeasons = totalSeasons,
+                                        currentSeason = season,
+                                        episodeIndex = episodeIndex,
+                                        isMobile = true,
+                                        isSeasonLoading = false
+                                    )
+                                }
+                            }
                         }
                     }
-                }
-
-                val hasAnyValidRating = remember(episodes) {
-                    episodes.any { (it.imdbRating.toFloatOrNull() ?: 0f) > 0f }
-                }
-                if (item.mediaType == MediaType.TV && episodes.isNotEmpty() && showEpisodeRatings && hasAnyValidRating) {
-                    DetailsEpisodeRatingsRail(
-                        episodes = episodes,
-                        totalSeasons = totalSeasons,
-                        currentSeason = currentSeason,
-                        episodeIndex = episodeIndex,
-                        isMobile = true
-                    )
                 }
 
                 // Cast section
@@ -2351,6 +2427,7 @@ private fun DetailsContent(
             usePosterCards = usePosterCards,
             showEpisodeRatings = showEpisodeRatings,
             spoilerBlurEnabled = spoilerBlurEnabled,
+            isSeasonLoading = isSeasonLoading,
             contentRowHeight = contentRowHeight,
             contentRowBottomPadding = contentRowBottomPadding,
             configuration = configuration,
@@ -2390,6 +2467,7 @@ private fun DetailsTvRows(
     usePosterCards: Boolean,
     showEpisodeRatings: Boolean,
     spoilerBlurEnabled: Boolean,
+    isSeasonLoading: Boolean = false,
     contentRowHeight: Dp,
     contentRowBottomPadding: Dp,
     configuration: android.content.res.Configuration,
@@ -2514,7 +2592,7 @@ private fun DetailsTvRows(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         contentPadding = PaddingValues(top = 6.dp)
     ) {
-        if (item.mediaType == MediaType.TV && episodes.isNotEmpty()) {
+        if (item.mediaType == MediaType.TV && (episodes.isNotEmpty() || isSeasonLoading)) {
             if (totalSeasons > 1) {
                 item {
                     DetailsSeasonRail(
@@ -2540,6 +2618,7 @@ private fun DetailsTvRows(
                     contentStartPadding = contentStartPadding,
                     contentOuterStartPadding = contentOuterStartPadding,
                     spoilerBlurEnabled = spoilerBlurEnabled,
+                    isSeasonLoading = isSeasonLoading,
                     onEpisodeClick = onEpisodeClick
                 )
             }
@@ -2728,11 +2807,12 @@ private fun DetailsEpisodeRatingsRail(
     episodeIndex: Int,
     ratingsIndex: Int = 0,
     isMobile: Boolean,
+    isSeasonLoading: Boolean = false,
     focusSectionForUi: FocusSection? = null,
     contentStartPadding: Dp = 0.dp,
     contentOuterStartPadding: Dp = 0.dp
 ) {
-    if (episodes.isEmpty()) return
+    if (episodes.isEmpty() && !isSeasonLoading) return
 
     var previousRatingsIndex by remember { mutableIntStateOf(ratingsIndex) }
     var leftChevronBump by remember { mutableStateOf(false) }
@@ -2958,6 +3038,7 @@ private fun DetailsEpisodeRail(
     contentStartPadding: Dp,
     contentOuterStartPadding: Dp,
     spoilerBlurEnabled: Boolean,
+    isSeasonLoading: Boolean = false,
     onEpisodeClick: (Int) -> Unit
 ) {
     val episodeCardWidth = if (configuration.screenWidthDp < 1400) 292.dp else 300.dp
@@ -2998,21 +3079,27 @@ private fun DetailsEpisodeRail(
             ),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            itemsIndexed(
-                episodes,
-                key = { index, ep -> "${ep.seasonNumber}_${ep.episodeNumber}_$index" }
-            ) { index, episode ->
-                val isFocused = currentFocusedSection == FocusSection.EPISODES && index == currentEpisodeIndex
-                val onClickForEpisode = remember(index) {
-                    { currentOnEpisodeClick.value(index) }
+            if (isSeasonLoading) {
+                items(4) {
+                    SkeletonEpisodeCard(modifier = Modifier.width(episodeCardWidth))
                 }
-                EpisodeCard(
-                    episode = episode,
-                    cardWidth = episodeCardWidth,
-                    isFocused = isFocused && !episodeFixedFocus,
-                    spoilerBlurEnabled = spoilerBlurEnabled,
-                    onClick = onClickForEpisode
-                )
+            } else {
+                itemsIndexed(
+                    episodes,
+                    key = { index, ep -> "${ep.seasonNumber}_${ep.episodeNumber}_$index" }
+                ) { index, episode ->
+                    val isFocused = currentFocusedSection == FocusSection.EPISODES && index == currentEpisodeIndex
+                    val onClickForEpisode = remember(index) {
+                        { currentOnEpisodeClick.value(index) }
+                    }
+                    EpisodeCard(
+                        episode = episode,
+                        cardWidth = episodeCardWidth,
+                        isFocused = isFocused && !episodeFixedFocus,
+                        spoilerBlurEnabled = spoilerBlurEnabled,
+                        onClick = onClickForEpisode
+                    )
+                }
             }
         }
         if (episodeFixedFocus) {
@@ -4192,16 +4279,26 @@ private fun SeasonButton(
     onLongClick: (() -> Unit)? = null
 ) {
     val shape = RoundedCornerShape(8.dp)
-    val backgroundColor = when {
+    val targetBackgroundColor = when {
         isFocused -> Color.White
-        isSelected -> Color.White.copy(alpha = 0.2f)
+        isSelected -> Color.White.copy(alpha = 0.22f)
         else -> Color.White.copy(alpha = 0.08f)
     }
-    val textColor = when {
+    val targetTextColor = when {
         isFocused -> Color.Black
         isSelected -> Color.White
         else -> Color.White.copy(alpha = 0.6f)
     }
+    val backgroundColor by animateColorAsState(
+        targetValue = targetBackgroundColor,
+        animationSpec = androidx.compose.animation.core.tween(150),
+        label = "season_btn_bg"
+    )
+    val textColor by animateColorAsState(
+        targetValue = targetTextColor,
+        animationSpec = androidx.compose.animation.core.tween(150),
+        label = "season_btn_txt"
+    )
 
     val isFullyWatched = totalCount > 0 && watchedCount >= totalCount
 

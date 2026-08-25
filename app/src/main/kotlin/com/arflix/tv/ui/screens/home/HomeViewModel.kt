@@ -196,7 +196,16 @@ class HomeViewModel @Inject constructor(
             catalogs.map { it.id }.toSet()
         }.distinctUntilChanged()
     ) { rows, visibleIds ->
-        rows.filter { it.id in visibleIds }
+        val filteredByCatalog = rows.filter { it.id in visibleIds }
+        if (!isTvDevice) {
+            filteredByCatalog.filter { row ->
+                row.items.any { item ->
+                    !item.isPlaceholder && !SportsAddonCapabilities.isSportsLockedStatus(item.status)
+                }
+            }
+        } else {
+            filteredByCatalog
+        }
     }.let { flow ->
         val state = MutableStateFlow<List<Category>>(emptyList())
         viewModelScope.launch { flow.collect { state.value = it } }
@@ -226,7 +235,35 @@ class HomeViewModel @Inject constructor(
     fun withSportsHomeRows(
         categories: List<Category>,
         sportsRows: List<Category>
-    ): List<Category> = sportsRepository.mergeSportsRows(categories, sportsRows)
+    ): List<Category> {
+        if (!isTvDevice) {
+            val activeSportsRows = sportsRows.filter { row ->
+                row.items.any { item ->
+                    !item.isPlaceholder && !SportsAddonCapabilities.isSportsLockedStatus(item.status)
+                }
+            }
+            val activeSportsById = activeSportsRows.associateBy { it.id }
+            // On mobile: If no sports addon is installed or a sports row is locked/empty,
+            // strictly strip it from the mobile feed (both from categories and sportsRows).
+            val filteredCategories = categories.mapNotNull { category ->
+                if (category.id == SportsAddonCapabilities.POPULAR_LIVE_TV_ROW_ID ||
+                    category.id == SportsAddonCapabilities.SPORTS_CATEGORY_ROW_ID) {
+                    activeSportsById[category.id]
+                } else {
+                    activeSportsById[category.id] ?: category
+                }
+            }
+            val existingIds = filteredCategories.map { it.id }.toSet()
+            val extraActiveSports = activeSportsRows.filter { it.id !in existingIds }
+            return if (extraActiveSports.isNotEmpty()) {
+                sportsRepository.mergeSportsRows(filteredCategories, extraActiveSports)
+            } else {
+                filteredCategories
+            }
+        } else {
+            return sportsRepository.mergeSportsRows(categories, sportsRows)
+        }
+    }
 
     fun openSportsHomeItem(
         item: MediaItem,
