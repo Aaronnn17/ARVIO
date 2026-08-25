@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.sp
+import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.LocalDeviceType
 import androidx.tv.foundation.lazy.list.TvLazyRow
 
@@ -332,13 +333,11 @@ fun SkeletonDetailsPage(
 ) {
     if (isMobile) {
         val configuration = LocalConfiguration.current
-        val screenHeightDp = configuration.screenHeightDp.dp
-        val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
-        val backdropHeight = if (isLandscape) {
-            (screenHeightDp * 0.35f).coerceIn(120.dp, 200.dp)
-        } else {
-            (screenHeightDp * 0.53f).coerceAtLeast(400.dp)
-        }
+        val backdropHeight = resolveDetailsBackdropHeightDp(
+            screenWidthDp = configuration.screenWidthDp,
+            screenHeightDp = configuration.screenHeightDp,
+            isPhone = LocalDeviceType.current == DeviceType.PHONE,
+        ).dp
 
         Column(
             modifier = modifier
