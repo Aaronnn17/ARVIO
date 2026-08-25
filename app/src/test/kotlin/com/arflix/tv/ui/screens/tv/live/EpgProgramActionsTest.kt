@@ -5,9 +5,56 @@ import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
 class EpgProgramActionsTest {
+
+    @Test
+    fun stalledVodLookupStopsAtDeadline() = runTest {
+        val result = runEpgLookupWithTimeout(timeoutMillis = 100L) {
+            delay(1_000L)
+            "late result"
+        }
+
+        assertThat(result).isNull()
+    }
+
+    @Test
+    fun eagerGuideLookupWaitsForLiveProgrammeUpdate() = runTest {
+        val updates = MutableStateFlow<IptvProgram?>(null)
+        val expected = IptvProgram(
+            title = "Live Movie",
+            startUtcMillis = 1_000L,
+            endUtcMillis = 2_000L,
+        )
+        backgroundScope.launch {
+            delay(250L)
+            updates.value = expected
+        }
+
+        val result = awaitLiveEpgProgram(
+            programUpdates = updates,
+            timeoutMillis = 1_000L,
+            nowMillis = { 1_500L },
+        )
+
+        assertThat(result).isEqualTo(expected)
+    }
+
+    @Test
+    fun eagerGuideLookupStopsWhenNoProgrammeArrives() = runTest {
+        val result = awaitLiveEpgProgram(
+            programUpdates = MutableStateFlow<IptvProgram?>(null),
+            timeoutMillis = 100L,
+            nowMillis = { 1_500L },
+        )
+
+        assertThat(result).isNull()
+    }
 
     @Test
     fun watchLiveClearsSelectedProgramSoPlaybackUsesLiveStream() {

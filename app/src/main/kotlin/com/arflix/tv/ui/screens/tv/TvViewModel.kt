@@ -10,6 +10,7 @@ import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.ui.screens.tv.live.LiveTvGuideSources
+import com.arflix.tv.ui.screens.tv.live.runEpgLookupWithTimeout
 import com.arflix.tv.data.repository.IptvPlaybackTarget
 import com.arflix.tv.data.repository.IptvPlaybackUrlResolver
 import com.arflix.tv.data.repository.IptvRepository
@@ -56,6 +57,7 @@ private const val RichCatchupRecentTarget = 6
 private const val CatchupHistoryWindowMs = 48L * 60L * 60_000L
 private const val RichCatchupRefreshThrottleMs = 45_000L
 private const val CurrentChannelEpgRefreshThrottleMs = 12_000L
+private const val EpgVodLookupTimeoutMs = 2_500L
 private const val LargeListCompleteGuideCoverageTarget = 0.75f
 private const val PlaybackEpgBackfillResumeDelayMs = 90_000L
 private const val LargeListCompleteEpgBackfillStartupDelayMs = 180_000L
@@ -109,7 +111,9 @@ class TvViewModel @Inject constructor(
     ): com.arflix.tv.data.model.MediaItem? {
         if (!epgChannelAllowsVodSearch(channelName, channelGroup)) return null
         val results = try {
-            mediaRepository.search(title)
+            runEpgLookupWithTimeout(EpgVodLookupTimeoutMs) {
+                mediaRepository.search(title)
+            }.orEmpty()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {

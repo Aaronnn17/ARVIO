@@ -4,6 +4,10 @@ import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvNowNext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val NON_VOD_EPG_CHANNEL_TERMS = setOf(
     "sport",
@@ -57,6 +61,21 @@ internal enum class EpgInteractionAction {
     ResolveVodOrPlayFullscreen,
     ShowVodDialog,
     NoOp,
+}
+
+internal suspend fun <T> runEpgLookupWithTimeout(
+    timeoutMillis: Long,
+    lookup: suspend () -> T,
+): T? = withTimeoutOrNull(timeoutMillis) { lookup() }
+
+internal suspend fun awaitLiveEpgProgram(
+    programUpdates: Flow<IptvProgram?>,
+    timeoutMillis: Long,
+    nowMillis: () -> Long = System::currentTimeMillis,
+): IptvProgram? = withTimeoutOrNull(timeoutMillis) {
+    programUpdates
+        .filterNotNull()
+        .firstOrNull { program -> program.isLive(nowMillis()) }
 }
 
 internal fun channelRowInteractionAction(

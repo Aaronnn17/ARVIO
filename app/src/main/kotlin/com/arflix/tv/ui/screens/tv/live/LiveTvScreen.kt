@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -137,6 +139,7 @@ private const val CatchupUrlAnchorGranularityMs = 60_000L
 private const val IptvPlaybackUserAgent = "VLC/3.0.20 LibVLC/3.0.20"
 private const val VisibleGuidePastWindowMs = 48L * 60L * 60_000L
 private const val VisibleGuideFutureWindowMs = 48L * 60L * 60_000L
+private const val EpgGuideLookupTimeoutMs = 2_500L
 
 private fun digitForTvKeyCode(keyCode: Int): Int? = when (keyCode) {
     AndroidKeyEvent.KEYCODE_0, AndroidKeyEvent.KEYCODE_NUMPAD_0 -> 0
@@ -1486,6 +1489,7 @@ fun LiveTvScreen(
     // and, only after a confident movie/series match, Stream Now.
     var programActionDialog by remember { mutableStateOf<ProgramActionData?>(null) }
     var programActionVodMatch by remember { mutableStateOf<ArvioMediaItem?>(null) }
+    var programActionLookupInProgress by remember { mutableStateOf(false) }
     val programActionLookupGuard = remember { EpgVodLookupGuard() }
     val programActionLookupJob = remember { arrayOf<Job?>(null) }
     fun invalidateProgramActionLookup() {
@@ -1494,6 +1498,7 @@ fun LiveTvScreen(
         programActionLookupGuard.invalidate()
         programActionDialog = null
         programActionVodMatch = null
+        programActionLookupInProgress = false
     }
     LaunchedEffect(
         selectedCategoryId,
@@ -1792,43 +1797,51 @@ fun LiveTvScreen(
             return
         }
         val lookupGeneration = programActionLookupGuard.beginLookup()
+        programActionLookupInProgress = true
         programActionLookupJob[0] = coroutineScope.launch {
-            // Force a network EPG fetch for this specific channel via the public API.
-            // refreshCurrentChannelEpg does cache-first, then network, then merges.
-            viewModel.refreshCurrentChannelEpg(channel.id, forceNetworkForLargeList = true)
-            // Wait briefly for the refresh to land in state.snapshot.nowNext.
-            kotlinx.coroutines.delay(300L)
-            if (!programActionLookupGuard.isCurrent(lookupGeneration)) return@launch
-            // After the fetch, try to get the current programme from the displayed guide.
-            val program = displayedCurrentProgram(channel)
-                ?: currentProgramForAction(channel)?.takeIf { it.isLive(guideClockMillis) }
-            if (program == null) {
-                // Still no EPG data — fall back to fullscreen, not a dead end.
-                playLiveFullscreen(channel)
-                return@launch
-            }
-            if (!programActionLookupGuard.isCurrent(lookupGeneration)) return@launch
-            val match = viewModel.findEpgVodMatch(
-                title = program.title,
-                description = program.description,
-                channelName = channel.name,
-                channelGroup = channel.source.group,
-            )
-            if (!programActionLookupGuard.isCurrent(lookupGeneration)) return@launch
-            if (!epgVodLookupCanPublish(
-                    selectedProgram = program,
-                    currentProgram = displayedCurrentProgram(channel)
-                        ?: currentProgramForAction(channel),
-                    nowMillis = System.currentTimeMillis(),
-                )
-            ) return@launch
-            when (vodLookupResolution(match != null)) {
-                EpgInteractionAction.ShowVodDialog -> {
-                    programActionVodMatch = match
-                    programActionDialog = ProgramActionData(channel, program)
+            try {
+                viewModel.refreshCurrentChannelEpg(channel.id, forceNetworkForLargeList = true)
+                val program = displayedCurrentProgram(channel)
+                    ?: currentProgramForAction(channel)?.takeIf { it.isLive(guideClockMillis) }
+                    ?: awaitLiveEpgProgram(
+                        programUpdates = viewModel.uiState.map { uiState ->
+                            uiState.snapshot.nowNext[channel.id]?.now
+                        },
+                        timeoutMillis = EpgGuideLookupTimeoutMs,
+                    )
+                if (!programActionLookupGuard.isCurrent(lookupGeneration)) return@launch
+                if (program == null) {
+                    playLiveFullscreen(channel)
+                    return@launch
                 }
-                EpgInteractionAction.PlayLiveFullscreen -> playLiveFullscreen(channel)
-                else -> Unit
+                val match = viewModel.findEpgVodMatch(
+                    title = program.title,
+                    description = program.description,
+                    channelName = channel.name,
+                    channelGroup = channel.source.group,
+                )
+                if (!programActionLookupGuard.isCurrent(lookupGeneration)) return@launch
+                if (!epgVodLookupCanPublish(
+                        selectedProgram = program,
+                        currentProgram = viewModel.uiState.value.snapshot.nowNext[channel.id]?.now
+                            ?: displayedCurrentProgram(channel)
+                            ?: currentProgramForAction(channel),
+                        nowMillis = System.currentTimeMillis(),
+                    )
+                ) return@launch
+                when (vodLookupResolution(match != null)) {
+                    EpgInteractionAction.ShowVodDialog -> {
+                        programActionVodMatch = match
+                        programActionDialog = ProgramActionData(channel, program)
+                    }
+                    EpgInteractionAction.PlayLiveFullscreen -> playLiveFullscreen(channel)
+                    else -> Unit
+                }
+            } finally {
+                if (programActionLookupGuard.isCurrent(lookupGeneration)) {
+                    programActionLookupInProgress = false
+                    programActionLookupJob[0] = null
+                }
             }
         }
     }
@@ -1840,28 +1853,37 @@ fun LiveTvScreen(
             return
         }
         val lookupGeneration = programActionLookupGuard.beginLookup()
+        programActionLookupInProgress = true
         programActionLookupJob[0] = coroutineScope.launch {
-            val match = viewModel.findEpgVodMatch(
-                title = program.title,
-                description = program.description,
-                channelName = channel.name,
-                channelGroup = channel.source.group,
-            )
-            if (!programActionLookupGuard.isCurrent(lookupGeneration)) return@launch
-            if (
-                !epgVodLookupCanPublish(
-                    selectedProgram = program,
-                    currentProgram = currentProgramForAction(channel),
-                    nowMillis = System.currentTimeMillis(),
+            try {
+                val match = viewModel.findEpgVodMatch(
+                    title = program.title,
+                    description = program.description,
+                    channelName = channel.name,
+                    channelGroup = channel.source.group,
                 )
-            ) return@launch
-            when (vodLookupResolution(match != null)) {
-                EpgInteractionAction.ShowVodDialog -> {
-                    programActionVodMatch = match
-                    programActionDialog = ProgramActionData(channel, program)
+                if (!programActionLookupGuard.isCurrent(lookupGeneration)) return@launch
+                if (
+                    !epgVodLookupCanPublish(
+                        selectedProgram = program,
+                        currentProgram = viewModel.uiState.value.snapshot.nowNext[channel.id]?.now
+                            ?: currentProgramForAction(channel),
+                        nowMillis = System.currentTimeMillis(),
+                    )
+                ) return@launch
+                when (vodLookupResolution(match != null)) {
+                    EpgInteractionAction.ShowVodDialog -> {
+                        programActionVodMatch = match
+                        programActionDialog = ProgramActionData(channel, program)
+                    }
+                    EpgInteractionAction.PlayLiveFullscreen -> playLiveFullscreen(channel)
+                    else -> Unit
                 }
-                EpgInteractionAction.PlayLiveFullscreen -> playLiveFullscreen(channel)
-                else -> Unit
+            } finally {
+                if (programActionLookupGuard.isCurrent(lookupGeneration)) {
+                    programActionLookupInProgress = false
+                    programActionLookupJob[0] = null
+                }
             }
         }
     }
@@ -3261,6 +3283,21 @@ fun LiveTvScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = if (isFullScreen) 72.dp else 24.dp),
         )
+
+        if (programActionLookupInProgress) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color(0xE61A1A1A), RoundedCornerShape(8.dp))
+                    .padding(20.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    color = Pink,
+                    strokeWidth = 3.dp,
+                )
+            }
+        }
 
         val actionData = programActionDialog
         if (actionData != null) {
