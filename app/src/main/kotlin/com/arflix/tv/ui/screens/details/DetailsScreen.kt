@@ -1297,7 +1297,12 @@ private fun DetailsContent(
     if (isMobile) {
         val configuration = LocalConfiguration.current
         val screenHeightDp = configuration.screenHeightDp.dp
-        val backdropHeight = (screenHeightDp * 0.53f).coerceAtLeast(400.dp)
+        val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
+        val backdropHeight = if (isLandscape) {
+            (screenHeightDp * 0.35f).coerceIn(120.dp, 200.dp)
+        } else {
+            (screenHeightDp * 0.53f).coerceAtLeast(400.dp)
+        }
         val mobileScrollState = rememberScrollState()
         val density = LocalDensity.current
         var stickyThreshold by remember { mutableStateOf(-1f) }
