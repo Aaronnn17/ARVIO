@@ -80,11 +80,11 @@ class SimklSyncService @Inject constructor(
      * Phase 2: Check /sync/activities first. If timestamp changed, fetch delta using /sync/all-items/?date_from=...
      * Throttles background checks to once every 15 minutes unless forced.
      */
-    suspend fun syncIfNeeded(force: Boolean = false) = syncMutex.withLock {
+    suspend fun syncIfNeeded(force: Boolean = false): Boolean = syncMutex.withLock {
         val token = authManager.getAccessToken()
         if (token.isNullOrBlank()) {
             clearCachedState()
-            return@withLock
+            return@withLock false
         }
         val tokenScope = token.hashCode()
         if (activeTokenScope != tokenScope) {
@@ -95,10 +95,10 @@ class SimklSyncService @Inject constructor(
 
         val now = System.currentTimeMillis()
         if (!force && hasInitialSnapshot && now - lastActivityCheckTime < SNAPSHOT_TTL_MS) {
-            return@withLock
+            return@withLock true
         }
         if (!force && now - lastSyncAttemptTime < FAILED_SYNC_BACKOFF_MS) {
-            return@withLock
+            return@withLock hasInitialSnapshot
         }
         lastSyncAttemptTime = now
 
@@ -120,14 +120,17 @@ class SimklSyncService @Inject constructor(
                     // Keep partial/previous data visible and retry after the short failure backoff.
                     lastActivityCheckTime = 0L
                 }
+                outcome.complete
             } else {
                 AppLogger.d("SimklSyncService", "Simkl activities unchanged ($currentActivityDate). Skipping sync.")
                 lastActivityCheckTime = now
+                true
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             AppLogger.e("SimklSyncService", "Error during Simkl sync: ${e.message}")
+            false
         }
     }
 

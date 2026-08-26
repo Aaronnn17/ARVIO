@@ -218,6 +218,11 @@ class HomeViewModel @Inject constructor(
         /** Prefix used in MediaItem.status to identify IPTV items. */
         const val IPTV_STATUS_PREFIX = "iptv:"
         private const val TOP_10_ITEM_LIMIT = 10
+        private val BUILTIN_TMDB_CATEGORY_IDS = setOf(
+            "trending_movies",
+            "trending_tv",
+            "trending_anime"
+        )
         private val HARD_CAPPED_TOP_10_CATALOG_IDS = setOf(
             "top10_movies_today",
             "top10_shows_today"
@@ -3160,24 +3165,19 @@ class HomeViewModel @Inject constructor(
         }
 
         // 5. TMDB Built-in Categories (Trending Movies, Shows, Anime) - fast independent single-request fetches
-        val builtinTmdbIds = setOf("trending_movies", "trending_tv", "trending_anime")
         val tmdbConfigs = savedCatalogs.filter {
-            (it.id in builtinTmdbIds) || (it.isPreinstalled && it.sourceUrl.isNullOrBlank() && !isCollectionRailConfig(it) && !isCollectionTileConfig(it))
+            (it.id in BUILTIN_TMDB_CATEGORY_IDS) || (it.isPreinstalled && it.sourceUrl.isNullOrBlank() && !isCollectionRailConfig(it) && !isCollectionTileConfig(it))
         }
         tmdbConfigs.forEach { cfg ->
             viewModelScope.launch(networkDispatcher) {
-                val category = runCatching {
-                    mediaRepository.loadSingleBuiltinCategory(cfg.id)
+                val page = runCatching {
+                    mediaRepository.loadHomeCategoryPage(cfg.id, 1)
                 }.getOrNull()
-                if (category != null && category.items.isNotEmpty()) {
-                    val titled = if (cfg.title.isNotBlank() && cfg.title != category.title) {
-                        category.copy(title = cfg.title)
-                    } else {
-                        category
-                    }
+                if (page != null && page.items.isNotEmpty()) {
+                    val category = Category(id = cfg.id, title = cfg.title, items = page.items)
                     withContext(Dispatchers.Main.immediate) {
                         if (requestId == loadHomeRequestId) {
-                            updateMobileCategoryRow(cfg.id, titled.withTop10CapIfNeeded(), hasMore = true)
+                            updateMobileCategoryRow(cfg.id, category.withTop10CapIfNeeded(), hasMore = page.hasMore)
                             persistCategoriesCache(_uiState.value.categories)
                         }
                     }
@@ -3187,7 +3187,7 @@ class HomeViewModel @Inject constructor(
 
         // 6. MDBList and Custom/Addon Catalogs - progressive fetch with higher concurrency
         val customConfigs = savedCatalogs.filter { cfg ->
-            cfg.id !in builtinTmdbIds &&
+            cfg.id !in BUILTIN_TMDB_CATEGORY_IDS &&
                 (isCustomCatalogConfig(cfg) || (cfg.isPreinstalled && !cfg.sourceUrl.isNullOrBlank() && !isCollectionRailConfig(cfg) && !isCollectionTileConfig(cfg)))
         }
         val customSemaphore = Semaphore(if (isLowRamDevice) 3 else 6)
@@ -3465,7 +3465,9 @@ class HomeViewModel @Inject constructor(
 
                 val catalog = savedCatalogById[categoryId]
                 val pageSize = getCategoryPageSize(categoryId)
-                val result = if (catalog?.isPreinstalled == true && catalog.sourceUrl.isNullOrBlank()) {
+                val result = if (categoryId in BUILTIN_TMDB_CATEGORY_IDS ||
+                    (catalog?.isPreinstalled == true && catalog.sourceUrl.isNullOrBlank())
+                ) {
                     // Pure TMDB preinstalled catalog (no MDBList source)
                     val nextPage = (realItems.size / 20) + 1
                     mediaRepository.loadHomeCategoryPage(categoryId, nextPage)

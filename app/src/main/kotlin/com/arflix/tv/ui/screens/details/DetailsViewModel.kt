@@ -245,6 +245,7 @@ class DetailsViewModel @Inject constructor(
     private var lastStreamListPrewarmKey: String = ""
     // Guards overlapping season loads: only the most recently requested season may apply its result.
     private var seasonLoadJob: kotlinx.coroutines.Job? = null
+    private var seasonPrefetchJob: kotlinx.coroutines.Job? = null
     private var seasonLoadRequestedSeason: Int = -1
     @Volatile private var initialLoadComplete = false
 
@@ -367,6 +368,9 @@ class DetailsViewModel @Inject constructor(
         homeServerAppendJob?.cancel()
         streamListPrewarmJob?.cancel()
         focusedStreamPrewarmJob?.cancel()
+        seasonLoadJob?.cancel()
+        seasonPrefetchJob?.cancel()
+        seasonLoadRequestedSeason = -1
         lastStreamListPrewarmKey = ""
 
         viewModelScope.launch {
@@ -407,7 +411,9 @@ class DetailsViewModel @Inject constructor(
                     it.id == mediaId && it.mediaType == mediaType
                 }
                 val cachedFullItem = mediaRepository.getCachedFullItem(mediaType, mediaId)
-                val cachedItem = cachedFullItem ?: mediaRepository.getCachedItem(mediaType, mediaId)
+                val cachedItem = cachedFullItem
+                    ?: mediaRepository.getCachedItem(mediaType, mediaId)
+                    ?: mediaRepository.getCachedItemFromDisk(mediaType, mediaId)
                 val initialItem = cachedItem ?: previousItem
                 val cachedLogoUrl = mediaRepository.peekCachedLogoUrl(mediaType, mediaId)
                     ?: previousState.logoUrl?.takeIf { previousMatches }
@@ -1028,21 +1034,7 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 if (mediaType == MediaType.TV) {
-                    val totalSeasonsCount = baseState.totalSeasons
-                    if (totalSeasonsCount > 1) {
-                        launch(Dispatchers.IO) {
-                            (1..totalSeasonsCount).filter { it != seasonToLoad }.forEach { sNum ->
-                                runCatching {
-                                    val currentStructure = animeSeasonStructure
-                                    if (currentStructure != null) {
-                                        loadAnimeDisplaySeason(mediaId, sNum, currentStructure)
-                                    } else {
-                                        mediaRepository.getSeasonEpisodes(mediaId, sNum)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    prefetchAdjacentSeasons(mediaId, seasonToLoad, baseState.totalSeasons)
 
                     launch {
                         val titleForPrefetch = baseState.item?.title.orEmpty().ifBlank { mergedItem.title }
@@ -1136,6 +1128,7 @@ class DetailsViewModel @Inject constructor(
                 episodes = decorated,
                 isSeasonLoading = false
             )
+            prefetchAdjacentSeasons(currentMediaId, seasonNumber, _uiState.value.totalSeasons)
             return
         }
 
@@ -1188,6 +1181,7 @@ class DetailsViewModel @Inject constructor(
                         currentSeason = seasonNumber,
                         isSeasonLoading = false
                     )
+                    prefetchAdjacentSeasons(currentMediaId, seasonNumber, _uiState.value.totalSeasons)
                 } else {
                     _uiState.value = _uiState.value.copy(
                         isSeasonLoading = false,
@@ -1204,6 +1198,29 @@ class DetailsViewModel @Inject constructor(
                     toastMessage = context.getString(R.string.details_failed_load_season, seasonNumber),
                     toastType = ToastType.ERROR
                 )
+            }
+        }
+    }
+
+    private fun prefetchAdjacentSeasons(mediaId: Int, selectedSeason: Int, totalSeasons: Int) {
+        seasonPrefetchJob?.cancel()
+        val seasons = listOf(selectedSeason - 1, selectedSeason + 1)
+            .filter { it in 1..totalSeasons }
+        if (seasons.isEmpty()) return
+
+        val structure = animeSeasonStructure
+        seasonPrefetchJob = viewModelScope.launch(Dispatchers.IO) {
+            seasons.forEach { season ->
+                try {
+                    if (structure != null) {
+                        loadAnimeDisplaySeason(mediaId, season, structure)
+                    } else {
+                        mediaRepository.getSeasonEpisodes(mediaId, season)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
             }
         }
     }

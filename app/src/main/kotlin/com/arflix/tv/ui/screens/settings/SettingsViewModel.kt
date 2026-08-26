@@ -991,29 +991,43 @@ class SettingsViewModel @Inject constructor(
                 var totalMovies = 0
                 var totalEpisodes = 0
                 var syncedAny = false
+                val connectedProviders = mutableListOf<String>()
+                val failures = mutableListOf<String>()
 
                 if (_uiState.value.isTraktAuthenticated) {
-                    val result = traktSyncService.performFullSync()
-                    if (result is SyncResult.Success) {
-                        totalMovies += result.moviesSynced
-                        totalEpisodes += result.episodesSynced
-                        syncedAny = true
+                    connectedProviders += "Trakt"
+                    when (val result = traktSyncService.performFullSync()) {
+                        is SyncResult.Success -> {
+                            totalMovies += result.moviesSynced
+                            totalEpisodes += result.episodesSynced
+                            syncedAny = true
+                        }
+                        is SyncResult.Error -> failures += "Trakt: ${result.message}"
                     }
                 }
                 if (_uiState.value.isMdbListConnected) {
-                    val mdbMovies = runCatching { mdbListRepository.getWatchedMovies() }.getOrDefault(emptySet())
-                    val mdbEpisodes = runCatching { mdbListRepository.getWatchedEpisodes() }.getOrDefault(emptySet())
-                    totalMovies += mdbMovies.size
-                    totalEpisodes += mdbEpisodes.size
-                    syncedAny = true
+                    connectedProviders += "MDBList"
+                    mdbListRepository.getWatchedSnapshot()
+                        .onSuccess { snapshot ->
+                            totalMovies += snapshot.movies.size
+                            totalEpisodes += snapshot.episodes.size
+                            syncedAny = true
+                        }
+                        .onFailure { error ->
+                            failures += "MDBList: ${error.message ?: "request failed"}"
+                        }
                 }
                 if (_uiState.value.isSimklConnected) {
-                    runCatching { simklSyncService.syncIfNeeded(force = true) }
-                    val simklMovies = runCatching { simklSyncService.getWatchedMovies() }.getOrDefault(emptySet())
-                    val simklEpisodes = runCatching { simklSyncService.getWatchedEpisodes() }.getOrDefault(emptySet())
-                    totalMovies += simklMovies.size
-                    totalEpisodes += simklEpisodes.size
-                    syncedAny = true
+                    connectedProviders += "Simkl"
+                    if (simklSyncService.syncIfNeeded(force = true)) {
+                        val simklMovies = simklSyncService.getWatchedMovies()
+                        val simklEpisodes = simklSyncService.getWatchedEpisodes()
+                        totalMovies += simklMovies.size
+                        totalEpisodes += simklEpisodes.size
+                        syncedAny = true
+                    } else {
+                        failures += "Simkl: request failed"
+                    }
                 }
 
                 val nowIso = java.time.Instant.now().toString()
@@ -1024,16 +1038,35 @@ class SettingsViewModel @Inject constructor(
                             syncedMovies = totalMovies,
                             syncedEpisodes = totalEpisodes,
                             lastSyncTime = formatSyncTime(nowIso),
-                            toastMessage = if (!silent) "Synced $totalMovies movies and $totalEpisodes episodes" else _uiState.value.toastMessage,
-                            toastType = if (!silent) ToastType.SUCCESS else _uiState.value.toastType
+                            toastMessage = if (!silent) {
+                                if (failures.isEmpty()) {
+                                    "Synced $totalMovies movies and $totalEpisodes episodes"
+                                } else {
+                                    "Synced $totalMovies movies and $totalEpisodes episodes; ${failures.joinToString("; ")}"
+                                }
+                            } else {
+                                _uiState.value.toastMessage
+                            },
+                            toastType = if (!silent) {
+                                if (failures.isEmpty()) ToastType.SUCCESS else ToastType.ERROR
+                            } else {
+                                _uiState.value.toastType
+                            }
                         )
                     }
                     traktRepository.invalidateWatchedCache()
                     traktRepository.initializeWatchedCache()
-                } else if (!silent) {
+                } else if (!silent && connectedProviders.isEmpty()) {
                     withContext(Dispatchers.Main) {
                         _uiState.value = _uiState.value.copy(
                             toastMessage = "No tracking provider connected",
+                            toastType = ToastType.ERROR
+                        )
+                    }
+                } else if (!silent) {
+                    withContext(Dispatchers.Main) {
+                        _uiState.value = _uiState.value.copy(
+                            toastMessage = context.getString(R.string.sync_failed, failures.joinToString("; ")),
                             toastType = ToastType.ERROR
                         )
                     }

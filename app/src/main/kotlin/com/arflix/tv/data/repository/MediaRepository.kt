@@ -328,13 +328,15 @@ class MediaRepository @Inject constructor(
 
     fun getCachedItem(mediaType: MediaType, mediaId: Int): MediaItem? {
         val cacheKey = detailsCacheKey(mediaType, mediaId)
-        val inMemory = getFromCache(detailsCache, cacheKey)
-        if (inMemory != null) return inMemory
-        return peekItemFromDiskCache(mediaType, mediaId)
+        return getFromCache(detailsCache, cacheKey)
     }
 
-    private fun peekItemFromDiskCache(mediaType: MediaType, mediaId: Int): MediaItem? {
-        return try {
+    suspend fun getCachedItemFromDisk(mediaType: MediaType, mediaId: Int): MediaItem? =
+        withContext(Dispatchers.IO) {
+            peekItemFromDiskCache(mediaType, mediaId)
+        }
+
+    private fun peekItemFromDiskCache(mediaType: MediaType, mediaId: Int): MediaItem? = try {
             val cacheFiles = mutableListOf<java.io.File>()
             context.cacheDir.listFiles { _, name -> name.startsWith("home_categories_cache_") && name.endsWith(".json") }
                 ?.let { cacheFiles.addAll(it) }
@@ -380,7 +382,6 @@ class MediaRepository @Inject constructor(
         } catch (_: Throwable) {
             null
         }
-    }
 
     fun getCachedFullItem(mediaType: MediaType, mediaId: Int): MediaItem? {
         val cacheKey = detailsCacheKey(mediaType, mediaId)
@@ -1809,22 +1810,6 @@ class MediaRepository @Inject constructor(
         return CategoryPageResult(
             items = items,
             hasMore = response.page < response.totalPages
-        )
-    }
-
-    suspend fun loadSingleBuiltinCategory(categoryId: String): Category? {
-        val pageResult = loadHomeCategoryPage(categoryId, 1)
-        if (pageResult.items.isEmpty()) return null
-        val title = when (categoryId) {
-            "trending_movies" -> context.getString(R.string.trending_movies)
-            "trending_tv" -> context.getString(R.string.trending_series)
-            "trending_anime" -> context.getString(R.string.trending_anime)
-            else -> categoryId
-        }
-        return Category(
-            id = categoryId,
-            title = title,
-            items = pageResult.items
         )
     }
 

@@ -551,4 +551,3 @@ fun SkeletonMobileHeroBanner(
 enum class SkeletonCardType {
     POSTER, MEDIA, EPISODE, CAST
 }
-
