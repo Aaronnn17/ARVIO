@@ -113,7 +113,7 @@ fun ContextMenu(
         if (isVisible) {
             focusedIndex = 0 // Reset to first item
             if (!isMobile) {
-                focusRequester.requestFocus()
+                runCatching { focusRequester.requestFocus() }
             }
         }
     }

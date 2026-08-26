@@ -257,7 +257,7 @@ fun StreamSelector(
     // Request focus when visible
     LaunchedEffect(isVisible) {
         if (isVisible) {
-            focusRequester.requestFocus()
+            runCatching { focusRequester.requestFocus() }
             focusedIndex = 0
             focusedTabIndex = 0
             selectedTabIndex = 0
