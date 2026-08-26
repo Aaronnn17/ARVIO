@@ -4087,9 +4087,9 @@ private fun MobileSettingsMainPage(
                     iconRes = R.drawable.ic_telegram,
                     title = "Telegram",
                     value = "",
-                    isExternalLink = true,
+                    isExternalLink = false,
                     isFocused = false,
-                    onClick = onNavigateToTelegram
+                    onClick = { onNavigate("Telegram") }
                 )
                 val isDiscordLoggedIn by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isLoggedInFlow.collectAsStateWithLifecycle(initialValue = false)
                 val discordUsername by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.usernameFlow.collectAsStateWithLifecycle(initialValue = null)
@@ -4421,7 +4421,8 @@ private fun MobileSettingsSubPage(
                     MobileSettingsRow(
                         icon = Icons.Default.VolumeUp,
                         title = stringResource(R.string.volume_boost),
-                        value = if (uiState.volumeBoostDb > 0) "+${uiState.volumeBoostDb} dB" else "Off",
+                        value = if (uiState.volumeBoostDb > 0) "+${uiState.volumeBoostDb} dB" else "0 dB",
+                        isToggle = false,
                         isFocused = false,
                         showDivider = false,
                         onClick = { viewModel.cycleVolumeBoost() }
@@ -4655,6 +4656,12 @@ private fun MobileSettingsSubPage(
                     stremioAddons = stremioAddons,
                     onSwitchProfile = onSwitchProfile,
                     context = LocalContext.current
+                )
+            }
+            "Telegram" -> {
+                com.arflix.tv.ui.screens.settings.telegram.TelegramSettingsScreen(
+                    onBack = { onNavigate("MAIN") },
+                    showHeader = false
                 )
             }
         }
@@ -5656,7 +5663,7 @@ private fun TvGeneralSettingsRows(
                     icon = Icons.Default.VolumeUp,
                     title = stringResource(R.string.volume_boost),
                     subtitle = stringResource(R.string.volume_boost_desc),
-                    value = if (volumeBoostDb == 0) "Off" else "+${volumeBoostDb} dB",
+                    value = if (volumeBoostDb == 0) "0 dB" else "+${volumeBoostDb} dB",
                     isFocused = focusedIndex == localIndex,
                     onClick = onVolumeBoostClick,
                     modifier = Modifier.settingsFocusSlot(localIndex)

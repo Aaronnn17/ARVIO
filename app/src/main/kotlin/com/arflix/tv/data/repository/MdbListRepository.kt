@@ -58,6 +58,11 @@ data class MdbExternalRating(
     val value: String
 )
 
+data class MdbWatchedSnapshot(
+    val movies: Set<Int>,
+    val episodes: Set<String>
+)
+
 @Singleton
 class MdbListRepository @Inject constructor(
     private val api: MdbListApi,
@@ -350,6 +355,37 @@ class MdbListRepository @Inject constructor(
     }
 
     // ===== Watched reads =====
+
+    suspend fun getWatchedSnapshot(): Result<MdbWatchedSnapshot> = withContext(Dispatchers.IO) {
+        val k = key() ?: return@withContext Result.failure(IllegalStateException("MDBList is not connected"))
+        try {
+            val movies = mutableSetOf<Int>()
+            val episodes = mutableSetOf<String>()
+            var offset = 0
+            val limit = 1000
+            while (true) {
+                val response = api.getWatched(k, limit = limit, offset = offset)
+                response.movies?.forEach { row ->
+                    row.movie?.ids?.tmdb?.let(movies::add)
+                }
+                response.episodes?.forEach { row ->
+                    val episode = row.episode ?: return@forEach
+                    val showTmdb = episode.show?.ids?.tmdb ?: return@forEach
+                    val season = episode.season ?: return@forEach
+                    val number = episode.number ?: return@forEach
+                    episodes.add("show_tmdb:$showTmdb:$season:$number")
+                }
+                if (response.pagination?.hasMore != true) break
+                offset += limit
+            }
+            Result.success(MdbWatchedSnapshot(movies, episodes))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "watched snapshot fetch failed", e)
+            Result.failure(e)
+        }
+    }
 
     suspend fun getWatchedMovies(): Set<Int> = withContext(Dispatchers.IO) {
         val k = key() ?: return@withContext emptySet()

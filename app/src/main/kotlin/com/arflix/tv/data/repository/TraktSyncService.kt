@@ -80,6 +80,25 @@ class TraktSyncService @Inject constructor(
     private fun accessTokenKey() = profileManager.profileStringKey("trakt_access_token")
     private fun refreshTokenKey() = profileManager.profileStringKey("trakt_refresh_token")
     private fun expiresAtKey() = profileManager.profileLongKey("trakt_expires_at")
+    private fun lastSyncTimeKey() = profileManager.profileStringKey("trakt_last_sync_time")
+    private fun lastSyncMoviesKey() = profileManager.profileStringKey("trakt_last_sync_movies")
+    private fun lastSyncEpisodesKey() = profileManager.profileStringKey("trakt_last_sync_episodes")
+
+    suspend fun saveLocalSyncSummary(
+        lastSyncAt: String,
+        moviesSynced: Int,
+        episodesSynced: Int
+    ) {
+        try {
+            context.traktDataStore.edit { prefs ->
+                prefs[lastSyncTimeKey()] = lastSyncAt
+                prefs[lastSyncMoviesKey()] = moviesSynced.toString()
+                prefs[lastSyncEpisodesKey()] = episodesSynced.toString()
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
+    }
 
     // In-memory cache for current session (fallback if Supabase fails)
     private var cachedWatchedMovies: List<WatchedMovieRecord>? = null
@@ -283,6 +302,13 @@ class TraktSyncService @Inject constructor(
                 }
             }
 
+            val nowIso = Instant.now().toString()
+            saveLocalSyncSummary(
+                lastSyncAt = nowIso,
+                moviesSynced = totalMovies,
+                episodesSynced = totalEpisodes
+            )
+
             _syncProgress.value = SyncProgress(
                 status = SyncStatus.COMPLETED,
                 message = "Sync completed!",
@@ -485,6 +511,15 @@ class TraktSyncService @Inject constructor(
             if (e is kotlinx.coroutines.CancellationException) throw e
 
             }
+
+            val currentSummary = getLastSyncSummary()
+            val newTotalMovies = (currentSummary?.moviesSynced ?: 0) + moviesUpdated
+            val newTotalEpisodes = (currentSummary?.episodesSynced ?: 0) + episodesUpdated
+            saveLocalSyncSummary(
+                lastSyncAt = Instant.now().toString(),
+                moviesSynced = newTotalMovies,
+                episodesSynced = newTotalEpisodes
+            )
 
             _syncProgress.value = SyncProgress(
                 status = SyncStatus.COMPLETED,
@@ -1156,23 +1191,44 @@ class TraktSyncService @Inject constructor(
      */
     suspend fun getLastSyncSummary(): TraktSyncSummary? = withContext(Dispatchers.IO) {
         try {
-            val userId = getUserId() ?: return@withContext null
-            if (getSupabaseAuth() == null) return@withContext null
+            // 1. Check local DataStore first (works offline and without Supabase)
+            val prefs = context.traktDataStore.data.first()
+            val localSyncAt = prefs[lastSyncTimeKey()]
+            val localMovies = prefs[lastSyncMoviesKey()]?.toIntOrNull()
+            val localEpisodes = prefs[lastSyncEpisodesKey()]?.toIntOrNull()
 
-            val syncStates = executeSupabaseCall("get sync state summary") { auth ->
-                supabaseApi.getSyncState(
-                    auth,
-                    userId = "eq.$userId",
-                    profileId = "eq.${activeProfileId()}"
+            if (!localSyncAt.isNullOrBlank() && (localMovies != null || localEpisodes != null)) {
+                return@withContext TraktSyncSummary(
+                    lastSyncAt = localSyncAt,
+                    moviesSynced = localMovies ?: 0,
+                    episodesSynced = localEpisodes ?: 0
                 )
             }
-            syncStates.firstOrNull()?.let { state ->
-                TraktSyncSummary(
-                    lastSyncAt = state.lastSyncAt,
-                    moviesSynced = state.moviesSynced,
-                    episodesSynced = state.episodesSynced
-                )
+
+            // 2. Fallback to Supabase if logged in
+            val userId = getUserId()
+            if (userId != null && getSupabaseAuth() != null) {
+                val syncStates = executeSupabaseCall("get sync state summary") { auth ->
+                    supabaseApi.getSyncState(
+                        auth,
+                        userId = "eq.$userId",
+                        profileId = "eq.${activeProfileId()}"
+                    )
+                }
+                syncStates.firstOrNull()?.let { state ->
+                    val summary = TraktSyncSummary(
+                        lastSyncAt = state.lastSyncAt,
+                        moviesSynced = state.moviesSynced,
+                        episodesSynced = state.episodesSynced
+                    )
+                    state.lastSyncAt?.let { at ->
+                        saveLocalSyncSummary(at, state.moviesSynced, state.episodesSynced)
+                    }
+                    return@withContext summary
+                }
             }
+
+            null
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 

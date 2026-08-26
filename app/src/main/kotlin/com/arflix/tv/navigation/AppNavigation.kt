@@ -163,10 +163,10 @@ fun AppNavigation(
         // Netflix TV uses ~250ms fade; this is tuned for Android TV's 60fps.
         // Pure crossfade — no horizontal slides (those feel mobile, not TV).
         // Netflix TV uses ~250ms crossfade for all screen transitions.
-        enterTransition = { fadeIn(androidx.compose.animation.core.tween(250)) },
-        exitTransition = { fadeOut(androidx.compose.animation.core.tween(200)) },
-        popEnterTransition = { fadeIn(androidx.compose.animation.core.tween(250)) },
-        popExitTransition = { fadeOut(androidx.compose.animation.core.tween(200)) }
+        enterTransition = { fadeIn(androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
+        exitTransition = { fadeOut(androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
+        popEnterTransition = { fadeIn(androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
+        popExitTransition = { fadeOut(androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
     ) {
         // Login screen
         composable(Screen.Login.route) {
