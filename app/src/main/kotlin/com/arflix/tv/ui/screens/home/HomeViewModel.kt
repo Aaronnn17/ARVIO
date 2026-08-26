@@ -136,6 +136,40 @@ internal fun compactHomeCategoriesForCache(
     category.copy(items = items).takeIf { items.isNotEmpty() }
 }
 
+internal fun orderCategoriesBySavedCatalogs(
+    categories: List<Category>,
+    savedCatalogs: List<CatalogConfig>
+): List<Category> {
+    if (categories.size <= 1 || savedCatalogs.isEmpty()) return categories
+
+    val orderMap = HashMap<String, Int>(savedCatalogs.size)
+    var orderIdx = 0
+    for (cfg in savedCatalogs) {
+        if (cfg.kind == CatalogKind.COLLECTION) continue
+        val catId = if (cfg.kind == CatalogKind.COLLECTION_RAIL) {
+            val group = cfg.collectionGroup ?: continue
+            "collection_row_${group.name.lowercase(Locale.US)}"
+        } else {
+            cfg.id
+        }
+        if (!orderMap.containsKey(catId)) {
+            orderMap[catId] = orderIdx++
+        }
+    }
+
+    return categories.sortedWith { a, b ->
+        when {
+            a.id == "continue_watching" -> -1
+            b.id == "continue_watching" -> 1
+            else -> {
+                val idxA = orderMap[a.id] ?: Int.MAX_VALUE
+                val idxB = orderMap[b.id] ?: Int.MAX_VALUE
+                idxA.compareTo(idxB)
+            }
+        }
+    }
+}
+
 enum class ToastType {
     SUCCESS, ERROR, INFO
 }
@@ -1265,6 +1299,8 @@ class HomeViewModel @Inject constructor(
     private val heroDetailsCache = ConcurrentHashMap<String, HeroDetailsSnapshot>()
     private val heroDetailsFetchInFlight = Collections.synchronizedSet(mutableSetOf<String>())
     private val heroDetailsPrefetchSemaphore = Semaphore(if (isLowRamDevice) 1 else 2)
+    @Volatile
+    private var currentSavedCatalogs: List<CatalogConfig> = emptyList()
     private val savedCatalogById = ConcurrentHashMap<String, CatalogConfig>()
     private val categoryPaginationStates = ConcurrentHashMap<String, CategoryPaginationState>()
     private val preloadedRequests: MutableSet<String> = run {
@@ -1386,6 +1422,7 @@ class HomeViewModel @Inject constructor(
         lastResolvedBaseCategories = emptyList()
         dismissedContinueWatchingAt.clear()
         categoryPaginationStates.clear()
+        currentSavedCatalogs = emptyList()
         savedCatalogById.clear()
         collectionCatalogByMediaId.clear()
         iptvChannelMap.clear()
@@ -2308,7 +2345,11 @@ class HomeViewModel @Inject constructor(
             applyContentLanguageFromPrefs()
 
             try {
-                if (_uiState.value.categories.isEmpty()) {
+                val existingCw = _uiState.value.categories.firstOrNull { it.id == "continue_watching" && it.items.isNotEmpty() }
+                val hasRealBaseCategories = _uiState.value.categories.any {
+                    it.id != "continue_watching" && !it.id.startsWith("collection_row_") && it.items.any { item -> !item.isPlaceholder }
+                }
+                if (!hasRealBaseCategories) {
                     // Build the early skeleton from the default catalog list minus any
                     // preinstalled catalogs the user has explicitly hidden for the active
                     // profile. Without this filter, deleted catalogs flash back into view
@@ -2328,14 +2369,19 @@ class HomeViewModel @Inject constructor(
                         cachedContinueWatching = emptyList(),
                         hasRemoteContinueWatching = earlyHasRemote
                     )
+                    val initialSkeleton = if (existingCw != null) {
+                        listOf(existingCw) + earlySkeleton.filterNot { it.id == "continue_watching" }
+                    } else {
+                        earlySkeleton
+                    }
                     if (requestId != loadHomeRequestId) return@loadHome
-                    if (earlySkeleton.isNotEmpty()) {
+                    if (initialSkeleton.isNotEmpty()) {
                         _uiState.value = _uiState.value.copy(
                             isLoading = true,
                             isInitialLoad = false,
-                            categories = earlySkeleton,
-                            heroItem = earlySkeleton.firstOrNull()?.items?.firstOrNull { !it.isPlaceholder },
-                            heroLogoUrl = null,
+                            categories = initialSkeleton,
+                            heroItem = initialSkeleton.firstOrNull()?.items?.firstOrNull { !it.isPlaceholder } ?: _uiState.value.heroItem,
+                            heroLogoUrl = _uiState.value.heroLogoUrl,
                             error = null
                         )
                     }
@@ -2375,6 +2421,7 @@ class HomeViewModel @Inject constructor(
                         }
                     }
                 }
+                currentSavedCatalogs = savedCatalogs
                 savedCatalogById.clear()
                 savedCatalogs.forEach { savedCatalogById[it.id] = it }
                 categoryPaginationStates.clear()
@@ -3009,13 +3056,14 @@ class HomeViewModel @Inject constructor(
         } else {
             currentCategories.add(newCategory)
         }
+        val orderedCategories = orderCategoriesBySavedCatalogs(currentCategories, currentSavedCatalogs)
         categoryPaginationStates[categoryId] = CategoryPaginationState(
             loadedCount = newCategory.items.size,
             hasMore = hasMore
         )
         val currentHero = _uiState.value.heroItem
         val newHero = if (currentHero == null || !isEligibleHeroItem(currentHero)) {
-            chooseInitialHero(currentCategories)
+            chooseInitialHero(orderedCategories)
         } else {
             currentHero
         }
@@ -3024,7 +3072,7 @@ class HomeViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             isLoading = false,
             isInitialLoad = false,
-            categories = currentCategories,
+            categories = orderedCategories,
             heroItem = newHero,
             heroLogoUrl = heroLogo ?: _uiState.value.heroLogoUrl,
             categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
@@ -3101,12 +3149,21 @@ class HomeViewModel @Inject constructor(
             cachedContinueWatching = cachedContinueWatching,
             hasRemoteContinueWatching = hasRemoteContinueWatching
         )
-        if (_uiState.value.categories.isEmpty()) {
-            val skeletonHero = chooseInitialHero(skeletonCategories)
+        val existingCw = _uiState.value.categories.firstOrNull { it.id == "continue_watching" && it.items.isNotEmpty() }
+        val hasRealBaseCategories = _uiState.value.categories.any {
+            it.id != "continue_watching" && !it.id.startsWith("collection_row_") && it.items.any { item -> !item.isPlaceholder }
+        }
+        if (!hasRealBaseCategories) {
+            val initialSkeleton = if (existingCw != null) {
+                listOf(existingCw) + skeletonCategories.filterNot { it.id == "continue_watching" }
+            } else {
+                skeletonCategories
+            }
+            val skeletonHero = chooseInitialHero(initialSkeleton)
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
                 isInitialLoad = false,
-                categories = skeletonCategories,
+                categories = initialSkeleton,
                 heroItem = skeletonHero,
                 heroLogoUrl = null,
                 error = null,
