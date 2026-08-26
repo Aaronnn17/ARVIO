@@ -1,13 +1,4 @@
-import java.io.File
-import java.io.FileOutputStream
-import java.security.KeyStore
-import java.security.PrivateKey
-import java.security.cert.X509Certificate
 import java.util.Properties
-import java.util.zip.ZipEntry
-import java.util.zip.ZipFile
-import java.util.zip.ZipOutputStream
-import com.android.apksig.ApkSigner
 
 plugins {
     id("com.android.application")
@@ -75,9 +66,9 @@ android {
         )
 
 
-        // Support both 32-bit and 64-bit architectures
+        // Support both 32-bit and 64-bit ARM TV devices
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
 
         if (hasDiscordSdk) {
@@ -130,14 +121,6 @@ android {
         }
     }
 
-    splits {
-        abi {
-            isEnable = true
-            reset()
-            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-            isUniversalApk = true
-        }
-    }
 
     buildTypes {
         release {
@@ -540,99 +523,8 @@ tasks.configureEach {
     ) {
         dependsOn(validateReleaseCloudSecrets)
     }
-
-    if (name.startsWith("package") && (name.endsWith("Debug") || name.endsWith("Release") || name.endsWith("Staging"))) {
-        doLast {
-            val apkDir = file("build/outputs/apk")
-            if (apkDir.exists()) {
-                apkDir.walkTopDown().filter {
-                    it.extension == "apk" &&
-                        it.name.contains("universal") &&
-                        !it.name.contains("arm-universal")
-                }.forEach { universalApk ->
-                    val armUniversalApk = File(universalApk.parentFile, universalApk.name.replace("universal", "arm-universal"))
-                    val releaseConfig = android.signingConfigs.findByName("release")
-                    val debugConfig = android.signingConfigs.getByName("debug")
-                    val targetConfig = if (name.contains("Release", ignoreCase = true) || name.contains("Staging", ignoreCase = true)) {
-                        releaseConfig?.takeIf { it.storeFile?.exists() == true } ?: debugConfig
-                    } else {
-                        debugConfig
-                    }
-                    generateArmUniversalApk(
-                        universalApk = universalApk,
-                        outputFile = armUniversalApk,
-                        keystoreFile = targetConfig.storeFile,
-                        storePassword = targetConfig.storePassword,
-                        keyAlias = targetConfig.keyAlias,
-                        keyPassword = targetConfig.keyPassword
-                    )
-                }
-            }
-        }
-    }
 }
 
-fun generateArmUniversalApk(
-    universalApk: File,
-    outputFile: File,
-    keystoreFile: File?,
-    storePassword: String?,
-    keyAlias: String?,
-    keyPassword: String?
-) {
-    if (!universalApk.exists()) return
-    val tempUnsigned = File(outputFile.parentFile, outputFile.nameWithoutExtension + "-unsigned.tmp")
-    if (tempUnsigned.exists()) tempUnsigned.delete()
-
-    ZipFile(universalApk).use { zipIn ->
-        ZipOutputStream(FileOutputStream(tempUnsigned)).use { zipOut ->
-            for (entry in zipIn.entries().asSequence()) {
-                val name = entry.name
-                if (name.startsWith("lib/x86/") || name.startsWith("lib/x86_64/") || name.startsWith("META-INF/")) {
-                    continue
-                }
-                val newEntry = ZipEntry(name).apply {
-                    method = entry.method
-                    if (entry.method == ZipEntry.STORED) {
-                        size = entry.size
-                        compressedSize = entry.compressedSize
-                        crc = entry.crc
-                    }
-                }
-                zipOut.putNextEntry(newEntry)
-                zipIn.getInputStream(entry).use { it.copyTo(zipOut) }
-                zipOut.closeEntry()
-            }
-        }
-    }
-
-    val finalKeystore = keystoreFile?.takeIf { it.exists() }
-        ?: File(System.getProperty("user.home"), ".android/debug.keystore")
-    val finalStorePass = storePassword ?: "android"
-    val finalAlias = keyAlias ?: "androiddebugkey"
-    val finalKeyPass = keyPassword ?: "android"
-
-    if (finalKeystore.exists()) {
-        val ks = KeyStore.getInstance(if (finalKeystore.name.endsWith(".p12")) "PKCS12" else "JKS")
-        finalKeystore.inputStream().use { ks.load(it, finalStorePass.toCharArray()) }
-        val privateKey = ks.getKey(finalAlias, finalKeyPass.toCharArray()) as PrivateKey
-        val certs = ks.getCertificateChain(finalAlias).map { it as X509Certificate }
-        val signerConfig = ApkSigner.SignerConfig.Builder(finalAlias, privateKey, certs).build()
-
-        if (outputFile.exists()) outputFile.delete()
-        ApkSigner.Builder(listOf(signerConfig))
-            .setInputApk(tempUnsigned)
-            .setOutputApk(outputFile)
-            .setV1SigningEnabled(true)
-            .setV2SigningEnabled(true)
-            .setV3SigningEnabled(true)
-            .build()
-            .sign()
-    } else {
-        tempUnsigned.copyTo(outputFile, overwrite = true)
-    }
-    tempUnsigned.delete()
-}
 
 detekt {
     // Configuration file
