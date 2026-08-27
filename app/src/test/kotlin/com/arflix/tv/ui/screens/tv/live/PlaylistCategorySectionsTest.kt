@@ -116,16 +116,16 @@ class PlaylistCategorySectionsTest {
         )
         // All groups from all categories
         val hiddenGroups = setOf(
-            com.arflix.tv.data.model.PlaylistGroupKey.build("first", "movies"),
-            com.arflix.tv.data.model.PlaylistGroupKey.build("first", "series"),
-            com.arflix.tv.data.model.PlaylistGroupKey.build("second", "sports"),
-            com.arflix.tv.data.model.PlaylistGroupKey.build("second", "news")
+            com.arflix.tv.data.model.PlaylistGroupKey.build("first", "Movies"),
+            com.arflix.tv.data.model.PlaylistGroupKey.build("first", "Series"),
+            com.arflix.tv.data.model.PlaylistGroupKey.build("second", "Sports"),
+            com.arflix.tv.data.model.PlaylistGroupKey.build("second", "News")
         )
         val categories = listOf(
-            LiveCategory("first:a", "Movies", 8, CategoryIcon.Movie, playlistId = "first"),
-            LiveCategory("first:b", "Series", 10, CategoryIcon.Grid, playlistId = "first"),
-            LiveCategory("second:a", "Sports", 6, CategoryIcon.Sport, playlistId = "second"),
-            LiveCategory("second:b", "News", 4, CategoryIcon.Grid, playlistId = "second"),
+            LiveCategory("first:a", "Movies", 8, CategoryIcon.Movie, playlistGroupName = "Movies", playlistId = "first"),
+            LiveCategory("first:b", "Series", 10, CategoryIcon.Grid, playlistGroupName = "Series", playlistId = "first"),
+            LiveCategory("second:a", "Sports", 6, CategoryIcon.Sport, playlistGroupName = "Sports", playlistId = "second"),
+            LiveCategory("second:b", "News", 4, CategoryIcon.Grid, playlistGroupName = "News", playlistId = "second"),
         )
         val sections = buildPlaylistCategorySections(config, categories, hiddenGroups)
         // All sections should be filtered out completely
