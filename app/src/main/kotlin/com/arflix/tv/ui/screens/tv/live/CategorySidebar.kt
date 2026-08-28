@@ -260,9 +260,7 @@ fun CategorySidebar(
             // hands it the selector on entry and again every time the lazy list
             // recomposes underneath the focused row — which is what pinned the
             // selector in the search box while the playlist loaded.
-            .arvioDpadFocusGroup(
-                restoreFocusRequester = if (categoriesLoaded) selectedCategoryFocusRequester else null,
-            )
+            .arvioDpadFocusGroup()
             .onFocusChanged { focusState ->
                 if (focusState.hasFocus) {
                     onFocusEnter()

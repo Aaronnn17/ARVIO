@@ -312,12 +312,12 @@ fun SearchScreen(
                         try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
                     } else {
                         focusZone = FocusZone.SEARCH_INPUT
-                        searchFocusRequester.requestFocus()
+                        runCatching { searchFocusRequester.requestFocus() }
                     }
                 }
                 FocusZone.FILTERS -> {
                     focusZone = FocusZone.SEARCH_INPUT
-                    searchFocusRequester.requestFocus()
+                    runCatching { searchFocusRequester.requestFocus() }
                 }
                 FocusZone.SEARCH_INPUT -> {
                     focusZone = FocusZone.SIDEBAR
