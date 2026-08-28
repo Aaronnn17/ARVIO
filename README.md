@@ -109,6 +109,9 @@ On Windows PowerShell or Command Prompt:
 .\gradlew.bat :app:assembleSideloadDebug
 ```
 
+APK builds include 32-bit and 64-bit ARM by default. For an x86/x86_64 emulator,
+add `-PincludeX86Abis=true` to the Gradle command.
+
 Install a debug build on a connected Android TV, Fire TV, emulator, phone, or tablet:
 
 ```bash

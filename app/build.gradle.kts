@@ -20,6 +20,9 @@ plugins {
 
 val discordSdkAar = layout.projectDirectory.file("libs/discord_partner_sdk.aar").asFile
 val hasDiscordSdk = discordSdkAar.isFile
+val includeX86Abis = providers.gradleProperty("includeX86Abis")
+    .orNull
+    ?.toBooleanStrictOrNull() == true
 
 android {
     namespace = "com.arflix.tv"
@@ -66,9 +69,15 @@ android {
         )
 
 
-        // Support both 32-bit and 64-bit ARM TV devices
+        // Keep release downloads ARM-universal by default. Developers can add x86
+        // emulator support with -PincludeX86Abis=true without changing this file.
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+            abiFilters += buildList {
+                addAll(listOf("armeabi-v7a", "arm64-v8a"))
+                if (includeX86Abis) {
+                    addAll(listOf("x86", "x86_64"))
+                }
+            }
         }
 
         if (hasDiscordSdk) {
