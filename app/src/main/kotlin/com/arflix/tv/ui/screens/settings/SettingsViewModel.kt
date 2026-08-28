@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.arflix.tv.R
 import com.arflix.tv.server.AiKeyConfigServer
 import com.arflix.tv.ui.screens.player.SubtitleAiModel
+import com.arflix.tv.ui.screens.player.SubtitleFontOption
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.DeviceIpAddress
 import com.arflix.tv.util.DiagnosticsManager
@@ -63,6 +64,7 @@ import com.arflix.tv.updater.UpdatePreferences
 import com.arflix.tv.updater.VersionUtils
 import com.arflix.tv.util.AuthEmailValidator
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
+import com.arflix.tv.util.IPTV_EPG_VOD_ACTIONS_ENABLED_KEY
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -87,6 +89,19 @@ enum class ToastType {
     SUCCESS, ERROR, INFO
 }
 
+internal data class SettingsIptvRefreshPolicy(
+    val forcePlaylistReload: Boolean,
+    val forceEpgReload: Boolean,
+    val allowNetworkEpgFetch: Boolean,
+)
+
+internal fun settingsIptvRefreshPolicy(force: Boolean): SettingsIptvRefreshPolicy =
+    SettingsIptvRefreshPolicy(
+        forcePlaylistReload = force,
+        forceEpgReload = force,
+        allowNetworkEpgFetch = force,
+    )
+
 data class AiKeyServerState(
     val isActive: Boolean = false,
     val serverUrl: String? = null,
@@ -110,6 +125,7 @@ data class SettingsUiState(
     val subtitleSize: String = "Medium",
     val subtitleColor: String = "White",
     val subtitleStyle: String = "Bold",
+    val subtitleFont: String = SubtitleFontOption.DefaultPreference,
     val subtitleOffset: String = "Bottom",
     val subtitleStylized: Boolean = true,
     val filterSubtitlesByLanguage: Boolean = true,
@@ -187,6 +203,7 @@ data class SettingsUiState(
     val iptvAvailableGroups: List<String> = emptyList(),
     val iptvHiddenGroups: List<String> = emptyList(),
     val iptvGroupOrder: List<String> = emptyList(),
+    val epgVodActionsEnabled: Boolean = true,
     // App updates
     val isSelfUpdateSupported: Boolean = true,
     val updateStatus: com.arflix.tv.updater.UpdateStatus = com.arflix.tv.updater.UpdateStatus.Idle,
@@ -267,7 +284,8 @@ class SettingsViewModel @Inject constructor(
     private val mdbListRepository: com.arflix.tv.data.repository.MdbListRepository,
     private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore,
     private val watchHistoryRepository: com.arflix.tv.data.repository.WatchHistoryRepository,
-    private val simklAuthManager: com.arflix.tv.data.repository.simkl.SimklAuthManager
+    private val simklAuthManager: com.arflix.tv.data.repository.simkl.SimklAuthManager,
+    private val simklSyncService: com.arflix.tv.data.repository.simkl.SimklSyncService
 ) : ViewModel() {
     private fun visibleCatalogs(catalogs: List<CatalogConfig>): List<CatalogConfig> {
         return catalogs.filter { config ->
@@ -318,6 +336,7 @@ class SettingsViewModel @Inject constructor(
     private fun subtitleColorKey() = profileManager.profileStringKey("subtitle_color")
     private fun subtitleOffsetKey() = profileManager.profileStringKey("subtitle_offset")
     private fun subtitleStyleKey() = profileManager.profileStringKey("subtitle_style")
+    private fun subtitleFontKey() = profileManager.profileStringKey("subtitle_font")
     private fun subtitleStylizedKey() = profileManager.profileBooleanKey("subtitle_stylized")
     private fun filterSubtitlesByLanguageKey() = profileManager.profileBooleanKey("filter_subtitles_by_lang")
     private fun secondarySubtitleKey() = profileManager.profileStringKey("secondary_subtitle")
@@ -526,10 +545,12 @@ class SettingsViewModel @Inject constructor(
             val volumeBoostDb = prefs[volumeBoostDbKey()]?.toIntOrNull()?.coerceIn(0, 15) ?: 0
             val showLoadingStats = prefs[showLoadingStatsKey()] ?: true
             val smoothScrolling = prefs[smoothScrollingKey()] ?: true
+            val epgVodActionsEnabled = prefs[IPTV_EPG_VOD_ACTIONS_ENABLED_KEY] ?: true
 
             val subtitleSize = prefs[subtitleSizeKey()] ?: "Medium"
             val subtitleColor = prefs[subtitleColorKey()] ?: "White"
             val subtitleStyle = prefs[subtitleStyleKey()] ?: "Bold"
+            val subtitleFont = SubtitleFontOption.fromPreference(prefs[subtitleFontKey()]).preferenceValue
             val subtitleOffset = prefs[subtitleOffsetKey()] ?: "Bottom"
             val subtitleStylized = prefs[subtitleStylizedKey()] ?: true
             val filterSubtitlesByLanguage = prefs[filterSubtitlesByLanguageKey()] ?: true
@@ -621,6 +642,7 @@ class SettingsViewModel @Inject constructor(
                 subtitleSize = subtitleSize,
                 subtitleColor = subtitleColor,
                 subtitleStyle = subtitleStyle,
+                subtitleFont = subtitleFont,
                 subtitleOffset = subtitleOffset,
                 subtitleStylized = subtitleStylized,
                 filterSubtitlesByLanguage = filterSubtitlesByLanguage,
@@ -665,11 +687,12 @@ class SettingsViewModel @Inject constructor(
                 subtitleAiApiKey = subtitleAiApiKey,
                 subtitleAiModel = subtitleAiModel,
                 subtitleRemoveHearingImpaired = subtitleRemoveHearingImpaired,
-                smoothScrolling = smoothScrolling
+                smoothScrolling = smoothScrolling,
+                epgVodActionsEnabled = epgVodActionsEnabled,
             )
 
             refreshIntegrationUsernames(loadProfileId, isTrakt, isMdbList, isSimkl)
-            if (isTrakt) refreshSyncSummary(loadProfileId)
+            if (isTrakt || isMdbList || isSimkl) refreshSyncSummary(loadProfileId)
         }
     }
 
@@ -739,18 +762,50 @@ class SettingsViewModel @Inject constructor(
 
     private fun refreshSyncSummary(profileId: String) {
         syncSummaryJob?.cancel()
-        syncSummaryJob = viewModelScope.launch {
-            val previousLastSyncTime = _uiState.value.lastSyncTime
+        syncSummaryJob = viewModelScope.launch(Dispatchers.IO) {
             val summary = traktSyncService.getLastSyncSummary()
-            if (
-                profileManager.getProfileIdSync() != profileId ||
-                _uiState.value.lastSyncTime != previousLastSyncTime
-            ) return@launch
-            _uiState.value = _uiState.value.copy(
-                lastSyncTime = formatSyncTime(summary?.lastSyncAt),
-                syncedMovies = summary?.moviesSynced ?: 0,
-                syncedEpisodes = summary?.episodesSynced ?: 0
-            )
+            var movies = summary?.moviesSynced ?: 0
+            var episodes = summary?.episodesSynced ?: 0
+            var lastSyncAt = summary?.lastSyncAt
+
+            val isTrakt = _uiState.value.isTraktAuthenticated
+            val isMdbList = _uiState.value.isMdbListConnected
+            val isSimkl = _uiState.value.isSimklConnected
+
+            // If summary has 0/null but a provider is connected, query provider caches directly
+            if (movies == 0 && episodes == 0 && (isTrakt || isMdbList || isSimkl)) {
+                if (isTrakt) {
+                    val traktMovies = runCatching { traktRepository.getWatchedMovies() }.getOrDefault(emptySet())
+                    val traktEpisodes = runCatching { traktRepository.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    movies += traktMovies.size
+                    episodes += traktEpisodes.size
+                }
+                if (isMdbList) {
+                    val mdbMovies = runCatching { mdbListRepository.getWatchedMovies() }.getOrDefault(emptySet())
+                    val mdbEpisodes = runCatching { mdbListRepository.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    movies += mdbMovies.size
+                    episodes += mdbEpisodes.size
+                }
+                if (isSimkl) {
+                    val simklMovies = runCatching { simklSyncService.getWatchedMovies() }.getOrDefault(emptySet())
+                    val simklEpisodes = runCatching { simklSyncService.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    movies += simklMovies.size
+                    episodes += simklEpisodes.size
+                }
+                if (lastSyncAt == null && (movies > 0 || episodes > 0)) {
+                    lastSyncAt = java.time.Instant.now().toString()
+                    traktSyncService.saveLocalSyncSummary(lastSyncAt, movies, episodes)
+                }
+            }
+
+            if (profileManager.getProfileIdSync() != profileId) return@launch
+            withContext(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(
+                    lastSyncTime = formatSyncTime(lastSyncAt),
+                    syncedMovies = movies,
+                    syncedEpisodes = episodes
+                )
+            }
         }
     }
 
@@ -957,62 +1012,116 @@ class SettingsViewModel @Inject constructor(
 
     // ========== App Updates ==========
 
-    fun performFullSync(silent: Boolean = false) {
-        viewModelScope.launch {
+    fun syncAllTrackingProviders(silent: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
             if (_uiState.value.isSyncing) return@launch
-            val result = traktSyncService.performFullSync()
-            when (result) {
-                is SyncResult.Success -> {
-                    _uiState.value = _uiState.value.copy(
-                        syncedMovies = result.moviesSynced,
-                        syncedEpisodes = result.episodesSynced,
-                        lastSyncTime = formatSyncTime(java.time.Instant.now().toString()),
-                        toastMessage = "Synced ${result.moviesSynced} movies and ${result.episodesSynced} episodes",
-                        toastType = ToastType.SUCCESS
-                    )
-                    // Invalidate repository cache to pick up new data
+            withContext(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(isSyncing = true)
+            }
+            try {
+                var totalMovies = 0
+                var totalEpisodes = 0
+                var syncedAny = false
+                val connectedProviders = mutableListOf<String>()
+                val failures = mutableListOf<String>()
+
+                if (_uiState.value.isTraktAuthenticated) {
+                    connectedProviders += "Trakt"
+                    when (val result = traktSyncService.performFullSync()) {
+                        is SyncResult.Success -> {
+                            totalMovies += result.moviesSynced
+                            totalEpisodes += result.episodesSynced
+                            syncedAny = true
+                        }
+                        is SyncResult.Error -> failures += "Trakt: ${result.message}"
+                    }
+                }
+                if (_uiState.value.isMdbListConnected) {
+                    connectedProviders += "MDBList"
+                    mdbListRepository.getWatchedSnapshot()
+                        .onSuccess { snapshot ->
+                            totalMovies += snapshot.movies.size
+                            totalEpisodes += snapshot.episodes.size
+                            syncedAny = true
+                        }
+                        .onFailure { error ->
+                            failures += "MDBList: ${error.message ?: "request failed"}"
+                        }
+                }
+                if (_uiState.value.isSimklConnected) {
+                    connectedProviders += "Simkl"
+                    if (simklSyncService.syncIfNeeded(force = true)) {
+                        val simklMovies = simklSyncService.getWatchedMovies()
+                        val simklEpisodes = simklSyncService.getWatchedEpisodes()
+                        totalMovies += simklMovies.size
+                        totalEpisodes += simklEpisodes.size
+                        syncedAny = true
+                    } else {
+                        failures += "Simkl: request failed"
+                    }
+                }
+
+                val nowIso = java.time.Instant.now().toString()
+                if (syncedAny) {
+                    traktSyncService.saveLocalSyncSummary(nowIso, totalMovies, totalEpisodes)
+                    withContext(Dispatchers.Main) {
+                        _uiState.value = _uiState.value.copy(
+                            syncedMovies = totalMovies,
+                            syncedEpisodes = totalEpisodes,
+                            lastSyncTime = formatSyncTime(nowIso),
+                            toastMessage = if (!silent) {
+                                if (failures.isEmpty()) {
+                                    "Synced $totalMovies movies and $totalEpisodes episodes"
+                                } else {
+                                    "Synced $totalMovies movies and $totalEpisodes episodes; ${failures.joinToString("; ")}"
+                                }
+                            } else {
+                                _uiState.value.toastMessage
+                            },
+                            toastType = if (!silent) {
+                                if (failures.isEmpty()) ToastType.SUCCESS else ToastType.ERROR
+                            } else {
+                                _uiState.value.toastType
+                            }
+                        )
+                    }
                     traktRepository.invalidateWatchedCache()
                     traktRepository.initializeWatchedCache()
-                }
-                is SyncResult.Error -> {
-                    if (!silent) {
+                } else if (!silent && connectedProviders.isEmpty()) {
+                    withContext(Dispatchers.Main) {
                         _uiState.value = _uiState.value.copy(
-                            toastMessage = context.getString(R.string.sync_failed, result.message),
+                            toastMessage = "No tracking provider connected",
                             toastType = ToastType.ERROR
                         )
                     }
+                } else if (!silent) {
+                    withContext(Dispatchers.Main) {
+                        _uiState.value = _uiState.value.copy(
+                            toastMessage = context.getString(R.string.sync_failed, failures.joinToString("; ")),
+                            toastType = ToastType.ERROR
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (!silent) {
+                    withContext(Dispatchers.Main) {
+                        _uiState.value = _uiState.value.copy(
+                            toastMessage = context.getString(R.string.sync_failed, e.message),
+                            toastType = ToastType.ERROR
+                        )
+                    }
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(isSyncing = false)
                 }
             }
         }
     }
 
-    fun performIncrementalSync() {
-        viewModelScope.launch {
-            val result = traktSyncService.performIncrementalSync()
-            when (result) {
-                is SyncResult.Success -> {
-                    _uiState.value = _uiState.value.copy(
-                        syncedMovies = _uiState.value.syncedMovies + result.moviesSynced,
-                        syncedEpisodes = _uiState.value.syncedEpisodes + result.episodesSynced,
-                        lastSyncTime = formatSyncTime(java.time.Instant.now().toString()),
-                        toastMessage = if (result.moviesSynced == 0 && result.episodesSynced == 0)
-                            "Already up to date"
-                        else
-                            "Synced ${result.moviesSynced} movies and ${result.episodesSynced} episodes",
-                        toastType = ToastType.SUCCESS
-                    )
-                    // Invalidate repository cache to pick up new data
-                    traktRepository.invalidateWatchedCache()
-                    traktRepository.initializeWatchedCache()
-                }
-                is SyncResult.Error -> {
-                    _uiState.value = _uiState.value.copy(
-                        toastMessage = context.getString(R.string.sync_failed, result.message),
-                        toastType = ToastType.ERROR
-                    )
-                }
-            }
-        }
+    fun performFullSync(silent: Boolean = false) {
+        syncAllTrackingProviders(silent = silent)
     }
 
     fun setDefaultSubtitle(language: String) {
@@ -1425,6 +1534,13 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setEpgVodActionsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[IPTV_EPG_VOD_ACTIONS_ENABLED_KEY] = enabled }
+            _uiState.value = _uiState.value.copy(epgVodActionsEnabled = enabled)
+        }
+    }
+
     fun setShowLoadingStats(enabled: Boolean) {
         viewModelScope.launch {
             context.settingsDataStore.edit { it[showLoadingStatsKey()] = enabled }
@@ -1499,6 +1615,15 @@ class SettingsViewModel @Inject constructor(
     fun cycleSubtitleStyle() {
         val next = when (_uiState.value.subtitleStyle) { "Bold" -> "Normal"; "Normal" -> "Background"; else -> "Bold" }
         viewModelScope.launch { context.settingsDataStore.edit { it[subtitleStyleKey()] = next }; _uiState.value = _uiState.value.copy(subtitleStyle = next); syncLocalStateToCloud(silent = true) }
+    }
+
+    fun cycleSubtitleFont() {
+        val next = SubtitleFontOption.nextPreference(_uiState.value.subtitleFont)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[subtitleFontKey()] = next }
+            _uiState.value = _uiState.value.copy(subtitleFont = next)
+            syncLocalStateToCloud(silent = true)
+        }
     }
 
     fun toggleSubtitleStylized() {
@@ -2525,9 +2650,11 @@ class SettingsViewModel @Inject constructor(
                 runCatching { iptvRepository.purgeAllIptvSourceCaches() }
             }
             runCatching {
+                val refreshPolicy = settingsIptvRefreshPolicy(force)
                 val snapshot = iptvRepository.loadSnapshot(
-                    forcePlaylistReload = force,
-                    forceEpgReload = false,
+                    forcePlaylistReload = refreshPolicy.forcePlaylistReload,
+                    forceEpgReload = refreshPolicy.forceEpgReload,
+                    allowNetworkEpgFetch = refreshPolicy.allowNetworkEpgFetch,
                     onProgress = { progress ->
                         _uiState.value = _uiState.value.copy(
                             isIptvLoading = true,
@@ -3653,19 +3780,17 @@ class SettingsViewModel @Inject constructor(
                     // Get the expiration date
                     val expirationDate = traktRepository.getTokenExpirationDate()
 
-                    // Success!
-                    // Trakt and Simkl can coexist. MDBList remains an exclusive legacy provider.
+                    // Success. Tracking integrations are independent credentials.
                     simklPollingJob?.cancel()
                     simklPollingJob = null
-                    syncProviderStore.setMdbListApiKey(null)
                     syncProviderStore.onProviderConnected(com.arflix.tv.data.repository.sync.SyncProvider.TRAKT)
                     val simklStillConnected = simklAuthManager.isConnected()
+                    val mdbListStillConnected = mdbListRepository.isConnected()
                     val trackingPreferences = syncProviderStore.getTrackingPreferences()
                     _uiState.value = _uiState.value.copy(
                         isTraktAuthenticated = true,
                         traktUsername = null,
-                        isMdbListConnected = false,
-                        mdbListUsername = null,
+                        isMdbListConnected = mdbListStillConnected,
                         isSimklConnected = simklStillConnected,
                         isSimklPolling = false,
                         simklUserCode = null,
@@ -3685,7 +3810,7 @@ class SettingsViewModel @Inject constructor(
                     refreshIntegrationUsernames(
                         profileManager.getProfileIdSync(),
                         isTraktConnected = true,
-                        isMdbListConnected = false,
+                        isMdbListConnected = mdbListStillConnected,
                         isSimklConnected = simklStillConnected
                     )
                     traktRepository.clearContinueWatchingCache()
@@ -3782,11 +3907,7 @@ class SettingsViewModel @Inject constructor(
 
     // ========== MDBList Authentication (API key) ==========
 
-    /**
-     * Connect MDBList using a user API key from mdblist.com/preferences.
-     * MDBList and Trakt are mutually exclusive per profile, so connecting MDBList
-     * disconnects Trakt for the active profile.
-     */
+    /** Connect MDBList using a user API key from mdblist.com/preferences. */
     fun connectMdbList(apiKey: String) {
         val trimmed = apiKey.trim()
         if (trimmed.isEmpty() || _uiState.value.mdbListConnecting) return
@@ -3801,27 +3922,17 @@ class SettingsViewModel @Inject constructor(
                 )
                 return@launch
             }
-            // Mutual exclusion: drop Trakt and Simkl for this profile.
-            cancelTraktAuth()
-            runCatching { traktRepository.logout() }
-            simklPollingJob?.cancel()
-            simklPollingJob = null
-            runCatching { simklAuthManager.disconnect() }
             syncProviderStore.setMdbListApiKey(trimmed)
             syncProviderStore.onProviderConnected(com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST)
+            val traktStillConnected = traktRepository.hasTrakt()
+            val simklStillConnected = simklAuthManager.isConnected()
             val trackingPreferences = syncProviderStore.getTrackingPreferences()
             _uiState.value = _uiState.value.copy(
                 mdbListConnecting = false,
                 isMdbListConnected = true,
                 mdbListUsername = null,
-                isTraktAuthenticated = false,
-                traktUsername = null,
-                traktExpiration = null,
-                isSimklConnected = false,
-                simklUsername = null,
-                isSimklPolling = false,
-                simklUserCode = null,
-                simklVerificationUrl = null,
+                isTraktAuthenticated = traktStillConnected,
+                isSimklConnected = simklStillConnected,
                 lastSyncTime = null,
                 syncedMovies = 0,
                 syncedEpisodes = 0,
@@ -3835,9 +3946,9 @@ class SettingsViewModel @Inject constructor(
             )
             refreshIntegrationUsernames(
                 profileManager.getProfileIdSync(),
-                isTraktConnected = false,
+                isTraktConnected = traktStillConnected,
                 isMdbListConnected = true,
-                isSimklConnected = false
+                isSimklConnected = simklStillConnected
             )
             // The MDBList watchlist is pulled when the Watchlist screen next loads.
             syncLocalStateToCloud(silent = true, force = true)
@@ -3905,8 +4016,9 @@ class SettingsViewModel @Inject constructor(
                 try {
                     val success = simklAuthManager.pollPinAuth(userCode)
                     if (success) {
-                        syncProviderStore.setMdbListApiKey(null)
+                        syncProviderStore.onProviderConnected(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL)
                         val traktStillConnected = traktRepository.hasTrakt()
+                        val mdbListStillConnected = mdbListRepository.isConnected()
                         val trackingPreferences = syncProviderStore.getTrackingPreferences()
                         _uiState.value = _uiState.value.copy(
                             isSimklPolling = false,
@@ -3914,8 +4026,7 @@ class SettingsViewModel @Inject constructor(
                             simklUserCode = null,
                             simklVerificationUrl = null,
                             isTraktAuthenticated = traktStillConnected,
-                            isMdbListConnected = false,
-                            mdbListUsername = null,
+                            isMdbListConnected = mdbListStillConnected,
                             trackingWatchlistReadMode = trackingPreferences.watchlistReadMode,
                             trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
                             trackingWatchedReadMode = trackingPreferences.watchedReadMode,
@@ -3927,7 +4038,7 @@ class SettingsViewModel @Inject constructor(
                         refreshIntegrationUsernames(
                             profileManager.getProfileIdSync(),
                             isTraktConnected = traktStillConnected,
-                            isMdbListConnected = false,
+                            isMdbListConnected = mdbListStillConnected,
                             isSimklConnected = true
                         )
                         syncLocalStateToCloud(silent = true, force = true)
@@ -3956,8 +4067,9 @@ class SettingsViewModel @Inject constructor(
             runCatching {
                 val success = simklAuthManager.pollPinAuth(userCode)
                 if (success) {
-                    syncProviderStore.setMdbListApiKey(null)
+                    syncProviderStore.onProviderConnected(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL)
                     val traktStillConnected = traktRepository.hasTrakt()
+                    val mdbListStillConnected = mdbListRepository.isConnected()
                     val trackingPreferences = syncProviderStore.getTrackingPreferences()
                     _uiState.value = _uiState.value.copy(
                         isSimklPolling = false,
@@ -3965,8 +4077,7 @@ class SettingsViewModel @Inject constructor(
                         simklUserCode = null,
                         simklVerificationUrl = null,
                         isTraktAuthenticated = traktStillConnected,
-                        isMdbListConnected = false,
-                        mdbListUsername = null,
+                        isMdbListConnected = mdbListStillConnected,
                         trackingWatchlistReadMode = trackingPreferences.watchlistReadMode,
                         trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
                         trackingWatchedReadMode = trackingPreferences.watchedReadMode,
@@ -3978,7 +4089,7 @@ class SettingsViewModel @Inject constructor(
                     refreshIntegrationUsernames(
                         profileManager.getProfileIdSync(),
                         isTraktConnected = traktStillConnected,
-                        isMdbListConnected = false,
+                        isMdbListConnected = mdbListStillConnected,
                         isSimklConnected = true
                     )
                     syncLocalStateToCloud(silent = true, force = true)
@@ -3993,6 +4104,7 @@ class SettingsViewModel @Inject constructor(
         simklPollingJob = null
         viewModelScope.launch {
             simklAuthManager.disconnect()
+            syncProviderStore.onProviderDisconnected(com.arflix.tv.data.repository.sync.SyncProvider.SIMKL)
             val preferences = syncProviderStore.getTrackingPreferences()
             _uiState.value = _uiState.value.copy(
                 isSimklConnected = false,
@@ -4008,6 +4120,7 @@ class SettingsViewModel @Inject constructor(
                 toastMessage = "Disconnected from Simkl",
                 toastType = ToastType.SUCCESS
             )
+            syncLocalStateToCloud(silent = true, force = true)
         }
     }
 

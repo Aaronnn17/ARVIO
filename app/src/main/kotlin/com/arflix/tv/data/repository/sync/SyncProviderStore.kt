@@ -76,14 +76,10 @@ class SyncProviderStore @Inject constructor(
     }
 
     private fun defaultReadMode(
-        provider: SyncProvider,
         hasTrakt: Boolean,
         hasSimkl: Boolean,
         hasMdbList: Boolean
     ): TrackingReadMode = when {
-        provider == SyncProvider.MDBLIST && hasMdbList -> TrackingReadMode.MDBLIST
-        provider == SyncProvider.SIMKL && hasSimkl -> TrackingReadMode.SIMKL
-        provider == SyncProvider.TRAKT && hasTrakt -> TrackingReadMode.TRAKT
         hasTrakt && hasSimkl -> TrackingReadMode.BOTH
         hasTrakt -> TrackingReadMode.TRAKT
         hasSimkl -> TrackingReadMode.SIMKL
@@ -94,11 +90,10 @@ class SyncProviderStore @Inject constructor(
     suspend fun getTrackingPreferences(): TrackingPreferences {
         val settings = context.settingsDataStore.data.first()
         val credentials = context.traktDataStore.data.first()
-        val provider = SyncProvider.fromStorage(settings[providerKey()])
         val hasTrakt = !credentials[traktAccessTokenKey()].isNullOrBlank()
         val hasSimkl = !SecureStorage.decrypt(credentials[simklAccessTokenKey()], SIMKL_TOKEN_ALIAS).isNullOrBlank()
         val hasMdbList = !credentials[mdbListKey()].isNullOrBlank()
-        val fallback = defaultReadMode(provider, hasTrakt, hasSimkl, hasMdbList)
+        val fallback = defaultReadMode(hasTrakt, hasSimkl, hasMdbList)
         return TrackingPreferences(
             watchlistReadMode = TrackingReadMode.fromStorage(settings[watchlistReadModeKey()]).let {
                 if (it == TrackingReadMode.AUTO) fallback else it
@@ -153,34 +148,46 @@ class SyncProviderStore @Inject constructor(
 
     suspend fun writeProviders(): Set<SyncProvider> {
         val preferences = getTrackingPreferences()
-        val legacyProvider = getProvider()
+        val credentials = context.traktDataStore.data.first()
+        val hasMdbList = !credentials[mdbListKey()].isNullOrBlank()
         return buildSet {
             if (preferences.writeToTrakt == true) add(SyncProvider.TRAKT)
             if (preferences.writeToSimkl == true) add(SyncProvider.SIMKL)
-            if (legacyProvider == SyncProvider.MDBLIST) add(SyncProvider.MDBLIST)
+            if (hasMdbList) add(SyncProvider.MDBLIST)
         }
     }
 
     suspend fun onProviderConnected(provider: SyncProvider) {
-        setProvider(provider)
         val credentials = context.traktDataStore.data.first()
         val hasTrakt = !credentials[traktAccessTokenKey()].isNullOrBlank()
         val hasSimkl = !SecureStorage.decrypt(credentials[simklAccessTokenKey()], SIMKL_TOKEN_ALIAS).isNullOrBlank()
-        val mode = when {
-            hasTrakt && hasSimkl -> TrackingReadMode.BOTH
-            provider == SyncProvider.SIMKL -> TrackingReadMode.SIMKL
-            provider == SyncProvider.TRAKT -> TrackingReadMode.TRAKT
-            provider == SyncProvider.MDBLIST -> TrackingReadMode.MDBLIST
-            else -> TrackingReadMode.AUTO
+        val hasMdbList = !credentials[mdbListKey()].isNullOrBlank()
+        val currentProvider = getProvider()
+        val currentProviderStillConnected = when (currentProvider) {
+            SyncProvider.TRAKT -> hasTrakt
+            SyncProvider.SIMKL -> hasSimkl
+            SyncProvider.MDBLIST -> hasMdbList
+            SyncProvider.NONE -> false
         }
-        TrackingFeature.entries.forEach { setReadMode(it, mode) }
-        if (provider == SyncProvider.MDBLIST) {
-            setWriteTarget(SyncProvider.TRAKT, false)
-            setWriteTarget(SyncProvider.SIMKL, false)
-            return
+        if (!currentProviderStillConnected) setProvider(provider)
+
+        val current = getTrackingPreferences()
+        fun connectedMode(mode: TrackingReadMode): TrackingReadMode = when {
+            provider == SyncProvider.MDBLIST && !hasTrakt && !hasSimkl -> TrackingReadMode.MDBLIST
+            hasTrakt && hasSimkl && mode in setOf(
+                TrackingReadMode.AUTO,
+                TrackingReadMode.TRAKT,
+                TrackingReadMode.SIMKL
+            ) -> TrackingReadMode.BOTH
+            provider == SyncProvider.TRAKT && mode == TrackingReadMode.AUTO -> TrackingReadMode.TRAKT
+            provider == SyncProvider.SIMKL && mode == TrackingReadMode.AUTO -> TrackingReadMode.SIMKL
+            else -> mode
         }
-        if (provider == SyncProvider.TRAKT || hasTrakt) setWriteTarget(SyncProvider.TRAKT, hasTrakt)
-        if (provider == SyncProvider.SIMKL || hasSimkl) setWriteTarget(SyncProvider.SIMKL, hasSimkl)
+        setReadMode(TrackingFeature.WATCHLIST, connectedMode(current.watchlistReadMode))
+        setReadMode(TrackingFeature.CONTINUE_WATCHING, connectedMode(current.continueWatchingReadMode))
+        setReadMode(TrackingFeature.WATCHED, connectedMode(current.watchedReadMode))
+        if (provider == SyncProvider.TRAKT) setWriteTarget(SyncProvider.TRAKT, true)
+        if (provider == SyncProvider.SIMKL) setWriteTarget(SyncProvider.SIMKL, true)
     }
 
     suspend fun onProviderDisconnected(provider: SyncProvider) {
@@ -189,7 +196,7 @@ class SyncProviderStore @Inject constructor(
         val hasTrakt = !credentials[traktAccessTokenKey()].isNullOrBlank()
         val hasSimkl = !SecureStorage.decrypt(credentials[simklAccessTokenKey()], SIMKL_TOKEN_ALIAS).isNullOrBlank()
         val hasMdbList = !credentials[mdbListKey()].isNullOrBlank()
-        val replacement = defaultReadMode(SyncProvider.NONE, hasTrakt, hasSimkl, hasMdbList)
+        val replacement = defaultReadMode(hasTrakt, hasSimkl, hasMdbList)
         val current = getTrackingPreferences()
         val affected = when (provider) {
             SyncProvider.TRAKT -> setOf(TrackingReadMode.TRAKT, TrackingReadMode.BOTH)

@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.sp
+import com.arflix.tv.util.DeviceType
 import com.arflix.tv.util.LocalDeviceType
 import androidx.tv.foundation.lazy.list.TvLazyRow
 
@@ -332,8 +334,11 @@ fun SkeletonDetailsPage(
 ) {
     if (isMobile) {
         val configuration = LocalConfiguration.current
-        val screenHeightDp = configuration.screenHeightDp.dp
-        val backdropHeight = (screenHeightDp * 0.53f).coerceAtLeast(400.dp)
+        val backdropHeight = resolveDetailsBackdropHeightDp(
+            screenWidthDp = configuration.screenWidthDp,
+            screenHeightDp = configuration.screenHeightDp,
+            isPhone = LocalDeviceType.current == DeviceType.PHONE,
+        ).dp
 
         Column(
             modifier = modifier
@@ -486,6 +491,58 @@ fun SkeletonHomePage(
         repeat(rowCount) { index ->
             SkeletonCategoryRow(
                 cardType = if (index == 0) SkeletonCardType.MEDIA else SkeletonCardType.POSTER
+            )
+        }
+    }
+}
+
+/**
+ * Skeleton for mobile hero banner (3:4 aspect ratio with rounded corners)
+ */
+@Composable
+fun SkeletonMobileHeroBanner(
+    modifier: Modifier = Modifier
+) {
+    val bannerShape = RoundedCornerShape(24.dp)
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(3f / 4f)
+            .clip(bannerShape)
+            .background(Color(0xFF141419))
+            .border(width = 1.dp, color = Color(0xFF2B2B2B), shape = bannerShape)
+    ) {
+        SkeletonBox(
+            modifier = Modifier.fillMaxSize(),
+            shape = bannerShape
+        )
+
+        Column(
+            modifier = Modifier
+                .align(androidx.compose.ui.Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            SkeletonBox(
+                modifier = Modifier
+                    .fillMaxWidth(0.65f)
+                    .height(32.dp),
+                shape = RoundedCornerShape(6.dp)
+            )
+            SkeletonBox(
+                modifier = Modifier
+                    .fillMaxWidth(0.40f)
+                    .height(14.dp),
+                shape = RoundedCornerShape(4.dp)
+            )
+            SkeletonBox(
+                modifier = Modifier
+                    .fillMaxWidth(0.25f)
+                    .height(12.dp),
+                shape = RoundedCornerShape(4.dp)
             )
         }
     }

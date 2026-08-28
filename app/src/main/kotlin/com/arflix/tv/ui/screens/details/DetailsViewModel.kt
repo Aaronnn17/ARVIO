@@ -23,6 +23,8 @@ import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.MediaRepository
+import com.arflix.tv.data.repository.MdbExternalRating
+import com.arflix.tv.data.repository.MdbListRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.StreamRepository
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
@@ -37,6 +39,7 @@ import com.arflix.tv.util.settingsDataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -60,10 +63,12 @@ data class DetailsUiState(
     val episodes: List<Episode> = emptyList(),
     val totalSeasons: Int = 1,
     val currentSeason: Int = 1,
+    val isSeasonLoading: Boolean = false,
     val cast: List<CastMember> = emptyList(),
     val similar: List<MediaItem> = emptyList(),
     val similarLogoUrls: Map<String, String> = emptyMap(),
     val reviews: List<Review> = emptyList(),
+    val externalRatings: List<MdbExternalRating> = emptyList(),
     val error: String? = null,
     // Person modal
     val showPersonModal: Boolean = false,
@@ -193,6 +198,7 @@ private fun Addon.isVodStreamingAddon(): Boolean =
 class DetailsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val mediaRepository: MediaRepository,
+    private val mdbListRepository: MdbListRepository,
     private val pluginManager: PluginManager,
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
@@ -239,9 +245,75 @@ class DetailsViewModel @Inject constructor(
     private var lastStreamListPrewarmKey: String = ""
     // Guards overlapping season loads: only the most recently requested season may apply its result.
     private var seasonLoadJob: kotlinx.coroutines.Job? = null
+    private var seasonPrefetchJob: kotlinx.coroutines.Job? = null
     private var seasonLoadRequestedSeason: Int = -1
-    /** Set to true after loadDetails() child coroutines finish populating episodes/seasons. */
     @Volatile private var initialLoadComplete = false
+
+    init {
+        viewModelScope.launch {
+            mediaRepository.episodeRatingsUpdated.collect { (tvId, seasonNumber) ->
+                if (tvId == currentMediaId && currentMediaType == MediaType.TV) {
+                    val structure = animeSeasonStructure
+                    if (structure != null) {
+                        val currentSeason = _uiState.value.currentSeason
+                        val cachedAnime = peekAnimeDisplaySeason(tvId, currentSeason, structure)
+                        if (cachedAnime != null) {
+                            val watchedKeys = traktRepository.getWatchedEpisodesFromCache()
+                            val decorated = if (watchedKeys.isNotEmpty()) {
+                                cachedAnime.map { ep ->
+                                    val key = "show_tmdb:$tvId:${ep.tmdbSeasonNumber}:${ep.tmdbEpisodeNumber}"
+                                    if (watchedKeys.contains(key)) ep.copy(isWatched = true) else ep
+                                }
+                            } else {
+                                cachedAnime
+                            }
+                            _uiState.value = _uiState.value.copy(episodes = decorated)
+                        }
+                    } else if (seasonNumber == _uiState.value.currentSeason) {
+                        val cached = mediaRepository.peekCachedSeasonEpisodes(tvId, seasonNumber)
+                        if (cached != null) {
+                            val normalized = normalizeAnimeEpisodesForDisplay(
+                                tmdbId = tvId,
+                                displaySeason = seasonNumber,
+                                item = _uiState.value.item,
+                                canonicalEpisodes = cached
+                            )
+                            val watchedKeys = traktRepository.getWatchedEpisodesFromCache()
+                            val decorated = if (watchedKeys.isNotEmpty()) {
+                                normalized.map { ep ->
+                                    val key = "show_tmdb:$tvId:${ep.tmdbSeasonNumber}:${ep.tmdbEpisodeNumber}"
+                                    if (watchedKeys.contains(key)) ep.copy(isWatched = true) else ep
+                                }
+                            } else {
+                                normalized
+                            }
+                            _uiState.value = _uiState.value.copy(episodes = decorated)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun peekAnimeDisplaySeason(
+        tmdbId: Int,
+        displaySeason: Int,
+        structure: AnimeSeasonStructure
+    ): List<Episode>? {
+        val identities = structure.seasons[displaySeason] ?: return null
+        val canonicalSeasonsNeeded = identities.map { it.tmdbSeason }.distinct()
+        val cachedCanonicalBySeason = canonicalSeasonsNeeded.associateWith { season ->
+            mediaRepository.peekCachedSeasonEpisodes(tmdbId, season) ?: return null
+        }
+        return identities.mapNotNull { identity ->
+            val episodesForSeason = cachedCanonicalBySeason[identity.tmdbSeason] ?: return@mapNotNull null
+            episodesForSeason.find { it.episodeNumber == identity.tmdbEpisode }?.copy(
+                seasonNumber = identity.displaySeason,
+                episodeNumber = identity.displayEpisode,
+                identity = identity
+            )
+        }
+    }
     private fun autoPlaySingleSourceKey() = profileManager.profileBooleanKey("auto_play_single_source")
     private fun autoPlayMinQualityKey() = profileManager.profileStringKey("auto_play_min_quality")
     private fun showBudgetKey() = profileManager.profileBooleanKey("show_budget_on_home")
@@ -296,6 +368,9 @@ class DetailsViewModel @Inject constructor(
         homeServerAppendJob?.cancel()
         streamListPrewarmJob?.cancel()
         focusedStreamPrewarmJob?.cancel()
+        seasonLoadJob?.cancel()
+        seasonPrefetchJob?.cancel()
+        seasonLoadRequestedSeason = -1
         lastStreamListPrewarmKey = ""
 
         viewModelScope.launch {
@@ -336,7 +411,9 @@ class DetailsViewModel @Inject constructor(
                     it.id == mediaId && it.mediaType == mediaType
                 }
                 val cachedFullItem = mediaRepository.getCachedFullItem(mediaType, mediaId)
-                val cachedItem = cachedFullItem ?: mediaRepository.getCachedItem(mediaType, mediaId)
+                val cachedItem = cachedFullItem
+                    ?: mediaRepository.getCachedItem(mediaType, mediaId)
+                    ?: mediaRepository.getCachedItemFromDisk(mediaType, mediaId)
                 val initialItem = cachedItem ?: previousItem
                 val cachedLogoUrl = mediaRepository.peekCachedLogoUrl(mediaType, mediaId)
                     ?: previousState.logoUrl?.takeIf { previousMatches }
@@ -437,30 +514,14 @@ class DetailsViewModel @Inject constructor(
                     _uiState.value = block(_uiState.value)
                 }
 
-                if (mediaType == MediaType.TV) {
-                    launch {
-                        val firstEpisodes = runCatching { episodesDeferred?.await() }.getOrNull()
-                        if (!firstEpisodes.isNullOrEmpty()) {
-                            val episodeItem = runCatching { itemDeferred.await() }.getOrNull() ?: initialItem
-                            val displayedEpisodes = normalizeAnimeEpisodesForDisplay(
-                                tmdbId = mediaId,
-                                displaySeason = seasonToLoad,
-                                item = episodeItem,
-                                canonicalEpisodes = firstEpisodes
-                            )
-                            updateState { state ->
-                                if (state.currentSeason == seasonToLoad && state.episodes == displayedEpisodes) {
-                                    state
-                                } else {
-                                    state.copy(
-                                        episodes = displayedEpisodes,
-                                        currentSeason = seasonToLoad
-                                    )
-                                }
-                            }
-                        }
+                val isAnime = mediaType == MediaType.TV && (
+                    animeMapper.isAnimeContent(mediaId, initialItem?.genreIds.orEmpty(), initialItem?.originalLanguage)
+                )
+                val animeStructureDeferred = if (isAnime) {
+                    async(Dispatchers.IO) {
+                        animeMapper.resolveAnimeSeasonStructure(mediaId)
                     }
-                }
+                } else null
 
                 val loadedItem = runCatching { itemDeferred.await() }.getOrNull()
                 val item = loadedItem ?: initialItem
@@ -474,14 +535,79 @@ class DetailsViewModel @Inject constructor(
                 val mergedItem = mergeItem(item, initialItem)
                 val hasTrustedTvDetails = mediaType != MediaType.TV || loadedItem != null || cachedFullItem != null
 
-                // Get total seasons for TV shows (stored in totalEpisodes field)
-                val totalSeasons = if (mediaType == MediaType.TV) {
-                    if (hasTrustedTvDetails) {
+                val isActuallyAnime = mediaType == MediaType.TV && (
+                    isAnime || animeMapper.isAnimeContent(mediaId, mergedItem.genreIds, mergedItem.originalLanguage)
+                )
+                val structure = if (isActuallyAnime) {
+                    animeStructureDeferred?.await() ?: animeMapper.resolveAnimeSeasonStructure(mediaId)
+                } else null
+
+                animeSeasonStructure = structure
+
+                // Resolve TV show seasonal episodes directly without intermediate layout flash
+                val resolvedTotalSeasons: Int
+                val resolvedCurrentSeason: Int
+                val resolvedEpisodes: List<Episode>
+                val displayTarget: EpisodeIdentity?
+
+                if (structure != null) {
+                    val canonicalTargetSeason = seasonToLoad
+                    val canonicalTargetEpisode = initialEpisode ?: 1
+                    val target = structure.identityForTmdb(canonicalTargetSeason, canonicalTargetEpisode)
+                    val displaySeason = target?.displaySeason ?: seasonToLoad.coerceIn(1, structure.seasonCount)
+                    val episodes = loadAnimeDisplaySeason(mediaId, displaySeason, structure)
+
+                    resolvedTotalSeasons = structure.seasonCount
+                    resolvedCurrentSeason = displaySeason
+                    resolvedEpisodes = episodes
+                    displayTarget = target
+
+                    // Pre-fetch all underlying TMDB seasons in background for 0ms season transitions
+                    launch(Dispatchers.IO) {
+                        val neededTmdbSeasons = structure.seasons.values.flatten().map { it.tmdbSeason }.distinct()
+                        for (s in neededTmdbSeasons) {
+                            if (isCurrentRequest() && mediaRepository.peekCachedSeasonEpisodes(mediaId, s) == null) {
+                                runCatching { mediaRepository.getSeasonEpisodes(mediaId, s) }
+                            }
+                        }
+                    }
+                } else if (mediaType == MediaType.TV) {
+                    val tmdbSeasons = if (hasTrustedTvDetails) {
                         mergedItem.totalEpisodes?.coerceAtLeast(1) ?: 1
                     } else {
                         1
                     }
-                } else 1
+                    val canonicalEpisodes = runCatching { episodesDeferred?.await() }.getOrNull() ?: emptyList()
+                    val displayedEpisodes = normalizeAnimeEpisodesForDisplay(
+                        tmdbId = mediaId,
+                        displaySeason = seasonToLoad,
+                        item = mergedItem,
+                        canonicalEpisodes = canonicalEpisodes
+                    )
+
+                    resolvedTotalSeasons = tmdbSeasons
+                    resolvedCurrentSeason = seasonToLoad
+                    resolvedEpisodes = displayedEpisodes
+                    displayTarget = null
+
+                    // Pre-fetch remaining seasons in background
+                    if (tmdbSeasons > 1) {
+                        launch(Dispatchers.IO) {
+                            for (s in 1..tmdbSeasons) {
+                                if (s != seasonToLoad && isCurrentRequest()) {
+                                    if (mediaRepository.peekCachedSeasonEpisodes(mediaId, s) == null) {
+                                        runCatching { mediaRepository.getSeasonEpisodes(mediaId, s) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    resolvedTotalSeasons = 1
+                    resolvedCurrentSeason = 1
+                    resolvedEpisodes = emptyList()
+                    displayTarget = null
+                }
 
                 // Map genre IDs to names
                 val genreMap = if (mediaType == MediaType.TV) tvGenres else movieGenres
@@ -513,80 +639,54 @@ class DetailsViewModel @Inject constructor(
                 }
                 val itemWithWatchedStatus = mergedItem.copy(isWatched = isWatched)
 
+                val initialSeasonIndex = (resolvedCurrentSeason - 1).coerceAtLeast(0)
+
                 val baseState = _uiState.value.copy(
                     isLoading = false,
                     item = itemWithWatchedStatus,
-                    totalSeasons = totalSeasons,
-                    currentSeason = seasonToLoad,
+                    totalSeasons = resolvedTotalSeasons,
+                    currentSeason = resolvedCurrentSeason,
+                    episodes = resolvedEpisodes,
+                    initialSeasonIndex = initialSeasonIndex,
                     genres = genreNames,
                     language = languageName,
                     budget = visibleBudget,
-                    showStatus = showStatus
+                    showStatus = showStatus,
+                    playSeason = displayTarget?.displaySeason ?: _uiState.value.playSeason,
+                    playEpisode = displayTarget?.displayEpisode ?: _uiState.value.playEpisode,
+                    playTmdbSeason = seasonToLoad,
+                    playTmdbEpisode = initialEpisode ?: 1,
+                    playLabel = displayTarget?.let {
+                        if (hasExplicitEpisodeTarget || resolvedEpisodes.any { ep -> ep.isWatched }) {
+                            context.getString(
+                                R.string.continue_season_episode,
+                                it.displaySeason,
+                                it.displayEpisode
+                            )
+                        } else {
+                            context.getString(R.string.play_start_s1e1)
+                        }
+                    } ?: _uiState.value.playLabel
                 )
                 _uiState.value = baseState
 
-                // ARM/Kitsu may expose several anime seasons for a single TMDB season. Resolve this
-                // after the fast TMDB details path and only replace the UI when the mapping is
-                // complete; otherwise the existing TMDB structure remains untouched.
-                if (
-                    mediaType == MediaType.TV &&
-                    animeMapper.isAnimeContent(mediaId, mergedItem.genreIds, mergedItem.originalLanguage)
-                ) {
-                    launch {
-                        val structure = animeMapper.resolveAnimeSeasonStructure(mediaId)
-                            ?: return@launch
-                        if (!isCurrentRequest()) return@launch
-                        val currentState = _uiState.value
-                        val canonicalTargetSeason = currentState.playTmdbSeason
-                            ?: currentState.playSeason
-                            ?: seasonToLoad
-                        val canonicalTargetEpisode = currentState.playTmdbEpisode
-                            ?: currentState.playEpisode
-                            ?: initialEpisode
-                            ?: 1
-                        val displayTarget = structure.identityForTmdb(
-                            canonicalTargetSeason,
-                            canonicalTargetEpisode
-                        )
-                        val requestedDisplaySeason = displayTarget?.displaySeason
-                            ?: seasonToLoad.coerceIn(1, structure.seasonCount)
-                        val animeEpisodes = loadAnimeDisplaySeason(mediaId, requestedDisplaySeason, structure)
-                        if (animeEpisodes.isEmpty() || !isCurrentRequest()) return@launch
-                        animeSeasonStructure = structure
-                        updateState { state ->
-                            state.copy(
-                                totalSeasons = structure.seasonCount,
-                                currentSeason = requestedDisplaySeason,
-                                episodes = animeEpisodes,
-                                initialSeasonIndex = requestedDisplaySeason - 1,
-                                playSeason = displayTarget?.displaySeason ?: state.playSeason,
-                                playEpisode = displayTarget?.displayEpisode ?: state.playEpisode,
-                                playTmdbSeason = canonicalTargetSeason,
-                                playTmdbEpisode = canonicalTargetEpisode,
-                                playLabel = displayTarget?.let {
-                                    context.getString(
-                                        R.string.continue_season_episode,
-                                        it.displaySeason,
-                                        it.displayEpisode
-                                    )
-                                } ?: state.playLabel
-                            )
-                        }
-                        val displayProgress = runCatching { fetchSeasonProgress(mediaId) }.getOrNull()
-                        if (animeSeasonStructure === structure && isCurrentRequest()) {
-                            updateState { state ->
-                                state.copy(
-                                    seasonProgress = displayProgress?.progress ?: state.seasonProgress,
-                                    totalSeasons = structure.seasonCount
-                                )
-                            }
-                        }
+                launch {
+                    val externalRatings = runCatching {
+                        mdbListRepository.getExternalRatings(mediaType, mediaId)
+                    }.getOrDefault(emptyList())
+                    if (externalRatings.isNotEmpty()) {
+                        updateState { state -> state.copy(externalRatings = externalRatings) }
                     }
                 }
 
-                // Calculate initial season index (0-based)
-                val initialSeasonIndex = (seasonToLoad - 1).coerceAtLeast(0)
-                updateState { it.copy(initialSeasonIndex = initialSeasonIndex) }
+                if (mediaType == MediaType.TV) {
+                    launch {
+                        val progress = runCatching { fetchSeasonProgress(mediaId) }.getOrNull()
+                        if (isCurrentRequest() && progress != null) {
+                            updateState { state -> state.copy(seasonProgress = progress.progress) }
+                        }
+                    }
+                }
 
                 launch {
                     val externalIds = runCatching { externalIdsDeferred.await() }.getOrNull()
@@ -793,12 +893,10 @@ class DetailsViewModel @Inject constructor(
                                     nextUnwatchedEpisode?.episodeNumber ?: if (hasWatchedEpisodes) 1 else state.playEpisode
                                 } else state.playEpisode,
                                 playLabel = if (shouldUseEpisodeTarget) {
-                                    if (nextUnwatchedEpisode != null) {
+                                    if (hasWatchedEpisodes && nextUnwatchedEpisode != null) {
                                         context.getString(R.string.continue_season_episode, nextUnwatchedEpisode.seasonNumber, nextUnwatchedEpisode.episodeNumber)
-                                    } else if (hasWatchedEpisodes) {
-                                        context.getString(R.string.play_start_s1e1)
                                     } else {
-                                        state.playLabel
+                                        context.getString(R.string.play_start_s1e1)
                                     }
                                 } else state.playLabel
                             )
@@ -899,7 +997,11 @@ class DetailsViewModel @Inject constructor(
                                 playTmdbSeason = playTarget?.season,
                                 playTmdbEpisode = playTarget?.episode,
                                 playLabel = displayTarget?.let {
-                                    context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                                    if (playTarget?.label == context.getString(R.string.play_start_s1e1)) {
+                                        context.getString(R.string.play_start_s1e1)
+                                    } else {
+                                        context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                                    }
                                 } ?: playTarget?.label,
                                 playPositionMs = playTarget?.positionMs
                             )
@@ -919,7 +1021,11 @@ class DetailsViewModel @Inject constructor(
                                 playTmdbSeason = playTarget?.season,
                                 playTmdbEpisode = playTarget?.episode,
                                 playLabel = displayTarget?.let {
-                                    context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                                    if (playTarget?.label == context.getString(R.string.play_start_s1e1)) {
+                                        context.getString(R.string.play_start_s1e1)
+                                     } else {
+                                        context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                                    }
                                 } ?: playTarget?.label,
                                 playPositionMs = playTarget?.positionMs
                             )
@@ -928,6 +1034,8 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 if (mediaType == MediaType.TV) {
+                    prefetchAdjacentSeasons(mediaId, seasonToLoad, baseState.totalSeasons)
+
                     launch {
                         val titleForPrefetch = baseState.item?.title.orEmpty().ifBlank { mergedItem.title }
                         if (titleForPrefetch.isBlank()) {
@@ -981,23 +1089,58 @@ class DetailsViewModel @Inject constructor(
 
     fun loadSeason(seasonNumber: Int) {
         if (currentMediaType != MediaType.TV) return
-        // Don't reload if already on this season
-        if (_uiState.value.currentSeason == seasonNumber && _uiState.value.episodes.isNotEmpty()) return
-        // Ignore a duplicate request for a load that is already in flight (the click handler and the
-        // hover effect can both ask for the same season).
+        // Don't reload if already on this season with loaded episodes and not in loading state
+        if (_uiState.value.currentSeason == seasonNumber && _uiState.value.episodes.isNotEmpty() && !_uiState.value.isSeasonLoading) return
+        // Ignore a duplicate request for a load that is already in flight
         if (seasonLoadRequestedSeason == seasonNumber && seasonLoadJob?.isActive == true) return
 
-        // Cancel any in-flight season load so only the most recently requested season can win —
-        // otherwise an older, slower request could finish last and display the wrong season's
-        // episodes for the currently selected season.
         seasonLoadJob?.cancel()
         seasonLoadRequestedSeason = seasonNumber
-        seasonLoadJob = viewModelScope.launch {
-            // Keep current episodes visible while loading new ones
-            val currentEpisodes = _uiState.value.episodes
 
+        val structure = animeSeasonStructure
+        // Fast-path: Check in-memory cache synchronously for instant 0ms transition!
+        val cachedEpisodes = if (structure != null) {
+            peekAnimeDisplaySeason(currentMediaId, seasonNumber, structure)
+        } else {
+            mediaRepository.peekCachedSeasonEpisodes(currentMediaId, seasonNumber)?.let { canonical ->
+                normalizeAnimeEpisodesForDisplay(
+                    tmdbId = currentMediaId,
+                    displaySeason = seasonNumber,
+                    item = _uiState.value.item,
+                    canonicalEpisodes = canonical
+                )
+            }
+        }
+        if (cachedEpisodes != null && cachedEpisodes.isNotEmpty()) {
+            val watchedKeys = traktRepository.getWatchedEpisodesFromCache()
+            val decorated = if (watchedKeys.isNotEmpty()) {
+                cachedEpisodes.map { ep ->
+                    val key = "show_tmdb:$currentMediaId:${ep.tmdbSeasonNumber}:${ep.tmdbEpisodeNumber}"
+                    if (watchedKeys.contains(key)) ep.copy(isWatched = true) else ep
+                }
+            } else {
+                val progress = _uiState.value.seasonProgress[seasonNumber]
+                val isFullyWatchedSeason = progress != null && progress.second > 0 && progress.first >= progress.second
+                if (isFullyWatchedSeason) cachedEpisodes.map { it.copy(isWatched = true) } else cachedEpisodes
+            }
+            _uiState.value = _uiState.value.copy(
+                currentSeason = seasonNumber,
+                episodes = decorated,
+                isSeasonLoading = false
+            )
+            prefetchAdjacentSeasons(currentMediaId, seasonNumber, _uiState.value.totalSeasons)
+            return
+        }
+
+        // Cache miss: Optimistically update selected season pill immediately and show loading skeleton
+        _uiState.value = _uiState.value.copy(
+            currentSeason = seasonNumber,
+            episodes = emptyList(),
+            isSeasonLoading = true
+        )
+
+        seasonLoadJob = viewModelScope.launch {
             try {
-                val structure = animeSeasonStructure
                 val episodes = if (structure != null) {
                     loadAnimeDisplaySeason(currentMediaId, seasonNumber, structure)
                 } else {
@@ -1031,29 +1174,53 @@ class DetailsViewModel @Inject constructor(
                         }
                     }
 
-                    // Re-check after the watched-status fetch (another suspension point) so a
-                    // superseded request never overwrites the newer season's episodes.
+                    // Re-check after the watched-status fetch so a superseded request never overwrites
                     if (seasonLoadRequestedSeason != seasonNumber) return@launch
                     _uiState.value = _uiState.value.copy(
                         episodes = decoratedEpisodes,
-                        currentSeason = seasonNumber
+                        currentSeason = seasonNumber,
+                        isSeasonLoading = false
                     )
+                    prefetchAdjacentSeasons(currentMediaId, seasonNumber, _uiState.value.totalSeasons)
                 } else {
-                    // If no episodes returned, keep current and show error
                     _uiState.value = _uiState.value.copy(
+                        isSeasonLoading = false,
                         toastMessage = context.getString(R.string.details_no_episodes_season, seasonNumber),
                         toastType = ToastType.ERROR
                     )
                 }
             } catch (e: CancellationException) {
-                // Superseded by a newer season request — leave the newer load's state untouched.
+                // Superseded by a newer season request
                 throw e
             } catch (e: Exception) {
-                // On error, keep showing current episodes
                 _uiState.value = _uiState.value.copy(
+                    isSeasonLoading = false,
                     toastMessage = context.getString(R.string.details_failed_load_season, seasonNumber),
                     toastType = ToastType.ERROR
                 )
+            }
+        }
+    }
+
+    private fun prefetchAdjacentSeasons(mediaId: Int, selectedSeason: Int, totalSeasons: Int) {
+        seasonPrefetchJob?.cancel()
+        val seasons = listOf(selectedSeason - 1, selectedSeason + 1)
+            .filter { it in 1..totalSeasons }
+        if (seasons.isEmpty()) return
+
+        val structure = animeSeasonStructure
+        seasonPrefetchJob = viewModelScope.launch(Dispatchers.IO) {
+            seasons.forEach { season ->
+                try {
+                    if (structure != null) {
+                        loadAnimeDisplaySeason(mediaId, season, structure)
+                    } else {
+                        mediaRepository.getSeasonEpisodes(mediaId, season)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
             }
         }
     }
@@ -1333,8 +1500,12 @@ class DetailsViewModel @Inject constructor(
             // Force-refresh watched episodes from backend (not just in-memory cache)
             // to pick up episodes marked watched during playback.
             val watchedKeys = if (mediaType == MediaType.TV) {
-                runCatching { traktRepository.getWatchedEpisodesForShow(tmdbId) }
-                    .getOrDefault(traktRepository.getWatchedEpisodesFromCache())
+                try {
+                    traktRepository.getWatchedEpisodesForShow(tmdbId)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    traktRepository.getWatchedEpisodesFromCache()
+                }
             } else {
                 emptySet()
             }
@@ -1408,7 +1579,11 @@ class DetailsViewModel @Inject constructor(
                 playTmdbSeason = playTarget?.season ?: latestState.playTmdbSeason,
                 playTmdbEpisode = playTarget?.episode ?: latestState.playTmdbEpisode,
                 playLabel = displayPlayTarget?.let {
-                    context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                    if (playTarget?.label == context.getString(R.string.play_start_s1e1)) {
+                        context.getString(R.string.play_start_s1e1)
+                    } else {
+                        context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                    }
                 } ?: playTarget?.label ?: latestState.playLabel,
                 playPositionMs = playTarget?.positionMs ?: 0L
             )
@@ -1421,25 +1596,35 @@ class DetailsViewModel @Inject constructor(
     private suspend fun deriveNextUnwatchedPlayTarget(tmdbId: Int, watchedKeys: Set<String>): PlayTarget? {
         return try {
             val tvDetails = tmdbApi.getTvDetails(tmdbId, Constants.TMDB_API_KEY)
+            val hasWatchedForShow = watchedKeys.any { it.startsWith("show_tmdb:$tmdbId:") }
             for (seasonNum in 1..tvDetails.numberOfSeasons) {
-                val seasonDetails = runCatching {
+                val seasonDetails = try {
                     tmdbApi.getTvSeason(tmdbId, seasonNum, Constants.TMDB_API_KEY)
-                }.getOrNull() ?: continue
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    null
+                } ?: continue
                 val firstUnwatched = seasonDetails.episodes.firstOrNull { episode ->
                     val key = "show_tmdb:$tmdbId:$seasonNum:${episode.episodeNumber}"
                     !watchedKeys.contains(key)
                 }
                 if (firstUnwatched != null) {
+                    val label = if (hasWatchedForShow) {
+                        context.getString(R.string.continue_season_episode, seasonNum, firstUnwatched.episodeNumber)
+                    } else {
+                        context.getString(R.string.play_start_s1e1)
+                    }
                     return PlayTarget(
                         season = seasonNum,
                         episode = firstUnwatched.episodeNumber,
-                        label = context.getString(R.string.continue_season_episode, seasonNum, firstUnwatched.episodeNumber)
+                        label = label
                     )
                 }
             }
             // All episodes watched — offer restart
             PlayTarget(season = 1, episode = 1, label = context.getString(R.string.play_start_s1e1))
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
             null
         }
     }
@@ -2131,7 +2316,11 @@ class DetailsViewModel @Inject constructor(
                     playTmdbSeason = playTarget?.season ?: _uiState.value.playTmdbSeason,
                     playTmdbEpisode = playTarget?.episode ?: _uiState.value.playTmdbEpisode,
                     playLabel = displayPlayTarget?.let {
-                        context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                        if (playTarget?.label == context.getString(R.string.play_start_s1e1)) {
+                            context.getString(R.string.play_start_s1e1)
+                        } else {
+                            context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                        }
                     } ?: playTarget?.label ?: _uiState.value.playLabel,
                     playPositionMs = playTarget?.positionMs ?: _uiState.value.playPositionMs,
                     toastMessage = context.getString(R.string.details_season_marked_watched, season),
@@ -2451,6 +2640,7 @@ class DetailsViewModel @Inject constructor(
                 else -> cloudResume
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             null
         }
     }
@@ -2460,10 +2650,13 @@ class DetailsViewModel @Inject constructor(
             val entry = watchHistoryRepository.getLatestProgress(mediaType, tmdbId) ?: return null
             if (mediaType == MediaType.TV && entry.season != null && entry.episode != null) {
                 val watchedKey = "show_tmdb:$tmdbId:${entry.season}:${entry.episode}"
-                val isWatched = runCatching {
+                val isWatched = try {
                     traktRepository.getWatchedEpisodesFromCache().contains(watchedKey) ||
                         traktRepository.getWatchedEpisodesForShow(tmdbId).contains(watchedKey)
-                }.getOrDefault(false)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    false
+                }
                 if (isWatched) return null
             }
             buildResumeFromProgress(
@@ -2475,7 +2668,8 @@ class DetailsViewModel @Inject constructor(
                 positionSeconds = entry.position_seconds,
                 durationSeconds = entry.duration_seconds
             )
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
             null
         }
     }

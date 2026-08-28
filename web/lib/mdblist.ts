@@ -10,6 +10,12 @@ export interface MdbMediaRef {
   episode?: number | null;
 }
 
+export interface MdbExternalRating {
+  source: string;
+  label: string;
+  value: string;
+}
+
 /**
  * MDBList client. Per-profile alternative to Trakt, authenticated with a static
  * user API key (mdblist.com/preferences). All calls go through the
@@ -73,6 +79,24 @@ export class MdbListClient {
     } catch {
       return false;
     }
+  }
+
+  async externalRatings(mediaType: "movie" | "tv", tmdbId: number): Promise<MdbExternalRating[]> {
+    if (!this.key || !tmdbId) return [];
+    const cacheKey = `arvio.web.mdblist.ratings.v1:${mediaType}:${tmdbId}`;
+    const cached = loadStored<{ at: number; ratings: MdbExternalRating[] } | null>(cacheKey, null);
+    if (cached && Date.now() - cached.at < 12 * 60 * 60 * 1000) return cached.ratings;
+
+    const apiType = mediaType === "tv" ? "show" : "movie";
+    const response = await this.request<MdbMediaInfo>(`tmdb/${apiType}/${tmdbId}/`, {}).catch(() => null);
+    const ratings = (response?.ratings ?? [])
+      .map(normalizeExternalRating)
+      .filter((rating): rating is MdbExternalRating => Boolean(rating))
+      .filter((rating, index, all) => all.findIndex((item) => item.source === rating.source) === index)
+      .sort((a, b) => ratingSourceOrder(a.source) - ratingSourceOrder(b.source))
+      .slice(0, 6);
+    saveStored(cacheKey, { at: Date.now(), ratings });
+    return ratings;
   }
 
   // ===== Reads (Trakt-compatible shapes) =====
@@ -320,4 +344,59 @@ interface MdbWatchedResponse {
   movies?: MdbWatchedMovieRow[];
   episodes?: MdbWatchedEpisodeRow[];
   pagination?: { has_more?: boolean };
+}
+
+interface MdbMediaInfo {
+  ratings?: MdbRatingRow[];
+}
+
+interface MdbRatingRow {
+  source?: string;
+  value?: number | string | null;
+  score?: number | string | null;
+}
+
+const MDB_RATING_LABELS: Record<string, string> = {
+  tomatoes: "Rotten Tomatoes",
+  popcorn: "RT Audience",
+  metacritic: "Metacritic",
+  metacriticuser: "Metacritic Users",
+  letterboxd: "Letterboxd",
+  trakt: "Trakt",
+  tmdb: "TMDB",
+  myanimelist: "MyAnimeList",
+  rogerebert: "Roger Ebert"
+};
+
+const MDB_RATING_ORDER = ["tomatoes", "popcorn", "metacritic", "letterboxd", "trakt", "tmdb", "myanimelist", "rogerebert", "metacriticuser"];
+
+function ratingSourceOrder(source: string) {
+  const index = MDB_RATING_ORDER.indexOf(source);
+  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function numericRating(value: number | string | null | undefined): number | null {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function decimalRating(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function normalizeExternalRating(row: MdbRatingRow): MdbExternalRating | null {
+  const source = row.source?.trim().toLowerCase() ?? "";
+  if (!source || source === "imdb") return null;
+  const label = MDB_RATING_LABELS[source];
+  if (!label) return null;
+  const value = numericRating(row.value);
+  const score = numericRating(row.score);
+  const display = source === "tomatoes" || source === "popcorn" || source === "metacritic" || source === "metacriticuser"
+    ? score == null ? null : `${Math.round(score)}%`
+    : value != null
+      ? decimalRating(value)
+      : score != null
+        ? decimalRating(score / 10)
+        : null;
+  return display ? { source, label, value: display } : null;
 }

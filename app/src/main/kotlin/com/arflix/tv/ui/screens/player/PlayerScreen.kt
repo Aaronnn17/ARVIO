@@ -7,6 +7,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import com.arflix.tv.util.findActivity
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -340,8 +341,14 @@ fun PlayerScreen(
         }
         onDispose {
             if (window != null && deviceType != com.arflix.tv.util.DeviceType.TV) {
+                @Suppress("DEPRECATION")
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
                 val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
+                controller.systemBarsBehavior =
+                    androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
                 controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                controller.isAppearanceLightStatusBars = false
+                controller.isAppearanceLightNavigationBars = false
             }
         }
     }
@@ -419,8 +426,29 @@ fun PlayerScreen(
     var pendingNextSourceName by remember { mutableStateOf<String?>(null) }
     var pendingNextBingeGroup by remember { mutableStateOf<String?>(null) }
     var nextEpisodeIdentity by remember { mutableStateOf<EpisodeIdentity?>(null) }
+    var nextEpisodeAirDateSource by remember { mutableStateOf<PlaybackEpisodeKey?>(null) }
+    var nextEpisodeAirDateResolution by remember {
+        mutableStateOf<NextEpisodeAirDateResolution>(NextEpisodeAirDateResolution.Pending)
+    }
     var previousEpisodeIdentity by remember { mutableStateOf<EpisodeIdentity?>(null) }
-    LaunchedEffect(mediaId, seasonNumber, episodeNumber, tmdbSeasonNumber, tmdbEpisodeNumber, kitsuId, kitsuEpisodeNumber) {
+    LaunchedEffect(mediaType, mediaId, seasonNumber, episodeNumber, tmdbSeasonNumber, tmdbEpisodeNumber, kitsuId, kitsuEpisodeNumber) {
+        nextEpisodeIdentity = null
+        nextEpisodeAirDateSource = if (
+            mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null
+        ) {
+            PlaybackEpisodeKey(
+                mediaId = mediaId,
+                seasonNumber = seasonNumber,
+                episodeNumber = episodeNumber,
+                tmdbSeasonNumber = tmdbSeasonNumber ?: seasonNumber,
+                tmdbEpisodeNumber = tmdbEpisodeNumber ?: episodeNumber,
+                kitsuId = kitsuId,
+                kitsuEpisodeNumber = kitsuEpisodeNumber,
+            )
+        } else {
+            null
+        }
+        nextEpisodeAirDateResolution = NextEpisodeAirDateResolution.Pending
         if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null) {
             val current = EpisodeIdentity(
                 displaySeason = seasonNumber,
@@ -430,10 +458,20 @@ fun PlayerScreen(
                 kitsuId = kitsuId,
                 kitsuEpisode = kitsuEpisodeNumber
             )
-            nextEpisodeIdentity = viewModel.adjacentEpisodeIdentity(mediaId, current, forward = true)
+            val next = viewModel.adjacentEpisodeIdentity(mediaId, current, forward = true)
+            nextEpisodeIdentity = next
             previousEpisodeIdentity = viewModel.adjacentEpisodeIdentity(mediaId, current, forward = false)
+            nextEpisodeAirDateResolution = if (next == null) {
+                NextEpisodeAirDateResolution.Blocked(
+                    NextEpisodeAirDateBlockReason.MissingEpisode,
+                )
+            } else {
+                viewModel.resolveNextEpisodeAirDate(mediaId, next)
+            }
         } else {
-            nextEpisodeIdentity = null
+            nextEpisodeAirDateResolution = NextEpisodeAirDateResolution.Blocked(
+                NextEpisodeAirDateBlockReason.MissingEpisode,
+            )
             previousEpisodeIdentity = null
         }
     }
@@ -2473,7 +2511,15 @@ fun PlayerScreen(
                 seasonNumber != null &&
                 episodeNumber != null
             ) {
-                PlaybackEpisodeKey(mediaId, seasonNumber, episodeNumber)
+                PlaybackEpisodeKey(
+                    mediaId = mediaId,
+                    seasonNumber = seasonNumber,
+                    episodeNumber = episodeNumber,
+                    tmdbSeasonNumber = tmdbSeasonNumber ?: seasonNumber,
+                    tmdbEpisodeNumber = tmdbEpisodeNumber ?: episodeNumber,
+                    kitsuId = kitsuId,
+                    kitsuEpisodeNumber = kitsuEpisodeNumber,
+                )
             } else {
                 null
             }
@@ -2484,20 +2530,22 @@ fun PlayerScreen(
                         !showSourceMenu &&
                         !showSubtitleMenu &&
                         uiState.error == null &&
-                        uiState.autoPlayNext,
+                        uiState.autoPlayNext &&
+                        nextEpisodeIdentity != null &&
+                        nextEpisodeAirDateSource == endedEpisodeKey,
+                    airDateResolution = nextEpisodeAirDateResolution,
                 )
             ) {
                 val selected = uiState.selectedStream
-                val next = nextEpisodeIdentity ?: EpisodeIdentity.canonical(
-                    tmdbSeasonNumber ?: endedEpisodeKey.seasonNumber,
-                    (tmdbEpisodeNumber ?: endedEpisodeKey.episodeNumber) + 1
-                )
-                pendingNextIdentity = next
-                pendingNextAddonId = selected?.addonId?.takeIf { it.isNotBlank() }
-                pendingNextSourceName = selected?.source?.takeIf { it.isNotBlank() }
-                pendingNextBingeGroup = selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
-                nextEpisodePromptButton = 0
-                showNextEpisodePrompt = true
+                val next = nextEpisodeIdentity
+                if (next != null) {
+                    pendingNextIdentity = next
+                    pendingNextAddonId = selected?.addonId?.takeIf { it.isNotBlank() }
+                    pendingNextSourceName = selected?.source?.takeIf { it.isNotBlank() }
+                    pendingNextBingeGroup = selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                    nextEpisodePromptButton = 0
+                    showNextEpisodePrompt = true
+                }
             }
 
             val tickDelayMs = when {
@@ -2657,8 +2705,8 @@ fun PlayerScreen(
     val subtitleSizePref = uiState.subtitleSize
     val subtitleColorPref = uiState.subtitleColor
     val subtitleStylePref = uiState.subtitleStyle
+    val subtitleFontPref = uiState.subtitleFont
     val subtitleStylizedPref = uiState.subtitleStylized
-    val subtitleOffsetPref = uiState.subtitleOffset
     val aspectModeLabel = when (playerResizeMode) {
         AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
         AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
@@ -3150,61 +3198,17 @@ fun PlayerScreen(
 
                         // Enable subtitle view with styling based on user preference
                         subtitleView?.apply {
-                            val subSizeSp = when (subtitleSizePref) {
-                                "Small" -> 18f; "Large" -> 30f; "Extra Large" -> 36f; else -> 24f
-                            }
-                            val subFgColor = when (subtitleColorPref) {
-                                "Yellow" -> android.graphics.Color.YELLOW
-                                "Green" -> android.graphics.Color.GREEN
-                                "Cyan" -> android.graphics.Color.CYAN
-                                else -> android.graphics.Color.WHITE
-                            }
-                            val subTypeface = when (subtitleStylePref) {
-                                "Normal" -> android.graphics.Typeface.DEFAULT
-                                "Background" -> android.graphics.Typeface.DEFAULT_BOLD
-                                else -> android.graphics.Typeface.DEFAULT_BOLD
-                            }
-                            val subEdgeType = when (subtitleStylePref) {
-                                "Normal" -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
-                                "Background" -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
-                                else -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE
-                            }
-                            val subBgColor = when (subtitleStylePref) {
-                                "Background" -> android.graphics.Color.argb(180, 0, 0, 0)
-                                else -> android.graphics.Color.TRANSPARENT
-                            }
-                            setStyle(
-                                androidx.media3.ui.CaptionStyleCompat(
-                                    subFgColor,
-                                    android.graphics.Color.TRANSPARENT,
-                                    subBgColor,
-                                    subEdgeType,
-                                    android.graphics.Color.BLACK,
-                                    subTypeface
-                                )
+                            applySubtitleAppearance(
+                                context = ctx,
+                                sizePreference = subtitleSizePref,
+                                sizePercent = subtitleSizePct,
+                                verticalPercent = subtitleVerticalPct,
+                                colorPreference = subtitleColorPref,
+                                stylePreference = subtitleStylePref,
+                                fontPreference = subtitleFontPref,
+                                preserveEmbeddedStyles = subtitleStylizedPref,
+                                inPictureInPicture = isInPipMode,
                             )
-                            val pipSubScale = if (isInPipMode) 0.4f else 1f
-                            setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subSizeSp * pipSubScale)
-                            val bottomPaddingFraction = when (subtitleOffsetPref) {
-                                "Bottom" -> 0.02f
-                                "Low" -> 0.08f
-                                "Medium" -> 0.15f
-                                "High" -> 0.25f
-                                else -> 0.02f
-                            }
-                            setBottomPaddingFraction(bottomPaddingFraction)
-
-                            if (subtitleStylizedPref) {
-                                // Stylized mode: let Media3 render embedded ASS/SSA styles
-                                // (colors, fonts, positioning, z-order). User prefs are
-                                // only used as a fallback CaptionStyle for plain SRT/VTT.
-                                setApplyEmbeddedStyles(true)
-                                setApplyEmbeddedFontSizes(true)
-                            } else {
-                                // Uniform mode: override everything with user preferences
-                                setApplyEmbeddedStyles(false)
-                                setApplyEmbeddedFontSizes(false)
-                            }
                         }
                     }
                 },
@@ -3214,12 +3218,17 @@ fun PlayerScreen(
                     playerView.resizeMode = playerResizeMode
                     playerView.setUseVideoFrameForSubtitles(useVideoFrameSubtitleViewport)
                     playerView.subtitleView?.apply {
-                        val baseSizeSp = when (subtitleSizePref) {
-                            "Small" -> 18f; "Large" -> 30f; "Extra Large" -> 36f; else -> 24f
-                        }
-                        val pipSubScale = if (isInPipMode) 0.4f else 1f
-                        setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, baseSizeSp * (subtitleSizePct / 100f) * pipSubScale)
-                        setBottomPaddingFraction((subtitleVerticalPct / 100f).coerceIn(0f, 0.5f))
+                        applySubtitleAppearance(
+                            context = playerView.context,
+                            sizePreference = subtitleSizePref,
+                            sizePercent = subtitleSizePct,
+                            verticalPercent = subtitleVerticalPct,
+                            colorPreference = subtitleColorPref,
+                            stylePreference = subtitleStylePref,
+                            fontPreference = subtitleFontPref,
+                            preserveEmbeddedStyles = subtitleStylizedPref,
+                            inPictureInPicture = isInPipMode,
+                        )
                         // "Find best match" without AI showing selects the built-in reference
                         // track under the hood to read its timing — hide its raw (e.g. English)
                         // cues while the scan runs. Display-only: the scan's cue collection
@@ -6020,13 +6029,6 @@ private fun resolveFrameRateOffStrategy(): Int {
     return readMedia3FrameRateConst("VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF", fallback = 0)
 }
 
-private tailrec fun Context.findActivity(): Activity? {
-    return when (this) {
-        is Activity -> this
-        is ContextWrapper -> baseContext.findActivity()
-        else -> null
-    }
-}
 
 private fun readMedia3FrameRateConst(fieldName: String, fallback: Int): Int {
     return runCatching { C::class.java.getField(fieldName).getInt(null) }.getOrDefault(fallback)

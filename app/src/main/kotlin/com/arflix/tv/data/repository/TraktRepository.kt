@@ -1288,10 +1288,14 @@ class TraktRepository @Inject constructor(
      */
     /** True when the active profile syncs Continue Watching from MDBList (not Trakt). */
     suspend fun isMdbListActive(): Boolean =
-        syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST
+        com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in syncProviderStore.readProviders(
+            com.arflix.tv.data.repository.sync.TrackingFeature.CONTINUE_WATCHING
+        )
 
     suspend fun isSimklActive(): Boolean =
-        syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.SIMKL
+        com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.readProviders(
+            com.arflix.tv.data.repository.sync.TrackingFeature.CONTINUE_WATCHING
+        )
 
     suspend fun isAlternativeRemoteActive(): Boolean =
         isMdbListActive() || isSimklActive()
@@ -1302,7 +1306,7 @@ class TraktRepository @Inject constructor(
 
         // MDBList profiles source Continue Watching from MDBList paused sessions
         // (cross-device), reusing the same dismissal/hydration/cache pipeline.
-        if (syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST) {
+        if (isMdbListActive()) {
             return@coroutineScope getMdbListContinueWatching(requestProfileId, forceRefresh)
         }
 
@@ -2029,7 +2033,7 @@ class TraktRepository @Inject constructor(
         // MDBList profiles have no Trakt token; without this branch the Trakt-token check
         // below falls through to local CW and the row shows only device-local history
         // (e.g. a single locally-watched show) instead of the MDBList paused sessions.
-        if (syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST) {
+        if (isMdbListActive()) {
             return getMdbListContinueWatching(profileId, forceRefresh = false)
         }
 

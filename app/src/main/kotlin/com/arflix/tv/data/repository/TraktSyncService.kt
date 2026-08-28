@@ -60,11 +60,6 @@ class TraktSyncService @Inject constructor(
 ) {
     private val TAG = "TraktSyncService"
 
-    /** True when the current profile mirrors watched state to MDBList, not Trakt. */
-    private suspend fun usesMdbList(): Boolean =
-        syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST
-    private suspend fun writesToTrakt(): Boolean =
-        com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in syncProviderStore.writeProviders()
     private val gson = Gson()
     private val clientId = Constants.TRAKT_CLIENT_ID
     private val clientSecret = Constants.TRAKT_CLIENT_SECRET
@@ -85,6 +80,25 @@ class TraktSyncService @Inject constructor(
     private fun accessTokenKey() = profileManager.profileStringKey("trakt_access_token")
     private fun refreshTokenKey() = profileManager.profileStringKey("trakt_refresh_token")
     private fun expiresAtKey() = profileManager.profileLongKey("trakt_expires_at")
+    private fun lastSyncTimeKey() = profileManager.profileStringKey("trakt_last_sync_time")
+    private fun lastSyncMoviesKey() = profileManager.profileStringKey("trakt_last_sync_movies")
+    private fun lastSyncEpisodesKey() = profileManager.profileStringKey("trakt_last_sync_episodes")
+
+    suspend fun saveLocalSyncSummary(
+        lastSyncAt: String,
+        moviesSynced: Int,
+        episodesSynced: Int
+    ) {
+        try {
+            context.traktDataStore.edit { prefs ->
+                prefs[lastSyncTimeKey()] = lastSyncAt
+                prefs[lastSyncMoviesKey()] = moviesSynced.toString()
+                prefs[lastSyncEpisodesKey()] = episodesSynced.toString()
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
+    }
 
     // In-memory cache for current session (fallback if Supabase fails)
     private var cachedWatchedMovies: List<WatchedMovieRecord>? = null
@@ -287,6 +301,13 @@ class TraktSyncService @Inject constructor(
                     // Silently ignore - sync data is already cached locally
                 }
             }
+
+            val nowIso = Instant.now().toString()
+            saveLocalSyncSummary(
+                lastSyncAt = nowIso,
+                moviesSynced = totalMovies,
+                episodesSynced = totalEpisodes
+            )
 
             _syncProgress.value = SyncProgress(
                 status = SyncStatus.COMPLETED,
@@ -491,6 +512,15 @@ class TraktSyncService @Inject constructor(
 
             }
 
+            val currentSummary = getLastSyncSummary()
+            val newTotalMovies = (currentSummary?.moviesSynced ?: 0) + moviesUpdated
+            val newTotalEpisodes = (currentSummary?.episodesSynced ?: 0) + episodesUpdated
+            saveLocalSyncSummary(
+                lastSyncAt = Instant.now().toString(),
+                moviesSynced = newTotalMovies,
+                episodesSynced = newTotalEpisodes
+            )
+
             _syncProgress.value = SyncProgress(
                 status = SyncStatus.COMPLETED,
                 message = if (moviesUpdated == 0 && episodesUpdated == 0) "Already up to date" else "Sync completed!",
@@ -521,8 +551,9 @@ class TraktSyncService @Inject constructor(
         try {
             val userId = getUserId()
             val hasSupabase = userId != null && getSupabaseAuth() != null
-            val useMdbList = usesMdbList()
-            val traktAuth = if (useMdbList || !writesToTrakt()) null else getAuthHeader()
+            val writeProviders = syncProviderStore.writeProviders()
+            val writeMdbList = com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in writeProviders
+            val traktAuth = if (com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in writeProviders) getAuthHeader() else null
 
             val now = Instant.now().toString()
 
@@ -540,8 +571,9 @@ class TraktSyncService @Inject constructor(
                 }
             }
 
-            // 2. Mirror to the active remote (queue on failure or if offline)
-            val remoteSyncOk = if (useMdbList) {
+            // 2. Mirror to every connected/enabled remote (queue on failure or if offline).
+            var remoteSyncOk = false
+            if (writeMdbList) {
                 val ok = mdbListRepository.markMovieWatched(tmdbId)
                 if (!ok) {
                     outboxRepository.enqueue(
@@ -552,8 +584,9 @@ class TraktSyncService @Inject constructor(
                         )
                     )
                 }
-                ok
-            } else if (traktAuth != null) {
+                remoteSyncOk = ok || remoteSyncOk
+            }
+            if (traktAuth != null) {
                 val ok = try {
                     traktApi.addToHistory(
                         traktAuth, clientId, "2",
@@ -573,9 +606,7 @@ class TraktSyncService @Inject constructor(
                         )
                     )
                 }
-                ok
-            } else {
-                false
+                remoteSyncOk = ok || remoteSyncOk
             }
 
             // 3. Remove from Supabase watch_history (no longer in-progress)
@@ -594,9 +625,10 @@ class TraktSyncService @Inject constructor(
             }
 
             // 4. Remove the paused session so it disappears from Continue Watching
-            if (useMdbList) {
+            if (writeMdbList) {
                 mdbListRepository.clearPlayback(MediaType.MOVIE, tmdbId, null, null)
-            } else {
+            }
+            if (traktAuth != null) {
                 removePlaybackForContent(traktAuth, tmdbId, MediaType.MOVIE)
             }
 
@@ -619,8 +651,9 @@ class TraktSyncService @Inject constructor(
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             val userId = getUserId()
-            val useMdbList = usesMdbList()
-            val traktAuth = if (useMdbList || !writesToTrakt()) null else getAuthHeader()
+            val writeProviders = syncProviderStore.writeProviders()
+            val writeMdbList = com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in writeProviders
+            val traktAuth = if (com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in writeProviders) getAuthHeader() else null
 
             // 1. Write to Supabase first (source of truth) when available
             //    Uses RPC function (direct SQL) instead of PostgREST table endpoint
@@ -650,9 +683,10 @@ class TraktSyncService @Inject constructor(
                 } catch (_: Exception) {}
             }
 
-            // 2. Mirror to the active remote (queue on failure or if offline)
+            // 2. Mirror to every connected/enabled remote (queue on failure or if offline).
             // Trakt uses shows format with nested seasons/episodes for proper episode identification
-            val remoteSyncOk = if (useMdbList) {
+            var remoteSyncOk = false
+            if (writeMdbList) {
                 val ok = mdbListRepository.markEpisodeWatched(showTmdbId, season, episode)
                 if (!ok) {
                     outboxRepository.enqueue(
@@ -666,8 +700,9 @@ class TraktSyncService @Inject constructor(
                         )
                     )
                 }
-                ok
-            } else if (traktAuth != null) {
+                remoteSyncOk = ok || remoteSyncOk
+            }
+            if (traktAuth != null) {
                 val ok = try {
                     traktApi.addToHistory(
                         traktAuth, clientId, "2",
@@ -702,9 +737,7 @@ class TraktSyncService @Inject constructor(
                         )
                     )
                 }
-                ok
-            } else {
-                false
+                remoteSyncOk = ok || remoteSyncOk
             }
 
             // 3. Remove from Supabase watch_history (no longer in-progress)
@@ -725,9 +758,10 @@ class TraktSyncService @Inject constructor(
             }
 
             // 4. Remove the paused session so it disappears from Continue Watching
-            if (useMdbList) {
+            if (writeMdbList) {
                 mdbListRepository.clearPlayback(MediaType.TV, showTmdbId, season, episode)
-            } else {
+            }
+            if (traktAuth != null) {
                 removePlaybackForContent(traktAuth, showTmdbId, MediaType.TV)
             }
 
@@ -783,8 +817,9 @@ class TraktSyncService @Inject constructor(
         try {
             val userId = getUserId()
             val hasSupabase = userId != null && getSupabaseAuth() != null
-            val useMdbList = usesMdbList()
-            val traktAuth = if (useMdbList || !writesToTrakt()) null else getAuthHeader()
+            val writeProviders = syncProviderStore.writeProviders()
+            val writeMdbList = com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in writeProviders
+            val traktAuth = if (com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in writeProviders) getAuthHeader() else null
 
             // 1. Delete from Supabase
             if (hasSupabase) {
@@ -798,17 +833,23 @@ class TraktSyncService @Inject constructor(
                 }
             }
 
-            // 2. Remove from the active remote
-            val remoteOk = if (useMdbList) {
-                mdbListRepository.markMovieUnwatched(tmdbId)
-            } else if (traktAuth != null) {
-                traktApi.removeFromHistory(
-                    traktAuth, clientId, "2",
-                    TraktHistoryBody(movies = listOf(TraktMovieId(TraktIds(tmdb = tmdbId))))
-                )
-                true
-            } else {
-                false
+            // 2. Remove from every connected/enabled remote.
+            var remoteOk = false
+            if (writeMdbList) {
+                remoteOk = mdbListRepository.markMovieUnwatched(tmdbId) || remoteOk
+            }
+            if (traktAuth != null) {
+                val traktOk = try {
+                    traktApi.removeFromHistory(
+                        traktAuth, clientId, "2",
+                        TraktHistoryBody(movies = listOf(TraktMovieId(TraktIds(tmdb = tmdbId))))
+                    )
+                    true
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    false
+                }
+                remoteOk = traktOk || remoteOk
             }
 
             remoteOk || hasSupabase
@@ -826,8 +867,9 @@ class TraktSyncService @Inject constructor(
         try {
             val userId = getUserId()
             val hasSupabase = userId != null && getSupabaseAuth() != null
-            val useMdbList = usesMdbList()
-            val traktAuth = if (useMdbList || !writesToTrakt()) null else getAuthHeader()
+            val writeProviders = syncProviderStore.writeProviders()
+            val writeMdbList = com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in writeProviders
+            val traktAuth = if (com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in writeProviders) getAuthHeader() else null
 
             // 1. Delete from Supabase
             if (hasSupabase) {
@@ -843,29 +885,35 @@ class TraktSyncService @Inject constructor(
                 }
             }
 
-            // 2. Remove from the active remote
-            val remoteOk = if (useMdbList) {
-                mdbListRepository.markEpisodeUnwatched(showTmdbId, season, episode)
-            } else if (traktAuth != null) {
-                traktApi.removeFromHistory(
-                    traktAuth, clientId, "2",
-                    TraktHistoryBody(
-                        shows = listOf(
-                            TraktHistoryShowWithSeasons(
-                                ids = TraktIds(tmdb = showTmdbId),
-                                seasons = listOf(
-                                    TraktHistorySeason(
-                                        number = season,
-                                        episodes = listOf(TraktHistoryEpisodeNumber(number = episode))
+            // 2. Remove from every connected/enabled remote.
+            var remoteOk = false
+            if (writeMdbList) {
+                remoteOk = mdbListRepository.markEpisodeUnwatched(showTmdbId, season, episode) || remoteOk
+            }
+            if (traktAuth != null) {
+                val traktOk = try {
+                    traktApi.removeFromHistory(
+                        traktAuth, clientId, "2",
+                        TraktHistoryBody(
+                            shows = listOf(
+                                TraktHistoryShowWithSeasons(
+                                    ids = TraktIds(tmdb = showTmdbId),
+                                    seasons = listOf(
+                                        TraktHistorySeason(
+                                            number = season,
+                                            episodes = listOf(TraktHistoryEpisodeNumber(number = episode))
+                                        )
                                     )
                                 )
                             )
                         )
                     )
-                )
-                true
-            } else {
-                false
+                    true
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    false
+                }
+                remoteOk = traktOk || remoteOk
             }
 
             remoteOk || hasSupabase
@@ -1143,23 +1191,44 @@ class TraktSyncService @Inject constructor(
      */
     suspend fun getLastSyncSummary(): TraktSyncSummary? = withContext(Dispatchers.IO) {
         try {
-            val userId = getUserId() ?: return@withContext null
-            if (getSupabaseAuth() == null) return@withContext null
+            // 1. Check local DataStore first (works offline and without Supabase)
+            val prefs = context.traktDataStore.data.first()
+            val localSyncAt = prefs[lastSyncTimeKey()]
+            val localMovies = prefs[lastSyncMoviesKey()]?.toIntOrNull()
+            val localEpisodes = prefs[lastSyncEpisodesKey()]?.toIntOrNull()
 
-            val syncStates = executeSupabaseCall("get sync state summary") { auth ->
-                supabaseApi.getSyncState(
-                    auth,
-                    userId = "eq.$userId",
-                    profileId = "eq.${activeProfileId()}"
+            if (!localSyncAt.isNullOrBlank() && (localMovies != null || localEpisodes != null)) {
+                return@withContext TraktSyncSummary(
+                    lastSyncAt = localSyncAt,
+                    moviesSynced = localMovies ?: 0,
+                    episodesSynced = localEpisodes ?: 0
                 )
             }
-            syncStates.firstOrNull()?.let { state ->
-                TraktSyncSummary(
-                    lastSyncAt = state.lastSyncAt,
-                    moviesSynced = state.moviesSynced,
-                    episodesSynced = state.episodesSynced
-                )
+
+            // 2. Fallback to Supabase if logged in
+            val userId = getUserId()
+            if (userId != null && getSupabaseAuth() != null) {
+                val syncStates = executeSupabaseCall("get sync state summary") { auth ->
+                    supabaseApi.getSyncState(
+                        auth,
+                        userId = "eq.$userId",
+                        profileId = "eq.${activeProfileId()}"
+                    )
+                }
+                syncStates.firstOrNull()?.let { state ->
+                    val summary = TraktSyncSummary(
+                        lastSyncAt = state.lastSyncAt,
+                        moviesSynced = state.moviesSynced,
+                        episodesSynced = state.episodesSynced
+                    )
+                    state.lastSyncAt?.let { at ->
+                        saveLocalSyncSummary(at, state.moviesSynced, state.episodesSynced)
+                    }
+                    return@withContext summary
+                }
             }
+
+            null
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 

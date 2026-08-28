@@ -64,6 +64,61 @@ data class TvProviderFilter(
     val count: Int,
 )
 
+data class PlaylistCategorySection(
+    val id: String,
+    val label: String,
+    val count: Int,
+    val categories: List<LiveCategory>,
+)
+
+fun buildPlaylistCategorySections(
+    config: IptvConfig,
+    categories: List<LiveCategory>,
+    hiddenGroups: Set<String> = emptySet(),
+): List<PlaylistCategorySection> {
+    val playlists = config.playlists
+        .asSequence()
+        .filter { it.enabled && it.id.isNotBlank() }
+        .distinctBy { it.id }
+        .toList()
+    val knownPlaylistIds = playlists.mapTo(HashSet()) { it.id }
+    val configuredSections = playlists.mapNotNull { playlist ->
+        val providerCategories = categories
+            .filter { it.playlistId == playlist.id }
+            .filterNot { category ->
+                val groupName = category.playlistGroupName ?: return@filterNot false
+                com.arflix.tv.data.model.PlaylistGroupKey.build(playlist.id, groupName) in hiddenGroups
+            }
+        providerCategories.takeIf { it.isNotEmpty() }?.let {
+            PlaylistCategorySection(
+                id = playlist.id,
+                label = playlist.name.ifBlank { playlist.id },
+                count = it.sumOf(LiveCategory::count),
+                categories = it,
+            )
+        }
+    }
+    val unmatchedSections = categories
+        .filter { category -> category.playlistId.isNullOrBlank() || category.playlistId !in knownPlaylistIds }
+        .groupBy { category -> category.playlistId?.takeIf { it.isNotBlank() } ?: "other" }
+        .entries
+        .sortedWith(compareBy<Map.Entry<String, List<LiveCategory>>> { if (it.key == "stalker") 0 else 1 }.thenBy { it.key })
+        .map { (sourceId, sourceCategories) ->
+            PlaylistCategorySection(
+                id = "source:$sourceId",
+                label = when (sourceId) {
+                    "stalker" -> "Stalker"
+                    "other" -> "Other sources"
+                    else -> sourceId.replaceFirstChar { it.uppercase() }
+                },
+                count = sourceCategories.sumOf(LiveCategory::count),
+                categories = sourceCategories,
+            )
+        }
+    val sections = configuredSections + unmatchedSections
+    return sections.takeIf { it.size > 1 }.orEmpty()
+}
+
 data class PlaybackDiagnostic(
     val title: String,
     val detail: String,
@@ -79,6 +134,7 @@ enum class PlaybackDiagnosticSeverity {
 fun buildTvProviderFilters(
     config: IptvConfig,
     channels: List<EnrichedChannel>,
+    playlistGroupCounts: List<Triple<String, String, Int>> = emptyList(),
 ): List<TvProviderFilter> {
     val enabledPlaylists = config.playlists
         .filter { it.enabled && it.id.isNotBlank() }
@@ -86,14 +142,21 @@ fun buildTvProviderFilters(
     if (enabledPlaylists.size <= 1) return emptyList()
 
     val knownIds = enabledPlaylists.mapTo(HashSet()) { it.id }
-    val counts = channels
-        .mapNotNull { channelPlaylistId(it, knownIds) }
-        .groupingBy { it }
-        .eachCount()
+    val pagedCounts = playlistGroupCounts
+        .asSequence()
+        .filter { (playlistId, _, count) -> playlistId in knownIds && count > 0 }
+        .groupingBy { (playlistId, _, _) -> playlistId }
+        .fold(0) { total, (_, _, count) -> total + count }
+    val counts = pagedCounts.ifEmpty {
+        channels
+            .mapNotNull { channelPlaylistId(it, knownIds) }
+            .groupingBy { it }
+            .eachCount()
+    }
     if (counts.size <= 1) return emptyList()
 
     return buildList {
-        add(TvProviderFilter("all", "All providers", channels.size))
+        add(TvProviderFilter("all", "All providers", counts.values.sum()))
         enabledPlaylists.forEach { playlist ->
             val count = counts[playlist.id] ?: 0
             if (count > 0) {

@@ -124,7 +124,7 @@ fun MediaContextMenu(
         if (isVisible) {
             focusedIndex = 0
             if (!isMobile) {
-                focusRequester.requestFocus()
+                runCatching { focusRequester.requestFocus() }
             }
         }
     }

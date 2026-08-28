@@ -9,7 +9,7 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 /**
- * MDBList API (https://api.mdblist.com). Per-profile alternative to Trakt.
+ * MDBList API (https://api.mdblist.com). Optional per-profile tracking and ratings integration.
  *
  * Auth is a static user API key passed as the `apikey` query param on every
  * call. Shapes below are verified against the live API (see the
@@ -23,6 +23,14 @@ interface MdbListApi {
 
     @GET("sync/last_activities")
     suspend fun getLastActivities(@Query("apikey") apiKey: String): MdbLastActivities
+
+    /** Ratings and metadata for one TMDB title. mediaType is "movie" or "show". */
+    @GET("tmdb/{mediaType}/{mediaId}/")
+    suspend fun getMediaInfo(
+        @Path("mediaType") mediaType: String,
+        @Path("mediaId") mediaId: Int,
+        @Query("apikey") apiKey: String
+    ): MdbMediaInfo
 
     // ===== Watchlist =====
 
@@ -117,6 +125,18 @@ data class MdbLastActivities(
     @SerializedName("paused_at") val pausedAt: String? = null,
     @SerializedName("episode_paused_at") val episodePausedAt: String? = null,
     @SerializedName("rated_at") val ratedAt: String? = null
+)
+
+data class MdbMediaInfo(
+    val ratings: List<MdbRating>? = null
+)
+
+data class MdbRating(
+    val source: String? = null,
+    val value: com.google.gson.JsonElement? = null,
+    val score: com.google.gson.JsonElement? = null,
+    val votes: Long? = null,
+    val url: String? = null
 )
 
 // ========== Watchlist ==========

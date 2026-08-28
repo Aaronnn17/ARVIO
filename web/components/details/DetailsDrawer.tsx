@@ -13,6 +13,7 @@ import { fetchSubtitlesForItem } from "@/lib/addons";
 import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefetchDebridDirectUrl, resolveDebridDirectUrl } from "@/lib/debrid";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { getImdbRating } from "@/lib/imdbRatings";
+import { mdblistClient, type MdbExternalRating } from "@/lib/mdblist";
 import { sourcePickerScore } from "@/lib/sourceRank";
 import { authClient, getPriorityConfig, useApp } from "@/lib/store";
 import { syncClient } from "@/lib/sync";
@@ -36,7 +37,7 @@ function needsDetailsHydration(item: MediaItem) {
 }
 
 function DetailsView({ item }: { item: MediaItem }) {
-  const { streams, selectedEpisode, activeProfile, addons: installedAddons, loadEpisodeStreams, openDetails, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally, toggleWatchlist } = useApp();
+  const { streams, selectedEpisode, activeProfile, addons: installedAddons, loadEpisodeStreams, openDetails, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally, toggleWatchlist, mdblistConnected } = useApp();
   const [detailsItem, setDetailsItem] = useState<MediaItem>(item);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [reviews, setReviews] = useState<ReviewInfo[]>([]);
@@ -102,6 +103,7 @@ function DetailsView({ item }: { item: MediaItem }) {
   // Real IMDb rating for the title (Cinemeta by imdb id), matching the Android
   // app. Episode rows get theirs from Agregarr (see getSeasonEpisodeRatings).
   const [detailImdbRating, setDetailImdbRating] = useState<string | null>(null);
+  const [externalRatings, setExternalRatings] = useState<MdbExternalRating[]>([]);
   useEffect(() => {
     setDetailImdbRating(null);
     let active = true;
@@ -112,6 +114,15 @@ function DetailsView({ item }: { item: MediaItem }) {
     }).catch(() => undefined);
     return () => { active = false; };
   }, [displayItem.imdbId, displayItem.mediaType]);
+  useEffect(() => {
+    setExternalRatings([]);
+    let active = true;
+    if (!mdblistConnected || !mdblistClient.isConnected) return () => { active = false; };
+    void mdblistClient.externalRatings(displayItem.mediaType, displayItem.id).then((ratings) => {
+      if (active) setExternalRatings(ratings);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [displayItem.id, displayItem.mediaType, mdblistConnected]);
   const continueLabel = buildContinueLabel(displayItem, selectedEpisode);
   const detailMeta = buildDetailMeta(displayItem, settings.showBudget);
   // Clearlogos (bundled from the app, no background tiles). Providers we have
@@ -234,6 +245,13 @@ function DetailsView({ item }: { item: MediaItem }) {
             {detailWatched && <span className="detail-watched-chip"><BadgeCheck size={13} /> Watched</span>}
             {displayItem.genres?.slice(0, 3).map((genre) => <span key={genre}>{genre}</span>)}
           </div>
+          {externalRatings.length ? (
+            <div className="detail-external-ratings" aria-label="MDBList external ratings">
+              {externalRatings.map((rating) => (
+                <span key={rating.source}><small>{rating.label}</small><b>{rating.value}</b></span>
+              ))}
+            </div>
+          ) : null}
           <div className="chips detail-metadata">
             {detailMeta.map((meta) => <span key={meta}>{meta}</span>)}
             {streams.length > 0 && <span>{streams.length} sources</span>}

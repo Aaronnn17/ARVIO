@@ -4,6 +4,7 @@ import com.arflix.tv.data.api.MdbListApi
 import com.arflix.tv.data.api.MdbIds
 import com.arflix.tv.data.api.MdbIdsItem
 import com.arflix.tv.data.api.MdbPlaybackItem
+import com.arflix.tv.data.api.MdbRating
 import com.arflix.tv.data.api.MdbScrobbleBody
 import com.arflix.tv.data.api.MdbScrobbleClearBody
 import com.arflix.tv.data.api.MdbScrobbleEpisodeNumber
@@ -27,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
 /**
@@ -50,12 +52,25 @@ data class MdbShowWatchedProgress(
     val lastWatchedAtMs: Long
 )
 
+data class MdbExternalRating(
+    val source: String,
+    val label: String,
+    val value: String
+)
+
+data class MdbWatchedSnapshot(
+    val movies: Set<Int>,
+    val episodes: Set<String>
+)
+
 @Singleton
 class MdbListRepository @Inject constructor(
     private val api: MdbListApi,
     private val store: SyncProviderStore
 ) {
     private val TAG = "MdbListRepository"
+    private data class RatingsCacheEntry(val storedAt: Long, val ratings: List<MdbExternalRating>)
+    private val ratingsCache = ConcurrentHashMap<String, RatingsCacheEntry>()
 
     private suspend fun key(): String? = store.getMdbListApiKey()
 
@@ -84,6 +99,71 @@ class MdbListRepository @Inject constructor(
         } catch (_: Exception) {
             null
         }
+    }
+
+    /**
+     * Extra title ratings shown on details pages. The 12-hour cache keeps this
+     * useful without spending the user's MDBList request allowance on every visit.
+     */
+    suspend fun getExternalRatings(mediaType: MediaType, tmdbId: Int): List<MdbExternalRating> =
+        withContext(Dispatchers.IO) {
+            val k = key() ?: return@withContext emptyList()
+            val cacheKey = "${k.hashCode()}:${mediaType.name}:$tmdbId"
+            ratingsCache[cacheKey]?.takeIf { System.currentTimeMillis() - it.storedAt < RATINGS_CACHE_TTL_MS }
+                ?.let { return@withContext it.ratings }
+            try {
+                val apiType = if (mediaType == MediaType.MOVIE) "movie" else "show"
+                val ratings = api.getMediaInfo(apiType, tmdbId, k).ratings
+                    .orEmpty()
+                    .mapNotNull(::normalizeRating)
+                    .distinctBy { it.source }
+                    .sortedBy { RATING_SOURCE_ORDER.indexOf(it.source).let { index -> if (index < 0) Int.MAX_VALUE else index } }
+                    .take(4)
+                ratingsCache[cacheKey] = RatingsCacheEntry(System.currentTimeMillis(), ratings)
+                ratings
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLogger.w(TAG, "MDBList ratings fetch failed: ${e.message}")
+                emptyList()
+            }
+        }
+
+    private fun normalizeRating(rating: MdbRating): MdbExternalRating? {
+        val source = rating.source?.lowercase()?.trim().orEmpty()
+        if (source == "imdb") return null // IMDb already has its own verified badge.
+        val label = RATING_LABELS[source] ?: return null
+        val value = when (source) {
+            "tomatoes", "popcorn", "metacritic", "metacriticuser" ->
+                rating.score.asRatingNumber()?.let { "${it.roundToInt()}%" }
+            "letterboxd", "rogerebert" -> rating.value.asRatingNumber()?.let(::formatDecimalRating)
+            else -> rating.value.asRatingNumber()?.let(::formatDecimalRating)
+                ?: rating.score.asRatingNumber()?.let { formatDecimalRating(it / 10.0) }
+        } ?: return null
+        return MdbExternalRating(source = source, label = label, value = value)
+    }
+
+    private fun formatDecimalRating(value: Double): String =
+        if (value % 1.0 == 0.0) value.roundToInt().toString() else String.format(java.util.Locale.US, "%.1f", value)
+
+    private fun com.google.gson.JsonElement?.asRatingNumber(): Double? =
+        this?.takeUnless { it.isJsonNull }?.runCatching { asString.toDoubleOrNull() }?.getOrNull()
+
+    private companion object {
+        const val RATINGS_CACHE_TTL_MS = 12 * 60 * 60 * 1000L
+        val RATING_SOURCE_ORDER = listOf(
+            "tomatoes", "popcorn", "metacritic", "letterboxd", "trakt", "tmdb", "myanimelist", "rogerebert", "metacriticuser"
+        )
+        val RATING_LABELS = mapOf(
+            "tomatoes" to "RT Critics",
+            "popcorn" to "RT Audience",
+            "metacritic" to "Metacritic",
+            "metacriticuser" to "Metacritic Users",
+            "letterboxd" to "Letterboxd",
+            "trakt" to "Trakt",
+            "tmdb" to "TMDB",
+            "myanimelist" to "MAL",
+            "rogerebert" to "Roger Ebert"
+        )
     }
 
     // ===== Watchlist =====
@@ -275,6 +355,37 @@ class MdbListRepository @Inject constructor(
     }
 
     // ===== Watched reads =====
+
+    suspend fun getWatchedSnapshot(): Result<MdbWatchedSnapshot> = withContext(Dispatchers.IO) {
+        val k = key() ?: return@withContext Result.failure(IllegalStateException("MDBList is not connected"))
+        try {
+            val movies = mutableSetOf<Int>()
+            val episodes = mutableSetOf<String>()
+            var offset = 0
+            val limit = 1000
+            while (true) {
+                val response = api.getWatched(k, limit = limit, offset = offset)
+                response.movies?.forEach { row ->
+                    row.movie?.ids?.tmdb?.let(movies::add)
+                }
+                response.episodes?.forEach { row ->
+                    val episode = row.episode ?: return@forEach
+                    val showTmdb = episode.show?.ids?.tmdb ?: return@forEach
+                    val season = episode.season ?: return@forEach
+                    val number = episode.number ?: return@forEach
+                    episodes.add("show_tmdb:$showTmdb:$season:$number")
+                }
+                if (response.pagination?.hasMore != true) break
+                offset += limit
+            }
+            Result.success(MdbWatchedSnapshot(movies, episodes))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "watched snapshot fetch failed", e)
+            Result.failure(e)
+        }
+    }
 
     suspend fun getWatchedMovies(): Set<Int> = withContext(Dispatchers.IO) {
         val k = key() ?: return@withContext emptySet()

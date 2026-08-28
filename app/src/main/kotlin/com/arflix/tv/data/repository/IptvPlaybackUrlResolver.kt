@@ -119,6 +119,10 @@ internal class IptvPlaybackUrlResolver(
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
+        } catch (e: java.io.IOException) {
+            null
+        } catch (e: java.lang.IllegalArgumentException) {
+            null
         } catch (e: Exception) {
             null
         }
@@ -127,14 +131,13 @@ internal class IptvPlaybackUrlResolver(
 
 internal fun shouldResolveIptvPlaybackRedirect(url: String): Boolean {
     val trimmed = url.trim()
-    if (!trimmed.startsWith("http://", ignoreCase = true) &&
-        !trimmed.startsWith("https://", ignoreCase = true)
-    ) {
+    if (trimmed.isBlank()) return false
+    if (!trimmed.startsWith("http://", ignoreCase = true) && !trimmed.startsWith("https://", ignoreCase = true)) {
         return false
     }
     if (looksLikeHlsPlaybackUrl(trimmed)) return false
 
-    val uri = try { URI(trimmed) } catch (e: Exception) { null } ?: return false
+    val uri = try { URI(trimmed) } catch (e: java.net.URISyntaxException) { null } catch (e: java.lang.IllegalArgumentException) { null } ?: return false
     val path = uri.path.orEmpty().trimEnd('/').lowercase(Locale.US)
     val lastSegment = path.substringAfterLast('/')
     if (lastSegment.isBlank() || lastSegment.contains('.')) return false

@@ -42,7 +42,7 @@ export function defaultTrackingPreferences(): TrackingPreferences {
   const trakt = traktClient.isConnected;
   const simkl = simklClient.isConnected;
   const mdb = mdblistClient.isConnected;
-  const mode: TrackingReadMode = mdb ? "mdblist" : trakt && simkl ? "both" : trakt ? "trakt" : simkl ? "simkl" : "auto";
+  const mode: TrackingReadMode = trakt && simkl ? "both" : trakt ? "trakt" : simkl ? "simkl" : mdb ? "mdblist" : "auto";
   return {
     watchlistReadMode: mode,
     continueWatchingReadMode: mode,
@@ -72,21 +72,22 @@ function readMode(feature: TrackingFeature, profileId?: string | null): Tracking
 }
 
 function readClients(feature: TrackingFeature): SyncClient[] {
-  if (mdblistClient.isConnected) return [mdblistClient as unknown as SyncClient];
   const mode = readMode(feature, simklClient.currentProfileId ?? traktClient.currentProfileId);
   const result: SyncClient[] = [];
+  if (mode === "mdblist" && mdblistClient.isConnected) result.push(mdblistClient as unknown as SyncClient);
   if ((mode === "trakt" || mode === "both" || mode === "auto") && traktClient.isConnected) result.push(traktClient as unknown as SyncClient);
   if ((mode === "simkl" || mode === "both" || mode === "auto") && simklClient.isConnected) result.push(simklClient as unknown as SyncClient);
+  if (mode === "auto" && result.length === 0 && mdblistClient.isConnected) result.push(mdblistClient as unknown as SyncClient);
   return result;
 }
 
 function writeClients(): SyncClient[] {
-  if (mdblistClient.isConnected) return [mdblistClient as unknown as SyncClient];
   const profileId = simklClient.currentProfileId ?? traktClient.currentProfileId;
   const preferences = loadTrackingPreferences(profileId);
   const result: SyncClient[] = [];
   if (preferences.writeToTrakt && traktClient.isConnected) result.push(traktClient as unknown as SyncClient);
   if (preferences.writeToSimkl && simklClient.isConnected) result.push(simklClient as unknown as SyncClient);
+  if (mdblistClient.isConnected) result.push(mdblistClient as unknown as SyncClient);
   return result;
 }
 
@@ -128,9 +129,9 @@ class TrackingRouter implements SyncClient {
 const trackingRouter = new TrackingRouter();
 
 export function activeSyncProvider(): SyncProvider {
-  if (mdblistClient.isConnected) return "mdblist";
   if (traktClient.isConnected) return "trakt";
   if (simklClient.isConnected) return "simkl";
+  if (mdblistClient.isConnected) return "mdblist";
   return "none";
 }
 

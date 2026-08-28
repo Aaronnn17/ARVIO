@@ -11,12 +11,17 @@ import com.arflix.tv.data.model.PlaylistGroupKey
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.ui.screens.tv.live.LiveTvGuideSources
+import com.arflix.tv.ui.screens.tv.live.runEpgLookupWithTimeout
 import com.arflix.tv.data.repository.IptvPlaybackTarget
 import com.arflix.tv.data.repository.IptvPlaybackUrlResolver
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.IptvTvSessionState
+import com.arflix.tv.ui.screens.tv.live.epgChannelAllowsVodSearch
+import com.arflix.tv.ui.screens.tv.live.selectConfidentEpgVodMatch
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.util.AppLogger
+import com.arflix.tv.util.IPTV_EPG_VOD_ACTIONS_ENABLED_KEY
+import com.arflix.tv.util.settingsDataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,9 +30,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
@@ -51,6 +58,7 @@ private const val RichCatchupRecentTarget = 6
 private const val CatchupHistoryWindowMs = 48L * 60L * 60_000L
 private const val RichCatchupRefreshThrottleMs = 45_000L
 private const val CurrentChannelEpgRefreshThrottleMs = 12_000L
+private const val EpgVodLookupTimeoutMs = 2_500L
 private const val LargeListCompleteGuideCoverageTarget = 0.75f
 private const val PlaybackEpgBackfillResumeDelayMs = 90_000L
 private const val LargeListCompleteEpgBackfillStartupDelayMs = 180_000L
@@ -73,6 +81,7 @@ data class TvUiState(
     val epgLoadingChannelIds: Set<String> = emptySet(),
     val epgAttemptedChannelIds: Set<String> = emptySet(),
     val epgBackfillInProgress: Boolean = false,
+    val epgVodActionsEnabled: Boolean = true,
 ) {
     val isConfigured: Boolean get() =
         config.m3uUrl.isNotBlank() ||
@@ -86,8 +95,33 @@ data class TvUiState(
 class TvViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     val iptvRepository: IptvRepository,
-    private val cloudSyncRepository: CloudSyncRepository
+    private val cloudSyncRepository: CloudSyncRepository,
+    private val mediaRepository: com.arflix.tv.data.repository.MediaRepository,
 ) : ViewModel() {
+
+    /**
+     * Resolve an EPG title to a confident TMDB movie/series match.
+     * Sports/news/shopping channel names are rejected before any metadata call,
+     * and fuzzy first-result matches are not treated as VOD.
+     */
+    suspend fun findEpgVodMatch(
+        title: String,
+        description: String?,
+        channelName: String,
+        channelGroup: String,
+    ): com.arflix.tv.data.model.MediaItem? {
+        if (!epgChannelAllowsVodSearch(channelName, channelGroup)) return null
+        val results = try {
+            runEpgLookupWithTimeout(EpgVodLookupTimeoutMs) {
+                mediaRepository.search(title)
+            }.orEmpty()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            emptyList()
+        }
+        return selectConfidentEpgVodMatch(title, results, description)
+    }
 
     private val _uiState = MutableStateFlow(TvUiState())
     val uiState: StateFlow<TvUiState> = _uiState.asStateFlow()
@@ -161,6 +195,7 @@ class TvViewModel @Inject constructor(
     init {
         observeConfigAndFavorites()
         observeTvSession()
+        observeEpgVodActionsPreference()
         viewModelScope.launch {
             runCatching { iptvRepository.warmupFromCacheOnly() }
             // Try fast non-blocking in-memory read first; fall back to mutex-guarded disk read
@@ -222,6 +257,17 @@ class TvViewModel @Inject constructor(
                 refresh(force = false, showLoading = false, forceEpg = false)
             }
             startPeriodicEpgRefresh()
+        }
+    }
+
+    private fun observeEpgVodActionsPreference() {
+        viewModelScope.launch {
+            context.settingsDataStore.data
+                .map { preferences -> preferences[IPTV_EPG_VOD_ACTIONS_ENABLED_KEY] ?: true }
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    setUiState(_uiState.value.copy(epgVodActionsEnabled = enabled))
+                }
         }
     }
 
@@ -410,6 +456,7 @@ class TvViewModel @Inject constructor(
                 startCompleteEpgBackfill()
                 warmXtreamVodCache()
             }.onFailure { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 logIptvRefreshFailure(
                     error = error,
                     phase = "load_snapshot",
@@ -417,9 +464,12 @@ class TvViewModel @Inject constructor(
                     forceEpg = forceEpg,
                     hasExistingChannels = hasExistingChannels
                 )
-                val fallback = runCatching {
+                val fallback = try {
                     iptvRepository.getMemoryCachedSnapshot() ?: iptvRepository.getCachedSnapshotOrNull()
-                }.getOrNull()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    null
+                }
                 if (fallback != null && fallback.channels.isNotEmpty()) {
                     val currentState = _uiState.value
                     val mergedFallback = mergeIncomingSnapshotWithCurrentGuide(fallback, currentState)
@@ -479,7 +529,7 @@ class TvViewModel @Inject constructor(
     private fun warmXtreamVodCache() {
         if (warmVodJob?.isActive == true) return
         warmVodJob = viewModelScope.launch(Dispatchers.IO) {
-            runCatching { iptvRepository.warmXtreamVodCachesIfPossible() }
+            try { iptvRepository.warmXtreamVodCachesIfPossible() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
         }.also { job ->
             job.invokeOnCompletion { warmVodJob = null }
         }
@@ -729,7 +779,7 @@ class TvViewModel @Inject constructor(
     private fun isActiveLargeIptvList(): Boolean {
         val snapshotCount = _uiState.value.snapshot.channels.size
         if (isLargeIptvList(snapshotCount)) return true
-        return runCatching { iptvRepository.pagedChannelStoreCount() }.getOrDefault(0) > 10_000
+        return try { iptvRepository.pagedChannelStoreCount() > 10_000 } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
     }
 
     /**
@@ -740,7 +790,7 @@ class TvViewModel @Inject constructor(
     private fun lookupChannelById(state: TvUiState, id: String): IptvChannel? {
         if (id.isBlank()) return null
         return if (isLargeIptvList(state.snapshot.channels.size) ||
-            runCatching { iptvRepository.pagedChannelStoreCount() }.getOrDefault(0) > 10_000
+            try { iptvRepository.pagedChannelStoreCount() > 10_000 } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
         ) {
             iptvRepository.pagedChannelsByIds(listOf(id)).firstOrNull()
         } else {

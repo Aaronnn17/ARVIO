@@ -262,7 +262,7 @@ private val tvGeneralSectionIds = setOf(
 private fun tvGeneralRowsForSection(section: String): List<Int> {
     return when (section) {
         "language" -> listOf(0, 3, 1, 2)
-        "subtitles" -> listOf(4, 5, 6, 7, 8, 38, 39, 9)
+        "subtitles" -> listOf(4, 5, 6, 7, 42, 8, 38, 39, 9)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
         "playback" -> listOf(10, 11, 12, 13, 14, 37, 34, 16, 15, 40, 27)
         "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22, 41, 36)
@@ -516,8 +516,8 @@ fun SettingsScreen(
                 // Reset row + (bulk-toggle row) + category rows.
                 groups.size + (firstIptvGroupIndex(uiState.iptvSelectedPlaylistId.orEmpty(), groups, stalkerIds) - 1)
             } else {
-                // Add-M3U + M3U rows + Add-Stalker + Stalker rows + order + refresh + clear
-                4 + uiState.iptvPlaylists.size + uiState.iptvStalkerPortals.size
+                // Add-M3U + M3U rows + Add-Stalker + Stalker rows + order + EPG actions + refresh + clear
+                5 + uiState.iptvPlaylists.size + uiState.iptvStalkerPortals.size
             }
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
@@ -1011,6 +1011,7 @@ fun SettingsScreen(
                                                 5 -> viewModel.cycleSubtitleColor()
                                                 6 -> viewModel.cycleSubtitleOffset()
                                                 7 -> viewModel.cycleSubtitleStyle()
+                                                42 -> viewModel.cycleSubtitleFont()
                                                 8 -> viewModel.toggleSubtitleStylized()
                                                 9 -> viewModel.setFilterSubtitlesByLanguage(!uiState.filterSubtitlesByLanguage)
                                                 10 -> viewModel.setAutoPlayNext(!uiState.autoPlayNext)
@@ -1159,9 +1160,12 @@ fun SettingsScreen(
                                                         viewModel.setIptvSortOrder(next)
                                                     }
                                                     contentFocusIndex == m3uCount + stalkerCount + 3 -> {
-                                                        viewModel.refreshIptv(force = true)
+                                                        viewModel.setEpgVodActionsEnabled(!uiState.epgVodActionsEnabled)
                                                     }
                                                     contentFocusIndex == m3uCount + stalkerCount + 4 -> {
+                                                        viewModel.refreshIptv(force = true)
+                                                    }
+                                                    contentFocusIndex == m3uCount + stalkerCount + 5 -> {
                                                         viewModel.clearIptvConfig()
                                                     }
                                                 }
@@ -1543,6 +1547,7 @@ fun SettingsScreen(
                             subtitleColor = uiState.subtitleColor,
                             subtitleOffset = uiState.subtitleOffset,
                             subtitleStyle = uiState.subtitleStyle,
+                            subtitleFont = uiState.subtitleFont,
                             subtitleStylized = uiState.subtitleStylized,
                             deviceModeOverride = uiState.deviceModeOverride,
                             skipProfileSelection = uiState.skipProfileSelection,
@@ -1589,6 +1594,7 @@ fun SettingsScreen(
                             onSubtitleColorClick = { viewModel.cycleSubtitleColor() },
                             onSubtitleOffsetClick = { viewModel.cycleSubtitleOffset() },
                             onSubtitleStyleClick = { viewModel.cycleSubtitleStyle() },
+                            onSubtitleFontClick = { viewModel.cycleSubtitleFont() },
                             onSubtitleStylizedToggle = { viewModel.toggleSubtitleStylized() },
                             filterSubtitlesByLanguage = uiState.filterSubtitlesByLanguage,
                             onFilterSubtitlesByLanguageToggle = { viewModel.setFilterSubtitlesByLanguage(it) },
@@ -1722,7 +1728,9 @@ fun SettingsScreen(
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
-                            onSortOrderChange = { viewModel.setIptvSortOrder(it) }
+                            onSortOrderChange = { viewModel.setIptvSortOrder(it) },
+                            epgVodActionsEnabled = uiState.epgVodActionsEnabled,
+                            onEpgVodActionsToggle = viewModel::setEpgVodActionsEnabled,
                         )
                         "TV" -> IptvSettings(
                             playlists = uiState.iptvPlaylists,
@@ -1777,7 +1785,9 @@ fun SettingsScreen(
                             onDelete = { viewModel.clearIptvConfig() },
                             onManageCategories = openIptvCategories,
                             sortOrder = uiState.iptvSortOrder,
-                            onSortOrderChange = { viewModel.setIptvSortOrder(it) }
+                            onSortOrderChange = { viewModel.setIptvSortOrder(it) },
+                            epgVodActionsEnabled = uiState.epgVodActionsEnabled,
+                            onEpgVodActionsToggle = viewModel::setEpgVodActionsEnabled,
                         )
                         "home_server" -> HomeServerSettings(
                             connections = uiState.homeServerConnections,
@@ -4210,9 +4220,9 @@ private fun MobileSettingsMainPage(
                     iconRes = R.drawable.ic_telegram,
                     title = "Telegram",
                     value = "",
-                    isExternalLink = true,
+                    isExternalLink = false,
                     isFocused = false,
-                    onClick = onNavigateToTelegram
+                    onClick = { onNavigate("Telegram") }
                 )
                 val isDiscordLoggedIn by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.isLoggedInFlow.collectAsStateWithLifecycle(initialValue = false)
                 val discordUsername by com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.usernameFlow.collectAsStateWithLifecycle(initialValue = null)
@@ -4444,6 +4454,14 @@ private fun MobileSettingsSubPage(
                     )
                     MobileSettingsRow(
                         icon = Icons.Default.Subtitles,
+                        title = stringResource(R.string.subtitle_font),
+                        subtitle = stringResource(R.string.subtitle_font_desc),
+                        value = uiState.subtitleFont,
+                        isFocused = false,
+                        onClick = { viewModel.cycleSubtitleFont() }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Subtitles,
                         title = stringResource(R.string.subtitle_stylized),
                         subtitle = stringResource(R.string.subtitle_stylized_desc),
                         value = if (uiState.subtitleStylized) "On" else "Off",
@@ -4552,7 +4570,8 @@ private fun MobileSettingsSubPage(
                     MobileSettingsRow(
                         icon = Icons.Default.VolumeUp,
                         title = stringResource(R.string.volume_boost),
-                        value = if (uiState.volumeBoostDb > 0) "+${uiState.volumeBoostDb} dB" else "Off",
+                        value = if (uiState.volumeBoostDb > 0) "+${uiState.volumeBoostDb} dB" else "0 dB",
+                        isToggle = false,
                         isFocused = false,
                         showDivider = false,
                         onClick = { viewModel.cycleVolumeBoost() }
@@ -4730,7 +4749,9 @@ private fun MobileSettingsSubPage(
                         onNavigate("IPTV_CATEGORIES")
                     },
                     sortOrder = uiState.iptvSortOrder,
-                    onSortOrderChange = { viewModel.setIptvSortOrder(it) }
+                    onSortOrderChange = { viewModel.setIptvSortOrder(it) },
+                    epgVodActionsEnabled = uiState.epgVodActionsEnabled,
+                    onEpgVodActionsToggle = viewModel::setEpgVodActionsEnabled,
                 )
             }
             "IPTV_CATEGORIES" -> {
@@ -4793,6 +4814,12 @@ private fun MobileSettingsSubPage(
                     stremioAddons = stremioAddons,
                     onSwitchProfile = onSwitchProfile,
                     context = LocalContext.current
+                )
+            }
+            "Telegram" -> {
+                com.arflix.tv.ui.screens.settings.telegram.TelegramSettingsScreen(
+                    onBack = { onNavigate("MAIN") },
+                    showHeader = false
                 )
             }
         }
@@ -5696,6 +5723,7 @@ private fun TvGeneralSettingsRows(
     subtitleColor: String = "White",
     subtitleOffset: String = "Low",
     subtitleStyle: String = "Bold",
+    subtitleFont: String = "System",
     deviceModeOverride: String = "auto",
     skipProfileSelection: Boolean = false,
     oledBlackBackground: Boolean = false,
@@ -5735,6 +5763,7 @@ private fun TvGeneralSettingsRows(
     onSubtitleColorClick: () -> Unit = {},
     onSubtitleOffsetClick: () -> Unit = {},
     onSubtitleStyleClick: () -> Unit = {},
+    onSubtitleFontClick: () -> Unit = {},
     subtitleStylized: Boolean = true,
     onSubtitleStylizedToggle: () -> Unit = {},
     filterSubtitlesByLanguage: Boolean = true,
@@ -5811,6 +5840,7 @@ private fun TvGeneralSettingsRows(
                 5 -> SettingsRow(Icons.Default.Subtitles, stringResource(R.string.subtitle_color), stringResource(R.string.subtitle_color_desc), subtitleColor, focusedIndex == localIndex, onSubtitleColorClick, Modifier.settingsFocusSlot(localIndex))
                 6 -> SettingsRow(Icons.Default.Subtitles, stringResource(R.string.subtitle_offset), stringResource(R.string.subtitle_offset_desc), subtitleOffset, focusedIndex == localIndex, onSubtitleOffsetClick, Modifier.settingsFocusSlot(localIndex))
                 7 -> SettingsRow(Icons.Default.Subtitles, stringResource(R.string.subtitle_style), stringResource(R.string.subtitle_style_desc), subtitleStyle, focusedIndex == localIndex, onSubtitleStyleClick, Modifier.settingsFocusSlot(localIndex))
+                42 -> SettingsRow(Icons.Default.Subtitles, stringResource(R.string.subtitle_font), stringResource(R.string.subtitle_font_desc), subtitleFont, focusedIndex == localIndex, onSubtitleFontClick, Modifier.settingsFocusSlot(localIndex))
                 8 -> SettingsToggleRow(stringResource(R.string.subtitle_stylized), stringResource(R.string.subtitle_stylized_desc), subtitleStylized, focusedIndex == localIndex, { onSubtitleStylizedToggle() }, Modifier.settingsFocusSlot(localIndex))
                 9 -> SettingsToggleRow(stringResource(R.string.filter_subtitles), stringResource(R.string.filter_subtitles_desc), filterSubtitlesByLanguage, focusedIndex == localIndex, onFilterSubtitlesByLanguageToggle, Modifier.settingsFocusSlot(localIndex))
                 10 -> SettingsToggleRow(stringResource(R.string.auto_play_next_title), stringResource(R.string.auto_play_desc), autoPlayNext, focusedIndex == localIndex, onAutoPlayToggle, Modifier.settingsFocusSlot(localIndex))
@@ -5849,7 +5879,7 @@ private fun TvGeneralSettingsRows(
                     icon = Icons.Default.VolumeUp,
                     title = stringResource(R.string.volume_boost),
                     subtitle = stringResource(R.string.volume_boost_desc),
-                    value = if (volumeBoostDb == 0) "Off" else "+${volumeBoostDb} dB",
+                    value = if (volumeBoostDb == 0) "0 dB" else "+${volumeBoostDb} dB",
                     isFocused = focusedIndex == localIndex,
                     onClick = onVolumeBoostClick,
                     modifier = Modifier.settingsFocusSlot(localIndex)
@@ -5937,6 +5967,7 @@ private fun GeneralSettings(
     onSubtitleColorClick: () -> Unit = {},
     onSubtitleOffsetClick: () -> Unit = {},
     onSubtitleStyleClick: () -> Unit = {},
+    onSubtitleFontClick: () -> Unit = {},
     subtitleStylized: Boolean = true,
     onSubtitleStylizedToggle: () -> Unit = {},
     filterSubtitlesByLanguage: Boolean = true,
@@ -6964,7 +6995,9 @@ private fun IptvSettings(
     onMoveStalkerPortalDown: (String) -> Unit = {},
     onRemoveStalkerPortal: (String) -> Unit = {},
     onManageStalkerCategories: (String) -> Unit = {},
-    onRenameStalkerPortal: (StalkerPortalEntry) -> Unit = {}
+    onRenameStalkerPortal: (StalkerPortalEntry) -> Unit = {},
+    epgVodActionsEnabled: Boolean = true,
+    onEpgVodActionsToggle: (Boolean) -> Unit = {},
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     var selectionMode by remember { mutableStateOf(false) }
@@ -7147,6 +7180,15 @@ private fun IptvSettings(
                         onSortOrderChange(next)
                     }
                 )
+                MobileSettingsRow(
+                    icon = Icons.Default.LiveTv,
+                    title = stringResource(R.string.settings_epg_vod_actions),
+                    subtitle = stringResource(R.string.settings_epg_vod_actions_desc),
+                    value = stringResource(if (epgVodActionsEnabled) R.string.on else R.string.off),
+                    isFocused = false,
+                    showDivider = false,
+                    onClick = { onEpgVodActionsToggle(!epgVodActionsEnabled) },
+                )
             }
             MobileSettingsCategory(title = stringResource(R.string.settings_section_actions)) {
                 val refreshSubtitle = when { isLoading -> stringResource(R.string.settings_refreshing_channels_epg); error != null -> error; playlists.none { it.epgUrl.isNotBlank() || it.epgUrls.orEmpty().isNotEmpty() } -> stringResource(R.string.settings_reload_playlists_now); else -> stringResource(R.string.settings_reload_playlist_epg_now) }
@@ -7303,11 +7345,20 @@ private fun IptvSettings(
                 modifier = Modifier.settingsFocusSlot(trailingBase)
             )
             Spacer(modifier = Modifier.height(16.dp))
+            SettingsToggleRow(
+                title = stringResource(R.string.settings_epg_vod_actions),
+                subtitle = stringResource(R.string.settings_epg_vod_actions_desc),
+                isEnabled = epgVodActionsEnabled,
+                isFocused = focusedIndex == trailingBase + 1,
+                onToggle = onEpgVodActionsToggle,
+                modifier = Modifier.settingsFocusSlot(trailingBase + 1),
+            )
+            Spacer(modifier = Modifier.height(16.dp))
             val refreshSubtitle = when { isLoading -> stringResource(R.string.settings_refreshing_channels_epg); error != null -> error; playlists.none { it.epgUrl.isNotBlank() || it.epgUrls.orEmpty().isNotEmpty() } -> stringResource(R.string.settings_reload_playlists_now); else -> stringResource(R.string.settings_reload_playlist_epg_now) }
-            SettingsRow(icon = Icons.Default.Link, title = stringResource(R.string.refresh_iptv), subtitle = refreshSubtitle, value = if (isLoading) stringResource(R.string.settings_badge_loading) else stringResource(R.string.settings_badge_refresh), isFocused = focusedIndex == trailingBase + 1, onClick = onRefresh, modifier = Modifier.settingsFocusSlot(trailingBase + 1))
+            SettingsRow(icon = Icons.Default.Link, title = stringResource(R.string.refresh_iptv), subtitle = refreshSubtitle, value = if (isLoading) stringResource(R.string.settings_badge_loading) else stringResource(R.string.settings_badge_refresh), isFocused = focusedIndex == trailingBase + 2, onClick = onRefresh, modifier = Modifier.settingsFocusSlot(trailingBase + 2))
             Spacer(modifier = Modifier.height(16.dp))
             val hasNoSources = playlists.isEmpty() && stalkerPortals.isEmpty()
-            SettingsRow(icon = Icons.Default.Delete, title = stringResource(R.string.delete_iptv), subtitle = if (hasNoSources) stringResource(R.string.settings_no_playlists_configured) else stringResource(R.string.settings_remove_playlists_epg), value = if (hasNoSources) stringResource(R.string.settings_badge_empty) else stringResource(R.string.settings_badge_delete), isFocused = focusedIndex == trailingBase + 2, onClick = onDelete, modifier = Modifier.settingsFocusSlot(trailingBase + 2))
+            SettingsRow(icon = Icons.Default.Delete, title = stringResource(R.string.delete_iptv), subtitle = if (hasNoSources) stringResource(R.string.settings_no_playlists_configured) else stringResource(R.string.settings_remove_playlists_epg), value = if (hasNoSources) stringResource(R.string.settings_badge_empty) else stringResource(R.string.settings_badge_delete), isFocused = focusedIndex == trailingBase + 3, onClick = onDelete, modifier = Modifier.settingsFocusSlot(trailingBase + 3))
             if (isLoading && !progressText.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(stringResource(R.string.settings_progress_format, progressText, progressPercent.coerceIn(0, 100)), style = ArflixTypography.caption, color = TextSecondary)

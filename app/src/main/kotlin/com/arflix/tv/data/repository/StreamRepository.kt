@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -367,7 +368,7 @@ class StreamRepository @Inject constructor(
         stremioAddonRuntime
     ).associateBy { it.kind }
     private val addonRuntimeAggregator = AddonRuntimeAggregator(addonRuntimes)
-    private data class AddonRuntimeHealth(
+    internal data class AddonRuntimeHealth(
         var fetchSuccesses: Int = 0,
         var fetchFailures: Int = 0,
         var playbackStarts: Int = 0,
@@ -2036,7 +2037,12 @@ class StreamRepository @Inject constructor(
                 }
 
                 if (addonStreams.isEmpty() && nativeAnimeAddon) {
-                    val retryAnimeQuery = animeQuery ?: resolveAnimeQuery(NATIVE_ANIME_ID_LOOKUP_TIMEOUT_MS)
+                    // Only resolve an anime id when this item actually looked like anime. The
+                    // retry fires purely because a native-anime addon returned nothing, so without
+                    // this guard a non-anime title (an Israeli drama, say) gets run through the
+                    // Kitsu title search and is offered a completely different show's streams.
+                    val retryAnimeQuery = animeQuery
+                        ?: if (resolveAsAnime) resolveAnimeQuery(NATIVE_ANIME_ID_LOOKUP_TIMEOUT_MS) else null
                     val retryTmdbEpisodeId = if (tmdbId != null && addonSupportsIdFamily(addon, "tmdb")) {
                         "tmdb:$tmdbId:$season:$episode"
                     } else null
@@ -2940,7 +2946,7 @@ class StreamRepository @Inject constructor(
         tmdbId: Int? = null
     ) = withContext(Dispatchers.IO) {
         if (title.isBlank()) return@withContext
-        runCatching {
+        try {
             iptvRepository.prefetchEpisodeVodResolution(
                 title = title,
                 season = season,
@@ -2948,6 +2954,9 @@ class StreamRepository @Inject constructor(
                 imdbId = imdbId,
                 tmdbId = tmdbId
             )
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            com.arflix.tv.util.AppLogger.recordException(e, mapOf("error_area" to "StreamRepository", "action" to "prefetchEpisodeVod"))
         }
     }
 
@@ -2957,12 +2966,15 @@ class StreamRepository @Inject constructor(
         tmdbId: Int? = null
     ) = withContext(Dispatchers.IO) {
         if (title.isBlank()) return@withContext
-        runCatching {
+        try {
             iptvRepository.prefetchSeriesInfoForShow(
                 title = title,
                 imdbId = imdbId,
                 tmdbId = tmdbId
             )
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            com.arflix.tv.util.AppLogger.recordException(e, mapOf("error_area" to "StreamRepository", "action" to "prefetchSeriesVodInfo"))
         }
     }
 
@@ -4115,10 +4127,12 @@ class StreamRepository @Inject constructor(
         val parsed: Map<String, AddonRuntimeHealth> = if (raw.isBlank()) {
             emptyMap()
         } else {
-            runCatching {
-                val type = TypeToken.getParameterized(Map::class.java, String::class.java, AddonRuntimeHealth::class.java).type
-                gson.fromJson<Map<String, AddonRuntimeHealth>>(raw, type)
-            }.getOrNull().orEmpty()
+            try {
+                gson.fromJson<Map<String, AddonRuntimeHealth>>(raw, StreamRepositoryTypeTokens.ADDON_HEALTH_TYPE) ?: emptyMap()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                emptyMap()
+            }
         }
 
         synchronized(addonRuntimeHealth) {
@@ -4376,3 +4390,7 @@ data class AddonRefreshReport(
     val refreshed: Int = 0,
     val failed: Int = 0
 )
+
+private object StreamRepositoryTypeTokens {
+    val ADDON_HEALTH_TYPE: java.lang.reflect.Type = com.google.gson.reflect.TypeToken.getParameterized(Map::class.java, String::class.java, StreamRepository.AddonRuntimeHealth::class.java).type
+}

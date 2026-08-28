@@ -1,6 +1,8 @@
 package com.arflix.tv.util
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import androidx.compose.runtime.compositionLocalOf
@@ -98,4 +100,12 @@ fun detectDeviceType(context: Context): DeviceType {
     }
 
     return DeviceType.PHONE
+}
+
+tailrec fun Context.findActivity(): Activity? {
+    return when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
 }
