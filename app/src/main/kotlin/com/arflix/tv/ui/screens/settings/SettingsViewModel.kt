@@ -35,8 +35,11 @@ import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.PlexPinAuthSession
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.MAX_STALKER_PORTALS
 import com.arflix.tv.data.repository.normalizeIptvSortOrder
 import com.arflix.tv.data.repository.IptvPlaylistEntry
+import com.arflix.tv.data.repository.StalkerPortalEntry
+import com.arflix.tv.data.repository.StalkerPortalSupport
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
@@ -188,8 +191,7 @@ data class SettingsUiState(
     val iptvM3uUrl: String = "",
     val iptvEpgUrl: String = "",
     val iptvPlaylists: List<IptvPlaylistEntry> = emptyList(),
-    val iptvStalkerUrl: String = "",
-    val iptvStalkerMac: String = "",
+    val iptvStalkerPortals: List<StalkerPortalEntry> = emptyList(),
     val iptvSortOrder: String = "provider",
     val iptvChannelCount: Int = 0,
     val isIptvLoading: Boolean = false,
@@ -937,6 +939,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     private suspend fun loadIptvGroupsForPlaylist(playlistId: String): List<String> {
+        val stalkerPortalIds = _uiState.value.iptvStalkerPortals.map { it.id }.toSet()
+        val isStalkerPortal = playlistId in stalkerPortalIds
+
         val pagedGroups = withContext(Dispatchers.IO) {
             iptvRepository.pagedPlaylistGroupCounts()
                 .asSequence()
@@ -949,10 +954,11 @@ class SettingsViewModel @Inject constructor(
 
         val snapshot = iptvRepository.getMemoryCachedSnapshot()
             ?: iptvRepository.getCachedSnapshotOrNull()
+        val prefix = if (isStalkerPortal) "stalker:$playlistId:" else "$playlistId:"
         return withContext(Dispatchers.Default) {
             snapshot?.channels
                 ?.asSequence()
-                ?.filter { it.id.startsWith("$playlistId:") }
+                ?.filter { it.id.startsWith(prefix) }
                 ?.map { it.group.trim().ifBlank { "Ungrouped" } }
                 ?.distinct()
                 ?.toList()
@@ -981,6 +987,20 @@ class SettingsViewModel @Inject constructor(
     fun moveIptvGroupToTop(playlistId: String, groupName: String) {
         viewModelScope.launch {
             iptvRepository.moveGroupToTop(playlistId, groupName, _uiState.value.iptvAvailableGroups)
+        }
+    }
+
+    /**
+     * Bulk-show or bulk-hide all groups of a playlist at once. Drives the
+     * "show all / hide all" button in the categories screen. The current
+     * available groups are taken from the UI state so the operation only
+     * touches groups that actually belong to the selected playlist.
+     */
+    fun setAllIptvGroupsVisible(playlistId: String, visible: Boolean) {
+        viewModelScope.launch {
+            val groups = _uiState.value.iptvAvailableGroups
+            if (groups.isEmpty()) return@launch
+            iptvRepository.setGroupsHidden(playlistId, groups, hidden = !visible)
         }
     }
 
@@ -2065,23 +2085,23 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             iptvRepository.observeConfig().collect { config ->
                 val current = _uiState.value
-                if (current.iptvM3uUrl != config.m3uUrl || current.iptvEpgUrl != config.epgUrl || current.iptvStalkerUrl != config.stalkerPortalUrl || current.iptvStalkerMac != config.stalkerMacAddress || current.iptvPlaylists != config.playlists || current.iptvSortOrder != config.sortOrder) {
+                val stalkerConfigured = config.stalkerPortals.any { it.portalUrl.isNotBlank() }
+                if (current.iptvM3uUrl != config.m3uUrl || current.iptvEpgUrl != config.epgUrl || current.iptvStalkerPortals != config.stalkerPortals || current.iptvPlaylists != config.playlists || current.iptvSortOrder != config.sortOrder) {
                     _uiState.value = current.copy(
                         iptvM3uUrl = config.m3uUrl,
                         iptvEpgUrl = config.epgUrl,
                         iptvPlaylists = config.playlists,
-                        iptvStalkerUrl = config.stalkerPortalUrl,
-                        iptvStalkerMac = config.stalkerMacAddress,
+                        iptvStalkerPortals = config.stalkerPortals,
                         iptvSortOrder = config.sortOrder
                     )
                 }
                 if (!hasObservedIptvConfig) {
                     hasObservedIptvConfig = true
                     lastObservedIptvM3u = config.m3uUrl
-                    lastObservedStalkerUrl = config.stalkerPortalUrl
+                    lastObservedStalkerUrl = if (stalkerConfigured) "stalker" else ""
                     lastObservedIptvConfigSignature = config.syncSignature()
                     val hasAnyIptvConfig = config.m3uUrl.isNotBlank() ||
-                        config.stalkerPortalUrl.isNotBlank() ||
+                        stalkerConfigured ||
                         config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
                     if (!hasAnyIptvConfig) {
                         _uiState.value = _uiState.value.copy(
@@ -2098,12 +2118,12 @@ class SettingsViewModel @Inject constructor(
                 }
 
                 val hasAnyConfig = config.m3uUrl.isNotBlank() ||
-                    config.stalkerPortalUrl.isNotBlank() ||
+                    stalkerConfigured ||
                     config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
                 val configSignature = config.syncSignature()
                 if (hasAnyConfig && configSignature != lastObservedIptvConfigSignature) {
                     lastObservedIptvM3u = config.m3uUrl
-                    lastObservedStalkerUrl = config.stalkerPortalUrl
+                    lastObservedStalkerUrl = if (stalkerConfigured) "stalker" else ""
                     lastObservedIptvConfigSignature = configSignature
                     if (iptvLoadJob?.isActive != true) {
                         refreshIptv(showToast = false, force = false)
@@ -2417,38 +2437,140 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun saveStalkerConfig(portalUrl: String, macAddress: String) {
+    /**
+     * Add a new Stalker portal at the end of the list (capped at
+     * [MAX_STALKER_PORTALS]). Returns false (with a toast) when
+     * the limit is reached or the URL/MAC are blank.
+     */
+    fun onAddStalkerPortal(portalUrl: String, macAddress: String, name: String? = null) {
+        val trimmedUrl = portalUrl.trim().trimEnd('/')
+        val trimmedMac = macAddress.trim().uppercase()
+        if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Portal URL and MAC address are required",
+                toastType = ToastType.ERROR
+            )
+            return
+        }
+        val current = _uiState.value.iptvStalkerPortals
+        if (current.size >= MAX_STALKER_PORTALS) {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Maximum number of Stalker portals reached",
+                toastType = ToastType.ERROR
+            )
+            return
+        }
+        val portalId = StalkerPortalSupport.nextAvailablePortalId(
+            current.map { it.id },
+            MAX_STALKER_PORTALS,
+        ) ?: return
+        val portalNumber = portalId.removePrefix("stalker").toIntOrNull() ?: (current.size + 1)
+        val portal = StalkerPortalEntry(
+            id = portalId,
+            name = name?.trim()?.ifBlank { null } ?: "Portal $portalNumber",
+            portalUrl = trimmedUrl,
+            macAddress = trimmedMac
+        )
+        persistStalkerPortals(current + portal)
+    }
+
+    /**
+     * Update an existing portal's URL/MAC (and optionally its name). The edit
+     * dialog calls this with the portal's id.
+     */
+    fun onEditStalkerPortal(portalId: String, portalUrl: String, macAddress: String, name: String? = null) {
+        val trimmedUrl = portalUrl.trim().trimEnd('/')
+        val trimmedMac = macAddress.trim().uppercase()
+        if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Portal URL and MAC address are required",
+                toastType = ToastType.ERROR
+            )
+            return
+        }
+        val updated = _uiState.value.iptvStalkerPortals.map { portal ->
+            if (portal.id == portalId) portal.copy(
+                portalUrl = trimmedUrl,
+                macAddress = trimmedMac,
+                name = name?.trim()?.ifBlank { portal.name } ?: portal.name
+            ) else portal
+        }
+        if (updated == _uiState.value.iptvStalkerPortals) return
+        persistStalkerPortals(updated)
+    }
+
+    /**
+     * Rename a portal without touching its URL/MAC.
+     */
+    fun onRenameStalkerPortal(portalId: String, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        val updated = _uiState.value.iptvStalkerPortals.map { portal ->
+            if (portal.id == portalId) portal.copy(name = trimmed) else portal
+        }
+        if (updated == _uiState.value.iptvStalkerPortals) return
         viewModelScope.launch {
-            val trimmedUrl = portalUrl.trim()
-            val trimmedMac = macAddress.trim()
-            if (trimmedUrl.isBlank() && trimmedMac.isBlank()) {
-                removeStalkerConfigInternal()
-                return@launch
-            }
-            if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
-                _uiState.value = _uiState.value.copy(toastMessage = "Portal URL and MAC address are required", toastType = ToastType.ERROR)
-                return@launch
-            }
-            iptvRepository.saveStalkerConfig(trimmedUrl, trimmedMac)
+            iptvRepository.saveStalkerPortals(updated)
+            _uiState.value = _uiState.value.copy(iptvStalkerPortals = updated)
             syncLocalStateToCloud(silent = true)
-            refreshIptv(showToast = true, configured = true, force = true)
         }
     }
 
-    fun removeStalkerConfig() {
-        viewModelScope.launch { removeStalkerConfigInternal() }
+    /** Enable / disable a portal. */
+    fun onToggleStalkerPortal(portalId: String) {
+        val updated = _uiState.value.iptvStalkerPortals.map { portal ->
+            if (portal.id == portalId) portal.copy(enabled = !portal.enabled) else portal
+        }
+        if (updated == _uiState.value.iptvStalkerPortals) return
+        persistStalkerPortals(updated)
     }
 
-    private suspend fun removeStalkerConfigInternal() {
-        iptvRepository.clearStalkerConfig()
-        _uiState.value = _uiState.value.copy(
-            iptvStalkerUrl = "",
-            iptvStalkerMac = "",
-            toastMessage = "Stalker portal removed",
-            toastType = ToastType.SUCCESS
-        )
-        syncLocalStateToCloud(silent = true)
-        refreshIptv(showToast = false, configured = true, force = true)
+    fun onMoveStalkerPortalUp(portalId: String) {
+        val current = _uiState.value.iptvStalkerPortals.toMutableList()
+        val idx = current.indexOfFirst { it.id == portalId }
+        if (idx <= 0) return
+        val item = current.removeAt(idx)
+        current.add(idx - 1, item)
+        persistStalkerPortals(current)
+    }
+
+    fun onMoveStalkerPortalDown(portalId: String) {
+        val current = _uiState.value.iptvStalkerPortals.toMutableList()
+        val idx = current.indexOfFirst { it.id == portalId }
+        if (idx !in 0 until current.lastIndex) return
+        val item = current.removeAt(idx)
+        current.add(idx + 1, item)
+        persistStalkerPortals(current)
+    }
+
+    fun onRemoveStalkerPortal(portalId: String) {
+        val updated = _uiState.value.iptvStalkerPortals.filterNot { it.id == portalId }
+        if (updated == _uiState.value.iptvStalkerPortals) return
+        persistStalkerPortals(updated)
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Stalker portal removed",
+                toastType = ToastType.SUCCESS
+            )
+        }
+    }
+
+    /**
+     * Open the categories dialog for a specific Stalker portal. Each portal has
+     * its own independent group set (decision #3) — the portal id is used as
+     * the playlist id for [PlaylistGroupKey] and hidden-group filtering.
+     */
+    fun onManageStalkerCategories(portalId: String) {
+        setIptvSelectedPlaylistId(portalId)
+    }
+
+    private fun persistStalkerPortals(portals: List<StalkerPortalEntry>) {
+        viewModelScope.launch {
+            iptvRepository.saveStalkerPortals(portals)
+            _uiState.value = _uiState.value.copy(iptvStalkerPortals = portals)
+            syncLocalStateToCloud(silent = true)
+            refreshIptv(showToast = true, configured = true, force = true)
+        }
     }
 
     /**
@@ -2500,9 +2622,10 @@ class SettingsViewModel @Inject constructor(
     fun refreshIptv(showToast: Boolean = true, configured: Boolean = false, force: Boolean = true) {
         viewModelScope.launch {
             val currentConfig = iptvRepository.observeConfig().first()
-            // Check legacy m3uUrl, multi-playlist entries, and Stalker portal
+            // Check legacy m3uUrl, multi-playlist entries, and Stalker portals
             val hasPlaylists = currentConfig.playlists.any { it.m3uUrl.isNotBlank() && it.enabled }
-            if (currentConfig.m3uUrl.isBlank() && currentConfig.stalkerPortalUrl.isBlank() && !hasPlaylists) {
+            val hasStalker = currentConfig.stalkerPortals.any { it.portalUrl.isNotBlank() }
+            if (currentConfig.m3uUrl.isBlank() && !hasStalker && !hasPlaylists) {
                 return@launch
             }
 
@@ -4066,11 +4189,20 @@ private fun IptvConfig.syncSignature(): String {
                 playlist.enabled.toString()
             ).joinToString("~")
         }
+    val stalkerSignature = stalkerPortals
+        .joinToString("|") { portal ->
+            listOf(
+                portal.id,
+                portal.name,
+                portal.portalUrl,
+                portal.macAddress,
+                portal.enabled.toString()
+            ).joinToString("~")
+        }
     return listOf(
         m3uUrl,
         epgUrl,
-        stalkerPortalUrl,
-        stalkerMacAddress,
+        stalkerSignature,
         playlistsSignature
     ).joinToString("||")
 }

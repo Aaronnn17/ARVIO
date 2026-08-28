@@ -7,6 +7,7 @@ import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvSnapshot
+import com.arflix.tv.data.model.PlaylistGroupKey
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.ui.screens.tv.live.LiveTvGuideSources
@@ -15,6 +16,7 @@ import com.arflix.tv.data.repository.IptvPlaybackTarget
 import com.arflix.tv.data.repository.IptvPlaybackUrlResolver
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.IptvTvSessionState
+import com.arflix.tv.data.repository.StalkerPortalSupport
 import com.arflix.tv.ui.screens.tv.live.epgChannelAllowsVodSearch
 import com.arflix.tv.ui.screens.tv.live.selectConfidentEpgVodMatch
 import com.arflix.tv.network.OkHttpProvider
@@ -84,7 +86,7 @@ data class TvUiState(
 ) {
     val isConfigured: Boolean get() =
         config.m3uUrl.isNotBlank() ||
-            config.stalkerPortalUrl.isNotBlank() ||
+            config.stalkerPortals.any { it.enabled && it.portalUrl.isNotBlank() } ||
             config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
 
     val hasPotentialGuideSource: Boolean get() = config.hasConfiguredEpgSource()
@@ -318,7 +320,7 @@ class TvViewModel @Inject constructor(
                 startFullEpgWarmup()
 
                 val hasAnyIptvConfig = config.m3uUrl.isNotBlank() ||
-                    config.stalkerPortalUrl.isNotBlank() ||
+                    config.stalkerPortals.any { it.enabled && it.portalUrl.isNotBlank() } ||
                     config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
 
                 // Auto-heal cases where the app has IPTV config but an empty in-memory snapshot.
@@ -1936,7 +1938,10 @@ class TvViewModel @Inject constructor(
     private fun currentVisiblePlaylistGroups(playlistId: String? = null): List<String> {
         val targetPlaylistId = playlistId?.trim().orEmpty()
         if (targetPlaylistId.isNotBlank() && iptvRepository.pagedChannelsReady()) {
-            val hidden = _uiState.value.snapshot.hiddenGroups.mapTo(HashSet()) { it.trim() }
+            // hiddenGroups are `playlistId|groupName` keys; narrow to this
+            // playlist's hidden names so cross-source groups are unaffected.
+            val hidden = _uiState.value.snapshot.hiddenGroups
+                .mapTo(HashSet()) { PlaylistGroupKey(it).groupName.trim() }
             return iptvRepository.pagedPlaylistGroupCounts()
                 .asSequence()
                 .filter { (id, _, _) -> id == targetPlaylistId }
@@ -1946,7 +1951,8 @@ class TvViewModel @Inject constructor(
                 .toList()
         }
         val snapshot = _uiState.value.snapshot
-        val hidden = snapshot.hiddenGroups.mapTo(HashSet()) { it.trim() }
+        val hidden = snapshot.hiddenGroups
+            .mapTo(HashSet()) { PlaylistGroupKey(it).groupName.trim() }
         return snapshot.grouped.keys
             .asSequence()
             .map { it.trim() }
@@ -2008,6 +2014,7 @@ class TvViewModel @Inject constructor(
         }
         val resolvedUrl = resolveStalkerStreamIfNeeded(
             rawUrl = rawUrl,
+            channelId = channel.id,
             isStalkerChannel = channel.id.startsWith("stalker:"),
             forceRefresh = forceRefresh,
         )
@@ -2020,25 +2027,27 @@ class TvViewModel @Inject constructor(
 
     private suspend fun resolveStalkerStreamIfNeeded(
         rawUrl: String,
+        channelId: String,
         isStalkerChannel: Boolean,
         forceRefresh: Boolean,
     ): String {
         val trimmed = rawUrl.trim()
         if (!isStalkerChannel) return trimmed
+        val cacheKey = StalkerPortalSupport.streamCacheKey(channelId, trimmed)
 
         if (!forceRefresh) {
             synchronized(resolvedStalkerStreamCache) {
-                resolvedStalkerStreamCache[trimmed]?.let { return it }
+                resolvedStalkerStreamCache[cacheKey]?.let { return it }
             }
         }
 
         val resolved = withContext(Dispatchers.IO) {
-            iptvRepository.resolveStalkerStreamUrl(trimmed)
+            iptvRepository.resolveStalkerStreamUrl(channelId, trimmed)
         }?.trim().orEmpty()
         val playable = resolved.ifBlank { trimmed.removePrefix("ffmpeg").trim() }
         if (playable.isNotBlank()) {
             synchronized(resolvedStalkerStreamCache) {
-                resolvedStalkerStreamCache[trimmed] = playable
+                resolvedStalkerStreamCache[cacheKey] = playable
                 while (resolvedStalkerStreamCache.size > 200) {
                     val firstKey = resolvedStalkerStreamCache.keys.firstOrNull() ?: break
                     resolvedStalkerStreamCache.remove(firstKey)
@@ -2265,12 +2274,18 @@ private fun setPreparedContent(state: TvUiState): TvUiState {
 
 private fun buildPreparedGroups(snapshot: IptvSnapshot): List<String> {
     val dynamicGroups = snapshot.grouped.keys.toList()
-    val hiddenSet = snapshot.hiddenGroups.toHashSet()
-    val visibleGroups = dynamicGroups.filterNot { hiddenSet.contains(it) }
+    // hiddenGroups are stored as `playlistId|groupName` keys (PlaylistGroupKey),
+    // but the TV grid merges channels from every source under plain group
+    // names. A group is therefore hidden when any source marks it hidden.
+    val hiddenGroupNames = snapshot.hiddenGroups
+        .mapTo(HashSet()) { PlaylistGroupKey(it).groupName.trim() }
+    val visibleGroups = dynamicGroups.filterNot { hiddenGroupNames.contains(it.trim()) }
     val favorites = snapshot.favoriteGroups.filter { visibleGroups.contains(it) }
     val others = visibleGroups.filterNot { snapshot.favoriteGroups.contains(it) }
     val baseOrdered = if (snapshot.groupOrder.isNotEmpty()) {
-        val orderMap = snapshot.groupOrder.withIndex().associate { (i, groupName) -> groupName to i }
+        val orderMap = snapshot.groupOrder
+            .mapIndexed { i, key -> PlaylistGroupKey(key).groupName to i }
+            .associate { (groupName, i) -> groupName to i }
         (favorites + others).sortedBy { orderMap[it] ?: Int.MAX_VALUE }
     } else {
         favorites + others
@@ -2349,7 +2364,7 @@ private fun filterTvChannels(
 
 private fun hasNetworkEpgSource(config: IptvConfig): Boolean {
     return config.epgUrl.isNotBlank() ||
-        config.stalkerPortalUrl.isNotBlank() ||
+        config.stalkerPortals.any { it.portalUrl.isNotBlank() } ||
         config.m3uUrl.isNotBlank() ||
         looksLikeXtream(config.m3uUrl) ||
         config.playlists.any { playlist ->
@@ -2365,7 +2380,7 @@ private fun hasNetworkEpgSource(config: IptvConfig): Boolean {
 
 private fun IptvConfig.hasConfiguredEpgSource(): Boolean {
     return epgUrl.isNotBlank() ||
-        stalkerPortalUrl.isNotBlank() ||
+        stalkerPortals.any { it.portalUrl.isNotBlank() } ||
         m3uUrl.isNotBlank() ||
         looksLikeXtream(m3uUrl) ||
         playlists.any { playlist ->
@@ -2397,11 +2412,20 @@ internal fun IptvConfig.syncSignature(): String {
                 playlist.enabled.toString()
             ).joinToString("~")
         }
+    val stalkerSignature = stalkerPortals
+        .joinToString("|") { portal ->
+            listOf(
+                portal.id,
+                portal.name,
+                portal.portalUrl,
+                portal.macAddress,
+                portal.enabled.toString()
+            ).joinToString("~")
+        }
     return listOf(
         m3uUrl,
         epgUrl,
-        stalkerPortalUrl,
-        stalkerMacAddress,
+        stalkerSignature,
         playlistsSignature
     ).joinToString("||")
 }

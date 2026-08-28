@@ -201,6 +201,27 @@ class LiveCategoryIndexTest {
             .inOrder()
     }
 
+    @Test
+    fun stalkerPortalsWithSameGroupRemainSeparateCategories() {
+        val state = buildFastStartupChannelState(
+            channels = listOf(
+                channel("stalker:stalker1:10", "Portal One News", "News"),
+                channel("stalker:stalker2:10", "Portal Two News", "News"),
+            ),
+            favorites = emptySet(),
+            recents = emptySet(),
+        )
+
+        val newsCategories = state.tree.global.categories.filter { it.label == "News" }
+        assertThat(newsCategories.map { it.playlistId })
+            .containsExactly("stalker1", "stalker2")
+            .inOrder()
+        assertThat(state.index.channelsFor(newsCategories[0].id, emptyList(), emptyList()).map { it.id })
+            .containsExactly("stalker:stalker1:10")
+        assertThat(state.index.channelsFor(newsCategories[1].id, emptyList(), emptyList()).map { it.id })
+            .containsExactly("stalker:stalker2:10")
+    }
+
     private fun channel(id: String, name: String, group: String): IptvChannel =
         IptvChannel(
             id = id,
