@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.arflix.tv.R
 import com.arflix.tv.server.AiKeyConfigServer
 import com.arflix.tv.ui.screens.player.SubtitleAiModel
+import com.arflix.tv.ui.screens.player.SubtitleFontOption
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.DeviceIpAddress
 import com.arflix.tv.util.DiagnosticsManager
@@ -34,8 +35,11 @@ import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.PlexPinAuthSession
 import com.arflix.tv.data.repository.IptvConfig
 import com.arflix.tv.data.repository.IptvRepository
+import com.arflix.tv.data.repository.MAX_STALKER_PORTALS
 import com.arflix.tv.data.repository.normalizeIptvSortOrder
 import com.arflix.tv.data.repository.IptvPlaylistEntry
+import com.arflix.tv.data.repository.StalkerPortalEntry
+import com.arflix.tv.data.repository.StalkerPortalSupport
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
@@ -122,6 +126,7 @@ data class SettingsUiState(
     val subtitleSize: String = "Medium",
     val subtitleColor: String = "White",
     val subtitleStyle: String = "Bold",
+    val subtitleFont: String = SubtitleFontOption.DefaultPreference,
     val subtitleOffset: String = "Bottom",
     val subtitleStylized: Boolean = true,
     val filterSubtitlesByLanguage: Boolean = true,
@@ -186,8 +191,7 @@ data class SettingsUiState(
     val iptvM3uUrl: String = "",
     val iptvEpgUrl: String = "",
     val iptvPlaylists: List<IptvPlaylistEntry> = emptyList(),
-    val iptvStalkerUrl: String = "",
-    val iptvStalkerMac: String = "",
+    val iptvStalkerPortals: List<StalkerPortalEntry> = emptyList(),
     val iptvSortOrder: String = "provider",
     val iptvChannelCount: Int = 0,
     val isIptvLoading: Boolean = false,
@@ -281,7 +285,8 @@ class SettingsViewModel @Inject constructor(
     private val mdbListRepository: com.arflix.tv.data.repository.MdbListRepository,
     private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore,
     private val watchHistoryRepository: com.arflix.tv.data.repository.WatchHistoryRepository,
-    private val simklAuthManager: com.arflix.tv.data.repository.simkl.SimklAuthManager
+    private val simklAuthManager: com.arflix.tv.data.repository.simkl.SimklAuthManager,
+    private val simklSyncService: com.arflix.tv.data.repository.simkl.SimklSyncService
 ) : ViewModel() {
     private fun visibleCatalogs(catalogs: List<CatalogConfig>): List<CatalogConfig> {
         return catalogs.filter { config ->
@@ -332,6 +337,7 @@ class SettingsViewModel @Inject constructor(
     private fun subtitleColorKey() = profileManager.profileStringKey("subtitle_color")
     private fun subtitleOffsetKey() = profileManager.profileStringKey("subtitle_offset")
     private fun subtitleStyleKey() = profileManager.profileStringKey("subtitle_style")
+    private fun subtitleFontKey() = profileManager.profileStringKey("subtitle_font")
     private fun subtitleStylizedKey() = profileManager.profileBooleanKey("subtitle_stylized")
     private fun filterSubtitlesByLanguageKey() = profileManager.profileBooleanKey("filter_subtitles_by_lang")
     private fun secondarySubtitleKey() = profileManager.profileStringKey("secondary_subtitle")
@@ -545,6 +551,7 @@ class SettingsViewModel @Inject constructor(
             val subtitleSize = prefs[subtitleSizeKey()] ?: "Medium"
             val subtitleColor = prefs[subtitleColorKey()] ?: "White"
             val subtitleStyle = prefs[subtitleStyleKey()] ?: "Bold"
+            val subtitleFont = SubtitleFontOption.fromPreference(prefs[subtitleFontKey()]).preferenceValue
             val subtitleOffset = prefs[subtitleOffsetKey()] ?: "Bottom"
             val subtitleStylized = prefs[subtitleStylizedKey()] ?: true
             val filterSubtitlesByLanguage = prefs[filterSubtitlesByLanguageKey()] ?: true
@@ -636,6 +643,7 @@ class SettingsViewModel @Inject constructor(
                 subtitleSize = subtitleSize,
                 subtitleColor = subtitleColor,
                 subtitleStyle = subtitleStyle,
+                subtitleFont = subtitleFont,
                 subtitleOffset = subtitleOffset,
                 subtitleStylized = subtitleStylized,
                 filterSubtitlesByLanguage = filterSubtitlesByLanguage,
@@ -685,7 +693,7 @@ class SettingsViewModel @Inject constructor(
             )
 
             refreshIntegrationUsernames(loadProfileId, isTrakt, isMdbList, isSimkl)
-            if (isTrakt) refreshSyncSummary(loadProfileId)
+            if (isTrakt || isMdbList || isSimkl) refreshSyncSummary(loadProfileId)
         }
     }
 
@@ -755,18 +763,50 @@ class SettingsViewModel @Inject constructor(
 
     private fun refreshSyncSummary(profileId: String) {
         syncSummaryJob?.cancel()
-        syncSummaryJob = viewModelScope.launch {
-            val previousLastSyncTime = _uiState.value.lastSyncTime
+        syncSummaryJob = viewModelScope.launch(Dispatchers.IO) {
             val summary = traktSyncService.getLastSyncSummary()
-            if (
-                profileManager.getProfileIdSync() != profileId ||
-                _uiState.value.lastSyncTime != previousLastSyncTime
-            ) return@launch
-            _uiState.value = _uiState.value.copy(
-                lastSyncTime = formatSyncTime(summary?.lastSyncAt),
-                syncedMovies = summary?.moviesSynced ?: 0,
-                syncedEpisodes = summary?.episodesSynced ?: 0
-            )
+            var movies = summary?.moviesSynced ?: 0
+            var episodes = summary?.episodesSynced ?: 0
+            var lastSyncAt = summary?.lastSyncAt
+
+            val isTrakt = _uiState.value.isTraktAuthenticated
+            val isMdbList = _uiState.value.isMdbListConnected
+            val isSimkl = _uiState.value.isSimklConnected
+
+            // If summary has 0/null but a provider is connected, query provider caches directly
+            if (movies == 0 && episodes == 0 && (isTrakt || isMdbList || isSimkl)) {
+                if (isTrakt) {
+                    val traktMovies = runCatching { traktRepository.getWatchedMovies() }.getOrDefault(emptySet())
+                    val traktEpisodes = runCatching { traktRepository.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    movies += traktMovies.size
+                    episodes += traktEpisodes.size
+                }
+                if (isMdbList) {
+                    val mdbMovies = runCatching { mdbListRepository.getWatchedMovies() }.getOrDefault(emptySet())
+                    val mdbEpisodes = runCatching { mdbListRepository.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    movies += mdbMovies.size
+                    episodes += mdbEpisodes.size
+                }
+                if (isSimkl) {
+                    val simklMovies = runCatching { simklSyncService.getWatchedMovies() }.getOrDefault(emptySet())
+                    val simklEpisodes = runCatching { simklSyncService.getWatchedEpisodes() }.getOrDefault(emptySet())
+                    movies += simklMovies.size
+                    episodes += simklEpisodes.size
+                }
+                if (lastSyncAt == null && (movies > 0 || episodes > 0)) {
+                    lastSyncAt = java.time.Instant.now().toString()
+                    traktSyncService.saveLocalSyncSummary(lastSyncAt, movies, episodes)
+                }
+            }
+
+            if (profileManager.getProfileIdSync() != profileId) return@launch
+            withContext(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(
+                    lastSyncTime = formatSyncTime(lastSyncAt),
+                    syncedMovies = movies,
+                    syncedEpisodes = episodes
+                )
+            }
         }
     }
 
@@ -899,6 +939,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     private suspend fun loadIptvGroupsForPlaylist(playlistId: String): List<String> {
+        val stalkerPortalIds = _uiState.value.iptvStalkerPortals.map { it.id }.toSet()
+        val isStalkerPortal = playlistId in stalkerPortalIds
+
         val pagedGroups = withContext(Dispatchers.IO) {
             iptvRepository.pagedPlaylistGroupCounts()
                 .asSequence()
@@ -911,10 +954,11 @@ class SettingsViewModel @Inject constructor(
 
         val snapshot = iptvRepository.getMemoryCachedSnapshot()
             ?: iptvRepository.getCachedSnapshotOrNull()
+        val prefix = if (isStalkerPortal) "stalker:$playlistId:" else "$playlistId:"
         return withContext(Dispatchers.Default) {
             snapshot?.channels
                 ?.asSequence()
-                ?.filter { it.id.startsWith("$playlistId:") }
+                ?.filter { it.id.startsWith(prefix) }
                 ?.map { it.group.trim().ifBlank { "Ungrouped" } }
                 ?.distinct()
                 ?.toList()
@@ -946,64 +990,132 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Bulk-show or bulk-hide all groups of a playlist at once. Drives the
+     * "show all / hide all" button in the categories screen. The current
+     * available groups are taken from the UI state so the operation only
+     * touches groups that actually belong to the selected playlist.
+     */
+    fun setAllIptvGroupsVisible(playlistId: String, visible: Boolean) {
+        viewModelScope.launch {
+            val groups = _uiState.value.iptvAvailableGroups
+            if (groups.isEmpty()) return@launch
+            iptvRepository.setGroupsHidden(playlistId, groups, hidden = !visible)
+        }
+    }
+
     // ========== App Updates ==========
 
-    fun performFullSync(silent: Boolean = false) {
-        viewModelScope.launch {
+    fun syncAllTrackingProviders(silent: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
             if (_uiState.value.isSyncing) return@launch
-            val result = traktSyncService.performFullSync()
-            when (result) {
-                is SyncResult.Success -> {
-                    _uiState.value = _uiState.value.copy(
-                        syncedMovies = result.moviesSynced,
-                        syncedEpisodes = result.episodesSynced,
-                        lastSyncTime = formatSyncTime(java.time.Instant.now().toString()),
-                        toastMessage = "Synced ${result.moviesSynced} movies and ${result.episodesSynced} episodes",
-                        toastType = ToastType.SUCCESS
-                    )
-                    // Invalidate repository cache to pick up new data
+            withContext(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(isSyncing = true)
+            }
+            try {
+                var totalMovies = 0
+                var totalEpisodes = 0
+                var syncedAny = false
+                val connectedProviders = mutableListOf<String>()
+                val failures = mutableListOf<String>()
+
+                if (_uiState.value.isTraktAuthenticated) {
+                    connectedProviders += "Trakt"
+                    when (val result = traktSyncService.performFullSync()) {
+                        is SyncResult.Success -> {
+                            totalMovies += result.moviesSynced
+                            totalEpisodes += result.episodesSynced
+                            syncedAny = true
+                        }
+                        is SyncResult.Error -> failures += "Trakt: ${result.message}"
+                    }
+                }
+                if (_uiState.value.isMdbListConnected) {
+                    connectedProviders += "MDBList"
+                    mdbListRepository.getWatchedSnapshot()
+                        .onSuccess { snapshot ->
+                            totalMovies += snapshot.movies.size
+                            totalEpisodes += snapshot.episodes.size
+                            syncedAny = true
+                        }
+                        .onFailure { error ->
+                            failures += "MDBList: ${error.message ?: "request failed"}"
+                        }
+                }
+                if (_uiState.value.isSimklConnected) {
+                    connectedProviders += "Simkl"
+                    if (simklSyncService.syncIfNeeded(force = true)) {
+                        val simklMovies = simklSyncService.getWatchedMovies()
+                        val simklEpisodes = simklSyncService.getWatchedEpisodes()
+                        totalMovies += simklMovies.size
+                        totalEpisodes += simklEpisodes.size
+                        syncedAny = true
+                    } else {
+                        failures += "Simkl: request failed"
+                    }
+                }
+
+                val nowIso = java.time.Instant.now().toString()
+                if (syncedAny) {
+                    traktSyncService.saveLocalSyncSummary(nowIso, totalMovies, totalEpisodes)
+                    withContext(Dispatchers.Main) {
+                        _uiState.value = _uiState.value.copy(
+                            syncedMovies = totalMovies,
+                            syncedEpisodes = totalEpisodes,
+                            lastSyncTime = formatSyncTime(nowIso),
+                            toastMessage = if (!silent) {
+                                if (failures.isEmpty()) {
+                                    "Synced $totalMovies movies and $totalEpisodes episodes"
+                                } else {
+                                    "Synced $totalMovies movies and $totalEpisodes episodes; ${failures.joinToString("; ")}"
+                                }
+                            } else {
+                                _uiState.value.toastMessage
+                            },
+                            toastType = if (!silent) {
+                                if (failures.isEmpty()) ToastType.SUCCESS else ToastType.ERROR
+                            } else {
+                                _uiState.value.toastType
+                            }
+                        )
+                    }
                     traktRepository.invalidateWatchedCache()
                     traktRepository.initializeWatchedCache()
-                }
-                is SyncResult.Error -> {
-                    if (!silent) {
+                } else if (!silent && connectedProviders.isEmpty()) {
+                    withContext(Dispatchers.Main) {
                         _uiState.value = _uiState.value.copy(
-                            toastMessage = context.getString(R.string.sync_failed, result.message),
+                            toastMessage = "No tracking provider connected",
                             toastType = ToastType.ERROR
                         )
                     }
+                } else if (!silent) {
+                    withContext(Dispatchers.Main) {
+                        _uiState.value = _uiState.value.copy(
+                            toastMessage = context.getString(R.string.sync_failed, failures.joinToString("; ")),
+                            toastType = ToastType.ERROR
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (!silent) {
+                    withContext(Dispatchers.Main) {
+                        _uiState.value = _uiState.value.copy(
+                            toastMessage = context.getString(R.string.sync_failed, e.message),
+                            toastType = ToastType.ERROR
+                        )
+                    }
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    _uiState.value = _uiState.value.copy(isSyncing = false)
                 }
             }
         }
     }
 
-    fun performIncrementalSync() {
-        viewModelScope.launch {
-            val result = traktSyncService.performIncrementalSync()
-            when (result) {
-                is SyncResult.Success -> {
-                    _uiState.value = _uiState.value.copy(
-                        syncedMovies = _uiState.value.syncedMovies + result.moviesSynced,
-                        syncedEpisodes = _uiState.value.syncedEpisodes + result.episodesSynced,
-                        lastSyncTime = formatSyncTime(java.time.Instant.now().toString()),
-                        toastMessage = if (result.moviesSynced == 0 && result.episodesSynced == 0)
-                            "Already up to date"
-                        else
-                            "Synced ${result.moviesSynced} movies and ${result.episodesSynced} episodes",
-                        toastType = ToastType.SUCCESS
-                    )
-                    // Invalidate repository cache to pick up new data
-                    traktRepository.invalidateWatchedCache()
-                    traktRepository.initializeWatchedCache()
-                }
-                is SyncResult.Error -> {
-                    _uiState.value = _uiState.value.copy(
-                        toastMessage = context.getString(R.string.sync_failed, result.message),
-                        toastType = ToastType.ERROR
-                    )
-                }
-            }
-        }
+    fun performFullSync(silent: Boolean = false) {
+        syncAllTrackingProviders(silent = silent)
     }
 
     fun setDefaultSubtitle(language: String) {
@@ -1499,6 +1611,15 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { context.settingsDataStore.edit { it[subtitleStyleKey()] = next }; _uiState.value = _uiState.value.copy(subtitleStyle = next); syncLocalStateToCloud(silent = true) }
     }
 
+    fun cycleSubtitleFont() {
+        val next = SubtitleFontOption.nextPreference(_uiState.value.subtitleFont)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[subtitleFontKey()] = next }
+            _uiState.value = _uiState.value.copy(subtitleFont = next)
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
     fun toggleSubtitleStylized() {
         val next = !_uiState.value.subtitleStylized
         viewModelScope.launch {
@@ -1964,23 +2085,23 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             iptvRepository.observeConfig().collect { config ->
                 val current = _uiState.value
-                if (current.iptvM3uUrl != config.m3uUrl || current.iptvEpgUrl != config.epgUrl || current.iptvStalkerUrl != config.stalkerPortalUrl || current.iptvStalkerMac != config.stalkerMacAddress || current.iptvPlaylists != config.playlists || current.iptvSortOrder != config.sortOrder) {
+                val stalkerConfigured = config.stalkerPortals.any { it.portalUrl.isNotBlank() }
+                if (current.iptvM3uUrl != config.m3uUrl || current.iptvEpgUrl != config.epgUrl || current.iptvStalkerPortals != config.stalkerPortals || current.iptvPlaylists != config.playlists || current.iptvSortOrder != config.sortOrder) {
                     _uiState.value = current.copy(
                         iptvM3uUrl = config.m3uUrl,
                         iptvEpgUrl = config.epgUrl,
                         iptvPlaylists = config.playlists,
-                        iptvStalkerUrl = config.stalkerPortalUrl,
-                        iptvStalkerMac = config.stalkerMacAddress,
+                        iptvStalkerPortals = config.stalkerPortals,
                         iptvSortOrder = config.sortOrder
                     )
                 }
                 if (!hasObservedIptvConfig) {
                     hasObservedIptvConfig = true
                     lastObservedIptvM3u = config.m3uUrl
-                    lastObservedStalkerUrl = config.stalkerPortalUrl
+                    lastObservedStalkerUrl = if (stalkerConfigured) "stalker" else ""
                     lastObservedIptvConfigSignature = config.syncSignature()
                     val hasAnyIptvConfig = config.m3uUrl.isNotBlank() ||
-                        config.stalkerPortalUrl.isNotBlank() ||
+                        stalkerConfigured ||
                         config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
                     if (!hasAnyIptvConfig) {
                         _uiState.value = _uiState.value.copy(
@@ -1997,12 +2118,12 @@ class SettingsViewModel @Inject constructor(
                 }
 
                 val hasAnyConfig = config.m3uUrl.isNotBlank() ||
-                    config.stalkerPortalUrl.isNotBlank() ||
+                    stalkerConfigured ||
                     config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
                 val configSignature = config.syncSignature()
                 if (hasAnyConfig && configSignature != lastObservedIptvConfigSignature) {
                     lastObservedIptvM3u = config.m3uUrl
-                    lastObservedStalkerUrl = config.stalkerPortalUrl
+                    lastObservedStalkerUrl = if (stalkerConfigured) "stalker" else ""
                     lastObservedIptvConfigSignature = configSignature
                     if (iptvLoadJob?.isActive != true) {
                         refreshIptv(showToast = false, force = false)
@@ -2316,38 +2437,140 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun saveStalkerConfig(portalUrl: String, macAddress: String) {
+    /**
+     * Add a new Stalker portal at the end of the list (capped at
+     * [MAX_STALKER_PORTALS]). Returns false (with a toast) when
+     * the limit is reached or the URL/MAC are blank.
+     */
+    fun onAddStalkerPortal(portalUrl: String, macAddress: String, name: String? = null) {
+        val trimmedUrl = portalUrl.trim().trimEnd('/')
+        val trimmedMac = macAddress.trim().uppercase()
+        if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Portal URL and MAC address are required",
+                toastType = ToastType.ERROR
+            )
+            return
+        }
+        val current = _uiState.value.iptvStalkerPortals
+        if (current.size >= MAX_STALKER_PORTALS) {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Maximum number of Stalker portals reached",
+                toastType = ToastType.ERROR
+            )
+            return
+        }
+        val portalId = StalkerPortalSupport.nextAvailablePortalId(
+            current.map { it.id },
+            MAX_STALKER_PORTALS,
+        ) ?: return
+        val portalNumber = portalId.removePrefix("stalker").toIntOrNull() ?: (current.size + 1)
+        val portal = StalkerPortalEntry(
+            id = portalId,
+            name = name?.trim()?.ifBlank { null } ?: "Portal $portalNumber",
+            portalUrl = trimmedUrl,
+            macAddress = trimmedMac
+        )
+        persistStalkerPortals(current + portal)
+    }
+
+    /**
+     * Update an existing portal's URL/MAC (and optionally its name). The edit
+     * dialog calls this with the portal's id.
+     */
+    fun onEditStalkerPortal(portalId: String, portalUrl: String, macAddress: String, name: String? = null) {
+        val trimmedUrl = portalUrl.trim().trimEnd('/')
+        val trimmedMac = macAddress.trim().uppercase()
+        if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Portal URL and MAC address are required",
+                toastType = ToastType.ERROR
+            )
+            return
+        }
+        val updated = _uiState.value.iptvStalkerPortals.map { portal ->
+            if (portal.id == portalId) portal.copy(
+                portalUrl = trimmedUrl,
+                macAddress = trimmedMac,
+                name = name?.trim()?.ifBlank { portal.name } ?: portal.name
+            ) else portal
+        }
+        if (updated == _uiState.value.iptvStalkerPortals) return
+        persistStalkerPortals(updated)
+    }
+
+    /**
+     * Rename a portal without touching its URL/MAC.
+     */
+    fun onRenameStalkerPortal(portalId: String, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        val updated = _uiState.value.iptvStalkerPortals.map { portal ->
+            if (portal.id == portalId) portal.copy(name = trimmed) else portal
+        }
+        if (updated == _uiState.value.iptvStalkerPortals) return
         viewModelScope.launch {
-            val trimmedUrl = portalUrl.trim()
-            val trimmedMac = macAddress.trim()
-            if (trimmedUrl.isBlank() && trimmedMac.isBlank()) {
-                removeStalkerConfigInternal()
-                return@launch
-            }
-            if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
-                _uiState.value = _uiState.value.copy(toastMessage = "Portal URL and MAC address are required", toastType = ToastType.ERROR)
-                return@launch
-            }
-            iptvRepository.saveStalkerConfig(trimmedUrl, trimmedMac)
+            iptvRepository.saveStalkerPortals(updated)
+            _uiState.value = _uiState.value.copy(iptvStalkerPortals = updated)
             syncLocalStateToCloud(silent = true)
-            refreshIptv(showToast = true, configured = true, force = true)
         }
     }
 
-    fun removeStalkerConfig() {
-        viewModelScope.launch { removeStalkerConfigInternal() }
+    /** Enable / disable a portal. */
+    fun onToggleStalkerPortal(portalId: String) {
+        val updated = _uiState.value.iptvStalkerPortals.map { portal ->
+            if (portal.id == portalId) portal.copy(enabled = !portal.enabled) else portal
+        }
+        if (updated == _uiState.value.iptvStalkerPortals) return
+        persistStalkerPortals(updated)
     }
 
-    private suspend fun removeStalkerConfigInternal() {
-        iptvRepository.clearStalkerConfig()
-        _uiState.value = _uiState.value.copy(
-            iptvStalkerUrl = "",
-            iptvStalkerMac = "",
-            toastMessage = "Stalker portal removed",
-            toastType = ToastType.SUCCESS
-        )
-        syncLocalStateToCloud(silent = true)
-        refreshIptv(showToast = false, configured = true, force = true)
+    fun onMoveStalkerPortalUp(portalId: String) {
+        val current = _uiState.value.iptvStalkerPortals.toMutableList()
+        val idx = current.indexOfFirst { it.id == portalId }
+        if (idx <= 0) return
+        val item = current.removeAt(idx)
+        current.add(idx - 1, item)
+        persistStalkerPortals(current)
+    }
+
+    fun onMoveStalkerPortalDown(portalId: String) {
+        val current = _uiState.value.iptvStalkerPortals.toMutableList()
+        val idx = current.indexOfFirst { it.id == portalId }
+        if (idx !in 0 until current.lastIndex) return
+        val item = current.removeAt(idx)
+        current.add(idx + 1, item)
+        persistStalkerPortals(current)
+    }
+
+    fun onRemoveStalkerPortal(portalId: String) {
+        val updated = _uiState.value.iptvStalkerPortals.filterNot { it.id == portalId }
+        if (updated == _uiState.value.iptvStalkerPortals) return
+        persistStalkerPortals(updated)
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                toastMessage = "Stalker portal removed",
+                toastType = ToastType.SUCCESS
+            )
+        }
+    }
+
+    /**
+     * Open the categories dialog for a specific Stalker portal. Each portal has
+     * its own independent group set (decision #3) — the portal id is used as
+     * the playlist id for [PlaylistGroupKey] and hidden-group filtering.
+     */
+    fun onManageStalkerCategories(portalId: String) {
+        setIptvSelectedPlaylistId(portalId)
+    }
+
+    private fun persistStalkerPortals(portals: List<StalkerPortalEntry>) {
+        viewModelScope.launch {
+            iptvRepository.saveStalkerPortals(portals)
+            _uiState.value = _uiState.value.copy(iptvStalkerPortals = portals)
+            syncLocalStateToCloud(silent = true)
+            refreshIptv(showToast = true, configured = true, force = true)
+        }
     }
 
     /**
@@ -2399,9 +2622,10 @@ class SettingsViewModel @Inject constructor(
     fun refreshIptv(showToast: Boolean = true, configured: Boolean = false, force: Boolean = true) {
         viewModelScope.launch {
             val currentConfig = iptvRepository.observeConfig().first()
-            // Check legacy m3uUrl, multi-playlist entries, and Stalker portal
+            // Check legacy m3uUrl, multi-playlist entries, and Stalker portals
             val hasPlaylists = currentConfig.playlists.any { it.m3uUrl.isNotBlank() && it.enabled }
-            if (currentConfig.m3uUrl.isBlank() && currentConfig.stalkerPortalUrl.isBlank() && !hasPlaylists) {
+            val hasStalker = currentConfig.stalkerPortals.any { it.portalUrl.isNotBlank() }
+            if (currentConfig.m3uUrl.isBlank() && !hasStalker && !hasPlaylists) {
                 return@launch
             }
 
@@ -3965,11 +4189,20 @@ private fun IptvConfig.syncSignature(): String {
                 playlist.enabled.toString()
             ).joinToString("~")
         }
+    val stalkerSignature = stalkerPortals
+        .joinToString("|") { portal ->
+            listOf(
+                portal.id,
+                portal.name,
+                portal.portalUrl,
+                portal.macAddress,
+                portal.enabled.toString()
+            ).joinToString("~")
+        }
     return listOf(
         m3uUrl,
         epgUrl,
-        stalkerPortalUrl,
-        stalkerMacAddress,
+        stalkerSignature,
         playlistsSignature
     ).joinToString("||")
 }

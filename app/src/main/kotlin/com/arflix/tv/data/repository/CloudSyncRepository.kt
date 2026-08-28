@@ -271,6 +271,7 @@ class CloudSyncRepository @Inject constructor(
         val subtitleSize: String = "Medium",
         val subtitleColor: String = "White",
         val subtitleStyle: String = "Bold",
+        val subtitleFont: String = "System",
         val subtitleOffset: String = "Bottom",
         val subtitleStylized: Boolean = true,
         val cardLayoutMode: String = CARD_LAYOUT_MODE_LANDSCAPE,
@@ -338,6 +339,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "subtitle_offset")
     private fun subtitleStyleKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "subtitle_style")
+    private fun subtitleFontKeyFor(profileId: String) =
+        profileManager.profileStringKeyFor(profileId, "subtitle_font")
     private fun subtitleStylizedKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "subtitle_stylized")
     private fun iptvHiddenGroupsKeyFor(profileId: String) =
@@ -631,6 +634,7 @@ class CloudSyncRepository @Inject constructor(
                         subtitleColor = prefs[subtitleColorKeyFor(profile.id)] ?: "White",
                         subtitleOffset = prefs[subtitleOffsetKeyFor(profile.id)] ?: "Bottom",
                         subtitleStyle = prefs[subtitleStyleKeyFor(profile.id)] ?: "Bold",
+                        subtitleFont = prefs[subtitleFontKeyFor(profile.id)] ?: "System",
                         subtitleStylized = prefs[subtitleStylizedKeyFor(profile.id)] ?: true,
                         secondarySubtitle = prefs[secondarySubtitleKeyFor(profile.id)] ?: "Off",
                         filterSubtitlesByLanguage = prefs[filterSubtitlesByLanguageKeyFor(profile.id)] ?: true,
@@ -1344,6 +1348,7 @@ class CloudSyncRepository @Inject constructor(
                         prefs[subtitleColorKeyFor(profileId)] = state.subtitleColor
                         prefs[subtitleOffsetKeyFor(profileId)] = state.subtitleOffset
                         prefs[subtitleStyleKeyFor(profileId)] = state.subtitleStyle
+                        prefs[subtitleFontKeyFor(profileId)] = state.subtitleFont
                         prefs[subtitleStylizedKeyFor(profileId)] = state.subtitleStylized
                         prefs[secondarySubtitleKeyFor(profileId)] = state.secondarySubtitle.ifBlank { "Off" }
                         prefs[filterSubtitlesByLanguageKeyFor(profileId)] = state.filterSubtitlesByLanguage

@@ -36,11 +36,16 @@ import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.util.CatalogUrlParser
 import com.arflix.tv.util.Constants
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -107,6 +112,7 @@ class MediaRepository @Inject constructor(
 
     private val apiKey = Constants.TMDB_API_KEY
     private val gson = Gson()
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** TMDB content language (e.g. "en-US", "fr-FR", "nl-NL"). */
     @Volatile
@@ -155,6 +161,8 @@ class MediaRepository @Inject constructor(
     private val addonTitleToTmdbCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val homeServerLogoRefCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val collectionRefsCache = ConcurrentHashMap<String, CacheEntry<List<Pair<MediaType, Int>>>>()
+    private val _episodeRatingsUpdated = MutableSharedFlow<Pair<Int, Int>>(extraBufferCapacity = 64)
+    val episodeRatingsUpdated = _episodeRatingsUpdated.asSharedFlow()
 
     private fun <T> getFromCache(cache: Map<String, CacheEntry<T>>, key: String): T? {
         val entry = cache[key] ?: return null
@@ -322,6 +330,58 @@ class MediaRepository @Inject constructor(
         val cacheKey = detailsCacheKey(mediaType, mediaId)
         return getFromCache(detailsCache, cacheKey)
     }
+
+    suspend fun getCachedItemFromDisk(mediaType: MediaType, mediaId: Int): MediaItem? =
+        withContext(Dispatchers.IO) {
+            peekItemFromDiskCache(mediaType, mediaId)
+        }
+
+    private fun peekItemFromDiskCache(mediaType: MediaType, mediaId: Int): MediaItem? = try {
+            val cacheFiles = mutableListOf<java.io.File>()
+            context.cacheDir.listFiles { _, name -> name.startsWith("home_categories_cache_") && name.endsWith(".json") }
+                ?.let { cacheFiles.addAll(it) }
+            context.filesDir.listFiles { _, name -> name.startsWith("home_continue_watching_") && name.endsWith(".json") }
+                ?.let { cacheFiles.addAll(it) }
+
+            for (file in cacheFiles) {
+                if (!file.exists() || file.length() > 12_000_000L) continue
+                val json = file.readText()
+                if (json.isBlank()) continue
+                if (!json.contains("\"id\":$mediaId") && !json.contains("\"id\": $mediaId")) continue
+
+                val type = com.google.gson.reflect.TypeToken
+                    .getParameterized(MutableList::class.java, Category::class.java)
+                    .type
+                val categories: List<Category>? = runCatching { gson.fromJson<List<Category>>(json, type) }.getOrNull()
+                if (categories != null) {
+                    for (cat in categories) {
+                        for (item in cat.items) {
+                            if (item.id == mediaId && item.mediaType == mediaType) {
+                                cacheItem(item)
+                                return item
+                            }
+                        }
+                    }
+                }
+
+                val cwType = com.google.gson.reflect.TypeToken
+                    .getParameterized(MutableList::class.java, ContinueWatchingItem::class.java)
+                    .type
+                val cwItems: List<ContinueWatchingItem>? = runCatching { gson.fromJson<List<ContinueWatchingItem>>(json, cwType) }.getOrNull()
+                if (cwItems != null) {
+                    for (cw in cwItems) {
+                        if (cw.id == mediaId && cw.mediaType == mediaType) {
+                            val item = cw.toMediaItem()
+                            cacheItem(item)
+                            return item
+                        }
+                    }
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
 
     fun getCachedFullItem(mediaType: MediaType, mediaId: Int): MediaItem? {
         val cacheKey = detailsCacheKey(mediaType, mediaId)
@@ -2938,7 +2998,9 @@ class MediaRepository @Inject constructor(
     }
 
     /**
-     * Get season episodes with Trakt watched status
+     * Get season episodes with Trakt watched status.
+     * Returns immediately upon fetching the TMDB season structure, hydrating missing
+     * episode IMDb ratings asynchronously in the background.
      */
     suspend fun getSeasonEpisodes(tvId: Int, seasonNumber: Int): List<Episode> {
         val cacheKey = "tv_${tvId}_season_$seasonNumber"
@@ -2955,49 +3017,69 @@ class MediaRepository @Inject constructor(
                 traktRepository.getWatchedEpisodesForShow(tvId)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-
                 emptySet<String>()
             }
         }
         val hasShowWatchedData = watchedEpisodes.any { it.startsWith("show_tmdb:$tvId:") }
 
-        // Re-apply watched status on cached episodes so stale season cache doesn't hide badges.
+        // Fast-path: return cached episodes immediately
         if (cachedEpisodes != null) {
-            val episodeImdbRatings = if (cachedEpisodes.any { it.imdbRating.isBlank() }) {
-                getSeasonEpisodeImdbRatings(
-                    tvId = tvId,
-                    seasonNumber = seasonNumber,
-                    episodeNumbers = cachedEpisodes.map { it.episodeNumber }
-                )
-            } else {
-                emptyMap()
-            }
-            return cachedEpisodes.map { episode ->
+            val episodes = cachedEpisodes.map { episode ->
                 val episodeKey = "show_tmdb:$tvId:${episode.seasonNumber}:${episode.episodeNumber}"
                 episode.copy(
-                    imdbRating = episode.imdbRating.ifBlank {
-                        episodeImdbRatings[episode.seasonNumber to episode.episodeNumber].orEmpty()
-                    },
                     isWatched = if (hasShowWatchedData) episodeKey in watchedEpisodes else episode.isWatched
                 )
             }
+            if (episodes.any { it.imdbRating.isBlank() }) {
+                repositoryScope.launch {
+                    val ratings = getSeasonEpisodeImdbRatings(
+                        tvId = tvId,
+                        seasonNumber = seasonNumber,
+                        episodeNumbers = episodes.map { it.episodeNumber }
+                    )
+                    if (ratings.isNotEmpty()) {
+                        val hydrated = episodes.map { ep ->
+                            ep.copy(imdbRating = ep.imdbRating.ifBlank { ratings[ep.seasonNumber to ep.episodeNumber].orEmpty() })
+                        }
+                        seasonEpisodesCache[cacheKey] = CacheEntry(hydrated, System.currentTimeMillis())
+                        _episodeRatingsUpdated.tryEmit(tvId to seasonNumber)
+                    }
+                }
+            }
+            return episodes
         }
 
         val season = tmdbApi.getTvSeason(tvId, seasonNumber, apiKey, language = contentLanguage)
-        val episodeImdbRatings = getSeasonEpisodeImdbRatings(
-            tvId = tvId,
-            seasonNumber = seasonNumber,
-            episodeNumbers = season.episodes.map { it.episodeNumber }
-        )
-
+        val cinemetaRatings = getSeriesCinemetaEpisodeRatings(tvId)
         val episodes = season.episodes.map { episode ->
             val episodeKey = "show_tmdb:$tvId:$seasonNumber:${episode.episodeNumber}"
+            val rating = cinemetaRatings[seasonNumber to episode.episodeNumber].orEmpty()
             episode.toEpisode().copy(
-                imdbRating = episodeImdbRatings[seasonNumber to episode.episodeNumber].orEmpty(),
+                imdbRating = rating,
                 isWatched = episodeKey in watchedEpisodes
             )
         }
         seasonEpisodesCache[cacheKey] = CacheEntry(episodes, System.currentTimeMillis())
+
+        if (episodes.any { it.imdbRating.isBlank() }) {
+            repositoryScope.launch {
+                val missingNumbers = episodes.filter { it.imdbRating.isBlank() }.map { it.episodeNumber }
+                val ratings = getSeasonEpisodeImdbRatings(
+                    tvId = tvId,
+                    seasonNumber = seasonNumber,
+                    episodeNumbers = missingNumbers
+                )
+                if (ratings.isNotEmpty()) {
+                    val currentCache = getFromCache(seasonEpisodesCache, cacheKey) ?: episodes
+                    val hydrated = currentCache.map { ep ->
+                        ep.copy(imdbRating = ep.imdbRating.ifBlank { ratings[ep.seasonNumber to ep.episodeNumber].orEmpty() })
+                    }
+                    seasonEpisodesCache[cacheKey] = CacheEntry(hydrated, System.currentTimeMillis())
+                    _episodeRatingsUpdated.tryEmit(tvId to seasonNumber)
+                }
+            }
+        }
+
         return episodes
     }
 
@@ -3183,10 +3265,44 @@ class MediaRepository @Inject constructor(
         return item.mediaType to match.id
     }
 
-    /** Instant synchronous peek into the in-memory logo cache. */
+    /** Instant synchronous peek into the in-memory or persisted logo cache. */
     fun peekCachedLogoUrl(mediaType: MediaType, mediaId: Int): String? {
+        val keys = listOf(
+            "${mediaType}_logo_$mediaId",
+            "${mediaType}_$mediaId",
+            "${mediaType.name.lowercase()}_logo_$mediaId",
+            "${mediaType.name.lowercase()}_$mediaId",
+            "${mediaType.name.uppercase()}_logo_$mediaId",
+            "${mediaType.name.uppercase()}_$mediaId"
+        )
+        for (k in keys) {
+            if (logoCache.containsKey(k)) {
+                val cached = getFromCache(logoCache, k)
+                if (!cached.isNullOrBlank()) return cached
+            }
+        }
+        try {
+            val json = context.getSharedPreferences("logo_cache", Context.MODE_PRIVATE).getString("urls", null)
+            if (!json.isNullOrBlank()) {
+                val jsonObject = org.json.JSONObject(json)
+                for (k in keys) {
+                    if (jsonObject.has(k)) {
+                        val url = jsonObject.optString(k)
+                        if (!url.isNullOrBlank()) {
+                            logoCache["${mediaType}_logo_$mediaId"] = CacheEntry(url, System.currentTimeMillis())
+                            return url
+                        }
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+        return null
+    }
+
+    fun cacheLogoUrl(mediaType: MediaType, mediaId: Int, logoUrl: String) {
+        if (logoUrl.isBlank()) return
         val cacheKey = "${mediaType}_logo_$mediaId"
-        return if (logoCache.containsKey(cacheKey)) getFromCache(logoCache, cacheKey) else null
+        logoCache[cacheKey] = CacheEntry(logoUrl, System.currentTimeMillis())
     }
 
     /** Instant synchronous peek into the in-memory season episodes cache. */

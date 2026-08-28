@@ -105,4 +105,30 @@ class PlaylistCategorySectionsTest {
         assertThat(filters.map { it.id }).containsExactly("all", "second", "first").inOrder()
         assertThat(filters.map { it.count }).containsExactly(30, 10, 20).inOrder()
     }
+
+    @Test
+    fun sectionsAreEmptyWhenAllGroupsAreHidden() {
+        val config = IptvConfig(
+            playlists = listOf(
+                IptvPlaylistEntry(id = "first", name = "First playlist", m3uUrl = "https://first.test/list.m3u"),
+                IptvPlaylistEntry(id = "second", name = "Second playlist", m3uUrl = "https://second.test/list.m3u"),
+            )
+        )
+        // All groups from all categories
+        val hiddenGroups = setOf(
+            com.arflix.tv.data.model.PlaylistGroupKey.build("first", "Movies"),
+            com.arflix.tv.data.model.PlaylistGroupKey.build("first", "Series"),
+            com.arflix.tv.data.model.PlaylistGroupKey.build("second", "Sports"),
+            com.arflix.tv.data.model.PlaylistGroupKey.build("second", "News")
+        )
+        val categories = listOf(
+            LiveCategory("first:a", "Movies", 8, CategoryIcon.Movie, playlistGroupName = "Movies", playlistId = "first"),
+            LiveCategory("first:b", "Series", 10, CategoryIcon.Grid, playlistGroupName = "Series", playlistId = "first"),
+            LiveCategory("second:a", "Sports", 6, CategoryIcon.Sport, playlistGroupName = "Sports", playlistId = "second"),
+            LiveCategory("second:b", "News", 4, CategoryIcon.Grid, playlistGroupName = "News", playlistId = "second"),
+        )
+        val sections = buildPlaylistCategorySections(config, categories, hiddenGroups)
+        // All sections should be filtered out completely
+        assertThat(sections).isEmpty()
+    }
 }

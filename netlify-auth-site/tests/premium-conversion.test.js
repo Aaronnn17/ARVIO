@@ -9,6 +9,7 @@ process.env.APP_ANON_KEY = "test-app-key";
 const entitlements = require("../netlify/functions/_entitlements");
 const funnel = require("../netlify/functions/_premium-funnel");
 const trialEmails = require("../netlify/functions/_trial-emails");
+const entitlementStatus = require("../netlify/functions/entitlement-status");
 
 test("new trials last three days while existing records retain their own expiry", () => {
   assert.equal(entitlements.TRIAL_DAYS, 3);
@@ -53,6 +54,18 @@ test("premium funnel metadata is bounded and excludes complex values", () => {
     duration_days: 3,
     successful: true
   });
+});
+
+test("trial requests tolerate missing, object, and base64 encoded bodies", () => {
+  const requestAction = entitlementStatus._test.requestAction;
+  assert.equal(requestAction({ body: JSON.stringify({ action: "start-trial" }) }), "start-trial");
+  assert.equal(requestAction({ body: { action: "START-TRIAL" } }), "start-trial");
+  assert.equal(requestAction({ body: "" }), "start-trial");
+  assert.equal(requestAction({ body: "not-json" }), "start-trial");
+  assert.equal(requestAction({
+    body: Buffer.from(JSON.stringify({ action: "start-trial" })).toString("base64"),
+    isBase64Encoded: true
+  }), "start-trial");
 });
 
 test("public Premium presentation has one tracked route and factual social proof", () => {

@@ -44,6 +44,43 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
     return () => { active = false; };
   }, [accountId]);
 
+  useEffect(() => {
+    if (!config.paywallEnabled || !accountId || state?.entitled) return;
+    let active = true;
+    let refreshing = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const refreshAccess = (scheduleRetry = false) => {
+      if (!active || refreshing || document.visibilityState === "hidden") return;
+      refreshing = true;
+      void fetchEntitlement(authClient)
+        .then((next) => {
+          if (!active) return;
+          setState(next);
+          setStatus("ready");
+          if (!next.entitled && scheduleRetry) {
+            if (retryTimer) clearTimeout(retryTimer);
+            retryTimer = setTimeout(() => refreshAccess(false), 3000);
+          }
+        })
+        .catch(() => { /* Keep the confirmed paywall state on refresh errors. */ })
+        .finally(() => { refreshing = false; });
+    };
+
+    const onFocus = () => refreshAccess(true);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshAccess(true);
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      active = false;
+      if (retryTimer) clearTimeout(retryTimer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [accountId, state?.entitled]);
+
   // Paywall off, or entitled → app. On a backend error with no cached "not
   // entitled", fail open so we never lock out a paying user over a hiccup.
   if (!config.paywallEnabled) return <>{children}</>;
@@ -125,7 +162,10 @@ function PaywallScreen({
         try { localStorage.removeItem(TRIAL_INTENT_KEY); } catch { /* storage is optional */ }
         setError("Your free trial has already been used.");
       } else setError("Could not start the trial — please try again in a moment.");
-      void trackPremiumEvent(authClient, "trial_start_failed", { status: status || 0 });
+      void trackPremiumEvent(authClient, "trial_start_failed", {
+        status: status || 0,
+        error: err instanceof Error ? err.message : "unknown"
+      });
     } finally {
       setBusy(null);
     }
@@ -152,8 +192,11 @@ function PaywallScreen({
         onEntitled(next);
       }
       else setError("No active membership was found for that email.");
-    } catch {
-      void trackPremiumEvent(authClient, "membership_link_failed");
+    } catch (err) {
+      void trackPremiumEvent(authClient, "membership_link_failed", {
+        status: err instanceof HttpError ? err.status : 0,
+        error: err instanceof Error ? err.message : "unknown"
+      });
       setError("No active membership was found for that email.");
     } finally {
       setBusy(null);

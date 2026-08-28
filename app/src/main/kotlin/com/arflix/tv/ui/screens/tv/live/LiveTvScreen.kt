@@ -7,6 +7,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import com.arflix.tv.util.findActivity
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -91,6 +92,7 @@ import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.MediaItem as ArvioMediaItem
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.repository.IptvPlaybackTarget
+import com.arflix.tv.data.repository.StalkerPortalSupport
 import com.arflix.tv.ui.screens.tv.TvUiState
 import com.arflix.tv.ui.screens.tv.TvViewModel
 import com.arflix.tv.network.OkHttpProvider
@@ -285,7 +287,7 @@ private fun mergeGuideSlices(
 }
 
 private fun EnrichedChannel.guideFallbackKeys(): List<String> {
-    val playlistId = id.substringBefore(':', missingDelimiterValue = "").trim()
+    val playlistId = StalkerPortalSupport.playlistIdFromChannelId(id)
     val prefix = playlistId.ifBlank { "default" }
     val keys = LinkedHashSet<String>()
 
@@ -588,6 +590,7 @@ fun LiveTvScreen(
                 val pageLimit = pagedLoadedLimit.coerceAtLeast(GuideMaxWindowRows)
                 fun scanCategoryWindow(categoryId: String, targetGroupTitle: String?): List<IptvChannel> {
                     if (!categoryId.startsWith("grp:")) return emptyList()
+                    val targetPlaylistId = playlistIdFromGroupCategoryId(categoryId)
                     val targetGroupKey = looseIptvGroupKey(targetGroupTitle)
                     val targetCompactGroupKey = compactIptvGroupKey(targetGroupTitle)
                     val out = ArrayList<IptvChannel>(pageLimit)
@@ -597,11 +600,12 @@ fun LiveTvScreen(
                         val chunk = viewModel.iptvRepository.pagedChannelWindow(null, null, offset, chunkSize)
                         if (chunk.isEmpty()) break
                         chunk.forEach { channel ->
-                            val rawPlaylistId = channel.id.substringBefore(':')
+                            val rawPlaylistId = channelPlaylistId(channel.id)
                             val categoryMatches = playlistGroupCategoryId(rawPlaylistId, channel.group) == categoryId
-                            val looseGroupMatches = targetGroupKey.isNotBlank() &&
+                            val samePlaylist = targetPlaylistId == null || rawPlaylistId == targetPlaylistId
+                            val looseGroupMatches = samePlaylist && targetGroupKey.isNotBlank() &&
                                 looseIptvGroupKey(channel.group) == targetGroupKey
-                            val compactGroupMatches = targetCompactGroupKey.isNotBlank() &&
+                            val compactGroupMatches = samePlaylist && targetCompactGroupKey.isNotBlank() &&
                                 compactIptvGroupKey(channel.group) == targetCompactGroupKey
                             if (categoryMatches || looseGroupMatches || compactGroupMatches) {
                                 out += channel
@@ -770,8 +774,8 @@ fun LiveTvScreen(
     val providerFilters = remember(state.config, enrichedState.value.all, lastKnownPlaylistGroupCounts) {
         buildTvProviderFilters(state.config, enrichedState.value.all, lastKnownPlaylistGroupCounts)
     }
-    val playlistCategorySections = remember(state.config, enrichedState.value.tree.global.categories) {
-        buildPlaylistCategorySections(state.config, enrichedState.value.tree.global.categories)
+    val playlistCategorySections = remember(state.config, enrichedState.value.tree.global.categories, hiddenGroupSet) {
+        buildPlaylistCategorySections(state.config, enrichedState.value.tree.global.categories, hiddenGroupSet)
     }
     LaunchedEffect(playlistCategorySections, selectedProviderId) {
         if (playlistCategorySections.isNotEmpty() && selectedProviderId != "all") {
@@ -882,6 +886,7 @@ fun LiveTvScreen(
                 val groupTitle = resolvedGroup?.second
                 fun scanCategoryWindow(targetGroupTitle: String?): List<IptvChannel> {
                     if (!selectedCategoryId.startsWith("grp:")) return emptyList()
+                    val targetPlaylistId = playlistIdFromGroupCategoryId(selectedCategoryId)
                     val targetGroupKey = looseIptvGroupKey(targetGroupTitle)
                     val targetCompactGroupKey = compactIptvGroupKey(targetGroupTitle)
                     val out = ArrayList<IptvChannel>(pagedLoadedLimit)
@@ -891,11 +896,12 @@ fun LiveTvScreen(
                         val chunk = viewModel.iptvRepository.pagedChannelWindow(null, null, offset, chunkSize)
                         if (chunk.isEmpty()) break
                         chunk.forEach { channel ->
-                            val rawPlaylistId = channel.id.substringBefore(':')
+                            val rawPlaylistId = channelPlaylistId(channel.id)
                             val categoryMatches = playlistGroupCategoryId(rawPlaylistId, channel.group) == selectedCategoryId
-                            val looseGroupMatches = targetGroupKey.isNotBlank() &&
+                            val samePlaylist = targetPlaylistId == null || rawPlaylistId == targetPlaylistId
+                            val looseGroupMatches = samePlaylist && targetGroupKey.isNotBlank() &&
                                 looseIptvGroupKey(channel.group) == targetGroupKey
-                            val compactGroupMatches = targetCompactGroupKey.isNotBlank() &&
+                            val compactGroupMatches = samePlaylist && targetCompactGroupKey.isNotBlank() &&
                                 compactIptvGroupKey(channel.group) == targetCompactGroupKey
                             if (categoryMatches || looseGroupMatches || compactGroupMatches) {
                                 out += channel
@@ -912,8 +918,7 @@ fun LiveTvScreen(
                     if (exact.isNotEmpty()) {
                         exact
                     } else {
-                        val fallback = viewModel.iptvRepository.pagedChannelWindow(null, groupTitle, 0, pagedLoadedLimit)
-                        if (fallback.isNotEmpty()) fallback else scanCategoryWindow(groupTitle)
+                        scanCategoryWindow(groupTitle)
                     }
                 } else {
                     scanCategoryWindow(tree.byId(selectedCategoryId)?.playlistGroupName)
@@ -1616,11 +1621,17 @@ fun LiveTvScreen(
 
         onDispose {
             if (previousOrientation != null) {
-                activity.requestedOrientation = previousOrientation
+                activity?.requestedOrientation = previousOrientation
             }
             if (window != null) {
-                androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
-                    .show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                @Suppress("DEPRECATION")
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
+                controller.systemBarsBehavior =
+                    androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+                controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                controller.isAppearanceLightStatusBars = false
+                controller.isAppearanceLightNavigationBars = false
             }
         }
     }
@@ -3262,7 +3273,7 @@ fun LiveTvScreen(
                         .asSequence()
                         .filterNot { channel -> isAdultGroup(channel.group, channel.name) }
                         .filterNot { channel ->
-                            val playlistId = channel.id.substringBefore(':')
+                            val playlistId = StalkerPortalSupport.playlistIdFromChannelId(channel.id)
                             val groupKey = com.arflix.tv.data.model.PlaylistGroupKey
                                 .build(playlistId, channel.group.ifBlank { "Ungrouped" })
                             groupKey in hiddenGroupSet
