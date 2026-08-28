@@ -10,16 +10,13 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRestorer
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.Key
 import kotlin.Unit
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 fun Modifier.arvioDpadFocusGroup(
-    restoreFocusRequester: FocusRequester? = null,
     enableFocusRestorer: Boolean = true
 ): Modifier {
     // Compose's focusRestorer(onRestoreFailed = { restoreFocusRequester }) captures the
@@ -30,22 +27,11 @@ fun Modifier.arvioDpadFocusGroup(
     // requestFocus() throws IllegalStateException: FocusRequester is not initialized and
     // crashes the app, unreachable by the runCatching guards wrapping direct calls.
     //
-    // To keep the "land on the previously focused row on re-entry" behaviour without the
-    // unguarded internal requestFocus, we enable the safe, default focusRestorer() (which
-    // only saves/restores Compose's own focus history and never calls a caller-supplied
-    // requester) and, when a restore target is requested, drive its focus ourselves on
-    // focus enter via onFocusChanged with a runCatching guard.
+    // Keep focus restoration limited to Compose's own saved focus history. Callers that
+    // need an initial focus target should request it after the target is attached instead
+    // of supplying a fallback that Compose can invoke before a lazy item is composed.
     val restorer = if (enableFocusRestorer) Modifier.focusRestorer() else Modifier
-    val restoreGuard = if (restoreFocusRequester != null) {
-        Modifier.onFocusChanged { state ->
-            if (state.hasFocus) {
-                runCatching { restoreFocusRequester.requestFocus() }
-            }
-        }
-    } else {
-        Modifier
-    }
-    return this.then(restorer).then(restoreGuard).focusGroup()
+    return this.then(restorer).focusGroup()
 }
 
 @OptIn(ExperimentalFoundationApi::class)
