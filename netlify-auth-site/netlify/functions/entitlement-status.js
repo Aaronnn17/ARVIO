@@ -15,6 +15,25 @@ const {
 const { recordPremiumEvent } = require("./_premium-funnel");
 const { queueTrialEmails } = require("./_trial-emails");
 
+function requestAction(event) {
+  let raw = event.body;
+  if (event.isBase64Encoded && typeof raw === "string") {
+    try { raw = Buffer.from(raw, "base64").toString("utf8"); } catch { raw = ""; }
+  }
+
+  let body = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    body = raw;
+  } else if (typeof raw === "string" && raw.trim()) {
+    try { body = JSON.parse(raw); } catch { body = {}; }
+  }
+
+  // This endpoint has one authenticated POST operation. Some browsers/proxies
+  // have reached Netlify with an empty or encoded body, so keep those requests
+  // backward-compatible instead of rejecting a valid trial with HTTP 400.
+  return String(body.action || "start-trial").trim().toLowerCase();
+}
+
 exports.handler = async (event) => {
   const cors = options(event);
   if (cors) return cors;
@@ -39,9 +58,8 @@ exports.handler = async (event) => {
 
     // Start-trial: grant a one-time 3-day trial if never used and not already paid.
     if (event.httpMethod === "POST") {
-      let body = {};
-      try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
-      if (body.action === "start-trial") {
+      const action = requestAction(event);
+      if (action === "start-trial") {
         const current = evaluateEntitlement(record);
         if (current.entitled) {
           return json(200, { ...current, alreadyEntitled: true });
@@ -108,3 +126,5 @@ exports.handler = async (event) => {
     return json(500, { error: "entitlement_status_failed", message: error.message });
   }
 };
+
+exports._test = { requestAction };
