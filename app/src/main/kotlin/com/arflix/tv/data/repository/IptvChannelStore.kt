@@ -208,7 +208,7 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
             val byPlaylist = !playlistId.isNullOrBlank()
             val sql = buildString {
                 append("SELECT * FROM channels WHERE source_key = ?")
-                if (byPlaylist) append(" AND id LIKE ?")
+                if (byPlaylist) append(" AND (id LIKE ? OR id LIKE ?)")
                 if (byGroup) {
                     if (normalizedGroup) append(" AND trim(group_title) = ?") else append(" AND group_title = ?")
                 }
@@ -217,7 +217,10 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
             }
             val args = buildList {
                 add(sourceKey)
-                if (byPlaylist) add("${playlistId}:%")
+                if (byPlaylist) {
+                    add("${playlistId}:%")
+                    add("stalker:${playlistId}:%")
+                }
                 if (byGroup) add(if (normalizedGroup) groupTitle!!.trim() else groupTitle!!)
             }.toTypedArray()
             return readableDatabase.rawQuery(sql, args).use { cursor ->
@@ -242,12 +245,15 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         if (!byGroup && !byPlaylist) return count(sourceKey)
         val sql = buildString {
             append("SELECT COUNT(*) FROM channels WHERE source_key = ?")
-            if (byPlaylist) append(" AND id LIKE ?")
+            if (byPlaylist) append(" AND (id LIKE ? OR id LIKE ?)")
             if (byGroup) append(" AND group_title = ?")
         }
         val args = buildList {
             add(sourceKey)
-            if (byPlaylist) add("${playlistId}:%")
+            if (byPlaylist) {
+                add("${playlistId}:%")
+                add("stalker:${playlistId}:%")
+            }
             if (byGroup) add(groupTitle!!)
         }.toTypedArray()
         return readableDatabase.rawQuery(sql, args)
@@ -323,7 +329,16 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         return readableDatabase.rawQuery(
             """
             SELECT
-                CASE WHEN instr(id, ':') > 0 THEN substr(id, 1, instr(id, ':') - 1) ELSE '' END AS playlist_id,
+                CASE
+                    WHEN id LIKE 'stalker:%:%' THEN
+                        substr(
+                            substr(id, instr(id, ':') + 1),
+                            1,
+                            instr(substr(id, instr(id, ':') + 1), ':') - 1
+                        )
+                    WHEN instr(id, ':') > 0 THEN substr(id, 1, instr(id, ':') - 1)
+                    ELSE ''
+                END AS playlist_id,
                 group_title,
                 COUNT(*),
                 MIN(ord) AS first_ord

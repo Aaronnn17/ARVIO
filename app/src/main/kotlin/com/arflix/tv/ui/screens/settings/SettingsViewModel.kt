@@ -39,6 +39,7 @@ import com.arflix.tv.data.repository.MAX_STALKER_PORTALS
 import com.arflix.tv.data.repository.normalizeIptvSortOrder
 import com.arflix.tv.data.repository.IptvPlaylistEntry
 import com.arflix.tv.data.repository.StalkerPortalEntry
+import com.arflix.tv.data.repository.StalkerPortalSupport
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
@@ -938,25 +939,18 @@ class SettingsViewModel @Inject constructor(
     }
 
     private suspend fun loadIptvGroupsForPlaylist(playlistId: String): List<String> {
-        // Stalker channel ids use the `stalker:<portalId>:<origId>` shape, so the
-        // paged channel store reports them under playlist_id "stalker" (the text
-        // before the first colon) — not the individual portal id. For Stalker
-        // portals we therefore skip the paged path and read groups from the
-        // in-memory snapshot, filtering by the full `stalker:<portalId>:` prefix.
         val stalkerPortalIds = _uiState.value.iptvStalkerPortals.map { it.id }.toSet()
         val isStalkerPortal = playlistId in stalkerPortalIds
 
-        if (!isStalkerPortal) {
-            val pagedGroups = withContext(Dispatchers.IO) {
-                iptvRepository.pagedPlaylistGroupCounts()
-                    .asSequence()
-                    .filter { (id, _, count) -> id == playlistId && count > 0 }
-                    .map { (_, group, _) -> group.trim().ifBlank { "Ungrouped" } }
-                    .distinct()
-                    .toList()
-            }
-            if (pagedGroups.isNotEmpty()) return pagedGroups
+        val pagedGroups = withContext(Dispatchers.IO) {
+            iptvRepository.pagedPlaylistGroupCounts()
+                .asSequence()
+                .filter { (id, _, count) -> id == playlistId && count > 0 }
+                .map { (_, group, _) -> group.trim().ifBlank { "Ungrouped" } }
+                .distinct()
+                .toList()
         }
+        if (pagedGroups.isNotEmpty()) return pagedGroups
 
         val snapshot = iptvRepository.getMemoryCachedSnapshot()
             ?: iptvRepository.getCachedSnapshotOrNull()
@@ -2466,10 +2460,14 @@ class SettingsViewModel @Inject constructor(
             )
             return
         }
-        val index = current.size
+        val portalId = StalkerPortalSupport.nextAvailablePortalId(
+            current.map { it.id },
+            MAX_STALKER_PORTALS,
+        ) ?: return
+        val portalNumber = portalId.removePrefix("stalker").toIntOrNull() ?: (current.size + 1)
         val portal = StalkerPortalEntry(
-            id = "stalker${index + 1}",
-            name = name?.trim()?.ifBlank { null } ?: "Portal ${index + 1}",
+            id = portalId,
+            name = name?.trim()?.ifBlank { null } ?: "Portal $portalNumber",
             portalUrl = trimmedUrl,
             macAddress = trimmedMac
         )

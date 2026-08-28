@@ -140,6 +140,61 @@ class StalkerPortalSupportTest {
     }
 
     @Test
+    fun playlistAndCacheKeysAreScopedPerPortal() {
+        val firstId = "stalker:stalker1:10"
+        val secondId = "stalker:stalker2:10"
+
+        assertThat(StalkerPortalSupport.playlistIdFromChannelId(firstId)).isEqualTo("stalker1")
+        assertThat(StalkerPortalSupport.playlistIdFromChannelId(secondId)).isEqualTo("stalker2")
+        assertThat(StalkerPortalSupport.streamCacheKey(firstId, "ffmpeg http://same"))
+            .isNotEqualTo(StalkerPortalSupport.streamCacheKey(secondId, "ffmpeg http://same"))
+    }
+
+    @Test
+    fun nextAvailablePortalIdDoesNotReuseDeletedPortalIdentity() {
+        assertThat(
+            StalkerPortalSupport.nextAvailablePortalId(
+                listOf("stalker1", "stalker3"),
+                maxPortals = 3,
+            )
+        ).isEqualTo("stalker4")
+    }
+
+    @Test
+    fun decodeStalkerPortalsRepairsDuplicateIds() {
+        val json = gson.toJson(
+            listOf(
+                StalkerPortalEntry("stalker1", "A", "http://a", "00:1A:79:11:11:11"),
+                StalkerPortalEntry("stalker1", "B", "http://b", "00:1A:79:22:22:22"),
+            )
+        )
+
+        val decoded = StalkerPortalSupport.decodeStalkerPortals(json, maxPortals = 3)
+
+        assertThat(decoded.map { it.id }).containsExactly("stalker1", "stalker2").inOrder()
+    }
+
+    @Test
+    fun legacyChannelAndGroupKeysMigrateToPortal1() {
+        assertThat(StalkerPortalSupport.migrateLegacyChannelId("stalker:42"))
+            .isEqualTo("stalker:stalker1:42")
+        assertThat(StalkerPortalSupport.migrateLegacyChannelId("stalker:stalker2:42"))
+            .isEqualTo("stalker:stalker2:42")
+        assertThat(StalkerPortalSupport.migrateLegacyPlaylistGroupKey("stalker|News"))
+            .isEqualTo("stalker1|News")
+    }
+
+    @Test
+    fun cloudGroupKeysKeepConfiguredStalkerPortalOrdering() {
+        val normalized = StalkerPortalSupport.normalizePlaylistGroupKeys(
+            listOf("stalker2|Sports", "stalker1|News", "removed|Kids"),
+            validSourceIds = setOf("stalker1", "stalker2"),
+        )
+
+        assertThat(normalized).containsExactly("stalker2|Sports", "stalker1|News").inOrder()
+    }
+
+    @Test
     fun normalizeStalkerPortalEntryTrimsUrlAndUppercasesMac() {
         val portal = StalkerPortalEntry("stalker1", "Portal 1", "  http://a/  ", "  00:1a:79:aa:bb:cc  ")
         val normalized = StalkerPortalSupport.normalizeStalkerPortalEntry(portal, 0)

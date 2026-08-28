@@ -197,6 +197,9 @@ data class IptvCloudProfileState(
     val m3uUrl: String = "",
     val epgUrl: String = "",
     val stalkerPortals: List<StalkerPortalEntry> = emptyList(),
+    // Retained for importing cloud snapshots written before multi-portal support.
+    val stalkerPortalUrl: String = "",
+    val stalkerMacAddress: String = "",
     val favoriteGroups: List<String> = emptyList(),
     val favoriteChannels: List<String> = emptyList(),
     val hiddenGroups: List<String> = emptyList(),
@@ -546,11 +549,11 @@ class IptvRepository @Inject constructor(
             } else {
                 prefs[tvSessionKey()] = gson.toJson(
                     state.copy(
-                        lastChannelId = state.lastChannelId.trim(),
+                        lastChannelId = StalkerPortalSupport.migrateLegacyChannelId(state.lastChannelId),
                         lastGroupName = state.lastGroupName.trim(),
                         lastFocusedZone = state.lastFocusedZone.trim().ifBlank { "GUIDE" },
                         recentChannelIds = state.recentChannelIds
-                            .map { it.trim() }
+                            .map(StalkerPortalSupport::migrateLegacyChannelId)
                             .filter { it.isNotBlank() }
                             .distinct()
                             .takeLast(40)
@@ -687,8 +690,10 @@ class IptvRepository @Inject constructor(
             prefs.remove(stalkerPortalUrlKey())
             prefs.remove(stalkerMacAddressKey())
         }
-        // Drop Stalker group preferences so re-adding a portal starts clean.
-        clearGroupPreferences(STALKER_PLAYLIST_ID)
+        // Drop both legacy and portal-scoped group preferences.
+        (previousConfig.stalkerPortals.map { it.id } + STALKER_PLAYLIST_ID)
+            .distinct()
+            .forEach { clearGroupPreferences(it) }
         cachedStalkerApis = emptyMap()
         groupOrderLocallyDirty = true
         if (sourceChanged) {
@@ -713,9 +718,10 @@ class IptvRepository @Inject constructor(
     suspend fun saveStalkerPortals(portals: List<StalkerPortalEntry>) {
         val profileId = profileManager.getProfileIdSync()
         val previousConfig = observeConfig().first()
-        val normalized = portals.mapIndexed { index, portal ->
-            normalizeStalkerPortalEntry(portal, index)
-        }.filterNotNull().take(MAX_STALKER_PORTALS)
+        val normalized = StalkerPortalSupport.normalizeStalkerPortals(
+            portals,
+            MAX_STALKER_PORTALS,
+        )
         val nextConfig = previousConfig.copy(stalkerPortals = normalized)
         val previousSourceKey = epgIndexKey(profileId, previousConfig)
         val sourceChanged = buildSourceSignature(previousConfig) != buildSourceSignature(nextConfig)
@@ -3272,7 +3278,7 @@ class IptvRepository @Inject constructor(
         return runCatching {
             val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             val list = gson.fromJson<List<String>>(raw, type)?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct() ?: emptyList()
-            if (list.any { !it.contains('|') }) {
+            val scoped = if (list.any { !it.contains('|') }) {
                 val playlistsRaw = prefs[playlistsKey()].orEmpty()
                 if (playlistsRaw.isBlank()) {
                     list
@@ -3284,6 +3290,7 @@ class IptvRepository @Inject constructor(
                     } else list
                 }
             } else list
+            StalkerPortalSupport.normalizePlaylistGroupKeys(scoped)
         }.getOrDefault(emptyList())
     }
 
@@ -3294,7 +3301,7 @@ class IptvRepository @Inject constructor(
         return runCatching {
             val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             val list = gson.fromJson<List<String>>(raw, type)?.map { it.trim() }?.filter { it.isNotBlank() }?.distinct() ?: emptyList()
-            if (list.any { !it.contains('|') }) {
+            val scoped = if (list.any { !it.contains('|') }) {
                 val playlistsRaw = prefs[playlistsKey()].orEmpty()
                 if (playlistsRaw.isBlank()) {
                     list
@@ -3306,6 +3313,7 @@ class IptvRepository @Inject constructor(
                     } else list
                 }
             } else list
+            StalkerPortalSupport.normalizePlaylistGroupKeys(scoped)
         }.getOrDefault(emptyList())
     }
 
@@ -3347,13 +3355,13 @@ class IptvRepository @Inject constructor(
         return runCatching {
             gson.fromJson(raw, IptvTvSessionState::class.java)?.let { session ->
                 session.copy(
-                    lastChannelId = session.lastChannelId.trim(),
+                    lastChannelId = StalkerPortalSupport.migrateLegacyChannelId(session.lastChannelId),
                     lastGroupName = session.lastGroupName.trim(),
                     lastFocusedZone = session.lastFocusedZone.trim().ifBlank { "GUIDE" },
                     recentChannelIds = runCatching { session.recentChannelIds }
                         .getOrNull()
                         .orEmpty()
-                        .map { it.trim() }
+                        .map(StalkerPortalSupport::migrateLegacyChannelId)
                         .filter { it.isNotBlank() }
                         .distinct()
                         .takeLast(40)
@@ -3379,7 +3387,7 @@ class IptvRepository @Inject constructor(
         return runCatching {
             val type = TypeToken.getParameterized(List::class.java, String::class.java).type
             gson.fromJson<List<String>>(raw, type)
-                ?.map { it.trim() }
+                ?.map(StalkerPortalSupport::migrateLegacyChannelId)
                 ?.filter { it.isNotBlank() }
                 ?.distinct()
                 ?: emptyList()
@@ -3395,25 +3403,36 @@ class IptvRepository @Inject constructor(
         val playlistsRaw = prefs[playlistsKeyFor(safeProfileId)].orEmpty()
         val tvSessionRaw = prefs[tvSessionKeyFor(safeProfileId)].orEmpty()
         val playlists = decodePlaylists(playlistsRaw)
+        val stalkerPortals = readStalkerPortalsFor(prefs, safeProfileId)
+        val validSourceIds = buildSet {
+            playlists.forEach { add(it.id) }
+            stalkerPortals.forEach { add(it.id) }
+        }
         val primary = playlists.firstOrNull()
         val legacyM3uUrl = normalizeStoredIptvUrl(decryptConfigValue(prefs[m3uUrlKeyFor(safeProfileId)].orEmpty()))
         val legacyEpgUrls = normalizeStoredEpgInputs(decryptConfigValue(prefs[epgUrlKeyFor(safeProfileId)].orEmpty()))
         return IptvCloudProfileState(
             m3uUrl = primary?.m3uUrl ?: legacyM3uUrl,
             epgUrl = primary?.epgUrl ?: legacyEpgUrls.firstOrNull().orEmpty(),
-            stalkerPortals = readStalkerPortalsFor(prefs, safeProfileId),
+            stalkerPortals = stalkerPortals,
             favoriteGroups = decodeFavoriteGroups(prefs[favoriteGroupsKeyFor(safeProfileId)].orEmpty()),
             favoriteChannels = decodeFavoriteChannels(prefs[favoriteChannelsKeyFor(safeProfileId)].orEmpty()),
             hiddenGroups = if (hiddenRaw.isNotBlank()) {
                 runCatching {
                     val type = TypeToken.getParameterized(List::class.java, String::class.java).type
-                    gson.fromJson<List<String>>(hiddenRaw, type) ?: emptyList()
+                    StalkerPortalSupport.normalizePlaylistGroupKeys(
+                        gson.fromJson<List<String>>(hiddenRaw, type).orEmpty(),
+                        validSourceIds,
+                    )
                 }.getOrDefault(emptyList())
             } else emptyList(),
             groupOrder = if (orderSchema == IPTV_GROUP_ORDER_SCHEMA && orderRaw.isNotBlank()) {
                 runCatching {
                     val type = TypeToken.getParameterized(List::class.java, String::class.java).type
-                    gson.fromJson<List<String>>(orderRaw, type) ?: emptyList()
+                    StalkerPortalSupport.normalizePlaylistGroupKeys(
+                        gson.fromJson<List<String>>(orderRaw, type).orEmpty(),
+                        validSourceIds,
+                    )
                 }.getOrDefault(emptyList())
             } else emptyList(),
             groupOrderSchema = IPTV_GROUP_ORDER_SCHEMA,
@@ -3428,10 +3447,19 @@ class IptvRepository @Inject constructor(
         val normalizedM3u = normalizeStoredIptvUrl(state.m3uUrl)
         val normalizedEpgUrls = normalizeStoredEpgInputs(state.epgUrl)
         val normalizedEpg = normalizedEpgUrls.firstOrNull().orEmpty()
-        val normalizedStalkerPortals = state.stalkerPortals
-            .mapIndexed { index, portal -> normalizeStalkerPortalEntry(portal, index) }
-            .filterNotNull()
-            .take(MAX_STALKER_PORTALS)
+        val importedStalkerPortals = runCatching { state.stalkerPortals }
+            .getOrNull()
+            .orEmpty()
+            .ifEmpty {
+                StalkerPortalSupport.migratedPortalFromLegacy(
+                    runCatching { state.stalkerPortalUrl }.getOrNull().orEmpty(),
+                    runCatching { state.stalkerMacAddress }.getOrNull().orEmpty(),
+                )?.let(::listOf).orEmpty()
+            }
+        val normalizedStalkerPortals = StalkerPortalSupport.normalizeStalkerPortals(
+            importedStalkerPortals,
+            MAX_STALKER_PORTALS,
+        )
         val normalizedPlaylists = state.playlists.mapIndexed { index, playlist ->
             normalizePlaylistEntry(playlist, index)
         }.filterNotNull().take(3)
@@ -3446,13 +3474,38 @@ class IptvRepository @Inject constructor(
                 )
             )
         }
-        val validPlaylistIds = effectivePlaylists.mapTo(HashSet()) { it.id }
+        val validSourceIds = buildSet {
+            effectivePlaylists.forEach { add(it.id) }
+            normalizedStalkerPortals.forEach { add(it.id) }
+        }
+        val defaultSourceId = effectivePlaylists.firstOrNull()?.id
+            ?: normalizedStalkerPortals.firstOrNull()?.id
+        fun normalizeCloudGroupKeys(keys: List<String>): List<String> {
+            val scoped = keys.map { raw ->
+                val trimmed = raw.trim()
+                if ('|' !in trimmed && defaultSourceId != null) "$defaultSourceId|$trimmed" else trimmed
+            }
+            return StalkerPortalSupport.normalizePlaylistGroupKeys(scoped, validSourceIds)
+        }
+        val normalizedHiddenGroups = normalizeCloudGroupKeys(state.hiddenGroups)
         val normalizedGroupOrder = state.groupOrder
             .takeIf { state.groupOrderSchema >= IPTV_GROUP_ORDER_SCHEMA }
             .orEmpty()
-            .map { it.trim() }
-            .filter { it.isNotBlank() && PlaylistGroupKey(it).playlistId in validPlaylistIds }
+            .let(::normalizeCloudGroupKeys)
+        val normalizedFavoriteChannels = state.favoriteChannels
+            .map(StalkerPortalSupport::migrateLegacyChannelId)
+            .filter { it.isNotBlank() }
             .distinct()
+        val normalizedTvSession = state.tvSession.copy(
+            lastChannelId = StalkerPortalSupport.migrateLegacyChannelId(state.tvSession.lastChannelId),
+            lastGroupName = state.tvSession.lastGroupName.trim(),
+            lastFocusedZone = state.tvSession.lastFocusedZone.trim().ifBlank { "GUIDE" },
+            recentChannelIds = state.tvSession.recentChannelIds
+                .map(StalkerPortalSupport::migrateLegacyChannelId)
+                .filter { it.isNotBlank() }
+                .distinct()
+                .takeLast(40),
+        )
         context.settingsDataStore.edit { prefs ->
             prefs[m3uUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedM3u)
             prefs[epgUrlKeyFor(safeProfileId)] = encryptConfigValue(normalizedEpg)
@@ -3465,29 +3518,17 @@ class IptvRepository @Inject constructor(
             prefs.remove(stalkerPortalUrlKeyFor(safeProfileId))
             prefs.remove(stalkerMacAddressKeyFor(safeProfileId))
             prefs[favoriteGroupsKeyFor(safeProfileId)] = gson.toJson(state.favoriteGroups.distinct())
-            prefs[favoriteChannelsKeyFor(safeProfileId)] = gson.toJson(state.favoriteChannels.distinct())
-            if (state.hiddenGroups.isNotEmpty()) {
-                prefs[hiddenGroupsKeyFor(safeProfileId)] = gson.toJson(state.hiddenGroups.distinct())
-            }
+            prefs[favoriteChannelsKeyFor(safeProfileId)] = gson.toJson(normalizedFavoriteChannels)
+            if (normalizedHiddenGroups.isEmpty()) prefs.remove(hiddenGroupsKeyFor(safeProfileId))
+            else prefs[hiddenGroupsKeyFor(safeProfileId)] = gson.toJson(normalizedHiddenGroups)
             if (normalizedGroupOrder.isEmpty()) prefs.remove(groupOrderKeyFor(safeProfileId))
             else prefs[groupOrderKeyFor(safeProfileId)] = gson.toJson(normalizedGroupOrder)
             prefs[groupOrderSchemaKeyFor(safeProfileId)] = IPTV_GROUP_ORDER_SCHEMA.toString()
             prefs[sortOrderKeyFor(safeProfileId)] = normalizeIptvSortOrder(state.sortOrder)
             if (effectivePlaylists.isEmpty()) prefs.remove(playlistsKeyFor(safeProfileId))
             else prefs[playlistsKeyFor(safeProfileId)] = gson.toJson(effectivePlaylists)
-            if (state.tvSession != IptvTvSessionState()) {
-                prefs[tvSessionKeyFor(safeProfileId)] = gson.toJson(
-                    state.tvSession.copy(
-                        lastChannelId = state.tvSession.lastChannelId.trim(),
-                        lastGroupName = state.tvSession.lastGroupName.trim(),
-                        lastFocusedZone = state.tvSession.lastFocusedZone.trim().ifBlank { "GUIDE" },
-                        recentChannelIds = state.tvSession.recentChannelIds
-                            .map { it.trim() }
-                            .filter { it.isNotBlank() }
-                            .distinct()
-                            .takeLast(40)
-                    )
-                )
+            if (normalizedTvSession != IptvTvSessionState()) {
+                prefs[tvSessionKeyFor(safeProfileId)] = gson.toJson(normalizedTvSession)
             } else {
                 prefs.remove(tvSessionKeyFor(safeProfileId))
             }

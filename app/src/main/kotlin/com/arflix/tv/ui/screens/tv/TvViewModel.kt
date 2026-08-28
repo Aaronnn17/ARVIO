@@ -16,6 +16,7 @@ import com.arflix.tv.data.repository.IptvPlaybackTarget
 import com.arflix.tv.data.repository.IptvPlaybackUrlResolver
 import com.arflix.tv.data.repository.IptvRepository
 import com.arflix.tv.data.repository.IptvTvSessionState
+import com.arflix.tv.data.repository.StalkerPortalSupport
 import com.arflix.tv.ui.screens.tv.live.epgChannelAllowsVodSearch
 import com.arflix.tv.ui.screens.tv.live.selectConfidentEpgVodMatch
 import com.arflix.tv.network.OkHttpProvider
@@ -2032,10 +2033,11 @@ class TvViewModel @Inject constructor(
     ): String {
         val trimmed = rawUrl.trim()
         if (!isStalkerChannel) return trimmed
+        val cacheKey = StalkerPortalSupport.streamCacheKey(channelId, trimmed)
 
         if (!forceRefresh) {
             synchronized(resolvedStalkerStreamCache) {
-                resolvedStalkerStreamCache[trimmed]?.let { return it }
+                resolvedStalkerStreamCache[cacheKey]?.let { return it }
             }
         }
 
@@ -2045,7 +2047,7 @@ class TvViewModel @Inject constructor(
         val playable = resolved.ifBlank { trimmed.removePrefix("ffmpeg").trim() }
         if (playable.isNotBlank()) {
             synchronized(resolvedStalkerStreamCache) {
-                resolvedStalkerStreamCache[trimmed] = playable
+                resolvedStalkerStreamCache[cacheKey] = playable
                 while (resolvedStalkerStreamCache.size > 200) {
                     val firstKey = resolvedStalkerStreamCache.keys.firstOrNull() ?: break
                     resolvedStalkerStreamCache.remove(firstKey)
