@@ -20,6 +20,9 @@ plugins {
 
 val discordSdkAar = layout.projectDirectory.file("libs/discord_partner_sdk.aar").asFile
 val hasDiscordSdk = discordSdkAar.isFile
+val includeX86Abis = providers.gradleProperty("includeX86Abis")
+    .orNull
+    ?.toBooleanStrictOrNull() == true
 
 android {
     namespace = "com.arflix.tv"
@@ -66,9 +69,15 @@ android {
         )
 
 
-        // Support both 32-bit and 64-bit devices (required for Google Play since 2019)
+        // Keep release downloads ARM-universal by default. Developers can add x86
+        // emulator support with -PincludeX86Abis=true without changing this file.
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            abiFilters += buildList {
+                addAll(listOf("armeabi-v7a", "arm64-v8a"))
+                if (includeX86Abis) {
+                    addAll(listOf("x86", "x86_64"))
+                }
+            }
         }
 
         if (hasDiscordSdk) {
@@ -121,11 +130,12 @@ android {
         }
     }
 
+
     buildTypes {
         release {
             // Full release optimization for TV smoothness.
             isMinifyEnabled = true
-            isShrinkResources = false
+            isShrinkResources = true
             // Use release signing if configured, otherwise fall back to debug
             val releaseSigningConfig = signingConfigs.findByName("release")
             signingConfig = if (releaseSigningConfig?.storeFile != null) {
@@ -523,6 +533,7 @@ tasks.configureEach {
         dependsOn(validateReleaseCloudSecrets)
     }
 }
+
 
 detekt {
     // Configuration file
