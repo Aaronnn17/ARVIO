@@ -1838,10 +1838,21 @@ class IptvRepository @Inject constructor(
                 cachedChannels = stalkerChannels
                 cachedGroupedChannels = grouped
                 cachedStalkerApis = stalkerApis
+                val stalkerNowNext = if (allowNetworkEpgFetch) {
+                    val fresh = runCatching {
+                        fetchStalkerEpgForActivePortals(stalkerApis, stalkerChannels)
+                    }.getOrDefault(emptyMap())
+                    if (fresh.isNotEmpty()) persistEpgIndexChannels(config, fresh, System.currentTimeMillis())
+                    fresh
+                } else {
+                    runCatching {
+                        epgIndex.loadNowNext(currentEpgIndexKey(config), stalkerChannels.asSequence().map { it.id }.toSet())
+                    }.getOrDefault(emptyMap())
+                }
                 val snapshot = IptvSnapshot(
                     channels = stalkerChannels,
                     grouped = grouped,
-                    nowNext = emptyMap(),
+                    nowNext = stalkerNowNext,
                     favoriteGroups = favGroups,
                     favoriteChannels = favChannels,
                     hiddenGroups = hiddenGroups,
@@ -2244,6 +2255,46 @@ class IptvRepository @Inject constructor(
                 }
                 resolvedNowNext
             }
+
+            // Stalker channels never had an epgCandidate/Xtream path above, so merge
+            // their now/next data in here — additive only, never overwrites data the
+            // M3U/Xtream/XMLTV resolution above already found for a channel (C1/C4/C6).
+            val stalkerChannelsInSnapshot = if (stalkerPortals.isNotEmpty()) {
+                channels.filter { StalkerPortalSupport.portalIdFromChannelId(it.id) != null }
+            } else {
+                emptyList()
+            }
+            val stalkerNowNextHybrid = if (stalkerChannelsInSnapshot.isNotEmpty()) {
+                if (allowNetworkEpgFetch) {
+                    val fresh = runCatching {
+                        fetchStalkerEpgForActivePortals(cachedStalkerApis, stalkerChannelsInSnapshot)
+                    }.getOrDefault(emptyMap())
+                    if (fresh.isNotEmpty()) {
+                        persistEpgIndexChannels(config, fresh, System.currentTimeMillis())
+                        epgUpdated = true
+                    }
+                    fresh
+                } else {
+                    runCatching {
+                        epgIndex.loadNowNext(
+                            currentEpgIndexKey(config),
+                            stalkerChannelsInSnapshot.asSequence().map { it.id }.toSet()
+                        )
+                    }.getOrDefault(emptyMap())
+                }
+            } else {
+                emptyMap()
+            }
+            val finalNowNext = if (stalkerNowNextHybrid.isEmpty()) {
+                nowNext
+            } else {
+                HashMap(nowNext).apply {
+                    stalkerNowNextHybrid.forEach { (channelId, value) ->
+                        if (!hasProgramData(this[channelId])) this[channelId] = value
+                    }
+                }
+            }
+
             val epgFailure = epgFailureMessage
             val epgWarning = if (epgCandidates.isNotEmpty() && nowNext.isEmpty()) {
                 if (!epgFailure.isNullOrBlank()) {
@@ -2270,7 +2321,7 @@ class IptvRepository @Inject constructor(
             IptvSnapshot(
                 channels = channels,
                 grouped = grouped,
-                nowNext = nowNext,
+                nowNext = finalNowNext,
                 favoriteGroups = favoriteGroups,
                 favoriteChannels = favoriteChannels,
                 hiddenGroups = hiddenGroups,
@@ -2282,7 +2333,7 @@ class IptvRepository @Inject constructor(
                     writeCache(
                         config = config,
                         channels = channels,
-                        nowNext = nowNext,
+                        nowNext = finalNowNext,
                         loadedAtMs = System.currentTimeMillis()
                     )
                 }
@@ -6222,6 +6273,86 @@ class IptvRepository @Inject constructor(
             }
         }
         return merged.takeIf { hasAnyProgramData(it) }
+    }
+
+    /**
+     * Fetches now/next EPG data from every active Stalker portal and returns it keyed by
+     * the same `stalker:<portalId>:<origId>` channel ids the portal's channel list already
+     * uses (see [StalkerPortalSupport]) — no separate EPG-index source key needed, isolation
+     * comes from the channel id prefix like everywhere else.
+     */
+    private suspend fun fetchStalkerEpgForActivePortals(
+        stalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi>,
+        stalkerChannels: List<IptvChannel>
+    ): Map<String, IptvNowNext> {
+        if (stalkerApis.isEmpty() || stalkerChannels.isEmpty()) return emptyMap()
+        val nowMs = System.currentTimeMillis()
+        val merged = ConcurrentHashMap<String, IptvNowNext>()
+        coroutineScope {
+            stalkerApis.entries.map { (portalId, api) ->
+                async {
+                    val portalChannels = stalkerChannels.filter {
+                        StalkerPortalSupport.portalIdFromChannelId(it.id) == portalId
+                    }
+                    if (portalChannels.isEmpty()) return@async
+                    // Stalker's ch_id is the portal's own numeric id, i.e. the last
+                    // segment of our "stalker:<portalId>:<origId>" channel id.
+                    val origIdToChannelId = portalChannels.associateBy(
+                        keySelector = { it.id.substringAfterLast(':') },
+                        valueTransform = { it.id }
+                    )
+                    val programs = runCatching { api.getEpg() }.getOrElse { error ->
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        System.err.println("[Stalker-EPG] Portal $portalId EPG fetch failed: ${error.message}")
+                        emptyList()
+                    }
+                    if (programs.isEmpty()) return@async
+
+                    val byChannel = LinkedHashMap<String, MutableList<IptvProgram>>()
+                    for (p in programs) {
+                        val channelId = p.chId?.let { origIdToChannelId[it] } ?: continue
+                        val startMs = p.startTimestamp?.toLongOrNull()?.let { it * 1000L } ?: continue
+                        val stopMs = p.stopTimestamp?.toLongOrNull()?.let { it * 1000L } ?: continue
+                        if (stopMs <= startMs) continue
+                        byChannel.getOrPut(channelId) { mutableListOf() } += IptvProgram(
+                            title = p.name?.takeIf { it.isNotBlank() } ?: context.getString(R.string.program_no_title),
+                            description = p.descr?.takeIf { it.isNotBlank() },
+                            startUtcMillis = startMs,
+                            endUtcMillis = stopMs
+                        )
+                    }
+                    byChannel.forEach { (channelId, channelPrograms) ->
+                        stalkerNowNextFromPrograms(channelPrograms, nowMs)?.let { merged[channelId] = it }
+                    }
+                }
+            }.awaitAll()
+        }
+        return merged
+    }
+
+    /**
+     * Compacts one channel's programs into a now/next slice. Unlike the Xtream/XMLTV
+     * paths this keeps no "recent" history — Stalker catchup isn't in scope here (K10).
+     */
+    private fun stalkerNowNextFromPrograms(programs: List<IptvProgram>, nowMs: Long): IptvNowNext? {
+        val sorted = programs.sortedBy { it.startUtcMillis }
+        var now: IptvProgram? = null
+        var next: IptvProgram? = null
+        var later: IptvProgram? = null
+        val upcoming = mutableListOf<IptvProgram>()
+        for (p in sorted) {
+            when {
+                p.isLive(nowMs) -> now = p
+                p.startUtcMillis > nowMs && next == null -> next = p
+                p.startUtcMillis > nowMs && later == null -> later = p
+                p.startUtcMillis > nowMs -> {
+                    upcoming.add(p)
+                    if (upcoming.size >= epgUpcomingProgramLimit) break
+                }
+            }
+        }
+        if (now == null && next == null && later == null && upcoming.isEmpty()) return null
+        return IptvNowNext(now = now, next = next, later = later, upcoming = upcoming)
     }
 
     private fun addChannelIdToLookup(

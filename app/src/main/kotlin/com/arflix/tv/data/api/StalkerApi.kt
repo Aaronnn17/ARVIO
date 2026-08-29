@@ -159,6 +159,25 @@ open class StalkerApi(
         return channels
     }
 
+    /**
+     * Fetch the portal's lightweight now/next EPG table for all channels in one call.
+     * [date] uses `YYYY-MM-DD`; blank means "today" on the server side.
+     */
+    suspend fun getEpg(date: String = ""): List<StalkerEpgProgram> {
+        return try {
+            val dateParam = if (date.isBlank()) "" else "&date=${java.net.URLEncoder.encode(date, "UTF-8")}"
+            val url = "$apiBase/server/load.php?type=epg&action=get_simple_data_table&ch_id=all$dateParam&JsHttpRequest=1-xml"
+            val response = doGet(url)
+            val parsed = gson.fromJson(response, StalkerEpgResponse::class.java)
+            parsed?.js.orEmpty().filterNotNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+
+            System.err.println("[Stalker] Get EPG failed: ${e.message}")
+            emptyList()
+        }
+    }
+
     /** Resolve a channel's cmd to a playable stream URL */
     suspend fun resolveStreamUrl(cmd: String): String? {
         return try {
@@ -206,4 +225,15 @@ open class StalkerApi(
 
     data class StalkerLinkResponse(val js: StalkerLink?)
     data class StalkerLink(val cmd: String?)
+
+    data class StalkerEpgResponse(val js: List<StalkerEpgProgram?>?)
+
+    /** Field names vary by portal software/version, hence the alternates. */
+    data class StalkerEpgProgram(
+        @SerializedName(value = "ch_id", alternate = ["channel_id"]) val chId: String?,
+        @SerializedName(value = "name", alternate = ["title"]) val name: String?,
+        @SerializedName(value = "descr", alternate = ["description"]) val descr: String?,
+        @SerializedName(value = "start_timestamp", alternate = ["start"]) val startTimestamp: String?,
+        @SerializedName(value = "stop_timestamp", alternate = ["end_timestamp", "end"]) val stopTimestamp: String?
+    )
 }
