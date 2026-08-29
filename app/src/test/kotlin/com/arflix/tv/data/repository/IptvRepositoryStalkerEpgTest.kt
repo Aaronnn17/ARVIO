@@ -65,10 +65,16 @@ class IptvRepositoryStalkerEpgTest {
     @Test
     fun `fetchStalkerEpgForActivePortals keys results by full channel id and isolates portals`() = runTest {
         val repository = newRepository()
+        // fetchStalkerEpgForActivePortals compacts against the real wall-clock "now"
+        // (System.currentTimeMillis()), so the stubbed program must actually be live now -
+        // a fixed epoch like 0/10 would always be in the past and get dropped, not merged.
+        val nowSec = System.currentTimeMillis() / 1000
+        val startSec = nowSec - 60
+        val stopSec = nowSec + 60
         val portal1Api = stubStalkerApi { url ->
             if (url.contains("action=get_simple_data_table")) {
                 """{ "js": [
-                    { "ch_id": "100", "name": "Portal1 News", "start_timestamp": "0", "stop_timestamp": "10" }
+                    { "ch_id": "100", "name": "Portal1 News", "start_timestamp": "$startSec", "stop_timestamp": "$stopSec" }
                 ] }"""
             } else null
         }
@@ -76,7 +82,7 @@ class IptvRepositoryStalkerEpgTest {
             if (url.contains("action=get_simple_data_table")) {
                 // Same ch_id as portal 1 on purpose: without isolation this would collide (C1/C6).
                 """{ "js": [
-                    { "ch_id": "100", "name": "Portal2 Movie", "start_timestamp": "0", "stop_timestamp": "10" }
+                    { "ch_id": "100", "name": "Portal2 Movie", "start_timestamp": "$startSec", "stop_timestamp": "$stopSec" }
                 ] }"""
             } else null
         }
