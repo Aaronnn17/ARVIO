@@ -1,3 +1,48 @@
+
+<div align="center">
+
+  <img src="https://raw.githubusercontent.com/ProdigyV21/ARVIO/e26d2ee1b65aaf1b4a9606bf1c4c6db20d286ba9/web/public/arvio-logo.svg" alt="ARVIO" width="150" />
+  <br />
+
+  <p><strong>A modern, open-source media hub for Android TV, phones, and tablets.</strong></p>
+
+  <p>
+    Browse your own media sources with a unified experience across your devices.
+  </p>
+
+  <p>
+    <a href="https://github.com/ProdigyV21/ARVIO">GitHub</a>
+    ·
+    <a href="https://github.com/ProdigyV21/ARVIO/releases">Releases</a>
+    ·
+    <a href="https://web.arvio.tv">ARVIO Web</a>
+  </p>
+
+  <br />
+
+  <img src="https://img.shields.io/github/v/release/ProdigyV21/ARVIO?style=for-the-badge&logo=github" alt="Latest Version" />
+  <img src="https://img.shields.io/github/downloads/ProdigyV21/ARVIO/total?style=for-the-badge&logo=github" alt="Downloads" />
+  <img src="https://img.shields.io/github/stars/ProdigyV21/ARVIO?style=for-the-badge&logo=github" alt="Stars" />
+  <img src="https://img.shields.io/github/license/ProdigyV21/ARVIO?style=for-the-badge" alt="License" />
+
+  <br />
+
+  <img src="https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android" />
+  <img src="https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin" />
+  <img src="https://img.shields.io/badge/Jetpack%20Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose" />
+
+<br>
+
+<a href="https://trendshift.io/repositories/28671?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-28671" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/28671/weekly?language=Kotlin" alt="ProdigyV21%2FARVIO | Trendshift" width="250" height="55"/></a>
+
+<br />
+
+</div>
+
+---
+
+
+
 # ARVIO
 
 ARVIO is an Android media hub for TV, phone, and tablet form factors. This repository is maintained as a source-code and development mirror for the Android application.
@@ -38,6 +83,9 @@ It is not intended as an advertising page, download landing page, or content dis
 ARVIO is available on Google Play:
 
 [<img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" width="160">](https://play.google.com/store/apps/details?id=com.arvio.tv)
+
+
+
 
 ## Support ARVIO
 
