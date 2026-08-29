@@ -216,4 +216,102 @@ class StalkerApiTest {
         assertEquals(2, requests.count { it.contains("action=get_all_channels") })
         assertFalse(requests.any { it.contains("p=3") })
     }
+
+    @Test
+    fun `getEpg builds url without date param when date is blank`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_simple_data_table")) """{ "js": [] }""" else null
+        }
+
+        api.getEpg()
+
+        assertEquals(
+            listOf("$PORTAL/server/load.php?type=epg&action=get_simple_data_table&ch_id=all&JsHttpRequest=1-xml"),
+            requests
+        )
+    }
+
+    @Test
+    fun `getEpg appends encoded date param when date is set`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_simple_data_table")) """{ "js": [] }""" else null
+        }
+
+        api.getEpg(date = "2026-08-29")
+
+        assertEquals(
+            listOf(
+                "$PORTAL/server/load.php?type=epg&action=get_simple_data_table&ch_id=all&date=2026-08-29&JsHttpRequest=1-xml"
+            ),
+            requests
+        )
+    }
+
+    @Test
+    fun `getEpg parses standard field names`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_simple_data_table")) {
+                """{ "js": [
+                    { "ch_id": "1", "name": "News", "descr": "Daily news", "start_timestamp": "1000", "stop_timestamp": "2000" }
+                ] }"""
+            } else null
+        }
+
+        val programs = api.getEpg()
+
+        assertEquals(1, programs.size)
+        assertEquals("1", programs[0].chId)
+        assertEquals("News", programs[0].name)
+        assertEquals("Daily news", programs[0].descr)
+        assertEquals("1000", programs[0].startTimestamp)
+        assertEquals("2000", programs[0].stopTimestamp)
+    }
+
+    @Test
+    fun `getEpg parses alternate field names from other portal software`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_simple_data_table")) {
+                """{ "js": [
+                    { "channel_id": "7", "title": "Movie", "description": "A film", "start": "1500", "end": "3000" }
+                ] }"""
+            } else null
+        }
+
+        val programs = api.getEpg()
+
+        assertEquals(1, programs.size)
+        assertEquals("7", programs[0].chId)
+        assertEquals("Movie", programs[0].name)
+        assertEquals("A film", programs[0].descr)
+        assertEquals("1500", programs[0].startTimestamp)
+        assertEquals("3000", programs[0].stopTimestamp)
+    }
+
+    @Test
+    fun `getEpg returns empty list on malformed response instead of throwing`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_simple_data_table")) "<html>not json</html>" else null
+        }
+
+        val programs = api.getEpg()
+
+        assertTrue(programs.isEmpty())
+    }
+
+    @Test
+    fun `getEpg returns empty list when js is null or absent`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_simple_data_table")) """{ "js": null }""" else null
+        }
+
+        val programs = api.getEpg()
+
+        assertTrue(programs.isEmpty())
+    }
 }
