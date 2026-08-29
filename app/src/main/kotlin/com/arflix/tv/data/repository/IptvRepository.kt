@@ -6281,7 +6281,7 @@ class IptvRepository @Inject constructor(
      * uses (see [StalkerPortalSupport]) — no separate EPG-index source key needed, isolation
      * comes from the channel id prefix like everywhere else.
      */
-    private suspend fun fetchStalkerEpgForActivePortals(
+    internal suspend fun fetchStalkerEpgForActivePortals(
         stalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi>,
         stalkerChannels: List<IptvChannel>
     ): Map<String, IptvNowNext> {
@@ -6334,7 +6334,7 @@ class IptvRepository @Inject constructor(
      * Compacts one channel's programs into a now/next slice. Unlike the Xtream/XMLTV
      * paths this keeps no "recent" history — Stalker catchup isn't in scope here (K10).
      */
-    private fun stalkerNowNextFromPrograms(programs: List<IptvProgram>, nowMs: Long): IptvNowNext? {
+    internal fun stalkerNowNextFromPrograms(programs: List<IptvProgram>, nowMs: Long): IptvNowNext? {
         val sorted = programs.sortedBy { it.startUtcMillis }
         var now: IptvProgram? = null
         var next: IptvProgram? = null

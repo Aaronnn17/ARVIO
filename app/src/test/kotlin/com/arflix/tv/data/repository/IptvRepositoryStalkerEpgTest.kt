@@ -2,19 +2,18 @@ package com.arflix.tv.data.repository
 
 import com.arflix.tv.data.api.StalkerApi
 import com.arflix.tv.data.model.IptvChannel
-import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Tests for the Stalker EPG merge helpers added to [IptvRepository] (isolation
- * comes from the channel id prefix, see [StalkerPortalSupport] - not a separate
- * per-portal EPG-index source key).
+ * Tests for the Stalker EPG merge helpers on [IptvRepository] (marked `internal`
+ * so tests can call them directly, same convention as [IptvEpgIndex]/[StalkerPortalSupport]).
+ * Isolation comes from the channel id prefix (see [StalkerPortalSupport]), not a
+ * separate per-portal EPG-index source key.
  */
 class IptvRepositoryStalkerEpgTest {
 
@@ -31,47 +30,13 @@ class IptvRepositoryStalkerEpgTest {
             override fun doGet(url: String): String = respond(url) ?: error("Unexpected url: $url")
         }
 
-    @Suppress("UNCHECKED_CAST")
-    private fun invokeStalkerNowNextFromPrograms(
-        repository: IptvRepository,
-        programs: List<IptvProgram>,
-        nowMs: Long
-    ): IptvNowNext? {
-        val method = IptvRepository::class.java.getDeclaredMethod(
-            "stalkerNowNextFromPrograms",
-            List::class.java,
-            Long::class.javaPrimitiveType
-        )
-        method.isAccessible = true
-        return method.invoke(repository, programs, nowMs) as IptvNowNext?
-    }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun invokeFetchStalkerEpgForActivePortals(
-        repository: IptvRepository,
-        stalkerApis: Map<String, StalkerApi>,
-        stalkerChannels: List<IptvChannel>
-    ): Map<String, IptvNowNext> = runBlocking {
-        val method = IptvRepository::class.java.getDeclaredMethod(
-            "fetchStalkerEpgForActivePortals",
-            Map::class.java,
-            List::class.java,
-            kotlin.coroutines.Continuation::class.java
-        )
-        method.isAccessible = true
-        suspendCancellableCoroutine<Any?> { cont ->
-            method.invoke(repository, stalkerApis, stalkerChannels, cont)
-        } as Map<String, IptvNowNext>
-    }
-
     private fun program(startMs: Long, endMs: Long, title: String) =
         IptvProgram(title = title, startUtcMillis = startMs, endUtcMillis = endMs)
 
     @Test
     fun `stalkerNowNextFromPrograms returns null for empty list`() {
         val repository = newRepository()
-        val result = invokeStalkerNowNextFromPrograms(repository, emptyList(), nowMs = 10_000L)
-        assertNull(result)
+        assertNull(repository.stalkerNowNextFromPrograms(emptyList(), nowMs = 10_000L))
     }
 
     @Test
@@ -87,7 +52,7 @@ class IptvRepositoryStalkerEpgTest {
             program(30_000L, 35_000L, "Upcoming2")
         )
 
-        val result = invokeStalkerNowNextFromPrograms(repository, programs.shuffled(), nowMs)
+        val result = repository.stalkerNowNextFromPrograms(programs.shuffled(), nowMs)
 
         requireNotNull(result)
         assertEquals("Now", result.now?.title)
@@ -98,7 +63,7 @@ class IptvRepositoryStalkerEpgTest {
     }
 
     @Test
-    fun `fetchStalkerEpgForActivePortals keys results by full channel id and isolates portals`() {
+    fun `fetchStalkerEpgForActivePortals keys results by full channel id and isolates portals`() = runTest {
         val repository = newRepository()
         val portal1Api = stubStalkerApi { url ->
             if (url.contains("action=get_simple_data_table")) {
@@ -120,8 +85,7 @@ class IptvRepositoryStalkerEpgTest {
             IptvChannel(id = "stalker:stalker2:100", name = "Ch B", logo = null, group = "g", streamUrl = "cmd")
         )
 
-        val result = invokeFetchStalkerEpgForActivePortals(
-            repository,
+        val result = repository.fetchStalkerEpgForActivePortals(
             mapOf("stalker1" to portal1Api, "stalker2" to portal2Api),
             channels
         )
@@ -132,7 +96,7 @@ class IptvRepositoryStalkerEpgTest {
     }
 
     @Test
-    fun `fetchStalkerEpgForActivePortals skips programs with unknown channel id or malformed timestamps`() {
+    fun `fetchStalkerEpgForActivePortals skips programs with unknown channel id or malformed timestamps`() = runTest {
         val repository = newRepository()
         val api = stubStalkerApi { url ->
             if (url.contains("action=get_simple_data_table")) {
@@ -147,14 +111,14 @@ class IptvRepositoryStalkerEpgTest {
             IptvChannel(id = "stalker:stalker1:100", name = "Ch A", logo = null, group = "g", streamUrl = "cmd")
         )
 
-        val result = invokeFetchStalkerEpgForActivePortals(repository, mapOf("stalker1" to api), channels)
+        val result = repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to api), channels)
 
         assertTrue("No valid programs in the response, result must stay empty", result.isEmpty())
     }
 
     @Test
-    fun `fetchStalkerEpgForActivePortals returns empty map without network calls when no portals or channels`() {
+    fun `fetchStalkerEpgForActivePortals returns empty map without network calls when no portals or channels`() = runTest {
         val repository = newRepository()
-        assertTrue(invokeFetchStalkerEpgForActivePortals(repository, emptyMap(), emptyList()).isEmpty())
+        assertTrue(repository.fetchStalkerEpgForActivePortals(emptyMap(), emptyList()).isEmpty())
     }
 }
