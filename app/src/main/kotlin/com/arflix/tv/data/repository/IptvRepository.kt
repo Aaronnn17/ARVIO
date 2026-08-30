@@ -429,6 +429,16 @@ class IptvRepository @Inject constructor(
     private val fullCatchupHistoryChannelLimit = 4
     private val xtreamShortEpgBatchSize = 1024
     private val xtreamShortEpgConcurrency = 64
+
+    // Per-channel `get_short_epg` fallback (portals whose bulk EPG actions return
+    // nothing, e.g. get_simple_data_table/get_epg_info both empty - confirmed
+    // live). Only worth doing for small batches (the on-demand visible-guide
+    // refresh, typically tens of channels); a full-catalog backfill can be
+    // thousands of channels and would hammer the portal with that many
+    // individual requests, so it's skipped above this cap and that batch
+    // simply gets no EPG until it's requested via the on-demand path instead.
+    private val stalkerShortEpgFallbackMaxChannels = 100
+    private val stalkerShortEpgFallbackConcurrency = 8
     private val cacheUpcomingProgramLimit = 48
     private val cacheRecentProgramLimit = 1
     private val cacheCatchupRecentProgramLimit = 96
@@ -6338,12 +6348,41 @@ class IptvRepository @Inject constructor(
                         valueTransform = { it.id }
                     )
                     System.err.println("[Stalker-EPG] Portal $portalId: requesting getEpg() for ${portalChannels.size} channels")
-                    val programs = runCatching { api.getEpg() }.getOrElse { error ->
+                    var programs = runCatching { api.getEpg() }.getOrElse { error ->
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         System.err.println("[Stalker-EPG] Portal $portalId EPG fetch failed: ${error.message}")
                         emptyList()
                     }
                     System.err.println("[Stalker-EPG] Portal $portalId: getEpg() returned ${programs.size} raw entries")
+
+                    // Bulk EPG actions confirmed empty on some portal builds -
+                    // fall back to get_short_epg per channel. Only for small
+                    // batches (see stalkerShortEpgFallbackMaxChannels comment).
+                    if (programs.isEmpty() && origIdToChannelId.size <= stalkerShortEpgFallbackMaxChannels) {
+                        System.err.println(
+                            "[Stalker-EPG] Portal $portalId: bulk EPG empty, falling back to " +
+                                "get_short_epg for ${origIdToChannelId.size} channels"
+                        )
+                        val gate = Semaphore(stalkerShortEpgFallbackConcurrency)
+                        val shortEpgResult = ConcurrentLinkedQueue<com.arflix.tv.data.api.StalkerApi.StalkerEpgProgram>()
+                        coroutineScope {
+                            origIdToChannelId.keys.map { origId ->
+                                async {
+                                    gate.withPermit {
+                                        val channelPrograms = runCatching { api.getShortEpg(origId) }.getOrElse { error ->
+                                            if (error is kotlinx.coroutines.CancellationException) throw error
+                                            emptyList()
+                                        }
+                                        shortEpgResult.addAll(channelPrograms)
+                                    }
+                                }
+                            }.awaitAll()
+                        }
+                        programs = shortEpgResult.toList()
+                        System.err.println(
+                            "[Stalker-EPG] Portal $portalId: get_short_epg fallback returned ${programs.size} raw entries"
+                        )
+                    }
                     if (programs.isEmpty()) return@async
 
                     val byChannel = LinkedHashMap<String, MutableList<IptvProgram>>()

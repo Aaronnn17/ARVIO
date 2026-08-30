@@ -250,6 +250,28 @@ open class StalkerApi(
         }
     }
 
+    /**
+     * Per-channel EPG fallback for portals whose `get_simple_data_table`/`get_epg_info`
+     * both come back empty (confirmed live on-device: 8/8 channels succeed on such a
+     * portal when neither bulk action returns anything). Response shape is the same flat
+     * `{"js":[...]}` array as `get_simple_data_table`. [chId] is the portal's own numeric
+     * channel id (the same value used as `ch_id` elsewhere, i.e. the last segment of our
+     * `stalker:<portalId>:<origId>` channel id).
+     */
+    suspend fun getShortEpg(chId: String): List<StalkerEpgProgram> {
+        return try {
+            val encodedChId = java.net.URLEncoder.encode(chId, "UTF-8")
+            val url = "$apiBase/server/load.php?type=itv&action=get_short_epg&ch_id=$encodedChId&size=10&JsHttpRequest=1-xml"
+            val response = doGet(url)
+            val parsed = gson.fromJson(response, StalkerEpgResponse::class.java)
+            parsed?.js.orEmpty().filterNotNull()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            System.err.println("[Stalker] get_short_epg failed for ch_id=$chId: ${e.message}")
+            emptyList()
+        }
+    }
+
     /** Resolve a channel's cmd to a playable stream URL */
     suspend fun resolveStreamUrl(cmd: String): String? {
         return try {

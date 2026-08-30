@@ -412,4 +412,69 @@ class StalkerApiTest {
         assertEquals(setOf("1", "2"), programs.map { it.chId }.toSet())
         assertEquals(setOf("News", "Movie"), programs.map { it.name }.toSet())
     }
+
+    @Test
+    fun `getShortEpg builds url with ch_id and size`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_short_epg")) """{ "js": [] }""" else null
+        }
+
+        api.getShortEpg("1441855")
+
+        assertEquals(
+            listOf("$PORTAL/server/load.php?type=itv&action=get_short_epg&ch_id=1441855&size=10&JsHttpRequest=1-xml"),
+            requests
+        )
+    }
+
+    @Test
+    fun `getShortEpg parses the confirmed real-world response shape (integer id field)`() = runTest {
+        // Confirmed live on-device: js is a flat array directly (same container shape as
+        // get_simple_data_table), but the "id" field is a number, not a string, on this
+        // portal build - our model doesn't map "id" at all, so this must still parse fine.
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_short_epg")) {
+                """{ "js": [{
+                    "id": 1788113700, "ch_id": "1441855",
+                    "start_timestamp": 1788113700, "stop_timestamp": 1788118800,
+                    "name": "Tatort: Roomservice", "descr": "Ein Krimi."
+                }] }"""
+            } else null
+        }
+
+        val programs = api.getShortEpg("1441855")
+
+        assertEquals(1, programs.size)
+        assertEquals("1441855", programs[0].chId)
+        assertEquals("Tatort: Roomservice", programs[0].name)
+        assertEquals("1788113700", programs[0].startTimestamp)
+        assertEquals("1788118800", programs[0].stopTimestamp)
+    }
+
+    @Test
+    fun `getShortEpg returns empty list for a channel with no programs`() = runTest {
+        // Confirmed live: a group-placeholder channel with blank xmltv_id returns {"js":[]}.
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_short_epg")) """{ "js": [] }""" else null
+        }
+
+        val programs = api.getShortEpg("679826")
+
+        assertTrue(programs.isEmpty())
+    }
+
+    @Test
+    fun `getShortEpg returns empty list on malformed response instead of throwing`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_short_epg")) "<html>error</html>" else null
+        }
+
+        val programs = api.getShortEpg("1")
+
+        assertTrue(programs.isEmpty())
+    }
 }

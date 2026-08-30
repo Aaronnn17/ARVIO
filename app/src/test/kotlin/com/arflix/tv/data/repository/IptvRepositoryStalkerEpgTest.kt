@@ -127,4 +127,64 @@ class IptvRepositoryStalkerEpgTest {
         val repository = newRepository()
         assertTrue(repository.fetchStalkerEpgForActivePortals(emptyMap(), emptyList()).isEmpty())
     }
+
+    @Test
+    fun `fetchStalkerEpgForActivePortals falls back to get_short_epg per channel when both bulk actions are empty`() = runTest {
+        // Confirmed live on-device (EPG-Test.md, Portal 1): get_simple_data_table and
+        // get_epg_info both return nothing on some portal builds, only get_short_epg works.
+        val repository = newRepository()
+        val nowSec = System.currentTimeMillis() / 1000
+        val startSec = nowSec - 60
+        val stopSec = nowSec + 60
+        val api = stubStalkerApi { url ->
+            when {
+                url.contains("action=get_simple_data_table") -> """{ "js": [] }"""
+                url.contains("action=get_epg_info") -> """{ "js": { "data": [] } }"""
+                url.contains("action=get_short_epg") && url.contains("ch_id=100") ->
+                    """{ "js": [
+                        { "ch_id": "100", "name": "Fallback Show", "start_timestamp": "$startSec", "stop_timestamp": "$stopSec" }
+                    ] }"""
+                url.contains("action=get_short_epg") && url.contains("ch_id=200") ->
+                    """{ "js": [] }"""
+                else -> null
+            }
+        }
+        val channels = listOf(
+            IptvChannel(id = "stalker:stalker1:100", name = "Ch A", logo = null, group = "g", streamUrl = "cmd"),
+            IptvChannel(id = "stalker:stalker1:200", name = "Ch B (no programs)", logo = null, group = "g", streamUrl = "cmd")
+        )
+
+        val result = repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to api), channels)
+
+        assertEquals(setOf("stalker:stalker1:100"), result.keys)
+        assertEquals("Fallback Show", result.getValue("stalker:stalker1:100").now?.title)
+    }
+
+    @Test
+    fun `fetchStalkerEpgForActivePortals skips the get_short_epg fallback for large batches`() = runTest {
+        // A full-catalog backfill can be thousands of channels - falling back to one
+        // get_short_epg request per channel at that scale would hammer the portal, so
+        // the fallback is capped and simply yields no EPG for an oversized batch instead.
+        val repository = newRepository()
+        val shortEpgRequested = mutableListOf<String>()
+        val api = stubStalkerApi { url ->
+            when {
+                url.contains("action=get_simple_data_table") -> """{ "js": [] }"""
+                url.contains("action=get_epg_info") -> """{ "js": { "data": [] } }"""
+                url.contains("action=get_short_epg") -> {
+                    shortEpgRequested += url
+                    """{ "js": [] }"""
+                }
+                else -> null
+            }
+        }
+        val channels = (1..150).map {
+            IptvChannel(id = "stalker:stalker1:$it", name = "Ch $it", logo = null, group = "g", streamUrl = "cmd")
+        }
+
+        val result = repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to api), channels)
+
+        assertTrue("Oversized batch must not trigger per-channel fallback requests", shortEpgRequested.isEmpty())
+        assertTrue(result.isEmpty())
+    }
 }
