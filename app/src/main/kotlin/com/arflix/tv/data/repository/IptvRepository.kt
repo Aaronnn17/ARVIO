@@ -2853,6 +2853,23 @@ class IptvRepository @Inject constructor(
                     mergedNowNext.putAll(freshNowNext)
                 }
             }
+
+            // Stalker channels never have Xtream credentials, so the loop above never
+            // touches them - without this they'd silently fall through to the XMLTV
+            // fallback below (which also can't help them) and this on-demand refresh,
+            // used all over the visible guide/grid, would return nothing for them.
+            val stalkerRequestedChannels = channels.filter {
+                StalkerPortalSupport.portalIdFromChannelId(it.id) != null
+            }
+            if (stalkerRequestedChannels.isNotEmpty()) {
+                val stalkerFresh = runCatching {
+                    fetchStalkerEpgForActivePortals(cachedStalkerApis, stalkerRequestedChannels)
+                }.getOrDefault(emptyMap())
+                if (stalkerFresh.isNotEmpty()) {
+                    mergedNowNext.putAll(stalkerFresh)
+                }
+            }
+
             val missingXmlChannels = channels.filter { channel ->
                 !hasProgramData(mergedNowNext[channel.id])
             }
