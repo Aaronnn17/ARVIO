@@ -168,6 +168,7 @@ open class StalkerApi(
             val dateParam = if (date.isBlank()) "" else "&date=${java.net.URLEncoder.encode(date, "UTF-8")}"
             val url = "$apiBase/server/load.php?type=epg&action=get_simple_data_table&ch_id=all$dateParam&JsHttpRequest=1-xml"
             val response = doGet(url)
+            System.err.println("[Stalker] getEpg raw response (${response.length} chars): ${response.take(500)}")
             val parsed = gson.fromJson(response, StalkerEpgResponse::class.java)
             parsed?.js.orEmpty().filterNotNull()
         } catch (e: Exception) {
