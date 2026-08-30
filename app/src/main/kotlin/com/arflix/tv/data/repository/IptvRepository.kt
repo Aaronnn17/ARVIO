@@ -247,6 +247,22 @@ class IptvRepository @Inject constructor(
     private var cachedStalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi> = emptyMap()
 
     /**
+     * Short-lived cache of each portal's raw `getEpg()` bulk result (see
+     * [fetchStalkerEpgForActivePortals]). Without this, every small on-demand
+     * visible-guide batch (`refreshEpgForChannels`, often called every few
+     * seconds while scrolling/switching channels) re-fetches the full bulk
+     * response from scratch - confirmed live on a large portal to be ~25 MB,
+     * taking 1.5-5s per fetch. `now/next` data doesn't need second-level
+     * freshness, so a short TTL is enough to remove the redundant re-fetch.
+     */
+    private data class StalkerEpgCacheEntry(
+        val fetchedAtMs: Long,
+        val programs: List<com.arflix.tv.data.api.StalkerApi.StalkerEpgProgram>
+    )
+    private val stalkerEpgCache = ConcurrentHashMap<String, StalkerEpgCacheEntry>()
+    private val stalkerEpgCacheTtlMs = 5 * 60 * 1000L
+
+    /**
      * Public accessor kept for compatibility with code that previously read the
      * single cached Stalker API instance. Returns the first cached portal API.
      */
@@ -6347,11 +6363,22 @@ class IptvRepository @Inject constructor(
                         keySelector = { it.id.substringAfterLast(':') },
                         valueTransform = { it.id }
                     )
-                    System.err.println("[Stalker-EPG] Portal $portalId: requesting getEpg() for ${portalChannels.size} channels")
-                    var programs = runCatching { api.getEpg() }.getOrElse { error ->
-                        if (error is kotlinx.coroutines.CancellationException) throw error
-                        System.err.println("[Stalker-EPG] Portal $portalId EPG fetch failed: ${error.message}")
-                        emptyList()
+                    val cachedBulk = stalkerEpgCache[portalId]
+                    var programs = if (cachedBulk != null && nowMs - cachedBulk.fetchedAtMs < stalkerEpgCacheTtlMs) {
+                        System.err.println(
+                            "[Stalker-EPG] Portal $portalId: using cached getEpg() result " +
+                                "(${cachedBulk.programs.size} entries, age=${nowMs - cachedBulk.fetchedAtMs}ms)"
+                        )
+                        cachedBulk.programs
+                    } else {
+                        System.err.println("[Stalker-EPG] Portal $portalId: requesting getEpg() for ${portalChannels.size} channels")
+                        val fetched = runCatching { api.getEpg() }.getOrElse { error ->
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            System.err.println("[Stalker-EPG] Portal $portalId EPG fetch failed: ${error.message}")
+                            emptyList()
+                        }
+                        stalkerEpgCache[portalId] = StalkerEpgCacheEntry(nowMs, fetched)
+                        fetched
                     }
                     System.err.println("[Stalker-EPG] Portal $portalId: getEpg() returned ${programs.size} raw entries")
 

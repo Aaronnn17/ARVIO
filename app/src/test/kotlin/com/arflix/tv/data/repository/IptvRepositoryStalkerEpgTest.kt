@@ -161,6 +161,39 @@ class IptvRepositoryStalkerEpgTest {
     }
 
     @Test
+    fun `fetchStalkerEpgForActivePortals reuses the cached bulk result within the TTL instead of re-fetching`() = runTest {
+        // Confirmed live: a large portal's get_epg_info response can be ~25 MB, taking
+        // seconds per fetch - refetching it on every small on-demand batch call caused
+        // real, user-visible lag. A short per-portal cache must avoid that repeat fetch.
+        val repository = newRepository()
+        val nowSec = System.currentTimeMillis() / 1000
+        val startSec = nowSec - 60
+        val stopSec = nowSec + 60
+        var bulkRequestCount = 0
+        val api = stubStalkerApi { url ->
+            when {
+                url.contains("action=get_simple_data_table") -> {
+                    bulkRequestCount++
+                    """{ "js": [
+                        { "ch_id": "100", "name": "Cached Show", "start_timestamp": "$startSec", "stop_timestamp": "$stopSec" }
+                    ] }"""
+                }
+                else -> null
+            }
+        }
+        val channels = listOf(
+            IptvChannel(id = "stalker:stalker1:100", name = "Ch A", logo = null, group = "g", streamUrl = "cmd")
+        )
+
+        val first = repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to api), channels)
+        val second = repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to api), channels)
+
+        assertEquals(1, bulkRequestCount)
+        assertEquals("Cached Show", first.getValue("stalker:stalker1:100").now?.title)
+        assertEquals("Cached Show", second.getValue("stalker:stalker1:100").now?.title)
+    }
+
+    @Test
     fun `fetchStalkerEpgForActivePortals skips the get_short_epg fallback for large batches`() = runTest {
         // A full-catalog backfill can be thousands of channels - falling back to one
         // get_short_epg request per channel at that scale would hammer the portal, so
