@@ -160,21 +160,69 @@ open class StalkerApi(
     }
 
     /**
-     * Fetch the portal's lightweight now/next EPG table for all channels in one call.
+     * Fetch the portal's now/next EPG data for all channels.
      * [date] uses `YYYY-MM-DD`; blank means "today" on the server side.
+     *
+     * Tries `type=epg&action=get_simple_data_table` first (lightweight, one flat
+     * list). Some Stalker/Ministra portal builds don't implement the `epg` type
+     * handler at all (confirmed on-device: 0-byte response, while `itv`/`stb`
+     * actions on the same portal work fine) - for those, falls back to
+     * `type=itv&action=get_epg_info`, which some portals return as a flat list
+     * like the first action and others as an object keyed by channel id.
      */
     suspend fun getEpg(date: String = ""): List<StalkerEpgProgram> {
+        val dateParam = if (date.isBlank()) "" else "&date=${java.net.URLEncoder.encode(date, "UTF-8")}"
+        val simpleTable = fetchSimpleDataTableEpg(dateParam)
+        if (simpleTable.isNotEmpty()) return simpleTable
+        return fetchEpgInfoFallback(dateParam)
+    }
+
+    private fun fetchSimpleDataTableEpg(dateParam: String): List<StalkerEpgProgram> {
         return try {
-            val dateParam = if (date.isBlank()) "" else "&date=${java.net.URLEncoder.encode(date, "UTF-8")}"
             val url = "$apiBase/server/load.php?type=epg&action=get_simple_data_table&ch_id=all$dateParam&JsHttpRequest=1-xml"
             val response = doGet(url)
-            System.err.println("[Stalker] getEpg raw response (${response.length} chars): ${response.take(500)}")
+            System.err.println("[Stalker] get_simple_data_table raw response (${response.length} chars): ${response.take(500)}")
             val parsed = gson.fromJson(response, StalkerEpgResponse::class.java)
             parsed?.js.orEmpty().filterNotNull()
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
+            System.err.println("[Stalker] get_simple_data_table failed: ${e.message}")
+            emptyList()
+        }
+    }
 
-            System.err.println("[Stalker] Get EPG failed: ${e.message}")
+    /**
+     * `get_epg_info` response shape varies by portal build: either a flat `js`
+     * list (same as get_simple_data_table) or a `js` object keyed by channel id,
+     * each holding that channel's program list. Both are tried.
+     */
+    private fun fetchEpgInfoFallback(dateParam: String): List<StalkerEpgProgram> {
+        return try {
+            val url = "$apiBase/server/load.php?type=itv&action=get_epg_info$dateParam&JsHttpRequest=1-xml"
+            val response = doGet(url)
+            System.err.println("[Stalker] get_epg_info raw response (${response.length} chars): ${response.take(800)}")
+
+            val asList = runCatching {
+                gson.fromJson(response, StalkerEpgResponse::class.java)?.js.orEmpty().filterNotNull()
+            }.getOrDefault(emptyList())
+            if (asList.isNotEmpty()) return asList
+
+            val mapType = com.google.gson.reflect.TypeToken.getParameterized(
+                Map::class.java,
+                String::class.java,
+                com.google.gson.reflect.TypeToken.getParameterized(List::class.java, StalkerEpgProgram::class.java).type
+            ).type
+            val asMap = runCatching {
+                gson.fromJson<Map<String, List<StalkerEpgProgram?>?>>(response, mapType)
+            }.getOrNull().orEmpty()
+            asMap.flatMap { (channelId, programs) ->
+                programs.orEmpty().filterNotNull().map { program ->
+                    if (program.chId.isNullOrBlank()) program.copy(chId = channelId) else program
+                }
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            System.err.println("[Stalker] get_epg_info failed: ${e.message}")
             emptyList()
         }
     }
