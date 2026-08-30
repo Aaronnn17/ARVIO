@@ -202,23 +202,40 @@ open class StalkerApi(
             val response = doGet(url)
             System.err.println("[Stalker] get_epg_info raw response (${response.length} chars): ${response.take(800)}")
 
-            val asList = runCatching {
-                gson.fromJson(response, StalkerEpgResponse::class.java)?.js.orEmpty().filterNotNull()
-            }.getOrDefault(emptyList())
-            if (asList.isNotEmpty()) return asList
+            // Parse the envelope first and inspect the "js" member's own shape -
+            // it's either a flat array or an object keyed by channel id, and
+            // trying to Gson-deserialize the whole envelope directly as one or
+            // the other (like get_simple_data_table's model does) mismatches
+            // whichever shape it isn't.
+            val jsElement = runCatching {
+                com.google.gson.JsonParser.parseString(response).asJsonObject.get("js")
+            }.getOrNull() ?: return emptyList()
 
-            val mapType = com.google.gson.reflect.TypeToken.getParameterized(
-                Map::class.java,
-                String::class.java,
-                com.google.gson.reflect.TypeToken.getParameterized(List::class.java, StalkerEpgProgram::class.java).type
-            ).type
-            val asMap = runCatching {
-                gson.fromJson<Map<String, List<StalkerEpgProgram?>?>>(response, mapType)
-            }.getOrNull().orEmpty()
-            asMap.flatMap { (channelId, programs) ->
-                programs.orEmpty().filterNotNull().map { program ->
-                    if (program.chId.isNullOrBlank()) program.copy(chId = channelId) else program
+            when {
+                jsElement.isJsonArray -> {
+                    val listType = com.google.gson.reflect.TypeToken.getParameterized(
+                        List::class.java, StalkerEpgProgram::class.java
+                    ).type
+                    runCatching {
+                        gson.fromJson<List<StalkerEpgProgram?>>(jsElement, listType)
+                    }.getOrNull().orEmpty().filterNotNull()
                 }
+                jsElement.isJsonObject -> {
+                    val mapType = com.google.gson.reflect.TypeToken.getParameterized(
+                        Map::class.java,
+                        String::class.java,
+                        com.google.gson.reflect.TypeToken.getParameterized(List::class.java, StalkerEpgProgram::class.java).type
+                    ).type
+                    val asMap = runCatching {
+                        gson.fromJson<Map<String, List<StalkerEpgProgram?>?>>(jsElement, mapType)
+                    }.getOrNull().orEmpty()
+                    asMap.flatMap { (channelId, programs) ->
+                        programs.orEmpty().filterNotNull().map { program ->
+                            if (program.chId.isNullOrBlank()) program.copy(chId = channelId) else program
+                        }
+                    }
+                }
+                else -> emptyList()
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
