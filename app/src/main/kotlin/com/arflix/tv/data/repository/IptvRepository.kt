@@ -1838,6 +1838,10 @@ class IptvRepository @Inject constructor(
                 cachedChannels = stalkerChannels
                 cachedGroupedChannels = grouped
                 cachedStalkerApis = stalkerApis
+                System.err.println(
+                    "[EPG] loadSnapshot Stalker-only: allowNetworkEpgFetch=$allowNetworkEpgFetch " +
+                        "apis=${stalkerApis.keys} channels=${stalkerChannels.size}"
+                )
                 val stalkerNowNext = if (allowNetworkEpgFetch) {
                     val fresh = runCatching {
                         fetchStalkerEpgForActivePortals(stalkerApis, stalkerChannels)
@@ -2722,6 +2726,7 @@ class IptvRepository @Inject constructor(
                 channelIds
             }
             val channels = channelsForEpgRefresh(requested)
+            System.err.println("[EPG-Refresh] refreshEpgForChannels: requested=${requested.size} resolved=${channels.size}")
             if (channels.isEmpty()) return@withContext null
 
             val activePlaylistById = activePlaylists(config).associateBy { it.id }
@@ -2861,10 +2866,17 @@ class IptvRepository @Inject constructor(
             val stalkerRequestedChannels = channels.filter {
                 StalkerPortalSupport.portalIdFromChannelId(it.id) != null
             }
+            System.err.println(
+                "[EPG-Refresh] refreshEpgForChannels: batch=${channels.size} " +
+                    "stalkerChannels=${stalkerRequestedChannels.size} cachedStalkerApis=${cachedStalkerApis.keys}"
+            )
             if (stalkerRequestedChannels.isNotEmpty()) {
                 val stalkerFresh = runCatching {
                     fetchStalkerEpgForActivePortals(cachedStalkerApis, stalkerRequestedChannels)
-                }.getOrDefault(emptyMap())
+                }.getOrElse { error ->
+                    System.err.println("[EPG-Refresh] fetchStalkerEpgForActivePortals threw: ${error.message}")
+                    emptyMap()
+                }
                 if (stalkerFresh.isNotEmpty()) {
                     mergedNowNext.putAll(stalkerFresh)
                 }
@@ -6302,7 +6314,11 @@ class IptvRepository @Inject constructor(
         stalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi>,
         stalkerChannels: List<IptvChannel>
     ): Map<String, IptvNowNext> {
-        if (stalkerApis.isEmpty() || stalkerChannels.isEmpty()) return emptyMap()
+        System.err.println("[Stalker-EPG] fetchStalkerEpgForActivePortals called: apis=${stalkerApis.keys} channels=${stalkerChannels.size}")
+        if (stalkerApis.isEmpty() || stalkerChannels.isEmpty()) {
+            System.err.println("[Stalker-EPG] Nothing to fetch (apis or channels empty), returning early")
+            return emptyMap()
+        }
         val nowMs = System.currentTimeMillis()
         val merged = ConcurrentHashMap<String, IptvNowNext>()
         coroutineScope {
@@ -6311,26 +6327,40 @@ class IptvRepository @Inject constructor(
                     val portalChannels = stalkerChannels.filter {
                         StalkerPortalSupport.portalIdFromChannelId(it.id) == portalId
                     }
-                    if (portalChannels.isEmpty()) return@async
+                    if (portalChannels.isEmpty()) {
+                        System.err.println("[Stalker-EPG] Portal $portalId: no channels in batch, skipping")
+                        return@async
+                    }
                     // Stalker's ch_id is the portal's own numeric id, i.e. the last
                     // segment of our "stalker:<portalId>:<origId>" channel id.
                     val origIdToChannelId = portalChannels.associateBy(
                         keySelector = { it.id.substringAfterLast(':') },
                         valueTransform = { it.id }
                     )
+                    System.err.println("[Stalker-EPG] Portal $portalId: requesting getEpg() for ${portalChannels.size} channels")
                     val programs = runCatching { api.getEpg() }.getOrElse { error ->
                         if (error is kotlinx.coroutines.CancellationException) throw error
                         System.err.println("[Stalker-EPG] Portal $portalId EPG fetch failed: ${error.message}")
                         emptyList()
                     }
+                    System.err.println("[Stalker-EPG] Portal $portalId: getEpg() returned ${programs.size} raw entries")
                     if (programs.isEmpty()) return@async
 
                     val byChannel = LinkedHashMap<String, MutableList<IptvProgram>>()
+                    var skippedUnknownChannel = 0
+                    var skippedBadTimestamp = 0
                     for (p in programs) {
-                        val channelId = p.chId?.let { origIdToChannelId[it] } ?: continue
-                        val startMs = p.startTimestamp?.toLongOrNull()?.let { it * 1000L } ?: continue
-                        val stopMs = p.stopTimestamp?.toLongOrNull()?.let { it * 1000L } ?: continue
-                        if (stopMs <= startMs) continue
+                        val channelId = p.chId?.let { origIdToChannelId[it] }
+                        if (channelId == null) {
+                            skippedUnknownChannel++
+                            continue
+                        }
+                        val startMs = p.startTimestamp?.toLongOrNull()?.let { it * 1000L }
+                        val stopMs = p.stopTimestamp?.toLongOrNull()?.let { it * 1000L }
+                        if (startMs == null || stopMs == null || stopMs <= startMs) {
+                            skippedBadTimestamp++
+                            continue
+                        }
                         byChannel.getOrPut(channelId) { mutableListOf() } += IptvProgram(
                             title = p.name?.takeIf { it.isNotBlank() } ?: context.getString(R.string.program_no_title),
                             description = p.descr?.takeIf { it.isNotBlank() },
@@ -6338,12 +6368,18 @@ class IptvRepository @Inject constructor(
                             endUtcMillis = stopMs
                         )
                     }
+                    System.err.println(
+                        "[Stalker-EPG] Portal $portalId: matched ${byChannel.size} channels, " +
+                            "skippedUnknownChannel=$skippedUnknownChannel skippedBadTimestamp=$skippedBadTimestamp " +
+                            "sampleReturnedChIds=${programs.take(3).map { it.chId }} sampleExpectedIds=${origIdToChannelId.keys.take(3)}"
+                    )
                     byChannel.forEach { (channelId, channelPrograms) ->
                         stalkerNowNextFromPrograms(channelPrograms, nowMs)?.let { merged[channelId] = it }
                     }
                 }
             }.awaitAll()
         }
+        System.err.println("[Stalker-EPG] fetchStalkerEpgForActivePortals result: ${merged.size} channels with data")
         return merged
     }
 
