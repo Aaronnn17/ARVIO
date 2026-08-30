@@ -192,9 +192,12 @@ open class StalkerApi(
     }
 
     /**
-     * `get_epg_info` response shape varies by portal build: either a flat `js`
-     * list (same as get_simple_data_table) or a `js` object keyed by channel id,
-     * each holding that channel's program list. Both are tried.
+     * `get_epg_info` response shape varies by portal build. Confirmed on-device
+     * against two different portals: `{"js":{"data":[]}}` (nothing available) and
+     * `{"js":{"data":{"<ch_id>":[{...program...}], ...}}}` (real data, one entry
+     * per channel id, ~tens of MB for a multi-thousand-channel portal). Some
+     * builds may skip the "data" wrapper and put the array/object directly under
+     * "js" (matching the get_simple_data_table shape) - both are handled.
      */
     private fun fetchEpgInfoFallback(dateParam: String): List<StalkerEpgProgram> {
         return try {
@@ -202,32 +205,35 @@ open class StalkerApi(
             val response = doGet(url)
             System.err.println("[Stalker] get_epg_info raw response (${response.length} chars): ${response.take(800)}")
 
-            // Parse the envelope first and inspect the "js" member's own shape -
-            // it's either a flat array or an object keyed by channel id, and
-            // trying to Gson-deserialize the whole envelope directly as one or
-            // the other (like get_simple_data_table's model does) mismatches
-            // whichever shape it isn't.
             val jsElement = runCatching {
                 com.google.gson.JsonParser.parseString(response).asJsonObject.get("js")
             }.getOrNull() ?: return emptyList()
 
+            // Unwrap the "data" wrapper when present; otherwise treat "js" itself
+            // as the array/object to parse (older/other portal builds).
+            val dataElement = if (jsElement.isJsonObject && jsElement.asJsonObject.has("data")) {
+                jsElement.asJsonObject.get("data")
+            } else {
+                jsElement
+            }
+
             when {
-                jsElement.isJsonArray -> {
+                dataElement.isJsonArray -> {
                     val listType = com.google.gson.reflect.TypeToken.getParameterized(
                         List::class.java, StalkerEpgProgram::class.java
                     ).type
                     runCatching {
-                        gson.fromJson<List<StalkerEpgProgram?>>(jsElement, listType)
+                        gson.fromJson<List<StalkerEpgProgram?>>(dataElement, listType)
                     }.getOrNull().orEmpty().filterNotNull()
                 }
-                jsElement.isJsonObject -> {
+                dataElement.isJsonObject -> {
                     val mapType = com.google.gson.reflect.TypeToken.getParameterized(
                         Map::class.java,
                         String::class.java,
                         com.google.gson.reflect.TypeToken.getParameterized(List::class.java, StalkerEpgProgram::class.java).type
                     ).type
                     val asMap = runCatching {
-                        gson.fromJson<Map<String, List<StalkerEpgProgram?>?>>(jsElement, mapType)
+                        gson.fromJson<Map<String, List<StalkerEpgProgram?>?>>(dataElement, mapType)
                     }.getOrNull().orEmpty()
                     asMap.flatMap { (channelId, programs) ->
                         programs.orEmpty().filterNotNull().map { program ->

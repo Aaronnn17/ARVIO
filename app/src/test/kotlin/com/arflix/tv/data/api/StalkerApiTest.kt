@@ -352,6 +352,45 @@ class StalkerApiTest {
     }
 
     @Test
+    fun `getEpg get_epg_info fallback parses the confirmed data-wrapped per-channel shape`() = runTest {
+        // Confirmed on-device response shape: {"js":{"data":{"<ch_id>":[...]}}}.
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("action=get_simple_data_table") -> """{ "js": [] }"""
+                url.contains("action=get_epg_info") ->
+                    """{ "js": { "data": {
+                        "1359": [{ "ch_id": "1359", "name": "Beestenboel", "start_timestamp": "1788110700", "stop_timestamp": "1788113400" }]
+                    } } }"""
+                else -> null
+            }
+        }
+
+        val programs = api.getEpg()
+
+        assertEquals(1, programs.size)
+        assertEquals("1359", programs[0].chId)
+        assertEquals("Beestenboel", programs[0].name)
+    }
+
+    @Test
+    fun `getEpg get_epg_info fallback returns empty list for the confirmed empty data-wrapped shape`() = runTest {
+        // Confirmed on-device response shape when a portal has no programs: {"js":{"data":[]}}.
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("action=get_simple_data_table") -> """{ "js": [] }"""
+                url.contains("action=get_epg_info") -> """{ "js": { "data": [] } }"""
+                else -> null
+            }
+        }
+
+        val programs = api.getEpg()
+
+        assertTrue(programs.isEmpty())
+    }
+
+    @Test
     fun `getEpg get_epg_info fallback parses a per-channel object shape`() = runTest {
         val requests = mutableListOf<String>()
         val api = stubApi(requests = requests) { url ->
