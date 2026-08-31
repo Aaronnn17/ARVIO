@@ -123,10 +123,12 @@ fun MediaCard(
     // hovered tile animates its GIF. Regular media items keep the existing
     // behavior (landscape uses backdrop art, poster uses image).
     val isCollectionTile = item.status?.startsWith("collection:") == true
+    val continueWatchingArtwork = item.episodeStill
+        ?.takeIf { showProgress && isLandscape && it.isNotBlank() }
     val baseImageUrl = if (isCollectionTile) {
         item.image.takeIf { it.isNotBlank() } ?: item.backdrop?.takeIf { it.isNotBlank() }
     } else if (isLandscape) {
-        (item.backdrop ?: item.image).takeIf { it.isNotBlank() }
+        (continueWatchingArtwork ?: item.backdrop ?: item.image).takeIf { it.isNotBlank() }
     } else {
         item.image.takeIf { it.isNotBlank() }
     }

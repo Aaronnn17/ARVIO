@@ -2523,10 +2523,7 @@ class TraktRepository @Inject constructor(
         }.awaitAll()
     }
 
-    /**
-     * Enrich a local Continue Watching item with TMDB data
-     * Matches the Trakt enrichment behavior: uses SHOW backdrop/overview, not episode
-     */
+    /** Enrich Continue Watching with series metadata and episode-specific artwork. */
     private suspend fun enrichLocalContinueWatchingItem(
         item: ContinueWatchingItem,
         seasonCache: java.util.concurrent.ConcurrentHashMap<Pair<Int, Int>, Deferred<com.arflix.tv.data.api.TmdbSeasonDetails?>> = java.util.concurrent.ConcurrentHashMap()
@@ -2534,7 +2531,11 @@ class TraktRepository @Inject constructor(
         // Skip only when all Continue Watching metrics are already present.
         val needsRuntime = item.durationSeconds <= 0L
         val needsEpisodeCounts = item.mediaType == MediaType.TV && item.totalEpisodes <= 0
-        if (!needsRuntime && !needsEpisodeCounts && item.overview.isNotEmpty() && item.backdropPath?.startsWith("http") == true) {
+        val needsEpisodeArtwork = item.mediaType == MediaType.TV &&
+            item.season != null &&
+            item.episode != null &&
+            item.episodeStillPath.isNullOrBlank()
+        if (!needsRuntime && !needsEpisodeCounts && !needsEpisodeArtwork && item.overview.isNotEmpty() && item.backdropPath?.startsWith("http") == true) {
             return@coroutineScope item
         }
 
@@ -2546,7 +2547,9 @@ class TraktRepository @Inject constructor(
                 } catch (e: Exception) { AppLogger.e("TraktRepository", "Silently returning null", e); null }
 
                 // Get current season info for episode title and aired-episode counts.
-                val seasonDetails = if (item.season != null && item.episode != null && (item.episodeTitle.isNullOrEmpty() || needsEpisodeCounts)) {
+                val seasonDetails = if (item.season != null && item.episode != null &&
+                    (item.episodeTitle.isNullOrEmpty() || needsEpisodeCounts || needsEpisodeArtwork)
+                ) {
                     try {
                         val cacheKey = Pair(item.id, item.season)
                         val newDeferred = CompletableDeferred<com.arflix.tv.data.api.TmdbSeasonDetails?>()
@@ -2571,9 +2574,9 @@ class TraktRepository @Inject constructor(
                 } else null
                 val episodeInfo = seasonDetails?.episodes?.find { it.episodeNumber == item.episode }
 
-                // Use SHOW's backdrop and overview (like Trakt does), not episode's
                 val backdropUrl = details?.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
                 val posterUrl = details?.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
+                val episodeStillUrl = episodeInfo?.stillPath?.let { "${Constants.IMAGE_BASE_LARGE}$it" }
                 val totalEpisodeCount = if (item.totalEpisodes > 0) {
                     item.totalEpisodes
                 } else {
@@ -2596,7 +2599,8 @@ class TraktRepository @Inject constructor(
 
                 item.copy(
                     overview = details?.overview ?: item.overview,  // Show overview, not episode
-                    backdropPath = backdropUrl ?: item.backdropPath,  // Show backdrop, not episode still
+                    backdropPath = backdropUrl ?: item.backdropPath,
+                    episodeStillPath = episodeStillUrl ?: item.episodeStillPath,
                     posterPath = posterUrl ?: item.posterPath,
                     year = details?.firstAirDate?.take(4) ?: item.year,
                     tmdbRating = details?.voteAverage?.let { String.format(Locale.US, "%.1f", it) } ?: item.tmdbRating.orEmpty(),
@@ -4556,6 +4560,7 @@ data class ContinueWatchingItem(
     val displayEpisode: Int? = episode,
     val episodeTitle: String? = null,
     val backdropPath: String? = null,
+    val episodeStillPath: String? = null,
     val posterPath: String? = null,
     val streamKey: String? = null,
     val streamAddonId: String? = null,
@@ -4651,6 +4656,7 @@ data class ContinueWatchingItem(
             progress = progress,
             image = posterPath ?: backdropPath ?: "",
             backdrop = backdropPath,
+            episodeStill = episodeStillPath,
             badge = null,
             budget = budget,
             nextEpisode = nextEp,

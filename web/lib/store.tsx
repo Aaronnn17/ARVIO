@@ -14,7 +14,7 @@ import { loadHomeServerRows } from "./homeserver";
 import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
-import { getDetails, loadCatalog, searchMedia } from "./tmdb";
+import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia } from "./tmdb";
 import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
 import { mdblistClient } from "./mdblist";
@@ -392,6 +392,7 @@ function mergeTraktWithLocalResume(traktItems: MediaItem[], localItems: MediaIte
       ...item,
       image: item.image || local.image,
       backdrop: item.backdrop || local.backdrop,
+      episodeStill: item.episodeStill || local.episodeStill,
       episodeTitle: item.episodeTitle ?? local.episodeTitle ?? null,
       progress: Math.max(item.progress ?? 0, local.progress ?? 0),
       timeRemainingLabel: local.timeRemainingLabel ?? item.timeRemainingLabel ?? null
@@ -414,16 +415,41 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
       const index = cursor;
       cursor += 1;
       const item = source[index];
-      const details = await getDetails(item).catch(() => item);
-      hydrated[index] = clampUpNextEpisode({
+      const episodeStillPromise = item.mediaType === "tv" && item.seasonNumber != null && item.episodeNumber != null
+        ? getSeasonEpisodes(item.id, item.seasonNumber)
+            .then((episodes) => episodes.find((episode) => episode.episodeNumber === item.episodeNumber)?.still ?? null)
+            .catch(() => null)
+        : Promise.resolve(null);
+      const [details, episodeStill] = await Promise.all([
+        getDetails(item).catch(() => item),
+        episodeStillPromise
+      ]);
+      const clamped = clampUpNextEpisode({
         ...details,
         ...item,
         image: item.image || details.image,
         backdrop: item.backdrop || details.backdrop,
+        episodeStill: null,
         overview: details.overview || item.overview,
         rating: details.rating || item.rating,
         duration: details.duration || item.duration
       });
+      if (!clamped) {
+        hydrated[index] = null;
+        continue;
+      }
+      const episodeChanged = clamped.seasonNumber !== item.seasonNumber || clamped.episodeNumber !== item.episodeNumber;
+      const correctedStill = episodeChanged && clamped.seasonNumber != null && clamped.episodeNumber != null
+        ? await getSeasonEpisodes(clamped.id, clamped.seasonNumber)
+            .then((episodes) => episodes.find((episode) => episode.episodeNumber === clamped.episodeNumber)?.still ?? null)
+            .catch(() => null)
+        : null;
+      hydrated[index] = {
+        ...clamped,
+        episodeStill: episodeChanged
+          ? correctedStill
+          : episodeStill || item.episodeStill || null
+      };
     }
   });
   await Promise.all(workers);
@@ -458,6 +484,7 @@ function clampUpNextEpisode(item: MediaItem): MediaItem | null {
     seasonNumber: nextSeason.seasonNumber,
     episodeNumber: 1,
     episodeTitle: null,
+    episodeStill: null,
     subtitle: `S${nextSeason.seasonNumber} E1`
   };
 }

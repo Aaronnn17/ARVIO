@@ -1148,6 +1148,7 @@ function VideoPlayer({
         duration_seconds: Math.round(video.duration),
         position_seconds: Math.round(video.currentTime),
         backdrop_path: item.backdrop?.replace(config.backdropBase, "") ?? null,
+        episode_still_path: item.episodeStill ?? null,
         poster_path: item.image?.replace(config.imageBase, "") ?? null,
         source: stream.addonName,
         stream_addon_id: stream.addonId ?? null,

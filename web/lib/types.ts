@@ -14,6 +14,7 @@ export interface MediaItem {
   mediaType: MediaType;
   image?: string;
   backdrop?: string | null;
+  episodeStill?: string | null;
   progress?: number;
   isWatched?: boolean;
   traktId?: number | null;
@@ -306,6 +307,7 @@ export interface WatchHistoryEntry {
   updated_at?: string | null;
   source?: string | null;
   backdrop_path?: string | null;
+  episode_still_path?: string | null;
   poster_path?: string | null;
   stream_key?: string | null;
   stream_addon_id?: string | null;
