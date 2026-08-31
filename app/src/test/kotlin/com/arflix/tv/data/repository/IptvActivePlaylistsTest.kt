@@ -60,6 +60,7 @@ class IptvActivePlaylistsTest {
         )
 
         assertTrue(repository.activePlaylists(config).isEmpty())
+        assertTrue(repository.hasAnyConfiguredSource(config).not())
     }
 
     @Test
@@ -98,6 +99,7 @@ class IptvActivePlaylistsTest {
         assertEquals(1, result.size)
         assertEquals("http://example.com/legacy.m3u", result.single().m3uUrl)
         assertTrue(result.single().enabled)
+        assertTrue(repository.hasAnyConfiguredSource(config))
     }
 
     @Test

@@ -373,10 +373,10 @@ class IptvRepository @Inject constructor(
         val url: String,
         val playlistId: String? = null
     )
-    private fun hasAnyConfiguredSource(config: IptvConfig): Boolean =
-        config.m3uUrl.isNotBlank() ||
-            config.stalkerPortals.any { it.enabled && it.portalUrl.isNotBlank() } ||
-            config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
+    internal fun hasAnyConfiguredSource(config: IptvConfig): Boolean =
+        activePlaylists(config).any { it.m3uUrl.isNotBlank() } ||
+            activeStalkerPortals(config).isNotEmpty()
+
     internal fun activePlaylists(config: IptvConfig): List<IptvPlaylistEntry> {
         // config.playlists.isEmpty() means the user has never created a playlist entry
         // (pre-multi-playlist legacy state) - fall back to the single legacy m3uUrl field.
