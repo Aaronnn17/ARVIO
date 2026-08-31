@@ -373,28 +373,35 @@ class IptvRepository @Inject constructor(
         val url: String,
         val playlistId: String? = null
     )
-    private fun hasAnyConfiguredSource(config: IptvConfig): Boolean =
-        config.m3uUrl.isNotBlank() ||
-            config.stalkerPortals.any { it.enabled && it.portalUrl.isNotBlank() } ||
-            config.playlists.any { it.enabled && it.m3uUrl.isNotBlank() }
-    private fun activePlaylists(config: IptvConfig): List<IptvPlaylistEntry> =
-        config.playlists.filter { it.enabled }.ifEmpty {
-            if (config.m3uUrl.isNotBlank()) {
-                val epgUrls = normalizeEpgInputs(config.epgUrl)
-                listOf(
-                    IptvPlaylistEntry(
-                        "list_1",
-                        "List 1",
-                        config.m3uUrl,
-                        epgUrls.firstOrNull().orEmpty(),
-                        enabled = true,
-                        epgUrls = epgUrls
-                    )
-                )
-            } else {
-                emptyList()
-            }
+    internal fun hasAnyConfiguredSource(config: IptvConfig): Boolean =
+        activePlaylists(config).any { it.m3uUrl.isNotBlank() } ||
+            activeStalkerPortals(config).isNotEmpty()
+
+    internal fun activePlaylists(config: IptvConfig): List<IptvPlaylistEntry> {
+        // config.playlists.isEmpty() means the user has never created a playlist entry
+        // (pre-multi-playlist legacy state) - fall back to the single legacy m3uUrl field.
+        // Once config.playlists is non-empty, respect it as-is (including "all disabled"):
+        // config.m3uUrl always mirrors playlists.firstOrNull()?.m3uUrl regardless of that
+        // entry's enabled state (see observeConfig()), so checking m3uUrl.isNotBlank() here
+        // instead would resurrect a playlist the user explicitly disabled.
+        if (config.playlists.isNotEmpty()) {
+            return config.playlists.filter { it.enabled }
         }
+        if (config.m3uUrl.isBlank()) {
+            return emptyList()
+        }
+        val epgUrls = normalizeEpgInputs(config.epgUrl)
+        return listOf(
+            IptvPlaylistEntry(
+                "list_1",
+                "List 1",
+                config.m3uUrl,
+                epgUrls.firstOrNull().orEmpty(),
+                enabled = true,
+                epgUrls = epgUrls
+            )
+        )
+    }
 
     /** Enabled Stalker portals with a non-blank URL — the ones that load channels. */
     private fun activeStalkerPortals(config: IptvConfig): List<StalkerPortalEntry> =
