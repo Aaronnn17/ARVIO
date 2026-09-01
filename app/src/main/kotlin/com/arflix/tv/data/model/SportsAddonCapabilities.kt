@@ -41,6 +41,9 @@ object SportsAddonCapabilities {
             value.startsWith(SPORTS_EVENT_STATUS_PREFIX)
     }
 
+    fun isSportsLockedStatus(status: String?): Boolean =
+        status?.startsWith(SPORTS_LOCKED_STATUS_PREFIX) == true
+
     fun isSportsCategoryStatus(status: String?): Boolean =
         status?.startsWith(SPORTS_STATUS_PREFIX) == true
 

@@ -16,6 +16,7 @@ export function historyToItem(entry: WatchHistoryEntry): MediaItem {
     mediaType: entry.media_type,
     image: tmdbImageUrl(config.imageBase, entry.poster_path),
     backdrop: tmdbImageUrl(config.backdropBase, entry.backdrop_path) || null,
+    episodeStill: tmdbImageUrl(config.backdropBase, entry.episode_still_path) || null,
     seasonNumber: entry.season ?? null,
     episodeNumber: entry.episode ?? null,
     episodeTitle: entry.episode_title ?? null,
@@ -55,6 +56,7 @@ export function traktPlaybackToMedia(raw: unknown): MediaItem {
     movie?: { title?: string; year?: number; ids?: { tmdb?: number; trakt?: number; imdb?: string } };
     show?: { title?: string; year?: number; ids?: { tmdb?: number; trakt?: number; imdb?: string } };
     episode?: { season?: number; number?: number; title?: string };
+    is_up_next?: boolean;
   };
   const media = item.movie ?? item.show;
   const isShow = Boolean(item.show);
@@ -70,7 +72,9 @@ export function traktPlaybackToMedia(raw: unknown): MediaItem {
     seasonNumber: item.episode?.season ?? null,
     episodeNumber: item.episode?.number ?? null,
     episodeTitle: item.episode?.title ?? null,
-    progress: Math.round(item.progress ?? 0)
+    progress: Math.round(item.progress ?? 0),
+    badge: item.is_up_next ? "Up Next" : null,
+    timeRemainingLabel: item.is_up_next ? "Up next" : null
   };
 }
 

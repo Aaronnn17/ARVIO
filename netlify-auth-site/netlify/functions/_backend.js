@@ -74,13 +74,22 @@ function appAnonKey() {
   return process.env.APP_ANON_KEY || "";
 }
 
+function getHeader(headers = {}, name = "") {
+  const target = String(name || "").toLowerCase();
+  for (const [k, v] of Object.entries(headers || {})) {
+    if (String(k || "").toLowerCase() === target) return String(v || "");
+  }
+  return "";
+}
+
 function assertAppRequest(event) {
+  if (process.env.IS_LOCAL_DEV === "true") return;
   const expected = appAnonKey();
   if (!expected) {
     throw new Error("APP_ANON_KEY is not configured");
   }
-  const apiKey = String(event.headers.apikey || event.headers.Apikey || "").trim();
-  const auth = event.headers.authorization || event.headers.Authorization || "";
+  const apiKey = getHeader(event.headers, "apikey").trim();
+  const auth = getHeader(event.headers, "authorization").trim();
   const bearer = auth.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || "";
   if (apiKey === expected || bearer === expected) return;
   const error = new Error("Unauthorized");
@@ -1003,6 +1012,67 @@ function isTvSessionExpired(session) {
   return !session?.expiresAt || Date.now() > Date.parse(session.expiresAt);
 }
 
+function discordSessionStore(event) {
+  connectLambda(event);
+  return getStore("discord-auth-sessions");
+}
+
+function discordSessionKeys(session) {
+  const deviceHash = sha256(session.deviceCode);
+  const expiryHour = new Date(session.expiresAt).toISOString().slice(0, 13).replace(/[-T:]/g, "");
+  return {
+    device: `device/${deviceHash}.json`,
+    expiry: `expiry/${expiryHour}/${deviceHash}.json`
+  };
+}
+
+async function loadDiscordSession(event, deviceCode) {
+  return getJSONOrNull(discordSessionStore(event), `device/${sha256(deviceCode)}.json`);
+}
+
+async function saveDiscordSession(event, session) {
+  const store = discordSessionStore(event);
+  const keys = discordSessionKeys(session);
+  await store.setJSON(keys.device, session, {
+    metadata: {
+      status: session.status,
+      expiresAt: session.expiresAt
+    }
+  });
+  await store.setJSON(keys.expiry, {
+    deviceKey: keys.device,
+    expiresAt: session.expiresAt
+  }, {
+    metadata: { expiresAt: session.expiresAt }
+  });
+}
+
+async function deleteDiscordSession(event, session) {
+  if (!session?.deviceCode || !session?.expiresAt) return;
+  const store = discordSessionStore(event);
+  const keys = discordSessionKeys(session);
+  await Promise.all([
+    store.delete(keys.device).catch(() => {}),
+    store.delete(keys.expiry).catch(() => {})
+  ]);
+}
+
+function isDiscordSessionExpired(session) {
+  return !session?.expiresAt || Date.now() > Date.parse(session.expiresAt);
+}
+
+function validDiscordDeviceCode(value) {
+  return /^[A-Za-z0-9_-]{40,128}$/.test(String(value || ""));
+}
+
+function validDiscordClientId(value) {
+  return /^\d{17,20}$/.test(String(value || ""));
+}
+
+function validPkceChallenge(value) {
+  return /^[A-Za-z0-9_-]{43,128}$/.test(String(value || ""));
+}
+
 function methodGuard(event, methods) {
   const method = event.httpMethod || "GET";
   if (methods.includes(method)) return null;
@@ -1083,6 +1153,104 @@ async function handleAuthRefresh(event) {
     return json(200, token);
   } catch (error) {
     return handlerError(event, error, "Session refresh failed");
+  }
+}
+
+async function handleDiscordAuthStart(event) {
+  const preflight = options(event);
+  if (preflight) return preflight;
+  const wrongMethod = methodGuard(event, ["POST"]);
+  if (wrongMethod) return wrongMethod;
+  try {
+    assertAppRequest(event);
+    const body = parseBody(event);
+    const clientId = String(body.client_id || "").trim();
+    const challenge = String(body.code_challenge || "").trim();
+    if (!validDiscordClientId(clientId)) return json(400, { error: "Invalid client_id" });
+    if (!validPkceChallenge(challenge)) return json(400, { error: "Invalid code_challenge" });
+
+    const deviceCode = crypto.randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await saveDiscordSession(event, {
+      deviceCode,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      expiresAt
+    });
+
+    const verifyBase = (
+      process.env.DISCORD_AUTH_VERIFY_BASE_URL ||
+      "https://auth.arvio.tv"
+    ).replace(/\/+$/, "");
+    const query = new URLSearchParams({
+      session: deviceCode,
+      challenge,
+      client_id: clientId
+    });
+    return json(200, {
+      device_code: deviceCode,
+      verification_uri_complete: `${verifyBase}/discord/?${query.toString()}`,
+      expires_in: 600,
+      interval: 3
+    });
+  } catch (error) {
+    return handlerError(event, error, "Failed to start Discord pairing");
+  }
+}
+
+async function handleDiscordAuthStatus(event) {
+  const preflight = options(event);
+  if (preflight) return preflight;
+  const wrongMethod = methodGuard(event, ["POST"]);
+  if (wrongMethod) return wrongMethod;
+  try {
+    assertAppRequest(event);
+    const body = parseBody(event);
+    const deviceCode = String(body.device_code || "").trim();
+    if (!validDiscordDeviceCode(deviceCode)) return json(400, { error: "Invalid device_code" });
+
+    const session = await loadDiscordSession(event, deviceCode);
+    if (!session) return json(200, { status: "expired" });
+    if (isDiscordSessionExpired(session)) {
+      await deleteDiscordSession(event, session);
+      return json(200, { status: "expired" });
+    }
+    if (session.status === "approved" && session.code) {
+      await deleteDiscordSession(event, session);
+      return json(200, { status: "approved", code: session.code });
+    }
+    return json(200, { status: "pending" });
+  } catch (error) {
+    return handlerError(event, error, "Failed to poll Discord pairing");
+  }
+}
+
+async function handleDiscordAuthCallback(event) {
+  const preflight = options(event);
+  if (preflight) return preflight;
+  const wrongMethod = methodGuard(event, ["POST"]);
+  if (wrongMethod) return wrongMethod;
+  try {
+    const body = parseBody(event);
+    const deviceCode = String(body.device_code || "").trim();
+    const code = String(body.code || "").trim();
+    if (!validDiscordDeviceCode(deviceCode)) return json(400, { error: "Invalid device_code" });
+    if (!code || code.length > 2048) return json(400, { error: "Invalid authorization code" });
+
+    const session = await loadDiscordSession(event, deviceCode);
+    if (!session || session.status !== "pending" || isDiscordSessionExpired(session)) {
+      if (session) await deleteDiscordSession(event, session);
+      return json(400, { error: "Invalid or expired pairing session" });
+    }
+    await saveDiscordSession(event, {
+      ...session,
+      status: "approved",
+      approvedAt: new Date().toISOString(),
+      code
+    });
+    return json(200, { ok: true });
+  } catch (error) {
+    return handlerError(event, error, "Discord pairing failed");
   }
 }
 
@@ -1383,6 +1551,162 @@ async function handleTraktProxy(event) {
     };
   } catch (error) {
     return json(502, { error: errorMessage(error) });
+  }
+}
+
+const SIMKL_REQUEST_RULES = [
+  { path: /^\/oauth\/pin(?:\/[A-Za-z0-9-]+)?$/, methods: new Set(["GET"]) },
+  { path: /^\/oauth\/token$/, methods: new Set(["POST"]) },
+  { path: /^\/users\/settings$/, methods: new Set(["POST"]) },
+  { path: /^\/scrobble\/(?:start|pause|stop)$/, methods: new Set(["POST"]) },
+  { path: /^\/sync\/activities$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/all-items\/(?:movies|shows|anime|all)\/(?:watching|plantowatch|hold|completed|dropped|all)$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/playback(?:\/(?:movies|episodes|shows|anime|all))?$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/playback\/\d+$/, methods: new Set(["DELETE"]) },
+  { path: /^\/sync\/(?:history|history\/remove|add-to-list)$/, methods: new Set(["POST"]) }
+];
+
+function isAllowedSimklRequest(path, method) {
+  return SIMKL_REQUEST_RULES.some((rule) => rule.path.test(path) && rule.methods.has(method));
+}
+
+function requestIp(event) {
+  return getHeader(event.headers, "x-nf-client-connection-ip").trim() ||
+    getHeader(event.headers, "cf-connecting-ip").trim() ||
+    getHeader(event.headers, "x-real-ip").trim() ||
+    getHeader(event.headers, "x-forwarded-for").split(",")[0].trim() ||
+    "unknown";
+}
+
+async function consumeSimklRateLimit(store, keyHash, limit, now = Date.now()) {
+  const key = `ip/${keyHash}.json`;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const existing = await store.getWithMetadata(key, { type: "json" });
+    const previousStart = Date.parse(existing?.data?.windowStartedAt || "");
+    const isCurrentWindow = Number.isFinite(previousStart) && now - previousStart < 60_000;
+    const windowStartedAt = isCurrentWindow ? previousStart : now;
+    const requestCount = isCurrentWindow
+      ? Math.max(0, Number(existing?.data?.requestCount || 0)) + 1
+      : 1;
+    const write = await store.setJSON(
+      key,
+      {
+        windowStartedAt: new Date(windowStartedAt).toISOString(),
+        requestCount
+      },
+      existing?.etag ? { onlyIfMatch: existing.etag } : { onlyIfNew: true }
+    );
+    if (!write.modified) continue;
+
+    const resetSeconds = Math.max(1, Math.ceil((windowStartedAt + 60_000 - now) / 1_000));
+    return {
+      exceeded: requestCount > limit,
+      remaining: Math.max(0, limit - requestCount),
+      resetSeconds
+    };
+  }
+
+  const error = new Error("Rate limit check conflicted; retry shortly");
+  error.statusCode = 429;
+  error.retryAfter = 1;
+  throw error;
+}
+
+async function enforceSimklRateLimit(event) {
+  if (process.env.IS_LOCAL_DEV === "true") return { remaining: 999, resetSeconds: 60 };
+  const configuredLimit = Number(process.env.SIMKL_PROXY_RATE_LIMIT || 100);
+  const limit = Number.isFinite(configuredLimit)
+    ? Math.max(10, Math.min(300, configuredLimit))
+    : 100;
+  connectLambda(event);
+  const store = getStore("simkl-proxy-rate-limits");
+  const rate = await consumeSimklRateLimit(
+    store,
+    sha256(`simkl:${requestIp(event)}`),
+    limit
+  );
+  if (rate.exceeded) {
+    const error = new Error("Rate limit exceeded");
+    error.statusCode = 429;
+    error.retryAfter = rate.resetSeconds;
+    throw error;
+  }
+  return { remaining: rate.remaining, resetSeconds: rate.resetSeconds };
+}
+
+async function handleSimklProxy(event) {
+  const preflight = options(event);
+  if (preflight) return preflight;
+  try {
+    assertAppRequest(event);
+    const pathParam = event.queryStringParameters?.path || "";
+    const method = String(event.queryStringParameters?.method || "GET").toUpperCase();
+    if (!pathParam) return json(400, { error: "Missing path parameter" });
+    if (String(event.httpMethod || "GET").toUpperCase() !== method) {
+      return json(400, { error: "HTTP method mismatch" });
+    }
+    if (!isAllowedSimklRequest(pathParam, method)) {
+      return json(403, { error: "Path or method not allowed" });
+    }
+    const rate = await enforceSimklRateLimit(event);
+    const clientId = process.env.SIMKL_CLIENT_ID || "";
+    const clientSecret = process.env.SIMKL_CLIENT_SECRET || "";
+    if (!clientId) throw new Error("Simkl credentials not configured");
+    const simklUrl = new URL(`https://api.simkl.com${pathParam}`);
+    Object.entries(event.queryStringParameters || {}).forEach(([key, value]) => {
+      if (!["path", "method", "client_id", "client_secret"].includes(key) && value !== undefined && value !== null) {
+        simklUrl.searchParams.set(key, String(value));
+      }
+    });
+    if (pathParam.startsWith("/oauth/pin")) simklUrl.searchParams.set("client_id", clientId);
+
+    let requestBody = undefined;
+    if (method === "POST" || method === "DELETE") {
+      let body = {};
+      try {
+        body = event.body
+          ? JSON.parse(event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body)
+          : {};
+      } catch {
+        body = {};
+      }
+      if (pathParam.includes("/oauth/token")) {
+        body.client_id = clientId;
+        if (clientSecret) body.client_secret = clientSecret;
+      }
+      requestBody = Object.keys(body).length > 0 ? JSON.stringify(body) : undefined;
+    }
+
+    const headers = {
+      "content-type": "application/json",
+      "simkl-api-key": clientId
+    };
+    const userToken = getHeader(event.headers, "x-user-token").trim();
+    if (userToken) headers.authorization = `Bearer ${userToken}`;
+
+    const response = await fetch(simklUrl, { method, headers, body: requestBody });
+    const text = await response.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : { status: response.status };
+    } catch {
+      data = text ? { raw: text } : { status: response.status };
+    }
+    return {
+      statusCode: response.status,
+      headers: {
+        ...JSON_HEADERS,
+        "cache-control": "no-store",
+        "x-ratelimit-remaining": String(rate.remaining),
+        "x-ratelimit-reset": String(rate.resetSeconds)
+      },
+      body: JSON.stringify(data)
+    };
+  } catch (error) {
+    const status = error.statusCode || 502;
+    const response = json(status, { error: errorMessage(error) });
+    if (error.retryAfter) response.headers = { ...response.headers, "retry-after": String(error.retryAfter) };
+    return response;
   }
 }
 
@@ -1849,6 +2173,24 @@ async function deleteUsageForAccount(event, accountId) {
   return deleted;
 }
 
+async function deletePremiumDataForAccount(event, email) {
+  connectLambda(event);
+  const normalizedEmail = normalizeEmail(email);
+  const accountKey = privacyHash("premium-funnel-account", normalizedEmail);
+  const funnelStore = getStore("premium-funnel");
+  const trialEmailStore = getStore("premium-trial-emails");
+  const entitlementStore = getStore("entitlements");
+  let funnelEvents = 0;
+  for (let daysAgo = 0; daysAgo <= 90; daysAgo++) {
+    const date = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    funnelEvents += await deleteBlobPrefix(funnelStore, `events/date/${date}/account/${accountKey}/`);
+  }
+  const trialEmailJobs = await deleteBlobPrefix(trialEmailStore, `jobs/${accountKey}/`);
+  const entitlementKey = `email/${sha256(normalizedEmail)}.json`;
+  const entitlementDeleted = await entitlementStore.delete(entitlementKey).then(() => 1).catch(() => 0);
+  return { funnelEvents, trialEmailJobs, entitlementDeleted };
+}
+
 async function deleteReferencedAuthRecords(store, prefix) {
   const references = await listBlobKeys(store, prefix);
   await mapWithConcurrency(references, 16, async (key) => {
@@ -1946,11 +2288,12 @@ async function purgeAccountData(event, email, accountId) {
   const identity = { email, supabaseUserId: accountId };
   const keys = snapshotKeys(identity);
 
-  const [events, authRecords, tvSessions, usageEvents, database] = await Promise.all([
+  const [events, authRecords, tvSessions, usageEvents, premiumData, database] = await Promise.all([
     deleteBlobPrefix(stores.events, `supabase/${accountId}/`),
     deleteAuthRecordsForAccount(event, accountId),
     deleteTvSessionsForAccount(event, accountId),
     deleteUsageForAccount(event, accountId),
+    deletePremiumDataForAccount(event, email),
     deleteDatabaseAccount(email, accountId)
   ]);
 
@@ -1969,6 +2312,9 @@ async function purgeAccountData(event, email, accountId) {
     refreshTokens: authRecords.refreshTokens,
     tvSessions,
     usageEvents,
+    premiumFunnelEvents: premiumData.funnelEvents,
+    premiumTrialEmailJobs: premiumData.trialEmailJobs,
+    premiumEntitlements: premiumData.entitlementDeleted,
     databaseRows: database.deleted,
     databaseSkipped: database.skipped
   };
@@ -2201,6 +2547,7 @@ async function handleRetentionCleanup(event) {
   const now = new Date();
   const currentHour = now.toISOString().slice(0, 13).replace(/[-T:]/g, "");
   const tvStore = tvSessionStores(event);
+  const discordStore = discordSessionStore(event);
   const authStore = authStores(event);
   const deletionStore = accountDeletionStore(event);
 
@@ -2223,6 +2570,16 @@ async function handleRetentionCleanup(event) {
         ? tvStore.delete(`code/${String(reference.userCode).toUpperCase()}.json`).catch(() => {})
         : Promise.resolve(),
       tvStore.delete(key).catch(() => {})
+    ]);
+  });
+
+  const discordExpiryKeys = (await listBlobKeys(discordStore, "expiry/"))
+    .filter((key) => String(key.split("/")[1] || "") < currentHour);
+  await mapWithConcurrency(discordExpiryKeys, 16, async (key) => {
+    const reference = await getJSONOrNull(discordStore, key);
+    await Promise.all([
+      reference?.deviceKey ? discordStore.delete(reference.deviceKey).catch(() => {}) : Promise.resolve(),
+      discordStore.delete(key).catch(() => {})
     ]);
   });
 
@@ -2273,6 +2630,7 @@ async function handleRetentionCleanup(event) {
   return json(200, {
     ok: true,
     tv_sessions: tvExpiryKeys.length,
+    discord_sessions: discordExpiryKeys.length,
     password_setup_tokens: passwordExpiryKeys.length,
     deletion_jobs: deletionJobs,
     revocations,
@@ -2314,10 +2672,15 @@ module.exports = {
   handleCloudAuthReset,
   handleTmdbProxy,
   handleTraktProxy,
+  handleSimklProxy,
   handleTvAuthApprove,
   handleTvAuthComplete,
   handleTvAuthStart,
   handleTvAuthStatus,
+  handleDiscordAuthStart,
+  handleDiscordAuthStatus,
+  handleDiscordAuthCallback,
+  sendTransactionalEmail,
   _test: {
     signArvioAccessToken,
     signArvioRefreshToken,
@@ -2325,6 +2688,11 @@ module.exports = {
     verifyArvioRefreshToken,
     passwordSetupKeyForToken,
     passwordSetupPrefixForAccount,
-    safeTokenEqual
+    safeTokenEqual,
+    isAllowedSimklRequest,
+    consumeSimklRateLimit,
+    validDiscordDeviceCode,
+    validDiscordClientId,
+    validPkceChallenge
   }
 };

@@ -15,7 +15,8 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
     return NextResponse.json({ error: "Missing MDBList API key" }, { status: 400 });
   }
 
-  const target = new URL(`https://api.mdblist.com/${path.join("/")}`);
+  const trailingSlash = input.pathname.endsWith("/") ? "/" : "";
+  const target = new URL(`https://api.mdblist.com/${path.join("/")}${trailingSlash}`);
   input.searchParams.forEach((value, key) => {
     if (key !== "apikey") target.searchParams.set(key, value);
   });

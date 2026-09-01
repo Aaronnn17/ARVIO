@@ -17,7 +17,14 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -34,6 +41,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.text.Normalizer
+import java.time.Instant
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -92,7 +100,9 @@ data class HomeServerCatalogCandidate(
     val sourceRef: String,
     val serverName: String,
     val collectionName: String,
-    val collectionType: String
+    val collectionType: String,
+    val serverKind: HomeServerKind = HomeServerKind.UNKNOWN,
+    val connectionId: String = ""
 )
 
 data class HomeServerCatalogItem(
@@ -100,8 +110,33 @@ data class HomeServerCatalogItem(
     val title: String,
     val mediaType: MediaType,
     val year: Int?,
-    val providerIds: Map<String, String>
+    val providerIds: Map<String, String>,
+    val overview: String = "",
+    val rating: Double? = null,
+    val imageUrl: String = "",
+    val backdropUrl: String? = null,
+    val addedAt: Long = 0L,
+    val sourceRef: String = "",
+    val providerName: String = ""
 )
+
+enum class HomeServerLibrarySort {
+    RECENTLY_ADDED,
+    TITLE,
+    RATING
+}
+
+internal fun homeServerCatalogMediaType(
+    collectionType: String,
+    explicitMediaType: MediaType? = null
+): MediaType? {
+    explicitMediaType?.let { return it }
+    return when (collectionType.trim().lowercase(Locale.US)) {
+        "movie", "movies", "film", "films" -> MediaType.MOVIE
+        "show", "shows", "series", "tv", "tvshow", "tvshows" -> MediaType.TV
+        else -> null
+    }
+}
 
 data class HomeServerCatalogPage(
     val items: List<HomeServerCatalogItem>,
@@ -171,6 +206,33 @@ internal object HomeServerMatcher {
     }
 
     fun isAcceptable(score: Int): Boolean = score >= 150 || score >= 900
+
+    fun isLikelySameVersion(
+        requestedTitle: String,
+        requestedYear: Int?,
+        candidate: HomeServerCandidateInfo
+    ): Boolean {
+        val requestedNormalized = normalizeTitle(requestedTitle)
+        val candidateNormalized = normalizeTitle(candidate.title)
+        if (requestedNormalized.isBlank() || requestedNormalized != candidateNormalized) return false
+        val candidateYear = candidate.productionYear ?: return true
+        return requestedYear == null || abs(requestedYear - candidateYear) <= 1
+    }
+}
+
+internal object HomeServerSourceCacheKey {
+    fun contentIdentity(
+        title: String,
+        year: Int?,
+        imdbId: String?,
+        tmdbId: Int?,
+        tvdbId: Int?
+    ): String {
+        imdbId?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() }?.let { return "imdb:$it" }
+        tmdbId?.takeIf { it > 0 }?.let { return "tmdb:$it" }
+        tvdbId?.takeIf { it > 0 }?.let { return "tvdb:$it" }
+        return "title:${HomeServerMatcher.normalizeTitle(title)}:${year?.toString().orEmpty()}"
+    }
 }
 
 @Singleton
@@ -187,6 +249,7 @@ class HomeServerRepository @Inject constructor(
         private const val HOME_SERVER_SECRET_ALIAS = "arvio_home_server_credentials_v1"
         private const val SOURCE_CACHE_MAX_ENTRIES = 128
         private const val SOURCE_CACHE_TTL_MS = 30L * 60L * 1000L
+        private const val EMPTY_SOURCE_CACHE_TTL_MS = 30L * 1000L
 
         fun catalogServerKey(connection: HomeServerConnection): String {
             return connection.serverId.ifBlank { connection.connectionId }.ifBlank {
@@ -246,11 +309,13 @@ class HomeServerRepository @Inject constructor(
     }
 
     private val sourceCacheLock = Any()
+    private val sourceRequestScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sourceCache = object : LinkedHashMap<String, CachedHomeServerSources>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedHomeServerSources>?): Boolean {
             return size > SOURCE_CACHE_MAX_ENTRIES
         }
     }
+    private val sourceRequests = mutableMapOf<String, Deferred<List<StreamSource>>>()
 
     val connections: Flow<List<HomeServerConnection>> = combine(
         profileManager.activeProfileId,
@@ -270,7 +335,7 @@ class HomeServerRepository @Inject constructor(
         displayName: String = ""
     ): Result<HomeServerConnection> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val serverUrl = normalizeServerUrl(rawUrl)
                 val trimmedUsername = username.trim()
                 val trimmedDisplayName = displayName.trim()
@@ -290,7 +355,7 @@ class HomeServerRepository @Inject constructor(
                         displayName = trimmedDisplayName
                     )
                     saveConnection(connection)
-                    return@runCatching connection
+                    return@withContext Result.success(connection)
                 }
 
                 require(trimmedUsername.isNotBlank()) { context.getString(R.string.homeserver_enter_username) }
@@ -311,7 +376,10 @@ class HomeServerRepository @Inject constructor(
                 )
                 val connection = connectionShell.copy(collections = fetchCollections(connectionShell))
                 saveConnection(connection)
-                connection
+                Result.success(connection)
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                Result.failure(e)
             }
         }
 
@@ -321,7 +389,7 @@ class HomeServerRepository @Inject constructor(
         displayName: String = ""
     ): Result<HomeServerConnection> =
         withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val connection = buildPlexConnection(
                     accountToken = accountToken,
                     preferredServerUrl = preferredServerUrl,
@@ -330,7 +398,10 @@ class HomeServerRepository @Inject constructor(
                     displayName = displayName.trim()
                 )
                 saveConnection(connection)
-                connection
+                Result.success(connection)
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                Result.failure(e)
             }
         }
 
@@ -339,12 +410,15 @@ class HomeServerRepository @Inject constructor(
     }
 
     suspend fun testConnections(): Result<List<HomeServerConnection>> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val current = currentConnections()
             require(current.isNotEmpty()) { context.getString(R.string.homeserver_none_connected) }
             val refreshed = current.map { refreshConnection(it) }
             saveConnections(refreshed)
-            refreshed
+            Result.success(refreshed)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Result.failure(e)
         }
     }
 
@@ -357,25 +431,34 @@ class HomeServerRepository @Inject constructor(
     }
 
     suspend fun startHomeServerCodeAuth(serverUrl: String): Result<PlexPinAuthSession> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val normalizedUrl = normalizeServerUrl(serverUrl)
-            if (normalizedUrl.isBlank()) return@runCatching startPlexPinAuthInternal()
+            if (normalizedUrl.isBlank()) return@withContext Result.success(startPlexPinAuthInternal())
 
             val publicInfo = fetchPublicInfo(normalizedUrl)
             val detectedKind = publicInfo.serverKind
                 .takeUnless { it == HomeServerKind.UNKNOWN }
                 ?: detectServerKind(publicInfo.productName, publicInfo.serverName)
-            when (detectedKind) {
+            val session = when (detectedKind) {
                 HomeServerKind.JELLYFIN -> startJellyfinQuickConnect(normalizedUrl)
                 HomeServerKind.PLEX -> startPlexPinAuthInternal().copy(serverUrl = normalizedUrl)
                 HomeServerKind.EMBY -> error("Code sign in is not supported by Emby. Use username and password.")
                 HomeServerKind.UNKNOWN -> error("Could not detect this server. Use username and password, or leave URL empty for Plex.")
             }
+            Result.success(session)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Result.failure(e)
         }
     }
 
     suspend fun startPlexPinAuth(): Result<PlexPinAuthSession> = withContext(Dispatchers.IO) {
-        runCatching { startPlexPinAuthInternal() }
+        try {
+            Result.success(startPlexPinAuthInternal())
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Result.failure(e)
+        }
     }
 
     private fun startPlexPinAuthInternal(): PlexPinAuthSession {
@@ -432,7 +515,7 @@ class HomeServerRepository @Inject constructor(
     }
 
     suspend fun pollPlexPinAuth(pinId: String): Result<String?> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val url = "https://plex.tv/api/v2/pins/$pinId".toHttpUrlOrNull()
                 ?.newBuilder()
                 ?.addQueryParameter("X-Plex-Client-Identifier", deviceId())
@@ -444,7 +527,7 @@ class HomeServerRepository @Inject constructor(
                 .get()
                 .headers(plexPublicHeaders())
                 .build()
-            okHttpClient.newCall(request).execute().use { response ->
+            val token = okHttpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     error(context.getString(R.string.homeserver_code_poll_failed, response.code))
@@ -454,6 +537,10 @@ class HomeServerRepository @Inject constructor(
                     .ifBlank { json.string("auth_token") }
                     .takeIf { it.isNotBlank() }
             }
+            Result.success(token)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Result.failure(e)
         }
     }
 
@@ -462,8 +549,8 @@ class HomeServerRepository @Inject constructor(
         preferredServerUrl: String = "",
         displayName: String = ""
     ): Result<HomeServerConnection?> = withContext(Dispatchers.IO) {
-        runCatching {
-            when (session.serverKind) {
+        try {
+            val conn = when (session.serverKind) {
                 HomeServerKind.PLEX -> {
                     val token = pollPlexPinAuth(session.id).getOrThrow()
                     if (token.isNullOrBlank()) {
@@ -479,6 +566,10 @@ class HomeServerRepository @Inject constructor(
                 HomeServerKind.JELLYFIN -> pollJellyfinQuickConnect(session, displayName)
                 else -> error(context.getString(R.string.homeserver_code_signin_failed))
             }
+            Result.success(conn)
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            Result.failure(e)
         }
     }
 
@@ -532,9 +623,9 @@ class HomeServerRepository @Inject constructor(
                 val libraryCandidates = connection.collections
                     .filter { it.enabled && it.id.isNotBlank() }
                     .map { collection -> connection.toCatalogCandidate(collection) }
-                val serverCollectionCandidates = runCatching {
+                val serverCollectionCandidates = try {
                     fetchServerCollectionCatalogs(connection)
-                }.getOrDefault(emptyList())
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                 libraryCandidates + serverCollectionCandidates
             }
             .distinctBy { it.sourceRef }
@@ -543,7 +634,11 @@ class HomeServerRepository @Inject constructor(
     suspend fun loadCatalogItems(
         sourceRef: String?,
         offset: Int,
-        limit: Int
+        limit: Int,
+        sort: HomeServerLibrarySort = HomeServerLibrarySort.TITLE,
+        mediaType: MediaType? = null,
+        searchQuery: String = "",
+        propagateErrors: Boolean = false
     ): HomeServerCatalogPage = withContext(Dispatchers.IO) {
         if (limit <= 0 || offset < 0) return@withContext HomeServerCatalogPage(emptyList(), hasMore = false)
         val parsed = parseCatalogSourceRef(sourceRef)
@@ -552,9 +647,19 @@ class HomeServerRepository @Inject constructor(
         val connection = currentConnections()
             .firstOrNull { it.isUsable && catalogServerKey(it) == serverKey }
             ?: return@withContext HomeServerCatalogPage(emptyList(), hasMore = false)
-        runCatching {
-            loadConnectionCatalogItems(connection, collectionId, collectionType, offset, limit)
-        }.getOrDefault(HomeServerCatalogPage(emptyList(), hasMore = false))
+        val loader = {
+            loadConnectionCatalogItems(connection, collectionId, collectionType, offset, limit, sort, mediaType, searchQuery)
+        }
+        if (propagateErrors) {
+            loader()
+        } else {
+            try {
+                loader()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                HomeServerCatalogPage(emptyList(), hasMore = false)
+            }
+        }
     }
 
     suspend fun resolveMovieSources(
@@ -576,22 +681,24 @@ class HomeServerRepository @Inject constructor(
             season = null,
             episode = null
         )
-        getCachedSources(cacheKey)?.let { return@withContext it }
-
-        val sources = connections
-            .flatMap { connection ->
-                runCatching {
-                    val items = if (connection.serverKind == HomeServerKind.PLEX) {
-                        findMovieMatches(connection, imdbId, title, year, tmdbId)
-                    } else {
-                        listOfNotNull(findBestMovie(connection, imdbId, title, year, tmdbId))
+        resolveSourcesCached(cacheKey) {
+            coroutineScope {
+                connections.map { connection ->
+                    async {
+                        try {
+                            val items = findMovieMatches(connection, imdbId, title, year, tmdbId)
+                            coroutineScope {
+                                items.map { item -> async { buildStreamSources(connection, item) } }
+                                    .awaitAll()
+                                    .flatten()
+                            }
+                        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                     }
-                    items.flatMap { item -> buildStreamSources(connection, item) }
-                }.getOrDefault(emptyList())
+                }.awaitAll()
+                    .flatten()
+                    .distinctBy { "${it.addonId}|${it.source}|${it.url}" }
             }
-            .distinctBy { "${it.addonId}|${it.source}|${it.url}" }
-        putCachedSources(cacheKey, sources)
-        sources
+        }
     }
 
     suspend fun resolveEpisodeSources(
@@ -615,30 +722,39 @@ class HomeServerRepository @Inject constructor(
             season = season,
             episode = episode
         )
-        getCachedSources(cacheKey)?.let { return@withContext it }
-
-        val sources = connections
-            .flatMap { connection ->
-                runCatching {
+        resolveSourcesCached(cacheKey) {
+            coroutineScope {
+                connections.map { connection ->
+                    async {
+                        try {
                     val series = findBestSeries(connection, imdbId, title, null, tmdbId, tvdbId)
-                        ?: return@runCatching emptyList()
-                    val episodeItems = if (connection.serverKind == HomeServerKind.PLEX) {
-                        findEpisodes(connection, series.id, season, episode)
-                            .ifEmpty {
-                                listOfNotNull(findEpisodeBySearch(connection, title, season, episode, imdbId, tmdbId, tvdbId))
+                        ?: return@async emptyList<StreamSource>()
+                            val episodeItems = findEpisodes(connection, series.id, season, episode)
+                                .ifEmpty {
+                                    listOfNotNull(
+                                        findEpisodeBySearch(
+                                            connection,
+                                            title,
+                                            season,
+                                            episode,
+                                            imdbId,
+                                            tmdbId,
+                                            tvdbId
+                                        )
+                                    )
+                                }
+                            coroutineScope {
+                                episodeItems.map { item -> async { buildStreamSources(connection, item) } }
+                                    .awaitAll()
+                                    .flatten()
                             }
-                    } else {
-                        listOfNotNull(
-                            findEpisode(connection, series.id, season, episode)
-                                ?: findEpisodeBySearch(connection, title, season, episode, imdbId, tmdbId, tvdbId)
-                        )
+                        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                     }
-                    episodeItems.flatMap { episodeItem -> buildStreamSources(connection, episodeItem) }
-                }.getOrDefault(emptyList())
+                }.awaitAll()
+                    .flatten()
+                    .distinctBy { "${it.addonId}|${it.source}|${it.url}" }
             }
-            .distinctBy { "${it.addonId}|${it.source}|${it.url}" }
-        putCachedSources(cacheKey, sources)
-        sources
+        }
     }
 
     private suspend fun saveConnection(connection: HomeServerConnection) {
@@ -702,7 +818,7 @@ class HomeServerRepository @Inject constructor(
 
     private fun parseConnections(json: String?): List<HomeServerConnection> {
         if (json.isNullOrBlank()) return emptyList()
-        return runCatching {
+        return try {
             val root = JsonParser().parse(json)
             val connections = when {
                 root.isJsonObject && root.asJsonObject.has("connections") -> {
@@ -719,7 +835,11 @@ class HomeServerRepository @Inject constructor(
                 .map { it.sanitized().decryptedForUse() }
                 .filter { it.serverUrl.isNotBlank() || it.accessToken.isNotBlank() }
                 .distinctBy { connectionIdentity(it) }
-        }.getOrDefault(emptyList())
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            com.arflix.tv.util.AppLogger.recordException(e)
+            emptyList()
+        }
     }
 
     private fun HomeServerConnection.encryptedForStorage(): HomeServerConnection {
@@ -798,38 +918,56 @@ class HomeServerRepository @Inject constructor(
         return listOf(
             type,
             connectionSignature,
-            imdbId?.trim().orEmpty().lowercase(Locale.US),
-            tmdbId?.toString().orEmpty(),
-            tvdbId?.toString().orEmpty(),
-            HomeServerMatcher.normalizeTitle(title),
-            year?.toString().orEmpty(),
+            HomeServerSourceCacheKey.contentIdentity(title, year, imdbId, tmdbId, tvdbId),
             season?.toString().orEmpty(),
             episode?.toString().orEmpty()
         ).joinToString("|")
     }
 
-    private fun getCachedSources(key: String): List<StreamSource>? = synchronized(sourceCacheLock) {
-        val cached = sourceCache[key] ?: return@synchronized null
-        val isFresh = System.currentTimeMillis() - cached.createdAtMs < SOURCE_CACHE_TTL_MS
+    private fun getCachedSourcesLocked(key: String): List<StreamSource>? {
+        val cached = sourceCache[key] ?: return null
+        val ttl = if (cached.sources.isEmpty()) EMPTY_SOURCE_CACHE_TTL_MS else SOURCE_CACHE_TTL_MS
+        val isFresh = System.currentTimeMillis() - cached.createdAtMs < ttl
         if (isFresh) {
-            cached.sources
+            return cached.sources
         } else {
             sourceCache.remove(key)
-            null
+            return null
         }
     }
 
+    private suspend fun resolveSourcesCached(
+        key: String,
+        loader: suspend () -> List<StreamSource>
+    ): List<StreamSource> {
+        val request = synchronized(sourceCacheLock) {
+            getCachedSourcesLocked(key)?.let { return it }
+            sourceRequests[key] ?: sourceRequestScope.async {
+                loader().also { putCachedSources(key, it) }
+            }.also { created ->
+                sourceRequests[key] = created
+                created.invokeOnCompletion {
+                    synchronized(sourceCacheLock) {
+                        if (sourceRequests[key] === created) sourceRequests.remove(key)
+                    }
+                }
+            }
+        }
+        return request.await()
+    }
+
     private fun putCachedSources(key: String, sources: List<StreamSource>) {
-        if (sources.isEmpty()) return
         synchronized(sourceCacheLock) {
             sourceCache[key] = CachedHomeServerSources(sources, System.currentTimeMillis())
         }
     }
 
     private fun clearSourceCache() {
-        synchronized(sourceCacheLock) {
+        val requests = synchronized(sourceCacheLock) {
             sourceCache.clear()
+            sourceRequests.values.toList().also { sourceRequests.clear() }
         }
+        requests.forEach { it.cancel() }
     }
 
     private fun normalizeServerUrl(rawUrl: String): String {
@@ -1095,14 +1233,14 @@ class HomeServerRepository @Inject constructor(
             .header("Accept", "application/json")
             .header("X-Plex-Token", token)
             .build()
-        return runCatching {
+        return try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use ""
                 val body = response.body?.string().orEmpty()
                 val json = JsonParser().parse(body).asJsonObjectOrNull() ?: return@use ""
                 json.string("friendlyName").ifBlank { json.string("username") }.ifBlank { json.string("title") }
             }
-        }.getOrDefault("")
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; "" }
     }
 
     private fun buildPlexConnection(
@@ -1119,7 +1257,7 @@ class HomeServerRepository @Inject constructor(
         val normalizedPreferredUrl = normalizeServerUrl(preferredServerUrl)
         val preferredIdentity = preferredInfo?.takeIf { it.serverId.isNotBlank() }
             ?: normalizedPreferredUrl.takeIf { it.isNotBlank() }?.let { url ->
-                runCatching {
+                try {
                     fetchSystemInfo(
                         HomeServerConnection(
                             serverUrl = url,
@@ -1130,7 +1268,7 @@ class HomeServerRepository @Inject constructor(
                             userName = preferredUsername.ifBlank { "Account" }
                         )
                     )
-                }.getOrNull()
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
             }
         val accountName = validatePlexAccount(trimmedAccountToken)
             .ifBlank { preferredUsername.ifBlank { "Account" } }
@@ -1218,12 +1356,12 @@ class HomeServerRepository @Inject constructor(
             .header("Accept", "application/xml")
             .header("X-Plex-Token", accountToken)
             .build()
-        return runCatching {
+        return try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use emptyList()
                 parsePlexResourcesXml(response.body?.string().orEmpty())
             }
-        }.getOrDefault(emptyList())
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
     }
 
     private fun parsePlexResourcesXml(xml: String): List<PlexResourceDevice> {
@@ -1405,7 +1543,9 @@ class HomeServerRepository @Inject constructor(
             sourceRef = buildCatalogSourceRef(this, collection),
             serverName = connectionLabel,
             collectionName = collection.name,
-            collectionType = collection.type
+            collectionType = collection.type,
+            serverKind = serverKind,
+            connectionId = connectionId
         )
     }
 
@@ -1422,7 +1562,7 @@ class HomeServerRepository @Inject constructor(
         return connection.collections
             .filter { it.enabled && it.id.isNotBlank() }
             .flatMap { library ->
-                runCatching {
+                try {
                     getJson(
                         buildUrl(
                             connection.serverUrl,
@@ -1445,7 +1585,7 @@ class HomeServerRepository @Inject constructor(
                             )
                             connection.toCatalogCandidate(collection)
                         }
-                }.getOrDefault(emptyList())
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
             }
     }
 
@@ -1482,12 +1622,15 @@ class HomeServerRepository @Inject constructor(
         collectionId: String,
         collectionType: String,
         offset: Int,
-        limit: Int
+        limit: Int,
+        sort: HomeServerLibrarySort,
+        mediaType: MediaType?,
+        searchQuery: String
     ): HomeServerCatalogPage {
         return if (connection.serverKind == HomeServerKind.PLEX) {
-            loadPlexCatalogItems(connection, collectionId, collectionType, offset, limit)
+            loadPlexCatalogItems(connection, collectionId, collectionType, offset, limit, sort, mediaType, searchQuery)
         } else {
-            loadJellyfinCatalogItems(connection, collectionId, offset, limit)
+            loadJellyfinCatalogItems(connection, collectionId, collectionType, offset, limit, sort, mediaType, searchQuery)
         }
     }
 
@@ -1496,7 +1639,10 @@ class HomeServerRepository @Inject constructor(
         collectionId: String,
         collectionType: String,
         offset: Int,
-        limit: Int
+        limit: Int,
+        sort: HomeServerLibrarySort,
+        mediaType: MediaType?,
+        searchQuery: String
     ): HomeServerCatalogPage {
         val collectionParts = collectionId.split(":")
         val path = if (collectionParts.firstOrNull() == "collection" && collectionParts.size >= 3) {
@@ -1504,10 +1650,10 @@ class HomeServerRepository @Inject constructor(
         } else {
             "/library/sections/$collectionId/all"
         }
-        val plexType = when (collectionType.lowercase(Locale.US)) {
-            "movie", "movies" -> "1"
-            "show", "shows", "series", "tvshows" -> "2"
-            else -> null
+        val plexType = when (homeServerCatalogMediaType(collectionType, mediaType)) {
+            MediaType.MOVIE -> "1"
+            MediaType.TV -> "2"
+            null -> null
         }
         val response = getJson(
             buildUrl(
@@ -1516,6 +1662,12 @@ class HomeServerRepository @Inject constructor(
                 mapOf(
                     "type" to plexType,
                     "includeGuids" to "1",
+                    "sort" to when (sort) {
+                        HomeServerLibrarySort.RECENTLY_ADDED -> "addedAt:desc"
+                        HomeServerLibrarySort.RATING -> "rating:desc"
+                        HomeServerLibrarySort.TITLE -> "titleSort:asc"
+                    },
+                    "title" to searchQuery.trim().takeIf { it.isNotBlank() },
                     "X-Plex-Container-Start" to offset.toString(),
                     "X-Plex-Container-Size" to limit.toString()
                 )
@@ -1527,7 +1679,7 @@ class HomeServerRepository @Inject constructor(
             ?: container?.int("size")
             ?: response.metadataItems(connection.serverKind).size
         val items = response.metadataItems(connection.serverKind)
-            .mapNotNull { it.toCatalogItem() }
+            .mapNotNull { it.toCatalogItem(connection, buildCatalogSourceRef(connection, HomeServerCollection(collectionId, type = collectionType))) }
         return HomeServerCatalogPage(
             items = items,
             hasMore = offset + items.size < total
@@ -1537,8 +1689,12 @@ class HomeServerRepository @Inject constructor(
     private fun loadJellyfinCatalogItems(
         connection: HomeServerConnection,
         collectionId: String,
+        collectionType: String,
         offset: Int,
-        limit: Int
+        limit: Int,
+        sort: HomeServerLibrarySort,
+        mediaType: MediaType?,
+        searchQuery: String
     ): HomeServerCatalogPage {
         val parentId = collectionId.removePrefix("collection:").trim()
         val response = getJson(
@@ -1548,10 +1704,19 @@ class HomeServerRepository @Inject constructor(
                 mapOf(
                     "ParentId" to parentId,
                     "Recursive" to "true",
-                    "IncludeItemTypes" to "Movie,Series",
-                    "Fields" to itemFields(),
-                    "SortBy" to "SortName",
-                    "SortOrder" to "Ascending",
+                    "IncludeItemTypes" to when (homeServerCatalogMediaType(collectionType, mediaType)) {
+                        MediaType.MOVIE -> "Movie"
+                        MediaType.TV -> "Series"
+                        null -> "Movie,Series"
+                    },
+                    "Fields" to catalogItemFields(),
+                    "SortBy" to when (sort) {
+                        HomeServerLibrarySort.RECENTLY_ADDED -> "DateCreated"
+                        HomeServerLibrarySort.RATING -> "CommunityRating"
+                        HomeServerLibrarySort.TITLE -> "SortName"
+                    },
+                    "SortOrder" to if (sort == HomeServerLibrarySort.TITLE) "Ascending" else "Descending",
+                    "SearchTerm" to searchQuery.trim().takeIf { it.isNotBlank() },
                     "StartIndex" to offset.toString(),
                     "Limit" to limit.toString()
                 )
@@ -1559,24 +1724,16 @@ class HomeServerRepository @Inject constructor(
             connection
         )
         val total = response.int("TotalRecordCount") ?: response.items().size
-        val items = response.items().mapNotNull { it.toCatalogItem() }
+        val items = response.items().mapNotNull {
+            it.toCatalogItem(connection, buildCatalogSourceRef(connection, HomeServerCollection(collectionId, type = "mixed")))
+        }
         return HomeServerCatalogPage(
             items = items,
             hasMore = offset + items.size < total
         )
     }
 
-    private fun findBestMovie(
-        connection: HomeServerConnection,
-        imdbId: String?,
-        title: String,
-        year: Int?,
-        tmdbId: Int?
-    ): HomeServerItem? {
-        return findMovieMatches(connection, imdbId, title, year, tmdbId).firstOrNull()
-    }
-
-    private fun findMovieMatches(
+    private suspend fun findMovieMatches(
         connection: HomeServerConnection,
         imdbId: String?,
         title: String,
@@ -1584,12 +1741,18 @@ class HomeServerRepository @Inject constructor(
         tmdbId: Int?
     ): List<HomeServerItem> {
         val candidates = linkedMapOf<String, HomeServerItem>()
-        providerQueries(imdbId, tmdbId, null).forEach { providerId ->
-            queryItems(
-                connection,
-                itemTypes = "Movie",
-                query = mapOf("AnyProviderIdEquals" to providerId, "Limit" to "10")
-            ).forEach { candidates[it.id] = it }
+        coroutineScope {
+            providerQueries(imdbId, tmdbId, null).map { providerId ->
+                async {
+                    try {
+                        queryItems(
+                            connection,
+                            itemTypes = "Movie",
+                            query = mapOf("AnyProviderIdEquals" to providerId, "Limit" to "10")
+                        )
+                    } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
+                }
+            }.awaitAll().flatten().forEach { candidates[it.id] = it }
         }
         val bestById = bestCandidate(candidates.values, title, year, imdbId, tmdbId, null)
         val bestByIdScore = bestById?.let {
@@ -1619,26 +1782,14 @@ class HomeServerRepository @Inject constructor(
         val bestScore = scored.maxOfOrNull { (_, score) -> score } ?: return emptyList()
         return scored
             .filter { (item, score) ->
-                score == bestScore || isLikelySameMovieVersion(item, title, year)
+                score == bestScore || HomeServerMatcher.isLikelySameVersion(title, year, item.info())
             }
             .sortedByDescending { (_, score) -> score }
             .map { (item, _) -> item }
             .distinctBy { it.id }
     }
 
-    private fun isLikelySameMovieVersion(
-        item: HomeServerItem,
-        title: String,
-        year: Int?
-    ): Boolean {
-        val requestedTitle = HomeServerMatcher.normalizeTitle(title)
-        val candidateTitle = HomeServerMatcher.normalizeTitle(item.name)
-        if (requestedTitle.isBlank() || requestedTitle != candidateTitle) return false
-        val candidateYear = item.productionYear ?: return true
-        return year == null || abs(year - candidateYear) <= 1
-    }
-
-    private fun findBestSeries(
+    private suspend fun findBestSeries(
         connection: HomeServerConnection,
         imdbId: String?,
         title: String,
@@ -1647,12 +1798,18 @@ class HomeServerRepository @Inject constructor(
         tvdbId: Int?
     ): HomeServerItem? {
         val candidates = linkedMapOf<String, HomeServerItem>()
-        providerQueries(imdbId, tmdbId, tvdbId).forEach { providerId ->
-            queryItems(
-                connection,
-                itemTypes = "Series",
-                query = mapOf("AnyProviderIdEquals" to providerId, "Limit" to "10")
-            ).forEach { candidates[it.id] = it }
+        coroutineScope {
+            providerQueries(imdbId, tmdbId, tvdbId).map { providerId ->
+                async {
+                    try {
+                        queryItems(
+                            connection,
+                            itemTypes = "Series",
+                            query = mapOf("AnyProviderIdEquals" to providerId, "Limit" to "10")
+                        )
+                    } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
+                }
+            }.awaitAll().flatten().forEach { candidates[it.id] = it }
         }
         val bestById = bestCandidate(candidates.values, title, year, imdbId, tmdbId, tvdbId)
         if (bestById != null && HomeServerMatcher.score(title, year, imdbId, tmdbId, tvdbId, bestById.info()) >= 900) {
@@ -1742,9 +1899,11 @@ class HomeServerRepository @Inject constructor(
             ),
             connection
         ).items()
-        return listOfNotNull(
-            byShowEndpoint.firstOrNull { it.parentIndexNumber == season && it.indexNumber == episode }
-                ?: queryItems(
+        val directMatches = byShowEndpoint
+            .filter { it.parentIndexNumber == season && it.indexNumber == episode }
+            .distinctBy { it.id }
+        if (directMatches.isNotEmpty()) return directMatches
+        return queryItems(
                     connection,
                     itemTypes = "Episode",
                     query = mapOf(
@@ -1753,8 +1912,9 @@ class HomeServerRepository @Inject constructor(
                         "IndexNumber" to episode.toString(),
                         "Limit" to "10"
                     )
-                ).firstOrNull { it.parentIndexNumber == season && it.indexNumber == episode }
-        )
+                )
+            .filter { it.parentIndexNumber == season && it.indexNumber == episode }
+            .distinctBy { it.id }
     }
 
     private fun findEpisodeBySearch(
@@ -1837,7 +1997,7 @@ class HomeServerRepository @Inject constructor(
 
         val sectionResults = if (collections.isNotEmpty()) {
             collections.flatMap { collection ->
-                runCatching {
+                try {
                     getJson(
                         buildUrl(
                             connection.serverUrl,
@@ -1851,7 +2011,7 @@ class HomeServerRepository @Inject constructor(
                         ),
                         connection
                     ).metadataItems(connection.serverKind)
-                }.getOrDefault(emptyList())
+                } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
             }
         } else {
             emptyList()
@@ -1874,7 +2034,7 @@ class HomeServerRepository @Inject constructor(
             connection.collections.filter { it.enabled }
         }
         return targetCollections.flatMap { collection ->
-            runCatching {
+            try {
                 getJson(
                     buildUrl(
                         connection.serverUrl,
@@ -1888,7 +2048,7 @@ class HomeServerRepository @Inject constructor(
                     ),
                     connection
                 ).metadataItems(connection.serverKind)
-            }.getOrDefault(emptyList())
+            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
         }
     }
 
@@ -1898,7 +2058,7 @@ class HomeServerRepository @Inject constructor(
         plexType: String?,
         limit: String
     ): List<HomeServerItem> {
-        return runCatching {
+        return try {
             getJson(
                 buildUrl(
                     connection.serverUrl,
@@ -1912,7 +2072,7 @@ class HomeServerRepository @Inject constructor(
                 ),
                 connection
             ).metadataItems(connection.serverKind)
-        }.getOrDefault(emptyList())
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
     }
 
     private fun filterPlexEpisodeNumbers(
@@ -1965,14 +2125,19 @@ class HomeServerRepository @Inject constructor(
             }
     }
 
-    private fun itemFields(): String = "ProviderIds,MediaSources,MediaStreams,Path,PremiereDate,ProductionYear,RunTimeTicks"
+    private fun itemFields(): String =
+        "ProviderIds,MediaSources,MediaStreams,Path,PremiereDate,ProductionYear,RunTimeTicks," +
+            "Overview,CommunityRating,ImageTags,BackdropImageTags,DateCreated"
+
+    private fun catalogItemFields(): String =
+        "ProviderIds,ProductionYear,Overview,CommunityRating,ImageTags,BackdropImageTags,DateCreated"
 
     private fun buildStreamSources(
         connection: HomeServerConnection,
         item: HomeServerItem
     ): List<StreamSource> {
         val sources = if (connection.serverKind == HomeServerKind.PLEX) {
-            val refreshedSources = runCatching {
+            val refreshedSources = try {
                 getJson(
                     buildUrl(
                         connection.serverUrl,
@@ -1984,11 +2149,14 @@ class HomeServerRepository @Inject constructor(
                     ),
                     connection
                 ).metadataItems(connection.serverKind).firstOrNull()?.mediaSources.orEmpty()
-            }.getOrDefault(emptyList())
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                emptyList()
+            }
             (refreshedSources + item.mediaSources)
                 .distinctBy { it.identityKey() }
         } else {
-            val playbackInfoSources = runCatching {
+            val playbackInfoSources = try {
                 postJson(
                     buildUrl(
                         connection.serverUrl,
@@ -2004,7 +2172,10 @@ class HomeServerRepository @Inject constructor(
                     JsonObject(),
                     connection
                 ).mediaSources()
-            }.getOrDefault(emptyList())
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                emptyList()
+            }
             (playbackInfoSources + item.mediaSources)
                 .distinctBy { it.identityKey() }
         }
@@ -2300,6 +2471,11 @@ class HomeServerRepository @Inject constructor(
                 type = string("type"),
                 productionYear = int("year") ?: string("originallyAvailableAt").take(4).toIntOrNull(),
                 providerIds = providerIds,
+                overview = string("summary"),
+                rating = string("rating").toDoubleOrNull(),
+                primaryImageTag = string("thumb"),
+                backdropImageTag = string("art"),
+                addedAt = (long("addedAt") ?: 0L) * 1000L,
                 librarySectionId = string("librarySectionID"),
                 indexNumber = int("index"),
                 parentIndexNumber = int("parentIndex"),
@@ -2323,6 +2499,11 @@ class HomeServerRepository @Inject constructor(
             type = string("Type"),
             productionYear = year,
             providerIds = providerIds,
+            overview = string("Overview"),
+            rating = string("CommunityRating").toDoubleOrNull(),
+            primaryImageTag = obj("ImageTags")?.string("Primary").orEmpty().ifBlank { string("PrimaryImageTag") },
+            backdropImageTag = array("BackdropImageTags").firstOrNull()?.asStringOrNull().orEmpty(),
+            addedAt = runCatching { Instant.parse(string("DateCreated")).toEpochMilli() }.getOrDefault(0L),
             librarySectionId = "",
             indexNumber = int("IndexNumber"),
             parentIndexNumber = int("ParentIndexNumber"),
@@ -2431,10 +2612,16 @@ class HomeServerRepository @Inject constructor(
         .replace("&gt;", ">")
 
     private fun parsePlexIdentity(body: String): Pair<String, String> {
-        val container = runCatching {
+        val container = try {
             val json = JsonParser().parse(body).asJsonObjectOrNull()
             json?.obj("MediaContainer") ?: json
-        }.getOrNull()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: com.google.gson.JsonSyntaxException) {
+            null
+        } catch (e: IllegalStateException) {
+            null
+        }
         val name = container?.string("friendlyName").orEmpty()
         val id = container?.string("machineIdentifier").orEmpty()
         if (name.isNotBlank() || id.isNotBlank()) {
@@ -2465,6 +2652,11 @@ class HomeServerRepository @Inject constructor(
         val type: String,
         val productionYear: Int?,
         val providerIds: Map<String, String>,
+        val overview: String = "",
+        val rating: Double? = null,
+        val primaryImageTag: String = "",
+        val backdropImageTag: String = "",
+        val addedAt: Long = 0L,
         val librarySectionId: String,
         val indexNumber: Int?,
         val parentIndexNumber: Int?,
@@ -2476,18 +2668,39 @@ class HomeServerRepository @Inject constructor(
             providerIds = providerIds
         )
 
-        fun toCatalogItem(): HomeServerCatalogItem? {
+        fun toCatalogItem(connection: HomeServerConnection, sourceRef: String): HomeServerCatalogItem? {
             val mediaType = when (type.lowercase(Locale.US)) {
                 "movie" -> MediaType.MOVIE
                 "series", "show", "tv", "tvshow" -> MediaType.TV
                 else -> return null
+            }
+            val base = connection.serverUrl.trimEnd('/')
+            val token = URLEncoder.encode(connection.accessToken, Charsets.UTF_8.name())
+            val imageUrl = when {
+                primaryImageTag.isBlank() -> ""
+                connection.serverKind == HomeServerKind.PLEX -> "$base$primaryImageTag?X-Plex-Token=$token"
+                else -> "$base/Items/$id/Images/Primary?maxWidth=600&tag=${URLEncoder.encode(primaryImageTag, Charsets.UTF_8.name())}&api_key=$token"
+            }
+            val backdropUrl = when {
+                backdropImageTag.isBlank() -> null
+                connection.serverKind == HomeServerKind.PLEX -> "$base$backdropImageTag?X-Plex-Token=$token"
+                else -> "$base/Items/$id/Images/Backdrop/0?maxWidth=1280&tag=${URLEncoder.encode(backdropImageTag, Charsets.UTF_8.name())}&api_key=$token"
             }
             return HomeServerCatalogItem(
                 id = id,
                 title = name,
                 mediaType = mediaType,
                 year = productionYear,
-                providerIds = providerIds.mapKeys { it.key.lowercase(Locale.US) }
+                providerIds = providerIds.mapKeys { it.key.lowercase(Locale.US) },
+                overview = overview,
+                rating = rating,
+                imageUrl = imageUrl,
+                backdropUrl = backdropUrl,
+                addedAt = addedAt,
+                sourceRef = sourceRef,
+                providerName = connection.displayName.ifBlank {
+                    connection.serverName.ifBlank { connection.serverKind.name.lowercase().replaceFirstChar { it.uppercase() } }
+                }
             )
         }
     }
@@ -2529,7 +2742,7 @@ private object HomeServerXmlRegexCache {
         }
     }
 }
-private object HomeServerRegexes {
+internal object HomeServerRegexes {
     val DIACRITICS_REGEX = Regex("\\p{Mn}+")
     val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
     val ARTICLES_REGEX = Regex("\\b(the|a|an)\\b")

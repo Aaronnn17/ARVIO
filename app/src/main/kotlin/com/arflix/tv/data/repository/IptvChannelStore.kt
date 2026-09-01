@@ -208,7 +208,7 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
             val byPlaylist = !playlistId.isNullOrBlank()
             val sql = buildString {
                 append("SELECT * FROM channels WHERE source_key = ?")
-                if (byPlaylist) append(" AND id LIKE ?")
+                if (byPlaylist) append(" AND (id LIKE ? OR id LIKE ?)")
                 if (byGroup) {
                     if (normalizedGroup) append(" AND trim(group_title) = ?") else append(" AND group_title = ?")
                 }
@@ -217,7 +217,10 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
             }
             val args = buildList {
                 add(sourceKey)
-                if (byPlaylist) add("${playlistId}:%")
+                if (byPlaylist) {
+                    add("${playlistId}:%")
+                    add("stalker:${playlistId}:%")
+                }
                 if (byGroup) add(if (normalizedGroup) groupTitle!!.trim() else groupTitle!!)
             }.toTypedArray()
             return readableDatabase.rawQuery(sql, args).use { cursor ->
@@ -242,12 +245,15 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         if (!byGroup && !byPlaylist) return count(sourceKey)
         val sql = buildString {
             append("SELECT COUNT(*) FROM channels WHERE source_key = ?")
-            if (byPlaylist) append(" AND id LIKE ?")
+            if (byPlaylist) append(" AND (id LIKE ? OR id LIKE ?)")
             if (byGroup) append(" AND group_title = ?")
         }
         val args = buildList {
             add(sourceKey)
-            if (byPlaylist) add("${playlistId}:%")
+            if (byPlaylist) {
+                add("${playlistId}:%")
+                add("stalker:${playlistId}:%")
+            }
             if (byGroup) add(groupTitle!!)
         }.toTypedArray()
         return readableDatabase.rawQuery(sql, args)
@@ -323,7 +329,16 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         return readableDatabase.rawQuery(
             """
             SELECT
-                CASE WHEN instr(id, ':') > 0 THEN substr(id, 1, instr(id, ':') - 1) ELSE '' END AS playlist_id,
+                CASE
+                    WHEN id LIKE 'stalker:%:%' THEN
+                        substr(
+                            substr(id, instr(id, ':') + 1),
+                            1,
+                            instr(substr(id, instr(id, ':') + 1), ':') - 1
+                        )
+                    WHEN instr(id, ':') > 0 THEN substr(id, 1, instr(id, ':') - 1)
+                    ELSE ''
+                END AS playlist_id,
                 group_title,
                 COUNT(*),
                 MIN(ord) AS first_ord
@@ -344,26 +359,37 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
 
     fun deleteSource(sourceKey: String) {
         if (sourceKey.isBlank()) return
-        writableDatabase.runCatching {
-            beginTransaction()
+        try {
+            writableDatabase.beginTransaction()
             try {
-                delete("channels", "source_key = ?", arrayOf(sourceKey))
-                delete("channel_sources", "source_key = ?", arrayOf(sourceKey))
-                setTransactionSuccessful()
+                writableDatabase.delete("channels", "source_key = ?", arrayOf(sourceKey))
+                writableDatabase.delete("channel_sources", "source_key = ?", arrayOf(sourceKey))
+                writableDatabase.setTransactionSuccessful()
             } finally {
-                endTransaction()
+                writableDatabase.endTransaction()
             }
+        } catch (e: Exception) {
+            // Ignore DB errors on delete
         }
     }
 
     private fun readChannel(cursor: android.database.Cursor, c: ColumnIndices): IptvChannel {
         val headersJson = if (cursor.isNull(c.requestHeaders)) null else cursor.getString(c.requestHeaders)
         val drmJson = if (cursor.isNull(c.drm)) null else cursor.getString(c.drm)
-        @Suppress("UNCHECKED_CAST")
         val headers = headersJson?.let {
-            runCatching { gson.fromJson(it, Map::class.java) as? Map<String, String> }.getOrNull()
+            try {
+                val jsonElement = com.google.gson.JsonParser.parseString(it)
+                if (jsonElement.isJsonObject) {
+                    jsonElement.asJsonObject.entrySet().mapNotNull { entry ->
+                        val value = entry.value
+                        if (value != null && value.isJsonPrimitive && value.asJsonPrimitive.isString) {
+                            entry.key to value.asString
+                        } else null
+                    }.toMap()
+                } else null
+            } catch (e: Exception) { null }
         }.orEmpty()
-        val drm = drmJson?.let { runCatching { gson.fromJson(it, DrmInfo::class.java) }.getOrNull() }
+        val drm = drmJson?.let { try { gson.fromJson(it, DrmInfo::class.java) } catch (e: Exception) { null } }
         val name = cursor.getString(c.name).orEmpty()
         return IptvChannel(
             id = cursor.getString(c.id).orEmpty(),

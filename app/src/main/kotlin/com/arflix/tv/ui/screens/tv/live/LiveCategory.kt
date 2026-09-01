@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvChannel
+import com.arflix.tv.data.repository.StalkerPortalSupport
 
 /** Broad channel genre derived from M3U group name. */
 enum class Genre {
@@ -314,6 +315,26 @@ data class LiveCategory(
     val isGroup: Boolean get() = children.isNotEmpty()
 }
 
+internal fun sortChannelsByConfiguredOrder(
+    channels: List<EnrichedChannel>,
+    sortOrder: String,
+): List<EnrichedChannel> = when (sortOrder) {
+    "number" -> channels.sortedWith { first, second ->
+        val firstNumber = first.source.providerChannelNumber?.trim()?.toBigDecimalOrNull()
+        val secondNumber = second.source.providerChannelNumber?.trim()?.toBigDecimalOrNull()
+        when {
+            firstNumber != null && secondNumber != null -> firstNumber.compareTo(secondNumber)
+            firstNumber != null -> -1
+            secondNumber != null -> 1
+            else -> 0
+        }
+    }
+    "name" -> channels.sortedWith { first, second ->
+        first.name.compareTo(second.name, ignoreCase = true)
+    }
+    else -> channels
+}
+
 enum class CategoryIcon { Favorite, Recent, All, Grid, Sport, Movie, News, Kids, Docs, Music, Lock, Country, SubEntry }
 
 /**
@@ -374,19 +395,30 @@ private fun playlistGroupLabel(group: String): String {
     return group.trim().ifBlank { "Ungrouped" }
 }
 
+/**
+ * Resolves the playlist id used to build a hidden-group key (`playlistId|group`)
+ * for a given channel id. M3U/Xtream ids are shaped `<playlistId>:<origId>`, so
+ * the first segment is the playlist id. Stalker ids are shaped
+ * `stalker:<portalId>:<origId>`; hidden groups for Stalker portals are stored
+ * under the *portal* id (e.g. `stalker1|group`), not the literal `stalker`
+ * prefix, so the portal segment must be returned for the key to match.
+ */
+internal fun channelPlaylistId(channelId: String): String =
+    StalkerPortalSupport.playlistIdFromChannelId(channelId)
+
 private fun playlistGroupKey(playlistId: String, group: String): String {
     return com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, playlistGroupLabel(group))
 }
 
 fun isHiddenPlaylistGroup(channel: EnrichedChannel, hiddenGroups: Set<String>): Boolean {
     if (hiddenGroups.isEmpty()) return false
-    val playlistId = channel.id.substringBefore(':')
+    val playlistId = channelPlaylistId(channel.id)
     return playlistGroupKey(playlistId, channel.source.group) in hiddenGroups
 }
 
 private fun isHiddenPlaylistGroup(channel: IptvChannel, hiddenGroups: Set<String>): Boolean {
     if (hiddenGroups.isEmpty()) return false
-    val playlistId = channel.id.substringBefore(':')
+    val playlistId = channelPlaylistId(channel.id)
     return playlistGroupKey(playlistId, channel.group) in hiddenGroups
 }
 
@@ -434,9 +466,10 @@ fun buildCategoryTree(
     val hiddenPlaylistGroups = hiddenGroups.toHashSet()
 
     channels.forEach { channel ->
-        val playlistId = channel.id.substringBefore(':')
+        val playlistId = channelPlaylistId(channel.id)
+        val hiddenPlaylistId = playlistId
         val groupLabel = playlistGroupLabel(channel.source.group)
-        val groupKey = playlistGroupKey(playlistId, groupLabel)
+        val groupKey = playlistGroupKey(hiddenPlaylistId, groupLabel)
         val groupId = playlistGroupCategoryId(playlistId, channel.source.group)
         val targetCounts = if (groupKey in hiddenPlaylistGroups) hiddenPlaylistGroupCounts else playlistGroupCounts
         val groupCount = targetCounts[groupId]?.second ?: 0
@@ -610,10 +643,11 @@ fun buildCategoryTree(
     val hiddenPlaylistGroups = hiddenGroups.toHashSet()
 
     channels.forEach { channel ->
-        val playlistId = channel.id.substringBefore(':')
+        val playlistId = channelPlaylistId(channel.id)
+        val hiddenPlaylistId = playlistId
         val traits = channel.traits()
         val groupLabel = playlistGroupLabel(channel.group)
-        val groupKey = playlistGroupKey(playlistId, groupLabel)
+        val groupKey = playlistGroupKey(hiddenPlaylistId, groupLabel)
         val groupId = playlistGroupCategoryId(playlistId, channel.group)
         val targetCounts = if (groupKey in hiddenPlaylistGroups) hiddenPlaylistGroupCounts else playlistGroupCounts
         val groupCount = targetCounts[groupId]?.second ?: 0
@@ -751,7 +785,7 @@ fun buildCategoryTree(
     return LiveCategoryTree(top = top, global = global, countries = countries, adult = adult, hidden = hidden)
 }
 
-private fun playlistIdFromGroupCategoryId(id: String): String? {
+internal fun playlistIdFromGroupCategoryId(id: String): String? {
     if (!id.startsWith("grp:")) return null
     return id.removePrefix("grp:")
         .substringBefore(':', missingDelimiterValue = "")
@@ -794,7 +828,7 @@ private fun rawCategoryMatcher(
     if (categoryId == "fav") return { ch -> ch.id in favorites && !ch.traits().isAdult }
     if (categoryId == "recent") return { ch -> ch.id in recents && !ch.traits().isAdult }
     if (categoryId == "adult") return { ch -> ch.traits().isAdult }
-    if (categoryId.startsWith("grp:")) return { ch -> playlistGroupCategoryId(ch.id.substringBefore(':'), ch.group) == categoryId }
+    if (categoryId.startsWith("grp:")) return { ch -> playlistGroupCategoryId(channelPlaylistId(ch.id), ch.group) == categoryId }
     if (categoryId == "g-4k") return { ch -> ch.traits().let { !it.isAdult && it.quality == Quality.K4 } }
     if (categoryId == "g-sports") return { ch -> ch.traits().let { !it.isAdult && it.genre == Genre.Sports } }
     if (categoryId == "g-movies") return { ch -> ch.traits().let { !it.isAdult && it.genre == Genre.Movies } }
@@ -863,9 +897,10 @@ fun buildFastStartupChannelState(
 
     channels.forEachIndexed { index, rawChannel ->
         val channel = rawChannel.enrichForFastStartup(index + 1)
-        val playlistId = rawChannel.id.substringBefore(':')
+        val playlistId = channelPlaylistId(rawChannel.id)
+        val hiddenPlaylistId = playlistId
         val groupLabel = playlistGroupLabel(rawChannel.group)
-        val groupKey = playlistGroupKey(playlistId, groupLabel)
+        val groupKey = playlistGroupKey(hiddenPlaylistId, groupLabel)
         val groupId = playlistGroupCategoryId(playlistId, rawChannel.group)
         val hidden = groupKey in hiddenPlaylistGroups
 
@@ -980,7 +1015,7 @@ fun buildPagedStartupChannelState(
         byId[channel.id] = channel
         if (channel.id in favorites) add("fav", channel)
         if (channel.id in recents) add("recent", channel)
-        val playlistId = channel.source.id.substringBefore(':')
+        val playlistId = channelPlaylistId(channel.source.id)
         val groupKey = playlistGroupKey(playlistId, channel.source.group)
         val groupId = playlistGroupCategoryId(playlistId, channel.source.group)
         add(groupId, channel)
@@ -1108,7 +1143,7 @@ fun buildInitialCategoryChannels(
     return buildList(limit.coerceAtMost(channels.size)) {
         channels.forEachIndexed { index, channel ->
             val isSelectedHiddenGroup = categoryId.startsWith("grp:") &&
-                playlistGroupCategoryId(channel.id.substringBefore(':'), channel.group) == categoryId
+                playlistGroupCategoryId(channelPlaylistId(channel.id), channel.group) == categoryId
             if (matcher(channel) && (isSelectedHiddenGroup || !isHiddenPlaylistGroup(channel, hiddenGroups))) {
                 add(channel.enrich(index + 1))
                 if (size >= limit) return@buildList
@@ -1133,7 +1168,7 @@ fun buildCategoryIndex(
 
     channels.forEach { channel ->
         byId[channel.id] = channel
-        add(playlistGroupCategoryId(channel.source.id.substringBefore(':'), channel.source.group), channel)
+        add(playlistGroupCategoryId(channelPlaylistId(channel.source.id), channel.source.group), channel)
         if (isHiddenPlaylistGroup(channel, hiddenGroups)) {
             hiddenIds += channel.id
             return@forEach
@@ -1188,7 +1223,7 @@ fun bestCategoryIdForChannel(
     channel: EnrichedChannel,
     tree: LiveCategoryTree,
 ): String {
-    val playlistGroupId = playlistGroupCategoryId(channel.source.id.substringBefore(':'), channel.source.group)
+    val playlistGroupId = playlistGroupCategoryId(channelPlaylistId(channel.source.id), channel.source.group)
     if (tree.byId(playlistGroupId) != null) return playlistGroupId
     if (channel.isAdult) return "adult"
 
@@ -1220,7 +1255,7 @@ fun categoryMatcher(
         categoryId == "fav"    -> { ch -> ch.id in favorites && !ch.isAdult }
         categoryId == "recent" -> { ch -> ch.id in recents && !ch.isAdult }
         categoryId == "adult"  -> { ch -> ch.isAdult }
-        categoryId.startsWith("grp:") -> { ch -> playlistGroupCategoryId(ch.source.id.substringBefore(':'), ch.source.group) == categoryId }
+        categoryId.startsWith("grp:") -> { ch -> playlistGroupCategoryId(channelPlaylistId(ch.source.id), ch.source.group) == categoryId }
         categoryId == "g-4k"      -> { ch -> ch.quality == Quality.K4 && !ch.isAdult }
         categoryId == "g-sports"  -> { ch -> ch.genre == Genre.Sports && !ch.isAdult }
         categoryId == "g-movies"  -> { ch -> ch.genre == Genre.Movies && !ch.isAdult }

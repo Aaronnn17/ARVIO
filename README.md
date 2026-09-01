@@ -109,6 +109,9 @@ On Windows PowerShell or Command Prompt:
 .\gradlew.bat :app:assembleSideloadDebug
 ```
 
+APK builds include 32-bit and 64-bit ARM by default. For an x86/x86_64 emulator,
+add `-PincludeX86Abis=true` to the Gradle command.
+
 Install a debug build on a connected Android TV, Fire TV, emulator, phone, or tablet:
 
 ```bash
@@ -140,6 +143,16 @@ cp secrets.defaults.properties secrets.properties
 ```
 
 `secrets.properties` is ignored and must not be committed.
+
+Discord Rich Presence is optional and requires Discord's separately licensed
+Android Partner SDK. Place the approved file at
+`app/libs/discord_partner_sdk.aar` and set `DISCORD_CLIENT_ID` in
+`secrets.properties`. Builds without that AAR remain valid, but show Discord as
+unavailable instead of compiling a simulated connection. Do not commit or
+redistribute the AAR unless your Discord SDK agreement explicitly permits it.
+Trusted signed builds restore the AAR from the private
+`ProdigyV21/ARVIO-private-dependencies` repository through a read-only deploy
+key stored as the `DISCORD_SDK_DEPLOY_KEY` repository secret.
 
 TMDB and Trakt credentials are not committed to the repository. When a valid
 Supabase config is present, app requests are routed through the tracked

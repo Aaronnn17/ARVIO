@@ -1,13 +1,19 @@
 import { jsonRequest } from "./http";
 import { loadStored, removeStored, saveStored } from "./storage";
 
-const MDBLIST_KEY_STORAGE = "arvio.web.mdblist.key";
+const LEGACY_MDBLIST_KEY_STORAGE = "arvio.web.mdblist.key";
 
 export interface MdbMediaRef {
   mediaType: "movie" | "tv";
   tmdbId: number;
   season?: number | null;
   episode?: number | null;
+}
+
+export interface MdbExternalRating {
+  source: string;
+  label: string;
+  value: string;
 }
 
 /**
@@ -20,18 +26,46 @@ export interface MdbMediaRef {
  * work unchanged regardless of the active provider.
  */
 export class MdbListClient {
-  key = loadStored<string | null>(MDBLIST_KEY_STORAGE, null);
+  key: string | null = null;
+  private profileId: string | null = null;
 
   get isConnected() {
     return Boolean(this.key);
+  }
+
+  private keyStorage(profileId: string) {
+    return `arvio.web.mdblist.key:${profileId}`;
+  }
+
+  setProfile(profileId: string | null) {
+    const normalized = profileId?.trim() || null;
+    if (normalized === this.profileId) return;
+    this.profileId = normalized;
+    this.watchedCache = null;
+    if (!normalized) {
+      this.key = null;
+      return;
+    }
+
+    let stored = loadStored<string | null>(this.keyStorage(normalized), null)?.trim() || null;
+    if (!stored) {
+      const legacy = loadStored<string | null>(LEGACY_MDBLIST_KEY_STORAGE, null)?.trim() || null;
+      if (legacy) {
+        stored = legacy;
+        saveStored(this.keyStorage(normalized), legacy);
+        removeStored(LEGACY_MDBLIST_KEY_STORAGE);
+      }
+    }
+    this.key = stored;
   }
 
   setKey(key: string | null) {
     const trimmed = key?.trim();
     this.key = trimmed ? trimmed : null;
     this.watchedCache = null; // don't serve a previous key's watched history
-    if (this.key) saveStored(MDBLIST_KEY_STORAGE, this.key);
-    else removeStored(MDBLIST_KEY_STORAGE);
+    if (!this.profileId) return;
+    if (this.key) saveStored(this.keyStorage(this.profileId), this.key);
+    else removeStored(this.keyStorage(this.profileId));
   }
 
   disconnect() {
@@ -45,6 +79,24 @@ export class MdbListClient {
     } catch {
       return false;
     }
+  }
+
+  async externalRatings(mediaType: "movie" | "tv", tmdbId: number): Promise<MdbExternalRating[]> {
+    if (!this.key || !tmdbId) return [];
+    const cacheKey = `arvio.web.mdblist.ratings.v1:${mediaType}:${tmdbId}`;
+    const cached = loadStored<{ at: number; ratings: MdbExternalRating[] } | null>(cacheKey, null);
+    if (cached && Date.now() - cached.at < 12 * 60 * 60 * 1000) return cached.ratings;
+
+    const apiType = mediaType === "tv" ? "show" : "movie";
+    const response = await this.request<MdbMediaInfo>(`tmdb/${apiType}/${tmdbId}/`, {}).catch(() => null);
+    const ratings = (response?.ratings ?? [])
+      .map(normalizeExternalRating)
+      .filter((rating): rating is MdbExternalRating => Boolean(rating))
+      .filter((rating, index, all) => all.findIndex((item) => item.source === rating.source) === index)
+      .sort((a, b) => ratingSourceOrder(a.source) - ratingSourceOrder(b.source))
+      .slice(0, 6);
+    saveStored(cacheKey, { at: Date.now(), ratings });
+    return ratings;
   }
 
   // ===== Reads (Trakt-compatible shapes) =====
@@ -128,19 +180,22 @@ export class MdbListClient {
     if (this.watchedCache && Date.now() - this.watchedCache.at < 30_000) {
       return this.watchedCache.data;
     }
-    const data = this.loadAllWatched();
+    const data = this.loadAllWatched(this.key);
     this.watchedCache = { at: Date.now(), data };
     return data;
   }
 
-  private async loadAllWatched() {
+  private async loadAllWatched(key: string | null) {
     const movies: MdbWatchedMovieRow[] = [];
     const episodes: MdbWatchedEpisodeRow[] = [];
+    if (!key) return { movies, episodes };
     const limit = 1000;
     // Hard page cap: never loop indefinitely on a bad has_more, even if it costs
     // a truncated tail (20k movies / 20k episodes is far beyond any real library).
     for (let page = 0; page < 20; page += 1) {
-      const resp = await this.request<MdbWatchedResponse>(`sync/watched?limit=${limit}&offset=${page * limit}`, {}).catch(() => null);
+      const resp = await this.request<MdbWatchedResponse>(`sync/watched?limit=${limit}&offset=${page * limit}`, {
+        headers: { "x-mdblist-key": key }
+      }).catch(() => null);
       if (!resp) break;
       if (resp.movies) movies.push(...resp.movies);
       if (resp.episodes) episodes.push(...resp.episodes);
@@ -181,6 +236,10 @@ export class MdbListClient {
   async removeFromHistory(item: MdbMediaRef) {
     if (!this.key) return;
     await this.request("sync/watched/remove", { method: "POST", body: JSON.stringify(this.watchedBody(item)) });
+  }
+
+  async dismissFromContinueWatching(_item: MdbMediaRef) {
+    // MDBList does not expose paused-playback dismissal. Keep watched history intact.
   }
 
   private watchedBody(item: MdbMediaRef) {
@@ -285,4 +344,59 @@ interface MdbWatchedResponse {
   movies?: MdbWatchedMovieRow[];
   episodes?: MdbWatchedEpisodeRow[];
   pagination?: { has_more?: boolean };
+}
+
+interface MdbMediaInfo {
+  ratings?: MdbRatingRow[];
+}
+
+interface MdbRatingRow {
+  source?: string;
+  value?: number | string | null;
+  score?: number | string | null;
+}
+
+const MDB_RATING_LABELS: Record<string, string> = {
+  tomatoes: "Rotten Tomatoes",
+  popcorn: "RT Audience",
+  metacritic: "Metacritic",
+  metacriticuser: "Metacritic Users",
+  letterboxd: "Letterboxd",
+  trakt: "Trakt",
+  tmdb: "TMDB",
+  myanimelist: "MyAnimeList",
+  rogerebert: "Roger Ebert"
+};
+
+const MDB_RATING_ORDER = ["tomatoes", "popcorn", "metacritic", "letterboxd", "trakt", "tmdb", "myanimelist", "rogerebert", "metacriticuser"];
+
+function ratingSourceOrder(source: string) {
+  const index = MDB_RATING_ORDER.indexOf(source);
+  return index < 0 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+function numericRating(value: number | string | null | undefined): number | null {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function decimalRating(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function normalizeExternalRating(row: MdbRatingRow): MdbExternalRating | null {
+  const source = row.source?.trim().toLowerCase() ?? "";
+  if (!source || source === "imdb") return null;
+  const label = MDB_RATING_LABELS[source];
+  if (!label) return null;
+  const value = numericRating(row.value);
+  const score = numericRating(row.score);
+  const display = source === "tomatoes" || source === "popcorn" || source === "metacritic" || source === "metacriticuser"
+    ? score == null ? null : `${Math.round(score)}%`
+    : value != null
+      ? decimalRating(value)
+      : score != null
+        ? decimalRating(score / 10)
+        : null;
+  return display ? { source, label, value: display } : null;
 }

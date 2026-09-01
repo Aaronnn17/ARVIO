@@ -81,12 +81,16 @@ sealed class Screen(val route: String) {
         }
     }
 
-    data object Player : Screen("player/{mediaType}/{mediaId}?seasonNumber={seasonNumber}&episodeNumber={episodeNumber}&imdbId={imdbId}&streamUrl={streamUrl}&preferredAddonId={preferredAddonId}&preferredSourceName={preferredSourceName}&preferredBingeGroup={preferredBingeGroup}&startPositionMs={startPositionMs}&isLiveStream={isLiveStream}") {
+    data object Player : Screen("player/{mediaType}/{mediaId}?seasonNumber={seasonNumber}&episodeNumber={episodeNumber}&tmdbSeasonNumber={tmdbSeasonNumber}&tmdbEpisodeNumber={tmdbEpisodeNumber}&kitsuId={kitsuId}&kitsuEpisodeNumber={kitsuEpisodeNumber}&imdbId={imdbId}&streamUrl={streamUrl}&preferredAddonId={preferredAddonId}&preferredSourceName={preferredSourceName}&preferredBingeGroup={preferredBingeGroup}&startPositionMs={startPositionMs}&isLiveStream={isLiveStream}") {
         fun createRoute(
             mediaType: MediaType,
             mediaId: Int,
             seasonNumber: Int? = null,
             episodeNumber: Int? = null,
+            tmdbSeasonNumber: Int? = seasonNumber,
+            tmdbEpisodeNumber: Int? = episodeNumber,
+            kitsuId: Int? = null,
+            kitsuEpisodeNumber: Int? = null,
             imdbId: String? = null,
             streamUrl: String? = null,
             preferredAddonId: String? = null,
@@ -99,6 +103,10 @@ sealed class Screen(val route: String) {
             val params = mutableListOf<String>()
             seasonNumber?.let { params.add("seasonNumber=$it") }
             episodeNumber?.let { params.add("episodeNumber=$it") }
+            tmdbSeasonNumber?.let { params.add("tmdbSeasonNumber=$it") }
+            tmdbEpisodeNumber?.let { params.add("tmdbEpisodeNumber=$it") }
+            kitsuId?.let { params.add("kitsuId=$it") }
+            kitsuEpisodeNumber?.let { params.add("kitsuEpisodeNumber=$it") }
             imdbId?.let { params.add("imdbId=${java.net.URLEncoder.encode(it, "UTF-8")}") }
             streamUrl?.let { params.add("streamUrl=${java.net.URLEncoder.encode(it, "UTF-8")}") }
             preferredAddonId?.let { params.add("preferredAddonId=${java.net.URLEncoder.encode(it, "UTF-8")}") }
@@ -155,10 +163,10 @@ fun AppNavigation(
         // Netflix TV uses ~250ms fade; this is tuned for Android TV's 60fps.
         // Pure crossfade — no horizontal slides (those feel mobile, not TV).
         // Netflix TV uses ~250ms crossfade for all screen transitions.
-        enterTransition = { fadeIn(androidx.compose.animation.core.tween(250)) },
-        exitTransition = { fadeOut(androidx.compose.animation.core.tween(200)) },
-        popEnterTransition = { fadeIn(androidx.compose.animation.core.tween(250)) },
-        popExitTransition = { fadeOut(androidx.compose.animation.core.tween(200)) }
+        enterTransition = { fadeIn(androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
+        exitTransition = { fadeOut(androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
+        popEnterTransition = { fadeIn(androidx.compose.animation.core.tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)) },
+        popExitTransition = { fadeOut(androidx.compose.animation.core.tween(240, easing = androidx.compose.animation.core.FastOutSlowInEasing)) }
     ) {
         // Login screen
         composable(Screen.Login.route) {
@@ -250,7 +258,9 @@ fun AppNavigation(
                 onNavigateToHome = { navigateHome() },
                 onNavigateToSearch = { navigateTopLevel(Screen.Search.route) },
                 onNavigateToTv = { navigateTopLevel(Screen.Tv.createRoute()) },
-                onNavigateToSettings = { navigateTopLevel(Screen.Settings.route) },
+                onNavigateToSettings = { section ->
+                    navigateTopLevel(Screen.Settings.createRoute(initialSection = section))
+                },
                 onSwitchProfile = {
                     onSwitchProfile()
                     navController.navigate(Screen.ProfileSelection.route) {
@@ -281,6 +291,9 @@ fun AppNavigation(
                 onNavigateToWatchlist = { navigateTopLevel(Screen.Watchlist.route) },
                 onNavigateToSettings = { navigateTopLevel(Screen.Settings.route) },
                 onNavigateToIptvSettings = { navigateTopLevel(Screen.Settings.createRoute(initialSection = "iptv")) },
+                onNavigateToDetails = { mediaType, mediaId ->
+                    navController.navigate(Screen.Details.createRoute(mediaType, mediaId))
+                },
                 onSwitchProfile = {
                     onSwitchProfile()
                     navController.navigate(Screen.ProfileSelection.route) {
@@ -424,13 +437,17 @@ fun AppNavigation(
                 initialSeason = initialSeason,
                 initialEpisode = initialEpisode,
                 currentProfile = currentProfile,
-                onNavigateToPlayer = { type, id, season, episode, imdbId, url, preferredAddonId, preferredSourceName, startPositionMs ->
+                onNavigateToPlayer = { type, id, identity, imdbId, url, preferredAddonId, preferredSourceName, startPositionMs ->
                     navController.navigate(
                         Screen.Player.createRoute(
                             mediaType = type,
                             mediaId = id,
-                            seasonNumber = season,
-                            episodeNumber = episode,
+                            seasonNumber = identity?.displaySeason,
+                            episodeNumber = identity?.displayEpisode,
+                            tmdbSeasonNumber = identity?.tmdbSeason,
+                            tmdbEpisodeNumber = identity?.tmdbEpisode,
+                            kitsuId = identity?.kitsuId,
+                            kitsuEpisodeNumber = identity?.kitsuEpisode,
                             imdbId = imdbId,
                             streamUrl = url,
                             preferredAddonId = preferredAddonId,
@@ -484,6 +501,22 @@ fun AppNavigation(
                     type = NavType.IntType
                     defaultValue = -1
                 },
+                navArgument("tmdbSeasonNumber") {
+                    type = NavType.IntType
+                    defaultValue = -1
+                },
+                navArgument("tmdbEpisodeNumber") {
+                    type = NavType.IntType
+                    defaultValue = -1
+                },
+                navArgument("kitsuId") {
+                    type = NavType.IntType
+                    defaultValue = -1
+                },
+                navArgument("kitsuEpisodeNumber") {
+                    type = NavType.IntType
+                    defaultValue = -1
+                },
                 navArgument("imdbId") {
                     type = NavType.StringType
                     defaultValue = ""
@@ -518,6 +551,12 @@ fun AppNavigation(
             val mediaId = backStackEntry.arguments?.getInt("mediaId") ?: 0
             val seasonNumber = backStackEntry.arguments?.getInt("seasonNumber")?.takeIf { it >= 0 }
             val episodeNumber = backStackEntry.arguments?.getInt("episodeNumber")?.takeIf { it >= 0 }
+            val tmdbSeasonNumber = backStackEntry.arguments?.getInt("tmdbSeasonNumber")?.takeIf { it >= 0 }
+                ?: seasonNumber
+            val tmdbEpisodeNumber = backStackEntry.arguments?.getInt("tmdbEpisodeNumber")?.takeIf { it >= 0 }
+                ?: episodeNumber
+            val kitsuId = backStackEntry.arguments?.getInt("kitsuId")?.takeIf { it > 0 }
+            val kitsuEpisodeNumber = backStackEntry.arguments?.getInt("kitsuEpisodeNumber")?.takeIf { it > 0 }
             val imdbId = backStackEntry.arguments?.getString("imdbId")?.takeIf { it.isNotBlank() }
             val streamUrl = backStackEntry.arguments?.getString("streamUrl")?.takeIf { it.isNotEmpty() }
             val preferredAddonId = backStackEntry.arguments?.getString("preferredAddonId")?.takeIf { it.isNotBlank() }
@@ -532,6 +571,10 @@ fun AppNavigation(
                 mediaId = mediaId,
                 seasonNumber = seasonNumber,
                 episodeNumber = episodeNumber,
+                tmdbSeasonNumber = tmdbSeasonNumber,
+                tmdbEpisodeNumber = tmdbEpisodeNumber,
+                kitsuId = kitsuId,
+                kitsuEpisodeNumber = kitsuEpisodeNumber,
                 imdbId = imdbId,
                 streamUrl = streamUrl,
                 preferredAddonId = preferredAddonId,
@@ -540,14 +583,18 @@ fun AppNavigation(
                 startPositionMs = startPositionMs,
                 isLiveStream = isLiveStream,
                 onBack = { navController.popBackStack() },
-                onPlayNext = { nextSeason, nextEpisode, nextPreferredAddonId, nextPreferredSourceName, nextPreferredBingeGroup ->
+                onPlayNext = { nextIdentity, nextPreferredAddonId, nextPreferredSourceName, nextPreferredBingeGroup ->
                     // Navigate to next episode
                     navController.navigate(
                         Screen.Player.createRoute(
                             mediaType = mediaType,
                             mediaId = mediaId,
-                            seasonNumber = nextSeason,
-                            episodeNumber = nextEpisode,
+                            seasonNumber = nextIdentity.displaySeason,
+                            episodeNumber = nextIdentity.displayEpisode,
+                            tmdbSeasonNumber = nextIdentity.tmdbSeason,
+                            tmdbEpisodeNumber = nextIdentity.tmdbEpisode,
+                            kitsuId = nextIdentity.kitsuId,
+                            kitsuEpisodeNumber = nextIdentity.kitsuEpisode,
                             preferredAddonId = nextPreferredAddonId,
                             preferredSourceName = nextPreferredSourceName,
                             preferredBingeGroup = nextPreferredBingeGroup

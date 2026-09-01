@@ -5,6 +5,17 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "ARVIO",
   description: "ARVIO media hub for web, iPad, desktop, and TV browsers",
+  robots: {
+    index: false,
+    follow: false,
+    noarchive: true,
+    googleBot: {
+      index: false,
+      follow: false,
+      noarchive: true,
+      noimageindex: true
+    }
+  },
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [

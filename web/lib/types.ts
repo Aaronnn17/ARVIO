@@ -14,6 +14,7 @@ export interface MediaItem {
   mediaType: MediaType;
   image?: string;
   backdrop?: string | null;
+  episodeStill?: string | null;
   progress?: number;
   isWatched?: boolean;
   traktId?: number | null;
@@ -45,6 +46,14 @@ export interface MediaItem {
   // Home server (Plex/Jellyfin/Emby) direct playback
   isHomeServer?: boolean;
   homeServerUrl?: string | null;
+  homeServerItemId?: string | null;
+  homeServerId?: string | null;
+  homeServerType?: "plex" | "jellyfin" | "emby" | null;
+  tmdbId?: number | null;
+  // External metadata IDs & classification
+  isAnime?: boolean;
+  anilistId?: number | null;
+  tvdbId?: number | null;
 }
 
 export interface NextEpisode {
@@ -298,6 +307,7 @@ export interface WatchHistoryEntry {
   updated_at?: string | null;
   source?: string | null;
   backdrop_path?: string | null;
+  episode_still_path?: string | null;
   poster_path?: string | null;
   stream_key?: string | null;
   stream_addon_id?: string | null;
@@ -456,6 +466,7 @@ export interface AppSettings {
   // Catalogs / addons
   catalogs: CatalogConfig[];
   hiddenCatalogIds: string[];
+  hiddenHomeServerCatalogIds: string[];
   disabledAddonIds: string[];
   // Home servers
   homeServers: HomeServerConfig[];
@@ -467,4 +478,12 @@ export interface AppSettings {
   favoriteGroupIds: string[];
   hiddenGroupIds: string[];
   groupOrder: string[];
+  // Metadata & API Keys
+  customTmdbApiKey: string;
+  customTvdbApiKey: string;
+  customTvdbUserPin: string;
+  metadataMovieProviders: string[];
+  metadataTvProviders: string[];
+  metadataAnimeProviders: string[];
+  iptvSortOrder?: "provider" | "number" | "name";
 }

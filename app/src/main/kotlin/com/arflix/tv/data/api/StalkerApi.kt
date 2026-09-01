@@ -11,10 +11,13 @@ import java.util.concurrent.TimeUnit
  * Stalker/Ministra portal API client for MAC-based IPTV authentication.
  * Converts Stalker portal channels into the same IptvChannel format as Xtream/M3U.
  */
-class StalkerApi(
+open class StalkerApi(
     private val portalUrl: String,
     private val macAddress: String
 ) {
+    private var apiBase: String = portalUrl.trim().trimEnd('/')
+    private var apiBaseResolved = false
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -34,7 +37,10 @@ class StalkerApi(
     /** Step 1: Handshake to get auth token */
     suspend fun handshake(): Boolean {
         return try {
-            val url = "$portalUrl/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+            if (!apiBaseResolved) {
+                resolveApiBase()
+            }
+            val url = "$apiBase/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
             val response = doGet(url)
             val parsed = gson.fromJson(response, StalkerHandshakeResponse::class.java)
             token = parsed?.js?.token ?: return false
@@ -47,10 +53,50 @@ class StalkerApi(
         }
     }
 
+    /**
+     * Try candidate portal base paths until one responds to the handshake with
+     * a valid token. HTML 404 pages (e.g. served on /c/ portal URLs) or empty
+     * bodies must not stop the probing early.
+     * Order: / (root), /stalker_portal, /portal, /c
+     */
+    private suspend fun resolveApiBase() {
+        val cleanPortal = portalUrl.trim().trimEnd('/')
+        // Common portals serve the UI under /c/ while the API lives at the
+        // root or a root subpath, so probe both the raw URL and its /c-stripped root.
+        val root = cleanPortal.removeSuffix("/c").removeSuffix("/")
+        val candidates = listOf(
+            cleanPortal,
+            root,
+            "$root/stalker_portal",
+            "$root/portal",
+            "$root/ministra"
+        ).distinct()
+        for (base in candidates) {
+            try {
+                val url = "$base/server/load.php?type=stb&action=handshake"
+                val response = doGet(url)
+                val probeToken = try {
+                    gson.fromJson(response, StalkerHandshakeResponse::class.java)?.js?.token
+                } catch (_: Exception) { null }
+                if (!probeToken.isNullOrBlank()) {
+                    apiBase = base
+                    token = probeToken
+                    apiBaseResolved = true
+                    return
+                }
+            } catch (e: Exception) {
+                // continue to next candidate
+            }
+        }
+        // Fallback to root
+        apiBase = cleanPortal
+        apiBaseResolved = true
+    }
+
     /** Step 2: Get profile (validates the connection) */
     suspend fun getProfile(): Boolean {
         return try {
-            val url = "$portalUrl/server/load.php?type=stb&action=get_profile&JsHttpRequest=1-xml"
+            val url = "$apiBase/server/load.php?type=stb&action=get_profile&JsHttpRequest=1-xml"
             val response = doGet(url)
             response.contains("\"id\"")
         } catch (_: Exception) { false }
@@ -59,9 +105,10 @@ class StalkerApi(
     /** Step 3: Get all channels */
     suspend fun getChannels(): List<IptvChannel> {
         val channels = mutableListOf<IptvChannel>()
+        val seenChannelIds = HashSet<String>()
         try {
             // Get genres first for group names
-            val genreUrl = "$portalUrl/server/load.php?type=itv&action=get_genres&JsHttpRequest=1-xml"
+            val genreUrl = "$apiBase/server/load.php?type=itv&action=get_genres&JsHttpRequest=1-xml"
             val genreResponse = doGet(genreUrl)
             val genres = gson.fromJson(genreResponse, StalkerGenreResponse::class.java)
             val genreMap = genres?.js?.mapNotNull { g -> g.id?.let { it to (g.title ?: "Unknown") } }?.toMap() ?: emptyMap()
@@ -70,17 +117,21 @@ class StalkerApi(
             var page = 1
             var hasMore = true
             while (hasMore) {
-                val url = "$portalUrl/server/load.php?type=itv&action=get_all_channels&p=$page&JsHttpRequest=1-xml"
+                val url = "$apiBase/server/load.php?type=itv&action=get_all_channels&p=$page&JsHttpRequest=1-xml"
                 val response = doGet(url)
                 val parsed = gson.fromJson(response, StalkerChannelResponse::class.java)
                 val data = parsed?.js?.data ?: break
 
+                var newChannelIdCount = 0
                 for (ch in data) {
+                    val channelId = ch.id?.toString() ?: continue
+                    if (!seenChannelIds.add(channelId)) continue
+                    newChannelIdCount++
                     val streamCmd = ch.cmd ?: continue
                     val groupName = ch.tvGenreId?.let { genreMap[it] } ?: "Uncategorized"
                     channels.add(
                         IptvChannel(
-                            id = ch.id?.toString() ?: continue,
+                            id = channelId,
                             name = ch.name ?: "Unknown",
                             logo = ch.logo,
                             group = groupName,
@@ -90,10 +141,16 @@ class StalkerApi(
                 }
 
                 val totalItems = parsed.js?.totalItems ?: 0
-                val maxPageItems = parsed.js?.maxPageItems ?: 20
-                hasMore = page * maxPageItems < totalItems
+                val maxPageItems = (parsed.js?.maxPageItems ?: 20).coerceAtLeast(1)
+                // Some portals ignore pagination and return all channels in every response.
+                // Stop when a page contains no new IDs as well as when one response
+                // already contains the complete channel list.
+                hasMore = newChannelIdCount > 0 &&
+                    page * maxPageItems < totalItems &&
+                    data.size < totalItems
                 page++
             }
+
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -106,7 +163,7 @@ class StalkerApi(
     suspend fun resolveStreamUrl(cmd: String): String? {
         return try {
             val encodedCmd = java.net.URLEncoder.encode(cmd, "UTF-8")
-            val url = "$portalUrl/server/load.php?type=itv&action=create_link&cmd=$encodedCmd&forced_storage=undefined&disable_ad=0&JsHttpRequest=1-xml"
+            val url = "$apiBase/server/load.php?type=itv&action=create_link&cmd=$encodedCmd&forced_storage=undefined&disable_ad=0&JsHttpRequest=1-xml"
             val response = doGet(url)
             val parsed = gson.fromJson(response, StalkerLinkResponse::class.java)
             parsed?.js?.cmd?.replace("ffmpeg ", "")?.trim()
@@ -118,7 +175,7 @@ class StalkerApi(
         }
     }
 
-    private fun doGet(url: String): String {
+    open fun doGet(url: String): String {
         val builder = Request.Builder().url(url)
         baseHeaders.forEach { (k, v) -> builder.addHeader(k, v) }
         val response = client.newCall(builder.build()).execute()

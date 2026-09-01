@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 
 /**
  * ARVIO Color Palette
@@ -143,3 +144,7 @@ val ParticlePurpleDark = ArcticBlack50
 val ArvioAccent = ArcticWhite
 val ArvioPurple = ArcticBlack
 val ArvioLight = ArcticWhite70
+
+/** Returns a readable foreground for opaque accent and focused-button surfaces. */
+fun contrastingContentColor(background: Color): Color =
+    if (background.luminance() >= 0.5f) Color.Black else Color.White

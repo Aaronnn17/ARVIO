@@ -1119,6 +1119,7 @@
     <string name="iptv_xtream_detected">Fournisseur Xtream détecté. Chargement des chaînes en direct…</string>
     <string name="iptv_xtream_timeout">Délai dépassé pour le fournisseur Xtream lors du chargement.</string>
     <string name="library_default">Bibliothèque</string>
+    <string name="nav_library">Bibliothèque</string>
     <string name="library_named">Bibliothèque %1$s</string>
     <string name="program_no_title">Sans titre</string>
     <string name="program_unknown">Programme inconnu</string>
