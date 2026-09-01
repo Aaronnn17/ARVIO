@@ -109,4 +109,61 @@ class IptvActivePlaylistsTest {
 
         assertTrue(repository.activePlaylists(config).isEmpty())
     }
+
+    @Test
+    fun `live-only first playlist does not hide VOD-enabled second playlist`() {
+        val repository = newRepository()
+        val liveOnly = IptvPlaylistEntry(
+            id = "live",
+            name = "Edited Live List",
+            m3uUrl = "http://example.com/live.m3u",
+            importLiveTv = true,
+            importVod = false,
+            importSeries = false
+        )
+        val vodOnly = IptvPlaylistEntry(
+            id = "vod",
+            name = "Xtream VOD",
+            m3uUrl = "http://provider.example/get.php?username=user&password=pass&type=m3u_plus",
+            importLiveTv = false,
+            importVod = true,
+            importSeries = true
+        )
+        val config = IptvConfig(
+            m3uUrl = liveOnly.m3uUrl,
+            playlists = listOf(liveOnly, vodOnly)
+        )
+
+        assertEquals(listOf(vodOnly), repository.activeVodPlaylists(config))
+        assertEquals(listOf(vodOnly), repository.activeSeriesPlaylists(config))
+    }
+
+    @Test
+    fun `disabled playlists are excluded from selective imports`() {
+        val repository = newRepository()
+        val disabled = IptvPlaylistEntry(
+            id = "disabled",
+            name = "Disabled Provider",
+            m3uUrl = "http://provider.example/get.php?username=user&password=pass&type=m3u_plus",
+            enabled = false,
+            importVod = true,
+            importSeries = true
+        )
+        val config = IptvConfig(m3uUrl = disabled.m3uUrl, playlists = listOf(disabled))
+
+        assertTrue(repository.activeVodPlaylists(config).isEmpty())
+        assertTrue(repository.activeSeriesPlaylists(config).isEmpty())
+    }
+
+    @Test
+    fun `legacy playlist remains enabled for movies and series`() {
+        val repository = newRepository()
+        val config = IptvConfig(
+            m3uUrl = "http://provider.example/get.php?username=user&password=pass&type=m3u_plus",
+            playlists = emptyList()
+        )
+
+        assertEquals(1, repository.activeVodPlaylists(config).size)
+        assertEquals(1, repository.activeSeriesPlaylists(config).size)
+    }
 }
