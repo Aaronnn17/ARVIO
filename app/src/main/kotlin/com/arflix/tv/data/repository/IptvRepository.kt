@@ -3559,13 +3559,10 @@ class IptvRepository @Inject constructor(
     playlist: IptvPlaylistEntry,
     onProgress: (IptvLoadProgress) -> Unit
 ): List<IptvChannel> {
-    resolveXtreamCredentials(playlist)?.let { creds ->
-        // NEW: If it's Xtream and the user has disabled “channels,” we don't request live streams.
-        // The return@let (not return@fetchChannelsForPlaylistWithRetries) is key: this way,
-        // if the m3uUrl later also contains standalone content, we don't block it.
-        if (!playlist.importLiveTv) {
+    if (!playlist.importLiveTv) {
             return emptyList()
-        }
+    }
+    resolveXtreamCredentials(playlist)?.let { creds ->
         onProgress(IptvLoadProgress(context.getString(R.string.iptv_xtream_detected), 6))
         val apiResult = runCatching {
             withTimeoutOrNull(60_000L) {
