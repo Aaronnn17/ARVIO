@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.Reader
 
 private const val PORTAL = "http://portal.example.com"
 private const val MAC = "00:1A:79:AA:BB:CC"
@@ -20,6 +21,11 @@ class StalkerApiTest {
             override fun doGet(url: String): String {
                 requests += url
                 return respond(url) ?: error("Unexpected url: $url")
+            }
+
+            override fun doGetReader(url: String): Reader {
+                requests += url
+                return (respond(url) ?: error("Unexpected url: $url")).reader()
             }
         }
 
@@ -297,6 +303,29 @@ class StalkerApiTest {
     }
 
     @Test
+    fun `getEpg bounded mode keeps only the nearest current and future programs per channel`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_simple_data_table")) {
+                """{ "js": [
+                    { "ch_id": "1", "name": "Past", "start_timestamp": "800", "stop_timestamp": "900" },
+                    { "ch_id": "1", "name": "Now", "start_timestamp": "900", "stop_timestamp": "1100" },
+                    { "ch_id": "1", "name": "Next", "start_timestamp": "1100", "stop_timestamp": "1200" },
+                    { "ch_id": "1", "name": "Later", "start_timestamp": "1200", "stop_timestamp": "1300" },
+                    { "ch_id": "1", "name": "Too far", "start_timestamp": "1300", "stop_timestamp": "1400" },
+                    { "ch_id": "2", "name": "Other channel", "start_timestamp": "900", "stop_timestamp": "1100" }
+                ] }"""
+            } else null
+        }
+
+        val programs = api.getEpg(notBeforeEpochSeconds = 1_000L, maxProgramsPerChannel = 3)
+
+        assertEquals(listOf("Now", "Next", "Later"), programs.filter { it.chId == "1" }.map { it.name })
+        assertEquals(listOf("Other channel"), programs.filter { it.chId == "2" }.map { it.name })
+        assertEquals(1, requests.size)
+    }
+
+    @Test
     fun `getEpg falls back to get_epg_info when get_simple_data_table is malformed`() = runTest {
         val requests = mutableListOf<String>()
         val api = stubApi(requests = requests) { url ->
@@ -464,6 +493,20 @@ class StalkerApiTest {
         val programs = api.getShortEpg("679826")
 
         assertTrue(programs.isEmpty())
+    }
+
+    @Test
+    fun `getShortEpg fills the requested channel id when the portal omits it`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_short_epg")) {
+                """{ "js": [{ "name": "News", "start_timestamp": "1000", "stop_timestamp": "2000" }] }"""
+            } else null
+        }
+
+        val programs = api.getShortEpg("42")
+
+        assertEquals("42", programs.single().chId)
     }
 
     @Test

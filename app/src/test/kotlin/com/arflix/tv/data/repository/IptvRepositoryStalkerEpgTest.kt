@@ -25,9 +25,15 @@ class IptvRepositoryStalkerEpgTest {
         return IptvRepository(context, okHttpClient, profileManager, invalidationBus)
     }
 
-    private fun stubStalkerApi(respond: (String) -> String?): StalkerApi =
-        object : StalkerApi("http://portal.example.com", "00:1A:79:AA:BB:CC") {
+    private fun stubStalkerApi(
+        portal: String = "http://portal.example.com",
+        mac: String = "00:1A:79:AA:BB:CC",
+        respond: (String) -> String?
+    ): StalkerApi =
+        object : StalkerApi(portal, mac) {
             override fun doGet(url: String): String = respond(url) ?: error("Unexpected url: $url")
+            override fun doGetReader(url: String): java.io.Reader =
+                (respond(url) ?: error("Unexpected url: $url")).reader()
         }
 
     private fun program(startMs: Long, endMs: Long, title: String) =
@@ -191,6 +197,90 @@ class IptvRepositoryStalkerEpgTest {
         assertEquals(1, bulkRequestCount)
         assertEquals("Cached Show", first.getValue("stalker:stalker1:100").now?.title)
         assertEquals("Cached Show", second.getValue("stalker:stalker1:100").now?.title)
+    }
+
+    @Test
+    fun `bulk cache is isolated when the same portal id points to different credentials`() = runTest {
+        val repository = newRepository()
+        val nowSec = System.currentTimeMillis() / 1000
+        val channels = listOf(
+            IptvChannel(id = "stalker:stalker1:100", name = "Ch A", logo = null, group = "g", streamUrl = "cmd")
+        )
+        fun response(title: String) = """{ "js": [
+            { "ch_id": "100", "name": "$title", "start_timestamp": "${nowSec - 60}", "stop_timestamp": "${nowSec + 60}" }
+        ] }"""
+        val firstApi = stubStalkerApi(portal = "http://first.example.com") { url ->
+            if (url.contains("action=get_simple_data_table")) response("First portal") else null
+        }
+        val secondApi = stubStalkerApi(portal = "http://second.example.com") { url ->
+            if (url.contains("action=get_simple_data_table")) response("Second portal") else null
+        }
+
+        val first = repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to firstApi), channels)
+        val second = repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to secondApi), channels)
+
+        assertEquals("First portal", first.getValue("stalker:stalker1:100").now?.title)
+        assertEquals("Second portal", second.getValue("stalker:stalker1:100").now?.title)
+    }
+
+    @Test
+    fun `invalidateCache clears the Stalker bulk cache`() = runTest {
+        val repository = newRepository()
+        val nowSec = System.currentTimeMillis() / 1000
+        var bulkRequestCount = 0
+        val api = stubStalkerApi { url ->
+            if (url.contains("action=get_simple_data_table")) {
+                bulkRequestCount++
+                """{ "js": [
+                    { "ch_id": "100", "name": "News", "start_timestamp": "${nowSec - 60}", "stop_timestamp": "${nowSec + 60}" }
+                ] }"""
+            } else null
+        }
+        val channels = listOf(
+            IptvChannel(id = "stalker:stalker1:100", name = "Ch A", logo = null, group = "g", streamUrl = "cmd")
+        )
+
+        repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to api), channels)
+        repository.invalidateCache()
+        repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to api), channels)
+
+        assertEquals(2, bulkRequestCount)
+    }
+
+    @Test
+    fun `empty short EPG results are cached within the TTL`() = runTest {
+        val repository = newRepository()
+        var simpleRequestCount = 0
+        var fallbackRequestCount = 0
+        var shortRequestCount = 0
+        val api = stubStalkerApi { url ->
+            when {
+                url.contains("action=get_simple_data_table") -> {
+                    simpleRequestCount++
+                    """{ "js": [] }"""
+                }
+                url.contains("action=get_epg_info") -> {
+                    fallbackRequestCount++
+                    """{ "js": { "data": [] } }"""
+                }
+                url.contains("action=get_short_epg") -> {
+                    shortRequestCount++
+                    """{ "js": [] }"""
+                }
+                else -> null
+            }
+        }
+        val channels = listOf(
+            IptvChannel(id = "stalker:stalker1:100", name = "Ch A", logo = null, group = "g", streamUrl = "cmd"),
+            IptvChannel(id = "stalker:stalker1:200", name = "Ch B", logo = null, group = "g", streamUrl = "cmd")
+        )
+
+        repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to api), channels)
+        repository.fetchStalkerEpgForActivePortals(mapOf("stalker1" to api), channels)
+
+        assertEquals(1, simpleRequestCount)
+        assertEquals(1, fallbackRequestCount)
+        assertEquals(2, shortRequestCount)
     }
 
     @Test

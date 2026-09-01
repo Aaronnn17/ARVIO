@@ -246,21 +246,32 @@ class IptvRepository @Inject constructor(
     @Volatile
     private var cachedStalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi> = emptyMap()
 
-    /**
-     * Short-lived cache of each portal's raw `getEpg()` bulk result (see
-     * [fetchStalkerEpgForActivePortals]). Without this, every small on-demand
-     * visible-guide batch (`refreshEpgForChannels`, often called every few
-     * seconds while scrolling/switching channels) re-fetches the full bulk
-     * response from scratch - confirmed live on a large portal to be ~25 MB,
-     * taking 1.5-5s per fetch. `now/next` data doesn't need second-level
-     * freshness, so a short TTL is enough to remove the redundant re-fetch.
-     */
+    private data class StalkerEpgPortalCacheKey(
+        val portalId: String,
+        val apiIdentity: String
+    )
+
+    /** Compact, timestamp-safe guide slices produced from the streamed bulk response. */
     private data class StalkerEpgCacheEntry(
         val fetchedAtMs: Long,
-        val programs: List<com.arflix.tv.data.api.StalkerApi.StalkerEpgProgram>
+        val programsByChannel: Map<String, List<IptvProgram>>
     )
-    private val stalkerEpgCache = ConcurrentHashMap<String, StalkerEpgCacheEntry>()
+
+    private data class StalkerShortEpgCacheKey(
+        val portal: StalkerEpgPortalCacheKey,
+        val originalChannelId: String
+    )
+
+    private data class StalkerShortEpgCacheEntry(
+        val fetchedAtMs: Long,
+        val programs: List<IptvProgram>
+    )
+
+    private val stalkerEpgCache = ConcurrentHashMap<StalkerEpgPortalCacheKey, StalkerEpgCacheEntry>()
+    private val stalkerShortEpgCache = ConcurrentHashMap<StalkerShortEpgCacheKey, StalkerShortEpgCacheEntry>()
     private val stalkerEpgCacheTtlMs = 5 * 60 * 1000L
+    private val stalkerShortEpgCacheTtlMs = 2 * 60 * 1000L
+    private val stalkerBulkProgramsPerChannelLimit = 16
 
     /**
      * Public accessor kept for compatibility with code that previously read the
@@ -3212,6 +3223,8 @@ class IptvRepository @Inject constructor(
         cachedNowNext = ConcurrentHashMap()
         cachedPlaylistAt = 0L
         cachedEpgAt = 0L
+        stalkerEpgCache.clear()
+        stalkerShortEpgCache.clear()
         discoveredM3uEpgUrls.clear()
         xtreamVodCacheKey = null
         xtreamVodLoadedAtMs = 0L
@@ -6363,90 +6376,125 @@ class IptvRepository @Inject constructor(
                         keySelector = { it.id.substringAfterLast(':') },
                         valueTransform = { it.id }
                     )
-                    val cachedBulk = stalkerEpgCache[portalId]
-                    var programs = if (cachedBulk != null && nowMs - cachedBulk.fetchedAtMs < stalkerEpgCacheTtlMs) {
+                    val portalCacheKey = StalkerEpgPortalCacheKey(portalId, api.epgCacheIdentity)
+                    val cachedBulk = stalkerEpgCache[portalCacheKey]
+                    var programsByOriginalChannel = if (
+                        cachedBulk != null && nowMs - cachedBulk.fetchedAtMs < stalkerEpgCacheTtlMs
+                    ) {
                         System.err.println(
                             "[Stalker-EPG] Portal $portalId: using cached getEpg() result " +
-                                "(${cachedBulk.programs.size} entries, age=${nowMs - cachedBulk.fetchedAtMs}ms)"
+                                "(${cachedBulk.programsByChannel.size} channels, age=${nowMs - cachedBulk.fetchedAtMs}ms)"
                         )
-                        cachedBulk.programs
+                        cachedBulk.programsByChannel
                     } else {
                         System.err.println("[Stalker-EPG] Portal $portalId: requesting getEpg() for ${portalChannels.size} channels")
-                        val fetched = runCatching { api.getEpg() }.getOrElse { error ->
+                        val fetched = runCatching {
+                            api.getEpg(
+                                notBeforeEpochSeconds = nowMs / 1000L,
+                                maxProgramsPerChannel = stalkerBulkProgramsPerChannelLimit
+                            )
+                        }.getOrElse { error ->
                             if (error is kotlinx.coroutines.CancellationException) throw error
                             System.err.println("[Stalker-EPG] Portal $portalId EPG fetch failed: ${error.message}")
                             emptyList()
                         }
-                        stalkerEpgCache[portalId] = StalkerEpgCacheEntry(nowMs, fetched)
-                        fetched
+                        val compact = compactStalkerProgramsByChannel(fetched, nowMs)
+                        stalkerEpgCache[portalCacheKey] = StalkerEpgCacheEntry(nowMs, compact)
+                        compact
                     }
-                    System.err.println("[Stalker-EPG] Portal $portalId: getEpg() returned ${programs.size} raw entries")
+                    System.err.println(
+                        "[Stalker-EPG] Portal $portalId: getEpg() retained " +
+                            "${programsByOriginalChannel.size} channels"
+                    )
 
                     // Bulk EPG actions confirmed empty on some portal builds -
                     // fall back to get_short_epg per channel. Only for small
                     // batches (see stalkerShortEpgFallbackMaxChannels comment).
-                    if (programs.isEmpty() && origIdToChannelId.size <= stalkerShortEpgFallbackMaxChannels) {
+                    if (
+                        programsByOriginalChannel.isEmpty() &&
+                        origIdToChannelId.size <= stalkerShortEpgFallbackMaxChannels
+                    ) {
                         System.err.println(
                             "[Stalker-EPG] Portal $portalId: bulk EPG empty, falling back to " +
                                 "get_short_epg for ${origIdToChannelId.size} channels"
                         )
                         val gate = Semaphore(stalkerShortEpgFallbackConcurrency)
-                        val shortEpgResult = ConcurrentLinkedQueue<com.arflix.tv.data.api.StalkerApi.StalkerEpgProgram>()
+                        val shortEpgResult = ConcurrentHashMap<String, List<IptvProgram>>()
                         coroutineScope {
                             origIdToChannelId.keys.map { origId ->
                                 async {
                                     gate.withPermit {
-                                        val channelPrograms = runCatching { api.getShortEpg(origId) }.getOrElse { error ->
-                                            if (error is kotlinx.coroutines.CancellationException) throw error
-                                            emptyList()
+                                        val shortCacheKey = StalkerShortEpgCacheKey(portalCacheKey, origId)
+                                        val cachedShort = stalkerShortEpgCache[shortCacheKey]
+                                        val channelPrograms = if (
+                                            cachedShort != null &&
+                                            nowMs - cachedShort.fetchedAtMs < stalkerShortEpgCacheTtlMs
+                                        ) {
+                                            cachedShort.programs
+                                        } else {
+                                            val fetched = runCatching { api.getShortEpg(origId) }.getOrElse { error ->
+                                                if (error is kotlinx.coroutines.CancellationException) throw error
+                                                emptyList()
+                                            }
+                                            val compact = compactStalkerProgramsByChannel(fetched, nowMs)[origId].orEmpty()
+                                            stalkerShortEpgCache[shortCacheKey] =
+                                                StalkerShortEpgCacheEntry(nowMs, compact)
+                                            compact
                                         }
-                                        shortEpgResult.addAll(channelPrograms)
+                                        shortEpgResult[origId] = channelPrograms
                                     }
                                 }
                             }.awaitAll()
                         }
-                        programs = shortEpgResult.toList()
+                        programsByOriginalChannel = shortEpgResult
                         System.err.println(
-                            "[Stalker-EPG] Portal $portalId: get_short_epg fallback returned ${programs.size} raw entries"
+                            "[Stalker-EPG] Portal $portalId: get_short_epg fallback retained " +
+                                "${programsByOriginalChannel.count { it.value.isNotEmpty() }} channels"
                         )
                     }
-                    if (programs.isEmpty()) return@async
+                    if (programsByOriginalChannel.isEmpty()) return@async
 
-                    val byChannel = LinkedHashMap<String, MutableList<IptvProgram>>()
                     var skippedUnknownChannel = 0
-                    var skippedBadTimestamp = 0
-                    for (p in programs) {
-                        val channelId = p.chId?.let { origIdToChannelId[it] }
+                    programsByOriginalChannel.forEach { (originalChannelId, channelPrograms) ->
+                        val channelId = origIdToChannelId[originalChannelId]
                         if (channelId == null) {
-                            skippedUnknownChannel++
-                            continue
+                            skippedUnknownChannel += channelPrograms.size
+                            return@forEach
                         }
-                        val startMs = p.startTimestamp?.toLongOrNull()?.let { it * 1000L }
-                        val stopMs = p.stopTimestamp?.toLongOrNull()?.let { it * 1000L }
-                        if (startMs == null || stopMs == null || stopMs <= startMs) {
-                            skippedBadTimestamp++
-                            continue
-                        }
-                        byChannel.getOrPut(channelId) { mutableListOf() } += IptvProgram(
-                            title = p.name?.takeIf { it.isNotBlank() } ?: context.getString(R.string.program_no_title),
-                            description = p.descr?.takeIf { it.isNotBlank() },
-                            startUtcMillis = startMs,
-                            endUtcMillis = stopMs
-                        )
-                    }
-                    System.err.println(
-                        "[Stalker-EPG] Portal $portalId: matched ${byChannel.size} channels, " +
-                            "skippedUnknownChannel=$skippedUnknownChannel skippedBadTimestamp=$skippedBadTimestamp " +
-                            "sampleReturnedChIds=${programs.take(3).map { it.chId }} sampleExpectedIds=${origIdToChannelId.keys.take(3)}"
-                    )
-                    byChannel.forEach { (channelId, channelPrograms) ->
                         stalkerNowNextFromPrograms(channelPrograms, nowMs)?.let { merged[channelId] = it }
                     }
+                    System.err.println(
+                        "[Stalker-EPG] Portal $portalId: matched ${merged.size} channels, " +
+                            "skippedUnknownChannel=$skippedUnknownChannel"
+                    )
                 }
             }.awaitAll()
         }
         System.err.println("[Stalker-EPG] fetchStalkerEpgForActivePortals result: ${merged.size} channels with data")
         return merged
+    }
+
+    private fun compactStalkerProgramsByChannel(
+        programs: List<com.arflix.tv.data.api.StalkerApi.StalkerEpgProgram>,
+        nowMs: Long
+    ): Map<String, List<IptvProgram>> {
+        val byChannel = LinkedHashMap<String, MutableList<IptvProgram>>()
+        programs.forEach { program ->
+            val channelId = program.chId?.takeIf { it.isNotBlank() } ?: return@forEach
+            val startMs = program.startTimestamp?.toLongOrNull()?.let { it * 1000L } ?: return@forEach
+            val stopMs = program.stopTimestamp?.toLongOrNull()?.let { it * 1000L } ?: return@forEach
+            if (stopMs <= startMs || stopMs <= nowMs) return@forEach
+            byChannel.getOrPut(channelId) { mutableListOf() } += IptvProgram(
+                title = program.name?.takeIf { it.isNotBlank() }
+                    ?: context.getString(R.string.program_no_title),
+                description = program.descr?.takeIf { it.isNotBlank() },
+                startUtcMillis = startMs,
+                endUtcMillis = stopMs
+            )
+        }
+        return byChannel.mapValues { (_, channelPrograms) ->
+            channelPrograms.sortedBy { it.startUtcMillis }
+        }
     }
 
     /**
