@@ -1,10 +1,11 @@
 
 <div align="center">
 
-  <img src="https://raw.githubusercontent.com/ProdigyV21/ARVIO/e26d2ee1b65aaf1b4a9606bf1c4c6db20d286ba9/web/public/arvio-logo.svg" alt="ARVIO" width="150" />
+  <img src="web/public/arvio-logo.svg" alt="ARVIO" width="150" />
+
   <br />
 
-  <p><strong>A modern, open-source media hub for Android TV, phones, and tablets.</strong></p>
+  <p>A modern, open-source media hub for Android TV, phones, tablets, and the web.</p>
 
   <p>
     Browse your own media sources with a unified experience across your devices.
@@ -31,19 +32,19 @@
   <img src="https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin" />
   <img src="https://img.shields.io/badge/Jetpack%20Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose" />
 
-<br>
-<br>
+  <br />
+  <br />
 
-<a href="https://trendshift.io/repositories/28671?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-28671" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/28671/weekly?language=Kotlin" alt="ProdigyV21%2FARVIO | Trendshift" width="250" height="55"/></a>
+  <a href="https://web.arvio.tv">
+    <img src="https://img.shields.io/badge/ARVIO-Web%20App-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="ARVIO Web App" />
+  </a>
 
-<br />
-<br />
+  <br />
+  <br />
 
 </div>
 
 ---
-
-
 
 # ARVIO
 
@@ -52,6 +53,8 @@ ARVIO is an Android media hub for TV, phone, and tablet form factors. This repos
 The app provides a media browser, player shell, profile support, optional cloud sync, IPTV playlist support, catalog configuration, home-server integrations, and integrations with user-configured sources. ARVIO does not host, store, sell, or distribute movies, series, live TV channels, playlists, streams, or other third-party media.
 
 ## Repository Purpose
+
+
 
 This GitHub repository is for:
 
