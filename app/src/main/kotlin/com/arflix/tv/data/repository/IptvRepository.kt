@@ -250,6 +250,33 @@ class IptvRepository @Inject constructor(
     @Volatile
     private var cachedStalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi> = emptyMap()
 
+    private data class StalkerEpgPortalCacheKey(
+        val portalId: String,
+        val apiIdentity: String
+    )
+
+    /** Compact, timestamp-safe guide slices produced from the streamed bulk response. */
+    private data class StalkerEpgCacheEntry(
+        val fetchedAtMs: Long,
+        val programsByChannel: Map<String, List<IptvProgram>>
+    )
+
+    private data class StalkerShortEpgCacheKey(
+        val portal: StalkerEpgPortalCacheKey,
+        val originalChannelId: String
+    )
+
+    private data class StalkerShortEpgCacheEntry(
+        val fetchedAtMs: Long,
+        val programs: List<IptvProgram>
+    )
+
+    private val stalkerEpgCache = ConcurrentHashMap<StalkerEpgPortalCacheKey, StalkerEpgCacheEntry>()
+    private val stalkerShortEpgCache = ConcurrentHashMap<StalkerShortEpgCacheKey, StalkerShortEpgCacheEntry>()
+    private val stalkerEpgCacheTtlMs = 5 * 60 * 1000L
+    private val stalkerShortEpgCacheTtlMs = 2 * 60 * 1000L
+    private val stalkerBulkProgramsPerChannelLimit = 16
+
     /**
      * Public accessor kept for compatibility with code that previously read the
      * single cached Stalker API instance. Returns the first cached portal API.
@@ -440,6 +467,16 @@ class IptvRepository @Inject constructor(
     private val fullCatchupHistoryChannelLimit = 4
     private val xtreamShortEpgBatchSize = 1024
     private val xtreamShortEpgConcurrency = 64
+
+    // Per-channel `get_short_epg` fallback (portals whose bulk EPG actions return
+    // nothing, e.g. get_simple_data_table/get_epg_info both empty - confirmed
+    // live). Only worth doing for small batches (the on-demand visible-guide
+    // refresh, typically tens of channels); a full-catalog backfill can be
+    // thousands of channels and would hammer the portal with that many
+    // individual requests, so it's skipped above this cap and that batch
+    // simply gets no EPG until it's requested via the on-demand path instead.
+    private val stalkerShortEpgFallbackMaxChannels = 100
+    private val stalkerShortEpgFallbackConcurrency = 8
     private val cacheUpcomingProgramLimit = 48
     private val cacheRecentProgramLimit = 1
     private val cacheCatchupRecentProgramLimit = 96
@@ -1853,10 +1890,25 @@ class IptvRepository @Inject constructor(
                 cachedChannels = stalkerChannels
                 cachedGroupedChannels = grouped
                 cachedStalkerApis = stalkerApis
+                System.err.println(
+                    "[EPG] loadSnapshot Stalker-only: allowNetworkEpgFetch=$allowNetworkEpgFetch " +
+                        "apis=${stalkerApis.keys} channels=${stalkerChannels.size}"
+                )
+                val stalkerNowNext = if (allowNetworkEpgFetch) {
+                    val fresh = runCatching {
+                        fetchStalkerEpgForActivePortals(stalkerApis, stalkerChannels)
+                    }.getOrDefault(emptyMap())
+                    if (fresh.isNotEmpty()) persistEpgIndexChannels(config, fresh, System.currentTimeMillis())
+                    fresh
+                } else {
+                    runCatching {
+                        epgIndex.loadNowNext(currentEpgIndexKey(config), stalkerChannels.asSequence().map { it.id }.toSet())
+                    }.getOrDefault(emptyMap())
+                }
                 val snapshot = IptvSnapshot(
                     channels = stalkerChannels,
                     grouped = grouped,
-                    nowNext = emptyMap(),
+                    nowNext = stalkerNowNext,
                     favoriteGroups = favGroups,
                     favoriteChannels = favChannels,
                     hiddenGroups = hiddenGroups,
@@ -2259,6 +2311,46 @@ class IptvRepository @Inject constructor(
                 }
                 resolvedNowNext
             }
+
+            // Stalker channels never had an epgCandidate/Xtream path above, so merge
+            // their now/next data in here — additive only, never overwrites data the
+            // M3U/Xtream/XMLTV resolution above already found for a channel (C1/C4/C6).
+            val stalkerChannelsInSnapshot = if (stalkerPortals.isNotEmpty()) {
+                channels.filter { StalkerPortalSupport.portalIdFromChannelId(it.id) != null }
+            } else {
+                emptyList()
+            }
+            val stalkerNowNextHybrid = if (stalkerChannelsInSnapshot.isNotEmpty()) {
+                if (allowNetworkEpgFetch) {
+                    val fresh = runCatching {
+                        fetchStalkerEpgForActivePortals(cachedStalkerApis, stalkerChannelsInSnapshot)
+                    }.getOrDefault(emptyMap())
+                    if (fresh.isNotEmpty()) {
+                        persistEpgIndexChannels(config, fresh, System.currentTimeMillis())
+                        epgUpdated = true
+                    }
+                    fresh
+                } else {
+                    runCatching {
+                        epgIndex.loadNowNext(
+                            currentEpgIndexKey(config),
+                            stalkerChannelsInSnapshot.asSequence().map { it.id }.toSet()
+                        )
+                    }.getOrDefault(emptyMap())
+                }
+            } else {
+                emptyMap()
+            }
+            val finalNowNext = if (stalkerNowNextHybrid.isEmpty()) {
+                nowNext
+            } else {
+                HashMap(nowNext).apply {
+                    stalkerNowNextHybrid.forEach { (channelId, value) ->
+                        if (!hasProgramData(this[channelId])) this[channelId] = value
+                    }
+                }
+            }
+
             val epgFailure = epgFailureMessage
             val epgWarning = if (epgCandidates.isNotEmpty() && nowNext.isEmpty()) {
                 if (!epgFailure.isNullOrBlank()) {
@@ -2285,7 +2377,7 @@ class IptvRepository @Inject constructor(
             IptvSnapshot(
                 channels = channels,
                 grouped = grouped,
-                nowNext = nowNext,
+                nowNext = finalNowNext,
                 favoriteGroups = favoriteGroups,
                 favoriteChannels = favoriteChannels,
                 hiddenGroups = hiddenGroups,
@@ -2297,7 +2389,7 @@ class IptvRepository @Inject constructor(
                     writeCache(
                         config = config,
                         channels = channels,
-                        nowNext = nowNext,
+                        nowNext = finalNowNext,
                         loadedAtMs = System.currentTimeMillis()
                     )
                 }
@@ -2686,6 +2778,7 @@ class IptvRepository @Inject constructor(
                 channelIds
             }
             val channels = channelsForEpgRefresh(requested)
+            System.err.println("[EPG-Refresh] refreshEpgForChannels: requested=${requested.size} resolved=${channels.size}")
             if (channels.isEmpty()) return@withContext null
 
             val activePlaylistById = activePlaylists(config).associateBy { it.id }
@@ -2817,6 +2910,30 @@ class IptvRepository @Inject constructor(
                     mergedNowNext.putAll(freshNowNext)
                 }
             }
+
+            // Stalker channels never have Xtream credentials, so the loop above never
+            // touches them - without this they'd silently fall through to the XMLTV
+            // fallback below (which also can't help them) and this on-demand refresh,
+            // used all over the visible guide/grid, would return nothing for them.
+            val stalkerRequestedChannels = channels.filter {
+                StalkerPortalSupport.portalIdFromChannelId(it.id) != null
+            }
+            System.err.println(
+                "[EPG-Refresh] refreshEpgForChannels: batch=${channels.size} " +
+                    "stalkerChannels=${stalkerRequestedChannels.size} cachedStalkerApis=${cachedStalkerApis.keys}"
+            )
+            if (stalkerRequestedChannels.isNotEmpty()) {
+                val stalkerFresh = runCatching {
+                    fetchStalkerEpgForActivePortals(cachedStalkerApis, stalkerRequestedChannels)
+                }.getOrElse { error ->
+                    System.err.println("[EPG-Refresh] fetchStalkerEpgForActivePortals threw: ${error.message}")
+                    emptyMap()
+                }
+                if (stalkerFresh.isNotEmpty()) {
+                    mergedNowNext.putAll(stalkerFresh)
+                }
+            }
+
             val missingXmlChannels = channels.filter { channel ->
                 !hasProgramData(mergedNowNext[channel.id])
             }
@@ -3121,6 +3238,8 @@ class IptvRepository @Inject constructor(
         cachedNowNext = ConcurrentHashMap()
         cachedPlaylistAt = 0L
         cachedEpgAt = 0L
+        stalkerEpgCache.clear()
+        stalkerShortEpgCache.clear()
         discoveredM3uEpgUrls.clear()
         xtreamVodCacheKey = null
         xtreamVodLoadedAtMs = 0L
@@ -6294,6 +6413,185 @@ class IptvRepository @Inject constructor(
             }
         }
         return merged.takeIf { hasAnyProgramData(it) }
+    }
+
+    /**
+     * Fetches now/next EPG data from every active Stalker portal and returns it keyed by
+     * the same `stalker:<portalId>:<origId>` channel ids the portal's channel list already
+     * uses (see [StalkerPortalSupport]) — no separate EPG-index source key needed, isolation
+     * comes from the channel id prefix like everywhere else.
+     */
+    internal suspend fun fetchStalkerEpgForActivePortals(
+        stalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi>,
+        stalkerChannels: List<IptvChannel>
+    ): Map<String, IptvNowNext> {
+        System.err.println("[Stalker-EPG] fetchStalkerEpgForActivePortals called: apis=${stalkerApis.keys} channels=${stalkerChannels.size}")
+        if (stalkerApis.isEmpty() || stalkerChannels.isEmpty()) {
+            System.err.println("[Stalker-EPG] Nothing to fetch (apis or channels empty), returning early")
+            return emptyMap()
+        }
+        val nowMs = System.currentTimeMillis()
+        val merged = ConcurrentHashMap<String, IptvNowNext>()
+        coroutineScope {
+            stalkerApis.entries.map { (portalId, api) ->
+                async {
+                    val portalChannels = stalkerChannels.filter {
+                        StalkerPortalSupport.portalIdFromChannelId(it.id) == portalId
+                    }
+                    if (portalChannels.isEmpty()) {
+                        System.err.println("[Stalker-EPG] Portal $portalId: no channels in batch, skipping")
+                        return@async
+                    }
+                    // Stalker's ch_id is the portal's own numeric id, i.e. the last
+                    // segment of our "stalker:<portalId>:<origId>" channel id.
+                    val origIdToChannelId = portalChannels.associateBy(
+                        keySelector = { it.id.substringAfterLast(':') },
+                        valueTransform = { it.id }
+                    )
+                    val portalCacheKey = StalkerEpgPortalCacheKey(portalId, api.epgCacheIdentity)
+                    val cachedBulk = stalkerEpgCache[portalCacheKey]
+                    var programsByOriginalChannel = if (
+                        cachedBulk != null && nowMs - cachedBulk.fetchedAtMs < stalkerEpgCacheTtlMs
+                    ) {
+                        System.err.println(
+                            "[Stalker-EPG] Portal $portalId: using cached getEpg() result " +
+                                "(${cachedBulk.programsByChannel.size} channels, age=${nowMs - cachedBulk.fetchedAtMs}ms)"
+                        )
+                        cachedBulk.programsByChannel
+                    } else {
+                        System.err.println("[Stalker-EPG] Portal $portalId: requesting getEpg() for ${portalChannels.size} channels")
+                        val fetched = runCatching {
+                            api.getEpg(
+                                notBeforeEpochSeconds = nowMs / 1000L,
+                                maxProgramsPerChannel = stalkerBulkProgramsPerChannelLimit
+                            )
+                        }.getOrElse { error ->
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            System.err.println("[Stalker-EPG] Portal $portalId EPG fetch failed: ${error.message}")
+                            emptyList()
+                        }
+                        val compact = compactStalkerProgramsByChannel(fetched, nowMs)
+                        stalkerEpgCache[portalCacheKey] = StalkerEpgCacheEntry(nowMs, compact)
+                        compact
+                    }
+                    System.err.println(
+                        "[Stalker-EPG] Portal $portalId: getEpg() retained " +
+                            "${programsByOriginalChannel.size} channels"
+                    )
+
+                    // Bulk EPG actions confirmed empty on some portal builds -
+                    // fall back to get_short_epg per channel. Only for small
+                    // batches (see stalkerShortEpgFallbackMaxChannels comment).
+                    if (
+                        programsByOriginalChannel.isEmpty() &&
+                        origIdToChannelId.size <= stalkerShortEpgFallbackMaxChannels
+                    ) {
+                        System.err.println(
+                            "[Stalker-EPG] Portal $portalId: bulk EPG empty, falling back to " +
+                                "get_short_epg for ${origIdToChannelId.size} channels"
+                        )
+                        val gate = Semaphore(stalkerShortEpgFallbackConcurrency)
+                        val shortEpgResult = ConcurrentHashMap<String, List<IptvProgram>>()
+                        coroutineScope {
+                            origIdToChannelId.keys.map { origId ->
+                                async {
+                                    gate.withPermit {
+                                        val shortCacheKey = StalkerShortEpgCacheKey(portalCacheKey, origId)
+                                        val cachedShort = stalkerShortEpgCache[shortCacheKey]
+                                        val channelPrograms = if (
+                                            cachedShort != null &&
+                                            nowMs - cachedShort.fetchedAtMs < stalkerShortEpgCacheTtlMs
+                                        ) {
+                                            cachedShort.programs
+                                        } else {
+                                            val fetched = runCatching { api.getShortEpg(origId) }.getOrElse { error ->
+                                                if (error is kotlinx.coroutines.CancellationException) throw error
+                                                emptyList()
+                                            }
+                                            val compact = compactStalkerProgramsByChannel(fetched, nowMs)[origId].orEmpty()
+                                            stalkerShortEpgCache[shortCacheKey] =
+                                                StalkerShortEpgCacheEntry(nowMs, compact)
+                                            compact
+                                        }
+                                        shortEpgResult[origId] = channelPrograms
+                                    }
+                                }
+                            }.awaitAll()
+                        }
+                        programsByOriginalChannel = shortEpgResult
+                        System.err.println(
+                            "[Stalker-EPG] Portal $portalId: get_short_epg fallback retained " +
+                                "${programsByOriginalChannel.count { it.value.isNotEmpty() }} channels"
+                        )
+                    }
+                    if (programsByOriginalChannel.isEmpty()) return@async
+
+                    var skippedUnknownChannel = 0
+                    programsByOriginalChannel.forEach { (originalChannelId, channelPrograms) ->
+                        val channelId = origIdToChannelId[originalChannelId]
+                        if (channelId == null) {
+                            skippedUnknownChannel += channelPrograms.size
+                            return@forEach
+                        }
+                        stalkerNowNextFromPrograms(channelPrograms, nowMs)?.let { merged[channelId] = it }
+                    }
+                    System.err.println(
+                        "[Stalker-EPG] Portal $portalId: matched ${merged.size} channels, " +
+                            "skippedUnknownChannel=$skippedUnknownChannel"
+                    )
+                }
+            }.awaitAll()
+        }
+        System.err.println("[Stalker-EPG] fetchStalkerEpgForActivePortals result: ${merged.size} channels with data")
+        return merged
+    }
+
+    private fun compactStalkerProgramsByChannel(
+        programs: List<com.arflix.tv.data.api.StalkerApi.StalkerEpgProgram>,
+        nowMs: Long
+    ): Map<String, List<IptvProgram>> {
+        val byChannel = LinkedHashMap<String, MutableList<IptvProgram>>()
+        programs.forEach { program ->
+            val channelId = program.chId?.takeIf { it.isNotBlank() } ?: return@forEach
+            val startMs = program.startTimestamp?.toLongOrNull()?.let { it * 1000L } ?: return@forEach
+            val stopMs = program.stopTimestamp?.toLongOrNull()?.let { it * 1000L } ?: return@forEach
+            if (stopMs <= startMs || stopMs <= nowMs) return@forEach
+            byChannel.getOrPut(channelId) { mutableListOf() } += IptvProgram(
+                title = program.name?.takeIf { it.isNotBlank() }
+                    ?: context.getString(R.string.program_no_title),
+                description = program.descr?.takeIf { it.isNotBlank() },
+                startUtcMillis = startMs,
+                endUtcMillis = stopMs
+            )
+        }
+        return byChannel.mapValues { (_, channelPrograms) ->
+            channelPrograms.sortedBy { it.startUtcMillis }
+        }
+    }
+
+    /**
+     * Compacts one channel's programs into a now/next slice. Unlike the Xtream/XMLTV
+     * paths this keeps no "recent" history — Stalker catchup isn't in scope here (K10).
+     */
+    internal fun stalkerNowNextFromPrograms(programs: List<IptvProgram>, nowMs: Long): IptvNowNext? {
+        val sorted = programs.sortedBy { it.startUtcMillis }
+        var now: IptvProgram? = null
+        var next: IptvProgram? = null
+        var later: IptvProgram? = null
+        val upcoming = mutableListOf<IptvProgram>()
+        for (p in sorted) {
+            when {
+                p.isLive(nowMs) -> now = p
+                p.startUtcMillis > nowMs && next == null -> next = p
+                p.startUtcMillis > nowMs && later == null -> later = p
+                p.startUtcMillis > nowMs -> {
+                    upcoming.add(p)
+                    if (upcoming.size >= epgUpcomingProgramLimit) break
+                }
+            }
+        }
+        if (now == null && next == null && later == null && upcoming.isEmpty()) return null
+        return IptvNowNext(now = now, next = next, later = later, upcoming = upcoming)
     }
 
     private fun addChannelIdToLookup(
