@@ -1057,8 +1057,12 @@ class TvViewModel @Inject constructor(
             )
             return
         }
+        // Stalker channels never carry epgId/tvgName (M3U/Xtream identity fields) - they're
+        // matched by channel id instead (see StalkerApi.getEpg/IptvRepository), so treat a
+        // Stalker channel id as its own "has identity for guide backfill" signal too.
         if (!force && channels.none { channel ->
-                !channel.epgId.isNullOrBlank() || !channel.tvgName.isNullOrBlank()
+                !channel.epgId.isNullOrBlank() || !channel.tvgName.isNullOrBlank() ||
+                    StalkerPortalSupport.portalIdFromChannelId(channel.id) != null
             }
         ) {
             AppLogger.breadcrumb(
