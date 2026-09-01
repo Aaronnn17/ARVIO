@@ -332,13 +332,18 @@ fun TvScreen(
         }
     }
 
-    BackHandler(enabled = isMobile && isFullScreen) {
-        if (showFullscreenOverlay) {
-            showFullscreenOverlay = false
-        } else {
-            // Always return to EPG guide first, regardless of how we got here
-            isFullScreen = false
-            showFullscreenOverlay = false
+    BackHandler(enabled = showGroupContextMenu || isFullScreen || !isMobile) {
+        when {
+            showGroupContextMenu -> showGroupContextMenu = false
+            isFullScreen && showFullscreenOverlay -> showFullscreenOverlay = false
+            isFullScreen -> {
+                // Always return to EPG guide first, regardless of how we got here.
+                isFullScreen = false
+                showFullscreenOverlay = false
+            }
+            focusZone == TvFocusZone.GUIDE -> focusZone = TvFocusZone.GROUPS
+            focusZone == TvFocusZone.GROUPS -> focusZone = TvFocusZone.SIDEBAR
+            else -> onBack()
         }
     }
 
@@ -700,14 +705,12 @@ fun TvScreen(
 
     LaunchedEffect(playingChannelId, playingChannel?.streamUrl) {
         var stream = playingChannel?.streamUrl ?: return@LaunchedEffect
+        val playingId = playingChannel?.id
         if (isPlayerReleased) return@LaunchedEffect
-        // Resolve Stalker portal cmd to actual stream URL
-        if (stream.startsWith("ffmpeg") || (stream.startsWith("/") && !stream.startsWith("//"))) {
-            val stalker = viewModel.iptvRepository.cachedStalkerApi
-            if (stalker != null) {
-                val resolved = stalker.resolveStreamUrl(stream)
-                if (resolved != null) stream = resolved else return@LaunchedEffect
-            }
+        // Resolve Stalker portal cmd to an authenticated stream URL.
+        if (playingId?.startsWith("stalker:") == true) {
+            val resolved = viewModel.iptvRepository.resolveStalkerStreamUrl(playingId, stream)
+            if (resolved != null) stream = resolved else return@LaunchedEffect
         }
         if (stream == lastPreparedStreamUrl) return@LaunchedEffect
         if (exoPlayer == null) {

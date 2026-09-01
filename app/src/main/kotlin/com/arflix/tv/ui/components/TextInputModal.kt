@@ -5,6 +5,7 @@ import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -117,7 +118,7 @@ fun TextInputModal(
     // Request focus on input when modal becomes visible and show keyboard
     LaunchedEffect(isVisible) {
         if (isVisible) {
-            inputFocusRequester.requestFocus()
+            runCatching { inputFocusRequester.requestFocus() }
             focusedButton = -1
             // Delay to ensure focus is set before showing keyboard
             kotlinx.coroutines.delay(200)
@@ -125,6 +126,11 @@ fun TextInputModal(
         } else {
             hideKeyboard()
         }
+    }
+
+    BackHandler(enabled = isVisible) {
+        hideKeyboard()
+        onCancel()
     }
 
     AnimatedVisibility(
@@ -154,7 +160,7 @@ fun TextInputModal(
                             Key.DirectionUp -> {
                                 if (focusedButton >= 0) {
                                     focusedButton = -1
-                                    inputFocusRequester.requestFocus()
+                                    runCatching { inputFocusRequester.requestFocus() }
                                     showKeyboard()
                                 }
                                 true

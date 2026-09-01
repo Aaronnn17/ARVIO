@@ -7,6 +7,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import com.arflix.tv.util.findActivity
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
@@ -137,6 +138,7 @@ import coil.compose.AsyncImage
 import com.arflix.tv.ArflixApplication
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.EpisodeIdentity
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.ui.components.KeepScreenOn
@@ -243,6 +245,10 @@ fun PlayerScreen(
     mediaId: Int,
     seasonNumber: Int? = null,
     episodeNumber: Int? = null,
+    tmdbSeasonNumber: Int? = seasonNumber,
+    tmdbEpisodeNumber: Int? = episodeNumber,
+    kitsuId: Int? = null,
+    kitsuEpisodeNumber: Int? = null,
     imdbId: String? = null,
     streamUrl: String? = null,
     preferredAddonId: String? = null,
@@ -252,7 +258,7 @@ fun PlayerScreen(
     isLiveStream: Boolean = false,
     viewModel: PlayerViewModel = hiltViewModel(),
     onBack: () -> Unit = {},
-    onPlayNext: (Int, Int, String?, String?, String?) -> Unit = { _, _, _, _, _ -> }
+    onPlayNext: (EpisodeIdentity, String?, String?, String?) -> Unit = { _, _, _, _ -> }
 ) {
     val playerAccent = LocalAccentColorOverride.current ?: Color.White
     val context = LocalContext.current
@@ -335,8 +341,14 @@ fun PlayerScreen(
         }
         onDispose {
             if (window != null && deviceType != com.arflix.tv.util.DeviceType.TV) {
+                @Suppress("DEPRECATION")
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
                 val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
+                controller.systemBarsBehavior =
+                    androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
                 controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                controller.isAppearanceLightStatusBars = false
+                controller.isAppearanceLightNavigationBars = false
             }
         }
     }
@@ -345,6 +357,13 @@ fun PlayerScreen(
     DisposableEffect(deviceType) {
         castManager.initialize(isMobile = deviceType.isTouchDevice())
         onDispose { }
+    }
+
+    // Discord RPC cleanup on player screen exit
+    DisposableEffect(Unit) {
+        onDispose {
+            com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.disconnect()
+        }
     }
 
     KeepScreenOn()
@@ -356,6 +375,8 @@ fun PlayerScreen(
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var progress by remember { mutableFloatStateOf(0f) }
+    var currentPlaybackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
+    var nextEpisodeTransitionInProgress by remember { mutableStateOf(false) }
 
     // Skip overlay state - shows +10/-10 without showing full controls
     var skipAmount by remember { mutableIntStateOf(0) }
@@ -400,18 +421,104 @@ fun PlayerScreen(
     // advance to the next episode. Gated on the existing autoPlayNext profile setting —
     // when disabled we simply stay on the ended frame rather than advancing silently.
     var showNextEpisodePrompt by remember { mutableStateOf(false) }
-    var pendingNextSeason by remember { mutableIntStateOf(0) }
-    var pendingNextEpisode by remember { mutableIntStateOf(0) }
+    var pendingNextIdentity by remember { mutableStateOf<EpisodeIdentity?>(null) }
     var pendingNextAddonId by remember { mutableStateOf<String?>(null) }
     var pendingNextSourceName by remember { mutableStateOf<String?>(null) }
     var pendingNextBingeGroup by remember { mutableStateOf<String?>(null) }
+    var nextEpisodeIdentity by remember { mutableStateOf<EpisodeIdentity?>(null) }
+    var nextEpisodeAirDateSource by remember { mutableStateOf<PlaybackEpisodeKey?>(null) }
+    var nextEpisodeAirDateResolution by remember {
+        mutableStateOf<NextEpisodeAirDateResolution>(NextEpisodeAirDateResolution.Pending)
+    }
+    var previousEpisodeIdentity by remember { mutableStateOf<EpisodeIdentity?>(null) }
+    LaunchedEffect(mediaType, mediaId, seasonNumber, episodeNumber, tmdbSeasonNumber, tmdbEpisodeNumber, kitsuId, kitsuEpisodeNumber) {
+        nextEpisodeIdentity = null
+        nextEpisodeAirDateSource = if (
+            mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null
+        ) {
+            PlaybackEpisodeKey(
+                mediaId = mediaId,
+                seasonNumber = seasonNumber,
+                episodeNumber = episodeNumber,
+                tmdbSeasonNumber = tmdbSeasonNumber ?: seasonNumber,
+                tmdbEpisodeNumber = tmdbEpisodeNumber ?: episodeNumber,
+                kitsuId = kitsuId,
+                kitsuEpisodeNumber = kitsuEpisodeNumber,
+            )
+        } else {
+            null
+        }
+        nextEpisodeAirDateResolution = NextEpisodeAirDateResolution.Pending
+        if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null) {
+            val current = EpisodeIdentity(
+                displaySeason = seasonNumber,
+                displayEpisode = episodeNumber,
+                tmdbSeason = tmdbSeasonNumber ?: seasonNumber,
+                tmdbEpisode = tmdbEpisodeNumber ?: episodeNumber,
+                kitsuId = kitsuId,
+                kitsuEpisode = kitsuEpisodeNumber
+            )
+            val next = viewModel.adjacentEpisodeIdentity(mediaId, current, forward = true)
+            nextEpisodeIdentity = next
+            previousEpisodeIdentity = viewModel.adjacentEpisodeIdentity(mediaId, current, forward = false)
+            nextEpisodeAirDateResolution = if (next == null) {
+                NextEpisodeAirDateResolution.Blocked(
+                    NextEpisodeAirDateBlockReason.MissingEpisode,
+                )
+            } else {
+                viewModel.resolveNextEpisodeAirDate(mediaId, next)
+            }
+        } else {
+            nextEpisodeAirDateResolution = NextEpisodeAirDateResolution.Blocked(
+                NextEpisodeAirDateBlockReason.MissingEpisode,
+            )
+            previousEpisodeIdentity = null
+        }
+    }
     var nextEpisodePromptButton by remember { mutableIntStateOf(0) } // 0 = next, 1 = cancel
     val nextEpisodePromptGate = remember { NextEpisodePromptGate() }
-    val playPendingNextEpisode: () -> Unit = {
+    val playNextEpisode: (EpisodeIdentity, String?, String?, String?) -> Unit =
+        { nextIdentity, nextAddonId, nextSourceName, nextBingeGroup ->
+            if (!nextEpisodeTransitionInProgress) {
+                nextEpisodeTransitionInProgress = true
+
+                val positionSnapshot = currentPosition
+                val durationSnapshot = duration
+                val playbackStateSnapshot = currentPlaybackState
+                val progressPercentSnapshot = if (durationSnapshot > 0L) {
+                    ((positionSnapshot.toDouble() / durationSnapshot.toDouble()) * 100.0)
+                        .toInt()
+                        .coerceIn(0, 100)
+                } else {
+                    0
+                }
+
+                coroutineScope.launch {
+                    runCatching {
+                        viewModel.saveProgressAndWait(
+                            position = positionSnapshot,
+                            duration = durationSnapshot,
+                            progressPercent = progressPercentSnapshot,
+                            isPlaying = false,
+                            playbackState = playbackStateSnapshot
+                        )
+                    }
+
+                    onPlayNext(
+                        nextIdentity,
+                        nextAddonId,
+                        nextSourceName,
+                        nextBingeGroup
+                    )
+                }
+            }
+        }
+
+    val playPendingNextEpisode: () -> Unit = playNext@{
         showNextEpisodePrompt = false
-        onPlayNext(
-            pendingNextSeason,
-            pendingNextEpisode,
+        val identity = pendingNextIdentity ?: return@playNext
+        playNextEpisode(
+            identity,
             pendingNextAddonId,
             pendingNextSourceName,
             pendingNextBingeGroup
@@ -643,7 +750,7 @@ fun PlayerScreen(
     }
 
     // Load media
-    LaunchedEffect(mediaType, mediaId, seasonNumber, episodeNumber, imdbId, preferredAddonId, preferredSourceName, preferredBingeGroup, startPositionMs, isLiveStream) {
+    LaunchedEffect(mediaType, mediaId, seasonNumber, episodeNumber, tmdbSeasonNumber, tmdbEpisodeNumber, kitsuId, kitsuEpisodeNumber, imdbId, preferredAddonId, preferredSourceName, preferredBingeGroup, startPositionMs, isLiveStream) {
         playbackIssueReported = false
         startupRecoverAttempted = false
         startupHardFailureReported = false
@@ -667,8 +774,11 @@ fun PlayerScreen(
         viewModel.loadMedia(
             mediaType = mediaType,
             mediaId = mediaId,
-            seasonNumber = seasonNumber,
-            episodeNumber = episodeNumber,
+            seasonNumber = tmdbSeasonNumber,
+            episodeNumber = tmdbEpisodeNumber,
+            displaySeasonNumber = seasonNumber,
+            displayEpisodeNumber = episodeNumber,
+            animeQueryOverride = kitsuId?.let { id -> kitsuEpisodeNumber?.let { episode -> "kitsu:$id:$episode" } },
             providedImdbId = imdbId,
             providedStreamUrl = streamUrl,
             preferredAddonId = preferredAddonId,
@@ -994,6 +1104,7 @@ fun PlayerScreen(
                 // Add error listener to try next stream on codec errors
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
+                        currentPlaybackState = playbackState
                         val stateStr = when (playbackState) {
                             Player.STATE_IDLE -> "IDLE"
                             Player.STATE_BUFFERING -> "BUFFERING"
@@ -1316,7 +1427,31 @@ fun PlayerScreen(
                                         trackTexts.any { it.contains("songs", ignoreCase = true) && it.contains("sign", ignoreCase = true) }
                                     // Image-based subtitle tracks (PGS/VOBSUB/DVB) carry no text — they
                                     // can't be AI-translated, so flag them to exclude as a translation source.
-                                    val isBitmap = isBitmapSubtitleMime(format.sampleMimeType)
+                                    // MIME is the primary signal, but some containers report a
+                                    // null/generic sampleMimeType for PGS/VOBSUB tracks. Cross-check
+                                    // the label/id the same way isForced does, so an image track can
+                                    // never be picked as the AI translation source.
+                                    // Media3 parses subtitles during extraction and rewrites the
+                                    // sample MIME to application/x-media3-cues, stashing the REAL
+                                    // one in Format.codecs. Reading sampleMimeType alone therefore
+                                    // reports every track as text and lets a PGS/VOBSUB image track
+                                    // be picked as the AI translation source.
+                                    val originalSubtitleMime =
+                                        if (format.sampleMimeType == MimeTypes.APPLICATION_MEDIA3_CUES) {
+                                            format.codecs ?: format.sampleMimeType
+                                        } else {
+                                            format.sampleMimeType
+                                        }
+                                    // Label cross-check only for EMBEDDED tracks: addon labels carry
+                                    // release names (".BluRay.AVC.DTS-HD.MA-PGS"), and a false positive
+                                    // there would drop a perfectly good text sub from the find-best-match
+                                    // candidates, which also consult isBitmap.
+                                    val isBitmap = isBitmapSubtitleMime(originalSubtitleMime) ||
+                                        (!isAddon && trackTexts.any { t ->
+                                            t.contains("pgs", ignoreCase = true) ||
+                                                t.contains("vobsub", ignoreCase = true) ||
+                                                t.contains("dvbsub", ignoreCase = true)
+                                        })
                                     textTracks.add(Subtitle(
                                         id = if (isAddon) {
                                             matched?.id ?: formatTrackId.substringAfter(ADDON_SUB_ID_PREFIX)
@@ -1482,6 +1617,27 @@ fun PlayerScreen(
                 (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
             } else 0f
             isPlaying = castManager.isRemotePlaying()
+            // Update Discord RPC
+            val titleVal = latestUiState.title
+            val subtitleVal = if (mediaType == MediaType.TV) {
+                val epPart = if (seasonNumber != null && episodeNumber != null) "S${seasonNumber}E${episodeNumber}" else ""
+                val epTitle = latestUiState.episodeTitle
+                if (!epTitle.isNullOrBlank()) {
+                    if (epPart.isNotEmpty()) "$epPart - $epTitle" else epTitle
+                } else {
+                    epPart
+                }
+            } else {
+                ""
+            }
+            com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.updatePlayback(
+                title = titleVal ?: "ARVIO",
+                subtitle = subtitleVal,
+                isPlaying = isPlaying,
+                progressMs = currentPosition,
+                durationMs = duration,
+                largeImage = latestUiState.posterUrl ?: latestUiState.logoUrl ?: ""
+            )
             delay(500)
         }
     }
@@ -2103,6 +2259,28 @@ fun PlayerScreen(
             }
             isPlaying = exoPlayer.isPlaying
             isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING
+
+            // Update Discord RPC
+            val titleVal = latestUiState.title
+            val subtitleVal = if (mediaType == MediaType.TV) {
+                val epPart = if (seasonNumber != null && episodeNumber != null) "S${seasonNumber}E${episodeNumber}" else ""
+                val epTitle = latestUiState.episodeTitle
+                if (!epTitle.isNullOrBlank()) {
+                    if (epPart.isNotEmpty()) "$epPart - $epTitle" else epTitle
+                } else {
+                    epPart
+                }
+            } else {
+                ""
+            }
+            com.arflix.tv.ui.screens.details.discord.DiscordRpcManager.updatePlayback(
+                title = titleVal ?: "ARVIO",
+                subtitle = subtitleVal,
+                isPlaying = isPlaying,
+                progressMs = currentPosition,
+                durationMs = duration,
+                largeImage = latestUiState.posterUrl ?: latestUiState.logoUrl ?: ""
+            )
             val loopNowMs = System.currentTimeMillis()
             val readyAndPlaying = exoPlayer.playbackState == Player.STATE_READY && exoPlayer.isPlaying
             if (readyAndPlaying) {
@@ -2333,7 +2511,15 @@ fun PlayerScreen(
                 seasonNumber != null &&
                 episodeNumber != null
             ) {
-                PlaybackEpisodeKey(mediaId, seasonNumber, episodeNumber)
+                PlaybackEpisodeKey(
+                    mediaId = mediaId,
+                    seasonNumber = seasonNumber,
+                    episodeNumber = episodeNumber,
+                    tmdbSeasonNumber = tmdbSeasonNumber ?: seasonNumber,
+                    tmdbEpisodeNumber = tmdbEpisodeNumber ?: episodeNumber,
+                    kitsuId = kitsuId,
+                    kitsuEpisodeNumber = kitsuEpisodeNumber,
+                )
             } else {
                 null
             }
@@ -2344,17 +2530,22 @@ fun PlayerScreen(
                         !showSourceMenu &&
                         !showSubtitleMenu &&
                         uiState.error == null &&
-                        uiState.autoPlayNext,
+                        uiState.autoPlayNext &&
+                        nextEpisodeIdentity != null &&
+                        nextEpisodeAirDateSource == endedEpisodeKey,
+                    airDateResolution = nextEpisodeAirDateResolution,
                 )
             ) {
                 val selected = uiState.selectedStream
-                pendingNextSeason = endedEpisodeKey.seasonNumber
-                pendingNextEpisode = endedEpisodeKey.episodeNumber + 1
-                pendingNextAddonId = selected?.addonId?.takeIf { it.isNotBlank() }
-                pendingNextSourceName = selected?.source?.takeIf { it.isNotBlank() }
-                pendingNextBingeGroup = selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
-                nextEpisodePromptButton = 0
-                showNextEpisodePrompt = true
+                val next = nextEpisodeIdentity
+                if (next != null) {
+                    pendingNextIdentity = next
+                    pendingNextAddonId = selected?.addonId?.takeIf { it.isNotBlank() }
+                    pendingNextSourceName = selected?.source?.takeIf { it.isNotBlank() }
+                    pendingNextBingeGroup = selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                    nextEpisodePromptButton = 0
+                    showNextEpisodePrompt = true
+                }
             }
 
             val tickDelayMs = when {
@@ -2371,22 +2562,24 @@ fun PlayerScreen(
             controlsSeekJob?.cancel()
             playerReleasedAtomic.set(true)
             playerReleased = true
-            runCatching {
-                val safeDuration = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
-                val safeProgressPercent = if (safeDuration > 0L) {
-                    ((exoPlayer.currentPosition.toDouble() / safeDuration.toDouble()) * 100.0)
-                        .toInt()
-                        .coerceIn(0, 100)
-                } else {
-                    0
+            if (!nextEpisodeTransitionInProgress) {
+                runCatching {
+                    val safeDuration = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
+                    val safeProgressPercent = if (safeDuration > 0L) {
+                        ((exoPlayer.currentPosition.toDouble() / safeDuration.toDouble()) * 100.0)
+                            .toInt()
+                            .coerceIn(0, 100)
+                    } else {
+                        0
+                    }
+                    viewModel.saveProgress(
+                        exoPlayer.currentPosition,
+                        safeDuration,
+                        safeProgressPercent,
+                        isPlaying = exoPlayer.isPlaying,
+                        playbackState = exoPlayer.playbackState
+                    )
                 }
-                viewModel.saveProgress(
-                    exoPlayer.currentPosition,
-                    safeDuration,
-                    safeProgressPercent,
-                    isPlaying = exoPlayer.isPlaying,
-                    playbackState = exoPlayer.playbackState
-                )
             }
             runCatching { exoPlayer.release() }
             // Restore the system stream volume if the player left it at zero.
@@ -2490,6 +2683,10 @@ fun PlayerScreen(
         cancelNextEpisodePrompt()
     }
 
+    BackHandler(enabled = uiState.error != null) {
+        onBack()
+    }
+
     BackHandler(
         enabled = !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && !showSubtitleSettings && uiState.error == null
     ) {
@@ -2508,8 +2705,8 @@ fun PlayerScreen(
     val subtitleSizePref = uiState.subtitleSize
     val subtitleColorPref = uiState.subtitleColor
     val subtitleStylePref = uiState.subtitleStyle
+    val subtitleFontPref = uiState.subtitleFont
     val subtitleStylizedPref = uiState.subtitleStylized
-    val subtitleOffsetPref = uiState.subtitleOffset
     val aspectModeLabel = when (playerResizeMode) {
         AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
         AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
@@ -2604,11 +2801,11 @@ fun PlayerScreen(
                         Key.MediaNext -> {
                             // Jump to next episode if this is a TV series and we have a
                             // current episode. No-op for movies (there is no next).
-                            if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null) {
+                            if (mediaType == MediaType.TV && nextEpisodeIdentity != null) {
                                 val selected = uiState.selectedStream
-                                onPlayNext(
-                                    seasonNumber,
-                                    episodeNumber + 1,
+                                val next = nextEpisodeIdentity ?: return@onKeyEvent true
+                                playNextEpisode(
+                                    next,
                                     selected?.addonId?.takeIf { it.isNotBlank() },
                                     selected?.source?.takeIf { it.isNotBlank() },
                                     selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
@@ -2618,11 +2815,11 @@ fun PlayerScreen(
                         }
                         Key.MediaPrevious -> {
                             // Jump to previous episode for TV series. Movies: no-op.
-                            if (mediaType == MediaType.TV && seasonNumber != null && episodeNumber != null && episodeNumber > 1) {
+                            if (mediaType == MediaType.TV && previousEpisodeIdentity != null) {
                                 val selected = uiState.selectedStream
+                                val previous = previousEpisodeIdentity ?: return@onKeyEvent true
                                 onPlayNext(
-                                    seasonNumber,
-                                    episodeNumber - 1,
+                                    previous,
                                     selected?.addonId?.takeIf { it.isNotBlank() },
                                     selected?.source?.takeIf { it.isNotBlank() },
                                     selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
@@ -3001,61 +3198,17 @@ fun PlayerScreen(
 
                         // Enable subtitle view with styling based on user preference
                         subtitleView?.apply {
-                            val subSizeSp = when (subtitleSizePref) {
-                                "Small" -> 18f; "Large" -> 30f; "Extra Large" -> 36f; else -> 24f
-                            }
-                            val subFgColor = when (subtitleColorPref) {
-                                "Yellow" -> android.graphics.Color.YELLOW
-                                "Green" -> android.graphics.Color.GREEN
-                                "Cyan" -> android.graphics.Color.CYAN
-                                else -> android.graphics.Color.WHITE
-                            }
-                            val subTypeface = when (subtitleStylePref) {
-                                "Normal" -> android.graphics.Typeface.DEFAULT
-                                "Background" -> android.graphics.Typeface.DEFAULT_BOLD
-                                else -> android.graphics.Typeface.DEFAULT_BOLD
-                            }
-                            val subEdgeType = when (subtitleStylePref) {
-                                "Normal" -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
-                                "Background" -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
-                                else -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE
-                            }
-                            val subBgColor = when (subtitleStylePref) {
-                                "Background" -> android.graphics.Color.argb(180, 0, 0, 0)
-                                else -> android.graphics.Color.TRANSPARENT
-                            }
-                            setStyle(
-                                androidx.media3.ui.CaptionStyleCompat(
-                                    subFgColor,
-                                    android.graphics.Color.TRANSPARENT,
-                                    subBgColor,
-                                    subEdgeType,
-                                    android.graphics.Color.BLACK,
-                                    subTypeface
-                                )
+                            applySubtitleAppearance(
+                                context = ctx,
+                                sizePreference = subtitleSizePref,
+                                sizePercent = subtitleSizePct,
+                                verticalPercent = subtitleVerticalPct,
+                                colorPreference = subtitleColorPref,
+                                stylePreference = subtitleStylePref,
+                                fontPreference = subtitleFontPref,
+                                preserveEmbeddedStyles = subtitleStylizedPref,
+                                inPictureInPicture = isInPipMode,
                             )
-                            val pipSubScale = if (isInPipMode) 0.4f else 1f
-                            setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, subSizeSp * pipSubScale)
-                            val bottomPaddingFraction = when (subtitleOffsetPref) {
-                                "Bottom" -> 0.02f
-                                "Low" -> 0.08f
-                                "Medium" -> 0.15f
-                                "High" -> 0.25f
-                                else -> 0.02f
-                            }
-                            setBottomPaddingFraction(bottomPaddingFraction)
-
-                            if (subtitleStylizedPref) {
-                                // Stylized mode: let Media3 render embedded ASS/SSA styles
-                                // (colors, fonts, positioning, z-order). User prefs are
-                                // only used as a fallback CaptionStyle for plain SRT/VTT.
-                                setApplyEmbeddedStyles(true)
-                                setApplyEmbeddedFontSizes(true)
-                            } else {
-                                // Uniform mode: override everything with user preferences
-                                setApplyEmbeddedStyles(false)
-                                setApplyEmbeddedFontSizes(false)
-                            }
                         }
                     }
                 },
@@ -3065,12 +3218,17 @@ fun PlayerScreen(
                     playerView.resizeMode = playerResizeMode
                     playerView.setUseVideoFrameForSubtitles(useVideoFrameSubtitleViewport)
                     playerView.subtitleView?.apply {
-                        val baseSizeSp = when (subtitleSizePref) {
-                            "Small" -> 18f; "Large" -> 30f; "Extra Large" -> 36f; else -> 24f
-                        }
-                        val pipSubScale = if (isInPipMode) 0.4f else 1f
-                        setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, baseSizeSp * (subtitleSizePct / 100f) * pipSubScale)
-                        setBottomPaddingFraction((subtitleVerticalPct / 100f).coerceIn(0f, 0.5f))
+                        applySubtitleAppearance(
+                            context = playerView.context,
+                            sizePreference = subtitleSizePref,
+                            sizePercent = subtitleSizePct,
+                            verticalPercent = subtitleVerticalPct,
+                            colorPreference = subtitleColorPref,
+                            stylePreference = subtitleStylePref,
+                            fontPreference = subtitleFontPref,
+                            preserveEmbeddedStyles = subtitleStylizedPref,
+                            inPictureInPicture = isInPipMode,
+                        )
                         // "Find best match" without AI showing selects the built-in reference
                         // track under the hood to read its timing — hide its raw (e.g. English)
                         // cues while the scan runs. Display-only: the scan's cue collection
@@ -3605,10 +3763,14 @@ fun PlayerScreen(
                                 focusRequester = nextEpisodeButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
                                 onFocusChanged = {},
                                 onClick = {
-                                    val season = seasonNumber ?: return@PlayerIconButton
-                                    val episode = episodeNumber ?: return@PlayerIconButton
+                                    val next = nextEpisodeIdentity ?: return@PlayerIconButton
                                     val selected = uiState.selectedStream
-                                    onPlayNext(season, episode + 1, selected?.addonId?.takeIf { it.isNotBlank() }, selected?.source?.takeIf { it.isNotBlank() }, selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() })
+                                    playNextEpisode(
+                                        next,
+                                        selected?.addonId?.takeIf { it.isNotBlank() },
+                                        selected?.source?.takeIf { it.isNotBlank() },
+                                        selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                                    )
                                 },
                                 onLeftKey = { aspectButtonFocusRequester.requestFocus() },
                                 onRightKey = { subtitleButtonFocusRequester.requestFocus() },
@@ -3859,9 +4021,9 @@ fun PlayerScreen(
             // episode's metadata would require an extra TMDB round-trip during playback.
             // Fall back to a generic "Episode N" label — the show title, S/E number, and
             // backdrop image still give users enough context to decide Continue/Cancel.
-            episodeTitle = "Episode $pendingNextEpisode",
-            seasonNumber = pendingNextSeason,
-            episodeNumber = pendingNextEpisode,
+            episodeTitle = "Episode ${pendingNextIdentity?.displayEpisode ?: 0}",
+            seasonNumber = pendingNextIdentity?.displaySeason ?: 0,
+            episodeNumber = pendingNextIdentity?.displayEpisode ?: 0,
             episodeImage = uiState.backdropUrl,
             countdownSeconds = 10,
             focusedButtonOverride = nextEpisodePromptButton,
@@ -5867,13 +6029,6 @@ private fun resolveFrameRateOffStrategy(): Int {
     return readMedia3FrameRateConst("VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF", fallback = 0)
 }
 
-private tailrec fun Context.findActivity(): Activity? {
-    return when (this) {
-        is Activity -> this
-        is ContextWrapper -> baseContext.findActivity()
-        else -> null
-    }
-}
 
 private fun readMedia3FrameRateConst(fieldName: String, fallback: Int): Int {
     return runCatching { C::class.java.getField(fieldName).getInt(null) }.getOrDefault(fallback)

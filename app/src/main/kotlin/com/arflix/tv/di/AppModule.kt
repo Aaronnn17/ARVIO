@@ -27,12 +27,14 @@ object AppModule {
 
     @Provides
     @Singleton
+    @JvmStatic
     fun provideOkHttpClient(): OkHttpClient {
         return OkHttpProvider.client
     }
 
     @Provides
     @Singleton
+    @JvmStatic
     fun provideTmdbApi(okHttpClient: OkHttpClient, @dagger.hilt.android.qualifiers.ApplicationContext context: android.content.Context): TmdbApi {
         val tmdbClient = okHttpClient.newBuilder()
             .addInterceptor { chain ->
@@ -64,6 +66,7 @@ object AppModule {
 
     @Provides
     @Singleton
+    @JvmStatic
     fun provideTraktApi(okHttpClient: OkHttpClient): TraktApi {
         return Retrofit.Builder()
             .baseUrl(Constants.TRAKT_API_URL)
@@ -75,6 +78,7 @@ object AppModule {
 
     @Provides
     @Singleton
+    @JvmStatic
     fun provideMdbListApi(okHttpClient: OkHttpClient): com.arflix.tv.data.api.MdbListApi {
         return Retrofit.Builder()
             .baseUrl(Constants.MDBLIST_API_URL)
@@ -86,6 +90,65 @@ object AppModule {
 
     @Provides
     @Singleton
+    @JvmStatic
+    fun provideSimklApi(okHttpClient: OkHttpClient): com.arflix.tv.data.api.SimklApi {
+        var lastPostTimestampMs = 0L
+        val postLock = Any()
+
+        val simklClient = okHttpClient.newBuilder()
+            .addInterceptor { chain ->
+                val original = chain.request()
+
+                // Enforce 1 POST request per second per Simkl API policy
+                if (original.method.equals("POST", ignoreCase = true)) {
+                    synchronized(postLock) {
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        val elapsed = now - lastPostTimestampMs
+                        if (elapsed < 1000L) {
+                            val sleepTime = 1000L - elapsed
+                            try {
+                                Thread.sleep(sleepTime)
+                            } catch (_: InterruptedException) {}
+                        }
+                        lastPostTimestampMs = android.os.SystemClock.elapsedRealtime()
+                    }
+                }
+
+                val originalUrl = original.url
+                val urlBuilder = originalUrl.newBuilder()
+                if (originalUrl.queryParameter("client_id") == null) {
+                    urlBuilder.addQueryParameter("client_id", Constants.SIMKL_CLIENT_ID)
+                }
+                if (originalUrl.queryParameter("app-name") == null) {
+                    urlBuilder.addQueryParameter("app-name", "ARVIO")
+                }
+                if (originalUrl.queryParameter("app-version") == null) {
+                    urlBuilder.addQueryParameter("app-version", com.arflix.tv.BuildConfig.VERSION_NAME)
+                }
+
+                val requestBuilder = original.newBuilder()
+                    .url(urlBuilder.build())
+                    .header("User-Agent", "ARVIO/${com.arflix.tv.BuildConfig.VERSION_NAME} (Android TV)")
+
+                if (original.header("simkl-api-key") == null) {
+                    requestBuilder.header("simkl-api-key", Constants.SIMKL_CLIENT_ID)
+                }
+
+                chain.proceed(requestBuilder.build())
+            }
+            .build()
+
+        return Retrofit.Builder()
+            .baseUrl(Constants.SIMKL_BASE_URL)
+            .client(simklClient)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(com.arflix.tv.data.api.SimklApi::class.java)
+    }
+
+    @Provides
+    @Singleton
+    @JvmStatic
     fun provideSupabaseApi(okHttpClient: OkHttpClient): SupabaseApi {
         // Supabase API client without disk cache to prevent OkHttp from returning
         // cached responses for POST/upsert operations (which silently drops writes)
@@ -102,6 +165,7 @@ object AppModule {
 
     @Provides
     @Singleton
+    @JvmStatic
     fun provideStreamApi(okHttpClient: OkHttpClient): StreamApi {
         // Base URL doesn't matter for dynamic URLs
         return Retrofit.Builder()
@@ -116,6 +180,7 @@ object AppModule {
 
     @Provides
     @Singleton
+    @JvmStatic
     @Named("introDb")
     fun provideIntroDbRetrofit(okHttpClient: OkHttpClient): Retrofit {
         return Retrofit.Builder()
@@ -127,12 +192,14 @@ object AppModule {
 
     @Provides
     @Singleton
+    @JvmStatic
     fun provideIntroDbApi(@Named("introDb") retrofit: Retrofit): IntroDbApi {
         return retrofit.create(IntroDbApi::class.java)
     }
 
     @Provides
     @Singleton
+    @JvmStatic
     @Named("aniSkip")
     fun provideAniSkipRetrofit(okHttpClient: OkHttpClient): Retrofit {
         return Retrofit.Builder()
@@ -144,12 +211,14 @@ object AppModule {
 
     @Provides
     @Singleton
+    @JvmStatic
     fun provideAniSkipApi(@Named("aniSkip") retrofit: Retrofit): AniSkipApi {
         return retrofit.create(AniSkipApi::class.java)
     }
 
     @Provides
     @Singleton
+    @JvmStatic
     @Named("arm")
     fun provideArmRetrofit(okHttpClient: OkHttpClient): Retrofit {
         return Retrofit.Builder()
@@ -161,12 +230,14 @@ object AppModule {
 
     @Provides
     @Singleton
+    @JvmStatic
     fun provideArmApi(@Named("arm") retrofit: Retrofit): ArmApi {
         return retrofit.create(ArmApi::class.java)
     }
 
     @Provides
     @Singleton
+    @JvmStatic
     @Named("jikan")
     fun provideJikanRetrofit(okHttpClient: OkHttpClient): Retrofit {
         return Retrofit.Builder()
@@ -178,11 +249,14 @@ object AppModule {
 
     @Provides
     @Singleton
+    @JvmStatic
     fun provideJikanApi(@Named("jikan") retrofit: Retrofit): com.arflix.tv.data.api.JikanApi {
         return retrofit.create(com.arflix.tv.data.api.JikanApi::class.java)
     }
+
     @Provides
     @Singleton
+    @JvmStatic
     fun provideMoshi(): com.squareup.moshi.Moshi {
         return com.squareup.moshi.Moshi.Builder()
             .add(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory())

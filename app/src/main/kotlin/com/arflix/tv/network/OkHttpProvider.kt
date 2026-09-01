@@ -237,9 +237,11 @@ object OkHttpProvider {
         var bytes = rawBytes
         repeat(MAX_GZIP_LAYERS) {
             if (!bytes.hasGzipMagic()) return bytes
-            bytes = runCatching {
+            bytes = try {
                 GZIPInputStream(ByteArrayInputStream(bytes)).use { it.readBytes() }
-            }.getOrNull() ?: return null
+            } catch (e: java.io.IOException) {
+                null
+            } ?: return null
         }
         return bytes.takeUnless { it.hasGzipMagic() }
     }
@@ -283,8 +285,14 @@ object OkHttpProvider {
 
     private fun buildAppClient(): OkHttpClient {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
+            redactHeader("Authorization")
+            redactHeader("apikey")
+            redactHeader("x-user-token")
+            redactHeader("X-Plex-Token")
+            redactHeader("X-Emby-Token")
+            redactHeader("Cookie")
             level = if (BuildConfig.DEBUG) {
-                HttpLoggingInterceptor.Level.BASIC
+                HttpLoggingInterceptor.Level.HEADERS
             } else {
                 HttpLoggingInterceptor.Level.NONE
             }

@@ -133,6 +133,33 @@ class LiveCategoryIndexTest {
     }
 
     @Test
+    fun channelNumberSortUsesProviderNumbersAndKeepsTiesStable() {
+        val channels = listOf(
+            channel("list:20", "Twenty", "General").copy(providerChannelNumber = "20"),
+            channel("list:none", "No number", "General"),
+            channel("list:3a", "Three A", "General").copy(providerChannelNumber = "3"),
+            channel("list:invalid", "Invalid number", "General").copy(providerChannelNumber = "HD"),
+            channel("list:3b", "Three B", "General").copy(providerChannelNumber = "3.0"),
+        ).mapIndexed { index, channel -> channel.enrich(index + 100) }
+
+        val result = sortChannelsByConfiguredOrder(channels, "number")
+
+        assertThat(result.map { it.id })
+            .containsExactly("list:3a", "list:3b", "list:20", "list:none", "list:invalid")
+            .inOrder()
+    }
+
+    @Test
+    fun providerSortKeepsTheOriginalChannelList() {
+        val channels = listOf(
+            channel("list:z", "Zulu", "General"),
+            channel("list:a", "Alpha", "General"),
+        ).mapIndexed { index, channel -> channel.enrich(index + 1) }
+
+        assertThat(sortChannelsByConfiguredOrder(channels, "provider")).isSameInstanceAs(channels)
+    }
+
+    @Test
     fun configSignatureChangesWhenPlaylistOrderChanges() {
         val first = IptvPlaylistEntry("first", "First", "https://example.test/first.m3u")
         val second = IptvPlaylistEntry("second", "Second", "https://example.test/second.m3u")
@@ -172,6 +199,27 @@ class LiveCategoryIndexTest {
         assertThat(state.index.channelsFor(sportsCategory.id, emptyList(), emptyList()).map { it.id })
             .containsExactly("list_1:xtream:30", "list_1:xtream:10")
             .inOrder()
+    }
+
+    @Test
+    fun stalkerPortalsWithSameGroupRemainSeparateCategories() {
+        val state = buildFastStartupChannelState(
+            channels = listOf(
+                channel("stalker:stalker1:10", "Portal One News", "News"),
+                channel("stalker:stalker2:10", "Portal Two News", "News"),
+            ),
+            favorites = emptySet(),
+            recents = emptySet(),
+        )
+
+        val newsCategories = state.tree.global.categories.filter { it.label == "News" }
+        assertThat(newsCategories.map { it.playlistId })
+            .containsExactly("stalker1", "stalker2")
+            .inOrder()
+        assertThat(state.index.channelsFor(newsCategories[0].id, emptyList(), emptyList()).map { it.id })
+            .containsExactly("stalker:stalker1:10")
+        assertThat(state.index.channelsFor(newsCategories[1].id, emptyList(), emptyList()).map { it.id })
+            .containsExactly("stalker:stalker2:10")
     }
 
     private fun channel(id: String, name: String, group: String): IptvChannel =

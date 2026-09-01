@@ -29,6 +29,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
@@ -74,7 +76,9 @@ class TraktRepository @Inject constructor(
     private val syncServiceProvider: Provider<TraktSyncService>,
     private val profileManager: ProfileManager,
     private val mdbListRepository: MdbListRepository,
-    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore
+    private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore,
+    private val simklSyncService: com.arflix.tv.data.repository.simkl.SimklSyncService,
+    private val continueWatchingUpdates: ContinueWatchingUpdates
 ) {
     private val gson = Gson()
     private val watchlistHttpClient by lazy { okHttpClient }
@@ -86,6 +90,8 @@ class TraktRepository @Inject constructor(
     private val USER_ID_KEY = stringPreferencesKey("user_id")
     private val clientId = Constants.TRAKT_CLIENT_ID
     private val clientSecret = Constants.TRAKT_CLIENT_SECRET
+    private val PERSONAL_LIST_PAGE_SIZE = 100
+    private val PERSONAL_LIST_ITEM_LIMIT = 500
     // Profile-scoped preference keys - each profile has its own Trakt connection
     private fun accessTokenKey() = profileManager.profileStringKey("trakt_access_token")
     private fun refreshTokenKey() = profileManager.profileStringKey("trakt_refresh_token")
@@ -151,9 +157,11 @@ class TraktRepository @Inject constructor(
     /**
      * Check if current profile is authenticated with Trakt
      */
-    val isAuthenticated: Flow<Boolean> = context.traktDataStore.data.map { prefs ->
-        prefs[accessTokenKey()] != null
-    }
+    val isAuthenticated: Flow<Boolean> = profileManager.activeProfileId
+        .combine(context.traktDataStore.data) { profileId, prefs ->
+            !prefs[profileManager.profileStringKeyFor(profileId, "trakt_access_token")].isNullOrBlank()
+        }
+        .distinctUntilChanged()
 
     /**
      * Get token expiration timestamp (seconds since epoch) for current profile
@@ -491,6 +499,22 @@ class TraktRepository @Inject constructor(
         return "Bearer $token"
     }
 
+    /**
+     * Fetches the Trakt username for the currently authenticated profile.
+     * Returns null gracefully if not authenticated or if the request fails — a
+     * failed username fetch must never break the auth or sync flow.
+     */
+    suspend fun fetchUsername(): String? = withContext(Dispatchers.IO) {
+        try {
+            val auth = getAuthHeader() ?: return@withContext null
+            traktApi.getMe(auth = auth, clientId = clientId).username
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private suspend fun hasStoredTraktTokenForCurrentProfile(): Boolean {
         ensureProfileCacheScope()
         val prefs = context.traktDataStore.data.first()
@@ -501,6 +525,7 @@ class TraktRepository @Inject constructor(
 
     private suspend fun getAllWatchedMovies(auth: String): List<TraktWatchedMovie> {
         val all = mutableListOf<TraktWatchedMovie>()
+        val seen = LinkedHashSet<String>()
         var page = 1
         val limit = 250
 
@@ -512,9 +537,7 @@ class TraktRepository @Inject constructor(
                 page = page,
                 limit = limit
             )
-            if (pageItems.isEmpty()) break
-            all.addAll(pageItems)
-            if (pageItems.size < limit) break
+            if (appendUniqueTraktPage(all, seen, pageItems, ::watchedMovieIdentity) == 0) break
             page++
         }
 
@@ -523,6 +546,7 @@ class TraktRepository @Inject constructor(
 
     private suspend fun getAllWatchedShows(auth: String): List<TraktWatchedShow> {
         val all = mutableListOf<TraktWatchedShow>()
+        val seen = LinkedHashSet<String>()
         var page = 1
         val limit = 250
 
@@ -535,9 +559,7 @@ class TraktRepository @Inject constructor(
                 limit = limit,
                 extended = "progress"
             )
-            if (pageItems.isEmpty()) break
-            all.addAll(pageItems)
-            if (pageItems.size < limit) break
+            if (appendUniqueTraktPage(all, seen, pageItems, ::watchedShowIdentity) == 0) break
             page++
         }
 
@@ -605,15 +627,20 @@ class TraktRepository @Inject constructor(
         // OPTIMISTIC UPDATE: Update caches immediately so the UI responds instantly
         updateWatchedCache(tmdbId, null, null, true)
         persistLocalWatchedSnapshotForCurrentProfile()
-        removeFromContinueWatchingCache(tmdbId, null, null)
+        removeFromContinueWatchingCache(tmdbId, null, null, MediaType.MOVIE)
 
         // Then sync to backend in background
         try {
             syncService.markMovieWatched(tmdbId)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-
-            // Sync failed, but local cache is already updated
+        }
+        if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
+            try {
+                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
         }
     }
 
@@ -631,8 +658,13 @@ class TraktRepository @Inject constructor(
             syncService.markMovieUnwatched(tmdbId)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-
-            // Sync failed, but local cache is already updated
+        }
+        if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
+            try {
+                simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.MOVIE, tmdbId)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
         }
     }
 
@@ -653,8 +685,15 @@ class TraktRepository @Inject constructor(
             syncService.markEpisodeWatched(showTmdbId, season, episode, traktShowId)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-
-            AppLogger.e("TraktRepository", "Failed to mark episode watched", e)
+            AppLogger.e("TraktRepository", "Failed to persist episode watched state", e)
+        }
+        if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
+            try {
+                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLogger.e("TraktRepository", "Failed to mirror episode watched state to Simkl", e)
+            }
         }
     }
 
@@ -695,8 +734,13 @@ class TraktRepository @Inject constructor(
                 syncService.markEpisodeUnwatched(showTmdbId, season, episode)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-
-                // Sync failed, but local cache is already updated
+            }
+            if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
+                try {
+                    simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
         }
     }
@@ -1244,7 +1288,17 @@ class TraktRepository @Inject constructor(
      */
     /** True when the active profile syncs Continue Watching from MDBList (not Trakt). */
     suspend fun isMdbListActive(): Boolean =
-        syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST
+        com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in syncProviderStore.readProviders(
+            com.arflix.tv.data.repository.sync.TrackingFeature.CONTINUE_WATCHING
+        )
+
+    suspend fun isSimklActive(): Boolean =
+        com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.readProviders(
+            com.arflix.tv.data.repository.sync.TrackingFeature.CONTINUE_WATCHING
+        )
+
+    suspend fun isAlternativeRemoteActive(): Boolean =
+        isMdbListActive() || isSimklActive()
 
     suspend fun getContinueWatching(forceRefresh: Boolean = false): List<ContinueWatchingItem> = coroutineScope {
         ensureProfileCacheScope()
@@ -1252,7 +1306,7 @@ class TraktRepository @Inject constructor(
 
         // MDBList profiles source Continue Watching from MDBList paused sessions
         // (cross-device), reusing the same dismissal/hydration/cache pipeline.
-        if (syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST) {
+        if (isMdbListActive()) {
             return@coroutineScope getMdbListContinueWatching(requestProfileId, forceRefresh)
         }
 
@@ -1299,6 +1353,7 @@ class TraktRepository @Inject constructor(
         }
         continueWatchingFetching = true
         continueWatchingFetchingProfileId = requestProfileId
+        val localUpdateRevision = continueWatchingUpdates.revision
 
         try {
         val candidates = mutableListOf<ContinueWatchingCandidate>()
@@ -1616,6 +1671,9 @@ class TraktRepository @Inject constructor(
                 severity = if (topCandidates.isEmpty() && (playbackFetched || watchedProgressFetched)) "warning" else "info"
             )
             if (topCandidates.isEmpty() && playbackFetched && watchedProgressFetched) {
+                if (continueWatchingUpdates.revision != localUpdateRevision) {
+                    return@coroutineScope cachedContinueWatching
+                }
                 cachedContinueWatching = emptyList()
                 cachedContinueWatchingProfileId = requestProfileId
                 lastContinueWatchingFetch = System.currentTimeMillis()
@@ -1640,6 +1698,9 @@ class TraktRepository @Inject constructor(
                 // Filter out items with null season/episode (already validated at candidate creation)
                 val fallbackItems = topCandidates.map { it.item }
                     .filter { it.mediaType != MediaType.TV || (it.season != null && it.episode != null) }
+                if (continueWatchingUpdates.revision != localUpdateRevision) {
+                    return@coroutineScope cachedContinueWatching
+                }
                 cachedContinueWatching = fallbackItems
                 cachedContinueWatchingProfileId = requestProfileId
                 lastContinueWatchingFetch = System.currentTimeMillis()
@@ -1647,6 +1708,9 @@ class TraktRepository @Inject constructor(
                 return@coroutineScope fallbackItems
             }
 
+        if (continueWatchingUpdates.revision != localUpdateRevision) {
+            return@coroutineScope cachedContinueWatching
+        }
         val resolvedItems = if (hydratedItems.isNotEmpty()) {
             cachedContinueWatching = hydratedItems
             cachedContinueWatchingProfileId = requestProfileId
@@ -1680,6 +1744,7 @@ class TraktRepository @Inject constructor(
         requestProfileId: String,
         forceRefresh: Boolean
     ): List<ContinueWatchingItem> {
+        val localUpdateRevision = continueWatchingUpdates.revision
         val now = System.currentTimeMillis()
         if (
             !forceRefresh &&
@@ -1787,6 +1852,10 @@ class TraktRepository @Inject constructor(
         val top = filtered.sortedByDescending { it.lastActivityAt }.take(Constants.MAX_CONTINUE_WATCHING)
         val hydrated = hydrateTopCandidates(top)
         val resolved = if (hydrated.isNotEmpty()) hydrated else top.map { it.item }
+
+        if (continueWatchingUpdates.revision != localUpdateRevision) {
+            return cachedContinueWatching
+        }
 
         cachedContinueWatching = resolved
         cachedContinueWatchingProfileId = requestProfileId
@@ -1930,6 +1999,25 @@ class TraktRepository @Inject constructor(
         }
     }
 
+    /**
+     * Reads only the persisted profile cache. Unlike [getContinueWatching] and
+     * [preloadContinueWatchingCache], this method never contacts a tracking service.
+     * Home startup uses it as a last local fallback before refreshing in background.
+     */
+    suspend fun loadPersistedContinueWatchingForStartup(): List<ContinueWatchingItem> {
+        ensureProfileCacheScope()
+        val profileId = currentProfileId()
+        if (cachedContinueWatchingProfileId == profileId && cachedContinueWatching.isNotEmpty()) {
+            return filterDismissedContinueWatchingItems(cachedContinueWatching)
+        }
+        val cached = filterDismissedContinueWatchingItems(loadContinueWatchingCache())
+        if (cached.isNotEmpty()) {
+            cachedContinueWatching = cached
+            cachedContinueWatchingProfileId = profileId
+        }
+        return cached
+    }
+
     // Cache for preloaded profile data (keyed by profileId)
     private val preloadedProfileCache = ConcurrentHashMap<String, List<ContinueWatchingItem>>()
 
@@ -1945,7 +2033,7 @@ class TraktRepository @Inject constructor(
         // MDBList profiles have no Trakt token; without this branch the Trakt-token check
         // below falls through to local CW and the row shows only device-local history
         // (e.g. a single locally-watched show) instead of the MDBList paused sessions.
-        if (syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST) {
+        if (isMdbListActive()) {
             return getMdbListContinueWatching(profileId, forceRefresh = false)
         }
 
@@ -2097,10 +2185,16 @@ class TraktRepository @Inject constructor(
     /**
      * Remove an episode from Continue Watching cache when marked as watched
      */
-    suspend fun removeFromContinueWatchingCache(showTmdbId: Int, seasonNum: Int?, episodeNum: Int?) {
+    suspend fun removeFromContinueWatchingCache(
+        showTmdbId: Int,
+        seasonNum: Int?,
+        episodeNum: Int?,
+        mediaType: MediaType? = if (seasonNum != null || episodeNum != null) MediaType.TV else null
+    ) {
         ensureProfileCacheScope()
+        val profileId = currentProfileId()
         // Always remove from local CW (for non-Trakt profiles) regardless of Trakt cache state
-        removeFromLocalContinueWatching(showTmdbId, seasonNum, episodeNum)
+        removeFromLocalContinueWatching(showTmdbId, seasonNum, episodeNum, mediaType)
 
         if (cachedContinueWatching.isEmpty()) {
             cachedContinueWatching = loadContinueWatchingCache()
@@ -2110,11 +2204,23 @@ class TraktRepository @Inject constructor(
         cachedContinueWatching = cachedContinueWatching.filter { item ->
             // Keep items that don't match the watched episode
             !(item.id == showTmdbId &&
+              (mediaType == null || item.mediaType == mediaType) &&
               (seasonNum == null || item.season == seasonNum) &&
               (episodeNum == null || item.episode == episodeNum))
         }
+        cachedContinueWatchingProfileId = profileId
         // Also update persisted cache
         persistContinueWatchingCache(cachedContinueWatching)
+        preloadedProfileCache.computeIfPresent(profileId) { _, items ->
+            items.filterNot { item ->
+                item.id == showTmdbId &&
+                    (mediaType == null || item.mediaType == mediaType) &&
+                    (seasonNum == null || item.season == seasonNum) &&
+                    (episodeNum == null || item.episode == episodeNum)
+            }
+        }
+        lastContinueWatchingFetch = 0L
+        continueWatchingUpdates.remove(profileId, mediaType, showTmdbId, seasonNum, episodeNum)
     }
 
     // ========== Local Continue Watching (for profiles without Trakt) ==========
@@ -2132,6 +2238,8 @@ class TraktRepository @Inject constructor(
         backdropPath: String?,
         season: Int?,
         episode: Int?,
+        displaySeason: Int? = season,
+        displayEpisode: Int? = episode,
         episodeTitle: String?,
         progress: Int, // 0-100
         positionSeconds: Long = 0L,
@@ -2157,7 +2265,7 @@ class TraktRepository @Inject constructor(
         if ((progress < Constants.MIN_PROGRESS_THRESHOLD && !hasMeaningfulPosition) || progress >= Constants.WATCHED_THRESHOLD) {
             // If watched (>= threshold), remove from Continue Watching
             if (progress >= Constants.WATCHED_THRESHOLD) {
-                removeFromLocalContinueWatching(tmdbId, season, episode)
+                removeFromContinueWatchingCache(tmdbId, season, episode, mediaType)
             }
             return
         }
@@ -2171,6 +2279,8 @@ class TraktRepository @Inject constructor(
             durationSeconds = durationSeconds.coerceAtLeast(0L),
             season = season,
             episode = episode,
+            displaySeason = displaySeason,
+            displayEpisode = displayEpisode,
             episodeTitle = episodeTitle,
             backdropPath = backdropPath,
             posterPath = posterPath,
@@ -2202,6 +2312,7 @@ class TraktRepository @Inject constructor(
         context.traktDataStore.edit { prefs ->
             prefs[saveKey] = json
         }
+        clearDismissedContinueWatching(mediaType, tmdbId, season, episode)
 
         // Only update the in-memory CW cache for non-Trakt profiles.
         // When Trakt is connected, the cache must only be populated by
@@ -2218,19 +2329,27 @@ class TraktRepository @Inject constructor(
         }
         if (!isTraktAuth) {
             cachedContinueWatching = trimmed
+            preloadedProfileCache[currentProfileId()] = trimmed
         }
+        continueWatchingUpdates.upsert(currentProfileId(), item)
     }
 
     /**
      * Remove item from local Continue Watching
      */
-    private suspend fun removeFromLocalContinueWatching(tmdbId: Int, season: Int?, episode: Int?) {
+    private suspend fun removeFromLocalContinueWatching(
+        tmdbId: Int,
+        season: Int?,
+        episode: Int?,
+        mediaType: MediaType?
+    ) {
         // Use raw method - no need to enrich items just to remove them
         val existingItems = loadLocalContinueWatchingRaw().toMutableList()
         val sizeBefore = existingItems.size
 
         existingItems.removeAll { item ->
             item.id == tmdbId &&
+            (mediaType == null || item.mediaType == mediaType) &&
             (season == null || item.season == season) &&
             (episode == null || item.episode == episode)
         }
@@ -2404,10 +2523,7 @@ class TraktRepository @Inject constructor(
         }.awaitAll()
     }
 
-    /**
-     * Enrich a local Continue Watching item with TMDB data
-     * Matches the Trakt enrichment behavior: uses SHOW backdrop/overview, not episode
-     */
+    /** Enrich Continue Watching with series metadata and episode-specific artwork. */
     private suspend fun enrichLocalContinueWatchingItem(
         item: ContinueWatchingItem,
         seasonCache: java.util.concurrent.ConcurrentHashMap<Pair<Int, Int>, Deferred<com.arflix.tv.data.api.TmdbSeasonDetails?>> = java.util.concurrent.ConcurrentHashMap()
@@ -2415,7 +2531,11 @@ class TraktRepository @Inject constructor(
         // Skip only when all Continue Watching metrics are already present.
         val needsRuntime = item.durationSeconds <= 0L
         val needsEpisodeCounts = item.mediaType == MediaType.TV && item.totalEpisodes <= 0
-        if (!needsRuntime && !needsEpisodeCounts && item.overview.isNotEmpty() && item.backdropPath?.startsWith("http") == true) {
+        val needsEpisodeArtwork = item.mediaType == MediaType.TV &&
+            item.season != null &&
+            item.episode != null &&
+            item.episodeStillPath.isNullOrBlank()
+        if (!needsRuntime && !needsEpisodeCounts && !needsEpisodeArtwork && item.overview.isNotEmpty() && item.backdropPath?.startsWith("http") == true) {
             return@coroutineScope item
         }
 
@@ -2427,7 +2547,9 @@ class TraktRepository @Inject constructor(
                 } catch (e: Exception) { AppLogger.e("TraktRepository", "Silently returning null", e); null }
 
                 // Get current season info for episode title and aired-episode counts.
-                val seasonDetails = if (item.season != null && item.episode != null && (item.episodeTitle.isNullOrEmpty() || needsEpisodeCounts)) {
+                val seasonDetails = if (item.season != null && item.episode != null &&
+                    (item.episodeTitle.isNullOrEmpty() || needsEpisodeCounts || needsEpisodeArtwork)
+                ) {
                     try {
                         val cacheKey = Pair(item.id, item.season)
                         val newDeferred = CompletableDeferred<com.arflix.tv.data.api.TmdbSeasonDetails?>()
@@ -2452,9 +2574,9 @@ class TraktRepository @Inject constructor(
                 } else null
                 val episodeInfo = seasonDetails?.episodes?.find { it.episodeNumber == item.episode }
 
-                // Use SHOW's backdrop and overview (like Trakt does), not episode's
                 val backdropUrl = details?.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" }
                 val posterUrl = details?.posterPath?.let { "${Constants.IMAGE_BASE}$it" }
+                val episodeStillUrl = episodeInfo?.stillPath?.let { "${Constants.IMAGE_BASE_LARGE}$it" }
                 val totalEpisodeCount = if (item.totalEpisodes > 0) {
                     item.totalEpisodes
                 } else {
@@ -2477,7 +2599,8 @@ class TraktRepository @Inject constructor(
 
                 item.copy(
                     overview = details?.overview ?: item.overview,  // Show overview, not episode
-                    backdropPath = backdropUrl ?: item.backdropPath,  // Show backdrop, not episode still
+                    backdropPath = backdropUrl ?: item.backdropPath,
+                    episodeStillPath = episodeStillUrl ?: item.episodeStillPath,
                     posterPath = posterUrl ?: item.posterPath,
                     year = details?.firstAirDate?.take(4) ?: item.year,
                     tmdbRating = details?.voteAverage?.let { String.format(Locale.US, "%.1f", it) } ?: item.tmdbRating.orEmpty(),
@@ -2555,12 +2678,42 @@ class TraktRepository @Inject constructor(
         return parseDismissedMap(raw)
     }
 
-    private suspend fun persistDismissedContinueWatching(map: Map<String, Long>) {
+    private suspend fun persistDismissedContinueWatching(
+        map: Map<String, Long>,
+        profileId: String? = null
+    ) {
+        val storageKey = if (profileId.isNullOrBlank()) {
+            dismissedContinueWatchingKey()
+        } else {
+            profileManager.profileStringKeyFor(profileId, "trakt_dismissed_continue_watching_v1")
+        }
         context.settingsDataStore.edit { prefs ->
             if (map.isEmpty()) {
-                prefs.remove(dismissedContinueWatchingKey())
+                prefs.remove(storageKey)
             } else {
-                prefs[dismissedContinueWatchingKey()] = encodeDismissedMap(map)
+                prefs[storageKey] = encodeDismissedMap(map)
+            }
+        }
+    }
+
+    private suspend fun clearDismissedContinueWatching(
+        mediaType: MediaType,
+        tmdbId: Int,
+        season: Int?,
+        episode: Int?
+    ) {
+        val exactKey = buildContinueWatchingKey(mediaType, tmdbId, season, episode)
+        val showKey = buildContinueWatchingShowKey(mediaType, tmdbId)
+        context.settingsDataStore.edit { prefs ->
+            val map = parseDismissedMap(prefs[dismissedContinueWatchingKey()])
+            val exactRemoved = map.remove(exactKey) != null
+            val showRemoved = map.remove(showKey) != null
+            if (exactRemoved || showRemoved) {
+                if (map.isEmpty()) {
+                    prefs.remove(dismissedContinueWatchingKey())
+                } else {
+                    prefs[dismissedContinueWatchingKey()] = encodeDismissedMap(map)
+                }
             }
         }
     }
@@ -2657,7 +2810,7 @@ class TraktRepository @Inject constructor(
         return map.entries.joinToString("|") { (key, value) -> "$key,$value" }
     }
 
-    private suspend fun filterDismissedContinueWatchingItems(
+    suspend fun filterDismissedContinueWatchingItems(
         items: List<ContinueWatchingItem>,
         profileId: String? = null
     ): List<ContinueWatchingItem> {
@@ -2672,11 +2825,27 @@ class TraktRepository @Inject constructor(
         }
         if (dismissed.isEmpty()) return items
 
-        return items.filterNot { item ->
+        val updatedDismissed = dismissed.toMutableMap()
+        val visible = items.filter { item ->
             val exactKey = buildContinueWatchingKey(item)
             val showKey = buildContinueWatchingShowKey(item.mediaType, item.id)
-            dismissed.containsKey(showKey) || (exactKey != null && dismissed.containsKey(exactKey))
+            val dismissedAt = listOfNotNull(
+                dismissed[showKey],
+                exactKey?.let(dismissed::get)
+            ).maxOrNull() ?: return@filter true
+
+            if (item.updatedAtMs > dismissedAt) {
+                updatedDismissed.remove(showKey)
+                exactKey?.let(updatedDismissed::remove)
+                true
+            } else {
+                false
+            }
         }
+        if (updatedDismissed.size != dismissed.size) {
+            persistDismissedContinueWatching(updatedDismissed, profileId)
+        }
+        return visible
     }
 
     private suspend fun persistContinueWatchingCache(items: List<ContinueWatchingItem>) {
@@ -2700,6 +2869,74 @@ class TraktRepository @Inject constructor(
     }
 
     // ========== Watchlist ==========
+
+    data class PersonalList(
+        val id: String,
+        val title: String,
+        val itemCount: Int
+    )
+
+    suspend fun getPersonalLists(): List<PersonalList> {
+        val auth = getAuthHeader() ?: return emptyList()
+        return try {
+            traktApi.getMyLists(auth = auth, clientId = clientId)
+                .mapNotNull { list ->
+                    val id = list.ids?.trakt?.takeIf { it > 0 }?.toString()
+                        ?: list.ids?.slug?.takeIf { it.isNotBlank() }
+                        ?: return@mapNotNull null
+                    PersonalList(
+                        id = id,
+                        title = list.name?.takeIf { it.isNotBlank() } ?: "Trakt list",
+                        itemCount = list.itemCount ?: 0
+                    )
+                }
+                .distinctBy(PersonalList::id)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AppLogger.e("TraktRepository", "Failed loading personal lists: ${error.message}")
+            emptyList()
+        }
+    }
+
+    suspend fun getPersonalListItems(listId: String): List<MediaItem> {
+        val auth = getAuthHeader() ?: return emptyList()
+
+        suspend fun loadItems(): List<TraktPublicListItem> {
+            val result = mutableListOf<TraktPublicListItem>()
+            var page = 1
+            while (true) {
+                val rows = traktApi.getMyListItems(
+                    auth = auth,
+                    clientId = clientId,
+                    listId = listId,
+                    type = TRAKT_PERSONAL_LIST_ITEM_TYPES,
+                    page = page,
+                    limit = PERSONAL_LIST_PAGE_SIZE
+                )
+                result += rows
+                if (rows.size < PERSONAL_LIST_PAGE_SIZE || result.size >= PERSONAL_LIST_ITEM_LIMIT) break
+                page += 1
+            }
+            return result.take(PERSONAL_LIST_ITEM_LIMIT)
+        }
+
+        return try {
+            val rows = loadItems()
+            val items = mapTraktPersonalListItems(rows, PERSONAL_LIST_ITEM_LIMIT)
+            AppLogger.breadcrumb(
+                tag = "Trakt",
+                message = "personal_list_mapped raw=${rows.size} mapped=${items.size}",
+                severity = if (rows.isNotEmpty() && items.isEmpty()) "warning" else "info"
+            )
+            items
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AppLogger.e("TraktRepository", "Failed loading personal list $listId: ${error.message}")
+            emptyList()
+        }
+    }
 
     data class WatchlistSyncResult(
         val items: List<MediaItem>,
@@ -2725,8 +2962,7 @@ class TraktRepository @Inject constructor(
             return false to null
         }
         val watchlist = fetchAllWatchlistItems(auth)
-        val items = watchlist
-            .mapIndexedNotNull { index, item -> mapWatchlistItemFast(item, sourceOrder = index) }
+        val items = mapWatchlistItemsFastWithFallback(watchlist)
             .sortedWith(compareBy<MediaItem> { it.sourceOrder }.thenByDescending { it.addedAt })
         AppLogger.breadcrumb(
             tag = "Trakt",
@@ -2734,6 +2970,35 @@ class TraktRepository @Inject constructor(
             severity = if (watchlist.isNotEmpty() && items.isEmpty()) "warning" else "info"
         )
         return true to WatchlistSyncResult(items = items, rawCount = watchlist.size)
+    }
+
+    private suspend fun mapWatchlistItemsFastWithFallback(
+        watchlist: List<TraktWatchlistItem>
+    ): List<MediaItem> = coroutineScope {
+        val mapped = MutableList<MediaItem?>(watchlist.size) { null }
+        val unresolved = mutableListOf<Pair<Int, TraktWatchlistItem>>()
+
+        watchlist.forEachIndexed { index, item ->
+            val fast = mapWatchlistItemFast(item, sourceOrder = index)
+            if (fast != null) {
+                mapped[index] = fast
+            } else {
+                unresolved += index to item
+            }
+        }
+
+        if (unresolved.isNotEmpty()) {
+            val semaphore = Semaphore(4)
+            unresolved.map { (index, item) ->
+                async {
+                    semaphore.withPermit {
+                        index to hydrateWatchlistItem(item, sourceOrder = index)
+                    }
+                }
+            }.awaitAll().forEach { (index, item) -> mapped[index] = item }
+        }
+
+        mapped.filterNotNull()
     }
 
     private suspend fun getWatchlistFromTrakt(auth: String): List<MediaItem> {
@@ -2920,9 +3185,16 @@ class TraktRepository @Inject constructor(
             }
             val body = response.body?.string().orEmpty()
             val listType = TypeToken.getParameterized(List::class.java, TraktWatchlistItem::class.java).type
-            val items: List<TraktWatchlistItem> = runCatching {
-                gson.fromJson<List<TraktWatchlistItem>>(body, listType)
-            }.getOrNull().orEmpty()
+            val items: List<TraktWatchlistItem> = try {
+                gson.fromJson<List<TraktWatchlistItem>>(body, listType).orEmpty()
+            } catch (e: com.google.gson.JsonSyntaxException) {
+                com.arflix.tv.util.AppLogger.e("Trakt", "Failed to parse watchlist items: ${e.message}")
+                emptyList()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                com.arflix.tv.util.AppLogger.e("Trakt", "Unexpected error parsing watchlist items: ${e.message}")
+                emptyList()
+            }
             WatchlistPageResult(
                 items = items,
                 totalPages = response.header("X-Pagination-Page-Count")?.toIntOrNull(),
@@ -3106,10 +3378,18 @@ class TraktRepository @Inject constructor(
         val imdbId = movie.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
         val ids = buildList {
             imdbId?.let { id ->
-                runCatching {
+                try {
                     tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).movieResults
                         .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
-                }.getOrNull()?.let { addAll(it) }
+                        .let { addAll(it) }
+                } catch (e: retrofit2.HttpException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "HTTP error finding movie by ID: ${e.message}")
+                } catch (e: java.io.IOException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Network error finding movie by ID: ${e.message}")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Unexpected error finding movie by ID: ${e.message}")
+                }
             }
             movie.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
         }.distinct()
@@ -3153,19 +3433,35 @@ class TraktRepository @Inject constructor(
         val imdbId = show.ids.imdb?.trim()?.takeIf { it.isNotEmpty() }
         val ids = buildList {
             imdbId?.let { id ->
-                runCatching {
+                try {
                     tmdbApi.findByExternalId(id, Constants.TMDB_API_KEY).tvResults
                         .mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
-                }.getOrNull()?.let { addAll(it) }
+                        .let { addAll(it) }
+                } catch (e: retrofit2.HttpException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "HTTP error finding show by ID: ${e.message}")
+                } catch (e: java.io.IOException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Network error finding show by ID: ${e.message}")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Unexpected error finding show by ID: ${e.message}")
+                }
             }
             show.ids.tvdb?.takeIf { it > 0 }?.let { tvdbId ->
-                runCatching {
+                try {
                     tmdbApi.findByExternalId(
                         tvdbId.toString(),
                         Constants.TMDB_API_KEY,
                         externalSource = "tvdb_id"
                     ).tvResults.mapNotNull { it.id.takeIf { tmdbId -> tmdbId > 0 } }
-                }.getOrNull()?.let { addAll(it) }
+                        .let { addAll(it) }
+                } catch (e: retrofit2.HttpException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "HTTP error finding show by TVDB ID: ${e.message}")
+                } catch (e: java.io.IOException) {
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Network error finding show by TVDB ID: ${e.message}")
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    com.arflix.tv.util.AppLogger.e("Trakt", "Unexpected error finding show by TVDB ID: ${e.message}")
+                }
             }
             show.ids.tmdb?.takeIf { it > 0 }?.let { add(it) }
         }.distinct()
@@ -3220,7 +3516,7 @@ class TraktRepository @Inject constructor(
         if (normalizedTitle.isBlank()) return null
         if (year == null && !allowTitleOnly) return null
 
-        return runCatching {
+        return try {
             val results = when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.searchMovies(
                     apiKey = Constants.TMDB_API_KEY,
@@ -3262,7 +3558,17 @@ class TraktRepository @Inject constructor(
                 .firstOrNull()
                 ?.id
                 ?.takeIf { it > 0 }
-        }.getOrNull()
+        } catch (e: retrofit2.HttpException) {
+            com.arflix.tv.util.AppLogger.e("Trakt", "HTTP error fuzzy matching TMDB ID: ${e.message}")
+            null
+        } catch (e: java.io.IOException) {
+            com.arflix.tv.util.AppLogger.e("Trakt", "Network error fuzzy matching TMDB ID: ${e.message}")
+            null
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            com.arflix.tv.util.AppLogger.e("Trakt", "Unexpected error fuzzy matching TMDB ID: ${e.message}")
+            null
+        }
     }
 
     private fun isWatchlistMatch(
@@ -3796,14 +4102,12 @@ class TraktRepository @Inject constructor(
      * Mark entire season as watched
      */
     suspend fun markSeasonWatched(showTmdbId: Int, seasonNumber: Int, episodes: List<Int>): Boolean {
-        // MDBList profiles mirror the batch to MDBList's /sync/watched.
-        if (syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST) {
-            val ok = mdbListRepository.markSeasonWatched(showTmdbId, seasonNumber, episodes)
-            episodes.forEach { ep -> updateWatchedCache(showTmdbId, seasonNumber, ep, true) }
-            return ok
-        }
-        val auth = getAuthHeader() ?: return false
-        return try {
+        if (episodes.isEmpty()) return true
+        val providers = syncProviderStore.writeProviders()
+        var synced = false
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in providers) {
+            val auth = getAuthHeader()
             val episodeIds = episodes.map {
                 TraktEpisodeId(
                     ids = TraktIds(tmdb = showTmdbId),
@@ -3811,20 +4115,30 @@ class TraktRepository @Inject constructor(
                     number = it
                 )
             }
-            traktApi.addToHistory(
-                auth, clientId, "2",
-                TraktHistoryBody(episodes = episodeIds)
-            )
-            // Update cache for all episodes
-            episodes.forEach { ep ->
-                updateWatchedCache(showTmdbId, seasonNumber, ep, true)
+            if (auth != null) {
+                try {
+                    traktApi.addToHistory(auth, clientId, "2", TraktHistoryBody(episodes = episodeIds))
+                    synced = true
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
-            true
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-
-            false
         }
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in providers) {
+            synced = mdbListRepository.markSeasonWatched(showTmdbId, seasonNumber, episodes) || synced
+        }
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in providers) {
+            synced = simklSyncService.markSeasonWatched(showTmdbId, seasonNumber, episodes, watched = true) || synced
+        }
+
+        episodes.forEach { ep ->
+            updateWatchedCache(showTmdbId, seasonNumber, ep, true)
+            updateShowWatchedCache(showTmdbId, seasonNumber, ep, true)
+        }
+        persistLocalWatchedSnapshotForCurrentProfile()
+        return synced || providers.isEmpty()
     }
 
     /**
@@ -3893,8 +4207,12 @@ class TraktRepository @Inject constructor(
      * Remove season from history
      */
     suspend fun removeSeasonFromHistory(showTmdbId: Int, seasonNumber: Int, episodes: List<Int>): Boolean {
-        val auth = getAuthHeader() ?: return false
-        return try {
+        if (episodes.isEmpty()) return true
+        val providers = syncProviderStore.writeProviders()
+        var synced = false
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in providers) {
+            val auth = getAuthHeader()
             val episodeIds = episodes.map {
                 TraktEpisodeId(
                     ids = TraktIds(tmdb = showTmdbId),
@@ -3902,20 +4220,32 @@ class TraktRepository @Inject constructor(
                     number = it
                 )
             }
-            traktApi.removeFromHistory(
-                auth, clientId, "2",
-                TraktHistoryBody(episodes = episodeIds)
-            )
-            // Update cache
-            episodes.forEach { ep ->
-                updateWatchedCache(showTmdbId, seasonNumber, ep, false)
+            if (auth != null) {
+                try {
+                    traktApi.removeFromHistory(auth, clientId, "2", TraktHistoryBody(episodes = episodeIds))
+                    synced = true
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                }
             }
-            true
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-
-            false
         }
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in providers) {
+            episodes.forEach { episode ->
+                synced = mdbListRepository.markEpisodeUnwatched(showTmdbId, seasonNumber, episode) || synced
+            }
+        }
+
+        if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in providers) {
+            synced = simklSyncService.markSeasonWatched(showTmdbId, seasonNumber, episodes, watched = false) || synced
+        }
+
+        episodes.forEach { ep ->
+            updateWatchedCache(showTmdbId, seasonNumber, ep, false)
+            updateShowWatchedCache(showTmdbId, seasonNumber, ep, false)
+        }
+        persistLocalWatchedSnapshotForCurrentProfile()
+        return synced || providers.isEmpty()
     }
 
     /**
@@ -4037,7 +4367,11 @@ class TraktRepository @Inject constructor(
         }
         cacheInitializing = true
         try {
-            val hasTraktAuth = refreshTokenIfNeeded() != null
+            val readProviders = syncProviderStore.readProviders(
+                com.arflix.tv.data.repository.sync.TrackingFeature.WATCHED
+            )
+            val hasTraktAuth = com.arflix.tv.data.repository.sync.SyncProvider.TRAKT in readProviders &&
+                refreshTokenIfNeeded() != null
             val (localSnapshotMovies, localSnapshotEpisodes) = loadLocalWatchedSnapshotForCurrentProfile()
 
             // Try to load from Supabase first (works for both Trakt and non-Trakt Cloud profiles)
@@ -4046,12 +4380,17 @@ class TraktRepository @Inject constructor(
 
             // MDBList profiles: also pull watched state marked outside Arvio (e.g. the
             // MDBList website) so those badges show up. Keys are already cache-compatible.
-            val useMdbList = syncProviderStore.getProvider() == com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST
+            val useMdbList = com.arflix.tv.data.repository.sync.SyncProvider.MDBLIST in readProviders
             val mdbMovies = if (useMdbList) mdbListRepository.getWatchedMovies() else emptySet()
             val mdbEpisodes = if (useMdbList) mdbListRepository.getWatchedEpisodes() else emptySet()
+            val useSimkl = com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in readProviders
+            val simklMovies = if (useSimkl) simklSyncService.getWatchedMovies() else emptySet()
+            val simklEpisodes = if (useSimkl) simklSyncService.getWatchedEpisodes() else emptySet()
 
             // If no Trakt auth AND no Supabase/MDBList data, leave caches empty
-            if (!hasTraktAuth && supabaseMovies.isEmpty() && supabaseEpisodes.isEmpty() && mdbMovies.isEmpty() && mdbEpisodes.isEmpty()) {
+            if (!hasTraktAuth && supabaseMovies.isEmpty() && supabaseEpisodes.isEmpty() &&
+                mdbMovies.isEmpty() && mdbEpisodes.isEmpty() && simklMovies.isEmpty() && simklEpisodes.isEmpty()
+            ) {
                 watchedMoviesCache.clear()
                 watchedMoviesCache.addAll(localSnapshotMovies)
                 watchedEpisodesCache.clear()
@@ -4068,11 +4407,13 @@ class TraktRepository @Inject constructor(
             watchedMoviesCache.addAll(localSnapshotMovies)
             watchedMoviesCache.addAll(if (supabaseMovies.isNotEmpty()) supabaseMovies else traktMovies)
             watchedMoviesCache.addAll(mdbMovies)
+            watchedMoviesCache.addAll(simklMovies)
 
             watchedEpisodesCache.clear()
             watchedEpisodesCache.addAll(localSnapshotEpisodes)
             watchedEpisodesCache.addAll(if (supabaseEpisodes.isNotEmpty()) supabaseEpisodes else traktEpisodes)
             watchedEpisodesCache.addAll(mdbEpisodes)
+            watchedEpisodesCache.addAll(simklEpisodes)
 
             cacheInitialized = true
         } catch (e: Exception) {
@@ -4215,8 +4556,11 @@ data class ContinueWatchingItem(
     val durationSeconds: Long = 0L,
     val season: Int? = null,
     val episode: Int? = null,
+    val displaySeason: Int? = season,
+    val displayEpisode: Int? = episode,
     val episodeTitle: String? = null,
     val backdropPath: String? = null,
+    val episodeStillPath: String? = null,
     val posterPath: String? = null,
     val streamKey: String? = null,
     val streamAddonId: String? = null,
@@ -4248,8 +4592,10 @@ data class ContinueWatchingItem(
         val resumeLabel = resumeSeconds.takeIf { it > 0L }?.let { formatResumeClock(it) }
 
         val subtitle = if (mediaType == MediaType.TV && season != null && episode != null) {
-            val base = context?.getString(R.string.continue_season_episode, season, episode)
-                ?: "Continue S${season}E${episode}"
+            val shownSeason = displaySeason ?: season
+            val shownEpisode = displayEpisode ?: episode
+            val base = context?.getString(R.string.continue_season_episode, shownSeason, shownEpisode)
+                ?: "Continue S${shownSeason}E${shownEpisode}"
             if (!resumeLabel.isNullOrBlank()) {
                 context?.getString(R.string.continue_from, resumeLabel) ?: "$base from $resumeLabel"
             } else {
@@ -4310,6 +4656,7 @@ data class ContinueWatchingItem(
             progress = progress,
             image = posterPath ?: backdropPath ?: "",
             backdrop = backdropPath,
+            episodeStill = episodeStillPath,
             badge = null,
             budget = budget,
             nextEpisode = nextEp,
@@ -4455,7 +4802,7 @@ private fun buildEpisodeKey(
 
 }
 
-private object TraktRepoRegexes {
+internal object TraktRepoRegexes {
     val DIACRITICS_REGEX = Regex("\\p{Mn}+")
     val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
     val HOURS_REGEX = Regex("""(\d+)\s*h""")

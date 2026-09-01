@@ -5,9 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ARVIO Account</title>
   <link rel="icon" href="/assets/arvio-icon-512.png" type="image/png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg-1: #0a0806;
@@ -317,6 +314,22 @@
 
     .privacy-link:hover, .privacy-link:focus-visible { color: var(--text); }
 
+    .privacy-notice {
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      text-align: center;
+    }
+
+    .privacy-notice a { color: var(--text); }
+
+    .privacy-links {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+    }
+
     @media (max-width: 480px) {
       .head { padding: 24px 22px 18px; }
       .body { padding: 18px 22px 22px; }
@@ -365,9 +378,14 @@
         <button class="btn" id="savepass" style="display:none;">Save New Password</button>
       </div>
 
+      <p class="privacy-notice">Creating an account stores your email and the cloud data you choose to sync. Read the <a href="https://arvio.tv/privacy" target="_blank" rel="noopener">Privacy Policy</a> before continuing.</p>
+
       <p class="small">If you opened this from a TV QR code, signing in will automatically pair that TV.</p>
       <div class="foot">ARVIO Cloud Auth</div>
-      <a class="privacy-link" href="/delete-account">Delete account</a>
+      <div class="privacy-links">
+        <a class="privacy-link" href="https://arvio.tv/privacy">Privacy Policy</a>
+        <a class="privacy-link" href="/delete-account">Delete account</a>
+      </div>
     </section>
   </main>
 
@@ -525,12 +543,18 @@
       if (!uri) return false;
       try {
         const url = new URL(uri);
-        return (
-          url.hostname === "arvio.tv" ||
-          url.hostname.endsWith(".arvio.tv") ||
-          url.hostname === "localhost" ||
-          url.hostname === "127.0.0.1"
-        );
+        const isLocal =
+          (url.protocol === "http:" || url.protocol === "https:") &&
+          (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+        const isArvioDomain =
+          url.protocol === "https:" &&
+          (url.hostname === "arvio.tv" || url.hostname.endsWith(".arvio.tv"));
+        const isArvioWebPreview =
+          url.protocol === "https:" &&
+          (url.hostname === "arvio-web.netlify.app" ||
+            url.hostname.endsWith("--arvio-web.netlify.app"));
+
+        return !url.username && !url.password && (isLocal || isArvioDomain || isArvioWebPreview);
       } catch {
         return false;
       }

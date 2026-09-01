@@ -199,6 +199,10 @@ private class TranslatingTextOutput(
             // Cues carry no extractable text (e.g. bitmap/PGS image subtitles). They can't be
             // translated — pass the originals through so image subtitles still appear on screen
             // instead of being hidden behind a blank.
+            // Translation is ON yet this source yields no text: tell the ViewModel so it can move
+            // to a real text track (or turn AI off) instead of silently showing the source
+            // language and looking like "AI returned English".
+            manager.onUntranslatableSource?.invoke()
             lastCueGroup = cueGroup
             delegate.onCues(cueGroup)
             return

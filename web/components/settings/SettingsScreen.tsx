@@ -39,6 +39,7 @@ import {
   hasNetlifyBackendConfig,
   hasSupabaseConfig,
   hasTraktConfig,
+  hasSimklConfig,
   getAuthPortalUrl,
 } from "@/lib/config";
 import {
@@ -51,6 +52,7 @@ import {
   VLC_SETUP_SH_URL,
   VLC_SETUP_URL,
 } from "@/lib/externalPlayers";
+import { buildHomeServerCatalogConfigs } from "@/lib/homeserver";
 import { defaultSettings, useApp } from "@/lib/store";
 import type {
   AppSettings,
@@ -108,7 +110,9 @@ const SECTIONS = [
   { id: "telegram", label: "Telegram", icon: Send },
   { id: "catalogs", label: "Catalogs", icon: ListVideo },
   { id: "addons", label: "Addons", icon: Sparkles },
+  { id: "metadata", label: "Metadata & Keys", icon: Sparkles },
 ] as const;
+
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -590,14 +594,17 @@ function SectionBody({ section }: { section: SectionId }) {
       return (
         <Panel title="Playback">
           <Row
-            label="Play in"
-            hint="VLC/Infuse open the source directly; ARVIO still syncs Trakt when you return"
+            label="Play Live TV in"
+            // Movies and series always open in an external player now, so this
+            // choice only routes Live TV. Saying otherwise here would be the
+            // same broken promise we removed from the source list.
+            hint="Movies and series always open in an external player like VLC. This picks where Live TV channels play; ARVIO still syncs Trakt when you return"
           >
             <Select
               value={settings.defaultPlayer}
               onChange={(v) => set({ defaultPlayer: v })}
               options={[
-                ["browser", "ARVIO player"],
+                ["browser", "ARVIO player (browser)"],
                 ["vlc", "VLC"],
                 ["infuse", "Infuse"],
               ]}
@@ -1121,10 +1128,76 @@ function SectionBody({ section }: { section: SectionId }) {
       return <AddonsSection />;
     case "vlc":
       return <VlcSection />;
+    case "metadata":
+      return <MetadataSection settings={settings} set={set} />;
     default:
       return null;
   }
 }
+
+function MetadataSection({ settings, set }: { settings: AppSettings; set: (patch: Partial<AppSettings>) => void }) {
+  const animeChain = (settings.metadataAnimeProviders || ["anilist", "tvdb", "tmdb"]).join(" → ").toUpperCase();
+  const tvChain = (settings.metadataTvProviders || ["tvdb", "tmdb"]).join(" → ").toUpperCase();
+  const movieChain = (settings.metadataMovieProviders || ["tmdb"]).join(" → ").toUpperCase();
+  const tvdbActive = Boolean(settings.customTvdbApiKey?.trim());
+
+  return (
+    <div className="settings-section">
+      <Panel title="Custom API Keys (Bring Your Own Key)">
+        <Row label="TMDB API Key" hint="Custom v3 API key for TMDB requests">
+          <input
+            type="password"
+            autoComplete="off"
+            className="settings-input"
+            placeholder="System Default Key"
+            value={settings.customTmdbApiKey || ""}
+            onChange={(e) => set({ customTmdbApiKey: e.target.value })}
+          />
+        </Row>
+
+        <Row
+          label="TVDB v4 API Key"
+          hint={tvdbActive ? "Active — TVDB enabled for metadata fallback" : "TVDB is disabled until a custom API key is provided"}
+        >
+          <input
+            type="password"
+            autoComplete="off"
+            className="settings-input"
+            placeholder="Enter Custom TVDB Key to Enable"
+            value={settings.customTvdbApiKey || ""}
+            onChange={(e) => set({ customTvdbApiKey: e.target.value })}
+          />
+        </Row>
+
+        <Row label="TVDB User PIN" hint="Required if using subscriber user key">
+          <input
+            type="password"
+            autoComplete="off"
+            className="settings-input"
+            placeholder="Optional User PIN"
+            value={settings.customTvdbUserPin || ""}
+            onChange={(e) => set({ customTvdbUserPin: e.target.value })}
+          />
+        </Row>
+      </Panel>
+
+      <Panel title="Metadata Provider Priorities">
+        <Row label="Anime Metadata Priority" hint={`Active chain: ${animeChain}`}>
+          <span className="accent-badge">{animeChain}</span>
+        </Row>
+
+        <Row label="TV Shows Metadata Priority" hint={`Active chain: ${tvChain}`}>
+          <span className="accent-badge">{tvChain}</span>
+        </Row>
+
+        <Row label="Movies Metadata Priority" hint={`Active chain: ${movieChain}`}>
+          <span className="accent-badge">{movieChain}</span>
+        </Row>
+      </Panel>
+    </div>
+  );
+}
+
 
 function safeArray<T>(value: T[] | null | undefined): T[] {
   return Array.isArray(value) ? value : [];
@@ -1152,22 +1225,36 @@ function AccountsSection() {
     auth,
     traktConnected,
     mdblistConnected,
+    simklConnected,
+    trackingPreferences,
+    updateTrackingPreferences,
     deviceCode,
+    simklDeviceCode,
     signOut,
     beginTrakt,
     pollTrakt,
     disconnectTrakt,
     connectMdblist,
     disconnectMdblist,
+    beginSimkl,
+    pollSimkl,
+    disconnectSimkl,
     refreshData,
   } = useApp();
   const [traktError, setTraktError] = useState<string | null>(null);
   const [traktBusy, setTraktBusy] = useState<"start" | "poll" | null>(null);
+  const [simklError, setSimklError] = useState<string | null>(null);
+  const [simklBusy, setSimklBusy] = useState<"start" | "poll" | null>(null);
   const [mdblistKey, setMdblistKey] = useState("");
   const [mdblistError, setMdblistError] = useState<string | null>(null);
   const [mdblistBusy, setMdblistBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
   const cloudConfigured = hasNetlifyBackendConfig() || hasSupabaseConfig();
+  const routingOptions: Array<[typeof trackingPreferences.watchlistReadMode, string]> = [];
+  if (traktConnected && simklConnected) routingOptions.push(["both", "Trakt + Simkl"]);
+  if (traktConnected) routingOptions.push(["trakt", "Trakt"]);
+  if (simklConnected) routingOptions.push(["simkl", "Simkl"]);
+  if (mdblistConnected) routingOptions.push(["mdblist", "MDBList"]);
 
   const redirectToAuthPortal = () => {
     const redirectUri = window.location.origin + "/";
@@ -1203,6 +1290,38 @@ function AccountsSection() {
       );
     } finally {
       setTraktBusy(null);
+    }
+  };
+
+  const startSimklLink = async () => {
+    setSimklBusy("start");
+    setSimklError(null);
+    try {
+      await beginSimkl();
+    } catch (error) {
+      setSimklError(
+        error instanceof Error
+          ? error.message
+          : "Could not start Simkl device link.",
+      );
+    } finally {
+      setSimklBusy(null);
+    }
+  };
+
+  const approveSimklLink = async () => {
+    setSimklBusy("poll");
+    setSimklError(null);
+    try {
+      await pollSimkl();
+    } catch (error) {
+      setSimklError(
+        error instanceof Error
+          ? error.message
+          : "Simkl has not approved this device yet.",
+      );
+    } finally {
+      setSimklBusy(null);
     }
   };
 
@@ -1259,6 +1378,20 @@ function AccountsSection() {
                   ? "Not linked"
                   : "Missing config"}
             </strong>
+          </div>
+          <div>
+            <span>Simkl</span>
+            <strong>
+              {simklConnected
+                ? "Connected"
+                : hasSimklConfig()
+                  ? "Not linked"
+                  : "Missing config"}
+            </strong>
+          </div>
+          <div>
+            <span>MDBList</span>
+            <strong>{mdblistConnected ? "Connected" : "Not linked"}</strong>
           </div>
           <div>
             <span>Sync</span>
@@ -1326,6 +1459,96 @@ function AccountsSection() {
           </>
         )}
       </Panel>
+
+      <Panel title="Simkl">
+        {!hasSimklConfig() && (
+          <p className="empty">Simkl client configuration is missing.</p>
+        )}
+        {simklError && <p className="login-error">{simklError}</p>}
+        {simklConnected ? (
+          <button type="button" className="secondary" onClick={disconnectSimkl}>
+            Disconnect Simkl
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="primary"
+              disabled={simklBusy === "start" || !hasSimklConfig()}
+              onClick={() => void startSimklLink()}
+            >
+              {simklBusy === "start" ? "Starting..." : "Start device link"}
+            </button>
+            {simklDeviceCode && (
+              <div className="device-code">
+                <span>{simklDeviceCode.user_code}</span>
+                <p>
+                  Open{" "}
+                  <a
+                    href={simklDeviceCode.verification_url || "https://simkl.com/pin"}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "var(--accent)", textDecoration: "underline" }}
+                  >
+                    {simklDeviceCode.verification_url || "https://simkl.com/pin"}
+                  </a>{" "}
+                  and enter the code above
+                </p>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={simklBusy === "poll"}
+                  onClick={() => void approveSimklLink()}
+                >
+                  {simklBusy === "poll" ? "Checking..." : "I approved it"}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </Panel>
+
+      {(traktConnected || simklConnected || mdblistConnected) && (
+        <Panel title="Tracking behavior">
+          <Row label="Watchlist source" hint="Choose which connected service fills your watchlist.">
+            <Select
+              value={trackingPreferences.watchlistReadMode}
+              options={routingOptions}
+              onChange={(watchlistReadMode) => void updateTrackingPreferences({ watchlistReadMode })}
+            />
+          </Row>
+          <Row label="Continue Watching source" hint="Choose one service or merge progress from both.">
+            <Select
+              value={trackingPreferences.continueWatchingReadMode}
+              options={routingOptions}
+              onChange={(continueWatchingReadMode) => void updateTrackingPreferences({ continueWatchingReadMode })}
+            />
+          </Row>
+          <Row label="Watched history source" hint="Watched badges merge safely when both is selected.">
+            <Select
+              value={trackingPreferences.watchedReadMode}
+              options={routingOptions}
+              onChange={(watchedReadMode) => void updateTrackingPreferences({ watchedReadMode })}
+            />
+          </Row>
+          {traktConnected && (
+            <Row label="Update Trakt while watching">
+              <Toggle
+                value={trackingPreferences.writeToTrakt}
+                onChange={(writeToTrakt) => void updateTrackingPreferences({ writeToTrakt })}
+              />
+            </Row>
+          )}
+          {simklConnected && (
+            <Row label="Update Simkl while watching">
+              <Toggle
+                value={trackingPreferences.writeToSimkl}
+                onChange={(writeToSimkl) => void updateTrackingPreferences({ writeToSimkl })}
+              />
+            </Row>
+          )}
+        </Panel>
+      )}
 
       <Panel title="MDBList">
         {mdblistError && <p className="login-error">{mdblistError}</p>}
@@ -1398,6 +1621,7 @@ function HomeServerSection() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [testing, setTesting] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   const servers = safeArray(settings.homeServers);
   const update = (next: HomeServerConfig[]) =>
@@ -1438,6 +1662,37 @@ function HomeServerSection() {
       );
     } finally {
       setTesting(false);
+    }
+  };
+
+  const addConnection = async () => {
+    if (!url.trim()) {
+      setToast("Enter a Home Server URL first.");
+      return;
+    }
+    if (type === "plex" && !token.trim()) {
+      setToast("Plex needs an access token (X-Plex-Token).");
+      return;
+    }
+    setAdding(true);
+    try {
+      const { testHomeServerConnection } = await import("@/lib/homeserver");
+      const result = await testHomeServerConnection(buildDraft());
+      if (!result.ok || !result.connection) {
+        setToast(`Could not connect: ${result.error || "Connection failed"}`);
+        return;
+      }
+      update([result.connection, ...servers]);
+      setName("");
+      setUrl("");
+      setToken("");
+      setUsername("");
+      setPassword("");
+      setToast(`Connected to ${result.serverName || result.connection.name} and saved ${result.libraryCount ?? 0} libraries.`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Connection failed.");
+    } finally {
+      setAdding(false);
     }
   };
 
@@ -1502,21 +1757,10 @@ function HomeServerSection() {
         <button
           type="button"
           className="primary"
-          onClick={() => {
-            if (!url.trim()) {
-              setToast("Enter a Home Server URL first.");
-              return;
-            }
-            update([buildDraft(), ...servers]);
-            setName("");
-            setUrl("");
-            setToken("");
-            setUsername("");
-            setPassword("");
-            setToast("Home server saved.");
-          }}
+          disabled={adding || testing}
+          onClick={() => void addConnection()}
         >
-          <Plus size={18} /> Add
+          <Plus size={18} /> {adding ? "Connecting…" : "Add"}
         </button>
       </div>
       <div className="settings-list">
@@ -1845,6 +2089,17 @@ function TvSettingsSection() {
 
   return (
     <Panel title="TV (IPTV)">
+      <Row label="Sort order" hint="Choose how live channels and groups are ordered in the list">
+        <Select
+          value={settings.iptvSortOrder ?? "provider"}
+          onChange={(v) => updateSettings({ iptvSortOrder: v as "provider" | "number" | "name" })}
+          options={[
+            ["provider", "Provider Order (Default)"],
+            ["number", "Channel Number"],
+            ["name", "Alphabetical (A-Z)"]
+          ]}
+        />
+      </Row>
       <p className="empty">
         {playlists.length} playlist(s) configured. These are cloud-saved and
         used by the TV page.
@@ -1975,17 +2230,39 @@ function TvSettingsSection() {
 
 function CatalogsSection() {
   const { settings, updateSettings, setToast } = useApp();
-  const catalogs = mergeCatalogs(
+  const standardCatalogs = mergeCatalogs(
     safeArray(settings.catalogs),
     safeArray(settings.hiddenCatalogIds),
-  );
+  ).filter((catalog) => catalog.sourceType !== "home-server");
+  const [homeServerCatalogs, setHomeServerCatalogs] = useState<CatalogConfig[]>([]);
   const [customCatalogUrl, setCustomCatalogUrl] = useState("");
+  const catalogs = [...homeServerCatalogs, ...standardCatalogs];
 
-  const updateCatalogs = (next: CatalogConfig[]) =>
+  useEffect(() => {
+    let cancelled = false;
+    void buildHomeServerCatalogConfigs(
+      safeArray(settings.homeServers),
+      safeArray(settings.catalogs),
+      safeArray(settings.hiddenHomeServerCatalogIds),
+    ).then((next) => {
+      if (!cancelled) setHomeServerCatalogs(next);
+    }).catch(() => {
+      if (!cancelled) setHomeServerCatalogs([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.catalogs, settings.hiddenHomeServerCatalogIds, settings.homeServers]);
+
+  const updateCatalogs = (next: CatalogConfig[]) => {
+    const homeServer = next.filter((catalog) => catalog.sourceType === "home-server");
+    const standard = next.filter((catalog) => catalog.sourceType !== "home-server");
     updateSettings({
       catalogs: next,
-      hiddenCatalogIds: next.filter((c) => !c.enabled).map((c) => c.id),
+      hiddenCatalogIds: standard.filter((catalog) => !catalog.enabled).map((catalog) => catalog.id),
+      hiddenHomeServerCatalogIds: homeServer.filter((catalog) => !catalog.enabled).map((catalog) => catalog.id),
     });
+  };
   const moveCatalog = (id: string, offset: number) => {
     const index = catalogs.findIndex((c) => c.id === id);
     const target = index + offset;
@@ -2031,7 +2308,7 @@ function CatalogsSection() {
         <button
           type="button"
           className="secondary text-button"
-          onClick={() => updateCatalogs(defaultCatalogs)}
+          onClick={() => updateCatalogs([...homeServerCatalogs, ...defaultCatalogs])}
         >
           <RotateCcw size={18} /> Reset
         </button>
@@ -2045,6 +2322,7 @@ function CatalogsSection() {
             <button
               type="button"
               className="icon-button"
+              aria-label={`${catalog.enabled ? "Hide" : "Show"} ${catalog.name}`}
               onClick={() =>
                 updateCatalogs(
                   catalogs.map((c) =>
@@ -2098,7 +2376,7 @@ function CatalogsSection() {
             >
               <ArrowDown size={18} />
             </button>
-            {!catalog.isPreinstalled && (
+            {!catalog.isPreinstalled && catalog.sourceType !== "home-server" && (
               <button
                 type="button"
                 className="icon-button danger"

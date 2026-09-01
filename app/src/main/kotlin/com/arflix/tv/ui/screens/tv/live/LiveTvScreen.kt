@@ -7,6 +7,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import com.arflix.tv.util.findActivity
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -33,6 +34,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -80,11 +83,16 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.arflix.tv.R
+import com.arflix.tv.ui.theme.Pink
+import com.arflix.tv.ui.theme.ArflixTypography
+import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.data.model.MediaItem as ArvioMediaItem
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.repository.IptvPlaybackTarget
+import com.arflix.tv.data.repository.StalkerPortalSupport
 import com.arflix.tv.ui.screens.tv.TvUiState
 import com.arflix.tv.ui.screens.tv.TvViewModel
 import com.arflix.tv.network.OkHttpProvider
@@ -133,6 +141,7 @@ private const val CatchupUrlAnchorGranularityMs = 60_000L
 private const val IptvPlaybackUserAgent = "VLC/3.0.20 LibVLC/3.0.20"
 private const val VisibleGuidePastWindowMs = 48L * 60L * 60_000L
 private const val VisibleGuideFutureWindowMs = 48L * 60L * 60_000L
+private const val EpgGuideLookupTimeoutMs = 2_500L
 
 private fun digitForTvKeyCode(keyCode: Int): Int? = when (keyCode) {
     AndroidKeyEvent.KEYCODE_0, AndroidKeyEvent.KEYCODE_NUMPAD_0 -> 0
@@ -278,7 +287,7 @@ private fun mergeGuideSlices(
 }
 
 private fun EnrichedChannel.guideFallbackKeys(): List<String> {
-    val playlistId = id.substringBefore(':', missingDelimiterValue = "").trim()
+    val playlistId = StalkerPortalSupport.playlistIdFromChannelId(id)
     val prefix = playlistId.ifBlank { "default" }
     val keys = LinkedHashSet<String>()
 
@@ -407,6 +416,7 @@ fun LiveTvScreen(
     onNavigateToWatchlist: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
     onNavigateToIptvSettings: (() -> Unit)? = null,
+    onNavigateToDetails: (com.arflix.tv.data.model.MediaType, Int) -> Unit = { _, _ -> },
     onSwitchProfile: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
@@ -421,7 +431,14 @@ fun LiveTvScreen(
     val deviceType = LocalDeviceType.current
     val isTouchDevice = deviceType.isTouchDevice()
     val useTouchRail = isTouchDevice && configuration.smallestScreenWidthDp < 600
+    val miniPlayerLayout = liveTvMiniPlayerLayout(
+        isTouchDevice = isTouchDevice,
+        smallestScreenWidthDp = configuration.smallestScreenWidthDp,
+        screenWidthDp = configuration.screenWidthDp,
+        screenHeightDp = configuration.screenHeightDp,
+    )
     val compactTouchLayout = isTouchDevice && configuration.screenWidthDp < 900
+    val landscapeCompactMiniPlayer = miniPlayerLayout == LiveTvMiniPlayerLayout.LANDSCAPE_COMPACT
     val showTopBar = !isTouchDevice
     val contentTopPadding = if (showTopBar) AppTopBarHeight else 0.dp
     val coroutineScope = rememberCoroutineScope()
@@ -573,6 +590,7 @@ fun LiveTvScreen(
                 val pageLimit = pagedLoadedLimit.coerceAtLeast(GuideMaxWindowRows)
                 fun scanCategoryWindow(categoryId: String, targetGroupTitle: String?): List<IptvChannel> {
                     if (!categoryId.startsWith("grp:")) return emptyList()
+                    val targetPlaylistId = playlistIdFromGroupCategoryId(categoryId)
                     val targetGroupKey = looseIptvGroupKey(targetGroupTitle)
                     val targetCompactGroupKey = compactIptvGroupKey(targetGroupTitle)
                     val out = ArrayList<IptvChannel>(pageLimit)
@@ -582,11 +600,12 @@ fun LiveTvScreen(
                         val chunk = viewModel.iptvRepository.pagedChannelWindow(null, null, offset, chunkSize)
                         if (chunk.isEmpty()) break
                         chunk.forEach { channel ->
-                            val rawPlaylistId = channel.id.substringBefore(':')
+                            val rawPlaylistId = channelPlaylistId(channel.id)
                             val categoryMatches = playlistGroupCategoryId(rawPlaylistId, channel.group) == categoryId
-                            val looseGroupMatches = targetGroupKey.isNotBlank() &&
+                            val samePlaylist = targetPlaylistId == null || rawPlaylistId == targetPlaylistId
+                            val looseGroupMatches = samePlaylist && targetGroupKey.isNotBlank() &&
                                 looseIptvGroupKey(channel.group) == targetGroupKey
-                            val compactGroupMatches = targetCompactGroupKey.isNotBlank() &&
+                            val compactGroupMatches = samePlaylist && targetCompactGroupKey.isNotBlank() &&
                                 compactIptvGroupKey(channel.group) == targetCompactGroupKey
                             if (categoryMatches || looseGroupMatches || compactGroupMatches) {
                                 out += channel
@@ -752,8 +771,16 @@ fun LiveTvScreen(
         enrichedState.value = current.copy(tree = tree)
     }
 
-    val providerFilters = remember(state.config, enrichedState.value.all) {
-        buildTvProviderFilters(state.config, enrichedState.value.all)
+    val providerFilters = remember(state.config, enrichedState.value.all, lastKnownPlaylistGroupCounts) {
+        buildTvProviderFilters(state.config, enrichedState.value.all, lastKnownPlaylistGroupCounts)
+    }
+    val playlistCategorySections = remember(state.config, enrichedState.value.tree.global.categories, hiddenGroupSet) {
+        buildPlaylistCategorySections(state.config, enrichedState.value.tree.global.categories, hiddenGroupSet)
+    }
+    LaunchedEffect(playlistCategorySections, selectedProviderId) {
+        if (playlistCategorySections.isNotEmpty() && selectedProviderId != "all") {
+            selectedProviderId = "all"
+        }
     }
     LaunchedEffect(providerFilters, selectedProviderId) {
         if (providerFilters.isEmpty() || providerFilters.none { it.id == selectedProviderId }) {
@@ -827,6 +854,7 @@ fun LiveTvScreen(
         favSet,
         recentsFilterKey,
         pagedLoadedLimit,
+        state.snapshot.sortOrder,
     ) {
         val tree = visibleEnrichedState.value.tree
         val categoryCount = tree.countForCategory(selectedCategoryId) ?: 0
@@ -837,9 +865,14 @@ fun LiveTvScreen(
                 recents = recents.value,
             )
         }
-        if (result.isEmpty() && categoryCount > 0 && selectedCategoryId.startsWith("grp:") &&
-            viewModel.iptvRepository.pagedChannelsReady()
-        ) {
+        // pagedChannelsReady() runs COUNT(*) over the channel database, so it must
+        // not be evaluated inline here: this effect body runs on the main
+        // dispatcher and the query blocks it on every category switch.
+        val pagedStoreReady = result.isEmpty() &&
+            categoryCount > 0 &&
+            selectedCategoryId.startsWith("grp:") &&
+            withContext(Dispatchers.IO) { viewModel.iptvRepository.pagedChannelsReady() }
+        if (pagedStoreReady) {
             val resolvedGroup = lastKnownPlaylistGroupCounts
                 .firstOrNull { (playlistId, groupTitle, _) ->
                     playlistGroupCategoryId(playlistId, groupTitle) == selectedCategoryId
@@ -853,6 +886,7 @@ fun LiveTvScreen(
                 val groupTitle = resolvedGroup?.second
                 fun scanCategoryWindow(targetGroupTitle: String?): List<IptvChannel> {
                     if (!selectedCategoryId.startsWith("grp:")) return emptyList()
+                    val targetPlaylistId = playlistIdFromGroupCategoryId(selectedCategoryId)
                     val targetGroupKey = looseIptvGroupKey(targetGroupTitle)
                     val targetCompactGroupKey = compactIptvGroupKey(targetGroupTitle)
                     val out = ArrayList<IptvChannel>(pagedLoadedLimit)
@@ -862,11 +896,12 @@ fun LiveTvScreen(
                         val chunk = viewModel.iptvRepository.pagedChannelWindow(null, null, offset, chunkSize)
                         if (chunk.isEmpty()) break
                         chunk.forEach { channel ->
-                            val rawPlaylistId = channel.id.substringBefore(':')
+                            val rawPlaylistId = channelPlaylistId(channel.id)
                             val categoryMatches = playlistGroupCategoryId(rawPlaylistId, channel.group) == selectedCategoryId
-                            val looseGroupMatches = targetGroupKey.isNotBlank() &&
+                            val samePlaylist = targetPlaylistId == null || rawPlaylistId == targetPlaylistId
+                            val looseGroupMatches = samePlaylist && targetGroupKey.isNotBlank() &&
                                 looseIptvGroupKey(channel.group) == targetGroupKey
-                            val compactGroupMatches = targetCompactGroupKey.isNotBlank() &&
+                            val compactGroupMatches = samePlaylist && targetCompactGroupKey.isNotBlank() &&
                                 compactIptvGroupKey(channel.group) == targetCompactGroupKey
                             if (categoryMatches || looseGroupMatches || compactGroupMatches) {
                                 out += channel
@@ -883,8 +918,7 @@ fun LiveTvScreen(
                     if (exact.isNotEmpty()) {
                         exact
                     } else {
-                        val fallback = viewModel.iptvRepository.pagedChannelWindow(null, groupTitle, 0, pagedLoadedLimit)
-                        if (fallback.isNotEmpty()) fallback else scanCategoryWindow(groupTitle)
+                        scanCategoryWindow(groupTitle)
                     }
                 } else {
                     scanCategoryWindow(tree.byId(selectedCategoryId)?.playlistGroupName)
@@ -912,7 +946,7 @@ fun LiveTvScreen(
             return@LaunchedEffect
         }
         filteredChannelsCategoryKey = selectedCategoryId
-        filteredChannelsState.value = result
+        filteredChannelsState.value = sortChannelsByConfiguredOrder(result, state.snapshot.sortOrder)
     }
     val visibleChannels = visibleEnrichedState.value.all
     // Variant grouping + collapsing + index building are O(channels). Doing them
@@ -1198,6 +1232,32 @@ fun LiveTvScreen(
             }
         }
     }
+    val actionGuideNowNext = remember(state.snapshot.nowNext, effectiveGuideNowNext) {
+        HashMap(state.snapshot.nowNext).apply { putAll(effectiveGuideNowNext) }
+    }
+    val guideIdentityKeysByChannelId = remember(enrichedState.value.all) {
+        enrichedState.value.all.associate { channel ->
+            channel.id to guideIdentityKeys(
+                channel.source.epgId,
+                channel.source.tvgName,
+                channel.source.rawTitle,
+                channel.name,
+            )
+        }
+    }
+    val currentActionGuideNowNext by rememberUpdatedState(actionGuideNowNext)
+    val currentGuideIdentityKeysByChannelId by rememberUpdatedState(guideIdentityKeysByChannelId)
+    fun currentProgramForAction(channel: EnrichedChannel): IptvProgram? = guideProgramForAction(
+        channelId = channel.id,
+        guideIdentityKeys = guideIdentityKeys(
+            channel.source.epgId,
+            channel.source.tvgName,
+            channel.source.rawTitle,
+            channel.name,
+        ),
+        guideByChannelId = currentActionGuideNowNext,
+        guideIdentityKeysByChannelId = currentGuideIdentityKeysByChannelId,
+    )
 
     val epgAnchorChannelId = epgPrefetchAnchorId
         ?: selectedDisplayChannelId
@@ -1437,16 +1497,50 @@ fun LiveTvScreen(
     // box. focusPlaylistSearch() still bumps it when the user actually asks
     // for search.
     var focusSearchCategorySignal by remember { mutableIntStateOf(0) }
+    // Bumped to put the selector on the category list (never on search).
+    var focusCategoryRailSignal by remember { mutableIntStateOf(0) }
     // Full-screen playback mode — pressing OK on an EPG row expands the
     // mini-player to cover the whole screen. Back collapses back to the grid.
     var isFullScreen by rememberSaveable { mutableStateOf(initialStreamUrl != null) }
     var fullscreenGuideOpen by remember { mutableStateOf(false) }
+    var quickZapOpen by remember { mutableStateOf(false) }
     var variantPickerChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
+    // A second selection on the currently playing programme offers Watch Live
+    // and, only after a confident movie/series match, Stream Now.
+    var programActionDialog by remember { mutableStateOf<ProgramActionData?>(null) }
+    var programActionVodMatch by remember { mutableStateOf<ArvioMediaItem?>(null) }
+    var programActionLookupInProgress by remember { mutableStateOf(false) }
+    val programActionLookupGuard = remember { EpgVodLookupGuard() }
+    val programActionLookupJob = remember { arrayOf<Job?>(null) }
+    fun invalidateProgramActionLookup() {
+        programActionLookupJob[0]?.cancel()
+        programActionLookupJob[0] = null
+        programActionLookupGuard.invalidate()
+        programActionDialog = null
+        programActionVodMatch = null
+        programActionLookupInProgress = false
+    }
+    LaunchedEffect(
+        selectedCategoryId,
+        selectedProviderId,
+        focusedChannelId,
+        searchOpen,
+        variantPickerChannel,
+        isFullScreen,
+        fullscreenGuideOpen,
+        quickZapOpen,
+    ) {
+        invalidateProgramActionLookup()
+    }
     LaunchedEffect(isFullScreen) {
         onFullscreenChanged(isFullScreen)
     }
     DisposableEffect(Unit) {
-        onDispose { onFullscreenChanged(false) }
+        onDispose {
+            programActionLookupJob[0]?.cancel()
+            programActionLookupGuard.invalidate()
+            onFullscreenChanged(false)
+        }
     }
     // Focus requesters for the three regions.
     val sidebarFocus = remember { FocusRequester() }
@@ -1457,7 +1551,6 @@ fun LiveTvScreen(
     val sidebarListState = rememberLazyListState()
 
     var hudPokeSignal by remember { mutableStateOf(0) }
-    var quickZapOpen by remember { mutableStateOf(false) }
     var isHudVisible by remember { mutableStateOf(false) }
     var guideOpenedFromQuickZap by remember { mutableStateOf(false) }
     var guideChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
@@ -1528,11 +1621,17 @@ fun LiveTvScreen(
 
         onDispose {
             if (previousOrientation != null) {
-                activity.requestedOrientation = previousOrientation
+                activity?.requestedOrientation = previousOrientation
             }
             if (window != null) {
-                androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
-                    .show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                @Suppress("DEPRECATION")
+                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
+                controller.systemBarsBehavior =
+                    androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+                controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                controller.isAppearanceLightStatusBars = false
+                controller.isAppearanceLightNavigationBars = false
             }
         }
     }
@@ -1585,7 +1684,9 @@ fun LiveTvScreen(
 
     fun focusProviderSwitcher() {
         noteGuideUserNavigation()
-        if (providerFilters.size <= 1) {
+        // Playlist sections replace the standalone provider selector. Route focus
+        // straight into the category rail when that selector is not composed.
+        if (playlistCategorySections.isNotEmpty() || providerFilters.size <= 1) {
             focusPlaylistSearch()
             return
         }
@@ -1636,28 +1737,6 @@ fun LiveTvScreen(
         }
     }
 
-    fun selectChannel(channel: EnrichedChannel) {
-        noteGuideUserNavigation()
-        focusedChannelId = channel.id
-        epgPrefetchAnchorId = channel.id
-        rememberedChannelByCategory[selectedCategoryId] = channel.id
-        val currentDisplayId = displayChannelIdFor(playingChannelId, visibleEnrichedState.value.index.byId, variantGroups)
-        val isSamePlayingChannel = channel.id == playingChannelId || channel.id == currentDisplayId
-        if (isSamePlayingChannel && !isFullScreen) {
-            // Second tap on the already-playing channel → fullscreen
-            playingCatchupProgram = null
-            catchupPlaybackOffsetMs = 0L
-            isFullScreen = true
-            hudPokeSignal++
-        } else {
-            // First tap or different channel → tune in mini-player
-            playingChannelId = channel.id
-            playingCatchupProgram = null
-            catchupPlaybackOffsetMs = 0L
-            fullscreenGuideOpen = false
-        }
-    }
-
     fun openVariantPicker(channel: EnrichedChannel) {
         noteGuideUserNavigation()
         if (variantCountFor(channel, variantGroups) > 1) {
@@ -1701,6 +1780,196 @@ fun LiveTvScreen(
         focusChannelList(playbackChannel.id)
     }
 
+    fun isSamePlayingChannel(channel: EnrichedChannel): Boolean {
+        val currentDisplayId = displayChannelIdFor(
+            playingChannelId,
+            visibleEnrichedState.value.index.byId,
+            variantGroups,
+        )
+        return channel.id == playingChannelId || channel.id == currentDisplayId
+    }
+
+    fun playLiveFullscreen(channel: EnrichedChannel) {
+        invalidateProgramActionLookup()
+        noteGuideUserNavigation()
+        playingChannelId = channel.id
+        focusedChannelId = channel.id
+        epgPrefetchAnchorId = channel.id
+        rememberedChannelByCategory[selectedCategoryId] = channel.id
+        playingCatchupProgram = null
+        catchupPlaybackOffsetMs = 0L
+        fullscreenGuideOpen = false
+        isFullScreen = true
+        hudPokeSignal++
+    }
+
+    /**
+     * Get the current live programme for a channel, using the same guide data
+     * the EPG grid is already displaying. This is the direct source — no identity-
+     * key aliasing or cross-playlist matching. If the grid shows a programme,
+     * this returns it; if the grid shows "guide pending", this returns null.
+     */
+    fun displayedCurrentProgram(channel: EnrichedChannel): IptvProgram? =
+        effectiveGuideNowNext[channel.id]?.now?.takeIf { it.isLive(guideClockMillis) }
+
+    /**
+     * When the user second-clicks a playing channel but EPG data hasn't loaded
+     * yet (common when switching to a different playlist), trigger an immediate
+     * network EPG fetch for that channel, then attempt the VOD resolution.
+     * This prevents the feature from silently falling back to fullscreen.
+     */
+    fun resolveVodWithEagerFetch(channel: EnrichedChannel) {
+        invalidateProgramActionLookup()
+        if (!epgChannelAllowsVodSearch(channel.name, channel.source.group)) {
+            playLiveFullscreen(channel)
+            return
+        }
+        val lookupGeneration = programActionLookupGuard.beginLookup()
+        programActionLookupInProgress = true
+        programActionLookupJob[0] = coroutineScope.launch {
+            try {
+                viewModel.refreshCurrentChannelEpg(channel.id, forceNetworkForLargeList = true)
+                val program = displayedCurrentProgram(channel)
+                    ?: currentProgramForAction(channel)?.takeIf { it.isLive(guideClockMillis) }
+                    ?: awaitLiveEpgProgram(
+                        programUpdates = viewModel.uiState.map { uiState ->
+                            uiState.snapshot.nowNext[channel.id]?.now
+                        },
+                        timeoutMillis = EpgGuideLookupTimeoutMs,
+                    )
+                if (!programActionLookupGuard.isCurrent(lookupGeneration)) return@launch
+                if (program == null) {
+                    playLiveFullscreen(channel)
+                    return@launch
+                }
+                val match = viewModel.findEpgVodMatch(
+                    title = program.title,
+                    description = program.description,
+                    channelName = channel.name,
+                    channelGroup = channel.source.group,
+                )
+                if (!programActionLookupGuard.isCurrent(lookupGeneration)) return@launch
+                if (!epgVodLookupCanPublish(
+                        selectedProgram = program,
+                        currentProgram = viewModel.uiState.value.snapshot.nowNext[channel.id]?.now
+                            ?: displayedCurrentProgram(channel)
+                            ?: currentProgramForAction(channel),
+                        nowMillis = System.currentTimeMillis(),
+                    )
+                ) return@launch
+                when (vodLookupResolution(match != null)) {
+                    EpgInteractionAction.ShowVodDialog -> {
+                        programActionVodMatch = match
+                        programActionDialog = ProgramActionData(channel, program)
+                    }
+                    EpgInteractionAction.PlayLiveFullscreen -> playLiveFullscreen(channel)
+                    else -> Unit
+                }
+            } finally {
+                if (programActionLookupGuard.isCurrent(lookupGeneration)) {
+                    programActionLookupInProgress = false
+                    programActionLookupJob[0] = null
+                }
+            }
+        }
+    }
+
+    fun resolveVodOrPlayFullscreen(channel: EnrichedChannel, program: IptvProgram) {
+        invalidateProgramActionLookup()
+        if (!epgChannelAllowsVodSearch(channel.name, channel.source.group)) {
+            playLiveFullscreen(channel)
+            return
+        }
+        val lookupGeneration = programActionLookupGuard.beginLookup()
+        programActionLookupInProgress = true
+        programActionLookupJob[0] = coroutineScope.launch {
+            try {
+                val match = viewModel.findEpgVodMatch(
+                    title = program.title,
+                    description = program.description,
+                    channelName = channel.name,
+                    channelGroup = channel.source.group,
+                )
+                if (!programActionLookupGuard.isCurrent(lookupGeneration)) return@launch
+                if (
+                    !epgVodLookupCanPublish(
+                        selectedProgram = program,
+                        currentProgram = viewModel.uiState.value.snapshot.nowNext[channel.id]?.now
+                            ?: currentProgramForAction(channel),
+                        nowMillis = System.currentTimeMillis(),
+                    )
+                ) return@launch
+                when (vodLookupResolution(match != null)) {
+                    EpgInteractionAction.ShowVodDialog -> {
+                        programActionVodMatch = match
+                        programActionDialog = ProgramActionData(channel, program)
+                    }
+                    EpgInteractionAction.PlayLiveFullscreen -> playLiveFullscreen(channel)
+                    else -> Unit
+                }
+            } finally {
+                if (programActionLookupGuard.isCurrent(lookupGeneration)) {
+                    programActionLookupInProgress = false
+                    programActionLookupJob[0] = null
+                }
+            }
+        }
+    }
+
+    fun selectChannel(channel: EnrichedChannel, currentProgram: IptvProgram? = null) {
+        val sameChannel = isSamePlayingChannel(channel)
+        when (
+            channelRowInteractionAction(
+                isSamePlayingChannel = sameChannel,
+                hasCurrentProgram = currentProgram != null,
+                vodActionsEnabled = state.epgVodActionsEnabled,
+            )
+        ) {
+            EpgInteractionAction.PlayLiveMini -> playProgramInMini(channel, null)
+            EpgInteractionAction.ResolveVodOrPlayFullscreen ->
+                resolveVodOrPlayFullscreen(channel, currentProgram ?: return)
+            EpgInteractionAction.PlayLiveFullscreen -> {
+                // Second click on the playing channel but no current EPG programme.
+                // Instead of going straight to fullscreen, try an eager EPG fetch
+                // so the Watch Live / Stream Now dialog can still appear. This is
+                // the key fix for channels on non-first playlists where EPG data
+                // hasn't been prefetched yet.
+                if (sameChannel && state.epgVodActionsEnabled &&
+                    epgChannelAllowsVodSearch(channel.name, channel.source.group)
+                ) {
+                    resolveVodWithEagerFetch(channel)
+                } else {
+                    playLiveFullscreen(channel)
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    fun selectEpgProgram(channel: EnrichedChannel, program: IptvProgram) {
+        val temporalState = when {
+            program.isLive(guideClockMillis) -> EpgTemporalState.Live
+            program.endUtcMillis <= guideClockMillis -> EpgTemporalState.Past
+            else -> EpgTemporalState.Future
+        }
+        // EpgGrid only forwards past programmes when catch-up is supported.
+        val catchupSupported = temporalState == EpgTemporalState.Past
+        when (
+            epgProgramInteractionAction(
+                temporalState = temporalState,
+                isSamePlayingChannel = isSamePlayingChannel(channel),
+                isCatchupSupported = catchupSupported,
+                vodActionsEnabled = state.epgVodActionsEnabled,
+            )
+        ) {
+            EpgInteractionAction.PlayLiveMini -> playProgramInMini(channel, null)
+            EpgInteractionAction.PlayCatchup -> playProgramInMini(channel, program)
+            EpgInteractionAction.ResolveVodOrPlayFullscreen -> resolveVodOrPlayFullscreen(channel, program)
+            EpgInteractionAction.PlayLiveFullscreen -> playLiveFullscreen(channel)
+            EpgInteractionAction.NoOp,
+            EpgInteractionAction.ShowVodDialog -> Unit
+        }
+    }
     fun playProgramInFullscreen(program: IptvProgram?, targetChannel: EnrichedChannel? = null) {
         val channel = targetChannel ?: playingChannel
         if (program != playingCatchupProgram) {
@@ -1840,6 +2109,7 @@ fun LiveTvScreen(
     var playerDurationMs by remember { mutableLongStateOf(0L) }
     var playerIsPlaying by remember { mutableStateOf(false) }
     var playerPlayWhenReady by remember { mutableStateOf(true) }
+    var playerIsBuffering by remember { mutableStateOf(false) }
     LaunchedEffect(exoPlayer, playingCatchupProgram, catchupUrlAnchorOffsetMs) {
         while (true) {
             val programDuration = playingCatchupProgram
@@ -1856,6 +2126,7 @@ fun LiveTvScreen(
                 .let { position -> if (duration > 0L) position.coerceAtMost(duration) else position }
             playerIsPlaying = exoPlayer.isPlaying
             playerPlayWhenReady = exoPlayer.playWhenReady
+            playerIsBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING
             delay(if (playingCatchupProgram != null) 500L else 1_500L)
         }
     }
@@ -1895,9 +2166,21 @@ fun LiveTvScreen(
         resetRetry: Boolean,
         initialPositionMs: Long = 0L,
         drmInfo: com.arflix.tv.data.model.DrmInfo? = null,
+        forcePrepare: Boolean = false,
     ) {
         val mergedHeaders = (baseRequestHeaders + headers).safePlaybackHeaders()
         iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
+
+        if (!forcePrepare &&
+            stream == lastPreparedStreamUrl &&
+            isHls == lastPreparedIsHls &&
+            headers == lastPreparedHeaders &&
+            (playingCatchupProgram == null || catchupUrlAnchorOffsetMs == lastPreparedCatchupOffsetMs)
+        ) {
+            return
+        }
+
+        playerIsBuffering = true
         exoPlayer.stop()
         exoPlayer.clearMediaItems()
         val mediaItem = MediaItem.Builder()
@@ -2010,12 +2293,50 @@ fun LiveTvScreen(
         hudPokeSignal++
     }
 
+    fun seekToPosition(targetMs: Long) {
+        if (playingCatchupProgram != null) {
+            val delta = targetMs - playerPositionMs
+            seekCatchupBy(delta)
+        } else {
+            val currentNow = currentNowNext?.now
+            val ch = playingChannel
+            val currentElapsed = if (currentNow != null && currentNow.startUtcMillis > 0L) {
+                (System.currentTimeMillis() - currentNow.startUtcMillis).coerceAtLeast(0L)
+            } else {
+                playerPositionMs
+            }
+            val boundedTarget = targetMs.coerceIn(0L, currentElapsed)
+            if (boundedTarget >= currentElapsed) {
+                hudPokeSignal++
+                return
+            }
+            if (ch != null && currentNow != null && ch.supportsCatchupHistory()) {
+                System.err.println("[IPTV-Catchup] auto-switch catchup program=${currentNow.title} targetMs=$boundedTarget")
+                playingCatchupProgram = currentNow
+                catchupPlaybackOffsetMs = boundedTarget
+                playerPositionMs = boundedTarget
+                lastPreparedStreamUrl = null
+                playerIsBuffering = true
+                hudPokeSignal++
+            } else {
+                val currentExo = exoPlayer.currentPosition
+                val maxExo = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 60_000L
+                val delta = boundedTarget - currentElapsed
+                val newExo = (currentExo + delta).coerceIn(0L, maxExo)
+                exoPlayer.seekTo(newExo)
+                hudPokeSignal++
+            }
+        }
+    }
+
     fun returnCatchupToLive() {
         if (playingCatchupProgram == null) return
         System.err.println("[IPTV-Catchup] return-live channel=${playingChannelId.orEmpty()}")
         playingCatchupProgram = null
         catchupPlaybackOffsetMs = 0L
         fullscreenGuideOpen = false
+        lastPreparedStreamUrl = null
+        playerIsBuffering = true
         exoPlayer.play()
         hudPokeSignal++
     }
@@ -2060,23 +2381,15 @@ fun LiveTvScreen(
             )
             return@LaunchedEffect
         }
-        val stream = target.url
         val headers = sourceChannel?.requestHeaders.orEmpty()
-        delay(90L)
-        if (
-            stream == lastPreparedStreamUrl &&
-            target.isHls == lastPreparedIsHls &&
-            headers == lastPreparedHeaders &&
-            catchupUrlAnchorOffsetMs == lastPreparedCatchupOffsetMs
-        ) {
-            return@LaunchedEffect
-        }
+        val initialSeekMs = if (playingCatchupProgram != null) catchupInSegmentSeekMs else 0L
+
         prepareStream(
-            stream = stream,
+            stream = target.url,
             isHls = target.isHls,
             headers = headers,
             resetRetry = true,
-            initialPositionMs = if (playingCatchupProgram != null) catchupInSegmentSeekMs else 0L,
+            initialPositionMs = initialSeekMs,
             drmInfo = playingChannel?.source?.drmInfo,
         )
         // Persist "recent" as soon as playback starts.
@@ -2105,12 +2418,23 @@ fun LiveTvScreen(
     ) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                playerIsBuffering = (playbackState == Player.STATE_BUFFERING)
                 if (playbackState == Player.STATE_READY) {
                     playbackDiagnostic = null
+                    playerIsBuffering = false
+                }
+            }
+
+            override fun onIsLoadingChanged(isLoading: Boolean) {
+                if (exoPlayer.playbackState == Player.STATE_BUFFERING || (isLoading && !exoPlayer.isPlaying)) {
+                    playerIsBuffering = true
+                } else if (exoPlayer.playbackState == Player.STATE_READY) {
+                    playerIsBuffering = false
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                playerIsBuffering = false
                 val prepared = lastPreparedStreamUrl ?: return
                 val preparedIsHls = lastPreparedIsHls
                 val nextAttempt = playerRetryCount + 1
@@ -2173,7 +2497,7 @@ fun LiveTvScreen(
                     }
                     System.err.println(
                         "[IPTV] Retrying live playback attempt=$nextAttempt " +
-                        "code=${error.errorCodeName} status=${httpResponseCode(error) ?: "-"} " +
+                            "code=${error.errorCodeName} status=${httpResponseCode(error) ?: "-"} " +
                             "candidates=$catchupCandidateCount url=${redactPlaybackUrl(retryTarget.url)}"
                     )
                     playbackDiagnostic = PlaybackDiagnostic(
@@ -2186,21 +2510,32 @@ fun LiveTvScreen(
                         isHls = retryTarget.isHls,
                         headers = retryHeaders,
                         resetRetry = false,
-                        initialPositionMs = if (retryProgram != null) catchupInSegmentSeekMs else 0L,
+                        initialPositionMs = retryChannel?.catchupInSegmentSeekOffset(catchupPlaybackOffsetMs) ?: 0L,
                         drmInfo = retryChannel?.drmInfo,
+                        forcePrepare = true,
                     )
                 }
             }
-
         }
         exoPlayer.addListener(listener)
         onDispose { exoPlayer.removeListener(listener) }
     }
 
-    // Default IPTV entry is the playlist/category rail, focused on Search.
+    // Default IPTV entry is the playlist/category rail. It used to land on the
+    // Search row, which is what users reported: the selector opened inside the
+    // search box and — because "down" from search selects the first category,
+    // which does not exist until the playlist has parsed — stayed stuck there
+    // through the whole load. Land on the categories instead; search is one
+    // press up from there.
     LaunchedEffect(visibleEnrichedState.value !== EnrichedChannels.Empty) {
-        if (!isTouchDevice && visibleEnrichedState.value !== EnrichedChannels.Empty) {
-            focusPlaylistSearch()
+        val entry = LiveTvStartup.entryFocus(
+            isTouchDevice = isTouchDevice,
+            hasChannels = visibleEnrichedState.value !== EnrichedChannels.Empty,
+        )
+        if (entry == LiveTvStartup.EntryFocus.CATEGORY_LIST) {
+            noteGuideUserNavigation()
+            focusZone = LiveTvFocusZone.CATEGORY_LIST
+            focusCategoryRailSignal += 1
         }
     }
 
@@ -2341,19 +2676,21 @@ fun LiveTvScreen(
                         .fillMaxSize()
                         .padding(top = contentTopPadding),
                 ) {
-                    ProviderSelector(
-                        providers = providerFilters,
-                        selectedId = selectedProviderId,
-                        onSelect = { id ->
-                            noteGuideUserNavigation()
-                            selectedProviderId = id
-                            selectedCategoryId = "all"
-                            focusedChannelId = null
-                            epgPrefetchAnchorId = null
-                        },
-                        onMoveDown = { focusPlaylistSearch() },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    if (playlistCategorySections.isEmpty()) {
+                        ProviderSelector(
+                            providers = providerFilters,
+                            selectedId = selectedProviderId,
+                            onSelect = { id ->
+                                noteGuideUserNavigation()
+                                selectedProviderId = id
+                                selectedCategoryId = "all"
+                                focusedChannelId = null
+                                epgPrefetchAnchorId = null
+                            },
+                            onMoveDown = { focusPlaylistSearch() },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     MiniPlayerRow(
                         exoPlayer = exoPlayer,
                         channel = playingChannel,
@@ -2365,11 +2702,13 @@ fun LiveTvScreen(
                         variantCount = playingChannel?.let { variantCountFor(it, variantGroups) } ?: 1,
                         onOpenVariants = playingChannel?.let { channel -> { openVariantPicker(channel) } },
                         compact = true,
+                        landscapeCompact = landscapeCompactMiniPlayer,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     TouchCategoryRail(
                         tree = visibleEnrichedState.value.tree,
                         selectedId = selectedCategoryId,
+                        playlistSections = playlistCategorySections,
                         onSelect = { id ->
                             noteGuideUserNavigation()
                             selectedCategoryId = id
@@ -2398,11 +2737,14 @@ fun LiveTvScreen(
                         scrollResetKey = "$selectedProviderId|$selectedCategoryId|$filteredChannelsWindowKey|$normalizedGuideStart",
                         compact = true,
                         gridFocused = focusZone == LiveTvFocusZone.EPG,
-                        onChannelSelect = { channel, _ ->
+                        onChannelSelect = { channel ->
                             focusZone = LiveTvFocusZone.CHANNEL_LIST
-                            selectChannel(channel)
+                            val currentProgram = displayedCurrentProgram(channel)
+                            selectChannel(channel, currentProgram)
                         },
-                        onProgramSelect = { channel, program -> playProgramInMini(channel, program) },
+                        onProgramSelect = { channel, program ->
+                            program?.let { selectEpgProgram(channel, it) }
+                        },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
                         onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
                         favorites = favSet,
@@ -2422,6 +2764,7 @@ fun LiveTvScreen(
                 CategorySidebar(
                     tree = visibleEnrichedState.value.tree,
                     selectedId = selectedCategoryId,
+                    playlistSections = playlistCategorySections,
                     expanded = sidebarExpanded,
                     listState = sidebarListState,
                     focusRequester = sidebarFocus,
@@ -2468,6 +2811,8 @@ fun LiveTvScreen(
                         focusZone = LiveTvFocusZone.TOPBAR
                     },
                     focusSearchSignal = focusSearchCategorySignal,
+                    focusCategorySignal = focusCategoryRailSignal,
+                    isTouchDevice = isTouchDevice,
                     modifier = Modifier
                         .fillMaxHeight()
                         .padding(top = contentTopPadding)
@@ -2479,25 +2824,27 @@ fun LiveTvScreen(
                         .fillMaxSize()
                         .padding(top = contentTopPadding),
                 ) {
-                    ProviderSelector(
-                        providers = providerFilters,
-                        selectedId = selectedProviderId,
-                        onSelect = { id ->
-                            noteGuideUserNavigation()
-                            selectedProviderId = id
-                            selectedCategoryId = "all"
-                            focusedChannelId = null
-                            epgPrefetchAnchorId = null
-                        },
-                        focusRequester = providerFocus,
-                        onMoveUp = {
-                            topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile)
-                                .coerceIn(0, maxTopBarIndex)
-                            focusZone = LiveTvFocusZone.TOPBAR
-                        },
-                        onMoveDown = { focusPlaylistSearch() },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    if (playlistCategorySections.isEmpty()) {
+                        ProviderSelector(
+                            providers = providerFilters,
+                            selectedId = selectedProviderId,
+                            onSelect = { id ->
+                                noteGuideUserNavigation()
+                                selectedProviderId = id
+                                selectedCategoryId = "all"
+                                focusedChannelId = null
+                                epgPrefetchAnchorId = null
+                            },
+                            focusRequester = providerFocus,
+                            onMoveUp = {
+                                topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile)
+                                    .coerceIn(0, maxTopBarIndex)
+                                focusZone = LiveTvFocusZone.TOPBAR
+                            },
+                            onMoveDown = { focusPlaylistSearch() },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     MiniPlayerRow(
                         exoPlayer = exoPlayer,
                         channel = playingChannel,
@@ -2532,8 +2879,13 @@ fun LiveTvScreen(
                         scrollResetKey = "$selectedProviderId|$selectedCategoryId|$filteredChannelsWindowKey|$normalizedGuideStart",
                         compact = compactTouchLayout,
                         gridFocused = focusZone == LiveTvFocusZone.CHANNEL_LIST || focusZone == LiveTvFocusZone.EPG,
-                        onChannelSelect = { channel, _ -> selectChannel(channel) },
-                        onProgramSelect = { channel, program -> playProgramInMini(channel, program) },
+                        onChannelSelect = { channel ->
+                            val currentProgram = displayedCurrentProgram(channel)
+                            selectChannel(channel, currentProgram)
+                        },
+                        onProgramSelect = { channel, program ->
+                            program?.let { selectEpgProgram(channel, it) }
+                        },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
                         onChannelFavoriteToggle = { id -> viewModel.toggleFavoriteChannel(id) },
                         favorites = favSet,
@@ -2573,7 +2925,20 @@ fun LiveTvScreen(
         )
         if (fsProgress > 0f && playingChannel != null) {
             val scale = 0.35f + 0.65f * fsProgress
-            Box(
+    BackHandler(enabled = isFullScreen) {
+        if (fullscreenGuideOpen) {
+            fullscreenGuideOpen = false
+            hudPokeSignal++
+        } else if (!quickZapOpen) {
+            if (playingCatchupProgram != null) {
+                returnCatchupToLive()
+            } else {
+                exitFullScreenPlayback()
+            }
+        }
+    }
+
+    Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
@@ -2603,51 +2968,30 @@ fun LiveTvScreen(
                             false
                         } else {
                             val firstPress = ev.nativeKeyEvent.repeatCount == 0
-                            if (playingCatchupProgram != null) {
-                                when (ev.key) {
-                                    Key.Back, Key.Escape -> {
-                                        if (firstPress) returnCatchupToLive()
+                            if (firstPress && playingCatchupProgram != null) {
+                                when (ev.nativeKeyEvent.keyCode) {
+                                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                                    AndroidKeyEvent.KEYCODE_SPACE -> {
+                                        toggleCatchupPlayback()
                                         return@onPreviewKeyEvent true
                                     }
-                                    Key.DirectionCenter, Key.Enter -> {
-                                        if (firstPress) toggleCatchupPlayback()
+                                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
+                                        exoPlayer.play()
+                                        hudPokeSignal++
                                         return@onPreviewKeyEvent true
                                     }
-                                    Key.DirectionLeft -> {
-                                        if (firstPress) seekCatchupBy(-CatchupSeekStepMs)
+                                    AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                                        exoPlayer.pause()
+                                        hudPokeSignal++
                                         return@onPreviewKeyEvent true
                                     }
-                                    Key.DirectionRight -> {
-                                        if (firstPress) seekCatchupBy(CatchupSeekStepMs)
+                                    AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> {
+                                        seekCatchupBy(-CatchupSeekStepMs)
                                         return@onPreviewKeyEvent true
                                     }
-                                    else -> Unit
-                                }
-                                if (firstPress) {
-                                    when (ev.nativeKeyEvent.keyCode) {
-                                        AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-                                        AndroidKeyEvent.KEYCODE_SPACE -> {
-                                            toggleCatchupPlayback()
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
-                                            exoPlayer.play()
-                                            hudPokeSignal++
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                                            exoPlayer.pause()
-                                            hudPokeSignal++
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_MEDIA_REWIND -> {
-                                            seekCatchupBy(-CatchupSeekStepMs)
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                                            seekCatchupBy(CatchupSeekStepMs)
-                                            return@onPreviewKeyEvent true
-                                        }
+                                    AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                                        seekCatchupBy(CatchupSeekStepMs)
+                                        return@onPreviewKeyEvent true
                                     }
                                 }
                             }
@@ -2661,28 +3005,19 @@ fun LiveTvScreen(
                                         hudPokeSignal++
                                         return@onPreviewKeyEvent true
                                     }
-                                } else {
-                                    when (ev.key) {
-                                        Key.DirectionUp, Key.DirectionDown -> {
-                                            quickZapOpen = true
-                                            isHudVisible = false
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        Key.DirectionCenter, Key.Enter -> {
-                                            openFullscreenGuide()
-                                            return@onPreviewKeyEvent true
-                                        }
-                                        else -> Unit
-                                    }
                                 }
                             }
                             when (ev.key) {
-                                Key.Back, Key.Escape -> { exitFullScreenPlayback(); true }
-                                Key.DirectionUp -> { zap(+1); hudPokeSignal++; true }
-                                Key.DirectionDown -> { zap(-1); hudPokeSignal++; true }
-                                Key.DirectionCenter, Key.Enter -> { openFullscreenGuide(); true }
-                                Key.DirectionLeft -> { hudPokeSignal++; false }
-                                Key.DirectionRight -> { hudPokeSignal++; false }
+                                Key.Back, Key.Escape -> {
+                                    if (firstPress) {
+                                        if (playingCatchupProgram != null) {
+                                            returnCatchupToLive()
+                                        } else {
+                                            exitFullScreenPlayback()
+                                        }
+                                    }
+                                    true
+                                }
                                 else -> false
                             }
                         }
@@ -2691,9 +3026,16 @@ fun LiveTvScreen(
                         if (isTouchDevice) {
                             Modifier.clickable(
                                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                                indication = null
+                                indication = null,
                             ) {
                                 hudPokeSignal++
+                            }
+                        } else if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
+                            Modifier.onPreviewKeyEvent { ev ->
+                                if (ev.type == KeyEventType.KeyDown) {
+                                    hudPokeSignal++
+                                }
+                                false
                             }
                         } else {
                             Modifier
@@ -2718,12 +3060,18 @@ fun LiveTvScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
                 if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
+                    val categoryTitle = playingChannel?.source?.group?.takeIf { it.isNotBlank() }
+                        ?: visibleEnrichedState.value.tree.byId(selectedCategoryId)?.label
+                        ?: selectedCategoryId
+
                     FullscreenHud(
                         channel = playingChannel,
                         nowNext = currentNowNext,
                         pokeSignal = hudPokeSignal,
+                        categoryName = categoryTitle,
                         isCatchupMode = playingCatchupProgram != null,
                         isPlaying = if (playingCatchupProgram != null) playerPlayWhenReady else playerIsPlaying,
+                        isBuffering = playerIsBuffering,
                         playbackPositionMs = playerPositionMs,
                         playbackDurationMs = playerDurationMs,
                         onBackClick = if (isTouchDevice) {
@@ -2738,8 +3086,77 @@ fun LiveTvScreen(
                             null
                         },
                         onGuideClick = { openFullscreenGuide() },
-                        onPlayPauseClick = { toggleCatchupPlayback() },
+                        onPlayPauseClick = {
+                            if (playingCatchupProgram != null) {
+                                toggleCatchupPlayback()
+                            } else {
+                                if (exoPlayer.isPlaying) {
+                                    exoPlayer.pause()
+                                    playerPlayWhenReady = false
+                                } else {
+                                    exoPlayer.playWhenReady = true
+                                    exoPlayer.play()
+                                    playerPlayWhenReady = true
+                                }
+                                hudPokeSignal++
+                            }
+                        },
+                        onRewindClick = {
+                            val currentNow = currentNowNext?.now
+                            val currentElapsed = if (currentNow != null && currentNow.startUtcMillis > 0L) {
+                                (System.currentTimeMillis() - currentNow.startUtcMillis).coerceAtLeast(0L)
+                            } else {
+                                playerPositionMs
+                            }
+                            seekToPosition((currentElapsed - 10_000L).coerceAtLeast(0L))
+                        },
+                        onFastForwardClick = {
+                            val currentNow = currentNowNext?.now
+                            val currentElapsed = if (currentNow != null && currentNow.startUtcMillis > 0L) {
+                                (System.currentTimeMillis() - currentNow.startUtcMillis).coerceAtLeast(0L)
+                            } else {
+                                playerPositionMs
+                            }
+                            seekToPosition(currentElapsed + 10_000L)
+                        },
+                        onPreviousCatchupClick = {
+                            val curIdx = filteredChannels.indexOfFirst { it.id == playingChannel?.id }
+                            if (curIdx > 0) {
+                                selectChannel(filteredChannels[curIdx - 1])
+                            }
+                        },
+                        onNextCatchupClick = {
+                            val curIdx = filteredChannels.indexOfFirst { it.id == playingChannel?.id }
+                            if (curIdx in 0 until filteredChannels.size - 1) {
+                                selectChannel(filteredChannels[curIdx + 1])
+                            }
+                        },
+                        onReplayClick = {
+                            if (playingCatchupProgram != null) {
+                                seekCatchupBy(-playerPositionMs)
+                            } else {
+                                val preparedStream = lastPreparedStreamUrl
+                                if (preparedStream != null) {
+                                    prepareStream(
+                                        stream = preparedStream,
+                                        isHls = lastPreparedIsHls,
+                                        headers = lastPreparedHeaders,
+                                        resetRetry = true,
+                                        drmInfo = playingChannel?.source?.drmInfo,
+                                        forcePrepare = true,
+                                    )
+                                }
+                                hudPokeSignal++
+                            }
+                        },
                         onGoLiveClick = { returnCatchupToLive() },
+                        onSeekToPosition = { targetMs ->
+                            seekToPosition(targetMs)
+                        },
+                        onOpenQuickZap = {
+                            quickZapOpen = true
+                            isHudVisible = false
+                        },
                         onVisibilityChanged = { isHudVisible = it },
                         modifier = Modifier,
                     )
@@ -2749,6 +3166,7 @@ fun LiveTvScreen(
                     channel = guideChannel ?: playingChannel,
                     guide = guideForChannel(guideChannel ?: playingChannel),
                     selectedProgram = playingCatchupProgram,
+                    clockTickMillis = guideClockMillis,
                     isTouchDevice = isTouchDevice,
                     onDismiss = {
                         fullscreenGuideOpen = false
@@ -2762,7 +3180,23 @@ fun LiveTvScreen(
                     onProgramSelect = { program ->
                         val target = guideChannel ?: playingChannel
                         guideOpenedFromQuickZap = false
-                        playProgramInFullscreen(program, target)
+                        if (program != null && target != null) {
+                            when {
+                                program.endUtcMillis <= guideClockMillis ->
+                                    playProgramInFullscreen(program, target)
+                                program.isLive(guideClockMillis) && isSamePlayingChannel(target) && state.epgVodActionsEnabled ->
+                                    resolveVodOrPlayFullscreen(target, program)
+                                program.isLive(guideClockMillis) && isSamePlayingChannel(target) ->
+                                    playProgramInFullscreen(null, target)
+                                program.isLive(guideClockMillis) -> {
+                                    // First selection of another live channel follows the same
+                                    // guide contract: tune it in the mini-player.
+                                    fullscreenGuideOpen = false
+                                    isFullScreen = false
+                                    playProgramInMini(target, null)
+                                }
+                            }
+                        }
                     },
                     onLeftClick = {
                         fullscreenGuideOpen = false
@@ -2839,7 +3273,7 @@ fun LiveTvScreen(
                         .asSequence()
                         .filterNot { channel -> isAdultGroup(channel.group, channel.name) }
                         .filterNot { channel ->
-                            val playlistId = channel.id.substringBefore(':')
+                            val playlistId = StalkerPortalSupport.playlistIdFromChannelId(channel.id)
                             val groupKey = com.arflix.tv.data.model.PlaylistGroupKey
                                 .build(playlistId, channel.group.ifBlank { "Ungrouped" })
                             groupKey in hiddenGroupSet
@@ -2884,6 +3318,90 @@ fun LiveTvScreen(
                 .align(Alignment.BottomCenter)
                 .padding(bottom = if (isFullScreen) 72.dp else 24.dp),
         )
+
+        if (programActionLookupInProgress) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color(0xE61A1A1A), RoundedCornerShape(8.dp))
+                    .padding(20.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    color = Pink,
+                    strokeWidth = 3.dp,
+                )
+            }
+        }
+
+        val actionData = programActionDialog
+        if (actionData != null) {
+            val program = actionData.program
+            val channel = actionData.channel
+            val isNow = program.isLive(guideClockMillis)
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { programActionDialog = null },
+                title = {
+                    androidx.tv.material3.Text(
+                        text = program.title,
+                        style = ArflixTypography.cardTitle,
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        androidx.tv.material3.Text(
+                            text = channel.name,
+                            style = ArflixTypography.caption,
+                            color = TextSecondary,
+                        )
+                        androidx.tv.material3.Text(
+                            text = "${formatClock(program.startUtcMillis)} - ${formatClock(program.endUtcMillis)}",
+                            style = ArflixTypography.body,
+                            color = TextSecondary,
+                        )
+                        if (isNow) {
+                            Badge(stringResource(R.string.live_badge_live), Color.White, LiveColors.LiveRed)
+                        }
+                    }
+                },
+                confirmButton = {
+                    val vodMatch = programActionVodMatch
+                    if (vodMatch != null) {
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                invalidateProgramActionLookup()
+                                onNavigateToDetails(vodMatch.mediaType, vodMatch.id)
+                            },
+                        ) {
+                            androidx.tv.material3.Text(
+                                text = stringResource(R.string.epg_search_sources),
+                                style = ArflixTypography.button,
+                                color = Pink,
+                            )
+                        }
+                    }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            programActionDialog = null
+                            playProgramInMini(channel, epgWatchLivePlaybackProgram(program))
+                        },
+                    ) {
+                        androidx.tv.material3.Text(
+                            text = stringResource(R.string.epg_watch_live),
+                            style = ArflixTypography.button,
+                            color = TextSecondary,
+                        )
+                    }
+                },
+                containerColor = Color(0xFF1A1A1A),
+                tonalElevation = 8.dp,
+            )
+        }
     }
 }
 
@@ -3016,3 +3534,12 @@ private tailrec fun Context.findActivity(): Activity? {
         else -> null
     }
 }
+
+internal fun epgWatchLivePlaybackProgram(
+    @Suppress("UNUSED_PARAMETER") selectedProgram: IptvProgram,
+): IptvProgram? = null
+
+internal data class ProgramActionData(
+    val channel: EnrichedChannel,
+    val program: IptvProgram,
+)

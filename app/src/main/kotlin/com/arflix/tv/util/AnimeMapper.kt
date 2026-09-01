@@ -412,6 +412,34 @@ class AnimeMapper @Inject constructor(
     }
 
     /**
+     * Resolve the optional user-visible anime season structure for a TMDB show.
+     * Returns null unless ARM exposes multiple Kitsu entries with complete episode counts.
+     */
+    internal suspend fun resolveAnimeSeasonStructure(tmdbId: Int): AnimeSeasonStructure? = withContext(Dispatchers.IO) {
+        try {
+            val entries = cacheMutex.withLock { armTmdbCache[tmdbId] }
+                ?: fetchArmMapping(tmdbId)
+                ?: return@withContext null
+            val providerEntries = entries
+                .mapNotNull { entry ->
+                    val kitsuId = entry.kitsu ?: return@mapNotNull null
+                    val count = getKitsuEpisodeCount(kitsuId) ?: return@mapNotNull null
+                    AnimeProviderSeason(kitsuId, entry.themoviedbSeason, count)
+                }
+                .distinctBy { Triple(it.kitsuId, it.tmdbSeason, it.episodeCount) }
+            if (providerEntries.size < 2) return@withContext null
+
+            val details = tmdbApi.getTvDetails(tmdbId, Constants.TMDB_API_KEY)
+            val tmdbCounts = details.seasons
+                .filter { it.seasonNumber > 0 && it.episodeCount > 0 }
+                .associate { it.seasonNumber to it.episodeCount }
+            buildAnimeSeasonStructure(tmdbCounts, providerEntries)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
      * Main resolution function: resolves the correct Kitsu episode query string
      * for Stremio addons. Uses 5-tier fallback chain.
      *
@@ -751,13 +779,30 @@ class AnimeMapper @Inject constructor(
 
         val normalizedQuery = title.lowercase().trim()
 
-        // Try to find an exact or close title match
+        // Try to find an exact or close title match.
+        //
+        // There is deliberately NO "just take the first result" fallback: Kitsu's filter[text]
+        // is a fuzzy search that always returns *something*, so an unrelated show (e.g. the
+        // Israeli drama "On Standby") would silently resolve to whatever anime happened to rank
+        // first and then be offered as that show's sources.
         val bestMatch = results.firstOrNull { anime ->
             val canonical = anime.attributes?.canonicalTitle?.lowercase()?.trim()
             val english = anime.attributes?.titles?.get("en")?.lowercase()?.trim()
             val enJp = anime.attributes?.titles?.get("en_jp")?.lowercase()?.trim()
             canonical == normalizedQuery || english == normalizedQuery || enJp == normalizedQuery
-        } ?: results.firstOrNull() // Fall back to first result
+        } ?: results.firstOrNull { anime ->
+            // Looser second pass: one title fully contains the other (handles subtitles and
+            // season suffixes like "Title 2nd Season"), still anchored on the real name.
+            listOfNotNull(
+                anime.attributes?.canonicalTitle,
+                anime.attributes?.titles?.get("en"),
+                anime.attributes?.titles?.get("en_jp")
+            ).any { raw ->
+                val candidate = raw.lowercase().trim()
+                candidate.isNotBlank() && normalizedQuery.isNotBlank() &&
+                    (candidate.contains(normalizedQuery) || normalizedQuery.contains(candidate))
+            }
+        }
 
         val kitsuId = bestMatch?.id?.toIntOrNull()
         if (kitsuId != null) {

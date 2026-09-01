@@ -132,9 +132,19 @@ class IptvPlaybackUrlResolverTest {
             rawUrl = "http://provider.test/hls/channel/index.m3u8",
             headers = emptyMap(),
         )
+        val hlsParam = resolver.resolve(
+            rawUrl = "http://provider.test/live/user/pass/stream?output=m3u8",
+            headers = emptyMap(),
+        )
+        val formatHls = resolver.resolve(
+            rawUrl = "http://provider.test/live/user/pass/stream?format=hls",
+            headers = emptyMap(),
+        )
 
         assertThat(numericXtream.isHls).isFalse()
         assertThat(transportStream.isHls).isFalse()
         assertThat(hls.isHls).isTrue()
+        assertThat(hlsParam.isHls).isTrue()
+        assertThat(formatHls.isHls).isTrue()
     }
 }

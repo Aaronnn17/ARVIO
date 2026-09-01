@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.search
 
+import androidx.activity.compose.BackHandler
 import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -296,6 +297,37 @@ fun SearchScreen(
     }
 
     val showFilters = uiState.query.isEmpty()
+
+    BackHandler {
+        if (isSearchEditing) {
+            isSearchEditing = false
+            keyboardController?.hide()
+            runCatching { searchFocusRequester.requestFocus() }
+        } else {
+            when (focusZone) {
+                FocusZone.RESULTS -> {
+                    if (showFilters && quickFilters.isNotEmpty()) {
+                        focusZone = FocusZone.FILTERS
+                        focusedFilterIndex = focusedFilterIndex.coerceIn(0, (quickFilters.size - 1).coerceAtLeast(0))
+                        try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
+                    } else {
+                        focusZone = FocusZone.SEARCH_INPUT
+                        runCatching { searchFocusRequester.requestFocus() }
+                    }
+                }
+                FocusZone.FILTERS -> {
+                    focusZone = FocusZone.SEARCH_INPUT
+                    runCatching { searchFocusRequester.requestFocus() }
+                }
+                FocusZone.SEARCH_INPUT -> {
+                    focusZone = FocusZone.SIDEBAR
+                }
+                FocusZone.SIDEBAR -> {
+                    onBack()
+                }
+            }
+        }
+    }
 
     // D-pad handler: manages zone transitions. FILTERS zone lets native focus handle Left/Right.
     val dpadModifier = if (!isTouchDevice) {
@@ -914,7 +946,7 @@ private fun RowsLayer(
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            contentPadding = PaddingValues(top = focusBleedPadding / 2, bottom = maxHeight * 0.6f),
+            contentPadding = PaddingValues(top = focusBleedPadding / 2, bottom = if (isTouchDevice) 16.dp else maxHeight * 0.6f),
             modifier = Modifier.fillMaxSize().arvioDpadFocusGroup(),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
@@ -930,7 +962,7 @@ private fun RowsLayer(
                     if (isPortrait) 105.dp else 210.dp
                 }
                 val baseRowHeight = if (isTouchDevice) {
-                    if (isPortrait) 260.dp else 190.dp
+                    if (isPortrait) 275.dp else 225.dp
                 } else if (isPortrait) {
                     // Poster cards (2:3) need extra vertical room for title + date below the image
                     if (screenHeight <= 640) 271.dp else 309.dp
@@ -1013,7 +1045,7 @@ private fun RowsLayer(
                                 start = focusBleedPadding,
                                 end = itemWidth + 56.dp,
                                 top = 8.dp,
-                                bottom = focusBleedPadding + 12.dp
+                                bottom = if (isTouchDevice) 8.dp else (focusBleedPadding + 12.dp)
                             ),
                             horizontalArrangement = Arrangement.spacedBy(18.dp)
                         ) {
@@ -1030,7 +1062,7 @@ private fun RowsLayer(
                                     isLandscape = !isPortrait,
                                     logoImageUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
                                     showProgress = false,
-                                    titleMaxLines = 2,
+                                    titleMaxLines = 1,
                                     subtitleMaxLines = 1,
                                     isFocusedOverride = itemIsFocused,
                                     enableSystemFocus = false,

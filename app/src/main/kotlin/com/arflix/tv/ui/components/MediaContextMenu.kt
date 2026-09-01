@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -123,9 +124,13 @@ fun MediaContextMenu(
         if (isVisible) {
             focusedIndex = 0
             if (!isMobile) {
-                focusRequester.requestFocus()
+                runCatching { focusRequester.requestFocus() }
             }
         }
+    }
+
+    BackHandler(enabled = isVisible) {
+        onDismiss()
     }
 
     if (!isMobile) {

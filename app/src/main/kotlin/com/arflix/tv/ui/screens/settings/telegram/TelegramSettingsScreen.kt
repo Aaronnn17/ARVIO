@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.settings.telegram
 
+import androidx.activity.compose.BackHandler
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -70,6 +71,9 @@ import com.arflix.tv.ui.theme.SuccessGreen
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.ui.theme.appBackgroundDark
+import androidx.compose.foundation.layout.PaddingValues
+import com.arflix.tv.ui.motion.rememberArvioPredictiveBack
+import com.arflix.tv.ui.motion.arvioBackSurface
 import com.arflix.tv.util.LocalDeviceType
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
@@ -78,48 +82,59 @@ import com.google.zxing.qrcode.QRCodeWriter
 @Composable
 fun TelegramSettingsScreen(
     onBack: () -> Unit,
+    showHeader: Boolean = true,
     viewModel: TelegramSettingsViewModel = hiltViewModel()
 ) {
     val authState by viewModel.authState.collectAsState()
     val cacheSizeBytes by viewModel.cacheSizeBytes.collectAsState()
     var showDisconnectConfirm by remember { mutableStateOf(false) }
+    val isMobile = LocalDeviceType.current.isTouchDevice()
+    val backMotion = rememberArvioPredictiveBack(enabled = isMobile && showHeader && !showDisconnectConfirm) {
+        onBack()
+    }
 
-    Box(
-        modifier = Modifier
+    val rootModifier = if (showHeader) {
+        Modifier
             .fillMaxSize()
+            .arvioBackSurface(backMotion)
             .background(appBackgroundDark())
-    ) {
-        Box(modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 24.dp)) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 24.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
-                        .clickable { onBack() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = stringResource(R.string.back),
-                        tint = TextPrimary,
-                        modifier = Modifier.size(20.dp)
-                    )
+    } else {
+        Modifier.fillMaxSize()
+    }
+
+    val contentPadding = if (isMobile && !showHeader) {
+        PaddingValues(horizontal = 20.dp, vertical = 8.dp)
+    } else {
+        PaddingValues(horizontal = 32.dp, vertical = 24.dp)
+    }
+
+    Box(modifier = rootModifier) {
+        Box(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                if (showHeader) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 24.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = stringResource(R.string.back),
+                            tint = TextPrimary,
+                            modifier = Modifier
+                                .clickable { onBack() }
+                                .padding(end = 16.dp)
+                        )
+                        Text(
+                            text = "Telegram",
+                            style = ArflixTypography.sectionTitle,
+                            color = TextPrimary
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = "Telegram",
-                    style = ArflixTypography.sectionTitle,
-                    color = TextPrimary
-                )
-            }
 
-            val isMobile = LocalDeviceType.current.isTouchDevice()
-
-            when (val state = authState) {
+                when (val state = authState) {
                 is TelegramAuthState.Idle -> IdleContent(onConnect = { viewModel.startAuth() })
                 is TelegramAuthState.Initializing -> LoadingContent(stringResource(R.string.telegram_connecting))
                 is TelegramAuthState.WaitPhone -> {
@@ -591,6 +606,10 @@ private fun DisconnectConfirmDialog(onConfirm: () -> Unit, onDismiss: () -> Unit
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+
+    BackHandler {
+        onDismiss()
+    }
 
     Box(
         modifier = Modifier

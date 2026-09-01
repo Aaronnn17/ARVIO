@@ -16,9 +16,6 @@ gen/
 out/
 release/
 
-# Repository-local automation not used by this distribution
-.github/workflows/
-
 # Gradle files
 .gradle/
 build/
@@ -166,3 +163,6 @@ arctic-fuse-2-temp/
 gradle-8.4-bin.zip
 *.zip
 _tmp_tv_perf/
+
+# Agent skills & customizations
+.agents/

@@ -83,6 +83,7 @@ fun MediaCard(
     raiseOnFocus: Boolean = true,
     showProgress: Boolean = false,
     showTitle: Boolean = true,
+    showSubtitle: Boolean = true,
     titleMaxLines: Int = 1,
     subtitleMaxLines: Int = 1,
     isFocusedOverride: Boolean = false,
@@ -99,6 +100,7 @@ fun MediaCard(
             width = width,
             isLandscape = isLandscape,
             showTitle = showTitle,
+            showSubtitle = showSubtitle,
             modifier = modifier
         )
         return
@@ -121,10 +123,12 @@ fun MediaCard(
     // hovered tile animates its GIF. Regular media items keep the existing
     // behavior (landscape uses backdrop art, poster uses image).
     val isCollectionTile = item.status?.startsWith("collection:") == true
+    val continueWatchingArtwork = item.episodeStill
+        ?.takeIf { showProgress && isLandscape && it.isNotBlank() }
     val baseImageUrl = if (isCollectionTile) {
         item.image.takeIf { it.isNotBlank() } ?: item.backdrop?.takeIf { it.isNotBlank() }
     } else if (isLandscape) {
-        (item.backdrop ?: item.image).takeIf { it.isNotBlank() }
+        (continueWatchingArtwork ?: item.backdrop ?: item.image).takeIf { it.isNotBlank() }
     } else {
         item.image.takeIf { it.isNotBlank() }
     }
@@ -147,8 +151,7 @@ fun MediaCard(
     val context = LocalContext.current
     val density = LocalDensity.current
     val overlayBrush: Brush? = null  // Gradient removed per user feedback
-    // Performance: Removed context/density from keys - they're stable CompositionLocals
-    val imageRequest = remember(rawImageUrl, width, aspectRatio) {
+    val imageRequest = remember(rawImageUrl, width, aspectRatio, isMobile) {
         if (rawImageUrl == null) return@remember null
         val widthPx = with(density) { width.roundToPx() }
         val heightPx = (widthPx / aspectRatio).toInt().coerceAtLeast(1)
@@ -160,12 +163,12 @@ fun MediaCard(
             .allowHardware(true)
             .memoryCacheKey(cacheKey)
             .placeholderMemoryCacheKey(cacheKey)
-            .crossfade(false)
+            .crossfade(if (isMobile) 250 else 0)
             .build()
     }
     // Performance: Removed context/density from keys
     val effectiveLogoImageUrl = logoImageUrl.takeIf { showLogoImage }
-    val logoRequest = remember(effectiveLogoImageUrl) {
+    val logoRequest = remember(effectiveLogoImageUrl, isMobile) {
         val logoWidthPx = with(density) { 220.dp.roundToPx() }.coerceAtLeast(1)
         val logoHeightPx = with(density) { 64.dp.roundToPx() }.coerceAtLeast(1)
         if (effectiveLogoImageUrl.isNullOrBlank()) {
@@ -179,7 +182,7 @@ fun MediaCard(
                 .allowHardware(true)
                 .memoryCacheKey(cacheKey)
                 .placeholderMemoryCacheKey(cacheKey)
-                .crossfade(false)
+                .crossfade(if (isMobile) 200 else 0)
                 .build()
         }
     }
@@ -212,11 +215,24 @@ fun MediaCard(
             },
         ) { _ ->
             Box(modifier = Modifier.fillMaxSize()) {
-                // Only render AsyncImage when we have a valid image URL.
-                // When imageRequest is null (no poster/backdrop from TMDB),
-                // render a branded gradient fallback with the title centered
-                // so the card conveys what it's for instead of showing as a
-                // blank rectangle that used to look broken.
+                // Branded gradient fallback with title that sits behind AsyncImage.
+                // When AsyncImage loads, it fades in smoothly over this background;
+                // if image fails or is slow, the title remains visible instead of a black box.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(missingArtworkBrush),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = item.title,
+                        style = ArvioSkin.typography.cardTitle,
+                        color = Color.White.copy(alpha = 0.72f),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 10.dp)
+                    )
+                }
                 if (imageRequest != null) {
                     AsyncImage(
                         model = imageRequest,
@@ -224,22 +240,6 @@ fun MediaCard(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(missingArtworkBrush),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = item.title,
-                            style = ArvioSkin.typography.cardTitle,
-                            color = Color.White.copy(alpha = 0.82f),
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 10.dp)
-                        )
-                    }
                 }
                 if (overlayBrush != null) {
                     Box(
@@ -480,36 +480,38 @@ fun MediaCard(
                 overflow = TextOverflow.Ellipsis,
             )
 
-            // Prefer release date (or year) under the title. Fall back to the
-            // explicit subtitle or media-type label only when neither is set.
-            val tvSeriesLabel = stringResource(R.string.component_label_tv_series)
-            val movieLabel = stringResource(R.string.movie)
-            val mediaLabel = stringResource(R.string.component_label_media)
-            val subtitle = remember(item.subtitle, item.releaseDate, item.year, item.mediaType, tvSeriesLabel, movieLabel, mediaLabel) {
-                val release = item.releaseDate?.takeIf { it.isNotBlank() }
-                    ?: item.year.takeIf { it.isNotBlank() }
-                release
-                    ?: item.subtitle.ifBlank {
-                        when (item.mediaType) {
-                            MediaType.TV -> tvSeriesLabel
-                            MediaType.MOVIE -> movieLabel
-                            else -> mediaLabel
+            if (showSubtitle) {
+                // Prefer release date (or year) under the title. Fall back to the
+                // explicit subtitle or media-type label only when neither is set.
+                val tvSeriesLabel = stringResource(R.string.component_label_tv_series)
+                val movieLabel = stringResource(R.string.movie)
+                val mediaLabel = stringResource(R.string.component_label_media)
+                val subtitle = remember(item.subtitle, item.releaseDate, item.year, item.mediaType, tvSeriesLabel, movieLabel, mediaLabel) {
+                    val release = item.releaseDate?.takeIf { it.isNotBlank() }
+                        ?: item.year.takeIf { it.isNotBlank() }
+                    release
+                        ?: item.subtitle.ifBlank {
+                            when (item.mediaType) {
+                                MediaType.TV -> tvSeriesLabel
+                                MediaType.MOVIE -> movieLabel
+                                else -> mediaLabel
+                            }
                         }
-                    }
+                }
+                Text(
+                    text = subtitle,
+                    style = ArvioSkin.typography.caption.copy(
+                        shadow = androidx.compose.ui.graphics.Shadow(
+                            color = androidx.compose.ui.graphics.Color.Black,
+                            offset = androidx.compose.ui.geometry.Offset(2f, 2f),
+                            blurRadius = 4f
+                        )
+                    ),
+                    color = ArvioSkin.colors.textMuted.copy(alpha = 0.85f),
+                    maxLines = subtitleMaxLines,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            Text(
-                text = subtitle,
-                style = ArvioSkin.typography.caption.copy(
-                    shadow = androidx.compose.ui.graphics.Shadow(
-                        color = androidx.compose.ui.graphics.Color.Black,
-                        offset = androidx.compose.ui.geometry.Offset(2f, 2f),
-                        blurRadius = 4f
-                    )
-                ),
-                color = ArvioSkin.colors.textMuted.copy(alpha = 0.85f),
-                maxLines = subtitleMaxLines,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }
@@ -524,6 +526,7 @@ private fun PlaceholderCard(
     width: Dp,
     isLandscape: Boolean,
     showTitle: Boolean = true,
+    showSubtitle: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val aspectRatio = if (isLandscape) 16f / 9f else 2f / 3f
@@ -555,15 +558,17 @@ private fun PlaceholderCard(
                     .clip(rememberArvioCardShape(ArvioSkin.radius.sm))
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
+            if (showSubtitle) {
+                Spacer(modifier = Modifier.height(4.dp))
 
-            // Subtitle skeleton
-            SkeletonBox(
-                modifier = Modifier
-                    .fillMaxWidth(0.5f)
-                    .height(12.dp)
-                    .clip(rememberArvioCardShape(ArvioSkin.radius.sm))
-            )
+                // Subtitle skeleton
+                SkeletonBox(
+                    modifier = Modifier
+                        .fillMaxWidth(0.5f)
+                        .height(12.dp)
+                        .clip(rememberArvioCardShape(ArvioSkin.radius.sm))
+                )
+            }
         }
     }
 }
@@ -604,9 +609,9 @@ fun PosterCard(
     val context = LocalContext.current
     val density = LocalDensity.current
     val aspectRatio = 2f / 3f
+    val isMobile = LocalDeviceType.current.isTouchDevice()
     val posterUrl = item.image.takeIf { it.isNotBlank() }
-    // Performance: Removed context/density from keys
-    val imageRequest = remember(posterUrl, width) {
+    val imageRequest = remember(posterUrl, width, isMobile) {
         if (posterUrl == null) return@remember null
         val widthPx = with(density) { width.roundToPx() }
         val heightPx = (widthPx / aspectRatio).toInt().coerceAtLeast(1)
@@ -618,7 +623,7 @@ fun PosterCard(
             .allowHardware(true)
             .memoryCacheKey(cacheKey)
             .placeholderMemoryCacheKey(cacheKey)
-            .crossfade(false)
+            .crossfade(if (isMobile) 250 else 0)
             .build()
     }
 
@@ -639,13 +644,30 @@ fun PosterCard(
                 if (it) onFocused()
             },
         ) { _ ->
-            if (imageRequest != null) {
-                AsyncImage(
-                    model = imageRequest,
-                    contentDescription = item.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
+            Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(missingArtworkBrush),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = item.title,
+                        style = ArvioSkin.typography.cardTitle,
+                        color = Color.White.copy(alpha = 0.72f),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                }
+                if (imageRequest != null) {
+                    AsyncImage(
+                        model = imageRequest,
+                        contentDescription = item.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
         }
 

@@ -27,6 +27,13 @@ class SubtitleTranslationManager(
 
     var onTranslatingChanged: ((Boolean) -> Unit)? = null
     var onBatchResult: ((success: Boolean, error: String?) -> Unit)? = null
+    /**
+     * Fired when translation is active but the cues carry no extractable text — i.e. the chosen
+     * AI source is an image track (PGS/VOBSUB). Metadata alone can't be trusted to catch this
+     * (containers report null/generic MIME), so this is the runtime backstop that stops AI from
+     * silently rendering the untranslated source language.
+     */
+    var onUntranslatableSource: (() -> Unit)? = null
 
     val translatedCount: Int get() = cache.size
 
