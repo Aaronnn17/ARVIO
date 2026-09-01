@@ -8127,7 +8127,10 @@ class IptvRepository @Inject constructor(
                 playlist.m3uUrl.trim(),
                 playlist.epgUrl.trim(),
                 playlist.epgUrls.orEmpty().joinToString(",") { it.trim() },
-                playlist.enabled.toString()
+                playlist.enabled.toString(),
+                playlist.importLiveTv.toString(), // NEW
+                playlist.importVod.toString(),    // NEW
+                playlist.importSeries.toString()  // NEW
             ).joinToString("|")
         }
         val raw = listOf(
@@ -8149,6 +8152,9 @@ class IptvRepository @Inject constructor(
                 playlist.name.trim(),
                 playlist.m3uUrl.trim(),
                 playlist.enabled.toString()
+                playlist.importLiveTv.toString(), // NEW
+                playlist.importVod.toString(),    // NEW
+                playlist.importSeries.toString()  // NEW
             ).joinToString("|")
         }
         val raw = listOf(
