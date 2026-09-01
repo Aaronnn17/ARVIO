@@ -2074,17 +2074,17 @@ fun SettingsScreen(
                 ),
                 toggleFields = listOf(
                     ToggleField(
-                        label = "Live TV channels",
+                        label = stringResource(R.string.live),
                         value = iptvEditImportLiveTv,
                         onValueChange = { iptvEditImportLiveTv = it }
                     ),
                     ToggleField(
-                        label = "Movies",
+                        label = stringResource(R.string.movies),
                         value = iptvEditImportVod,
                         onValueChange = { iptvEditImportVod = it }
                     ),
                     ToggleField(
-                        label = "Series",
+                        label = stringResource(R.string.series),
                         value = iptvEditImportSeries,
                         onValueChange = { iptvEditImportSeries = it }
                     )
