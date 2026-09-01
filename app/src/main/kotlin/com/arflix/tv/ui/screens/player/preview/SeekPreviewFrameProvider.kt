@@ -167,6 +167,24 @@ class SeekPreviewFrameProvider(
             SeekPreviewFrame(bitmap, bucket)
         }
 
+    suspend fun rememberRenderedFrame(positionMs: Long, bitmap: Bitmap): SeekPreviewFrame? =
+        withContext(dispatcher) {
+            if (closed) {
+                bitmap.recycle()
+                return@withContext null
+            }
+            val active = session ?: run {
+                bitmap.recycle()
+                return@withContext null
+            }
+            val bucket = quantizeSeekPreviewPosition(positionMs, active.source.durationMs)
+            val frameKey = "${stableHash(active.source.cacheIdentity)}_$bucket"
+            val normalized = normalizeFrame(bitmap)
+            memoryCache.put(frameKey, normalized)
+            writeDiskFrame(frameKey, normalized)
+            SeekPreviewFrame(normalized, bucket)
+        }
+
     override fun close() {
         if (closed) return
         closed = true
@@ -192,7 +210,11 @@ class SeekPreviewFrameProvider(
         var failureCount: Int = 0
 
         fun extract(positionMs: Long): Bitmap {
-            if (!media3Unavailable && !source.headers.requiresCustomRequestHeaders()) {
+            // Signed debrid URLs often remain readable without the optional proxy headers. Try
+            // Media3 first because it can extract frames from modern 4K/HDR codecs that Android's
+            // legacy metadata retriever cannot decode, then retain the authenticated range source
+            // below as the fallback for providers that truly require those headers.
+            if (!media3Unavailable) {
                 runCatching { extractWithMedia3(positionMs) }
                     .onSuccess { return it }
                     .onFailure {
@@ -510,10 +532,6 @@ private fun Request.Builder.applyHeaders(headers: Map<String, String>): Request.
             header(name, value)
         }
     }
-}
-
-private fun Map<String, String>.requiresCustomRequestHeaders(): Boolean = keys.any { name ->
-    name.lowercase() !in setOf("accept", "accept-encoding", "connection")
 }
 
 private fun sourceSignature(source: SeekPreviewSource): String = stableHash(

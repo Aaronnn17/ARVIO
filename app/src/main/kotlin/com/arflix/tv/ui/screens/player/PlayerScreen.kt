@@ -7,10 +7,17 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.graphics.Bitmap
+import android.graphics.Rect
 import com.arflix.tv.util.findActivity
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
+import android.view.SurfaceView
+import android.view.TextureView
 import com.arflix.tv.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -167,10 +174,13 @@ import com.arflix.tv.ui.theme.PurplePrimary
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.suspendCancellableCoroutine
 import androidx.compose.runtime.rememberCoroutineScope
 import okhttp3.Cookie
 import okhttp3.CookieJar
@@ -181,6 +191,8 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.Locale
+import kotlin.coroutines.resume
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.dash.DashMediaSource
@@ -435,6 +447,9 @@ fun PlayerScreen(
     var trackbarFocused by remember { mutableStateOf(false) }
     var seekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
     var seekPreviewDirection by remember { mutableIntStateOf(0) }
+    var playerViewForSeekPreview by remember {
+        mutableStateOf<FullViewportSubtitlePlayerView?>(null)
+    }
     // Post-episode "Up Next" prompt (issue #86). Shown on STATE_ENDED for TV shows:
     // a 10-second countdown lets the user stop watching or immediately Continue. On timeout we
     // advance to the next episode. Gated on the existing autoPlayNext profile setting —
@@ -668,6 +683,9 @@ fun PlayerScreen(
     // Guard against accessing a released ExoPlayer from long-running coroutines (can crash on some devices).
     // AtomicBoolean gives cross-thread visibility; Compose state drives recomposition.
     val playerReleasedAtomic = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    val lastRenderedVideoFrameUs = remember {
+        java.util.concurrent.atomic.AtomicLong(C.TIME_UNSET)
+    }
     var playerReleased by remember { mutableStateOf(false) }
 
     // Picture-in-Picture state
@@ -1129,6 +1147,9 @@ fun PlayerScreen(
             .build().apply {
                 // Ensure volume is at maximum
                 volume = 1.0f
+                setVideoFrameMetadataListener { presentationTimeUs, _, _, _ ->
+                    lastRenderedVideoFrameUs.set(presentationTimeUs)
+                }
 
                 // Add error listener to try next stream on codec errors
                 addListener(object : Player.Listener {
@@ -1514,6 +1535,7 @@ fun PlayerScreen(
     ) {
         seekPreviewFrame = null
         seekPreviewDirection = 0
+        lastRenderedVideoFrameUs.set(C.TIME_UNSET)
         val url = uiState.selectedStreamUrl
         val selected = uiState.selectedStream
         val headers = selected
@@ -1568,6 +1590,43 @@ fun PlayerScreen(
             return@LaunchedEffect
         }
         delay(SEEK_PREVIEW_DEBOUNCE_MS)
+
+        // A prefetched or previously rendered frame is the true instant path.
+        withTimeoutOrNull(500L) {
+            seekPreviewProvider.frameAt(seekPreviewBucket, cacheOnly = true)
+        }?.let { cachedFrame ->
+            seekPreviewFrame = cachedFrame
+            return@LaunchedEffect
+        }
+        seekPreviewFrame = null
+
+        // Some TVs cannot allocate a second decoder beside 4K Dolby Vision playback. Once the
+        // player's normal delayed seek reaches the requested bucket, capture its rendered surface
+        // instead. This path uses the decoder that is already playing and remains source-agnostic.
+        val renderedBitmap = withTimeoutOrNull(1_600L) {
+            val targetUs = seekPreviewBucket * 1_000L
+            while (
+                playerReleased ||
+                lastRenderedVideoFrameUs.get() == C.TIME_UNSET ||
+                abs(lastRenderedVideoFrameUs.get() - targetUs) > 5_500_000L
+            ) {
+                delay(40L)
+            }
+            delay(40L)
+            playerViewForSeekPreview?.let { playerView ->
+                captureRenderedSeekPreview(playerView)
+            }
+        }
+        if (renderedBitmap != null) {
+            seekPreviewProvider.rememberRenderedFrame(
+                positionMs = seekPreviewBucket,
+                bitmap = renderedBitmap,
+            )?.let { renderedFrame ->
+                seekPreviewFrame = renderedFrame
+                return@LaunchedEffect
+            }
+        }
+
         val bufferAheadMs = if (!playerReleased) {
             (exoPlayer.bufferedPosition - exoPlayer.currentPosition).coerceAtLeast(0L)
         } else {
@@ -3374,9 +3433,10 @@ fun PlayerScreen(
                                 inPictureInPicture = isInPipMode,
                             )
                         }
-                    }
+                    }.also { playerViewForSeekPreview = it }
                 },
                 update = { playerView ->
+                    playerViewForSeekPreview = playerView
                     playerView.keepScreenOn = true
                     playerView.player = exoPlayer
                     playerView.resizeMode = playerResizeMode
@@ -6353,6 +6413,55 @@ private class PlaybackCookieJar : CookieJar {
             }
         }
         return valid
+    }
+}
+
+private suspend fun captureRenderedSeekPreview(
+    playerView: FullViewportSubtitlePlayerView,
+): Bitmap? = withContext(Dispatchers.Main.immediate) {
+    val surface = playerView.videoSurfaceView ?: return@withContext null
+    if (surface.width <= 0 || surface.height <= 0) return@withContext null
+
+    val output = Bitmap.createBitmap(416, 234, Bitmap.Config.ARGB_8888)
+    when (surface) {
+        is TextureView -> {
+            runCatching { surface.getBitmap(output) }
+                .getOrNull()
+                ?.let { output }
+                ?: run {
+                    output.recycle()
+                    null
+                }
+        }
+        is SurfaceView -> {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N || !surface.holder.surface.isValid) {
+                output.recycle()
+                return@withContext null
+            }
+            suspendCancellableCoroutine { continuation ->
+                val sourceRect = Rect(0, 0, surface.width, surface.height)
+                PixelCopy.request(
+                    surface,
+                    sourceRect,
+                    output,
+                    { result ->
+                        if (!continuation.isActive) {
+                            output.recycle()
+                        } else if (result == PixelCopy.SUCCESS) {
+                            continuation.resume(output)
+                        } else {
+                            output.recycle()
+                            continuation.resume(null)
+                        }
+                    },
+                    Handler(Looper.getMainLooper()),
+                )
+            }
+        }
+        else -> {
+            output.recycle()
+            null
+        }
     }
 }
 
