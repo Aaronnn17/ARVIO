@@ -14,6 +14,7 @@ import android.os.Build
 import com.arflix.tv.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -27,11 +28,13 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -45,6 +48,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -177,6 +181,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.Locale
+import kotlin.math.roundToInt
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.source.MediaSource
@@ -185,6 +190,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.res.stringResource
@@ -209,14 +215,24 @@ import androidx.compose.ui.graphics.Canvas as ComposeCanvas
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.IntOffset
 import androidx.core.content.ContextCompat
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewSource
+import com.arflix.tv.ui.screens.player.preview.acceleratedSeekPreviewStepMs
+import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
 
 private const val PIP_ACTION_REWIND = "com.arflix.tv.pip.REWIND"
 private const val PIP_ACTION_PLAY_PAUSE = "com.arflix.tv.pip.PLAY_PAUSE"
 private const val PIP_ACTION_FORWARD = "com.arflix.tv.pip.FORWARD"
+private const val CONTROLS_SEEK_COMMIT_DELAY_MS = 700L
+private const val SEEK_PREVIEW_DEBOUNCE_MS = 110L
+private const val SEEK_PREVIEW_TIMEOUT_MS = 6_000L
 
 private fun isSafePlaybackHeader(name: String, value: String): Boolean {
     return name.isNotBlank() &&
@@ -416,6 +432,9 @@ fun PlayerScreen(
     var focusedButton by remember { mutableIntStateOf(0) }
     var showSubtitleMenu by remember { mutableStateOf(false) }
     var showSourceMenu by remember { mutableStateOf(false) }
+    var trackbarFocused by remember { mutableStateOf(false) }
+    var seekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
+    var seekPreviewDirection by remember { mutableIntStateOf(0) }
     // Post-episode "Up Next" prompt (issue #86). Shown on STATE_ENDED for TV shows:
     // a 10-second countdown lets the user stop watching or immediately Continue. On timeout we
     // advance to the next episode. Gated on the existing autoPlayNext profile setting —
@@ -914,6 +933,16 @@ fun PlayerScreen(
         OkHttpProvider.playbackClient.newBuilder()
             .cookieJar(playbackCookieJar)
             .build()
+    }
+    val seekPreviewProvider = remember(playbackHttpClient, playbackMemoryClassMb) {
+        SeekPreviewFrameProvider(
+            context = context,
+            playbackClient = playbackHttpClient,
+            memoryClassMb = playbackMemoryClassMb,
+        )
+    }
+    DisposableEffect(seekPreviewProvider) {
+        onDispose { seekPreviewProvider.close() }
     }
     val httpDataSourceFactory = remember(playbackHttpClient) {
         OkHttpDataSource.Factory(playbackHttpClient)
@@ -1477,6 +1506,140 @@ fun PlayerScreen(
             }
     }
 
+    LaunchedEffect(
+        uiState.selectedStreamUrl,
+        uiState.streamSelectionNonce,
+        duration,
+        isLiveStream,
+    ) {
+        seekPreviewFrame = null
+        seekPreviewDirection = 0
+        val url = uiState.selectedStreamUrl
+        val selected = uiState.selectedStream
+        val headers = selected
+            ?.behaviorHints
+            ?.proxyHeaders
+            ?.request
+            .orEmpty()
+            .safePlaybackHeaders()
+        val lowerUrl = url?.lowercase().orEmpty()
+        val adaptive = url != null && (
+            isLikelyHlsPlaybackUrl(url, selected) ||
+                lowerUrl.contains(".mpd") ||
+                lowerUrl.contains("/dash") ||
+                lowerUrl.contains("format=dash")
+            )
+        seekPreviewProvider.configure(
+            url?.let {
+                SeekPreviewSource(
+                    url = it,
+                    headers = baseRequestHeaders + headers,
+                    cacheIdentity = buildSeekPreviewCacheIdentity(
+                        mediaType = mediaType,
+                        mediaId = mediaId,
+                        seasonNumber = seasonNumber,
+                        episodeNumber = episodeNumber,
+                        stream = selected,
+                    ),
+                    durationMs = duration,
+                    isLive = isLiveStream,
+                    isAdaptive = adaptive,
+                )
+            }
+        )
+    }
+
+    val seekPreviewTargetPosition = if (isControlScrubbing) {
+        scrubPreviewPosition
+    } else {
+        currentPosition
+    }
+    val seekPreviewBucket = quantizeSeekPreviewPosition(seekPreviewTargetPosition, duration)
+
+    LaunchedEffect(
+        trackbarFocused,
+        seekPreviewBucket,
+        uiState.selectedStreamUrl,
+        uiState.streamSelectionNonce,
+        hasPlaybackStarted,
+        isCasting,
+    ) {
+        if (!trackbarFocused || !hasPlaybackStarted || isCasting || duration <= 0L) {
+            return@LaunchedEffect
+        }
+        delay(SEEK_PREVIEW_DEBOUNCE_MS)
+        val bufferAheadMs = if (!playerReleased) {
+            (exoPlayer.bufferedPosition - exoPlayer.currentPosition).coerceAtLeast(0L)
+        } else {
+            0L
+        }
+        val avoidNewNetworkWork = isPlaying && (isBuffering || bufferAheadMs < 8_000L)
+        val frame = withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
+            seekPreviewProvider.frameAt(
+                positionMs = seekPreviewBucket,
+                cacheOnly = avoidNewNetworkWork,
+            )
+        }
+        if (frame != null) seekPreviewFrame = frame
+    }
+
+    // Once navigation settles, warm the closest frame in each direction. Direction decides which
+    // side is decoded first, while the buffer guard keeps preview work away from active playback.
+    LaunchedEffect(
+        trackbarFocused,
+        seekPreviewBucket,
+        seekPreviewDirection,
+        uiState.selectedStreamUrl,
+        uiState.streamSelectionNonce,
+    ) {
+        if (!trackbarFocused || !hasPlaybackStarted || isCasting || duration <= 0L) {
+            return@LaunchedEffect
+        }
+        delay(1_200L)
+        if (playerReleased || isBuffering) return@LaunchedEffect
+        val bufferAheadMs = (exoPlayer.bufferedPosition - exoPlayer.currentPosition).coerceAtLeast(0L)
+        if (isPlaying && bufferAheadMs < 20_000L) return@LaunchedEffect
+
+        val offsets = if (seekPreviewDirection < 0) {
+            listOf(-10_000L, 10_000L)
+        } else {
+            listOf(10_000L, -10_000L)
+        }
+        offsets
+            .map { offset ->
+                quantizeSeekPreviewPosition(
+                    (seekPreviewBucket + offset).coerceIn(0L, duration),
+                    duration,
+                )
+            }
+            .filter { it != seekPreviewBucket }
+            .distinct()
+            .forEach { neighborPosition ->
+                withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
+                    seekPreviewProvider.frameAt(neighborPosition)
+                }
+            }
+    }
+
+    // Warm one frame only after playback has a healthy buffer. This makes the first timeline focus
+    // feel immediate without scanning the file or competing with startup playback bandwidth.
+    LaunchedEffect(
+        hasPlaybackStarted,
+        uiState.selectedStreamUrl,
+        uiState.streamSelectionNonce,
+        duration,
+    ) {
+        if (!hasPlaybackStarted || duration <= 0L || isLiveStream || isCasting) return@LaunchedEffect
+        delay(2_000L)
+        if (playerReleased || isBuffering) return@LaunchedEffect
+        val bufferAheadMs = (exoPlayer.bufferedPosition - exoPlayer.currentPosition).coerceAtLeast(0L)
+        if (!isPlaying || bufferAheadMs >= 20_000L) {
+            withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) {
+                seekPreviewProvider.frameAt(exoPlayer.currentPosition.coerceAtLeast(0L))
+            }
+        }
+    }
+
     DisposableEffect(lifecycleOwner, exoPlayer) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -1537,6 +1700,7 @@ fun PlayerScreen(
             return@queueSeek
         }
         if (playerReleased) return@queueSeek
+        seekPreviewDirection = deltaMs.compareTo(0L)
         val basePosition = if (isControlScrubbing) {
             scrubPreviewPosition
         } else {
@@ -1548,7 +1712,7 @@ fun PlayerScreen(
         isControlScrubbing = true
         controlsSeekJob?.cancel()
         controlsSeekJob = coroutineScope.launch {
-            delay(260)
+            delay(CONTROLS_SEEK_COMMIT_DELAY_MS)
             if (!playerReleased) {
                 exoPlayer.seekTo(scrubPreviewPosition)
             }
@@ -3811,7 +3975,6 @@ fun PlayerScreen(
                         )
 
                         // Trackbar
-                        var trackbarFocused by remember { mutableStateOf(false) }
                         val trackbarHeight by animateFloatAsState(if (trackbarFocused) 8f else if (isTouchDevice) 6f else 4f, label = "trackbarHeight")
                         var trackbarWidthPx by remember { mutableIntStateOf(0) }
                         Box(
@@ -3822,25 +3985,88 @@ fun PlayerScreen(
                                 .focusRequester(trackbarFocusRequester)
                                 .onFocusChanged { state ->
                                     trackbarFocused = state.isFocused
+                                    if (state.isFocused && !isControlScrubbing) {
+                                        scrubPreviewPosition = currentPosition
+                                        seekPreviewDirection = 0
+                                    }
                                     if (!state.isFocused && isControlScrubbing) commitControlsSeekNow()
                                 }
                                 .focusable()
                                 .pointerInput(duration, isCasting) {
                                     detectHorizontalDragGestures(
-                                        onDragStart = { offset -> if (duration > 0L && trackbarWidthPx > 0) { scrubPreviewPosition = ((offset.x / trackbarWidthPx).coerceIn(0f, 1f) * duration).toLong(); isControlScrubbing = true } },
-                                        onDragEnd = { if (isControlScrubbing) { if (isCasting) castManager.seekTo(scrubPreviewPosition) else if (!playerReleased) exoPlayer.seekTo(scrubPreviewPosition); isControlScrubbing = false } },
-                                        onDragCancel = { if (isControlScrubbing) { if (isCasting) castManager.seekTo(scrubPreviewPosition) else if (!playerReleased) exoPlayer.seekTo(scrubPreviewPosition); isControlScrubbing = false } },
-                                        onHorizontalDrag = { _, dragAmount -> if (duration > 0L && trackbarWidthPx > 0) { val delta = (dragAmount / trackbarWidthPx * duration).toLong(); scrubPreviewPosition = (scrubPreviewPosition + delta).coerceIn(0L, duration); isControlScrubbing = true } }
+                                        onDragStart = { offset ->
+                                            if (duration > 0L && trackbarWidthPx > 0) {
+                                                trackbarFocusRequester.requestFocus()
+                                                val target = (
+                                                    (offset.x / trackbarWidthPx).coerceIn(0f, 1f) * duration
+                                                ).toLong()
+                                                seekPreviewDirection = target.compareTo(currentPosition)
+                                                scrubPreviewPosition = target
+                                                isControlScrubbing = true
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            if (isControlScrubbing) {
+                                                if (isCasting) {
+                                                    castManager.seekTo(scrubPreviewPosition)
+                                                } else if (!playerReleased) {
+                                                    exoPlayer.seekTo(scrubPreviewPosition)
+                                                }
+                                                isControlScrubbing = false
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            if (isControlScrubbing) {
+                                                if (isCasting) {
+                                                    castManager.seekTo(scrubPreviewPosition)
+                                                } else if (!playerReleased) {
+                                                    exoPlayer.seekTo(scrubPreviewPosition)
+                                                }
+                                                isControlScrubbing = false
+                                            }
+                                        },
+                                        onHorizontalDrag = { _, dragAmount ->
+                                            if (duration > 0L && trackbarWidthPx > 0) {
+                                                val delta = (dragAmount / trackbarWidthPx * duration).toLong()
+                                                seekPreviewDirection = delta.compareTo(0L)
+                                                scrubPreviewPosition =
+                                                    (scrubPreviewPosition + delta).coerceIn(0L, duration)
+                                                isControlScrubbing = true
+                                            }
+                                        }
                                     )
                                 }
                                 .pointerInput(duration, isCasting) {
-                                    detectTapGestures { offset -> if (duration > 0L && trackbarWidthPx > 0) { val pos = ((offset.x / trackbarWidthPx).coerceIn(0f, 1f) * duration).toLong(); if (isCasting) castManager.seekTo(pos) else if (!playerReleased) exoPlayer.seekTo(pos) } }
+                                    detectTapGestures { offset ->
+                                        if (duration > 0L && trackbarWidthPx > 0) {
+                                            val position = (
+                                                (offset.x / trackbarWidthPx).coerceIn(0f, 1f) * duration
+                                            ).toLong()
+                                            if (isCasting) {
+                                                castManager.seekTo(position)
+                                            } else if (!playerReleased) {
+                                                exoPlayer.seekTo(position)
+                                            }
+                                        }
+                                    }
                                 }
                                 .onKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyDown && trackbarFocused) {
                                         when (event.key) {
-                                            Key.DirectionLeft -> { queueControlsSeek(-10_000L); true }
-                                            Key.DirectionRight -> { queueControlsSeek(10_000L); true }
+                                            Key.DirectionLeft -> {
+                                                val step = acceleratedSeekPreviewStepMs(
+                                                    event.nativeKeyEvent.repeatCount
+                                                )
+                                                queueControlsSeek(-step)
+                                                true
+                                            }
+                                            Key.DirectionRight -> {
+                                                val step = acceleratedSeekPreviewStepMs(
+                                                    event.nativeKeyEvent.repeatCount
+                                                )
+                                                queueControlsSeek(step)
+                                                true
+                                            }
                                             Key.Enter, Key.DirectionCenter -> { commitControlsSeekNow(); true }
                                             Key.DirectionUp -> { playButtonFocusRequester.requestFocus(); true }
                                             Key.DirectionDown -> true
@@ -3859,6 +4085,43 @@ fun PlayerScreen(
                             Box(modifier = Modifier.fillMaxWidth(frac).fillMaxHeight().background(
                                 if (trackbarFocused) playerAccent else playerAccent.copy(alpha = 0.8f), RoundedCornerShape(3.dp)
                             ))
+                            }
+
+                            val previewCardWidth = if (isTouchDevice) 168.dp else 208.dp
+                            val previewCardHeight = previewCardWidth * 9f / 16f
+                            val previewDensity = LocalDensity.current
+                            val previewCardWidthPx = with(previewDensity) { previewCardWidth.toPx() }
+                            val previewCardHeightPx = with(previewDensity) { (previewCardHeight + 12.dp).roundToPx() }
+                            val previewX = if (trackbarWidthPx > 0) {
+                                (frac * trackbarWidthPx - previewCardWidthPx / 2f)
+                                    .coerceIn(0f, (trackbarWidthPx - previewCardWidthPx).coerceAtLeast(0f))
+                                    .roundToInt()
+                            } else {
+                                0
+                            }
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible =
+                                    trackbarFocused &&
+                                        hasPlaybackStarted &&
+                                        duration > 0L &&
+                                        !isLiveStream &&
+                                        !isCasting &&
+                                        seekPreviewFrame != null,
+                                enter = fadeIn(animationSpec = animTween(90)),
+                                exit = fadeOut(animationSpec = animTween(70)),
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .offset { IntOffset(previewX, -previewCardHeightPx) }
+                                    .zIndex(12f)
+                                    .width(previewCardWidth)
+                                    .wrapContentHeight(align = Alignment.Top, unbounded = true),
+                            ) {
+                                seekPreviewFrame?.let { frame ->
+                                    SeekPreviewCard(
+                                        frame = frame,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                             }
                         }
 
@@ -6090,6 +6353,61 @@ private class PlaybackCookieJar : CookieJar {
             }
         }
         return valid
+    }
+}
+
+@Composable
+private fun SeekPreviewCard(
+    frame: SeekPreviewFrame,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(5.dp)
+    Box(
+        modifier = modifier
+            .shadow(14.dp, shape, clip = false)
+            .aspectRatio(16f / 9f)
+            .background(Color.Black, shape)
+            .border(1.dp, Color.White.copy(alpha = 0.68f), shape)
+            .clip(shape)
+    ) {
+        Crossfade(
+            targetState = frame,
+            animationSpec = animTween(100),
+            label = "seekPreviewFrame",
+        ) { displayedFrame ->
+            Image(
+                bitmap = displayedFrame.bitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+private fun buildSeekPreviewCacheIdentity(
+    mediaType: MediaType,
+    mediaId: Int,
+    seasonNumber: Int?,
+    episodeNumber: Int?,
+    stream: StreamSource?,
+): String = buildString {
+    append("v1|")
+    append(mediaType.name).append('|').append(mediaId)
+    append('|').append(seasonNumber ?: 0).append('|').append(episodeNumber ?: 0)
+    if (stream != null) {
+        append('|').append(stream.addonId)
+        append('|').append(stream.infoHash.orEmpty()).append('|').append(stream.fileIdx ?: -1)
+        append('|').append(stream.behaviorHints?.videoHash.orEmpty())
+        append('|').append(stream.behaviorHints?.filename.orEmpty())
+        append('|').append(stream.sizeBytes ?: stream.behaviorHints?.videoSize ?: 0L)
+        append('|').append(stream.source)
+        if (stream.infoHash.isNullOrBlank() && stream.behaviorHints?.videoHash.isNullOrBlank()) {
+            append('|').append(
+                runCatching { Uri.parse(stream.url).path.orEmpty() }
+                    .getOrDefault("")
+            )
+        }
     }
 }
 

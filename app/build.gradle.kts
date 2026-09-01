@@ -346,6 +346,15 @@ ksp {
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
     implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
+    implementation("androidx.media3:media3-effect:$media3Version") {
+        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-guava")
+    }
+    implementation("androidx.media3:media3-inspector:$media3Version") {
+        // Inspector's optional Kotlin Future adapter pulls Coroutines 1.9 into this app, while
+        // ARVIO's Ktor stack is intentionally pinned to 1.7.3. FrameExtractor is Java/Guava-based
+        // and does not need that adapter.
+        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-guava")
+    }
     implementation("androidx.media3:media3-ui:$media3Version")
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
