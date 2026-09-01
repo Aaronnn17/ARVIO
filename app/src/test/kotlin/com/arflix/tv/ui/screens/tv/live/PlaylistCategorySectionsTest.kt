@@ -70,6 +70,35 @@ class PlaylistCategorySectionsTest {
     }
 
     @Test
+    fun multiPortalStalkerSectionsUseTheConfiguredPortalNameNotTheRawId() {
+        val config = IptvConfig(
+            stalkerPortals = listOf(
+                com.arflix.tv.data.repository.StalkerPortalEntry(
+                    id = "stalker1",
+                    name = "Home Portal",
+                    portalUrl = "http://portal1.test",
+                    macAddress = "00:1A:79:AA:BB:01",
+                ),
+                com.arflix.tv.data.repository.StalkerPortalEntry(
+                    id = "stalker2",
+                    name = "Backup Portal",
+                    portalUrl = "http://portal2.test",
+                    macAddress = "00:1A:79:AA:BB:02",
+                ),
+            )
+        )
+        val categories = listOf(
+            LiveCategory("stalker:stalker1:news", "News", 6, CategoryIcon.Grid, playlistId = "stalker1"),
+            LiveCategory("stalker:stalker2:sports", "Sports", 4, CategoryIcon.Sport, playlistId = "stalker2"),
+        )
+
+        val sections = buildPlaylistCategorySections(config, categories)
+
+        assertThat(sections.map { it.id }).containsExactly("source:stalker1", "source:stalker2").inOrder()
+        assertThat(sections.map { it.label }).containsExactly("Home Portal", "Backup Portal").inOrder()
+    }
+
+    @Test
     fun singlePlaylistUsesLegacyFlatCategoriesWithoutCollapsedParent() {
         val config = IptvConfig(
             playlists = listOf(

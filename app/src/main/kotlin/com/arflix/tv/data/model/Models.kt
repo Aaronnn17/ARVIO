@@ -22,6 +22,9 @@ data class MediaItem(
     val mediaType: MediaType = MediaType.MOVIE,
     val image: String = "",
     val backdrop: String? = null,
+    // Episode-specific landscape artwork for Continue Watching cards. Keeping
+    // it separate prevents episode stills from replacing series hero artwork.
+    val episodeStill: String? = null,
     val progress: Int = 0,
     val isWatched: Boolean = false,
     val traktId: Int? = null,

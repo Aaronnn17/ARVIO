@@ -35,6 +35,7 @@ interface AndroidContinueWatchingItem {
   episode?: number | null;
   episodeTitle?: string | null;
   backdropPath?: string | null;
+  episodeStillPath?: string | null;
   posterPath?: string | null;
   streamKey?: string | null;
   streamAddonId?: string | null;
@@ -559,6 +560,7 @@ function androidCwToHistory(item: AndroidContinueWatchingItem, profileId?: strin
     duration_seconds: duration,
     position_seconds: position,
     backdrop_path: item.backdropPath ?? null,
+    episode_still_path: item.episodeStillPath ?? null,
     poster_path: item.posterPath ?? null,
     stream_key: item.streamKey ?? null,
     stream_addon_id: item.streamAddonId ?? null,
@@ -579,6 +581,7 @@ function historyToAndroidCw(entry: Omit<WatchHistoryEntry, "user_id">): AndroidC
     episode: entry.episode ?? null,
     episodeTitle: entry.episode_title ?? null,
     backdropPath: entry.backdrop_path ?? null,
+    episodeStillPath: entry.episode_still_path ?? null,
     posterPath: entry.poster_path ?? null,
     streamKey: entry.stream_key ?? null,
     streamAddonId: entry.stream_addon_id ?? null,

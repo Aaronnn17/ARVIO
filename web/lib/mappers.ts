@@ -16,6 +16,7 @@ export function historyToItem(entry: WatchHistoryEntry): MediaItem {
     mediaType: entry.media_type,
     image: tmdbImageUrl(config.imageBase, entry.poster_path),
     backdrop: tmdbImageUrl(config.backdropBase, entry.backdrop_path) || null,
+    episodeStill: tmdbImageUrl(config.backdropBase, entry.episode_still_path) || null,
     seasonNumber: entry.season ?? null,
     episodeNumber: entry.episode ?? null,
     episodeTitle: entry.episode_title ?? null,

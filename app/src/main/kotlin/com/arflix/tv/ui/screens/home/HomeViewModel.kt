@@ -527,10 +527,12 @@ class HomeViewModel @Inject constructor(
         preferred: ContinueWatchingItem,
         fallback: ContinueWatchingItem
     ): ContinueWatchingItem {
+        val sameEpisode = preferred.season == fallback.season && preferred.episode == fallback.episode
         return preferred.copy(
             title = preferred.title.ifBlank { fallback.title },
             episodeTitle = preferred.episodeTitle ?: fallback.episodeTitle,
             backdropPath = preferred.backdropPath ?: fallback.backdropPath,
+            episodeStillPath = preferred.episodeStillPath ?: fallback.episodeStillPath.takeIf { sameEpisode },
             posterPath = preferred.posterPath ?: fallback.posterPath,
             streamKey = preferred.streamKey ?: fallback.streamKey,
             streamAddonId = preferred.streamAddonId ?: fallback.streamAddonId,
@@ -551,6 +553,7 @@ class HomeViewModel @Inject constructor(
     private fun needsContinueWatchingArtworkRepair(item: ContinueWatchingItem): Boolean {
         return item.posterPath.isNullOrBlank() ||
             item.backdropPath.isNullOrBlank() ||
+            (item.mediaType == MediaType.TV && item.season != null && item.episode != null && item.episodeStillPath.isNullOrBlank()) ||
             item.overview.isBlank() ||
             item.durationSeconds <= 0L
     }

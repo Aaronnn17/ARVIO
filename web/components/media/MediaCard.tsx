@@ -54,6 +54,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   // "Up next" chip instead; the bar stays for genuinely resumable items.
   const isUpNext = item.timeRemainingLabel === "Up next";
   const showProgress = !watched && !isUpNext && progress >= 1 && progress <= 94;
+  const isContinueWatchingCard = isUpNext || showProgress || Boolean(item.timeRemainingLabel);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressClickUntil = useRef(0);
   // CW/up-next items from Trakt arrive with no artwork, and a hydration that hit
@@ -62,7 +63,8 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   const [fallbackArt, setFallbackArt] = useState<{ image: string; backdrop: string | null } | null>(null);
   const image = item.image || fallbackArt?.image || "";
   const backdrop = item.backdrop || fallbackArt?.backdrop || "";
-  const artwork = effectivePosterMode ? (image || backdrop) : (backdrop || image);
+  const episodeArtwork = isContinueWatchingCard ? item.episodeStill || "" : "";
+  const artwork = effectivePosterMode ? (image || backdrop) : (episodeArtwork || backdrop || image);
   const year = item.releaseDate?.slice(0, 4) || item.year || (item.mediaType === "tv" ? "Series" : "Movie");
   const directMetadataId = item.tmdbId && item.tmdbId > 0 ? item.tmdbId : item.id > 0 ? item.id : null;
   const [metadataId, setMetadataId] = useState<number | null>(directMetadataId);
@@ -84,7 +86,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   const triggerContextMenu = (posX?: number, posY?: number) => {
     openContextMenu({
       item,
-      isContinueWatching: isUpNext || showProgress || Boolean(item.timeRemainingLabel),
+      isContinueWatching: isContinueWatchingCard,
       position: posX !== undefined && posY !== undefined ? { x: posX, y: posY } : null
     });
   };

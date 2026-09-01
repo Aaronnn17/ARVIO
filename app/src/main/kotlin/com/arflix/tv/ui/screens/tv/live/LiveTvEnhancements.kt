@@ -102,13 +102,22 @@ fun buildPlaylistCategorySections(
         .filter { category -> category.playlistId.isNullOrBlank() || category.playlistId !in knownPlaylistIds }
         .groupBy { category -> category.playlistId?.takeIf { it.isNotBlank() } ?: "other" }
         .entries
-        .sortedWith(compareBy<Map.Entry<String, List<LiveCategory>>> { if (it.key == "stalker") 0 else 1 }.thenBy { it.key })
+        .sortedWith(compareBy<Map.Entry<String, List<LiveCategory>>> { if (it.key.startsWith("stalker")) 0 else 1 }.thenBy { it.key })
         .map { (sourceId, sourceCategories) ->
+            // Multi-portal Stalker ids look like "stalker1"/"stalker2" (see
+            // StalkerPortalSupport), not the legacy single-portal "stalker" - look
+            // up the name the user configured for that portal before falling back
+            // to a generic capitalized id.
+            val stalkerPortalName = config.stalkerPortals
+                .firstOrNull { it.id == sourceId }
+                ?.name
+                ?.takeIf { it.isNotBlank() }
             PlaylistCategorySection(
                 id = "source:$sourceId",
-                label = when (sourceId) {
-                    "stalker" -> "Stalker"
-                    "other" -> "Other sources"
+                label = when {
+                    stalkerPortalName != null -> stalkerPortalName
+                    sourceId == "stalker" -> "Stalker"
+                    sourceId == "other" -> "Other sources"
                     else -> sourceId.replaceFirstChar { it.uppercase() }
                 },
                 count = sourceCategories.sumOf(LiveCategory::count),
