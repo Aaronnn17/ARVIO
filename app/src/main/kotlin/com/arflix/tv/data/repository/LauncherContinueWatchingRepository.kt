@@ -100,7 +100,6 @@ class LauncherContinueWatchingRepository @Inject constructor(
     private suspend fun loadPublisherItems(): List<ContinueWatchingItem> {
         val installedAddons = streamRepository.installedAddons.first()
         val primaryItems = runCatching { traktRepository.getContinueWatching() }.getOrDefault(emptyList())
-        
         val filteredPrimary = primaryItems.filterNot { item ->
             SportsAddonCapabilities.isLiveStreamOrSportsItem(
                 mediaType = item.mediaType,
@@ -170,7 +169,6 @@ class LauncherContinueWatchingRepository @Inject constructor(
             )
         }
     }
-    
     @RequiresApi(Build.VERSION_CODES.O)
     private fun syncPublishedRows(items: List<ContinueWatchingItem>) {
         val channelId = ensurePreviewChannel() ?: return
