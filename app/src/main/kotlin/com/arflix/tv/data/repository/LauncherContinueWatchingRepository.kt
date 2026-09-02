@@ -26,6 +26,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -148,28 +154,43 @@ class LauncherContinueWatchingRepository @Inject constructor(
                 .take(Constants.MAX_CONTINUE_WATCHING)
         }
 
-        return selectedItems.map { item ->
-            val localizedTitle = runCatching {
-                if (item.mediaType == MediaType.TV) {
-                    mediaRepository.getTvDetails(item.id).title
-                } else {
-                    mediaRepository.getMovieDetails(item.id).title
-                }
-            }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
+       // Limit of 4 simultaneous calls to avoid saturating the network
+        val semaphore = Semaphore(4)
+        val currentLang = Locale.getDefault().toLanguageTag()
 
-            val resolvedEpisodeTitle = runCatching {
-                if (item.mediaType == MediaType.TV && item.season != null && item.episode != null) {
-                    val episodes = mediaRepository.getSeasonEpisodes(item.id, item.season)
-                    episodes.firstOrNull { it.episodeNumber == item.episode }?.name
-                } else {
-                    null
-                }
-            }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.episodeTitle
+        return coroutineScope {
+            selectedItems.map { item ->
+                async {
+                    semaphore.withPermit {
+                        // Cache keys including current language
+                        val titleKey = "${currentLang}_${item.mediaType}_${item.id}"
+                        val epKey = "${currentLang}_tv_${item.id}_${item.season}_${item.episode}"
 
-            item.copy(
-                title = localizedTitle,
-                episodeTitle = resolvedEpisodeTitle
-            )
+                        val localizedTitle = titleCache.get(titleKey) ?: runCatching {
+                            val t = if (item.mediaType == MediaType.TV) {
+                                mediaRepository.getLightweightTvTitle(item.id)
+                            } else {
+                                mediaRepository.getLightweightMovieTitle(item.id)
+                            }
+                            t?.takeIf { it.isNotBlank() }?.also { titleCache.put(titleKey, it) }
+                        }.getOrNull() ?: item.title
+
+                        val resolvedEpisodeTitle = if (item.mediaType == MediaType.TV && item.season != null && item.episode != null) {
+                            titleCache.get(epKey) ?: runCatching {
+                                val ep = mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
+                                ep?.takeIf { it.isNotBlank() }?.also { titleCache.put(epKey, it) }
+                            }.getOrNull()
+                        } else {
+                            null
+                        } ?: item.episodeTitle
+
+                        item.copy(
+                            title = localizedTitle,
+                            episodeTitle = resolvedEpisodeTitle
+                        )
+                    }
+                }
+            }.awaitAll()
         }
     }
     @RequiresApi(Build.VERSION_CODES.O)
