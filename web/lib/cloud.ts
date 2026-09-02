@@ -1,10 +1,12 @@
 import type { AuthClient } from "./auth";
-import { config, hasNetlifyBackendConfig } from "./config";
+import { config, hasNetlifyBackendUrl } from "./config";
 import { parseHomeServerConnectionJson, serializeHomeServerConnectionJson } from "./homeserver";
 import { jsonRequest } from "./http";
 import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
 import { tmdbImageUrl } from "./mediaImages";
 import type { TraktToken } from "./trakt";
+import type { SimklToken } from "./simkl";
+import type { TrackingPreferences, TrackingReadMode } from "./sync";
 import type { AppSettings, InstalledAddon, IptvPlaylistEntry, MediaItem, Profile, QualityFilterConfig, WatchHistoryEntry } from "./types";
 
 export interface CloudPayload {
@@ -33,6 +35,7 @@ interface AndroidContinueWatchingItem {
   episode?: number | null;
   episodeTitle?: string | null;
   backdropPath?: string | null;
+  episodeStillPath?: string | null;
   posterPath?: string | null;
   streamKey?: string | null;
   streamAddonId?: string | null;
@@ -60,10 +63,14 @@ interface AndroidIptvProfileState {
   favoriteGroups?: string[];
   hiddenGroups?: string[];
   groupOrder?: string[];
+  sortOrder?: string;
 }
 
 function canUseBackendSync(auth: AuthClient) {
-  return Boolean(auth.session?.accessToken && auth.isNetlifySession && hasNetlifyBackendConfig());
+  // Account sync authenticates with the signed-in user's bearer token. The
+  // public app key is only needed to create/refresh a password session, so it
+  // must not disable cloud pulls for sessions returned by auth.arvio.tv.
+  return Boolean(auth.session?.accessToken && auth.isNetlifySession && hasNetlifyBackendUrl());
 }
 
 async function backendRequest<T>(auth: AuthClient, path: string, init: RequestInit = {}) {
@@ -108,6 +115,51 @@ function objectRecord<T = unknown>(value: unknown): Record<string, T> {
 function arrayValue<T = unknown>(value: unknown): T[] {
   const parsed = parseNestedJson(value);
   return Array.isArray(parsed) ? parsed as T[] : [];
+}
+
+function parseDismissedContinueWatching(value: unknown): Map<string, number> {
+  const result = new Map<string, number>();
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return result;
+  raw.split("|").forEach((entry) => {
+    const split = entry.lastIndexOf(",");
+    if (split <= 0) return;
+    const key = entry.slice(0, split);
+    const timestamp = Number(entry.slice(split + 1));
+    if (key && Number.isFinite(timestamp)) result.set(key, timestamp);
+  });
+  return result;
+}
+
+function encodeDismissedContinueWatching(values: Map<string, number>): string {
+  return [...values.entries()].map(([key, timestamp]) => `${key},${timestamp}`).join("|");
+}
+
+function continueWatchingDismissalKeys(item: {
+  id: number;
+  mediaType: MediaItem["mediaType"];
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+}) {
+  const showKey = item.mediaType === "movie" ? `movie:${item.id}` : `tv:${item.id}`;
+  const exactKey = item.mediaType === "tv" && item.seasonNumber != null && item.episodeNumber != null
+    ? `${showKey}:${item.seasonNumber}:${item.episodeNumber}`
+    : showKey;
+  return { showKey, exactKey };
+}
+
+function updateProfileDismissals(
+  root: RawPayload,
+  profileId: string,
+  update: (values: Map<string, number>) => void
+) {
+  const byProfile = objectRecord<unknown>(root.dismissedContinueWatchingByProfile);
+  const values = parseDismissedContinueWatching(byProfile[profileId]);
+  update(values);
+  const encoded = encodeDismissedContinueWatching(values);
+  if (encoded) byProfile[profileId] = encoded;
+  else delete byProfile[profileId];
+  root.dismissedContinueWatchingByProfile = byProfile;
 }
 
 function scopedValue<T>(root: RawPayload, key: string, profileId?: string | null): T | undefined {
@@ -482,6 +534,7 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
     favoriteGroupIds: stringArray(state.favoriteGroups).length ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
     hiddenGroupIds: stringArray(state.hiddenGroups),
     groupOrder: stringArray(state.groupOrder),
+    iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
     iptvStalkerUrl: stringValue(state.stalkerPortalUrl ?? rootState.iptvStalkerUrl),
     iptvStalkerMac: stringValue(state.stalkerMacAddress ?? rootState.iptvStalkerMac)
   };
@@ -507,6 +560,7 @@ function androidCwToHistory(item: AndroidContinueWatchingItem, profileId?: strin
     duration_seconds: duration,
     position_seconds: position,
     backdrop_path: item.backdropPath ?? null,
+    episode_still_path: item.episodeStillPath ?? null,
     poster_path: item.posterPath ?? null,
     stream_key: item.streamKey ?? null,
     stream_addon_id: item.streamAddonId ?? null,
@@ -527,6 +581,7 @@ function historyToAndroidCw(entry: Omit<WatchHistoryEntry, "user_id">): AndroidC
     episode: entry.episode ?? null,
     episodeTitle: entry.episode_title ?? null,
     backdropPath: entry.backdrop_path ?? null,
+    episodeStillPath: entry.episode_still_path ?? null,
     posterPath: entry.poster_path ?? null,
     streamKey: entry.stream_key ?? null,
     streamAddonId: entry.stream_addon_id ?? null,
@@ -658,8 +713,12 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
   const iptvSettings = iptvFromAndroid(scopedValue(root, "iptvByProfile", profileId), root);
   const profileCatalogs = scopedValue<AppSettings["catalogs"]>(root, "catalogsByProfile", profileId);
   const hiddenCatalogIds = scopedValue<string[]>(root, "hiddenPreinstalledByProfile", profileId);
+  const hiddenHomeServerCatalogIds = scopedValue<string[]>(root, "hiddenHomeServerByProfile", profileId);
   const profileAddons = scopedValue<InstalledAddon[]>(root, "addonsByProfile", profileId);
   const legacySettings = objectRecord<unknown>(root.settings) as Partial<AppSettings>;
+  delete legacySettings.customTmdbApiKey;
+  delete legacySettings.customTvdbApiKey;
+  delete legacySettings.customTvdbUserPin;
   const legacyCatalogs = arrayValue(root.catalogs) as AppSettings["catalogs"];
   const legacyHiddenCatalogIds = arrayValue<string>(root.hiddenPreinstalledCatalogs);
   // Canonical, timestamp-managed GLOBAL settings live at the top level of the payload (written by
@@ -691,7 +750,8 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
       ...globalSettings,
       ...iptvSettings,
       ...(arrayValue(profileCatalogs).length ? { catalogs: arrayValue(profileCatalogs) as AppSettings["catalogs"] } : legacyCatalogs.length ? { catalogs: legacyCatalogs } : {}),
-      ...(arrayValue(hiddenCatalogIds).length ? { hiddenCatalogIds: arrayValue<string>(hiddenCatalogIds) } : legacyHiddenCatalogIds.length ? { hiddenCatalogIds: legacyHiddenCatalogIds } : {})
+      ...(hiddenCatalogIds !== undefined ? { hiddenCatalogIds: arrayValue<string>(hiddenCatalogIds) } : legacyHiddenCatalogIds.length ? { hiddenCatalogIds: legacyHiddenCatalogIds } : {}),
+      ...(hiddenHomeServerCatalogIds !== undefined ? { hiddenHomeServerCatalogIds: arrayValue<string>(hiddenHomeServerCatalogIds) } : {})
     },
     updatedAt: typeof root.updatedAt === "number" ? root.updatedAt : 0
   };
@@ -749,7 +809,8 @@ export async function saveCloudSettings(
     // exclusively through saveCloudAddons (merge-protected). A stale session's
     // partial in-memory addon list must never leak into the shared payload.
     void addons;
-    root.settings = settings;
+    const { customTmdbApiKey: _k1, customTvdbApiKey: _k2, customTvdbUserPin: _k3, ...sanitizedSettings } = settings;
+    root.settings = sanitizedSettings;
 
     // ── Genuine global settings that Android merges by per-field timestamp. Only write + bump the
     //    timestamp when the web actually changed the field vs its baseline; otherwise leave the
@@ -827,6 +888,7 @@ export async function saveCloudSettings(
       // add-on installed on another device. Add-ons are written exclusively by saveCloudAddons().
       setScopedValue(root, "catalogsByProfile", profileId, settings.catalogs);
       setScopedValue(root, "hiddenPreinstalledByProfile", profileId, settings.hiddenCatalogIds);
+      setScopedValue(root, "hiddenHomeServerByProfile", profileId, settings.hiddenHomeServerCatalogIds);
       setScopedValue(root, "iptvByProfile", profileId, {
         m3uUrl: settings.iptvPlaylists[0]?.m3uUrl ?? "",
         epgUrl: settings.iptvPlaylists[0]?.epgUrl ?? "",
@@ -836,7 +898,8 @@ export async function saveCloudSettings(
         favoriteChannels: settings.favoriteChannelIds,
         favoriteGroups: settings.favoriteGroupIds,
         hiddenGroups: settings.hiddenGroupIds,
-        groupOrder: settings.groupOrder
+        groupOrder: settings.groupOrder,
+        sortOrder: settings.iptvSortOrder ?? "provider"
       });
     }
   });
@@ -857,8 +920,35 @@ export async function pullCloudProfiles(auth: AuthClient): Promise<CloudProfiles
   };
 }
 
-export async function pullCloudTraktToken(auth: AuthClient, profileId?: string | null): Promise<TraktToken | null> {
-  const root = await pullRawPayload(auth);
+export type CloudTrackingProvider = "NONE" | "TRAKT" | "MDBLIST" | "SIMKL";
+
+export interface CloudTrackingSelection {
+  provider: CloudTrackingProvider;
+  traktToken: TraktToken | null;
+  mdbListApiKey: string | null;
+  simklToken: SimklToken | null;
+  trackingPreferences?: TrackingPreferences;
+}
+
+export interface CloudTrackingSnapshot extends CloudTrackingSelection {
+  hasCloudState: boolean;
+  needsCleanup: boolean;
+}
+
+function normalizeCloudTrackingProvider(value: unknown): CloudTrackingProvider | null {
+  const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return normalized === "NONE" || normalized === "TRAKT" || normalized === "MDBLIST" || normalized === "SIMKL"
+    ? normalized
+    : null;
+}
+
+function normalizeTrackingReadMode(value: unknown, fallback: TrackingReadMode): TrackingReadMode {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "auto" || normalized === "trakt" || normalized === "simkl" ||
+    normalized === "both" || normalized === "mdblist" ? normalized : fallback;
+}
+
+function readCloudTraktToken(root: RawPayload, profileId: string): TraktToken | null {
   const tokensByProfile = objectRecord<{
     accessToken?: string;
     refreshToken?: string;
@@ -867,7 +957,7 @@ export async function pullCloudTraktToken(auth: AuthClient, profileId?: string |
     refresh_token?: string;
     expires_at?: number;
   }>(root.traktTokens);
-  const token = profileId ? tokensByProfile?.[profileId] : undefined;
+  const token = tokensByProfile[profileId];
   const accessToken = token?.accessToken ?? token?.access_token;
   const refreshToken = token?.refreshToken ?? token?.refresh_token;
   const rawExpiresAt = token?.expiresAt ?? token?.expires_at ?? 0;
@@ -880,21 +970,159 @@ export async function pullCloudTraktToken(auth: AuthClient, profileId?: string |
   };
 }
 
-export async function saveCloudTraktToken(auth: AuthClient, token: TraktToken, profileId?: string | null) {
+function readCloudSimklToken(root: RawPayload, profileId: string): SimklToken | null {
+  const directTokens = objectRecord<{ access_token?: string; accessToken?: string }>(root.simklTokens);
+  const selections = objectRecord<{ provider?: string; simklAccessToken?: string }>(root.mdbListSyncByProfile);
+  const direct = directTokens[profileId];
+  const selection = selections[profileId];
+  const accessToken = direct?.access_token ?? direct?.accessToken ?? selection?.simklAccessToken;
+  return accessToken ? { access_token: accessToken } : null;
+}
+
+export async function pullCloudTrackingSelection(
+  auth: AuthClient,
+  profileId?: string | null
+): Promise<CloudTrackingSnapshot> {
+  if (!profileId) {
+    return {
+      provider: "NONE",
+      traktToken: null,
+      mdbListApiKey: null,
+      simklToken: null,
+      trackingPreferences: {
+        watchlistReadMode: "auto",
+        continueWatchingReadMode: "auto",
+        watchedReadMode: "auto",
+        writeToTrakt: false,
+        writeToSimkl: false
+      },
+      hasCloudState: false,
+      needsCleanup: false
+    };
+  }
+  const root = await pullRawPayload(auth);
+  const selections = objectRecord<Record<string, unknown>>(root.mdbListSyncByProfile);
+  const selection = selections[profileId] ?? {};
+  const traktToken = readCloudTraktToken(root, profileId);
+  const simklToken = readCloudSimklToken(root, profileId);
+  const rawMdbListKey = selection.mdbListApiKey ?? selection.mdblistApiKey;
+  const mdbListApiKey = typeof rawMdbListKey === "string" ? rawMdbListKey.trim() || null : null;
+  const explicitProvider = normalizeCloudTrackingProvider(selection.provider);
+  const inferredProvider: CloudTrackingProvider = traktToken
+    ? "TRAKT"
+    : simklToken
+      ? "SIMKL"
+      : mdbListApiKey
+        ? "MDBLIST"
+        : "NONE";
+  const requestedProvider = explicitProvider ?? inferredProvider;
+  const provider: CloudTrackingProvider = requestedProvider === "TRAKT" && traktToken
+    ? "TRAKT"
+    : requestedProvider === "SIMKL" && simklToken
+      ? "SIMKL"
+      : requestedProvider === "MDBLIST" && mdbListApiKey
+        ? "MDBLIST"
+        : "NONE";
+  const storedProviderCount = Number(Boolean(traktToken)) + Number(Boolean(simklToken)) + Number(Boolean(mdbListApiKey));
+  const defaultMode: TrackingReadMode = traktToken && simklToken
+      ? "both"
+      : traktToken
+        ? "trakt"
+        : simklToken
+          ? "simkl"
+          : mdbListApiKey
+            ? "mdblist"
+            : "auto";
+  const trackingPreferences: TrackingPreferences = {
+    watchlistReadMode: normalizeTrackingReadMode(selection.watchlistReadMode, defaultMode),
+    continueWatchingReadMode: normalizeTrackingReadMode(selection.continueWatchingReadMode, defaultMode),
+    watchedReadMode: normalizeTrackingReadMode(selection.watchedReadMode, defaultMode),
+    writeToTrakt: typeof selection.writeToTrakt === "boolean" ? selection.writeToTrakt : Boolean(traktToken),
+    writeToSimkl: typeof selection.writeToSimkl === "boolean" ? selection.writeToSimkl : Boolean(simklToken)
+  };
+  const hasCloudState = explicitProvider !== null || storedProviderCount > 0;
+  const needsCleanup = !hasCloudState
+    ? false
+    : explicitProvider === null
+    ? storedProviderCount > 0
+    : explicitProvider !== provider;
+
+  return {
+    provider,
+    traktToken,
+    mdbListApiKey,
+    simklToken,
+    trackingPreferences,
+    hasCloudState,
+    needsCleanup
+  };
+}
+
+export async function saveCloudTrackingSelection(
+  auth: AuthClient,
+  profileId: string | null | undefined,
+  selection: CloudTrackingSelection
+) {
   if (!profileId) return;
   await mutateCloudPayload(auth, (root) => {
-    const tokens = objectRecord<unknown>(root.traktTokens) ?? {};
-    // Write both key styles so the Android app and web read it either way.
-    tokens[profileId] = {
-      accessToken: token.access_token,
-      refreshToken: token.refresh_token,
-      expiresAt: token.expires_at,
-      access_token: token.access_token,
-      refresh_token: token.refresh_token,
-      expires_at: token.expires_at
+    const traktTokens = objectRecord<unknown>(root.traktTokens);
+    const simklTokens = objectRecord<unknown>(root.simklTokens);
+    const selections = objectRecord<Record<string, unknown>>(root.mdbListSyncByProfile);
+    const defaultMode: TrackingReadMode = selection.traktToken && selection.simklToken
+        ? "both"
+        : selection.traktToken
+          ? "trakt"
+          : selection.simklToken
+            ? "simkl"
+            : selection.mdbListApiKey
+              ? "mdblist"
+              : "auto";
+    const preferences = selection.trackingPreferences ?? {
+      watchlistReadMode: defaultMode,
+      continueWatchingReadMode: defaultMode,
+      watchedReadMode: defaultMode,
+      writeToTrakt: Boolean(selection.traktToken),
+      writeToSimkl: Boolean(selection.simklToken)
     };
-    root.traktTokens = tokens;
-    root.traktLinked = true;
+
+    if (selection.traktToken) {
+      const token = selection.traktToken;
+      traktTokens[profileId] = {
+        accessToken: token.access_token,
+        refreshToken: token.refresh_token,
+        expiresAt: token.expires_at,
+        access_token: token.access_token,
+        refresh_token: token.refresh_token,
+        expires_at: token.expires_at
+      };
+    } else {
+      delete traktTokens[profileId];
+    }
+    if (selection.simklToken?.access_token) {
+      const token = selection.simklToken;
+      simklTokens[profileId] = {
+        access_token: token.access_token,
+        accessToken: token.access_token
+      };
+    } else {
+      delete simklTokens[profileId];
+    }
+
+    selections[profileId] = {
+      provider: selection.provider,
+      ...(selection.mdbListApiKey?.trim() ? { mdbListApiKey: selection.mdbListApiKey.trim() } : {}),
+      ...(selection.simklToken?.access_token ? { simklAccessToken: selection.simklToken.access_token } : {}),
+      watchlistReadMode: preferences.watchlistReadMode.toUpperCase(),
+      continueWatchingReadMode: preferences.continueWatchingReadMode.toUpperCase(),
+      watchedReadMode: preferences.watchedReadMode.toUpperCase(),
+      writeToTrakt: preferences.writeToTrakt,
+      writeToSimkl: preferences.writeToSimkl
+    };
+
+    root.traktTokens = traktTokens;
+    root.traktLinked = Object.keys(traktTokens).length > 0;
+    root.simklTokens = simklTokens;
+    root.mdbListSyncByProfile = selections;
   });
 }
 
@@ -919,6 +1147,65 @@ export async function pullCloudWatchlist(auth: AuthClient, profileId?: string | 
       };
     })
     .filter((item): item is MediaItem => Boolean(item));
+}
+
+export async function saveCloudWatchlist(
+  auth: AuthClient,
+  items: MediaItem[],
+  profileId?: string | null
+) {
+  if (!profileId) return;
+  await mutateCloudPayload(auth, (root) => {
+    const byProfile = objectRecord<unknown>(root.watchlistByProfile);
+    byProfile[profileId] = items.map((item, index): AndroidWatchlistItem => ({
+      tmdbId: item.id,
+      mediaType: item.mediaType,
+      title: item.title,
+      posterPath: item.image || null,
+      backdropPath: item.backdrop || null,
+      addedAt: item.activityAt ?? Date.now(),
+      sourceOrder: index
+    }));
+    root.watchlistByProfile = byProfile;
+  });
+}
+
+export async function pullCloudWatchedKeys(auth: AuthClient, profileId?: string | null): Promise<Set<string>> {
+  const root = await pullRawPayload(auth);
+  const keys = new Set<string>();
+  const movieProfiles = objectRecord<unknown>(root.localWatchedMoviesByProfile);
+  const episodeProfiles = objectRecord<unknown>(root.localWatchedEpisodesByProfile);
+  const movies = profileId
+    ? arrayValue<number>(movieProfiles[profileId])
+    : Object.values(movieProfiles).flatMap((value) => arrayValue<number>(value));
+  const episodes = profileId
+    ? arrayValue<string>(episodeProfiles[profileId])
+    : Object.values(episodeProfiles).flatMap((value) => arrayValue<string>(value));
+  movies.forEach((id) => {
+    const value = Number(id);
+    if (value > 0) keys.add(`movie:${value}`);
+  });
+  episodes.forEach((value) => {
+    const match = /^show_tmdb:(\d+):(\d+):(\d+)$/.exec(String(value));
+    if (match) keys.add(`tv:${match[1]}:${match[2]}:${match[3]}`);
+  });
+  return keys;
+}
+
+export async function pullCloudContinueWatchingDismissals(
+  auth: AuthClient,
+  profileId?: string | null
+): Promise<Map<string, number>> {
+  const root = await pullRawPayload(auth);
+  const byProfile = objectRecord<unknown>(root.dismissedContinueWatchingByProfile);
+  if (profileId) return parseDismissedContinueWatching(byProfile[profileId]);
+  const merged = new Map<string, number>();
+  Object.values(byProfile).forEach((value) => {
+    parseDismissedContinueWatching(value).forEach((timestamp, key) => {
+      merged.set(key, Math.max(timestamp, merged.get(key) ?? 0));
+    });
+  });
+  return merged;
 }
 
 export async function saveCloudProfiles(auth: AuthClient, profiles: Profile[], activeProfileId: string | null) {
@@ -1051,6 +1338,19 @@ export async function saveProgress(auth: AuthClient, entry: Omit<WatchHistoryEnt
       });
       byProfile[targetProfileId] = (nextItem.progress ?? 0) >= 90 ? filtered : [nextItem, ...filtered].slice(0, 50);
       root.localContinueWatchingByProfile = byProfile;
+      if ((nextItem.progress ?? 0) > 0 && (nextItem.progress ?? 0) < 90) {
+        const dismissalItem = {
+          id: entry.show_tmdb_id,
+          mediaType: entry.media_type,
+          seasonNumber: entry.season,
+          episodeNumber: entry.episode
+        };
+        const { showKey, exactKey } = continueWatchingDismissalKeys(dismissalItem);
+        updateProfileDismissals(root, targetProfileId, (values) => {
+          values.delete(showKey);
+          values.delete(exactKey);
+        });
+      }
     });
     return;
   }
@@ -1067,11 +1367,100 @@ export async function saveProgress(auth: AuthClient, entry: Omit<WatchHistoryEnt
   });
 }
 
+export async function removeContinueWatchingProgress(
+  auth: AuthClient,
+  item: Pick<MediaItem, "id" | "mediaType" | "seasonNumber" | "episodeNumber">,
+  profileId?: string | null
+) {
+  if (!auth.session) return;
+  const matches = (candidate: AndroidContinueWatchingItem) => {
+    if (candidate.id !== item.id || String(candidate.mediaType ?? "").toLowerCase() !== item.mediaType) return false;
+    if (item.mediaType !== "tv") return true;
+    if (item.seasonNumber != null && candidate.season !== item.seasonNumber) return false;
+    if (item.episodeNumber != null && candidate.episode !== item.episodeNumber) return false;
+    return true;
+  };
+
+  if (canUseBackendSync(auth)) {
+    await mutateCloudPayload(auth, (root) => {
+      const targetProfileId = profileId ?? "default";
+      for (const key of ["localContinueWatchingByProfile", "continueWatchingByProfile"]) {
+        const byProfile = objectRecord<unknown>(root[key]);
+        byProfile[targetProfileId] = arrayValue<AndroidContinueWatchingItem>(byProfile[targetProfileId]).filter((candidate) => !matches(candidate));
+        root[key] = byProfile;
+      }
+      for (const key of ["localContinueWatching", "continueWatching"]) {
+        root[key] = arrayValue<AndroidContinueWatchingItem>(root[key]).filter((candidate) => !matches(candidate));
+      }
+      const { showKey, exactKey } = continueWatchingDismissalKeys(item);
+      updateProfileDismissals(root, targetProfileId, (values) => {
+        const now = Date.now();
+        values.set(showKey, now);
+        values.set(exactKey, now);
+      });
+    });
+    return;
+  }
+
+  const query = new URLSearchParams({
+    user_id: `eq.${auth.session.userId}`,
+    media_type: `eq.${item.mediaType}`,
+    show_tmdb_id: `eq.${item.id}`
+  });
+  query.set("profile_id", profileId ? `eq.${profileId}` : "is.null");
+  if (item.seasonNumber != null) query.set("season", `eq.${item.seasonNumber}`);
+  if (item.episodeNumber != null) query.set("episode", `eq.${item.episodeNumber}`);
+  await auth.supabase(`/rest/v1/watch_history?${query.toString()}`, { method: "DELETE" });
+  await mutateCloudPayload(auth, (root) => {
+    const targetProfileId = profileId ?? "default";
+    const { showKey, exactKey } = continueWatchingDismissalKeys(item);
+    updateProfileDismissals(root, targetProfileId, (values) => {
+      const now = Date.now();
+      values.set(showKey, now);
+      values.set(exactKey, now);
+    });
+  });
+}
+
+export async function saveWatchedState(
+  auth: AuthClient,
+  item: Pick<MediaItem, "id" | "mediaType" | "seasonNumber" | "episodeNumber">,
+  watched: boolean,
+  profileId?: string | null
+) {
+  if (!auth.session) return;
+  const targetProfileId = profileId ?? "default";
+  await mutateCloudPayload(auth, (root) => {
+    if (item.mediaType === "movie") {
+      const byProfile = objectRecord<unknown>(root.localWatchedMoviesByProfile);
+      const ids = new Set(arrayValue<number>(byProfile[targetProfileId]).map(Number).filter((id) => id > 0));
+      if (watched) ids.add(item.id); else ids.delete(item.id);
+      byProfile[targetProfileId] = [...ids].sort((a, b) => a - b);
+      root.localWatchedMoviesByProfile = byProfile;
+    } else if (item.seasonNumber != null && item.episodeNumber != null) {
+      const byProfile = objectRecord<unknown>(root.localWatchedEpisodesByProfile);
+      const episodeKey = `show_tmdb:${item.id}:${item.seasonNumber}:${item.episodeNumber}`;
+      const keys = new Set(arrayValue<string>(byProfile[targetProfileId]).map(String).filter(Boolean));
+      if (watched) keys.add(episodeKey); else keys.delete(episodeKey);
+      byProfile[targetProfileId] = [...keys].sort();
+      root.localWatchedEpisodesByProfile = byProfile;
+    }
+
+    if (watched) {
+      const matches = (candidate: AndroidContinueWatchingItem) =>
+        candidate.id === item.id && String(candidate.mediaType ?? "").toLowerCase() === item.mediaType;
+      const byProfile = objectRecord<unknown>(root.localContinueWatchingByProfile);
+      byProfile[targetProfileId] = arrayValue<AndroidContinueWatchingItem>(byProfile[targetProfileId]).filter((candidate) => !matches(candidate));
+      root.localContinueWatchingByProfile = byProfile;
+    }
+  });
+}
 
 export async function markWatched(auth: AuthClient, entry: Omit<WatchHistoryEntry, "user_id" | "progress" | "position_seconds">, profileId?: string | null) {
-  await saveProgress(auth, {
-    ...entry,
-    progress: 1,
-    position_seconds: entry.duration_seconds
-  }, profileId);
+  await saveWatchedState(auth, {
+    id: entry.show_tmdb_id,
+    mediaType: entry.media_type,
+    seasonNumber: entry.season,
+    episodeNumber: entry.episode
+  }, true, profileId);
 }

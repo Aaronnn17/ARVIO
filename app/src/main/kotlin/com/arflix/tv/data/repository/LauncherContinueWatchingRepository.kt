@@ -48,9 +48,9 @@ class LauncherContinueWatchingRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val profileManager: ProfileManager,
     private val traktRepository: TraktRepository,
+    private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
     private val watchHistoryRepository: WatchHistoryRepository,
-    private val streamRepository: StreamRepository,
-    private val mediaRepository: MediaRepository
+    private val streamRepository: StreamRepository
 ) {
 
     private val titleCache = LruCache<String, String>(200)
@@ -108,7 +108,7 @@ class LauncherContinueWatchingRepository @Inject constructor(
 
     private suspend fun loadPublisherItems(): List<ContinueWatchingItem> {
         val installedAddons = streamRepository.installedAddons.first()
-        val primaryItems = runCatching { traktRepository.getContinueWatching() }.getOrDefault(emptyList())
+        val primaryItems = runCatching { remoteSyncManager.getContinueWatching() }.getOrDefault(emptyList())
         val filteredPrimary = primaryItems.filterNot { item ->
             SportsAddonCapabilities.isLiveStreamOrSportsItem(
                 mediaType = item.mediaType,
@@ -242,7 +242,7 @@ class LauncherContinueWatchingRepository @Inject constructor(
             .setDescription(item.buildSubtitle())
             .setInternalProviderId(item.previewProgramId())
             .setPosterArtUri(item.posterPath?.takeIf { it.isNotBlank() }?.let(Uri::parse))
-            .setThumbnailUri(item.backdropPath?.takeIf { it.isNotBlank() }?.let(Uri::parse))
+            .setThumbnailUri((item.episodeStillPath ?: item.backdropPath)?.takeIf { it.isNotBlank() }?.let(Uri::parse))
             .setIntentUri(buildLaunchIntent(item).toUri(Intent.URI_INTENT_SCHEME).let(Uri::parse))
             .setWeight((Constants.MAX_CONTINUE_WATCHING - index).coerceAtLeast(1))
             .build()
@@ -259,7 +259,7 @@ class LauncherContinueWatchingRepository @Inject constructor(
             .setInternalProviderId(item.watchNextProgramId())
             .setIntentUri(buildLaunchIntent(item).toUri(Intent.URI_INTENT_SCHEME).let(Uri::parse))
             .setPosterArtUri(item.posterPath?.takeIf { it.isNotBlank() }?.let(Uri::parse))
-            .setThumbnailUri(item.backdropPath?.takeIf { it.isNotBlank() }?.let(Uri::parse))
+            .setThumbnailUri((item.episodeStillPath ?: item.backdropPath)?.takeIf { it.isNotBlank() }?.let(Uri::parse))
             .setWatchNextType(TvContractCompat.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE)
             .setLastEngagementTimeUtcMillis(System.currentTimeMillis() - index)
 

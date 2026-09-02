@@ -18,9 +18,16 @@ plugins {
     // id("com.google.firebase.crashlytics")
 }
 
+val discordSdkAar = layout.projectDirectory.file("libs/discord_partner_sdk.aar").asFile
+val hasDiscordSdk = discordSdkAar.isFile
+val includeX86Abis = providers.gradleProperty("includeX86Abis")
+    .orNull
+    ?.toBooleanStrictOrNull() == true
+
 android {
     namespace = "com.arflix.tv"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
 
     flavorDimensions += "distribution"
 
@@ -30,8 +37,8 @@ android {
         // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
         minSdk = 23
         targetSdk = 36
-        versionCode = 306
-        versionName = "1.9.983"
+        versionCode = 310
+        versionName = "1.9.995"
         buildConfigField("String", "GITHUB_OWNER", "\"ProdigyV21\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
@@ -44,7 +51,17 @@ android {
         buildConfigField("Boolean", "ENABLE_PERIODIC_CLOUD_PULL", "false")
         buildConfigField("Boolean", "ENABLE_NETLIFY_CLOUD_SYNC", "true")
         buildConfigField("Boolean", "ENABLE_SUPABASE_SYNC_MIRROR", "false")
-        buildConfigField("String", "NETLIFY_BACKEND_URL", "\"https://auth.arvio.tv/.netlify/functions\"")
+        buildConfigField("Boolean", "DISCORD_RICH_PRESENCE_AVAILABLE", hasDiscordSdk.toString())
+        buildConfigField(
+            "String",
+            "DISCORD_APPLICATION_ID",
+            "\"${escapeBuildConfigString(localSecretValue("DISCORD_CLIENT_ID").ifBlank { "1501197333826637835" })}\""
+        )
+        buildConfigField(
+            "String",
+            "NETLIFY_BACKEND_URL",
+            "\"${escapeBuildConfigString(localSecretValue("NETLIFY_BACKEND_URL").ifBlank { "https://auth.arvio.tv/.netlify/functions" })}\""
+        )
         buildConfigField(
             "String",
             "APP_ANON_KEY",
@@ -52,9 +69,24 @@ android {
         )
 
 
-        // Support both 32-bit and 64-bit devices (required for Google Play since 2019)
+        // Keep release downloads ARM-universal by default. Developers can add x86
+        // emulator support with -PincludeX86Abis=true without changing this file.
         ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            abiFilters += buildList {
+                addAll(listOf("armeabi-v7a", "arm64-v8a"))
+                if (includeX86Abis) {
+                    addAll(listOf("x86", "x86_64"))
+                }
+            }
+        }
+
+        if (hasDiscordSdk) {
+            externalNativeBuild {
+                cmake {
+                    arguments += "-DANDROID_STL=c++_shared"
+                    arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+                }
+            }
         }
 
         vectorDrawables {
@@ -98,11 +130,12 @@ android {
         }
     }
 
+
     buildTypes {
         release {
             // Full release optimization for TV smoothness.
             isMinifyEnabled = true
-            isShrinkResources = false
+            isShrinkResources = true
             // Use release signing if configured, otherwise fall back to debug
             val releaseSigningConfig = signingConfigs.findByName("release")
             signingConfig = if (releaseSigningConfig?.storeFile != null) {
@@ -134,14 +167,18 @@ android {
             buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "false")
         }
 
-        // Staging build type: release-grade optimizations but signed with the
-        // debug keystore so the APK installs as an update over an existing
-        // debug build (preserves profile/IPTV/DataStore). NO applicationId
-        // suffix — it MUST resolve to the same package as debug/release.
+        // Beta build: release-grade optimizations in a separate package so it
+        // can be tested alongside the Play Store installation.
         create("staging") {
             initWith(getByName("release"))
-            versionNameSuffix = "-rc"
-            signingConfig = signingConfigs.getByName("debug")
+            applicationIdSuffix = ".beta"
+            versionNameSuffix = "-beta"
+            val releaseSigningConfig = signingConfigs.findByName("release")
+            signingConfig = if (releaseSigningConfig?.storeFile != null) {
+                releaseSigningConfig
+            } else {
+                signingConfigs.getByName("debug")
+            }
             isDebuggable = false
             isJniDebuggable = false
 
@@ -173,6 +210,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        prefab = hasDiscordSdk
     }
 
     packaging {
@@ -187,6 +225,15 @@ android {
         }
         jniLibs {
             useLegacyPackaging = false  // Required for 16KB page size support
+        }
+    }
+
+    if (hasDiscordSdk) {
+        externalNativeBuild {
+            cmake {
+                path = file("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
     }
 
@@ -231,6 +278,13 @@ ksp {
     }
 
     dependencies {
+    // Discord Partner SDK is licensed separately and intentionally not committed.
+    if (hasDiscordSdk) {
+        implementation(files(discordSdkAar))
+    } else {
+        logger.warn("Discord Partner SDK AAR not found. Discord Rich Presence will be unavailable.")
+    }
+
     // Gson explicit pin to keep `JsonParser`/AST extension API stable with current sources.
     implementation("com.google.code.gson:gson:2.10.1")
 
@@ -292,6 +346,15 @@ ksp {
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
     implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
+    implementation("androidx.media3:media3-effect:$media3Version") {
+        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-guava")
+    }
+    implementation("androidx.media3:media3-inspector:$media3Version") {
+        // Inspector's optional Kotlin Future adapter pulls Coroutines 1.9 into this app, while
+        // ARVIO's Ktor stack is intentionally pinned to 1.7.3. FrameExtractor is Java/Guava-based
+        // and does not need that adapter.
+        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-guava")
+    }
     implementation("androidx.media3:media3-ui:$media3Version")
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
@@ -414,13 +477,14 @@ secrets {
     // Ignore missing keys to allow builds without secrets file
     ignoreList.add("sdk.*")
     ignoreList.add("APP_ANON_KEY")
+    ignoreList.add("SIMKL_CLIENT_SECRET")
 }
 
 fun localSecretValue(name: String): String {
     val secretsFile = rootProject.file("secrets.properties")
     if (secretsFile.exists()) {
         val properties = Properties()
-        secretsFile.inputStream().use { properties.load(it) }
+        secretsFile.readText(Charsets.UTF_8).removePrefix("\uFEFF").reader().use { properties.load(it) }
         properties.getProperty(name)?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
     }
     providers.gradleProperty(name).orNull?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
@@ -436,12 +500,33 @@ fun escapeBuildConfigString(value: String): String =
 val validateReleaseCloudSecrets = tasks.register("validateReleaseCloudSecrets") {
     doLast {
         val appAnonKey = localSecretValue("APP_ANON_KEY").ifBlank { localSecretValue("SUPABASE_ANON_KEY") }
+        val supabaseUrl = localSecretValue("SUPABASE_URL")
+        val traktClientId = localSecretValue("TRAKT_CLIENT_ID")
+        val traktClientSecret = localSecretValue("TRAKT_CLIENT_SECRET")
+        val supabaseHost = supabaseUrl.substringAfter("://", missingDelimiterValue = "").substringBefore('/')
+        val hasValidSupabaseUrl =
+            (supabaseUrl.startsWith("https://") || supabaseUrl.startsWith("http://")) &&
+                supabaseHost.contains('.') &&
+                '*' !in supabaseUrl
+        require(hasValidSupabaseUrl) {
+            "Release builds require a valid HTTP(S) SUPABASE_URL " +
+                "(length=${supabaseUrl.length}, http=${supabaseUrl.startsWith("http")}, " +
+                "hostPresent=${supabaseHost.isNotBlank()}, hostHasDot=${supabaseHost.contains('.')}, redacted=${'*' in supabaseUrl})."
+        }
         require(
             appAnonKey.length > 40 &&
                 !appAnonKey.equals("your-supabase-anon-key", ignoreCase = true) &&
                 !appAnonKey.startsWith("your-", ignoreCase = true)
         ) {
             "Release builds require a real APP_ANON_KEY in secrets.properties, Gradle properties, or the environment."
+        }
+        require(
+            traktClientId.length > 20 &&
+                !traktClientId.startsWith("your-", ignoreCase = true) &&
+                traktClientSecret.length > 20 &&
+                !traktClientSecret.startsWith("your-", ignoreCase = true)
+        ) {
+            "Release builds require real TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET values."
         }
     }
 }
@@ -457,6 +542,7 @@ tasks.configureEach {
         dependsOn(validateReleaseCloudSecrets)
     }
 }
+
 
 detekt {
     // Configuration file

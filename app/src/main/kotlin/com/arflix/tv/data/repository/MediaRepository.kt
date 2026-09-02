@@ -36,10 +36,16 @@ import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.util.CatalogUrlParser
 import com.arflix.tv.util.Constants
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -77,6 +83,12 @@ data class PersonMediaSearchResult(
     val items: List<MediaItem>
 )
 
+internal object HomeServerLibraryIdentity {
+    fun stableNativeId(sourceRef: String, itemId: String): Int {
+        return -("$sourceRef:$itemId".hashCode() and Int.MAX_VALUE).coerceAtLeast(1)
+    }
+}
+
 /**
  * Repository for media data from TMDB
  * Cross-references with Trakt for watched status
@@ -100,12 +112,13 @@ class MediaRepository @Inject constructor(
 
     private val apiKey = Constants.TMDB_API_KEY
     private val gson = Gson()
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** TMDB content language (e.g. "en-US", "fr-FR", "nl-NL"). Null = TMDB default (English). */
+    /** TMDB content language (e.g. "en-US", "fr-FR", "nl-NL"). */
     @Volatile
-    var contentLanguage: String? = null
+    var contentLanguage: String = "en-US"
         set(value) {
-            field = value?.replace("iw", "he")?.replace('_', '-')
+            field = value.ifBlank { "en-US" }.replace("iw", "he").replace('_', '-')
         }
 
     // === IN-MEMORY CACHE FOR PERFORMANCE ===
@@ -118,11 +131,24 @@ class MediaRepository @Inject constructor(
     @Volatile private var homeCategoriesFetchedAt = 0L
     private val HOME_CATEGORIES_CACHE_MS = 120_000L // 2 minutes
 
+    fun clearMediaCache() {
+        cachedHomeCategories = emptyList()
+        homeCategoriesFetchedAt = 0L
+        synchronized(detailsCache) { detailsCache.clear() }
+        synchronized(fullDetailsCacheKeys) { fullDetailsCacheKeys.clear() }
+        synchronized(castCache) { castCache.clear() }
+        synchronized(similarCache) { similarCache.clear() }
+        synchronized(logoCache) { logoCache.clear() }
+        homeServerLogoRefCache.clear()
+        synchronized(reviewsCache) { reviewsCache.clear() }
+        synchronized(seasonEpisodesCache) { seasonEpisodesCache.clear() }
+    }
+
     private val detailsCache = mutableMapOf<String, CacheEntry<MediaItem>>()
     private val fullDetailsCacheKeys = mutableSetOf<String>()
     private val castCache = mutableMapOf<String, CacheEntry<List<CastMember>>>()
     private val similarCache = mutableMapOf<String, CacheEntry<List<MediaItem>>>()
-    private val logoCache = mutableMapOf<String, CacheEntry<String?>>()
+    private val logoCache = ConcurrentHashMap<String, CacheEntry<String?>>()
     private val reviewsCache = mutableMapOf<String, CacheEntry<List<Review>>>()
     private val watchProvidersCache = mutableMapOf<String, CacheEntry<StreamingServicesResult?>>()
     private val seasonEpisodesCache = mutableMapOf<String, CacheEntry<List<Episode>>>()
@@ -133,7 +159,10 @@ class MediaRepository @Inject constructor(
     private val imdbIdCache = ConcurrentHashMap<String, String>()
     private val addonImdbToTmdbCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val addonTitleToTmdbCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
+    private val homeServerLogoRefCache = ConcurrentHashMap<String, CacheEntry<Pair<MediaType, Int>?>>()
     private val collectionRefsCache = ConcurrentHashMap<String, CacheEntry<List<Pair<MediaType, Int>>>>()
+    private val _episodeRatingsUpdated = MutableSharedFlow<Pair<Int, Int>>(extraBufferCapacity = 64)
+    val episodeRatingsUpdated = _episodeRatingsUpdated.asSharedFlow()
 
     private fun <T> getFromCache(cache: Map<String, CacheEntry<T>>, key: String): T? {
         val entry = cache[key] ?: return null
@@ -302,6 +331,58 @@ class MediaRepository @Inject constructor(
         return getFromCache(detailsCache, cacheKey)
     }
 
+    suspend fun getCachedItemFromDisk(mediaType: MediaType, mediaId: Int): MediaItem? =
+        withContext(Dispatchers.IO) {
+            peekItemFromDiskCache(mediaType, mediaId)
+        }
+
+    private fun peekItemFromDiskCache(mediaType: MediaType, mediaId: Int): MediaItem? = try {
+            val cacheFiles = mutableListOf<java.io.File>()
+            context.cacheDir.listFiles { _, name -> name.startsWith("home_categories_cache_") && name.endsWith(".json") }
+                ?.let { cacheFiles.addAll(it) }
+            context.filesDir.listFiles { _, name -> name.startsWith("home_continue_watching_") && name.endsWith(".json") }
+                ?.let { cacheFiles.addAll(it) }
+
+            for (file in cacheFiles) {
+                if (!file.exists() || file.length() > 12_000_000L) continue
+                val json = file.readText()
+                if (json.isBlank()) continue
+                if (!json.contains("\"id\":$mediaId") && !json.contains("\"id\": $mediaId")) continue
+
+                val type = com.google.gson.reflect.TypeToken
+                    .getParameterized(MutableList::class.java, Category::class.java)
+                    .type
+                val categories: List<Category>? = runCatching { gson.fromJson<List<Category>>(json, type) }.getOrNull()
+                if (categories != null) {
+                    for (cat in categories) {
+                        for (item in cat.items) {
+                            if (item.id == mediaId && item.mediaType == mediaType) {
+                                cacheItem(item)
+                                return item
+                            }
+                        }
+                    }
+                }
+
+                val cwType = com.google.gson.reflect.TypeToken
+                    .getParameterized(MutableList::class.java, ContinueWatchingItem::class.java)
+                    .type
+                val cwItems: List<ContinueWatchingItem>? = runCatching { gson.fromJson<List<ContinueWatchingItem>>(json, cwType) }.getOrNull()
+                if (cwItems != null) {
+                    for (cw in cwItems) {
+                        if (cw.id == mediaId && cw.mediaType == mediaType) {
+                            val item = cw.toMediaItem()
+                            cacheItem(item)
+                            return item
+                        }
+                    }
+                }
+            }
+            null
+        } catch (_: Throwable) {
+            null
+        }
+
     fun getCachedFullItem(mediaType: MediaType, mediaId: Int): MediaItem? {
         val cacheKey = detailsCacheKey(mediaType, mediaId)
         if (cacheKey !in fullDetailsCacheKeys) return null
@@ -354,12 +435,16 @@ class MediaRepository @Inject constructor(
     }
 
     private suspend fun resolveExternalIds(mediaType: MediaType, mediaId: Int): TmdbExternalIds? {
-        return runCatching {
+        return try {
             when (mediaType) {
                 MediaType.MOVIE -> tmdbApi.getMovieExternalIds(mediaId, apiKey)
                 MediaType.TV -> tmdbApi.getTvExternalIds(mediaId, apiKey)
             }
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            com.arflix.tv.util.AppLogger.recordException(e, mapOf("error_area" to "MediaRepository", "action" to "resolveExternalIds"))
+            null
+        }
     }
 
     private suspend fun fetchCinemetaImdbRating(mediaType: MediaType, imdbId: String): String? = withContext(Dispatchers.IO) {
@@ -1691,7 +1776,7 @@ class MediaRepository @Inject constructor(
         calendar.add(Calendar.MONTH, -18)
         val eighteenMonthsAgo = dateFormat.format(calendar.time)
 
-        val response = runCatching {
+        val response = try {
             when (categoryId) {
                 "trending_movies" -> tmdbApi.getTrendingMovies(apiKey, language = contentLanguage, page = page)
                 "trending_tv" -> tmdbApi.getTrendingTv(apiKey, language = contentLanguage, page = page)
@@ -1709,7 +1794,11 @@ class MediaRepository @Inject constructor(
                 // favor of the Services collection-tile row.
                 else -> null
             }
-        }.getOrNull() ?: return CategoryPageResult(emptyList(), hasMore = false)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            com.arflix.tv.util.AppLogger.recordException(e, mapOf("error_area" to "MediaRepository", "action" to "loadHomeCategoryPage"))
+            null
+        } ?: return CategoryPageResult(emptyList(), hasMore = false)
 
         val mediaType = if (categoryId == "trending_movies") MediaType.MOVIE else MediaType.TV
         val items = response.results
@@ -1860,6 +1949,55 @@ class MediaRepository @Inject constructor(
             items = orderedItems.distinctBy { "${it.mediaType.name}_${it.id}" },
             hasMore = page.hasMore
         )
+    }
+
+    /**
+     * Native-first home-server browsing. Unlike home-screen catalog hydration,
+     * this does not wait for one TMDB details request per card. Provider artwork
+     * and metadata render immediately while a real TMDB id is retained whenever
+     * the server supplies one.
+     */
+    suspend fun loadHomeServerLibraryPage(
+        sourceRef: String,
+        offset: Int,
+        limit: Int,
+        sort: HomeServerLibrarySort = HomeServerLibrarySort.RECENTLY_ADDED,
+        mediaType: MediaType? = null,
+        searchQuery: String = ""
+    ): CategoryPageResult {
+        val page = homeServerRepository.loadCatalogItems(
+            sourceRef = sourceRef,
+            offset = offset,
+            limit = limit,
+            sort = sort,
+            mediaType = mediaType,
+            searchQuery = searchQuery,
+            propagateErrors = true
+        )
+        val items = page.items.map { serverItem ->
+            val tmdbId = serverItem.providerIds["tmdb"]?.toIntOrNull()?.takeIf { it > 0 }
+            val stableNativeId = HomeServerLibraryIdentity.stableNativeId(serverItem.sourceRef, serverItem.id)
+            MediaItem(
+                id = tmdbId ?: stableNativeId,
+                title = serverItem.title,
+                subtitle = serverItem.providerName,
+                overview = serverItem.overview,
+                year = serverItem.year?.toString().orEmpty(),
+                rating = serverItem.rating?.let { String.format(Locale.US, "%.1f", it) }.orEmpty(),
+                tmdbRating = serverItem.rating?.let { String.format(Locale.US, "%.1f", it) }.orEmpty(),
+                mediaType = serverItem.mediaType,
+                image = serverItem.imageUrl,
+                backdrop = serverItem.backdropUrl,
+                addedAt = serverItem.addedAt,
+                isHomeServer = true,
+                homeServerItemId = serverItem.id,
+                homeServerSourceRef = serverItem.sourceRef,
+                homeServerProvider = serverItem.providerName,
+                homeServerImdbId = serverItem.providerIds["imdb"]
+            )
+        }
+        cacheItems(items)
+        return CategoryPageResult(items = items, hasMore = page.hasMore)
     }
 
     private suspend fun resolveHomeServerCatalogItem(item: HomeServerCatalogItem): MediaItem? {
@@ -2041,7 +2179,7 @@ class MediaRepository @Inject constructor(
         val body = withContext(Dispatchers.IO) {
             fetchUrl("https://mdblist.com/lists/$slug/json")
         } ?: return emptyList()
-        val array = runCatching { JSONArray(body) }.getOrNull() ?: return emptyList()
+        val array = try { org.json.JSONArray(body) } catch (e: org.json.JSONException) { null } ?: return emptyList()
         val refs = mutableListOf<Pair<MediaType, Int>>()
         for (i in 0 until array.length()) {
             val obj = array.optJSONObject(i) ?: continue
@@ -2771,6 +2909,7 @@ class MediaRepository @Inject constructor(
     suspend fun getMovieDetails(movieId: Int): MediaItem {
         val cacheKey = "movie_$movieId"
         getFromCache(detailsCache, cacheKey)?.let { cached ->
+            if (movieId < 0 && cached.isHomeServer) return cached
             if (cacheKey in fullDetailsCacheKeys) {
                 if (cached.imdbRating.isNotBlank()) return cached
                 val imdbRating = getImdbRating(MediaType.MOVIE, movieId)
@@ -2800,6 +2939,7 @@ class MediaRepository @Inject constructor(
     suspend fun getTvDetails(tvId: Int): MediaItem {
         val cacheKey = "tv_$tvId"
         getFromCache(detailsCache, cacheKey)?.let { cached ->
+            if (tvId < 0 && cached.isHomeServer) return cached
             if (cacheKey in fullDetailsCacheKeys) {
                 if (cached.imdbRating.isNotBlank()) return cached
                 val imdbRating = getImdbRating(MediaType.TV, tvId)
@@ -2881,7 +3021,9 @@ class MediaRepository @Inject constructor(
     }
 
     /**
-     * Get season episodes with Trakt watched status
+     * Get season episodes with Trakt watched status.
+     * Returns immediately upon fetching the TMDB season structure, hydrating missing
+     * episode IMDb ratings asynchronously in the background.
      */
     suspend fun getSeasonEpisodes(tvId: Int, seasonNumber: Int): List<Episode> {
         val cacheKey = "tv_${tvId}_season_$seasonNumber"
@@ -2898,49 +3040,69 @@ class MediaRepository @Inject constructor(
                 traktRepository.getWatchedEpisodesForShow(tvId)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-
                 emptySet<String>()
             }
         }
         val hasShowWatchedData = watchedEpisodes.any { it.startsWith("show_tmdb:$tvId:") }
 
-        // Re-apply watched status on cached episodes so stale season cache doesn't hide badges.
+        // Fast-path: return cached episodes immediately
         if (cachedEpisodes != null) {
-            val episodeImdbRatings = if (cachedEpisodes.any { it.imdbRating.isBlank() }) {
-                getSeasonEpisodeImdbRatings(
-                    tvId = tvId,
-                    seasonNumber = seasonNumber,
-                    episodeNumbers = cachedEpisodes.map { it.episodeNumber }
-                )
-            } else {
-                emptyMap()
-            }
-            return cachedEpisodes.map { episode ->
+            val episodes = cachedEpisodes.map { episode ->
                 val episodeKey = "show_tmdb:$tvId:${episode.seasonNumber}:${episode.episodeNumber}"
                 episode.copy(
-                    imdbRating = episode.imdbRating.ifBlank {
-                        episodeImdbRatings[episode.seasonNumber to episode.episodeNumber].orEmpty()
-                    },
                     isWatched = if (hasShowWatchedData) episodeKey in watchedEpisodes else episode.isWatched
                 )
             }
+            if (episodes.any { it.imdbRating.isBlank() }) {
+                repositoryScope.launch {
+                    val ratings = getSeasonEpisodeImdbRatings(
+                        tvId = tvId,
+                        seasonNumber = seasonNumber,
+                        episodeNumbers = episodes.map { it.episodeNumber }
+                    )
+                    if (ratings.isNotEmpty()) {
+                        val hydrated = episodes.map { ep ->
+                            ep.copy(imdbRating = ep.imdbRating.ifBlank { ratings[ep.seasonNumber to ep.episodeNumber].orEmpty() })
+                        }
+                        seasonEpisodesCache[cacheKey] = CacheEntry(hydrated, System.currentTimeMillis())
+                        _episodeRatingsUpdated.tryEmit(tvId to seasonNumber)
+                    }
+                }
+            }
+            return episodes
         }
 
         val season = tmdbApi.getTvSeason(tvId, seasonNumber, apiKey, language = contentLanguage)
-        val episodeImdbRatings = getSeasonEpisodeImdbRatings(
-            tvId = tvId,
-            seasonNumber = seasonNumber,
-            episodeNumbers = season.episodes.map { it.episodeNumber }
-        )
-
+        val cinemetaRatings = getSeriesCinemetaEpisodeRatings(tvId)
         val episodes = season.episodes.map { episode ->
             val episodeKey = "show_tmdb:$tvId:$seasonNumber:${episode.episodeNumber}"
+            val rating = cinemetaRatings[seasonNumber to episode.episodeNumber].orEmpty()
             episode.toEpisode().copy(
-                imdbRating = episodeImdbRatings[seasonNumber to episode.episodeNumber].orEmpty(),
+                imdbRating = rating,
                 isWatched = episodeKey in watchedEpisodes
             )
         }
         seasonEpisodesCache[cacheKey] = CacheEntry(episodes, System.currentTimeMillis())
+
+        if (episodes.any { it.imdbRating.isBlank() }) {
+            repositoryScope.launch {
+                val missingNumbers = episodes.filter { it.imdbRating.isBlank() }.map { it.episodeNumber }
+                val ratings = getSeasonEpisodeImdbRatings(
+                    tvId = tvId,
+                    seasonNumber = seasonNumber,
+                    episodeNumbers = missingNumbers
+                )
+                if (ratings.isNotEmpty()) {
+                    val currentCache = getFromCache(seasonEpisodesCache, cacheKey) ?: episodes
+                    val hydrated = currentCache.map { ep ->
+                        ep.copy(imdbRating = ep.imdbRating.ifBlank { ratings[ep.seasonNumber to ep.episodeNumber].orEmpty() })
+                    }
+                    seasonEpisodesCache[cacheKey] = CacheEntry(hydrated, System.currentTimeMillis())
+                    _episodeRatingsUpdated.tryEmit(tvId to seasonNumber)
+                }
+            }
+        }
+
         return episodes
     }
 
@@ -3010,8 +3172,11 @@ class MediaRepository @Inject constructor(
      */
     suspend fun getLogoUrl(mediaType: MediaType, mediaId: Int): String? {
         val cacheKey = "${mediaType}_logo_$mediaId"
-        if (logoCache.containsKey(cacheKey)) {
-            getFromCache(logoCache, cacheKey)?.let { return it }
+        logoCache[cacheKey]?.let { cached ->
+            if (System.currentTimeMillis() - cached.timestamp < CACHE_TTL_MS) {
+                return cached.data
+            }
+            logoCache.remove(cacheKey)
         }
 
         val type = if (mediaType == MediaType.TV) "tv" else "movie"
@@ -3042,10 +3207,125 @@ class MediaRepository @Inject constructor(
         }
     }
 
-    /** Instant synchronous peek into the in-memory logo cache. */
+    suspend fun getLogoUrl(item: MediaItem): String? {
+        item.id.takeIf { it > 0 }?.let { return getLogoUrl(item.mediaType, it) }
+        if (!item.isHomeServer) return null
+
+        val resolved = resolveHomeServerLogoRef(item) ?: return null
+        return getLogoUrl(resolved.first, resolved.second)
+    }
+
+    private suspend fun resolveHomeServerLogoRef(item: MediaItem): Pair<MediaType, Int>? {
+        val cacheKey = listOf(
+            item.mediaType.name,
+            item.homeServerImdbId.orEmpty(),
+            HomeServerMatcher.normalizeTitle(item.title),
+            item.year
+        ).joinToString("|")
+        homeServerLogoRefCache[cacheKey]?.let { cached ->
+            if (System.currentTimeMillis() - cached.timestamp < CACHE_TTL_MS) return cached.data
+            homeServerLogoRefCache.remove(cacheKey)
+        }
+
+        val resolvedByImdb = item.homeServerImdbId
+            ?.takeIf { it.startsWith("tt", ignoreCase = true) }
+            ?.let { resolveImdbToTmdbRef(it, item.mediaType) }
+        val resolved = resolvedByImdb ?: resolveHomeServerLogoRefByTitle(item)
+        homeServerLogoRefCache[cacheKey] = CacheEntry(resolved, System.currentTimeMillis())
+        return resolved
+    }
+
+    private suspend fun resolveHomeServerLogoRefByTitle(item: MediaItem): Pair<MediaType, Int>? {
+        val title = item.title.trim()
+        if (title.isBlank()) return null
+        val year = item.year.take(4).toIntOrNull()
+        val response = runCatching {
+            when (item.mediaType) {
+                MediaType.MOVIE -> tmdbApi.searchMovies(
+                    apiKey = apiKey,
+                    query = title,
+                    language = contentLanguage,
+                    primaryReleaseYear = year,
+                    year = year
+                )
+                MediaType.TV -> tmdbApi.searchTv(
+                    apiKey = apiKey,
+                    query = title,
+                    language = contentLanguage,
+                    firstAirDateYear = year
+                )
+            }
+        }.getOrNull() ?: return null
+
+        val requestedTitle = HomeServerMatcher.normalizeTitle(title)
+        val match = response.results
+            .map { candidate ->
+                val candidateTitle = candidate.title ?: candidate.name ?: candidate.originalTitle
+                    ?: candidate.originalName.orEmpty()
+                val normalizedTitle = HomeServerMatcher.normalizeTitle(candidateTitle)
+                val candidateYear = (candidate.releaseDate ?: candidate.firstAirDate)
+                    .orEmpty()
+                    .take(4)
+                    .toIntOrNull()
+                val titleScore = when {
+                    requestedTitle == normalizedTitle -> 100
+                    requestedTitle.isNotBlank() &&
+                        (requestedTitle in normalizedTitle || normalizedTitle in requestedTitle) -> 45
+                    else -> 0
+                }
+                val yearScore = when {
+                    year == null || candidateYear == null -> 0
+                    year == candidateYear -> 30
+                    kotlin.math.abs(year - candidateYear) <= 1 -> 12
+                    else -> -40
+                }
+                candidate to (titleScore + yearScore + candidate.popularity.toInt().coerceAtMost(30))
+            }
+            .maxByOrNull { it.second }
+            ?.takeIf { it.second >= 55 }
+            ?.first
+            ?: return null
+        return item.mediaType to match.id
+    }
+
+    /** Instant synchronous peek into the in-memory or persisted logo cache. */
     fun peekCachedLogoUrl(mediaType: MediaType, mediaId: Int): String? {
+        val keys = listOf(
+            "${mediaType}_logo_$mediaId",
+            "${mediaType}_$mediaId",
+            "${mediaType.name.lowercase()}_logo_$mediaId",
+            "${mediaType.name.lowercase()}_$mediaId",
+            "${mediaType.name.uppercase()}_logo_$mediaId",
+            "${mediaType.name.uppercase()}_$mediaId"
+        )
+        for (k in keys) {
+            if (logoCache.containsKey(k)) {
+                val cached = getFromCache(logoCache, k)
+                if (!cached.isNullOrBlank()) return cached
+            }
+        }
+        try {
+            val json = context.getSharedPreferences("logo_cache", Context.MODE_PRIVATE).getString("urls", null)
+            if (!json.isNullOrBlank()) {
+                val jsonObject = org.json.JSONObject(json)
+                for (k in keys) {
+                    if (jsonObject.has(k)) {
+                        val url = jsonObject.optString(k)
+                        if (!url.isNullOrBlank()) {
+                            logoCache["${mediaType}_logo_$mediaId"] = CacheEntry(url, System.currentTimeMillis())
+                            return url
+                        }
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+        return null
+    }
+
+    fun cacheLogoUrl(mediaType: MediaType, mediaId: Int, logoUrl: String) {
+        if (logoUrl.isBlank()) return
         val cacheKey = "${mediaType}_logo_$mediaId"
-        return if (logoCache.containsKey(cacheKey)) getFromCache(logoCache, cacheKey) else null
+        logoCache[cacheKey] = CacheEntry(logoUrl, System.currentTimeMillis())
     }
 
     /** Instant synchronous peek into the in-memory season episodes cache. */
@@ -3063,7 +3343,10 @@ class MediaRepository @Inject constructor(
             val videos = tmdbApi.getVideos(type, mediaId, apiKey, language = contentLanguage)
             var results = videos.results
             // If language-specific request returned no YouTube videos, fall back to English
-            if (results.none { it.site == "YouTube" } && !contentLanguage.isNullOrBlank()) {
+            if (
+                results.none { it.site == "YouTube" } &&
+                !contentLanguage.equals("en-US", ignoreCase = true)
+            ) {
                 results = tmdbApi.getVideos(type, mediaId, apiKey, language = null).results
             }
             val trailer = results.find { it.type == "Trailer" && it.site == "YouTube" && it.official }
@@ -3418,7 +3701,7 @@ class MediaRepository @Inject constructor(
             "apple tv+" -> R.drawable.apple_tv_plus_logo
             else -> null
         } ?: return null
-        return "android.resource://com.arvio.tv/$resId"
+        return "android.resource://${context.packageName}/$resId"
     }
 
     private fun normalizeWatchRegion(region: String?): String {
@@ -3661,7 +3944,11 @@ private fun TmdbMediaItem.toMediaItem(defaultType: MediaType): MediaItem {
 
     return MediaItem(
         id = id,
-        title = title ?: name ?: "Unknown",
+        title = title?.takeIf { it.isNotBlank() }
+            ?: name?.takeIf { it.isNotBlank() }
+            ?: originalTitle?.takeIf { it.isNotBlank() }
+            ?: originalName?.takeIf { it.isNotBlank() }
+            ?: "Unknown",
         subtitle = if (type == MediaType.MOVIE) "Movie" else "TV Series",
         overview = overview ?: "",
         year = year,
@@ -3688,7 +3975,9 @@ private fun TmdbMovieDetails.toMediaItem(): MediaItem {
 
     return MediaItem(
         id = id,
-        title = title,
+        title = title.takeIf { it.isNotBlank() }
+            ?: originalTitle?.takeIf { it.isNotBlank() }
+            ?: "Unknown",
         subtitle = "Movie",
         overview = overview ?: "",
         year = year,
@@ -3723,7 +4012,9 @@ private fun TmdbTvDetails.toMediaItem(): MediaItem {
 
     return MediaItem(
         id = id,
-        title = name,
+        title = name.takeIf { it.isNotBlank() }
+            ?: originalName?.takeIf { it.isNotBlank() }
+            ?: "Unknown",
         subtitle = "TV Series",
         overview = overview ?: "",
         year = year,

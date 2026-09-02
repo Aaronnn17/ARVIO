@@ -2,6 +2,7 @@
 
 package com.arflix.tv.ui.screens.home
 
+import androidx.activity.compose.BackHandler
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedContent
@@ -141,6 +142,11 @@ import com.arflix.tv.ui.components.TrailerPlayer
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
+import com.arflix.tv.data.model.SportsAddonCapabilities
+import com.arflix.tv.ui.components.SkeletonMobileHeroBanner
+import com.arflix.tv.ui.components.SkeletonPosterCard
+import com.arflix.tv.ui.components.SkeletonMediaCard
+import androidx.compose.material3.TextButton
 import com.arflix.tv.ui.components.MobileHeroBanner
 import com.arflix.tv.ui.components.ProfileAvatarVisual
 import com.arflix.tv.util.LocalDeviceType
@@ -255,6 +261,9 @@ private class HomeFocusState(
     // every Down press resets to item 0 which is jarring.
     // Catalog IDs remain stable while background loads insert or reorder rows.
     val rowItemIndicesByCategoryId = mutableMapOf<String, Int>()
+    // Keep the exact focused title as well as its index. Catalog refreshes can
+    // insert or reorder items, so the numeric index alone is not a stable anchor.
+    val rowItemKeysByCategoryId = mutableMapOf<String, String>()
 
     companion object {
         // `userHasNavigated` is saved as the 4th element (0/1). Without it,
@@ -294,8 +303,8 @@ private fun localizedCategoryTitle(category: Category): String = when (category.
     "collection_row_franchise" -> stringResource(R.string.franchises)
     "collection_row_network"   -> stringResource(R.string.networks)
     "collection_row_featured"  -> stringResource(R.string.featured)
-    "top10_movies_today"       -> if (androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl) "10 הסרטים הנצפים היום" else stringResource(R.string.home_top10_movies_today)
-    "top10_shows_today"        -> if (androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl) "10 הסדרות הנצפות היום" else stringResource(R.string.home_top10_shows_today)
+    "top10_movies_today"       -> stringResource(R.string.home_top10_movies_today)
+    "top10_shows_today"        -> stringResource(R.string.home_top10_shows_today)
     else                       -> category.title
 }
 
@@ -337,6 +346,20 @@ private fun homeRowItemKey(item: MediaItem): String {
     return "${item.mediaType.name}-${item.id}$episodeSuffix"
 }
 
+internal fun stableHomeRowItemKeys(categoryId: String, items: List<MediaItem>): List<String> {
+    val occurrences = HashMap<String, Int>()
+    return items.map { item ->
+        val baseKey = if (item.isPlaceholder) {
+            "placeholder_${categoryId}_${item.id}"
+        } else {
+            homeRowItemKey(item)
+        }
+        val occurrence = occurrences[baseKey] ?: 0
+        occurrences[baseKey] = occurrence + 1
+        if (occurrence == 0) baseKey else "$baseKey#duplicate$occurrence"
+    }
+}
+
 internal fun stableHomeRowKey(layout: String, categoryId: String): String =
     "${layout}_home_row_$categoryId"
 
@@ -352,6 +375,23 @@ internal fun resolveHomeCategoryIndex(
     } else {
         fallbackIndex.coerceIn(0, categoryIds.lastIndex)
     }
+}
+
+internal fun resolveHomeItemIndex(
+    itemKeys: List<String>,
+    preferredItemKey: String?,
+    fallbackIndex: Int,
+    hasMore: Boolean
+): Int {
+    val preferredIndex = preferredItemKey?.let(itemKeys::indexOf) ?: -1
+    if (preferredIndex >= 0) return preferredIndex
+
+    val safeFallback = fallbackIndex.coerceAtLeast(0)
+    if (itemKeys.isEmpty() || safeFallback <= itemKeys.lastIndex) return safeFallback
+
+    // A paged row can temporarily contain fewer items while it is refreshing.
+    // Preserve the intended index until the page arrives instead of snapping left.
+    return if (hasMore) safeFallback else itemKeys.lastIndex
 }
 
 @androidx.compose.runtime.Immutable
@@ -423,14 +463,16 @@ private fun createHomeHeroPlaybackHandles(context: Context): HomeHeroPlaybackHan
 
 private suspend fun androidx.compose.foundation.lazy.LazyListState.animateHomeScrollDelta(
     deltaPx: Float,
-    durationMillis: Int
+    durationMillis: Int,
+    isRtl: Boolean = false
 ) {
-    if (abs(deltaPx) <= 1f) return
+    val targetDelta = if (isRtl) -deltaPx else deltaPx
+    if (abs(targetDelta) <= 1f) return
     scroll(scrollPriority = MutatePriority.PreventUserInput) {
         var previousValue = 0f
         animate(
             initialValue = 0f,
-            targetValue = deltaPx,
+            targetValue = targetDelta,
             animationSpec = spring(
                 dampingRatio = 0.85f,
                 stiffness = 200f
@@ -592,10 +634,28 @@ fun HomeScreen(
     // Per-card logo reads now come from a stable snapshotStateMap so a single
     // logo arriving no longer recomposes the full home surface.
     val cardLogoUrls = viewModel.cardLogoUrls
+    val cardImdbRatings = viewModel.cardImdbRatings
     val profileCount = if (currentProfile != null) 1 else 0
     val usePosterCards = rememberCardLayoutMode() == CardLayoutMode.POSTER
     val lifecycleOwner = LocalLifecycleOwner.current
     var suppressSelectUntilMs by remember { mutableLongStateOf(0L) }
+
+    val navigateToDetailsWithCache: (MediaType, Int, Int?, Int?) -> Unit = { mediaType, mediaId, initialSeason, initialEpisode ->
+        val matchingItem = uiState.categories.asSequence()
+            .flatMap { it.items.asSequence() }
+            .firstOrNull { it.id == mediaId && it.mediaType == mediaType }
+            ?: uiState.heroItem?.takeIf { it.id == mediaId && it.mediaType == mediaType }
+        if (matchingItem != null) {
+            viewModel.cacheItem(matchingItem)
+        }
+        val matchingLogo = cardLogoUrls["${mediaType}_$mediaId"]
+            ?: cardLogoUrls["${mediaType.name.lowercase()}_$mediaId"]
+            ?: uiState.heroLogoUrl?.takeIf { uiState.heroItem?.id == mediaId && uiState.heroItem?.mediaType == mediaType }
+        if (!matchingLogo.isNullOrBlank()) {
+            viewModel.cacheLogoUrl(mediaType, mediaId, matchingLogo)
+        }
+        onNavigateToDetails(mediaType, mediaId, initialSeason, initialEpisode)
+    }
 
     LaunchedEffect(Unit) {
         // Prevent stale select key events from previous screen from reopening details.
@@ -605,7 +665,9 @@ fun HomeScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshContinueWatchingOnly(force = true)
+                // Keep the profile-to-Home transition local-first. A forced remote
+                // refresh here cancelled the cache fast path on every app launch.
+                viewModel.refreshContinueWatchingOnly(force = false)
                 // Pull the full cloud state (addons, catalogs, settings) on resume.
                 // This catches any changes pushed by another device while this one
                 // was backgrounded — the WebSocket may have been killed by Android,
@@ -1119,6 +1181,8 @@ fun HomeScreen(
         HomeInputLayer(
             categories = displayCategories,
             cardLogoUrls = cardLogoUrls,
+            cardImdbRatings = cardImdbRatings,
+            onPreloadHeroImdbRatings = viewModel::preloadImdbRatingsForHeroItems,
             focusState = focusState,
             limitRowsDuringStartup = limitRowsDuringStartup,
             suppressSelectUntilMs = suppressSelectUntilMs,
@@ -1140,7 +1204,7 @@ fun HomeScreen(
                     } else if (viewModel.isCollectionItem(item)) {
                         onNavigateToCollection(item.status?.removePrefix("collection:").orEmpty())
                     } else {
-                        onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
+                        navigateToDetailsWithCache(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
                     }
                 }
             },
@@ -1153,7 +1217,7 @@ fun HomeScreen(
                     } else if (viewModel.isCollectionItem(item)) {
                         onNavigateToCollection(item.status?.removePrefix("collection:").orEmpty())
                     } else {
-                        onNavigateToDetails(item.mediaType, item.id, null, null)
+                        navigateToDetailsWithCache(item.mediaType, item.id, null, null)
                     }
                 }
             },
@@ -1164,12 +1228,14 @@ fun HomeScreen(
             hasUpdateBadge = uiState.hasUpdateBadge,
             categoryHasMoreMap = uiState.categoryHasMoreMap,
             smoothScrolling = uiState.smoothScrolling,
+            isSlowLoading = uiState.isMobileSlowLoading,
+            onRetry = { viewModel.retryMobileHomeLoading() },
             onLoadMoreCategory = { viewModel.loadNextPageForCategory(it) },
             onItemFocusedPrefetch = {},
             onMobileCategoryVisiblePosition = { categoryId, lastVisibleItemIndex ->
                 viewModel.onMobileCategoryVisiblePosition(categoryId, lastVisibleItemIndex)
             },
-            onNavigateToDetails = onNavigateToDetails,
+            onNavigateToDetails = navigateToDetailsWithCache,
             onNavigateToCollection = onNavigateToCollection,
             onNavigateToSearch = onNavigateToSearch,
             onNavigateToWatchlist = onNavigateToWatchlist,
@@ -1200,7 +1266,7 @@ fun HomeScreen(
                 contentStartPadding = contentStartPadding,
                 isMobile = isMobile,
                 showBudget = uiState.showBudget,
-                onNavigateToDetails = onNavigateToDetails,
+                onNavigateToDetails = navigateToDetailsWithCache,
                 onNavigateToTv = { channelId, streamUrl -> onNavigateToTv(channelId, streamUrl) },
                 isIptvItem = { item -> viewModel.isIptvItem(item) },
                 getIptvChannelId = { item -> viewModel.getIptvChannelId(item) },
@@ -1261,7 +1327,7 @@ fun HomeScreen(
                         } else if (viewModel.isIptvItem(item)) {
                             onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
                         } else {
-                            onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
+                            navigateToDetailsWithCache(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
                         }
                     },
                     onViewDetails = {
@@ -1270,7 +1336,7 @@ fun HomeScreen(
                         } else if (viewModel.isIptvItem(item)) {
                             onNavigateToTv(viewModel.getIptvChannelId(item), viewModel.getIptvStreamUrl(item.id))
                         } else {
-                            onNavigateToDetails(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
+                            navigateToDetailsWithCache(item.mediaType, item.id, item.nextEpisode?.seasonNumber, item.nextEpisode?.episodeNumber)
                         }
                     },
                     onToggleWatchlist = {
@@ -1696,7 +1762,12 @@ private fun formatBudgetCompact(budget: Long): String {
 
 private fun imdbRatingFor(item: MediaItem): String {
     val imdbValue = parseRatingValue(item.imdbRating)
-    return if (imdbValue > 0f) item.imdbRating else ""
+    if (imdbValue > 0f) return item.imdbRating
+    val tmdbValue = parseRatingValue(item.tmdbRating)
+    if (tmdbValue > 0f) return item.tmdbRating
+    val ratingValue = parseRatingValue(item.rating)
+    if (ratingValue > 0f) return item.rating
+    return ""
 }
 
 @Composable
@@ -1767,28 +1838,27 @@ private fun HomeHeroLayer(
         val buttonsBottomPadding = contentRowTopPadding - 10.dp
         val heroBottomPadding = buttonsBottomPadding + if (configuration.screenHeightDp < 720) 34.dp else 34.dp
 
-        androidx.compose.runtime.CompositionLocalProvider(
-            androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = AppTopBarContentTopInset)
+                .zIndex(3f)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = AppTopBarContentTopInset)
-                    .zIndex(3f)
-            ) {
-                heroItem?.let { item ->
-                    if (!item.status.orEmpty().startsWith("collection:")) {
-                        HeroSection(
-                            item = item,
-                            logoUrl = heroLogoUrl,
-                            overviewOverride = heroOverviewOverride,
-                            showBudget = showBudget,
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(start = contentStartPadding, end = 400.dp)
-                                .offset(y = -heroBottomPadding)
-                        )
-                    }
+            heroItem?.let { item ->
+                if (!item.status.orEmpty().startsWith("collection:")) {
+                    HeroSection(
+                        item = item,
+                        logoUrl = heroLogoUrl,
+                        overviewOverride = heroOverviewOverride,
+                        showBudget = showBudget,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(
+                                start = contentStartPadding,
+                                end = 400.dp
+                            )
+                            .offset(y = -heroBottomPadding)
+                    )
                 }
             }
         }
@@ -2011,18 +2081,25 @@ private fun MobileHeroOverlay(
 private fun MobileHeroCarousel(
     categories: List<Category>,
     cardLogoUrls: Map<String, String> = emptyMap(),
+    cardImdbRatings: Map<String, String> = emptyMap(),
     currentProfile: com.arflix.tv.data.model.Profile? = null,
     onNavigateToSearch: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
-    onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit
+    onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit,
+    onPreloadHeroImdbRatings: (List<MediaItem>) -> Unit = {}
 ) {
     val heroItems = remember(categories) {
-        val nonCwCats = categories.filter { it.id != "continue_watching" }
-        val firstCat = nonCwCats.getOrNull(0)
-            ?.items?.filter { it.id > 0 && !it.isPlaceholder }?.take(5)
+        val eligibleRows = categories.filter {
+            it.id != "continue_watching" &&
+                !it.id.startsWith("collection_row_") &&
+                it.id != SportsAddonCapabilities.SPORTS_CATEGORY_ROW_ID &&
+                it.id != SportsAddonCapabilities.POPULAR_LIVE_TV_ROW_ID
+        }
+        val firstCat = eligibleRows.getOrNull(0)
+            ?.items?.filter { !it.isPlaceholder && it.id > 0 && !SportsAddonCapabilities.isSportsHomeStatus(it.status) && !SportsAddonCapabilities.isSportsLockedStatus(it.status) }?.take(5)
             .orEmpty()
-        val secondCat = nonCwCats.getOrNull(1)
-            ?.items?.filter { it.id > 0 && !it.isPlaceholder }?.take(5)
+        val secondCat = eligibleRows.getOrNull(1)
+            ?.items?.filter { !it.isPlaceholder && it.id > 0 && !SportsAddonCapabilities.isSportsHomeStatus(it.status) && !SportsAddonCapabilities.isSportsLockedStatus(it.status) }?.take(5)
             .orEmpty()
         // Interleave: first[0], second[0], first[1], second[1], …
         buildList {
@@ -2034,7 +2111,59 @@ private fun MobileHeroCarousel(
         }.distinctBy { "${it.mediaType}_${it.id}" }
     }
 
-    if (heroItems.isEmpty()) return
+    LaunchedEffect(heroItems) {
+        if (heroItems.isNotEmpty()) {
+            onPreloadHeroImdbRatings(heroItems)
+        }
+    }
+
+    if (heroItems.isEmpty()) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // Profile avatar + search icon row — above the pager, respects status bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(start = 26.dp, end = 26.dp, top = 12.dp, bottom = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (currentProfile != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .clickable { onSwitchProfile() }
+                    ) {
+                        ProfileAvatarVisual(
+                            profile = currentProfile,
+                            letterFontSize = 15.sp,
+                            iconPadding = 5.dp
+                        )
+                    }
+                } else {
+                    Spacer(modifier = Modifier.size(38.dp))
+                }
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = stringResource(R.string.search),
+                    tint = Color.White,
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clickable { onNavigateToSearch() }
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 64.dp)
+            ) {
+                SkeletonMobileHeroBanner()
+            }
+        }
+        return
+    }
 
     // Circular paging: use a large virtual page count that's a multiple of heroItems.size
     // so page % heroItems.size always maps correctly and starts at item[0].
@@ -2118,7 +2247,14 @@ private fun MobileHeroCarousel(
                     item.year
                 }
             }
-            val rating = remember(item.id, item.imdbRating) { imdbRatingFor(item) }
+            val dynamicImdb = cardImdbRatings["${item.mediaType}_${item.id}"]
+            val rating = remember(item.id, dynamicImdb, item.imdbRating, item.tmdbRating, item.rating) {
+                if (!dynamicImdb.isNullOrBlank() && parseRatingValue(dynamicImdb) > 0f) {
+                    dynamicImdb
+                } else {
+                    imdbRatingFor(item)
+                }
+            }
             val logoUrl = remember(item.id) { cardLogoUrls["${item.mediaType}_${item.id}"] }
 
             // Scale down cards that aren't in the center; animate smoothly as they scroll in/out
@@ -2183,6 +2319,8 @@ private fun MobileHeroCarousel(
 private fun HomeInputLayer(
     categories: List<Category>,
     cardLogoUrls: Map<String, String>,
+    cardImdbRatings: Map<String, String> = emptyMap(),
+    onPreloadHeroImdbRatings: (List<MediaItem>) -> Unit = {},
     focusState: HomeFocusState,
     limitRowsDuringStartup: Boolean,
     suppressSelectUntilMs: Long,
@@ -2204,6 +2342,8 @@ private fun HomeInputLayer(
     hasUpdateBadge: Boolean = false,
     categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
     smoothScrolling: Boolean = true,
+    isSlowLoading: Boolean = false,
+    onRetry: () -> Unit = {},
     onLoadMoreCategory: (String) -> Unit = {},
     onItemFocusedPrefetch: (MediaItem) -> Unit = {},
     onMobileCategoryVisiblePosition: (String, Int) -> Unit = { _, _ -> },
@@ -2293,25 +2433,54 @@ private fun HomeInputLayer(
             fallbackIndex = focusState.currentRowIndex
         )
         preferredCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
+    }
 
-        // Clamp item index if it's beyond the current row's bounds.
-        // Do NOT reset to 0 or jump rows — that's what caused the trip.
-        val currentRowItems = categories.getOrNull(focusState.currentRowIndex)?.items.orEmpty()
-        if (currentRowItems.isNotEmpty() && focusState.currentItemIndex > currentRowItems.lastIndex) {
-            focusState.currentItemIndex = currentRowItems.lastIndex
+    BackHandler {
+        selectPressedInHome = false
+        selectDownAtMs = 0L
+        if (focusState.isSidebarFocused) {
+            onExitApp()
+        } else {
+            categories.getOrNull(focusState.currentRowIndex)?.id?.let { categoryId ->
+                focusState.rowItemIndicesByCategoryId[categoryId] = focusState.currentItemIndex
+            }
+            focusState.isSidebarFocused = true
         }
     }
 
     val focusedCategory = categories.getOrNull(focusState.currentRowIndex)
-    val focusedRowItemCount = focusedCategory?.items?.size ?: 0
-    LaunchedEffect(focusState.currentRowIndex, focusedRowItemCount) {
-        if (focusedRowItemCount <= 0) {
-            if (focusState.currentItemIndex != 0) focusState.currentItemIndex = 0
-            return@LaunchedEffect
+    val focusedCategoryId = focusedCategory?.id
+    val focusedItemKeys = remember(focusedCategoryId, focusedCategory?.items) {
+        if (focusedCategory == null) emptyList() else {
+            stableHomeRowItemKeys(focusedCategory.id, focusedCategory.items)
         }
-        val maxItemIndex = focusedRowItemCount - 1
-        if (focusState.currentItemIndex > maxItemIndex) {
-            focusState.currentItemIndex = maxItemIndex
+    }
+    val focusedRowHasMore = focusedCategoryId?.let { categoryHasMoreMap[it] == true } == true
+
+    // Restore the same title when a row is reordered or refreshed. Empty and
+    // partial paged results keep the pending index instead of resetting to zero.
+    LaunchedEffect(focusedCategoryId, focusedItemKeys, focusedRowHasMore) {
+        val categoryId = focusedCategoryId ?: return@LaunchedEffect
+        val resolvedIndex = resolveHomeItemIndex(
+            itemKeys = focusedItemKeys,
+            preferredItemKey = focusState.rowItemKeysByCategoryId[categoryId],
+            fallbackIndex = focusState.currentItemIndex,
+            hasMore = focusedRowHasMore
+        )
+        if (focusState.currentItemIndex != resolvedIndex) {
+            focusState.currentItemIndex = resolvedIndex
+        }
+        focusState.rowItemIndicesByCategoryId[categoryId] = resolvedIndex
+    }
+
+    // User navigation updates the stable identity anchor. This effect is not
+    // keyed on the item list, so a background reorder cannot overwrite it first.
+    LaunchedEffect(focusedCategoryId, focusState.currentItemIndex) {
+        val categoryId = focusedCategoryId ?: return@LaunchedEffect
+        val itemIndex = focusState.currentItemIndex
+        focusState.rowItemIndicesByCategoryId[categoryId] = itemIndex
+        focusedItemKeys.getOrNull(itemIndex)?.let { itemKey ->
+            focusState.rowItemKeysByCategoryId[categoryId] = itemKey
         }
     }
 
@@ -2589,6 +2758,8 @@ private fun HomeInputLayer(
         HomeRowsLayer(
             categories = categories,
             cardLogoUrls = cardLogoUrls,
+            cardImdbRatings = cardImdbRatings,
+            onPreloadHeroImdbRatings = onPreloadHeroImdbRatings,
             focusState = focusState,
             limitRowsDuringStartup = limitRowsDuringStartup,
             contentStartPadding = contentStartPadding,
@@ -2597,6 +2768,8 @@ private fun HomeInputLayer(
             isMobile = isMobile,
             categoryHasMoreMap = categoryHasMoreMap,
             smoothScrolling = smoothScrolling,
+            isSlowLoading = isSlowLoading,
+            onRetry = onRetry,
             onLoadMoreCategory = onLoadMoreCategory,
             onItemFocusedPrefetch = onItemFocusedPrefetch,
             heroItem = heroItem,
@@ -2646,6 +2819,8 @@ private fun HomeInputLayer(
 private fun HomeRowsLayer(
     categories: List<Category>,
     cardLogoUrls: Map<String, String>,
+    cardImdbRatings: Map<String, String> = emptyMap(),
+    onPreloadHeroImdbRatings: (List<MediaItem>) -> Unit = {},
     focusState: HomeFocusState,
     limitRowsDuringStartup: Boolean,
     contentStartPadding: androidx.compose.ui.unit.Dp,
@@ -2654,6 +2829,8 @@ private fun HomeRowsLayer(
     isMobile: Boolean = false,
     categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
     smoothScrolling: Boolean = true,
+    isSlowLoading: Boolean = false,
+    onRetry: () -> Unit = {},
     onLoadMoreCategory: (String) -> Unit = {},
     onItemFocusedPrefetch: (MediaItem) -> Unit = {},
     heroItem: MediaItem? = null,
@@ -2675,12 +2852,16 @@ private fun HomeRowsLayer(
         MobileHomeRowsLayer(
             categories = categories,
             cardLogoUrls = cardLogoUrls,
+            cardImdbRatings = cardImdbRatings,
+            onPreloadHeroImdbRatings = onPreloadHeroImdbRatings,
             contentStartPadding = contentStartPadding,
             currentProfile = currentProfile,
             onNavigateToSearch = onNavigateToSearch,
             onSwitchProfile = onSwitchProfile,
             usePosterCards = usePosterCards,
             categoryHasMoreMap = categoryHasMoreMap,
+            isSlowLoading = isSlowLoading,
+            onRetry = onRetry,
             onLoadMoreCategory = onLoadMoreCategory,
             onNavigateToDetails = onNavigateToDetails,
             onItemClick = onItemClick,
@@ -2721,12 +2902,16 @@ private fun HomeRowsLayer(
 private fun MobileHomeRowsLayer(
     categories: List<Category>,
     cardLogoUrls: Map<String, String>,
+    cardImdbRatings: Map<String, String> = emptyMap(),
+    onPreloadHeroImdbRatings: (List<MediaItem>) -> Unit = {},
     contentStartPadding: androidx.compose.ui.unit.Dp,
     usePosterCards: Boolean,
     currentProfile: com.arflix.tv.data.model.Profile? = null,
     onNavigateToSearch: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
     categoryHasMoreMap: Map<String, Boolean> = emptyMap(),
+    isSlowLoading: Boolean = false,
+    onRetry: () -> Unit = {},
     onLoadMoreCategory: (String) -> Unit = {},
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit = { _, _, _, _ -> },
     onItemClick: (MediaItem) -> Unit,
@@ -2737,7 +2922,7 @@ private fun MobileHomeRowsLayer(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 80.dp),
+        contentPadding = PaddingValues(bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // Hero carousel — profile/search row + banner card pager
@@ -2745,10 +2930,12 @@ private fun MobileHomeRowsLayer(
             MobileHeroCarousel(
                 categories = categories,
                 cardLogoUrls = cardLogoUrls,
+                cardImdbRatings = cardImdbRatings,
                 currentProfile = currentProfile,
                 onNavigateToSearch = onNavigateToSearch,
                 onSwitchProfile = onSwitchProfile,
-                onNavigateToDetails = onNavigateToDetails
+                onNavigateToDetails = onNavigateToDetails,
+                onPreloadHeroImdbRatings = onPreloadHeroImdbRatings
             )
         }
 
@@ -2809,82 +2996,100 @@ private fun MobileHomeRowsLayer(
                 } else {
                     rowUsePosterCards
                 }
-                val itemsToRender = remember(category.items, rowHasMore, isPortrait) {
-                    if (category.items.isEmpty()) {
-                        (1..8).map { index ->
-                            MediaItem(
-                                id = -index,
-                                title = "",
-                                mediaType = MediaType.MOVIE,
-                                isPlaceholder = true
-                            )
-                        }
-                    } else if (rowHasMore) {
-                        val skeletonCount = if (isPortrait) 12 else 7
-                        category.items + List(skeletonCount) { idx ->
-                            MediaItem(
-                                id = -1000 - idx,
-                                title = "",
-                                isPlaceholder = true
-                            )
-                        }
-                    } else {
-                        category.items
-                    }
-                }
+                val isRowSkeleton = category.items.isEmpty() || category.items.all { it.isPlaceholder }
 
-                // Horizontal card row with touch scrolling
-                LazyRow(
-                    state = rowState,
-                    modifier = Modifier.arvioDpadFocusGroup(),
-                    contentPadding = PaddingValues(
-                        start = contentStartPadding,
-                        end = 16.dp,
-                        top = 4.dp,
-                        bottom = 4.dp
-                    ),
-                    horizontalArrangement = Arrangement.spacedBy(mobileItemSpacing)
-                ) {
-                    itemsIndexed(
-                        itemsToRender,
-                        key = { index, item ->
-                            if (item.isPlaceholder) "placeholder_${category.id}_${item.id}"
-                            else {
-                                val episodeSuffix = if (item.nextEpisode != null) "_S${item.nextEpisode.seasonNumber}E${item.nextEpisode.episodeNumber}" else ""
-                                "${item.mediaType.name}-${item.id}${episodeSuffix}_$index"
-                            }
-                        },
-                        contentType = { _, item -> if (item.isPlaceholder) "placeholder_card" else "${item.mediaType.name}_mobile_card" }
-                    ) { index, item ->
-                        if (item.isPlaceholder) {
-                            LaunchedEffect(item.id) {
-                                onLoadMoreCategory(category.id)
-                            }
-                        } else if (rowHasMore && index >= category.items.size - 5) {
-                            LaunchedEffect(category.items.size) {
-                                onLoadMoreCategory(category.id)
+                if (isRowSkeleton) {
+                    // Render structured skeleton cards while category metadata is loading
+                    LazyRow(
+                        state = rowState,
+                        modifier = Modifier.arvioDpadFocusGroup(),
+                        contentPadding = PaddingValues(
+                            start = contentStartPadding,
+                            end = 16.dp,
+                            top = 4.dp,
+                            bottom = 4.dp
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(mobileItemSpacing)
+                    ) {
+                        items(8, key = { "skeleton_${category.id}_$it" }) {
+                            if (isPortrait) {
+                                SkeletonPosterCard(width = rowMobileItemWidth)
+                            } else {
+                                SkeletonMediaCard(width = rowMobileItemWidth)
                             }
                         }
-                        val currentItem = rememberUpdatedState(item)
-                        val onCardClick = remember {
-                            { onItemClick(currentItem.value) }
-                        }
-                        val onCardLongClick = if (onItemLongClick != null) {
-                            remember {
-                                { onItemLongClick(currentItem.value, isContinueWatching) }
+                    }
+                } else {
+                    val realItems = remember(category.items) {
+                        category.items.filter { !it.isPlaceholder }
+                    }
+                    val itemKeys = remember(category.id, realItems) {
+                        stableHomeRowItemKeys(category.id, realItems)
+                    }
+
+                    // Horizontal card row with touch scrolling
+                    LazyRow(
+                        state = rowState,
+                        modifier = Modifier.arvioDpadFocusGroup(),
+                        contentPadding = PaddingValues(
+                            start = contentStartPadding,
+                            end = 16.dp,
+                            top = 4.dp,
+                            bottom = 4.dp
+                        ),
+                        horizontalArrangement = Arrangement.spacedBy(mobileItemSpacing)
+                    ) {
+                        itemsIndexed(
+                            realItems,
+                            key = { index, _ -> itemKeys[index] },
+                            contentType = { _, item -> "${item.mediaType.name}_mobile_card" }
+                        ) { index, item ->
+                            val currentItem = rememberUpdatedState(item)
+                            val onCardClick = remember {
+                                { onItemClick(currentItem.value) }
                             }
-                        } else null
-                        if (isRanked && index < 10) {
-                            Box(
-                                modifier = Modifier.width(rowMobileItemWidth)
-                            ) {
+                            val onCardLongClick = if (onItemLongClick != null) {
+                                remember {
+                                    { onItemLongClick(currentItem.value, isContinueWatching) }
+                                }
+                            } else null
+
+                            if (isRanked && index < 10) {
+                                Box(
+                                    modifier = Modifier.width(rowMobileItemWidth)
+                                ) {
+                                    val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
+                                    ArvioMediaCard(
+                                        item = item,
+                                        width = rowMobileItemWidth,
+                                        isLandscape = !isPortrait,
+                                        logoImageUrl = cardLogoUrl,
+                                        showProgress = false,
+                                        showTitle = !item.collectionHideTitle,
+                                        isFocusedOverride = false,
+                                        enableSystemFocus = false,
+                                        onFocused = {},
+                                        onClick = onCardClick,
+                                        onLongClick = onCardLongClick,
+                                    )
+                                    TopRankRibbon(
+                                        rank = index + 1,
+                                        isFocused = false,
+                                        compact = true,
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .zIndex(2f)
+                                            .padding(start = 6.dp)
+                                    )
+                                }
+                            } else {
                                 val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
                                 ArvioMediaCard(
                                     item = item,
                                     width = rowMobileItemWidth,
                                     isLandscape = !isPortrait,
                                     logoImageUrl = cardLogoUrl,
-                                    showProgress = false,
+                                    showProgress = isContinueWatching,
                                     showTitle = !item.collectionHideTitle,
                                     isFocusedOverride = false,
                                     enableSystemFocus = false,
@@ -2892,32 +3097,39 @@ private fun MobileHomeRowsLayer(
                                     onClick = onCardClick,
                                     onLongClick = onCardLongClick,
                                 )
-                                TopRankRibbon(
-                                    rank = index + 1,
-                                    isFocused = false,
-                                    compact = true,
-                                    modifier = Modifier
-                                        .align(Alignment.TopStart)
-                                        .zIndex(2f)
-                                        .padding(start = 6.dp)
-                                )
                             }
-                        } else {
-                            val cardLogoUrl = if (isCollectionRow) null else cardLogoUrls["${item.mediaType}_${item.id}"]
-                            ArvioMediaCard(
-                                item = item,
-                                width = rowMobileItemWidth,
-                                isLandscape = !isPortrait,
-                                logoImageUrl = cardLogoUrl,
-                                showProgress = isContinueWatching,
-                                showTitle = !item.collectionHideTitle,
-                                isFocusedOverride = false,
-                                enableSystemFocus = false,
-                                onFocused = {},
-                                onClick = onCardClick,
-                                onLongClick = onCardLongClick,
-                            )
                         }
+
+                        if (rowHasMore) {
+                            item(key = "${category.id}_loading_more", contentType = "loading_more_card") {
+                                if (isPortrait) {
+                                    SkeletonPosterCard(width = rowMobileItemWidth)
+                                } else {
+                                    SkeletonMediaCard(width = rowMobileItemWidth)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isSlowLoading) {
+            item(key = "mobile_slow_loading_indicator", contentType = "mobile_slow_loading") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Still loading your catalogue…",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 14.sp
+                    )
+                    TextButton(onClick = onRetry) {
+                        Text("Retry", color = Color(0xFF00F0D0), fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -3276,10 +3488,9 @@ private fun ImdbSvgRatingBadge(
     textShadow: Shadow
 ) {
     val context = LocalContext.current
-    val imdbLogoUri = remember { "android.resource://com.arvio.tv/${R.raw.logo_imdb_rectangle}" }
-    val request = remember(imdbLogoUri, context) {
+    val request = remember(context) {
         ImageRequest.Builder(context)
-            .data(imdbLogoUri)
+            .data(R.raw.logo_imdb_rectangle)
             .bitmapConfig(Bitmap.Config.ARGB_8888)
             .allowRgb565(false)
             .build()
@@ -3406,6 +3617,10 @@ private fun ContentRow(
             category.items
         }
     }
+    val itemKeys = remember(category.id, itemsToRender) {
+        stableHomeRowItemKeys(category.id, itemsToRender)
+    }
+    val isRtlLayout = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val totalItems = itemsToRender.size
     val maxFirstIndex = remember(totalItems) {
         (totalItems - 1).coerceAtLeast(0)
@@ -3471,7 +3686,7 @@ private fun ContentRow(
     // Use smooth scroll (animated) for D-pad moves to avoid abrupt jumps.
     var lastScrollIndex by remember { mutableIntStateOf(-1) }
     var lastScrollOffset by remember { mutableIntStateOf(-1) }
-    LaunchedEffect(isCurrentRow, totalItems) {
+    LaunchedEffect(isCurrentRow, category.id) {
         lastScrollIndex = -1
         lastScrollOffset = -1
     }
@@ -3521,7 +3736,8 @@ private fun ContentRow(
                         isFastScrolling -> 115
                         jumpDistance >= 3 -> 180
                         else -> 150
-                    }
+                    },
+                    isRtl = isRtlLayout
                 )
                 if (
                     !isFastScrolling && (
@@ -3586,10 +3802,7 @@ private fun ContentRow(
             ) {
                 itemsIndexed(
                     itemsToRender,
-                    key = { index, item ->
-                        if (item.isPlaceholder) "placeholder_${category.id}_${item.id}"
-                        else "${homeRowItemKey(item)}_$index"
-                    },
+                    key = { index, _ -> itemKeys[index] },
                     contentType = { index, item ->
                         when {
                             item.isPlaceholder -> "placeholder_card"

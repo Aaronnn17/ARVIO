@@ -1,5 +1,5 @@
 import { jsonRequest, proxiedUrl } from "./http";
-import type { Category, HomeServerCollectionConfig, HomeServerConfig, MediaItem, MediaType, StreamSource } from "./types";
+import type { CatalogConfig, Category, HomeServerCollectionConfig, HomeServerConfig, MediaItem, MediaType, StreamSource } from "./types";
 
 // ── Cloud sync shape mapping (APK parity) ───────────────────────────────────
 // The Android app persists home servers as a JSON string:
@@ -132,6 +132,95 @@ function trimUrl(url: string) {
   return url.replace(/\/+$/, "");
 }
 
+function javaUrlEncode(value: string): string {
+  return encodeURIComponent(value)
+    .replace(/%20/g, "+")
+    .replace(/[!'()~]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function homeServerKey(server: HomeServerConfig): string {
+  return server.serverId?.trim() || server.id.trim() || `${webTypeToApkKind(server.type)}:${trimUrl(server.url)}`;
+}
+
+export function buildHomeServerCatalogSourceRef(
+  server: HomeServerConfig,
+  collection: Pick<HomeServerCollectionConfig, "id" | "type">
+): string {
+  return `home_server_catalog|${[
+    homeServerKey(server),
+    collection.id,
+    collection.type
+  ].map(javaUrlEncode).join("|")}`;
+}
+
+async function sha256Short(value: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest).slice(0, 8))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export async function homeServerCatalogIdentity(
+  server: HomeServerConfig,
+  collection: Pick<HomeServerCollectionConfig, "id" | "type">
+): Promise<{ id: string; sourceRef: string }> {
+  const sourceRef = buildHomeServerCatalogSourceRef(server, collection);
+  return { id: `home_server_${await sha256Short(sourceRef)}`, sourceRef };
+}
+
+export async function buildHomeServerCatalogConfigs(
+  servers: HomeServerConfig[],
+  savedCatalogs: CatalogConfig[] = [],
+  hiddenCatalogIds: string[] = []
+): Promise<CatalogConfig[]> {
+  const hidden = new Set(hiddenCatalogIds);
+  const savedHomeCatalogs = savedCatalogs.filter((catalog) => catalog.sourceType === "home-server");
+  const savedById = new Map(savedHomeCatalogs.map((catalog) => [catalog.id, catalog]));
+  const savedBySourceRef = new Map(
+    savedHomeCatalogs
+      .filter((catalog) => Boolean(catalog.sourceRef))
+      .map((catalog) => [catalog.sourceRef as string, catalog])
+  );
+  const generated: CatalogConfig[] = [];
+
+  for (const server of servers) {
+    for (const collection of server.collections ?? []) {
+      if (!collection.id || !isVideoCollectionType(collection.type)) continue;
+      const identity = await homeServerCatalogIdentity(server, collection);
+      const existing = savedById.get(identity.id) ?? savedBySourceRef.get(identity.sourceRef);
+      const title = existing?.name || existing?.title || `${server.name} - ${collection.name}`;
+      const normalizedType = collection.type.toLowerCase();
+      generated.push({
+        ...existing,
+        id: identity.id,
+        name: title,
+        title,
+        sourceType: "home-server",
+        sourceRef: identity.sourceRef,
+        mediaType: normalizedType.includes("movie") ? "movie" : normalizedType.includes("tv") ? "tv" : "all",
+        enabled: !hidden.has(identity.id),
+        isPreinstalled: false,
+        layout: existing?.layout ?? "landscape"
+      });
+    }
+  }
+
+  const generatedById = new Map(generated.map((catalog) => [catalog.id, catalog]));
+  const ordered = savedHomeCatalogs
+    .map((catalog) => generatedById.get(catalog.id))
+    .filter((catalog): catalog is CatalogConfig => Boolean(catalog));
+  const orderedIds = new Set(ordered.map((catalog) => catalog.id));
+  ordered.push(...generated.filter((catalog) => !orderedIds.has(catalog.id)));
+
+  // Keep a saved catalog manageable if an older cloud record has not yet
+  // populated the connection's collection metadata.
+  const generatedIds = new Set(generated.map((catalog) => catalog.id));
+  ordered.push(...savedHomeCatalogs
+    .filter((catalog) => !generatedIds.has(catalog.id))
+    .map((catalog) => ({ ...catalog, enabled: catalog.enabled !== false && !hidden.has(catalog.id) })));
+  return ordered;
+}
+
 function directUrl(url: string) {
   return url;
 }
@@ -227,6 +316,8 @@ interface JellyfinItem {
   ImageTags?: { Primary?: string };
   BackdropImageTags?: string[];
   PrimaryImageTag?: string;
+  ProviderIds?: { Tmdb?: string; Imdb?: string; Tvdb?: string };
+  DateCreated?: string;
 }
 
 interface PlexSection {
@@ -245,15 +336,18 @@ interface PlexItem {
   thumb?: string;
   art?: string;
   Media?: Array<{ Part?: Array<{ key?: string }> }>;
+  Guid?: Array<{ id?: string }>;
+  addedAt?: number;
 }
 
 const NON_VIDEO_COLLECTION_TYPES = new Set(["music", "photos", "homevideos", "books", "podcasts", "audiobooks"]);
+const BROWSABLE_LIBRARY_TYPES = new Set(["movies", "tvshows", "mixed"]);
 function isVideoCollectionType(type?: string | null): boolean {
   if (!type) return true;
   return !NON_VIDEO_COLLECTION_TYPES.has(type.toLowerCase().trim());
 }
 
-function mapItem(base: string, token: string, item: JellyfinItem): MediaItem {
+function mapItem(base: string, token: string, item: JellyfinItem, server?: HomeServerConfig): MediaItem {
   const mediaType: MediaType = item.Type === "Series" ? "tv" : "movie";
   // Leave these empty when the server has no artwork rather than pointing at an
   // image route that will 404: MediaCard renders a placeholder for empty values
@@ -267,8 +361,9 @@ function mapItem(base: string, token: string, item: JellyfinItem): MediaItem {
   const backdrop = backdropTag
     ? directUrl(`${base}/Items/${item.Id}/Images/Backdrop/0?maxWidth=1280&tag=${backdropTag}&api_key=${token}`)
     : null;
+  const tmdbId = Number(item.ProviderIds?.Tmdb) || null;
   return {
-    id: hashId(item.Id),
+    id: tmdbId ?? -hashId(`${server?.id ?? base}:${item.Id}`),
     title: item.Name,
     overview: item.Overview ?? "",
     year: item.ProductionYear ? String(item.ProductionYear) : "",
@@ -277,6 +372,13 @@ function mapItem(base: string, token: string, item: JellyfinItem): MediaItem {
     image,
     backdrop,
     isHomeServer: true,
+    tmdbId,
+    imdbId: item.ProviderIds?.Imdb ?? null,
+    tvdbId: Number(item.ProviderIds?.Tvdb) || null,
+    activityAt: item.DateCreated ? Date.parse(item.DateCreated) || 0 : 0,
+    homeServerItemId: item.Id,
+    homeServerId: server?.id ?? null,
+    homeServerType: server?.type ?? null,
     // Movies stream directly; series would need episode browsing (future).
     homeServerUrl: mediaType === "movie" ? directUrl(`${base}/Videos/${item.Id}/stream?static=true&api_key=${token}`) : null
   };
@@ -291,10 +393,15 @@ function plexStreamUrl(base: string, token: string, item: PlexItem) {
   return part ? directUrl(`${base}${part}?X-Plex-Token=${encodeURIComponent(token)}`) : null;
 }
 
-function mapPlexItem(base: string, token: string, item: PlexItem): MediaItem {
+function mapPlexItem(base: string, token: string, item: PlexItem, server?: HomeServerConfig): MediaItem {
   const mediaType: MediaType = item.type === "show" ? "tv" : "movie";
+  const providerIds = Object.fromEntries((item.Guid ?? []).map((entry) => {
+    const value = entry.id ?? "";
+    return [value.split("://")[0]?.toLowerCase(), value.split("://")[1]?.split("?")[0]];
+  }).filter(([provider, id]) => Boolean(provider && id)));
+  const tmdbId = Number(providerIds.tmdb) || null;
   return {
-    id: hashId(`plex:${item.ratingKey}`),
+    id: tmdbId ?? -hashId(`${server?.id ?? base}:${item.ratingKey}`),
     title: item.title,
     overview: item.summary ?? "",
     year: item.year ? String(item.year) : "",
@@ -303,11 +410,18 @@ function mapPlexItem(base: string, token: string, item: PlexItem): MediaItem {
     image: plexImage(base, token, item.thumb),
     backdrop: item.art ? plexImage(base, token, item.art) : null,
     isHomeServer: true,
+    tmdbId,
+    imdbId: providerIds.imdb ?? null,
+    tvdbId: Number(providerIds.tvdb) || null,
+    activityAt: item.addedAt ? item.addedAt * 1000 : 0,
+    homeServerItemId: item.ratingKey,
+    homeServerId: server?.id ?? null,
+    homeServerType: server?.type ?? "plex",
     homeServerUrl: mediaType === "movie" ? plexStreamUrl(base, token, item) : null
   };
 }
 
-async function loadPlexRows(server: HomeServerConfig): Promise<Category[]> {
+async function loadPlexRows(server: HomeServerConfig, hiddenCatalogIds: Set<string>): Promise<Category[]> {
   if (!server.token) return [];
   const base = trimUrl(server.url);
   const token = server.token;
@@ -318,26 +432,43 @@ async function loadPlexRows(server: HomeServerConfig): Promise<Category[]> {
   ).catch(() => null);
   const libraries = (sections?.MediaContainer?.Directory ?? [])
     .filter((section) => section.type === "movie" || section.type === "show")
+    .filter((section) => {
+      if (!server.collections?.length) return true;
+      return server.collections.some((collection) => collection.id === section.key && collection.enabled !== false);
+    })
     .slice(0, 6);
   const rows = await Promise.all(libraries.map(async (library) => {
+    const configured = server.collections?.find((collection) => collection.id === library.key);
+    if (server.collections?.length && !configured) return null;
+    if (configured?.enabled === false) return null;
+    const identity = await homeServerCatalogIdentity(server, {
+      id: library.key,
+      type: configured?.type || library.type
+    });
+    if (hiddenCatalogIds.has(identity.id)) return null;
     const payload = await proxiedGet<{ MediaContainer?: { Metadata?: PlexItem[] } }>(
       `${base}/library/sections/${library.key}/all?X-Plex-Token=${encodeURIComponent(token)}&sort=addedAt:desc`,
       headers
     ).catch(() => null);
     const mapped = (payload?.MediaContainer?.Metadata ?? [])
       .slice(0, 24)
-      .map((item) => mapPlexItem(base, token, item))
+      .map((item) => mapPlexItem(base, token, item, server))
       .filter((item) => Boolean(item && item.title));
-    return mapped.length ? { id: `hs_${server.id}_${library.key}`, title: `${server.name} - ${library.title}`, items: mapped } : null;
+    return mapped.length ? { id: identity.id, title: `${server.name} - ${library.title}`, items: mapped } : null;
   }));
   return rows.filter((row): row is Category => Boolean(row));
 }
 
-export async function loadHomeServerRows(servers: HomeServerConfig[]): Promise<Category[]> {
+export async function loadHomeServerRows(
+  servers: HomeServerConfig[],
+  hiddenCatalogIds: string[] = [],
+  catalogOrder: CatalogConfig[] = []
+): Promise<Category[]> {
+  const hidden = new Set(hiddenCatalogIds);
   const plexRows = await Promise.all(
     servers
       .filter((server) => server.enabled && server.url && server.type === "plex")
-      .map((server) => loadPlexRows(server).catch(() => [] as Category[]))
+      .map((server) => loadPlexRows(server, hidden).catch(() => [] as Category[]))
   );
   const active = servers.filter((server) => server.enabled && server.url && (server.type === "jellyfin" || server.type === "emby"));
   const rowsPerServer = await Promise.all(active.map(async (server) => {
@@ -349,20 +480,36 @@ export async function loadHomeServerRows(servers: HomeServerConfig[]): Promise<C
       const views = await proxiedGet<{ Items?: Array<{ Id: string; Name: string; CollectionType?: string }> }>(
         `${base}/Users/${userId}/Views?api_key=${token}`
       );
-      const libraries = (views.Items ?? []).filter((v) => isVideoCollectionType(v.CollectionType)).slice(0, 6);
+      const libraries = (views.Items ?? [])
+        .filter((view) => isVideoCollectionType(view.CollectionType))
+        .filter((view) => {
+          if (!server.collections?.length) return true;
+          return server.collections.some((collection) => collection.id === view.Id && collection.enabled !== false);
+        })
+        .slice(0, 6);
       const rows = await Promise.all(libraries.map(async (library) => {
+        const configured = server.collections?.find((collection) => collection.id === library.Id);
+        if (server.collections?.length && !configured) return null;
+        if (configured?.enabled === false) return null;
+        const identity = await homeServerCatalogIdentity(server, {
+          id: library.Id,
+          type: configured?.type || library.CollectionType || ""
+        });
+        if (hidden.has(identity.id)) return null;
         const items = await proxiedGet<{ Items?: JellyfinItem[] }>(
           `${base}/Users/${userId}/Items?ParentId=${library.Id}&Recursive=true&IncludeItemTypes=Movie,Series&SortBy=DateCreated&SortOrder=Descending&Limit=24&Fields=Overview,PrimaryImageAspectRatio,BasicSyncInfo,ImageTags,BackdropImageTags,ProductionYear,CommunityRating&api_key=${token}`
         ).catch(() => ({ Items: [] as JellyfinItem[] }));
-        const mapped = (items.Items ?? []).map((item) => mapItem(base, token, item)).filter((m) => Boolean(m && m.title));
-        return mapped.length ? { id: `hs_${server.id}_${library.Id}`, title: `${server.name} · ${library.Name}`, items: mapped } : null;
+        const mapped = (items.Items ?? []).map((item) => mapItem(base, token, item, server)).filter((m) => Boolean(m && m.title));
+        return mapped.length ? { id: identity.id, title: `${server.name} - ${library.Name}`, items: mapped } : null;
       }));
       return rows.filter((row): row is Category => Boolean(row));
     } catch {
       return [] as Category[];
     }
   }));
-  return [...plexRows.flat(), ...rowsPerServer.flat()];
+  const order = new Map(catalogOrder.map((catalog, index) => [catalog.id, index]));
+  return [...plexRows.flat(), ...rowsPerServer.flat()]
+    .sort((left, right) => (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER));
 }
 
 export function clearHomeServerSessions() {
@@ -374,7 +521,13 @@ export function clearHomeServerSessions() {
 // so users adding a server directly (no Android app) get confirmation.
 export async function testHomeServerConnection(
   server: HomeServerConfig
-): Promise<{ ok: boolean; serverName?: string; libraryCount?: number; error?: string }> {
+): Promise<{
+  ok: boolean;
+  serverName?: string;
+  libraryCount?: number;
+  connection?: HomeServerConfig;
+  error?: string;
+}> {
   const base = trimUrl(server.url);
   if (!base) return { ok: false, error: "Missing server URL" };
   try {
@@ -386,19 +539,61 @@ export async function testHomeServerConnection(
         { Accept: "application/json", "X-Plex-Token": token }
       );
       const libs = sections?.MediaContainer?.Directory ?? [];
-      return { ok: true, serverName: sections?.MediaContainer?.friendlyName, libraryCount: libs.length };
+      const serverName = sections?.MediaContainer?.friendlyName;
+      return {
+        ok: true,
+        serverName,
+        libraryCount: libs.length,
+        connection: {
+          ...server,
+          name: server.name || serverName || "Plex",
+          url: base,
+          password: undefined,
+          collections: libs.map((library) => ({
+            id: library.key,
+            name: library.title,
+            type: library.type,
+            enabled: true
+          })),
+          lastConnectedAt: Date.now()
+        }
+      };
     }
     // Reset any cached (possibly stale) session so the test really re-auths.
     sessionCache.delete(server.id);
     const session = await ensureSession(server);
     if (!session) return { ok: false, error: "Authentication failed — check token or username/password" };
-    const views = await proxiedGet<{ Items?: unknown[] }>(
+    const views = await proxiedGet<{ Items?: Array<{ Id: string; Name: string; CollectionType?: string }> }>(
       `${base}/Users/${session.userId}/Views?api_key=${session.token}`
     ).catch(() => null);
-    const info = await proxiedGet<{ ServerName?: string }>(
+    const info = await proxiedGet<{ Id?: string; ServerName?: string }>(
       `${base}/System/Info?api_key=${session.token}`
     ).catch(() => null);
-    return { ok: true, serverName: info?.ServerName, libraryCount: (views?.Items ?? []).length };
+    const libraries = (views?.Items ?? [])
+      .filter((view) => isBrowsableLibraryType(view.CollectionType))
+      .map((view) => ({
+        id: view.Id,
+        name: view.Name,
+        type: view.CollectionType ?? "mixed",
+        enabled: true
+      }));
+    return {
+      ok: true,
+      serverName: info?.ServerName,
+      libraryCount: libraries.length,
+      connection: {
+        ...server,
+        name: server.name || info?.ServerName || (server.type === "emby" ? "Emby" : "Jellyfin"),
+        url: base,
+        token: session.token,
+        userId: session.userId,
+        userName: server.username,
+        password: undefined,
+        serverId: info?.Id,
+        collections: libraries,
+        lastConnectedAt: Date.now()
+      }
+    };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Connection failed" };
   }
@@ -428,6 +623,73 @@ interface MatchTarget {
   year?: number;
   imdbId?: string;
   tmdbId?: number;
+}
+
+const SOURCE_CACHE_TTL_MS = 30 * 60 * 1000;
+const EMPTY_SOURCE_CACHE_TTL_MS = 30 * 1000;
+const SOURCE_CACHE_MAX_ENTRIES = 128;
+const sourceCache = new Map<string, { expiresAt: number; sources: StreamSource[] }>();
+const sourceRequests = new Map<string, Promise<StreamSource[]>>();
+
+function sourceContentIdentity(target: MatchTarget): string {
+  const imdb = target.imdbId?.trim().toLowerCase();
+  if (imdb) return `imdb:${imdb}`;
+  if (target.tmdbId && target.tmdbId > 0) return `tmdb:${target.tmdbId}`;
+  return `title:${normalizeTitle(target.title)}:${target.year ?? ""}`;
+}
+
+function sourceServerSignature(servers: HomeServerConfig[]): string {
+  return servers.map((server) => [
+    server.id,
+    server.type,
+    trimUrl(server.url),
+    server.userId ?? "",
+    server.lastConnectedAt ?? 0,
+    `${server.token?.length ?? 0}:${hashId(server.token ?? "")}`,
+    (server.collections ?? []).filter((collection) => collection.enabled !== false).map((collection) => collection.id).join(",")
+  ].join(":"))
+    .join("|");
+}
+
+function homeServerSourceCacheKey(
+  type: "movie" | "episode",
+  servers: HomeServerConfig[],
+  target: MatchTarget,
+  season?: number,
+  episode?: number
+): string {
+  return [type, sourceServerSignature(servers), sourceContentIdentity(target), season ?? "", episode ?? ""].join("|");
+}
+
+async function resolveCachedHomeServerSources(
+  key: string,
+  loader: () => Promise<StreamSource[]>
+): Promise<StreamSource[]> {
+  const cached = sourceCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.sources;
+  if (cached) sourceCache.delete(key);
+
+  const inFlight = sourceRequests.get(key);
+  if (inFlight) return inFlight;
+
+  let request: Promise<StreamSource[]>;
+  request = loader()
+    .then((sources) => {
+      if (sourceCache.size >= SOURCE_CACHE_MAX_ENTRIES) {
+        const oldestKey = sourceCache.keys().next().value as string | undefined;
+        if (oldestKey) sourceCache.delete(oldestKey);
+      }
+      sourceCache.set(key, {
+        sources,
+        expiresAt: Date.now() + (sources.length ? SOURCE_CACHE_TTL_MS : EMPTY_SOURCE_CACHE_TTL_MS)
+      });
+      return sources;
+    })
+    .finally(() => {
+      if (sourceRequests.get(key) === request) sourceRequests.delete(key);
+    });
+  sourceRequests.set(key, request);
+  return request;
 }
 
 interface Candidate {
@@ -464,6 +726,12 @@ function isAcceptable(score: number): boolean {
   return score >= 150 || score >= 900;
 }
 
+function isLikelySameVersion(target: MatchTarget, candidate: Candidate): boolean {
+  if (!normalizeTitle(target.title) || normalizeTitle(target.title) !== normalizeTitle(candidate.title)) return false;
+  if (target.year == null || candidate.year == null) return true;
+  return Math.abs(target.year - candidate.year) <= 1;
+}
+
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return "";
   const gb = bytes / 1_000_000_000;
@@ -498,12 +766,12 @@ interface JellyfinFullItem {
   }>;
 }
 
-async function jellyfinFindItem(
+async function jellyfinFindItems(
   server: HomeServerConfig,
   session: { token: string; userId: string },
   target: MatchTarget,
   itemTypes: string
-): Promise<JellyfinFullItem | null> {
+): Promise<JellyfinFullItem[]> {
   const base = trimUrl(server.url);
   const { token, userId } = session;
   const params = new URLSearchParams({
@@ -518,21 +786,29 @@ async function jellyfinFindItem(
     `${base}/Users/${userId}/Items?${params.toString()}`
   ).catch(() => null);
   const items = res?.Items ?? [];
-  if (!items.length) return null;
-  let best: JellyfinFullItem | null = null;
-  let bestScore = -Infinity;
-  for (const item of items) {
-    const score = scoreCandidate(target, {
+  const scored = items.map((item) => {
+    const candidate = {
       title: item.Name,
       year: item.ProductionYear,
       providerIds: item.ProviderIds ?? {}
-    });
-    if (score > bestScore) {
-      bestScore = score;
-      best = item;
-    }
-  }
-  return best && isAcceptable(bestScore) ? best : null;
+    };
+    return { item, candidate, score: scoreCandidate(target, candidate) };
+  }).filter(({ score }) => isAcceptable(score));
+  const bestScore = Math.max(...scored.map(({ score }) => score), -Infinity);
+  return scored
+    .filter(({ candidate, score }) => score === bestScore || isLikelySameVersion(target, candidate))
+    .sort((a, b) => b.score - a.score)
+    .filter(({ item }, index, all) => all.findIndex((entry) => entry.item.Id === item.Id) === index)
+    .map(({ item }) => item);
+}
+
+async function jellyfinFindItem(
+  server: HomeServerConfig,
+  session: { token: string; userId: string },
+  target: MatchTarget,
+  itemTypes: string
+): Promise<JellyfinFullItem | null> {
+  return (await jellyfinFindItems(server, session, target, itemTypes))[0] ?? null;
 }
 
 async function jellyfinItemSources(
@@ -602,39 +878,55 @@ function plexProviderIds(meta: PlexMetadata): Record<string, string> {
   return ids;
 }
 
+async function plexFindMetadataMatches(
+  server: HomeServerConfig,
+  target: MatchTarget,
+  plexTypes: number[]
+): Promise<PlexMetadata[]> {
+  const base = trimUrl(server.url);
+  const token = server.token ?? "";
+  const headers = { Accept: "application/json", "X-Plex-Token": token };
+  const responses = await Promise.all(plexTypes.map(async (plexType) => {
+    const res = await proxiedGet<{ MediaContainer?: { Metadata?: PlexMetadata[] } }>(
+      `${base}/library/all?title=${encodeURIComponent(target.title)}&type=${plexType}&includeGuids=1&X-Plex-Token=${encodeURIComponent(token)}`,
+      headers
+    ).catch(() => null);
+    return res?.MediaContainer?.Metadata ?? [];
+  }));
+  const scored = responses.flat().map((meta) => {
+    const candidate = { title: meta.title, year: meta.year, providerIds: plexProviderIds(meta) };
+    return { meta, candidate, score: scoreCandidate(target, candidate) };
+  }).filter(({ score }) => isAcceptable(score));
+  const bestScore = Math.max(...scored.map(({ score }) => score), -Infinity);
+  return scored
+    .filter(({ candidate, score }) => score === bestScore || isLikelySameVersion(target, candidate))
+    .sort((a, b) => b.score - a.score)
+    .filter(({ meta }, index, all) => all.findIndex((entry) => entry.meta.ratingKey === meta.ratingKey) === index)
+    .map(({ meta }) => meta);
+}
+
 async function plexFindMetadata(
   server: HomeServerConfig,
   target: MatchTarget,
   plexTypes: number[]
 ): Promise<PlexMetadata | null> {
-  const base = trimUrl(server.url);
-  const token = server.token ?? "";
-  const headers = { Accept: "application/json", "X-Plex-Token": token };
-  let best: PlexMetadata | null = null;
-  let bestScore = -Infinity;
-  for (const plexType of plexTypes) {
-    const res = await proxiedGet<{ MediaContainer?: { Metadata?: PlexMetadata[] } }>(
-      `${base}/library/all?title=${encodeURIComponent(target.title)}&type=${plexType}&includeGuids=1&X-Plex-Token=${encodeURIComponent(token)}`,
-      headers
-    ).catch(() => null);
-    for (const meta of res?.MediaContainer?.Metadata ?? []) {
-      const score = scoreCandidate(target, { title: meta.title, year: meta.year, providerIds: plexProviderIds(meta) });
-      if (score > bestScore) {
-        bestScore = score;
-        best = meta;
-      }
-    }
-  }
-  return best && isAcceptable(bestScore) ? best : null;
+  return (await plexFindMetadataMatches(server, target, plexTypes))[0] ?? null;
 }
 
 async function plexMetadataSources(server: HomeServerConfig, meta: PlexMetadata): Promise<StreamSource[]> {
   const base = trimUrl(server.url);
   const token = server.token ?? "";
+  const headers = { Accept: "application/json", "X-Plex-Token": token };
+  // Search responses can contain only one Media entry. Always hydrate the full
+  // item so every Plex version/part is represented in the source selector.
+  const hydrated = (await proxiedGet<{ MediaContainer?: { Metadata?: PlexMetadata[] } }>(
+    `${base}/library/metadata/${meta.ratingKey}?includeGuids=1&includeMedia=1&X-Plex-Token=${encodeURIComponent(token)}`,
+    headers
+  ).catch(() => null))?.MediaContainer?.Metadata?.[0] ?? meta;
   const label = server.name || "Home Server";
   const out: StreamSource[] = [];
   const seen = new Set<string>();
-  for (const media of meta.Media ?? []) {
+  for (const media of hydrated.Media ?? []) {
     for (const part of media.Part ?? []) {
       if (!part.key) continue;
       const url = `${base}${part.key}?X-Plex-Token=${encodeURIComponent(token)}`;
@@ -652,8 +944,8 @@ async function plexMetadataSources(server: HomeServerConfig, meta: PlexMetadata)
         size: formatBytes(part.size ?? 0),
         sizeBytes: part.size && part.size > 0 ? part.size : null,
         url,
-        behaviorHints: { cached: true, filename: meta.title, videoSize: part.size && part.size > 0 ? part.size : null },
-        description: `${meta.title} · ${label}`
+        behaviorHints: { cached: true, filename: hydrated.title, videoSize: part.size && part.size > 0 ? part.size : null },
+        description: `${hydrated.title} · ${label}`
       });
     }
   }
@@ -670,21 +962,24 @@ export async function resolveHomeServerMovieSources(
 ): Promise<StreamSource[]> {
   const active = usableServers(servers);
   if (!active.length) return [];
-  const perServer = await Promise.all(active.map(async (server) => {
-    try {
-      if (server.type === "plex") {
-        const meta = await plexFindMetadata(server, target, [1]); // 1 = movie
-        return meta ? plexMetadataSources(server, meta) : [];
+  const cacheKey = homeServerSourceCacheKey("movie", active, target);
+  return resolveCachedHomeServerSources(cacheKey, async () => {
+    const perServer = await Promise.all(active.map(async (server) => {
+      try {
+        if (server.type === "plex") {
+          const matches = await plexFindMetadataMatches(server, target, [1]); // 1 = movie
+          return (await Promise.all(matches.map((meta) => plexMetadataSources(server, meta)))).flat();
+        }
+        const session = await ensureSession(server);
+        if (!session) return [];
+        const items = await jellyfinFindItems(server, session, target, "Movie");
+        return (await Promise.all(items.map((item) => jellyfinItemSources(server, session, item)))).flat();
+      } catch {
+        return [];
       }
-      const session = await ensureSession(server);
-      if (!session) return [];
-      const item = await jellyfinFindItem(server, session, target, "Movie");
-      return item ? jellyfinItemSources(server, session, item) : [];
-    } catch {
-      return [];
-    }
-  }));
-  return dedupeSources(perServer.flat());
+    }));
+    return dedupeSources(perServer.flat());
+  });
 }
 
 export async function resolveHomeServerEpisodeSources(
@@ -695,28 +990,33 @@ export async function resolveHomeServerEpisodeSources(
 ): Promise<StreamSource[]> {
   const active = usableServers(servers);
   if (!active.length) return [];
-  const perServer = await Promise.all(active.map(async (server) => {
-    try {
-      if (server.type === "plex") {
-        return plexEpisodeSources(server, target, season, episode);
+  const cacheKey = homeServerSourceCacheKey("episode", active, target, season, episode);
+  return resolveCachedHomeServerSources(cacheKey, async () => {
+    const perServer = await Promise.all(active.map(async (server) => {
+      try {
+        if (server.type === "plex") {
+          return plexEpisodeSources(server, target, season, episode);
+        }
+        const session = await ensureSession(server);
+        if (!session) return [];
+        const series = await jellyfinFindItem(server, session, target, "Series");
+        if (!series) return [];
+        const base = trimUrl(server.url);
+        const { token, userId } = session;
+        // Keep separately stored episode versions instead of selecting the first one.
+        const epRes = await proxiedGet<{ Items?: Array<JellyfinFullItem & { IndexNumber?: number; ParentIndexNumber?: number }> }>(
+          `${base}/Shows/${series.Id}/Episodes?userId=${userId}&Fields=MediaSources,Path&api_key=${token}`
+        ).catch(() => null);
+        const episodes = (epRes?.Items ?? []).filter((item) =>
+          item.ParentIndexNumber === season && item.IndexNumber === episode
+        );
+        return (await Promise.all(episodes.map((item) => jellyfinItemSources(server, session, item)))).flat();
+      } catch {
+        return [];
       }
-      const session = await ensureSession(server);
-      if (!session) return [];
-      const series = await jellyfinFindItem(server, session, target, "Series");
-      if (!series) return [];
-      const base = trimUrl(server.url);
-      const { token, userId } = session;
-      // Jellyfin episode lookup by series + season/episode indices.
-      const epRes = await proxiedGet<{ Items?: Array<JellyfinFullItem & { IndexNumber?: number; ParentIndexNumber?: number }> }>(
-        `${base}/Shows/${series.Id}/Episodes?userId=${userId}&Fields=MediaSources,Path&api_key=${token}`
-      ).catch(() => null);
-      const ep = (epRes?.Items ?? []).find((e) => e.ParentIndexNumber === season && e.IndexNumber === episode);
-      return ep ? jellyfinItemSources(server, session, ep) : [];
-    } catch {
-      return [];
-    }
-  }));
-  return dedupeSources(perServer.flat());
+    }));
+    return dedupeSources(perServer.flat());
+  });
 }
 
 async function plexEpisodeSources(
@@ -735,8 +1035,10 @@ async function plexEpisodeSources(
     `${base}/library/metadata/${series.ratingKey}/allLeaves?X-Plex-Token=${encodeURIComponent(token)}`,
     headers
   ).catch(() => null);
-  const ep = (res?.MediaContainer?.Metadata ?? []).find((m) => m.parentIndex === season && m.index === episode);
-  return ep ? plexMetadataSources(server, ep) : [];
+  const episodes = (res?.MediaContainer?.Metadata ?? []).filter(
+    (item) => item.parentIndex === season && item.index === episode
+  );
+  return (await Promise.all(episodes.map((item) => plexMetadataSources(server, item)))).flat();
 }
 
 function dedupeSources(sources: StreamSource[]): StreamSource[] {
@@ -756,6 +1058,44 @@ export interface HomeServerLibraryOption {
   // to loadHomeServerLibraryItems.
   value: string;
   label: string;
+  serverId: string;
+  serverName: string;
+  serverType: HomeServerConfig["type"];
+  libraryId: string;
+  libraryName: string;
+  mediaType: "movie" | "tv" | "mixed";
+}
+
+function isBrowsableLibraryType(type?: string | null): boolean {
+  return !type || BROWSABLE_LIBRARY_TYPES.has(type.toLowerCase().trim());
+}
+
+export type HomeServerLibrarySort = "added" | "title" | "rating";
+export interface HomeServerLibraryPage {
+  items: MediaItem[];
+  hasMore: boolean;
+  total: number;
+}
+
+function libraryValue(serverId: string, libraryId: string): string {
+  return `hslib:${encodeURIComponent(serverId)}:${encodeURIComponent(libraryId)}`;
+}
+
+export function homeServerLibraryMediaFilter(mediaType: HomeServerLibraryOption["mediaType"] | string | undefined): "movie" | "tv" | "all" {
+  const normalized = mediaType?.trim().toLowerCase();
+  if (["movie", "movies", "film", "films"].includes(normalized ?? "")) return "movie";
+  if (["tv", "show", "shows", "series", "tvshow", "tvshows"].includes(normalized ?? "")) return "tv";
+  return "all";
+}
+
+function parseLibraryValue(value: string): { serverId: string; libraryId: string } | null {
+  const match = value.match(/^hslib:([^:]+):(.+)$/);
+  if (!match) return null;
+  try {
+    return { serverId: decodeURIComponent(match[1]), libraryId: decodeURIComponent(match[2]) };
+  } catch {
+    return { serverId: match[1], libraryId: match[2] };
+  }
 }
 
 // List each enabled server's movie/show libraries as selectable options.
@@ -774,7 +1114,16 @@ export async function listHomeServerLibraries(
         );
         return (res?.MediaContainer?.Directory ?? [])
           .filter((s) => s.type === "movie" || s.type === "show")
-          .map((s) => ({ value: `hslib:${server.id}:${s.key}`, label: `${server.name} · ${s.title}` }));
+          .map((s) => ({
+            value: libraryValue(server.id, s.key),
+            label: `${server.name} · ${s.title}`,
+            serverId: server.id,
+            serverName: server.name,
+            serverType: server.type,
+            libraryId: s.key,
+            libraryName: s.title,
+            mediaType: s.type === "movie" ? "movie" as const : "tv" as const
+          }));
       }
       const session = await ensureSession(server);
       if (!session) return [];
@@ -783,8 +1132,17 @@ export async function listHomeServerLibraries(
         `${base}/Users/${session.userId}/Views?api_key=${session.token}`
       );
       return (views.Items ?? [])
-        .filter((v) => isVideoCollectionType(v.CollectionType))
-        .map((v) => ({ value: `hslib:${server.id}:${v.Id}`, label: `${server.name} · ${v.Name}` }));
+        .filter((v) => isBrowsableLibraryType(v.CollectionType))
+        .map((v) => ({
+          value: libraryValue(server.id, v.Id),
+          label: `${server.name} · ${v.Name}`,
+          serverId: server.id,
+          serverName: server.name,
+          serverType: server.type,
+          libraryId: v.Id,
+          libraryName: v.Name,
+          mediaType: v.CollectionType === "movies" ? "movie" as const : v.CollectionType === "tvshows" ? "tv" as const : "mixed" as const
+        }));
     } catch {
       return [];
     }
@@ -798,31 +1156,79 @@ export async function loadHomeServerLibraryItems(
   source: string,
   limit = 60
 ): Promise<MediaItem[]> {
-  const match = source.match(/^hslib:([^:]+):(.+)$/);
-  if (!match) return [];
-  const [, serverId, libraryKey] = match;
+  return (await loadHomeServerLibraryPage(servers, source, { limit })).items;
+}
+
+export async function loadHomeServerLibraryPage(
+  servers: HomeServerConfig[],
+  source: string,
+  options: {
+    offset?: number;
+    limit?: number;
+    sort?: HomeServerLibrarySort;
+    filter?: "all" | "movie" | "tv";
+    libraryMediaType?: HomeServerLibraryOption["mediaType"];
+    search?: string;
+    throwOnError?: boolean;
+  } = {}
+): Promise<HomeServerLibraryPage> {
+  const parsed = parseLibraryValue(source);
+  if (!parsed) return { items: [], hasMore: false, total: 0 };
+  const { serverId, libraryId: libraryKey } = parsed;
+  const offset = Math.max(0, options.offset ?? 0);
+  const limit = Math.min(100, Math.max(1, options.limit ?? 60));
+  const sort = options.sort ?? "added";
+  const filter = options.filter ?? "all";
+  const search = options.search?.trim() ?? "";
   const server = servers.find((s) => s.id === serverId && s.enabled && s.url);
-  if (!server) return [];
+  if (!server) return { items: [], hasMore: false, total: 0 };
+  const effectiveFilter = filter === "all" ? homeServerLibraryMediaFilter(options.libraryMediaType) : filter;
   try {
     if (server.type === "plex") {
       const base = trimUrl(server.url);
       const token = server.token ?? "";
-      const res = await proxiedGet<{ MediaContainer?: { Metadata?: PlexItem[] } }>(
-        `${base}/library/sections/${libraryKey}/all?X-Plex-Token=${encodeURIComponent(token)}&sort=addedAt:desc&X-Plex-Container-Start=0&X-Plex-Container-Size=${limit}`,
+      const params = new URLSearchParams({
+        "X-Plex-Token": token,
+        sort: sort === "title" ? "titleSort:asc" : sort === "rating" ? "rating:desc" : "addedAt:desc",
+        "X-Plex-Container-Start": String(offset),
+        "X-Plex-Container-Size": String(limit),
+        includeGuids: "1"
+      });
+      if (effectiveFilter !== "all") params.set("type", effectiveFilter === "movie" ? "1" : "2");
+      if (search) params.set("title", search);
+      const res = await proxiedGet<{ MediaContainer?: { Metadata?: PlexItem[]; totalSize?: number; size?: number } }>(
+        `${base}/library/sections/${libraryKey}/all?${params.toString()}`,
         { Accept: "application/json", "X-Plex-Token": token }
       );
-      return (res?.MediaContainer?.Metadata ?? [])
-        .map((item) => mapPlexItem(base, token, item))
+      const items = (res?.MediaContainer?.Metadata ?? [])
+        .map((item) => mapPlexItem(base, token, item, server))
         .filter((m) => Boolean(m && m.title));
+      const total = res?.MediaContainer?.totalSize ?? res?.MediaContainer?.size ?? items.length;
+      return { items, total, hasMore: offset + items.length < total };
     }
     const session = await ensureSession(server);
-    if (!session) return [];
+    if (!session) return { items: [], hasMore: false, total: 0 };
     const base = trimUrl(server.url);
-    const items = await proxiedGet<{ Items?: JellyfinItem[] }>(
-      `${base}/Users/${session.userId}/Items?ParentId=${libraryKey}&Recursive=true&IncludeItemTypes=Movie,Series&SortBy=DateCreated&SortOrder=Descending&Limit=${limit}&Fields=Overview,PrimaryImageAspectRatio,BasicSyncInfo,ImageTags,BackdropImageTags,ProductionYear,CommunityRating&api_key=${session.token}`
+    const params = new URLSearchParams({
+      ParentId: libraryKey,
+      Recursive: "true",
+      IncludeItemTypes: effectiveFilter === "movie" ? "Movie" : effectiveFilter === "tv" ? "Series" : "Movie,Series",
+      SortBy: sort === "title" ? "SortName" : sort === "rating" ? "CommunityRating" : "DateCreated",
+      SortOrder: sort === "title" ? "Ascending" : "Descending",
+      StartIndex: String(offset),
+      Limit: String(limit),
+      Fields: "Overview,PrimaryImageAspectRatio,BasicSyncInfo,ImageTags,BackdropImageTags,ProductionYear,CommunityRating,ProviderIds,DateCreated",
+      api_key: session.token
+    });
+    if (search) params.set("SearchTerm", search);
+    const payload = await proxiedGet<{ Items?: JellyfinItem[]; TotalRecordCount?: number }>(
+      `${base}/Users/${session.userId}/Items?${params.toString()}`
     );
-    return (items.Items ?? []).map((item) => mapItem(base, session.token, item)).filter((m) => Boolean(m && m.title));
-  } catch {
-    return [];
+    const items = (payload.Items ?? []).map((item) => mapItem(base, session.token, item, server)).filter((m) => Boolean(m && m.title));
+    const total = payload.TotalRecordCount ?? items.length;
+    return { items, total, hasMore: offset + items.length < total };
+  } catch (error) {
+    if (options.throwOnError) throw error;
+    return { items: [], hasMore: false, total: 0 };
   }
 }

@@ -3,6 +3,7 @@
     <string name="home">בית</string>
     <string name="search">חיפוש</string>
     <string name="watchlist">רשימת צפייה</string>
+    <string name="nav_library">רשימת צפייה</string>
     <string name="settings">הגדרות</string>
     <string name="general">כללי</string>
     <string name="movies">סרטים</string>
@@ -240,4 +241,6 @@
     <string name="settings_trakt_desc">סנכרון היסטוריית צפייה, התקדמות ורשימת צפייה</string>
     <string name="mdblist_key_help">השג את מפתח ה-API שלך מ-mdblist.com/preferences</string>
     <string name="settings_telegram_desc">חפש קובצי וידאו בערוצים ובקבוצות שלך</string>
+    <string name="home_top10_movies_today">10 הסרטים הנצפים היום</string>
+    <string name="home_top10_shows_today">10 הסדרות הנצפות היום</string>
 </resources>

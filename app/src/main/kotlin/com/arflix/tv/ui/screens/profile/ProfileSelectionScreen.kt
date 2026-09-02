@@ -1,15 +1,12 @@
 package com.arflix.tv.ui.screens.profile
 
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,9 +15,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,11 +28,13 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -42,13 +44,20 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.util.lerp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -56,13 +65,14 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import com.arflix.tv.R
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.ui.components.ProfileAvatarVisual
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.util.LocalDeviceType
-import androidx.compose.ui.res.stringResource
-import com.arflix.tv.R
+import com.arflix.tv.util.PinUtil
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -78,12 +88,47 @@ fun ProfileSelectionScreen(
     // Create focus requesters for each profile slot (max 5 profiles + 1 add button)
     val focusRequesters = remember { List(6) { FocusRequester() } }
 
-    // Track if profile was selected in this session to trigger navigation
-    var navigateTriggered by remember { mutableStateOf(false) }
-
     // Guard against Enter key events from previous screen (TV only — touch devices don't need this)
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
     var isReadyForInput by remember { mutableStateOf(isTouchDevice) }
+
+    val density = LocalDensity.current
+    val verticalCenterOffsetDp = if (isTouchDevice) 28.dp else 0.dp
+    val verticalCenterOffsetPx = with(density) { verticalCenterOffsetDp.toPx() }
+
+    // Coordinate tracking & 3-step transition states
+    var rootCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val avatarCoordinatesMap = remember { mutableMapOf<String, LayoutCoordinates>() }
+    var transitionProfile by remember { mutableStateOf<Profile?>(null) }
+    var initialDeltaOffset by remember { mutableStateOf(Offset.Zero) }
+    var isTransitioning by remember { mutableStateOf(false) }
+    var minAnimationCompleted by remember { mutableStateOf(false) }
+
+    val transitionProgress by animateFloatAsState(
+        targetValue = if (isTransitioning) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = 420,
+            easing = FastOutSlowInEasing
+        ),
+        label = "profile_transition_progress"
+    )
+
+    fun startTransitionForProfile(profile: Profile) {
+        val coords = avatarCoordinatesMap[profile.id]
+        val root = rootCoordinates
+        if (coords != null && root != null && root.isAttached && coords.isAttached) {
+            val avatarCenterInRoot = root.localPositionOf(coords, Offset(coords.size.width / 2f, coords.size.height / 2f))
+            val rootCenter = Offset(root.size.width / 2f, root.size.height / 2f + verticalCenterOffsetPx)
+            initialDeltaOffset = Offset(
+                x = avatarCenterInRoot.x - rootCenter.x,
+                y = avatarCenterInRoot.y - rootCenter.y
+            )
+        } else {
+            initialDeltaOffset = Offset.Zero
+        }
+        transitionProfile = profile
+        isTransitioning = true
+    }
 
     // Set ready for input after a short delay to ignore stray key events (TV only)
     LaunchedEffect(Unit) {
@@ -102,13 +147,24 @@ fun ProfileSelectionScreen(
         }
     }
 
-    // Navigate when activeProfile changes after user selection
-    LaunchedEffect(uiState.activeProfile?.id, uiState.isSwitchingProfile) {
+    // Guarantee full completion of the expand/center animation before moving to Home
+    LaunchedEffect(isTransitioning) {
+        if (isTransitioning) {
+            minAnimationCompleted = false
+            delay(620)
+            minAnimationCompleted = true
+        }
+    }
+
+    // Navigate to Home once the expand-to-center animation has finished AND profile data loading is complete
+    LaunchedEffect(isTransitioning, minAnimationCompleted, uiState.isSwitchingProfile, uiState.activeProfile?.id) {
         if (
-            navigateTriggered &&
+            isTransitioning &&
+            minAnimationCompleted &&
+            !uiState.isSwitchingProfile &&
             uiState.activeProfile != null &&
             !uiState.isManageMode &&
-            !uiState.isSwitchingProfile
+            !uiState.showPinDialog
         ) {
             onProfileSelected()
         }
@@ -117,7 +173,6 @@ fun ProfileSelectionScreen(
     // Request focus on the first available item (profile or add button)
     LaunchedEffect(uiState.isLoading) {
         if (!uiState.isLoading) {
-            // Brief delay for layout, with retry logic
             delay(50)
             val targetIndex = if (uiState.profiles.isNotEmpty()) {
                 uiState.activeProfile?.let { active ->
@@ -129,7 +184,6 @@ fun ProfileSelectionScreen(
             try {
                 focusRequesters.getOrNull(targetIndex)?.requestFocus()
             } catch (e: IllegalStateException) {
-                // Retry after a bit more time
                 delay(100)
                 try {
                     focusRequesters.getOrNull(targetIndex)?.requestFocus()
@@ -140,170 +194,239 @@ fun ProfileSelectionScreen(
         }
     }
 
+    val handleProfileClick: (Profile) -> Unit = { profile ->
+        if (!uiState.isSwitchingProfile && !isTransitioning && (isTouchDevice || isReadyForInput)) {
+            if (uiState.isManageMode) {
+                viewModel.showEditDialog(profile)
+            } else if (profile.isLocked && !profile.pin.isNullOrEmpty()) {
+                viewModel.selectProfileWithLockCheck(profile)
+            } else {
+                startTransitionForProfile(profile)
+                viewModel.selectProfile(profile)
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(appBackgroundDark()),
+            .background(appBackgroundDark())
+            .onGloballyPositioned { rootCoordinates = it },
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Title
-            Text(
-                text = "ARVIO",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                letterSpacing = 6.sp
-            )
+        val backgroundAlpha = if (isTransitioning) {
+            (1f - transitionProgress * 2.5f).coerceIn(0f, 1f)
+        } else 1f
 
-            Spacer(modifier = Modifier.height(16.dp))
+        if (backgroundAlpha > 0f) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .offset(y = verticalCenterOffsetDp)
+                    .graphicsLayer { alpha = backgroundAlpha }
+            ) {
+                // Title
+                Text(
+                    text = "ARVIO",
+                    fontSize = 32.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    letterSpacing = 6.sp
+                )
 
-            Text(
-                text = if (uiState.isManageMode) stringResource(R.string.manage_profiles) else stringResource(R.string.whos_watching),
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Normal,
-                color = Color.White.copy(alpha = 0.8f)
-            )
+                Spacer(modifier = Modifier.height(16.dp))
 
-            Spacer(modifier = Modifier.height(48.dp))
+                Text(
+                    text = if (uiState.isManageMode) stringResource(R.string.manage_profiles) else stringResource(R.string.whos_watching),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = Color.White.copy(alpha = 0.8f)
+                )
 
-            // Profile avatars row
-            val avatarSize = if (isTouchDevice) 90.dp else 120.dp
-            val avatarSpacing = if (isTouchDevice) 16.dp else 24.dp
+                Spacer(modifier = Modifier.height(48.dp))
 
-            if (uiState.isLoading) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(avatarSize),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = stringResource(R.string.loading_profile),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.White.copy(alpha = 0.72f),
-                        textAlign = TextAlign.Center
-                    )
-                }
-            } else if (isTouchDevice) {
-                // Mobile: use LazyRow so profiles scroll horizontally on small screens
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(avatarSpacing, Alignment.CenterHorizontally),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    itemsIndexed(uiState.profiles) { index, profile ->
-                        ProfileAvatar(
-                            profile = profile,
-                            isManageMode = uiState.isManageMode,
-                            isActiveProfile = uiState.activeProfile?.id == profile.id,
-                            avatarSize = avatarSize,
-                            modifier = Modifier.focusRequester(focusRequesters[index]),
-                            onClick = {
-                                if (uiState.isSwitchingProfile) return@ProfileAvatar
-                                if (uiState.isManageMode) {
-                                    viewModel.showEditDialog(profile)
-                                } else {
-                                    navigateTriggered = true
-                                    viewModel.selectProfileWithLockCheck(profile)
-                                }
-                            },
-                            onFocus = { viewModel.preloadForProfile(profile) },
-                            onDelete = { viewModel.deleteProfile(profile) }
+                // Profile avatars row
+                val avatarSize = if (isTouchDevice) 90.dp else 120.dp
+                val avatarSpacing = if (isTouchDevice) 16.dp else 24.dp
+
+                if (uiState.isLoading) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(avatarSize),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = stringResource(R.string.loading_profile),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White.copy(alpha = 0.72f),
+                            textAlign = TextAlign.Center
                         )
                     }
+                } else if (isTouchDevice) {
+                    // Mobile: use LazyRow so profiles scroll horizontally on small screens
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(avatarSpacing, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        itemsIndexed(uiState.profiles) { index, profile ->
+                            ProfileAvatar(
+                                profile = profile,
+                                isManageMode = uiState.isManageMode,
+                                isActiveProfile = uiState.activeProfile?.id == profile.id,
+                                avatarSize = avatarSize,
+                                isTransitionSelected = isTransitioning && transitionProfile?.id == profile.id,
+                                modifier = Modifier.focusRequester(focusRequesters[index]),
+                                onAvatarPositioned = { coords ->
+                                    avatarCoordinatesMap[profile.id] = coords
+                                },
+                                onClick = { handleProfileClick(profile) },
+                                onFocus = { viewModel.preloadForProfile(profile) },
+                                onDelete = { viewModel.deleteProfile(profile) }
+                            )
+                        }
 
-                    // Add profile button (max 5 profiles)
-                    if (uiState.profiles.size < 5) {
-                        item {
+                        // Add profile button (max 5 profiles)
+                        if (uiState.profiles.size < 5) {
+                            item {
+                                AddProfileButton(
+                                    avatarSize = avatarSize,
+                                    modifier = Modifier.focusRequester(focusRequesters[uiState.profiles.size]),
+                                    onClick = { if (!isTransitioning) viewModel.showAddDialog() }
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // TV: original Row layout with fixed spacing
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        uiState.profiles.forEachIndexed { index, profile ->
+                            ProfileAvatar(
+                                profile = profile,
+                                isManageMode = uiState.isManageMode,
+                                isActiveProfile = uiState.activeProfile?.id == profile.id,
+                                avatarSize = avatarSize,
+                                isTransitionSelected = isTransitioning && transitionProfile?.id == profile.id,
+                                modifier = Modifier.focusRequester(focusRequesters[index]),
+                                onAvatarPositioned = { coords ->
+                                    avatarCoordinatesMap[profile.id] = coords
+                                },
+                                onClick = { handleProfileClick(profile) },
+                                onFocus = { viewModel.preloadForProfile(profile) },
+                                onDelete = { viewModel.deleteProfile(profile) }
+                            )
+
+                            if (index < uiState.profiles.size - 1 || uiState.profiles.size < 5) {
+                                Spacer(modifier = Modifier.width(avatarSpacing))
+                            }
+                        }
+
+                        // Add profile button (max 5 profiles)
+                        if (uiState.profiles.size < 5) {
                             AddProfileButton(
                                 avatarSize = avatarSize,
                                 modifier = Modifier.focusRequester(focusRequesters[uiState.profiles.size]),
-                                onClick = { viewModel.showAddDialog() }
+                                onClick = { if (isReadyForInput && !uiState.isSwitchingProfile && !isTransitioning) viewModel.showAddDialog() }
                             )
                         }
                     }
                 }
-            } else {
-                // TV: original Row layout with fixed spacing
-                Row(
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    uiState.profiles.forEachIndexed { index, profile ->
-                        ProfileAvatar(
-                            profile = profile,
-                            isManageMode = uiState.isManageMode,
-                            isActiveProfile = uiState.activeProfile?.id == profile.id,
-                            avatarSize = avatarSize,
-                            modifier = Modifier.focusRequester(focusRequesters[index]),
-                            onClick = {
-                                // Guard against stray Enter key events from previous screen
-                                if (!isReadyForInput || uiState.isSwitchingProfile) return@ProfileAvatar
 
-                                if (uiState.isManageMode) {
-                                    viewModel.showEditDialog(profile)
-                                } else {
-                                    navigateTriggered = true
-                                    viewModel.selectProfileWithLockCheck(profile)
-                                }
-                            },
-                            onFocus = { viewModel.preloadForProfile(profile) },
-                            onDelete = { viewModel.deleteProfile(profile) }
-                        )
+                Spacer(modifier = Modifier.height(48.dp))
 
-                        if (index < uiState.profiles.size - 1 || uiState.profiles.size < 5) {
-                            Spacer(modifier = Modifier.width(avatarSpacing))
-                        }
-                    }
-
-                    // Add profile button (max 5 profiles)
-                    if (uiState.profiles.size < 5) {
-                        AddProfileButton(
-                            avatarSize = avatarSize,
-                            modifier = Modifier.focusRequester(focusRequesters[uiState.profiles.size]),
-                            onClick = { if (isReadyForInput && !uiState.isSwitchingProfile) viewModel.showAddDialog() }
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(48.dp))
-
-            // Manage Profiles button
-            ManageProfilesButton(
-                isManageMode = uiState.isManageMode,
-                onClick = {
-                    if ((isTouchDevice || isReadyForInput) && !uiState.isSwitchingProfile) {
-                        viewModel.toggleManageMode()
-                    }
-                }
-            )
-
-            if (!isCloudConnected) {
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Cloud connect button — focusable on TV, tappable on mobile
-                CloudConnectButton(
+                // Manage Profiles button
+                ManageProfilesButton(
+                    isManageMode = uiState.isManageMode,
                     onClick = {
-                        if ((isTouchDevice || isReadyForInput) && !uiState.isSwitchingProfile) {
-                            onConnectCloud()
+                        if ((isTouchDevice || isReadyForInput) && !uiState.isSwitchingProfile && !isTransitioning) {
+                            viewModel.toggleManageMode()
                         }
                     }
                 )
-            }
 
-            if (uiState.isSwitchingProfile) {
-                Spacer(modifier = Modifier.height(18.dp))
-                Text(
-                    text = stringResource(R.string.loading_profile),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color.White.copy(alpha = 0.72f)
+                if (!isCloudConnected) {
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Cloud connect button — focusable on TV, tappable on mobile
+                    CloudConnectButton(
+                        onClick = {
+                            if ((isTouchDevice || isReadyForInput) && !uiState.isSwitchingProfile && !isTransitioning) {
+                                onConnectCloud()
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        // ── 3-Step Profile Selection Transition Overlay ──
+        if (transitionProfile != null) {
+            val targetScale = if (isTouchDevice) 1.85f else 1.70f
+            val currentScale = lerp(1f, targetScale, transitionProgress)
+            val currentOffsetX = lerp(initialDeltaOffset.x, 0f, transitionProgress)
+            val currentOffsetY = lerp(initialDeltaOffset.y, 0f, transitionProgress)
+            val avatarBaseSize = if (isTouchDevice) 90.dp else 120.dp
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset(y = verticalCenterOffsetDp),
+                contentAlignment = Alignment.Center
+            ) {
+                // The enlarged profile card: centered directly at (0, 0)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .graphicsLayer {
+                            translationX = currentOffsetX
+                            translationY = currentOffsetY
+                            scaleX = currentScale
+                            scaleY = currentScale
+                        }
+                        .size(avatarBaseSize)
+                        .clip(RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    ProfileAvatarVisual(
+                        profile = transitionProfile!!,
+                        letterFontSize = 48.sp,
+                        iconPadding = 12.dp
+                    )
+                }
+
+                // Loading ring: appears only if loading is still in progress once the card is centered
+                val showSpinner by produceState(initialValue = false, key1 = isTransitioning, key2 = uiState.isSwitchingProfile) {
+                    if (isTransitioning && uiState.isSwitchingProfile) {
+                        delay(200) // Smooth delay so instantaneous cached data doesn't flash the spinner
+                        value = isTransitioning && uiState.isSwitchingProfile
+                    } else {
+                        value = false
+                    }
+                }
+
+                val spinnerAlpha by animateFloatAsState(
+                    targetValue = if (transitionProgress >= 0.95f && showSpinner) 1f else 0f,
+                    animationSpec = tween(220),
+                    label = "spinner_alpha"
                 )
+
+                if (spinnerAlpha > 0f) {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .offset(y = (avatarBaseSize * targetScale / 2) + 26.dp)
+                            .size(26.dp)
+                            .graphicsLayer { alpha = spinnerAlpha },
+                        color = Color.White.copy(alpha = 0.85f),
+                        strokeWidth = 2.5.dp,
+                        trackColor = Color.White.copy(alpha = 0.12f)
+                    )
+                }
             }
         }
 
@@ -360,7 +483,13 @@ fun ProfileSelectionScreen(
             if (uiState.pinDialogMode == "verify") {
                 PinEntryDialog(
                     title = stringResource(R.string.enter_pin_to_unlock),
-                    onPinConfirmed = { pin -> viewModel.verifyPinAndSelectProfile(pin) },
+                    onPinConfirmed = { pin ->
+                        val pending = uiState.pendingProfileForPin
+                        if (pending != null && PinUtil.verifyPin(pin, pending.pin)) {
+                            startTransitionForProfile(pending)
+                        }
+                        viewModel.verifyPinAndSelectProfile(pin)
+                    },
                     onDismiss = { viewModel.hidePinDialog() },
                     isSetup = false,
                     pinError = uiState.pinError
@@ -384,7 +513,9 @@ private fun ProfileAvatar(
     isManageMode: Boolean,
     isActiveProfile: Boolean = false,
     avatarSize: Dp = 120.dp,
+    isTransitionSelected: Boolean = false,
     modifier: Modifier = Modifier,
+    onAvatarPositioned: (LayoutCoordinates) -> Unit = {},
     onClick: () -> Unit,
     onFocus: () -> Unit = {},
     onDelete: () -> Unit
@@ -399,9 +530,14 @@ private fun ProfileAvatar(
     val isTouchDevice = LocalDeviceType.current.isTouchDevice()
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
+        modifier = modifier.graphicsLayer {
+            alpha = if (isTransitionSelected) 0f else 1f
+        }
     ) {
-        Box(contentAlignment = Alignment.Center) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.onGloballyPositioned { onAvatarPositioned(it) }
+        ) {
             val avatarContent: @Composable () -> Unit = {
                 ProfileAvatarVisual(
                     profile = profile,

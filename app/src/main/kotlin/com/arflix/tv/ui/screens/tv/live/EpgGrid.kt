@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.tv.live
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -96,8 +97,8 @@ fun EpgGrid(
     focusEpgSignal: Int = 0,
     focusMode: EpgGridFocusMode = EpgGridFocusMode.ChannelList,
     scrollResetKey: String = "",
-    onChannelSelect: (EnrichedChannel, IptvProgram?) -> Unit,
-    onProgramSelect: (EnrichedChannel, IptvProgram?) -> Unit = onChannelSelect,
+    onChannelSelect: (EnrichedChannel) -> Unit,
+    onProgramSelect: (EnrichedChannel, IptvProgram?) -> Unit = { channel, _ -> onChannelSelect(channel) },
     onChannelFocused: (EnrichedChannel) -> Unit = {},
     onChannelFavoriteToggle: (String) -> Unit,
     favorites: Set<String>,
@@ -279,6 +280,15 @@ fun EpgGrid(
         channelListState.scrollToItem(idx)
         runCatching { selectedChannelFocusRequester.requestFocus() }
         handledSelectedFocusSignal = focusSelectedChannelSignal
+    }
+
+    BackHandler {
+        if (focusMode == EpgGridFocusMode.Epg) {
+            onExitEpg(selectedChannel)
+            runCatching { selectedChannelFocusRequester.requestFocus() }
+        } else {
+            onMoveLeftFromChannels()
+        }
     }
 
     var handledEpgFocusSignal by remember { mutableIntStateOf(0) }
@@ -477,7 +487,7 @@ fun EpgGrid(
                                 nowNext = nowNext[ch.id],
                                 isFavorite = ch.id in favorites,
                                 stripe = idx % 2 == 1,
-                                onClick = { onChannelSelect(ch, null) },
+                                onClick = { onChannelSelect(ch) },
                                 onFocused = {
                                     val pendingId = pendingChannelFocusId
                                     if (pendingId != null && pendingId != ch.id) {
@@ -722,11 +732,12 @@ private fun ProgramsRow(
                     focusable = isFocusable,
                     isCatchupSupported = isCatchupSupported,
                     onClick = {
-                        if (placementIsPast && isCatchupSupported) {
-                            onClick(placement.program)
-                        } else if (!placementIsPast) {
-                            onClick(null)
-                        }
+                        epgProgramActionTarget(
+                            program = placement.program,
+                            isPast = placementIsPast,
+                            isLive = placementIsNow,
+                            isCatchupSupported = isCatchupSupported,
+                        )?.let(onClick)
                     },
                     onFocused = onFocused,
                     onMoveLeft = {
@@ -847,6 +858,17 @@ private data class ProgramFocusTarget(val startMin: Int, val endMin: Int) {
         anchorStartMin > endMin -> anchorStartMin - endMin
         else -> 0
     }
+}
+
+internal fun epgProgramActionTarget(
+    program: IptvProgram,
+    isPast: Boolean,
+    isLive: Boolean,
+    isCatchupSupported: Boolean,
+): IptvProgram? = when {
+    isPast && isCatchupSupported -> program
+    isLive -> program
+    else -> null
 }
 
 private fun ProgramPlacement.isCatchupSupported(channel: EnrichedChannel, nowMillis: Long): Boolean {

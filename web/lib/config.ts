@@ -10,6 +10,7 @@ export const config = {
   resolverUrl: envValue(process.env.NEXT_PUBLIC_ARVIO_RESOLVER_URL, ""),
   traktClientId: process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID ?? "",
   traktClientSecret: envValue(process.env.NEXT_PUBLIC_TRAKT_CLIENT_SECRET, ""),
+  simklClientId: process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID ?? process.env.SIMKL_CLIENT_ID ?? "",
   allowNetlifyMediaProxy: envValue(process.env.NEXT_PUBLIC_ALLOW_NETLIFY_MEDIA_PROXY, "false") === "true",
   // Web subscription: the Ko-fi membership page the paywall links to, and a
   // master switch to enable the paywall (off by default so nothing changes for
@@ -25,8 +26,12 @@ export function hasSupabaseConfig() {
   return config.supabaseUrl.startsWith("https://") && config.supabaseAnonKey.length > 40;
 }
 
+export function hasNetlifyBackendUrl() {
+  return config.netlifyBackendUrl.startsWith("https://");
+}
+
 export function hasNetlifyBackendConfig() {
-  return config.netlifyBackendUrl.startsWith("https://") && config.appAnonKey.length > 40;
+  return hasNetlifyBackendUrl() && config.appAnonKey.length > 40;
 }
 
 export function hasResolverConfig() {
@@ -34,7 +39,12 @@ export function hasResolverConfig() {
 }
 
 export function hasTraktConfig() {
-  return config.traktClientId.length > 10 && !config.traktClientId.startsWith("__");
+  return hasNetlifyBackendConfig() ||
+    (config.traktClientId.length > 10 && !config.traktClientId.startsWith("__"));
+}
+
+export function hasSimklConfig() {
+  return hasNetlifyBackendUrl() || (config.simklClientId.length > 10 && !config.simklClientId.startsWith("__"));
 }
 
 export function getAuthPortalUrl(): string {
