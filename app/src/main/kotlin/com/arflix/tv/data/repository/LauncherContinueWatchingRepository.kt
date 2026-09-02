@@ -8,6 +8,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.BaseColumns
+import android.util.LruCache
 import androidx.annotation.RequiresApi
 import androidx.tvprovider.media.tv.Channel
 import androidx.tvprovider.media.tv.ChannelLogoUtils
@@ -45,6 +46,8 @@ class LauncherContinueWatchingRepository @Inject constructor(
     private val streamRepository: StreamRepository,
     private val mediaRepository: MediaRepository
 ) {
+
+    private val titleCache = LruCache<String, String>(200)
     companion object {
         private const val TAG = "LauncherCW"
         private const val CHANNEL_INTERNAL_ID = "arvio_continue_watching_channel"
