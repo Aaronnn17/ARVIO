@@ -2824,6 +2824,29 @@ class MediaRepository @Inject constructor(
     }
 
     /**
+     * Lightweight calls for LauncherContinueWatchingRepository to avoid heavy IMDb rating/caching tasks.
+     */
+    suspend fun getLightweightMovieTitle(movieId: Int): String? {
+        return runCatching {
+            tmdbApi.getMovieDetails(movieId, apiKey, language = contentLanguage).title
+        }.getOrNull()
+    }
+
+    suspend fun getLightweightTvTitle(tvId: Int): String? {
+        return runCatching {
+            // TMDB uses 'name' for series instead of 'title'
+            tmdbApi.getTvDetails(tvId, apiKey, language = contentLanguage).name
+        }.getOrNull()
+    }
+
+    suspend fun getLightweightEpisodeTitle(tvId: Int, seasonNumber: Int, episodeNumber: Int): String? {
+        return runCatching {
+            val episodes = getSeasonEpisodes(tvId, seasonNumber)
+            episodes.firstOrNull { it.episodeNumber == episodeNumber }?.name
+        }.getOrNull()
+    }
+
+    /**
      * Get the TMDB collection (franchise) reference for a movie.
      * Calls /movie/{id} directly to access the `belongs_to_collection` field,
      * which is discarded by getMovieDetails() → toMediaItem().
