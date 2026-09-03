@@ -50,7 +50,8 @@ class LauncherContinueWatchingRepository @Inject constructor(
     private val traktRepository: TraktRepository,
     private val remoteSyncManager: com.arflix.tv.data.repository.sync.RemoteSyncManager,
     private val watchHistoryRepository: WatchHistoryRepository,
-    private val streamRepository: StreamRepository
+    private val streamRepository: StreamRepository,
+    private val mediaRepository: MediaRepository
 ) {
 
     private val titleCache = LruCache<String, String>(200)
