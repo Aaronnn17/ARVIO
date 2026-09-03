@@ -2907,7 +2907,7 @@ class MediaRepository @Inject constructor(
      * Get movie details (cached)
      */
     suspend fun getMovieDetails(movieId: Int): MediaItem {
-        val cacheKey = "movie_$movieId"
+        val cacheKey = "movie_${movieId}_${contentLanguage ?: "default"}"
         getFromCache(detailsCache, cacheKey)?.let { cached ->
             if (movieId < 0 && cached.isHomeServer) return cached
             if (cacheKey in fullDetailsCacheKeys) {
@@ -2937,7 +2937,7 @@ class MediaRepository @Inject constructor(
      * Get TV show details (cached)
      */
     suspend fun getTvDetails(tvId: Int): MediaItem {
-        val cacheKey = "tv_$tvId"
+        val cacheKey = "tv_${tvId}_${contentLanguage ?: "default"}"
         getFromCache(detailsCache, cacheKey)?.let { cached ->
             if (tvId < 0 && cached.isHomeServer) return cached
             if (cacheKey in fullDetailsCacheKeys) {
