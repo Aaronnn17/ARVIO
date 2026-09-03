@@ -1164,7 +1164,7 @@ class HomeViewModel @Inject constructor(
         val semaphore = kotlinx.coroutines.sync.Semaphore(4)
         kotlinx.coroutines.coroutineScope {
             items.map { item ->
-                kotlinx.coroutines.async {
+                async {
                     semaphore.withPermit {
                         val localizedTitle = runCatching {
                             if (item.mediaType.name == "TV") {
