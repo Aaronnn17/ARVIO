@@ -1147,7 +1147,7 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun loadContinueWatchingCache(): List<ContinueWatchingItem> = runCatching {
+    private suspend fun loadContinueWatchingCache(): List<ContinueWatchingItem> = runCatching {
         val file = continueWatchingCacheFile()
         if (!file.exists() || file.length() > maxContinueWatchingCacheBytes) return emptyList()
         val json = file.readText()
@@ -1156,7 +1156,40 @@ class HomeViewModel @Inject constructor(
             .getParameterized(MutableList::class.java, ContinueWatchingItem::class.java)
             .type
         val parsed: List<ContinueWatchingItem> = gson.fromJson(json, type) ?: emptyList()
-        parsed.filter { it.id > 0 && it.title.isNotBlank() }.take(Constants.MAX_CONTINUE_WATCHING)
+        
+        // We retrieve the items from the cache
+        val items = parsed.filter { it.id > 0 && it.title.isNotBlank() }.take(Constants.MAX_CONTINUE_WATCHING)
+
+        // We translate them on the fly before sending them to the screen
+        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+        kotlinx.coroutines.coroutineScope {
+            items.map { item ->
+                kotlinx.coroutines.async {
+                    semaphore.withPermit {
+                        val localizedTitle = runCatching {
+                            if (item.mediaType.name == "TV") {
+                                mediaRepository.getLightweightTvTitle(item.id)
+                            } else {
+                                mediaRepository.getLightweightMovieTitle(item.id)
+                            }
+                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
+
+                        val resolvedEpisodeTitle = if (item.mediaType.name == "TV" && item.season != null && item.episode != null) {
+                            runCatching {
+                                mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
+                            }.getOrNull()
+                        } else {
+                            null
+                        } ?: item.episodeTitle
+
+                        item.copy(
+                            title = localizedTitle,
+                            episodeTitle = resolvedEpisodeTitle
+                        )
+                    }
+                }
+            }.awaitAll()
+        }
     }.getOrDefault(emptyList())
 
     private fun loadCategoriesCache(): List<Category> {
