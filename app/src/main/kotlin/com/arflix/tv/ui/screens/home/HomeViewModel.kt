@@ -3048,10 +3048,41 @@ class HomeViewModel @Inject constructor(
                             persistContinueWatchingCache(freshContinueWatching)
                         }
                         val mergedContinueWatching = mergeContinueWatchingResumeData(freshContinueWatching)
+                        
+                        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+                        val translatedItems = kotlinx.coroutines.coroutineScope {
+                            mergedContinueWatching.map { item ->
+                                async {
+                                    semaphore.withPermit {
+                                        val localizedTitle = runCatching {
+                                            if (item.mediaType.name == "TV") {
+                                                mediaRepository.getLightweightTvTitle(item.id)
+                                            } else {
+                                                mediaRepository.getLightweightMovieTitle(item.id)
+                                            }
+                                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
+
+                                        val resolvedEpisodeTitle = if (item.mediaType.name == "TV" && item.season != null && item.episode != null) {
+                                            runCatching {
+                                                mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
+                                            }.getOrNull()
+                                        } else {
+                                            null
+                                        } ?: item.episodeTitle
+
+                                        item.copy(
+                                            title = localizedTitle,
+                                            episodeTitle = resolvedEpisodeTitle
+                                        ).toMediaItem()
+                                    }
+                                }
+                            }.awaitAll()
+                        }
+
                         val continueWatchingCategory = Category(
                             id = "continue_watching",
                             title = "Continue Watching",
-                            items = mergedContinueWatching.map { it.toMediaItem() }
+                            items = translatedItems
                         )
                         continueWatchingCategory.items.forEach { mediaRepository.cacheItem(it) }
                         lastContinueWatchingItems = continueWatchingCategory.items
