@@ -4254,11 +4254,41 @@ class HomeViewModel @Inject constructor(
         }
 
         val repairedItems = repairContinueWatchingMetadataIfNeeded(items)
-        return applyContinueWatchingDismissals(sanitizeContinueWatchingItems(repairedItems))
+        val finalItems = applyContinueWatchingDismissals(sanitizeContinueWatchingItems(repairedItems))
             .filter { item ->
                 if (useRemoteSync) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
+
+        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+        return kotlinx.coroutines.coroutineScope {
+            finalItems.map { item ->
+                async {
+                    semaphore.withPermit {
+                        val localizedTitle = runCatching {
+                            if (item.mediaType.name == "TV") {
+                                mediaRepository.getLightweightTvTitle(item.id)
+                            } else {
+                                mediaRepository.getLightweightMovieTitle(item.id)
+                            }
+                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
+
+                        val resolvedEpisodeTitle = if (item.mediaType.name == "TV" && item.season != null && item.episode != null) {
+                            runCatching {
+                                mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
+                            }.getOrNull()
+                        } else {
+                            null
+                        } ?: item.episodeTitle
+
+                        item.copy(
+                            title = localizedTitle,
+                            episodeTitle = resolvedEpisodeTitle
+                        )
+                    }
+                }
+            }.awaitAll()
+        }
     }
 
     private suspend fun preloadStartupContinueWatchingItems(): List<ContinueWatchingItem> {
