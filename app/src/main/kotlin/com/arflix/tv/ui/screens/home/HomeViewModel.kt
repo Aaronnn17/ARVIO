@@ -2305,36 +2305,7 @@ class HomeViewModel @Inject constructor(
                 fresh != instant &&
                 continueWatchingUpdates.revision == localUpdateRevision
             ) {
-                val semaphore = kotlinx.coroutines.sync.Semaphore(4)
-                val translatedFresh = kotlinx.coroutines.coroutineScope {
-                    fresh.map { item ->
-                        async {
-                            semaphore.withPermit {
-                                val localizedTitle = runCatching {
-                                    if (item.mediaType.name == "TV") {
-                                        mediaRepository.getLightweightTvTitle(item.id)
-                                    } else {
-                                        mediaRepository.getLightweightMovieTitle(item.id)
-                                    }
-                                }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
-
-                                val resolvedEpisodeTitle = if (item.mediaType.name == "TV" && item.season != null && item.episode != null) {
-                                    runCatching {
-                                        mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
-                                    }.getOrNull()
-                                } else {
-                                    null
-                                } ?: item.episodeTitle
-
-                                item.copy(
-                                    title = localizedTitle,
-                                    episodeTitle = resolvedEpisodeTitle
-                                )
-                            }
-                        }
-                    }.awaitAll()
-                }
-                publishContinueWatching(translatedFresh)
+                publishContinueWatching(fresh)
             } else if (cached.isEmpty() && instant.isEmpty() && fresh.isEmpty()) {
                 publishContinueWatching(emptyList())
             }
@@ -2374,17 +2345,51 @@ class HomeViewModel @Inject constructor(
             }
             return
         }
-        withContext(Dispatchers.IO) {
-            persistContinueWatchingCache(items)
+
+        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+        val translatedItems = kotlinx.coroutines.coroutineScope {
+            items.map { item ->
+                async {
+                    semaphore.withPermit {
+                        val localizedTitle = runCatching {
+                            if (item.mediaType == com.arflix.tv.data.model.MediaType.TV) {
+                                mediaRepository.getLightweightTvTitle(item.id)
+                            } else {
+                                mediaRepository.getLightweightMovieTitle(item.id)
+                            }
+                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: item.title
+
+                        val resolvedEpisodeTitle = if (item.mediaType == com.arflix.tv.data.model.MediaType.TV && item.season != null && item.episode != null) {
+                            runCatching {
+                                mediaRepository.getLightweightEpisodeTitle(item.id, item.season, item.episode)
+                            }.getOrNull()
+                        } else {
+                            null
+                        } ?: item.episodeTitle
+
+                        item.copy(
+                            title = localizedTitle,
+                            episodeTitle = resolvedEpisodeTitle
+                        )
+                    }
+                }
+            }.awaitAll()
         }
+
+        withContext(Dispatchers.IO) {
+            persistContinueWatchingCache(translatedItems)
+        }
+        
         val continueWatchingCategory = Category(
             id = "continue_watching",
             title = "Continue Watching",
-            items = items.map { it.toMediaItem() }
+            items = translatedItems.map { it.toMediaItem() }
         )
+        
         continueWatchingCategory.items.forEach { mediaRepository.cacheItem(it) }
         lastContinueWatchingItems = continueWatchingCategory.items
         lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
+        
         withContext(Dispatchers.Main) {
             val current = _uiState.value.categories.toMutableList()
             val cwIdx = current.indexOfFirst { it.id == "continue_watching" }
