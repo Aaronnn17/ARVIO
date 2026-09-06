@@ -89,6 +89,8 @@ import androidx.tv.foundation.lazy.list.TvLazyListState
 import androidx.tv.foundation.lazy.list.rememberTvLazyListState
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
+import com.arflix.tv.data.model.IptvVodSourceIds
+import com.arflix.tv.data.model.isDirectStreamUrl
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.theme.ArflixTypography
@@ -1334,8 +1336,8 @@ private fun presentSource(stream: StreamSource, unknownSourceLabel: String): Sou
         addonLower.contains("alldebrid") ||
         searchBlob.contains("magnet:", ignoreCase = true)
 
-    val hasDirectHttpUrl = !stream.url.isNullOrBlank() && stream.url.startsWith("http", true)
-    val isIptvVod = stream.addonId == "iptv_xtream_vod" || addonLower.contains("iptv vod")
+    val hasDirectHttpUrl = isDirectStreamUrl(stream.url)
+    val isIptvVod = IptvVodSourceIds.isIptvVodAddonId(stream.addonId) || addonLower.contains("iptv vod")
     val isDebridReady = isDebridLikeSource(stream, searchBlob)
     val isReady = stream.behaviorHints?.cached == true || isDebridReady
 
@@ -1399,7 +1401,7 @@ private fun presentSource(stream: StreamSource, unknownSourceLabel: String): Sou
         qualityColor = qualityColor,
         sizeBytes = getSizeBytes(stream),
         sortCached = isReady,
-        sortDirect = !stream.url.isNullOrBlank() && stream.url.startsWith("http", true),
+        sortDirect = isDirectStreamUrl(stream.url),
         description = cleanStreamDescription(stream.description, rawTitle),
         bitrateLabel = StreamRegexes.BITRATE.find(stream.description.orEmpty())
             ?.let { "${it.groupValues[1]} Mbps" },

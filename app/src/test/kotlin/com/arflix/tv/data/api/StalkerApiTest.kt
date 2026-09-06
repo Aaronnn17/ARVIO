@@ -710,4 +710,158 @@ class StalkerApiTest {
 
         assertNull(api.resolveStreamUrl("ffmpeg http://host/ch/9_"))
     }
+
+    // ── VOD ───────────────────────────────────────────────────────────────
+
+    @Test
+    fun `searchVod asks the portal instead of walking the catalog`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("action=get_ordered_list") -> """
+                    {"js":{"total_items":1,"max_page_items":14,"data":[
+                      {"id":"42","name":"Dune (2021)","cmd":"/media/dune.mpg","year":"2021","tmdb_id":"438631"}
+                    ]}}
+                """.trimIndent()
+                else -> null
+            }
+        }
+
+        val items = api.searchVod("Dune")
+
+        assertEquals(1, items.size)
+        assertEquals("Dune (2021)", items.first().name)
+        assertEquals("438631", items.first().tmdbId)
+        assertEquals(1, requests.size)
+        assertTrue(requests.single().contains("type=vod&action=get_ordered_list"))
+        assertTrue(requests.single().contains("search=Dune"))
+        assertTrue(requests.single().contains("category=*"))
+        // Matching must never cost a link: create_link happens at playback only.
+        assertTrue(requests.none { it.contains("action=create_link") })
+    }
+
+    @Test
+    fun `searchVod pages until the reported total is covered`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("&p=1") -> """
+                    {"js":{"total_items":3,"max_page_items":2,"data":[
+                      {"id":"1","name":"Alien","cmd":"/a.mpg"},
+                      {"id":"2","name":"Aliens","cmd":"/b.mpg"}
+                    ]}}
+                """.trimIndent()
+                url.contains("&p=2") -> """
+                    {"js":{"total_items":3,"max_page_items":2,"data":[
+                      {"id":"3","name":"Alien 3","cmd":"/c.mpg"}
+                    ]}}
+                """.trimIndent()
+                else -> null
+            }
+        }
+
+        val items = api.searchVod("Alien")
+
+        assertEquals(listOf("Alien", "Aliens", "Alien 3"), items.map { it.name })
+        assertEquals(2, requests.size)
+    }
+
+    @Test
+    fun `searchVod stops when a portal ignores paging and repeats itself`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=get_ordered_list")) {
+                """
+                {"js":{"total_items":999,"max_page_items":1,"data":[
+                  {"id":"7","name":"Heat","cmd":"/heat.mpg"}
+                ]}}
+                """.trimIndent()
+            } else {
+                null
+            }
+        }
+
+        val items = api.searchVod("Heat")
+
+        assertEquals(1, items.size)
+        // Page 2 repeats page 1 - no new ids means stop, not 999 requests.
+        assertEquals(2, requests.size)
+    }
+
+    @Test
+    fun `searchVod treats an HTML 200 answer as unsupported`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { "<html><body>Not found</body></html>" }
+
+        assertTrue(api.searchVod("Dune").isEmpty())
+    }
+
+    @Test
+    fun `searchVod skips entries without a playable cmd`() = runTest {
+        val api = stubApi(requests = mutableListOf()) {
+            """
+            {"js":{"total_items":2,"max_page_items":14,"data":[
+              {"id":"1","name":"No Command"},
+              {"id":"2","name":"Playable","cmd":"/ok.mpg"}
+            ]}}
+            """.trimIndent()
+        }
+
+        assertEquals(listOf("Playable"), api.searchVod("x").map { it.name })
+    }
+
+    @Test
+    fun `searchVod ignores a blank query without touching the portal`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { null }
+
+        assertTrue(api.searchVod("   ").isEmpty())
+        assertTrue(requests.isEmpty())
+    }
+
+    @Test
+    fun `resolveVodStreamUrl exchanges the cmd for a playable url`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("type=vod&action=create_link") ->
+                    """{"js":{"cmd":"ffmpeg http://cdn.example.com/movie.mp4"}}"""
+                else -> null
+            }
+        }
+
+        val url = api.resolveVodStreamUrl("/media/file_1.mpg")
+
+        assertEquals("http://cdn.example.com/movie.mp4", url)
+        assertTrue(requests.single().contains("cmd=%2Fmedia%2Ffile_1.mpg"))
+    }
+
+    @Test
+    fun `resolveVodStreamUrl returns null when the portal answers without a link`() = runTest {
+        val api = stubApi(requests = mutableListOf()) { """{"js":{"cmd":""}}""" }
+
+        assertNull(api.resolveVodStreamUrl("/media/file.mpg"))
+    }
+
+    @Test
+    fun `sanitizePlaybackCommand strips the player hint but keeps bare urls`() {
+        assertEquals(
+            "http://cdn.example.com/a.mp4",
+            StalkerApi.sanitizePlaybackCommand("ffmpeg http://cdn.example.com/a.mp4")
+        )
+        assertEquals(
+            "http://cdn.example.com/a.mp4",
+            StalkerApi.sanitizePlaybackCommand("auto http://cdn.example.com/a.mp4")
+        )
+        assertEquals(
+            "http://cdn.example.com/a.mp4",
+            StalkerApi.sanitizePlaybackCommand("  http://cdn.example.com/a.mp4  ")
+        )
+        assertNull(StalkerApi.sanitizePlaybackCommand(""))
+        assertNull(StalkerApi.sanitizePlaybackCommand(null))
+        assertNull(StalkerApi.sanitizePlaybackCommand("   "))
+        // A lone token carries no hint to strip and is returned unchanged; the
+        // caller drops it because it is not an http(s) URL.
+        assertEquals("ffmpeg", StalkerApi.sanitizePlaybackCommand("ffmpeg   "))
+    }
 }

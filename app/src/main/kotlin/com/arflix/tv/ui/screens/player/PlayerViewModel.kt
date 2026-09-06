@@ -16,6 +16,8 @@ import com.arflix.tv.data.model.AddonType
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.EpisodeIdentity
 import com.arflix.tv.data.model.SportsAddonCapabilities
+import com.arflix.tv.data.model.IptvVodSourceIds
+import com.arflix.tv.data.model.isDirectStreamUrl
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.repository.MediaRepository
@@ -79,7 +81,7 @@ import com.arflix.tv.ui.screens.player.common.PlaybackEpisodeKey
 import javax.inject.Inject
 
 private fun isSupplementalStream(stream: StreamSource): Boolean =
-    stream.addonId == "iptv_xtream_vod" || stream.addonId == HomeServerRepository.ADDON_ID
+    IptvVodSourceIds.isIptvVodAddonId(stream.addonId) || stream.addonId == HomeServerRepository.ADDON_ID
 
 private fun Addon.isVodStreamingAddon(): Boolean =
     isEnabled &&
@@ -529,7 +531,7 @@ class PlayerViewModel @Inject constructor(
         val url = source.url?.trim().orEmpty()
         return when {
             addonId == HomeServerRepository.ADDON_ID -> "home_server"
-            addonId == "iptv_xtream_vod" -> "iptv_vod"
+            IptvVodSourceIds.isIptvVodAddonId(addonId) -> "iptv_vod"
             url.startsWith("magnet:", ignoreCase = true) || !source.infoHash.isNullOrBlank() -> "p2p"
             url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true) -> "http"
             else -> "unknown"
@@ -1984,7 +1986,7 @@ class PlayerViewModel @Inject constructor(
         if (text.contains("x264") || text.contains("h264")) score += 20
         if (stream.behaviorHints?.cached == true || text.contains(" rd+")) score += 500
         if (stream.behaviorHints?.notWebReady == true) score -= 150
-        if (!stream.url.isNullOrBlank() && stream.url.startsWith("http", ignoreCase = true)) score += 100
+        if (isDirectStreamUrl(stream.url)) score += 100
         if (stream.url?.startsWith("magnet:", ignoreCase = true) == true) score -= 800
         score += streamRepository.getAddonHealthBias(stream.addonId)
 
