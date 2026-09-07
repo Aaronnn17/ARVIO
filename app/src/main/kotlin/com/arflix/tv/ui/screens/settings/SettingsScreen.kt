@@ -2318,7 +2318,11 @@ fun SettingsScreen(
                 uiState.iptvStalkerPortals.firstOrNull { it.id == stalkerEditId }
             } else null
 
-            val resolvedImportLiveTv = editingPlaylist?.importLiveTv ?: true
+            val resolvedImportLiveTv = if (showStalkerInput) {
+                editingStalkerPortal?.importLiveTv ?: true
+            } else {
+                editingPlaylist?.importLiveTv ?: true
+            }
             val resolvedImportVod = if (showStalkerInput) {
                 editingStalkerPortal?.importVod ?: true
             } else {
@@ -2384,7 +2388,7 @@ fun SettingsScreen(
                         editingIptvIndex = -1
                         stalkerEditId = null
                     },
-                    onSaveStalker = { name, portalUrl, macAddress, importVod, importSeries ->
+                    onSaveStalker = { name, portalUrl, macAddress, importLiveTv, importVod, importSeries ->
                         val id = stalkerEditId
                         if (id != null) {
                             viewModel.onEditStalkerPortal(
@@ -2392,6 +2396,7 @@ fun SettingsScreen(
                                 portalUrl.trim(),
                                 macAddress.trim(),
                                 name.trim(),
+                                importLiveTv,
                                 importVod,
                                 importSeries
                             )
@@ -2400,6 +2405,7 @@ fun SettingsScreen(
                                 portalUrl.trim(),
                                 macAddress.trim(),
                                 name.trim(),
+                                importLiveTv,
                                 importVod,
                                 importSeries
                             )

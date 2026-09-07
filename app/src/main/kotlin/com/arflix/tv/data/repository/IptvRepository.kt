@@ -335,8 +335,9 @@ data class StalkerPortalEntry(
     // as Gson JSON, and this class has parameters without defaults, so Kotlin
     // generates no no-arg constructor and Gson skips the default values. A
     // non-null `Boolean = true` would therefore come back as `false` for every
-    // portal saved before these fields existed - silently switching off VOD for
-    // existing users. Always read them as `importVod ?: true`.
+    // portal saved before these fields existed - silently switching off live TV
+    // and VOD for existing users. Always read them as `importLiveTv ?: true`.
+    val importLiveTv: Boolean? = true,
     val importVod: Boolean? = true,
     val importSeries: Boolean? = true
 )
@@ -874,6 +875,14 @@ class IptvRepository @Inject constructor(
                 channels = stalker.getChannels().map { it.copy(id = "stalker:${portal.id}:${it.id}") }
             )
         }.getOrElse { StalkerPortalChannels(portal.id, null, emptyList()) }
+    /**
+     * The portals that actually contribute channels. Mirrors what
+     * [fetchChannelsForPlaylistWithRetries] does for M3U playlists, where an
+     * `importLiveTv == false` entry stays configured but yields no channels:
+     * the portal keeps working as a VOD source, it just stops filling the guide.
+     */
+    internal fun activeStalkerLiveTvPortals(config: IptvConfig): List<StalkerPortalEntry> =
+        activeStalkerPortals(config).filter { it.importLiveTv ?: true }
 
     @Volatile
     private var xtreamSeriesLoadedAtMs: Long = 0L
@@ -2378,7 +2387,9 @@ class IptvRepository @Inject constructor(
             ensureCacheOwnership(profileId, config)
             cleanupIptvCacheDirectory()
             val activePlaylists = activePlaylists(config)
-            val stalkerPortals = activeStalkerPortals(config)
+            // Channel loading only: a portal switched off for live TV keeps
+            // serving movies and series, it just contributes no channels here.
+            val stalkerPortals = activeStalkerLiveTvPortals(config)
             if (activePlaylists.isEmpty() && stalkerPortals.isEmpty()) {
                 return@withContext IptvSnapshot(
                     channels = emptyList(),
@@ -3864,7 +3875,7 @@ class IptvRepository @Inject constructor(
 
     private suspend fun fetchFreshChannelsForStartup(config: IptvConfig): Pair<List<IptvChannel>, Map<String, com.arflix.tv.data.api.StalkerApi>>? {
         val activeLists = activePlaylists(config)
-        val stalkerPortals = activeStalkerPortals(config)
+        val stalkerPortals = activeStalkerLiveTvPortals(config)
         if (activeLists.isEmpty() && stalkerPortals.isEmpty()) return null
 
         // Stalker-only mode: no playlists configured.
@@ -10557,7 +10568,15 @@ class IptvRepository @Inject constructor(
                 portal.name.trim(),
                 portal.portalUrl.trim(),
                 portal.macAddress.trim(),
-                portal.enabled.toString()
+                portal.enabled.toString(),
+                // Same three entries the M3U playlist signature carries. The live
+                // switch has to be here: it decides which portals fill the channel
+                // list, so flipping it must invalidate the cached snapshot -
+                // otherwise the toggle appears to do nothing until the next reload
+                // happens for some unrelated reason.
+                (portal.importLiveTv ?: true).toString(),
+                (portal.importVod ?: true).toString(),
+                (portal.importSeries ?: true).toString()
             ).joinToString("|")
         }
 

@@ -321,12 +321,14 @@ class StalkerPortalSupportTest {
             "Portal 1",
             "http://a/",
             "00:1A:79:AA:BB:CC",
+            importLiveTv = false,
             importVod = false,
             importSeries = false
         )
         val normalized = StalkerPortalSupport.normalizeStalkerPortalEntry(portal, 0)
         assertThat(normalized).isNotNull()
-        assertThat(normalized!!.importVod).isFalse()
+        assertThat(normalized!!.importLiveTv).isFalse()
+        assertThat(normalized.importVod).isFalse()
         assertThat(normalized.importSeries).isFalse()
     }
 
@@ -335,8 +337,8 @@ class StalkerPortalSupportTest {
      * JSON, and [StalkerPortalEntry] has parameters without defaults, so Gson
      * constructs it without running Kotlin's default values. A stored portal
      * from before the import switches existed carries neither field - and it
-     * has to come back with both switched ON, not off, or every existing user
-     * silently loses Stalker movies and series after the update.
+     * has to come back with all three switched ON, not off, or every existing
+     * user silently loses Stalker live TV, movies and series after the update.
      */
     @Test
     fun decodeStalkerPortalsDefaultsImportFlagsToOnForLegacyJson() {
@@ -346,6 +348,7 @@ class StalkerPortalSupportTest {
         """.trimIndent()
         val decoded = StalkerPortalSupport.decodeStalkerPortals(json, maxPortals = 3)
         assertThat(decoded).hasSize(1)
+        assertThat(decoded[0].importLiveTv).isTrue()
         assertThat(decoded[0].importVod).isTrue()
         assertThat(decoded[0].importSeries).isTrue()
     }
@@ -355,10 +358,11 @@ class StalkerPortalSupportTest {
         val json = """
             [{"id":"stalker1","name":"Portal 1","portalUrl":"http://a/",
               "macAddress":"00:1A:79:11:11:11","enabled":true,
-              "importVod":false,"importSeries":true}]
+              "importLiveTv":true,"importVod":false,"importSeries":true}]
         """.trimIndent()
         val decoded = StalkerPortalSupport.decodeStalkerPortals(json, maxPortals = 3)
         assertThat(decoded).hasSize(1)
+        assertThat(decoded[0].importLiveTv).isTrue()
         assertThat(decoded[0].importVod).isFalse()
         assertThat(decoded[0].importSeries).isTrue()
     }
@@ -370,11 +374,13 @@ class StalkerPortalSupportTest {
             "Portal 1",
             "http://a",
             "00:1A:79:11:11:11",
+            importLiveTv = false,
             importVod = false,
             importSeries = false
         )
         val decoded = StalkerPortalSupport.decodeStalkerPortals(gson.toJson(listOf(portal)), maxPortals = 3)
         assertThat(decoded).hasSize(1)
+        assertThat(decoded[0].importLiveTv).isFalse()
         assertThat(decoded[0].importVod).isFalse()
         assertThat(decoded[0].importSeries).isFalse()
     }

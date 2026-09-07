@@ -190,6 +190,7 @@ internal object StalkerPortalSupport {
             // Same guard as `enabled` above, plus the `?: true` fallback: portals
             // written before these fields existed carry no value for them, and
             // "no value" has to mean "on" - see [StalkerPortalEntry].
+            importLiveTv = runCatching { portal.importLiveTv }.getOrDefault(true) ?: true,
             importVod = runCatching { portal.importVod }.getOrDefault(true) ?: true,
             importSeries = runCatching { portal.importSeries }.getOrDefault(true) ?: true
         )
