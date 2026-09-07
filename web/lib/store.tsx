@@ -6,6 +6,7 @@ import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
+import { includeIptvContinueWatching } from "./continueWatching";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { trackPremiumEvent } from "./premiumAnalytics";
@@ -399,6 +400,9 @@ function mergeTraktWithLocalResume(traktItems: MediaItem[], localItems: MediaIte
       episodeStill: item.episodeStill || local.episodeStill,
       episodeTitle: item.episodeTitle ?? local.episodeTitle ?? null,
       progress: Math.max(item.progress ?? 0, local.progress ?? 0),
+      resumePositionSeconds: Math.max(item.resumePositionSeconds ?? 0, local.resumePositionSeconds ?? 0),
+      durationSeconds: Math.max(item.durationSeconds ?? 0, local.durationSeconds ?? 0),
+      streamAddonId: item.streamAddonId ?? local.streamAddonId,
       timeRemainingLabel: local.timeRemainingLabel ?? item.timeRemainingLabel ?? null
     };
   });
@@ -1024,7 +1028,10 @@ export function AppProvider({
       ], cloudCw);
       const watchedKeys = new Set([...traktWatchedKeys(watchedMoviesRows, watchedShowsRows), ...cloudWatchedKeys]);
       if (!readFailures.has("watched") && refreshKeyRef.current === key) setWatchedKeys(watchedKeys);
-      const cwBase = traktReady ? traktCw : cloudCw.filter(isPausedPlaybackItem);
+      const cwBase = includeIptvContinueWatching(
+        traktReady ? traktCw : cloudCw.filter(isPausedPlaybackItem),
+        cloudCw.filter((item) => !isHiddenShow(item) && !isDismissed(item))
+      );
       // Order newest-activity-first across playback + up-next (matches the app's
       // updatedAt-descending sort) so the row leads with what you last watched.
       const cwSorted = dedupeMedia(cwBase).filter((item) => !isDismissed(item)).sort((a, b) => (b.activityAt ?? 0) - (a.activityAt ?? 0));
