@@ -438,6 +438,15 @@ class IptvRepository @Inject constructor(
     private val stalkerVodSearchCache =
         ConcurrentHashMap<StalkerVodSearchCacheKey, StalkerVodSearchCacheEntry>()
     private val stalkerVodSearchCacheTtlMs = 6 * 60 * 60_000L
+
+    /**
+     * A "the portal knows no such title" answer is kept only briefly. It is a
+     * real answer, so it earns an entry - it stops a browsed-past show from
+     * asking again on every screen - but six hours is far too long to be wrong
+     * about: catalogs change, and a title the portal gains today would stay
+     * invisible for the rest of the day.
+     */
+    private val stalkerVodSearchEmptyCacheTtlMs = 10 * 60_000L
     private val maxStalkerVodSearchCacheEntries = 64
 
     /**
@@ -5549,6 +5558,10 @@ class IptvRepository @Inject constructor(
      * frequently list "Dune" where TMDB says "Dune: Part Two". The second query
      * is skipped as soon as the first one produced a match.
      */
+    /** Empty answers expire quickly, real hits keep the long TTL. */
+    private fun cacheTtlFor(items: List<*>): Long =
+        if (items.isEmpty()) stalkerVodSearchEmptyCacheTtlMs else stalkerVodSearchCacheTtlMs
+
     internal fun stalkerVodSearchQueries(title: String): List<String> {
         val primary = title.trim()
         if (primary.isBlank()) return emptyList()
@@ -5571,10 +5584,12 @@ class IptvRepository @Inject constructor(
         val key = StalkerVodSearchCacheKey(portal.id, fingerprint, term.lowercase(Locale.US))
         val now = System.currentTimeMillis()
         stalkerVodSearchCache[key]?.let { cached ->
-            if (now - cached.fetchedAtMs < stalkerVodSearchCacheTtlMs) return cached.items
+            if (now - cached.fetchedAtMs < cacheTtlFor(cached.items)) return cached.items
             stalkerVodSearchCache.remove(key)
         }
-        val items = api.searchVod(term)
+        // null means the request itself failed. Caching that would turn one
+        // bad moment into hours of "this portal has no such film".
+        val items = api.searchVod(term) ?: return emptyList()
         if (stalkerVodSearchCache.size >= maxStalkerVodSearchCacheEntries) {
             // Bounded on purpose: one answer is small, but a long browsing
             // session must not accumulate an entry per looked-up movie.

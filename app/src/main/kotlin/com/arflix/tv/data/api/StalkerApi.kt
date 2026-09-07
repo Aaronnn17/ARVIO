@@ -458,7 +458,7 @@ open class StalkerApi(
     suspend fun searchVod(
         query: String,
         maxPages: Int = DEFAULT_VOD_SEARCH_PAGES
-    ): List<StalkerVodItem> {
+    ): List<StalkerVodItem>? {
         require(maxPages > 0) { "maxPages must be positive" }
         val term = query.trim()
         if (term.isBlank()) return emptyList()
@@ -501,6 +501,10 @@ open class StalkerApi(
             if (e is kotlinx.coroutines.CancellationException) throw e
 
             System.err.println("[Stalker] VOD search failed: ${e.message}")
+            // null, not the partial list: the caller caches what it gets back,
+            // and a failed request must never be stored as "this portal has
+            // nothing" - see the null contract on the return type.
+            return null
         }
         return results
     }

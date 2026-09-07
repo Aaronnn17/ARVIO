@@ -727,7 +727,7 @@ class StalkerApiTest {
             }
         }
 
-        val items = api.searchVod("Dune")
+        val items = api.searchVod("Dune")!!
 
         assertEquals(1, items.size)
         assertEquals("Dune (2021)", items.first().name)
@@ -760,7 +760,7 @@ class StalkerApiTest {
             }
         }
 
-        val items = api.searchVod("Alien")
+        val items = api.searchVod("Alien")!!
 
         assertEquals(listOf("Alien", "Aliens", "Alien 3"), items.map { it.name })
         assertEquals(2, requests.size)
@@ -781,7 +781,7 @@ class StalkerApiTest {
             }
         }
 
-        val items = api.searchVod("Heat")
+        val items = api.searchVod("Heat")!!
 
         assertEquals(1, items.size)
         // Page 2 repeats page 1 - no new ids means stop, not 999 requests.
@@ -789,11 +789,13 @@ class StalkerApiTest {
     }
 
     @Test
-    fun `searchVod treats an HTML 200 answer as unsupported`() = runTest {
+    fun `searchVod reports an HTML 200 answer as a failure, not as no results`() = runTest {
         val requests = mutableListOf<String>()
         val api = stubApi(requests = requests) { "<html><body>Not found</body></html>" }
 
-        assertTrue(api.searchVod("Dune").isEmpty())
+        // null, not emptyList: the caller caches answers, and a broken reply
+        // cached as "no such film" hides the title until the entry expires.
+        assertNull(api.searchVod("Dune"))
     }
 
     @Test
@@ -807,7 +809,7 @@ class StalkerApiTest {
             """.trimIndent()
         }
 
-        assertEquals(listOf("Playable"), api.searchVod("x").map { it.name })
+        assertEquals(listOf("Playable"), api.searchVod("x")!!.map { it.name })
     }
 
     @Test
@@ -815,7 +817,7 @@ class StalkerApiTest {
         val requests = mutableListOf<String>()
         val api = stubApi(requests = requests) { null }
 
-        assertTrue(api.searchVod("   ").isEmpty())
+        assertTrue(api.searchVod("   ")!!.isEmpty())
         assertTrue(requests.isEmpty())
     }
 
