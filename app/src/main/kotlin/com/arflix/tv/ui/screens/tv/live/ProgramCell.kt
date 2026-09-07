@@ -76,6 +76,7 @@ fun ProgramCell(
     onMoveUp: () -> Boolean = { false },
     onMoveDown: () -> Boolean = { false },
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
+    contentStartOffsetDp: androidx.compose.ui.unit.Dp = 0.dp,
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -207,7 +208,9 @@ fun ProgramCell(
             )
         }
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = contentStartOffsetDp),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {

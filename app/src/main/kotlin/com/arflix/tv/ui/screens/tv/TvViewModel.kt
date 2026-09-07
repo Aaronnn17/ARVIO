@@ -2037,9 +2037,9 @@ class TvViewModel @Inject constructor(
     }
 
     fun rememberTvSession(
-        lastChannelId: String?,
-        lastGroupName: String?,
-        lastFocusedZone: String,
+        lastChannelId: String? = null,
+        lastGroupName: String? = null,
+        lastFocusedZone: String = "GUIDE",
         markOpened: Boolean = false
     ) {
         val current = _uiState.value.tvSession

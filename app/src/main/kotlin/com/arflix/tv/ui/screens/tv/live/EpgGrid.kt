@@ -233,17 +233,21 @@ fun EpgGrid(
             channelListState.animateScrollBy(delta.toFloat(), tween(durationMillis = 100))
         }
     }
-    fun nearestProgramIndex(rowIdx: Int, anchorStartMin: Int): Int? {
+    fun nearestProgramIndex(rowIdx: Int, anchorStartMin: Int, preferLive: Boolean = false): Int? {
         val channel = channels.getOrNull(rowIdx) ?: return null
         val targets = programFocusTargets[channel.id].orEmpty()
         if (targets.isEmpty()) return null
+        if (preferLive) {
+            val liveIdx = targets.indexOfFirst { it.isNow }
+            if (liveIdx >= 0) return liveIdx
+        }
         return targets
             .withIndex()
             .minByOrNull { (_, target) -> target.distanceTo(anchorStartMin) }
             ?.index
     }
 
-    fun requestNearestProgramFocus(rowIdx: Int, anchorStartMin: Int): Boolean {
+    fun requestNearestProgramFocus(rowIdx: Int, anchorStartMin: Int, preferLive: Boolean = false): Boolean {
         val channel = channels.getOrNull(rowIdx) ?: return false
         requestMoreRowsIfNeeded(rowIdx)
         focusJob?.cancel()
@@ -252,7 +256,7 @@ fun EpgGrid(
             // Retry a few times: Compose may need a frame to mount the row and
             // its programme; falling back to spatial focus can jump to the rail.
             repeat(8) {
-                val currentTargetIdx = nearestProgramIndex(rowIdx, anchorStartMin)
+                val currentTargetIdx = nearestProgramIndex(rowIdx, anchorStartMin, preferLive)
                 val requester = currentTargetIdx?.let { programFocusRequesters[channel.id]?.getOrNull(it) }
                 if (requester != null && runCatching { requester.requestFocus() }.isSuccess) {
                     return@launch
@@ -605,7 +609,7 @@ fun EpgGrid(
                                     if (hasFocusable) {
                                         val nowMin = ((clockTickMillis - windowStartMillis) / 60_000L).toInt()
                                         onEnterEpg(ch)
-                                        requestNearestProgramFocus(idx, nowMin)
+                                        requestNearestProgramFocus(idx, nowMin, preferLive = true)
                                     } else {
                                         keepChannelFocus(idx)
                                     }
@@ -623,7 +627,11 @@ fun EpgGrid(
                                     .background(LiveColors.PanelDeep)
                                     .focusRequester(channelFocusRequester)
                                     .then(if (idx == 0) Modifier.focusRequester(firstChannelFocusRequester) else Modifier)
-                                    .then(if (ch.id == selectedChannelId) Modifier.focusRequester(selectedChannelFocusRequester) else Modifier),
+                                    .then(
+                                        if (ch.id == (activeChannelFocusId ?: selectedChannelId ?: channels.firstOrNull()?.id)) {
+                                            Modifier.focusRequester(selectedChannelFocusRequester)
+                                        } else Modifier
+                                    ),
                             )
 
                             // 2. Vertical Divider
@@ -672,6 +680,7 @@ fun EpgGrid(
                                     epgMode = focusMode == EpgGridFocusMode.Epg,
                                     rowHeight = rowHeight,
                                     renderWindow = renderWindow,
+                                    hScrollOffsetPx = hScroll.value,
                                     onClick = { program ->
                                         onExitEpg(ch)
                                         onProgramSelect(ch, program)
@@ -758,6 +767,7 @@ private fun ProgramsRow(
     epgMode: Boolean,
     rowHeight: Dp,
     renderWindow: GuideRenderWindow,
+    hScrollOffsetPx: Int = 0,
     onClick: (IptvProgram?) -> Unit,
     onFocused: () -> Unit,
     onMoveVertically: (rowIdx: Int, anchorStartMin: Int) -> Boolean,
@@ -767,6 +777,7 @@ private fun ProgramsRow(
     focusTargets: MutableMap<String, List<ProgramFocusTarget>>,
 ) {
     val nowMillis = clockTickMillis
+    val density = LocalDensity.current
     Box(
         modifier = Modifier
             .width(totalWidth)
@@ -804,10 +815,14 @@ private fun ProgramsRow(
         val rowFocusRequesters = remember(channel.id, focusablePlacementIndices.size) {
             List(focusablePlacementIndices.size) { FocusRequester() }
         }
-        val rowFocusTargets = remember(placements, focusablePlacementIndices) {
+        val rowFocusTargets = remember(placements, focusablePlacementIndices, nowMillis) {
             focusablePlacementIndices.mapNotNull { index ->
                 placements.getOrNull(index)?.let { placement ->
-                    ProgramFocusTarget(placement.startMin, placement.endMin)
+                    ProgramFocusTarget(
+                        startMin = placement.startMin,
+                        endMin = placement.endMin,
+                        isNow = placement.isNow(nowMillis),
+                    )
                 }
             }
         }
@@ -832,6 +847,11 @@ private fun ProgramsRow(
                 }
                 val offset = (placement.startMin * pxPerMin).dp
                 val width = (placement.durationMin * pxPerMin).dp
+                val cellOffsetPx = with(density) { offset.toPx() }
+                val cellWidthPx = with(density) { width.toPx() }
+                val scrolledPastPx = (hScrollOffsetPx - cellOffsetPx).coerceAtLeast(0f)
+                val maxShiftPx = (cellWidthPx - with(density) { 50.dp.toPx() }).coerceAtLeast(0f)
+                val shiftDp = with(density) { scrolledPastPx.coerceAtMost(maxShiftPx).toDp() }
                 val isCatchupSupported = placement.isCatchupSupported(channel, nowMillis)
                 val focusableIndex = focusableIndexByPlacementIndex[placementIndex] ?: -1
                 val isFocusable = focusableIndex >= 0
@@ -847,6 +867,7 @@ private fun ProgramsRow(
                         isFocusTarget = placementIsNow,
                         focusable = isFocusable,
                         isCatchupSupported = isCatchupSupported,
+                        contentStartOffsetDp = shiftDp,
                         onClick = {
                             epgProgramActionTarget(
                                 program = placement.program,
@@ -969,7 +990,7 @@ private data class ProgramPlacement(
     fun isPast(nowMs: Long): Boolean = endMillis <= nowMs
 }
 
-private data class ProgramFocusTarget(val startMin: Int, val endMin: Int) {
+private data class ProgramFocusTarget(val startMin: Int, val endMin: Int, val isNow: Boolean = false) {
     fun distanceTo(anchorStartMin: Int): Int = when {
         anchorStartMin < startMin -> startMin - anchorStartMin
         anchorStartMin > endMin -> anchorStartMin - endMin

@@ -884,9 +884,11 @@ fun LiveTvScreen(
         }
         visibleEnrichedState.value = EnrichedChannels(all = visibleChannels, tree = tree, index = index)
     }
-    LaunchedEffect(hiddenGroupSet, selectedCategoryId, visibleEnrichedState.value.tree) {
+    LaunchedEffect(hiddenGroupSet, selectedCategoryId, visibleEnrichedState.value.tree, favSet) {
         val tree = visibleEnrichedState.value.tree
-        if (tree.top.isNotEmpty() && selectedCategoryId != "all" &&
+        if (selectedCategoryId == "fav" && favSet.isEmpty()) {
+            selectedCategoryId = "all"
+        } else if (tree.top.isNotEmpty() && selectedCategoryId != "all" &&
             (tree.byId(selectedCategoryId) == null || tree.hidden.categories.any { it.id == selectedCategoryId })
         ) {
             selectedCategoryId = "all"
@@ -1714,6 +1716,11 @@ fun LiveTvScreen(
                 }
             }
         }
+        playlistCategorySections.forEach { section ->
+            section.categories.forEach { cat ->
+                if (cat.count > 0) list.add(cat.id)
+            }
+        }
         tree.global.categories.forEach { cat ->
             if (cat.count > 0) list.add(cat.id)
         }
@@ -1731,10 +1738,10 @@ fun LiveTvScreen(
         return list.distinct()
     }
 
-    LaunchedEffect(state.tvSessionLoaded, state.tvSession.lastGroupName, visibleEnrichedState.value.tree, startupCategoryApplied) {
+    LaunchedEffect(state.tvSessionLoaded, state.tvSession.lastGroupName, visibleEnrichedState.value.tree, playlistCategorySections, startupCategoryApplied) {
         if (startupCategoryApplied || !state.tvSessionLoaded) return@LaunchedEffect
         val tree = visibleEnrichedState.value.tree
-        if (tree.top.isEmpty() && tree.global.categories.isEmpty()) return@LaunchedEffect
+        if (tree.top.isEmpty() && tree.global.categories.isEmpty() && playlistCategorySections.isEmpty()) return@LaunchedEffect
         selectedCategoryId = LiveTvStartup.resumeCategoryId(
             lastGroupName = state.tvSession.lastGroupName,
             availableCategoryIds = getAvailableCategoryIds(tree).toSet(),
@@ -1830,6 +1837,7 @@ fun LiveTvScreen(
         categoryDrawerOpen = true
         focusCategoryAfterDrawerOpen = true
         focusZone = LiveTvFocusZone.CATEGORY_LIST
+        runCatching { sidebarFocus.requestFocus() }
     }
 
     // Keep focus in the sidebar while that zone is active — but NOT while the
@@ -1900,6 +1908,20 @@ fun LiveTvScreen(
         selectedCategoryId = categoryId
         categoryDrawerOpen = false
         focusGuideAfterDrawerClose = true
+        viewModel.rememberTvSession(
+            lastGroupName = categoryId,
+            lastFocusedZone = "CATEGORY",
+            markOpened = false,
+        )
+    }
+
+    LaunchedEffect(selectedCategoryId, startupCategoryApplied) {
+        if (startupCategoryApplied && selectedCategoryId.isNotBlank()) {
+            viewModel.rememberTvSession(
+                lastGroupName = selectedCategoryId,
+                markOpened = false,
+            )
+        }
     }
 
     fun requestCategorySelection(categoryId: String) {
@@ -3206,7 +3228,13 @@ fun LiveTvScreen(
                     },
                     onMoveRight = {
                         categoryDrawerOpen = false
-                        focusGuideAfterDrawerClose = true
+                        focusGuideAfterDrawerClose = false
+                        val target = rememberedChannelByCategory[categoryScope]
+                            ?.takeIf { it in filteredChannelIndexById }
+                            ?: playingChannelId?.let { displayChannelIdFor(it, visibleEnrichedState.value.index.byId, variantGroups) }
+                                ?.takeIf { it in filteredChannelIndexById }
+                            ?: filteredChannels.firstOrNull()?.id
+                        focusChannelList(target)
                     },
                     onMoveUpFromSearch = {
                         topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile)
