@@ -1,5 +1,14 @@
 import type { MediaItem } from "./types";
 
+/** A stale pause on a watched episode must not suppress the show's next episode. */
+export function mergeTrackerContinueWatching(playback: MediaItem[], upNext: MediaItem[], watchedKeys: Set<string>): MediaItem[] {
+  const unwatched = playback.filter((item) => !watchedKeys.has(item.mediaType === "tv"
+    ? `tv:${item.id}:${item.seasonNumber}:${item.episodeNumber}`
+    : `movie:${item.id}`));
+  const pausedShows = new Set(unwatched.filter((item) => item.mediaType === "tv").map((item) => item.id));
+  return [...unwatched, ...upNext.filter((item) => !pausedShows.has(item.id))];
+}
+
 /** Tracker list membership must not discard saved IPTV VOD sessions. */
 export function includeIptvContinueWatching(primary: MediaItem[], local: MediaItem[]): MediaItem[] {
   const key = (item: MediaItem) => `${item.mediaType}:${item.id}`;

@@ -6,7 +6,7 @@ import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
-import { includeIptvContinueWatching } from "./continueWatching";
+import { includeIptvContinueWatching, mergeTrackerContinueWatching } from "./continueWatching";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { trackPremiumEvent } from "./premiumAnalytics";
@@ -308,12 +308,6 @@ function traktActivityTime(raw: unknown) {
   return Date.parse(item.last_watched_at ?? item.last_updated_at ?? "") || 0;
 }
 
-// Per-show progress responses cached by show + last activity: a show whose
-// last_watched_at hasn't moved has unchanged progress, so refreshes after the
-// first cost zero Trakt calls for it. Keeps us far away from Trakt's rate
-// limits (their July 2026 API update made bursts much more failure-prone).
-const showProgressCache = new Map<string, unknown>();
-
 // How many watched shows we ask Trakt for per-show progress. The activity-keyed
 // progress cache means only shows whose last_watched_at MOVED cost a call on a
 // repeat refresh, so this ceiling mostly bounds the very first sync of a large
@@ -355,25 +349,10 @@ async function loadTraktUpNext(watchedShowsRows: unknown[], includeSpecials: boo
       const traktId = row.show?.ids?.trakt;
       if (!traktId) continue;
       const activityAt = traktActivityTime(watched);
-      const cacheKey = `${traktId}:${activityAt}:${includeSpecials}`;
-      let progress: unknown = showProgressCache.get(cacheKey) ?? null;
-      if (progress === undefined || progress === null) {
-        // activityAt keys the persistent cache: unchanged activity = identical
-        // progress, so repeat boots read from localStorage instead of firing
-        // ~120 Trakt calls — the difference between CW enriching in seconds vs
-        // half a minute (and the reason the CW cache never got written on
-        // devices where sessions were shorter than the old pipeline).
-        progress = await traktClient.showProgress(traktId, includeSpecials, activityAt).catch(() => null);
-        if (progress) {
-          showProgressCache.set(cacheKey, progress);
-          if (showProgressCache.size > 200) {
-            const oldest = showProgressCache.keys().next().value;
-            if (oldest) showProgressCache.delete(oldest);
-          }
-        } else {
-          fetchFailures += 1;
-        }
-      }
+      // The client owns the account-scoped, expiring cache. A second, timeless
+      // cache here hid newly aired episodes and could leak progress by profile.
+      const progress = await traktClient.showProgress(traktId, includeSpecials, activityAt).catch(() => null);
+      if (!progress) fetchFailures += 1;
       results[index] = traktUpNextToMedia(watched, progress);
     }
   });
@@ -432,7 +411,7 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
         getDetails(item).catch(() => item),
         episodeStillPromise
       ]);
-      const clamped = clampUpNextEpisode({
+      const enriched = {
         ...details,
         ...item,
         image: item.image || details.image,
@@ -441,60 +420,31 @@ async function hydrateContinueWatchingItems(items: MediaItem[]) {
         overview: details.overview || item.overview,
         rating: details.rating || item.rating,
         duration: details.duration || item.duration
-      });
-      if (!clamped) {
-        hydrated[index] = null;
-        continue;
-      }
-      const episodeChanged = clamped.seasonNumber !== item.seasonNumber || clamped.episodeNumber !== item.episodeNumber;
-      const correctedStill = episodeChanged && clamped.seasonNumber != null && clamped.episodeNumber != null
-        ? await getSeasonEpisodes(clamped.id, clamped.seasonNumber)
-            .then((episodes) => episodes.find((episode) => episode.episodeNumber === clamped.episodeNumber)?.still ?? null)
-            .catch(() => null)
-        : null;
+      };
       hydrated[index] = {
-        ...clamped,
-        episodeStill: episodeChanged
-          ? correctedStill
-          : episodeStill || item.episodeStill || null
+        ...enriched,
+        episodeStill: episodeStill || item.episodeStill || null
       };
     }
   });
   await Promise.all(workers);
-  // The unhydrated tail still gets the episode clamp — that guard reads only
-  // TMDB season data the item may already carry, and returns the item as-is
-  // when it doesn't.
-  const tailClamped = tail.map(clampUpNextEpisode);
-  return [...hydrated, ...tailClamped].filter((item): item is MediaItem => Boolean(item));
+  // Metadata providers can disagree about season numbering. Artwork must never
+  // change Trakt's selected episode or remove it based on TMDB episode counts.
+  return [...hydrated, ...tail].filter((item): item is MediaItem => Boolean(item));
 }
 
-// Trakt's episode database can list MORE episodes than TMDB does for the same
-// season (specials folded in, split-release counting) — its next_episode then
-// points past the last episode the app can actually show ("Up next S1 E11" on
-// a 10-episode season, which plays nothing). Clamp against the hydrated TMDB
-// season data: advance to the next real season when one exists, otherwise the
-// show is finished and the row is dropped from Continue Watching.
-function clampUpNextEpisode(item: MediaItem): MediaItem | null {
-  if (item.timeRemainingLabel !== "Up next") return item;
-  const seasonNumber = item.seasonNumber;
-  const episodeNumber = item.episodeNumber;
-  if (item.mediaType !== "tv" || !seasonNumber || !episodeNumber) return item;
+
+// Only locally advancing playback uses TMDB's season boundaries, not imported
+// tracker progress (which may use a different episode ordering).
+function nextLocalEpisode(item: MediaItem): MediaItem | null {
+  const { seasonNumber, episodeNumber } = item;
+  if (!seasonNumber || !episodeNumber) return item;
   const seasons = (item.seasons ?? []).filter((season) => season.seasonNumber > 0);
-  if (!seasons.length) return item;
   const current = seasons.find((season) => season.seasonNumber === seasonNumber);
   if (!current?.episodeCount || episodeNumber <= current.episodeCount) return item;
-  const nextSeason = seasons
-    .filter((season) => season.seasonNumber > seasonNumber && (season.episodeCount ?? 0) > 0)
+  const next = seasons.filter((season) => season.seasonNumber > seasonNumber && (season.episodeCount ?? 0) > 0)
     .sort((a, b) => a.seasonNumber - b.seasonNumber)[0];
-  if (!nextSeason) return null; // watched past the final episode — show done
-  return {
-    ...item,
-    seasonNumber: nextSeason.seasonNumber,
-    episodeNumber: 1,
-    episodeTitle: null,
-    episodeStill: null,
-    subtitle: `S${nextSeason.seasonNumber} E1`
-  };
+  return next ? { ...item, seasonNumber: next.seasonNumber, episodeNumber: 1, episodeTitle: null, episodeStill: null, subtitle: `S${next.seasonNumber} E1` } : null;
 }
 
 function sameSettings(a: AppSettings, b: AppSettings) {
@@ -1021,12 +971,10 @@ export function AppProvider({
         ? await loadTraktUpNext(watchedShowsRows, effectiveSettings.includeSpecials, hiddenShowIds).catch(() => ({ items: [] as MediaItem[], fetchFailures: 1 }))
         : { items: [] as MediaItem[], fetchFailures: 0 };
       const upNextRows = upNext.items;
-      const playbackShowKeys = new Set(traktPlaybackCw.filter((item) => item.mediaType === "tv").map((item) => `${item.mediaType}:${item.id}`));
-      const traktCw = mergeTraktWithLocalResume([
-        ...traktPlaybackCw,
-        ...upNextRows.filter((item) => !playbackShowKeys.has(`${item.mediaType}:${item.id}`))
-      ], cloudCw);
       const watchedKeys = new Set([...traktWatchedKeys(watchedMoviesRows, watchedShowsRows), ...cloudWatchedKeys]);
+      const traktCw = mergeTraktWithLocalResume(
+        mergeTrackerContinueWatching(traktPlaybackCw, upNextRows, watchedKeys), cloudCw
+      );
       if (!readFailures.has("watched") && refreshKeyRef.current === key) setWatchedKeys(watchedKeys);
       const cwBase = includeIptvContinueWatching(
         traktReady ? traktCw : cloudCw.filter(isPausedPlaybackItem),
@@ -1714,7 +1662,7 @@ export function AppProvider({
     const playback = ++playbackGeneration.current;
     const isCurrent = () => sourceGeneration.current === generation && playbackGeneration.current === playback;
     try {
-      const next = clampUpNextEpisode({ ...selected, timeRemainingLabel: "Up next", seasonNumber: selectedEpisode.season, episodeNumber: selectedEpisode.episode + 1 });
+      const next = nextLocalEpisode({ ...selected, timeRemainingLabel: "Up next", seasonNumber: selectedEpisode.season, episodeNumber: selectedEpisode.episode + 1 });
       if (!next?.seasonNumber || !next.episodeNumber) { setToast("You have reached the last available episode."); return false; }
       const episodes = await getSeasonEpisodes(selected.tmdbId ?? selected.id, next.seasonNumber);
       if (!isCurrent()) return false;
