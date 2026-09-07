@@ -187,4 +187,55 @@ class IptvActivePlaylistsTest {
         assertEquals(listOf(entryWithNullFlags), repository.activeVodPlaylists(config))
         assertEquals(listOf(entryWithNullFlags), repository.activeSeriesPlaylists(config))
     }
+
+    @Test
+    fun `stalker portal switched off for movies still serves series`() {
+        val repository = newRepository()
+        val seriesOnly = StalkerPortalEntry(
+            id = "stalker1",
+            name = "Portal 1",
+            portalUrl = "http://portal.example/c",
+            macAddress = "00:1A:79:11:11:11",
+            importVod = false,
+            importSeries = true
+        )
+        val config = IptvConfig(stalkerPortals = listOf(seriesOnly))
+
+        assertTrue(repository.activeStalkerVodPortals(config).isEmpty())
+        assertEquals(listOf(seriesOnly), repository.activeStalkerSeriesPortals(config))
+    }
+
+    @Test
+    fun `disabled stalker portal is excluded from both vod filters`() {
+        val repository = newRepository()
+        val disabled = StalkerPortalEntry(
+            id = "stalker1",
+            name = "Portal 1",
+            portalUrl = "http://portal.example/c",
+            macAddress = "00:1A:79:11:11:11",
+            enabled = false
+        )
+        val config = IptvConfig(stalkerPortals = listOf(disabled))
+
+        assertTrue(repository.activeStalkerVodPortals(config).isEmpty())
+        assertTrue(repository.activeStalkerSeriesPortals(config).isEmpty())
+    }
+
+    @Test
+    fun `stalker portal with null import flags defaults to enabled for movies and series`() {
+        val repository = newRepository()
+        // The shape a portal stored before the switches existed decodes into.
+        val legacyPortal = StalkerPortalEntry(
+            id = "stalker1",
+            name = "Portal 1",
+            portalUrl = "http://portal.example/c",
+            macAddress = "00:1A:79:11:11:11",
+            importVod = null,
+            importSeries = null
+        )
+        val config = IptvConfig(stalkerPortals = listOf(legacyPortal))
+
+        assertEquals(listOf(legacyPortal), repository.activeStalkerVodPortals(config))
+        assertEquals(listOf(legacyPortal), repository.activeStalkerSeriesPortals(config))
+    }
 }

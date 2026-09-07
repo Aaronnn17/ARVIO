@@ -313,4 +313,69 @@ class StalkerPortalSupportTest {
         ).isNull()
         assertThat(StalkerPortalSupport.directLiveStreamUrl(null, "0", "0", "0")).isNull()
     }
+
+    @Test
+    fun normalizeStalkerPortalEntryPreservesImportFlags() {
+        val portal = StalkerPortalEntry(
+            "stalker1",
+            "Portal 1",
+            "http://a/",
+            "00:1A:79:AA:BB:CC",
+            importVod = false,
+            importSeries = false
+        )
+        val normalized = StalkerPortalSupport.normalizeStalkerPortalEntry(portal, 0)
+        assertThat(normalized).isNotNull()
+        assertThat(normalized!!.importVod).isFalse()
+        assertThat(normalized.importSeries).isFalse()
+    }
+
+    /**
+     * The regression this whole feature hinges on. Portals are stored as Gson
+     * JSON, and [StalkerPortalEntry] has parameters without defaults, so Gson
+     * constructs it without running Kotlin's default values. A stored portal
+     * from before the import switches existed carries neither field - and it
+     * has to come back with both switched ON, not off, or every existing user
+     * silently loses Stalker movies and series after the update.
+     */
+    @Test
+    fun decodeStalkerPortalsDefaultsImportFlagsToOnForLegacyJson() {
+        val json = """
+            [{"id":"stalker1","name":"Portal 1","portalUrl":"http://a/",
+              "macAddress":"00:1A:79:11:11:11","enabled":true}]
+        """.trimIndent()
+        val decoded = StalkerPortalSupport.decodeStalkerPortals(json, maxPortals = 3)
+        assertThat(decoded).hasSize(1)
+        assertThat(decoded[0].importVod).isTrue()
+        assertThat(decoded[0].importSeries).isTrue()
+    }
+
+    @Test
+    fun decodeStalkerPortalsKeepsExplicitlyDisabledImportFlags() {
+        val json = """
+            [{"id":"stalker1","name":"Portal 1","portalUrl":"http://a/",
+              "macAddress":"00:1A:79:11:11:11","enabled":true,
+              "importVod":false,"importSeries":true}]
+        """.trimIndent()
+        val decoded = StalkerPortalSupport.decodeStalkerPortals(json, maxPortals = 3)
+        assertThat(decoded).hasSize(1)
+        assertThat(decoded[0].importVod).isFalse()
+        assertThat(decoded[0].importSeries).isTrue()
+    }
+
+    @Test
+    fun importFlagsSurviveAJsonRoundTrip() {
+        val portal = StalkerPortalEntry(
+            "stalker1",
+            "Portal 1",
+            "http://a",
+            "00:1A:79:11:11:11",
+            importVod = false,
+            importSeries = false
+        )
+        val decoded = StalkerPortalSupport.decodeStalkerPortals(gson.toJson(listOf(portal)), maxPortals = 3)
+        assertThat(decoded).hasSize(1)
+        assertThat(decoded[0].importVod).isFalse()
+        assertThat(decoded[0].importSeries).isFalse()
+    }
 }

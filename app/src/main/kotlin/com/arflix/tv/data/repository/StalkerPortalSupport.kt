@@ -186,7 +186,12 @@ internal object StalkerPortalSupport {
             name = runCatching { portal.name }.getOrNull().orEmpty().trim().ifBlank { "Portal ${index + 1}" },
             portalUrl = portalUrl,
             macAddress = macAddress,
-            enabled = runCatching { portal.enabled }.getOrDefault(true)
+            enabled = runCatching { portal.enabled }.getOrDefault(true),
+            // Same guard as `enabled` above, plus the `?: true` fallback: portals
+            // written before these fields existed carry no value for them, and
+            // "no value" has to mean "on" - see [StalkerPortalEntry].
+            importVod = runCatching { portal.importVod }.getOrDefault(true) ?: true,
+            importSeries = runCatching { portal.importSeries }.getOrDefault(true) ?: true
         )
     }
 

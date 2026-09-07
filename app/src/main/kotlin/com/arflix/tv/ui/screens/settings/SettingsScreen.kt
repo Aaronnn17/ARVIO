@@ -2312,9 +2312,23 @@ fun SettingsScreen(
                 else -> ""
             }
 
+            // When a Stalker portal is being edited its own flags win; a missing
+            // flag means "on" (see StalkerPortalEntry).
+            val editingStalkerPortal = if (showStalkerInput) {
+                uiState.iptvStalkerPortals.firstOrNull { it.id == stalkerEditId }
+            } else null
+
             val resolvedImportLiveTv = editingPlaylist?.importLiveTv ?: true
-            val resolvedImportVod = editingPlaylist?.importVod ?: true
-            val resolvedImportSeries = editingPlaylist?.importSeries ?: true
+            val resolvedImportVod = if (showStalkerInput) {
+                editingStalkerPortal?.importVod ?: true
+            } else {
+                editingPlaylist?.importVod ?: true
+            }
+            val resolvedImportSeries = if (showStalkerInput) {
+                editingStalkerPortal?.importSeries ?: true
+            } else {
+                editingPlaylist?.importSeries ?: true
+            }
             val playlistEnabled = editingPlaylist?.enabled ?: true
 
             key(
@@ -2370,12 +2384,25 @@ fun SettingsScreen(
                         editingIptvIndex = -1
                         stalkerEditId = null
                     },
-                    onSaveStalker = { name, portalUrl, macAddress ->
+                    onSaveStalker = { name, portalUrl, macAddress, importVod, importSeries ->
                         val id = stalkerEditId
                         if (id != null) {
-                            viewModel.onEditStalkerPortal(id, portalUrl.trim(), macAddress.trim(), name.trim())
+                            viewModel.onEditStalkerPortal(
+                                id,
+                                portalUrl.trim(),
+                                macAddress.trim(),
+                                name.trim(),
+                                importVod,
+                                importSeries
+                            )
                         } else {
-                            viewModel.onAddStalkerPortal(portalUrl.trim(), macAddress.trim(), name.trim())
+                            viewModel.onAddStalkerPortal(
+                                portalUrl.trim(),
+                                macAddress.trim(),
+                                name.trim(),
+                                importVod,
+                                importSeries
+                            )
                         }
                         showIptvInput = false
                         showStalkerInput = false

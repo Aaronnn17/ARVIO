@@ -135,7 +135,7 @@ class IptvPlaylistModalDeviceTest {
         compose.onNodeWithText(compose.activity.getString(R.string.settings_save_portal)).performClick()
         compose.runOnIdle {
             assertNull(saved)
-            assertEquals(listOf("Test", HOST, "00:1A:79:12:34:56"), savedPortal)
+            assertEquals(listOf("Test", HOST, "00:1A:79:12:34:56", "true", "true"), savedPortal)
         }
     }
 
@@ -153,7 +153,9 @@ class IptvPlaylistModalDeviceTest {
                     onSaveIptv = { _, url, user, password, epg, _, _, _ ->
                         saved = SavedPlaylist(url, user, password, epg)
                     },
-                    onSaveStalker = { name, url, mac -> savedPortal = listOf(name, url, mac) },
+                    onSaveStalker = { name, url, mac, importVod, importSeries ->
+                        savedPortal = listOf(name, url, mac, importVod.toString(), importSeries.toString())
+                    },
                     onDismiss = {},
                 )
             }
