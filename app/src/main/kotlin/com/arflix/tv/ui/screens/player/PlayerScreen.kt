@@ -259,6 +259,7 @@ import com.arflix.tv.ui.screens.player.preview.SeekInteraction
 import com.arflix.tv.ui.screens.player.preview.SeekSurface
 import com.arflix.tv.ui.screens.player.preview.SeekPhase
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewCapability
+import com.arflix.tv.ui.screens.player.preview.loadSeekPreviewFrame
 import com.arflix.tv.ui.screens.player.preview.nativePreviewCacheIdentity
 import com.arflix.tv.ui.screens.player.preview.acceleratedSeekPreviewStepMs
 
@@ -287,7 +288,6 @@ private const val PIP_ACTION_PLAY_PAUSE = "com.arflix.tv.pip.PLAY_PAUSE"
 private const val PIP_ACTION_FORWARD = "com.arflix.tv.pip.FORWARD"
 private const val QUICK_SEEK_DISMISS_DELAY_MS = 2_200L
 private const val SEEK_PREVIEW_DEBOUNCE_MS = 60L
-private const val SEEK_PREVIEW_TIMEOUT_MS = 4_500L
 
 private fun isSafePlaybackHeader(name: String, value: String): Boolean {
     return name.isNotBlank() &&
@@ -1626,18 +1626,17 @@ fun PlayerScreen(
     // Keep the previous bitmap owned until its replacement is ready, but never display it
     // under a different timestamp. A cancelled request cannot publish into the next target.
     LaunchedEffect(
-        previewRequested, previewTarget, previewStatus.sourceGeneration,
+        previewRequested, previewTarget, previewStatus.sourceGeneration, previewStatus.capability,
         uiState.selectedStreamUrl, uiState.streamSelectionNonce,
     ) {
-        if (!previewRequested) return@LaunchedEffect
+        if (!previewRequested || previewStatus.capability == SeekPreviewCapability.UNAVAILABLE) return@LaunchedEffect
         unavailablePreviewTarget = null
         seekPreviewProvider.memoryFrameAt(previewTarget)?.let { frame ->
             if (seekPreviewProvider.matchesTarget(frame, previewTarget)) seekPreviewFrame = frame
         }
         if (seekPreviewProvider.matchesTarget(seekPreviewFrame, previewTarget)) return@LaunchedEffect
         delay(SEEK_PREVIEW_DEBOUNCE_MS)
-        val frame = seekPreviewProvider.cachedFrameAt(previewTarget)
-            ?: withTimeoutOrNull(SEEK_PREVIEW_TIMEOUT_MS) { seekPreviewProvider.frameAt(previewTarget) }
+        val frame = loadSeekPreviewFrame(seekPreviewProvider, previewTarget)
         if (frame != null && seekPreviewProvider.matchesTarget(frame, previewTarget)) {
             seekPreviewFrame = frame
         } else {

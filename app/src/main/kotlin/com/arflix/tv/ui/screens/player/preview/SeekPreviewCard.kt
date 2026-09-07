@@ -49,7 +49,7 @@ fun SeekPreviewCard(
             Image(
                 bitmap = displayedFrame.bitmap.asImageBitmap(),
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
+                contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(),
             )
         }

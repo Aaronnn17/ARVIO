@@ -66,8 +66,8 @@ private const val MAX_CACHE_ENTRY_BYTES = 2L * 1024L * 1024L
 internal const val RANGE_CHUNK_BYTES = 512 * 1024
 private const val RANGE_MEMORY_LIMIT_BYTES = 4 * 1024 * 1024
 private const val MAX_EXTRACTION_NETWORK_BYTES = 16L * 1024L * 1024L
-private const val REQUEST_TIMEOUT_MS = 6_000L
-private const val MEDIA3_FRAME_TIMEOUT_MS = 2_500L
+internal const val SEEK_PREVIEW_REQUEST_TIMEOUT_MS = 10_000L
+private const val MEDIA3_FRAME_TIMEOUT_MS = 6_000L
 
 data class SeekPreviewSource(
     val url: String,
@@ -380,7 +380,7 @@ class SeekPreviewFrameProvider internal constructor(
             val startedAt = SystemClock.elapsedRealtime()
             if (!background) updateStatus(source, SeekPreviewState.LOADING, requestId = requestId)
             try {
-                val result = withTimeout(REQUEST_TIMEOUT_MS) {
+                val result = withTimeout(SEEK_PREVIEW_REQUEST_TIMEOUT_MS) {
                     var image = source.images?.load(target)
                     var origin = SeekPreviewOrigin.PROVIDER
                     // Metadata alone does not guarantee images. Background image warming must
@@ -444,7 +444,9 @@ class SeekPreviewFrameProvider internal constructor(
 
     private fun logFailure(source: ActiveSource, target: Long, startedAt: Long, reason: String) {
         // Never print exception messages: network/decoder exceptions can embed signed URLs.
-        Log.i("SeekPreview", "targetMs=$target elapsedMs=${SystemClock.elapsedRealtime() - startedAt} status=UNAVAILABLE reason=$reason generation=${source.generation}")
+        if (source.failures <= 3) {
+            Log.w("SeekPreview", "targetMs=$target elapsedMs=${SystemClock.elapsedRealtime() - startedAt} status=UNAVAILABLE reason=$reason generation=${source.generation}")
+        }
     }
 
     private fun disableForMemoryPressure(source: ActiveSource) {
@@ -557,7 +559,8 @@ class SeekPreviewFrameProvider internal constructor(
                 if (extractorIdentity != source.identity) {
                     extractor?.close()
                     extractor = FrameExtractor.Builder(appContext, MediaItem.fromUri(uri))
-                        .setSeekParameters(SeekParameters.CLOSEST_SYNC)
+                        // Bound the seek around the requested position, not a rounded cache key.
+                        .setSeekParameters(SeekParameters(FRAME_TOLERANCE_MS * 1_000, FRAME_TOLERANCE_MS * 1_000))
                         .setMediaCodecSelector(MediaCodecSelector.PREFER_SOFTWARE)
                         .setEffects(listOf(Presentation.createForWidthAndHeight(
                             source.source.maxWidthPx, source.source.maxWidthPx * 9 / 16, Presentation.LAYOUT_SCALE_TO_FIT,
@@ -616,7 +619,7 @@ class SeekPreviewFrameProvider internal constructor(
 
     private fun frameKey(source: ActiveSource, positionMs: Long) = "${source.identity}_${quantizeSeekPreviewPosition(positionMs, source.source.durationMs)}"
     private fun decodePosition(source: ActiveSource, target: Long) =
-        quantizeSeekPreviewPosition(target, source.source.durationMs).coerceAtMost(source.source.durationMs - 1)
+        target.coerceIn(0L, source.source.durationMs - 1)
     private fun clamp(positionMs: Long, source: ActiveSource) = positionMs.coerceIn(0, source.source.durationMs)
 
     override fun close() {
@@ -936,7 +939,7 @@ internal class HttpRangeReader(
 internal class SeekPreviewRangeProxy(private val reader: HttpRangeReader) : NanoHTTPD("127.0.0.1", 0), Closeable {
     private class Lease {
         val remaining = AtomicLong(MAX_EXTRACTION_NETWORK_BYTES)
-        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(REQUEST_TIMEOUT_MS)
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SEEK_PREVIEW_REQUEST_TIMEOUT_MS)
     }
     private val path = "/${UUID.randomUUID()}/media"
     private val readLock = Mutex()

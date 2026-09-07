@@ -59,9 +59,9 @@ class SeekPreviewFrameProviderDeviceTest {
                 "Timeline previews must change as the scrub position changes",
                 openingFrame!!.bitmap.sameAs(endingFrame!!.bitmap),
             )
-            assertTimestampAndScene(openingFrame, 2_000L, 0L, red = true)
-            assertTimestampAndScene(endingFrame, 22_000L, 20_000L, red = false)
-            assertWarmMemoryLatency(provider, 22_000L, 20_000L)
+            assertTimestampAndScene(openingFrame, 2_000L, 2_000L, red = true)
+            assertTimestampAndScene(endingFrame, 22_000L, 22_000L, red = false)
+            assertWarmMemoryLatency(provider, 22_000L, 22_000L)
             assertTrue(
                 "A decoded frame must be immediately available from memory",
                 provider.memoryFrameAt(2_000L)?.bitmap === openingFrame.bitmap,
@@ -108,9 +108,9 @@ class SeekPreviewFrameProviderDeviceTest {
                 "Ranged HTTP previews must change with the scrub position",
                 openingFrame!!.bitmap.sameAs(endingFrame!!.bitmap),
             )
-            assertTimestampAndScene(openingFrame, 2_000L, 0L, red = true)
-            assertTimestampAndScene(endingFrame, 22_000L, 20_000L, red = false)
-            assertWarmMemoryLatency(provider, 22_000L, 20_000L)
+            assertTimestampAndScene(openingFrame, 2_000L, 2_000L, red = true)
+            assertTimestampAndScene(endingFrame, 22_000L, 22_000L, red = false)
+            assertWarmMemoryLatency(provider, 22_000L, 22_000L)
             assertTrue("Playback authentication headers must reach the media server", server.sawAuthHeader.get())
             assertTrue("Progressive previews must use byte-range requests", server.sawRangeRequest.get())
         } finally {
