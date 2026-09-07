@@ -559,7 +559,9 @@ fun LiveTvScreen(
             value = System.currentTimeMillis()
         }
     }
-    var selectedCategoryId by rememberSaveable { mutableStateOf("all") }
+    var selectedCategoryId by rememberSaveable {
+        mutableStateOf(state.tvSession.lastGroupName.takeIf { it.isNotBlank() } ?: "all")
+    }
     var startupCategoryApplied by rememberSaveable { mutableStateOf(false) }
     var selectedProviderId by rememberSaveable { mutableStateOf("all") }
     val categoryScope = "${currentProfile?.id}|$selectedProviderId|$selectedCategoryId"
@@ -1884,7 +1886,9 @@ fun LiveTvScreen(
         }
         focusZone = LiveTvFocusZone.CHANNEL_LIST
         focusSelectedChannelSignal += 1
-        runCatching { epgFocus.requestFocus() }
+        if (channelId == null) {
+            runCatching { epgFocus.requestFocus() }
+        }
     }
 
     fun focusEpg(channelId: String) {
@@ -1898,7 +1902,6 @@ fun LiveTvScreen(
         }
         focusZone = LiveTvFocusZone.EPG
         focusEpgSignal += 1
-        runCatching { epgFocus.requestFocus() }
     }
 
     fun enterSelectedCategory(categoryId: String) {
@@ -3333,12 +3336,6 @@ fun LiveTvScreen(
                         channelColumnWidthOverride = guideChannelColumnWidth,
                         modifier = Modifier
                             .fillMaxSize()
-                            .onFocusChanged {
-                                if (it.hasFocus && focusZone == LiveTvFocusZone.CATEGORY_LIST) {
-                                    focusZone = LiveTvFocusZone.CHANNEL_LIST
-                                    categoryDrawerOpen = false
-                                }
-                            }
                             .then(if (!isTouchDevice) Modifier.focusRequester(epgFocus) else Modifier),
                     )
                 }

@@ -251,13 +251,18 @@ fun EpgGrid(
         val channel = channels.getOrNull(rowIdx) ?: return false
         requestMoreRowsIfNeeded(rowIdx)
         focusJob?.cancel()
+        val currentTargetIdx = nearestProgramIndex(rowIdx, anchorStartMin, preferLive)
+        val directRequester = currentTargetIdx?.let { programFocusRequesters[channel.id]?.getOrNull(it) }
+        if (directRequester != null && runCatching { directRequester.requestFocus() }.isSuccess) {
+            return true
+        }
         focusJob = scope.launch {
             revealRow(rowIdx)
             // Retry a few times: Compose may need a frame to mount the row and
             // its programme; falling back to spatial focus can jump to the rail.
             repeat(8) {
-                val currentTargetIdx = nearestProgramIndex(rowIdx, anchorStartMin, preferLive)
-                val requester = currentTargetIdx?.let { programFocusRequesters[channel.id]?.getOrNull(it) }
+                val targetIdx = nearestProgramIndex(rowIdx, anchorStartMin, preferLive)
+                val requester = targetIdx?.let { programFocusRequesters[channel.id]?.getOrNull(it) }
                 if (requester != null && runCatching { requester.requestFocus() }.isSuccess) {
                     return@launch
                 }
@@ -275,6 +280,14 @@ fun EpgGrid(
         pendingChannelFocusId = channel.id
         onChannelFocused(channel)
         focusJob?.cancel()
+        val directRequester = channelFocusRequesters[channel.id]
+            ?: if (rowIdx == 0) firstChannelFocusRequester
+            else if (channel.id == selectedChannelId) selectedChannelFocusRequester
+            else null
+        if (directRequester != null && runCatching { directRequester.requestFocus() }.isSuccess) {
+            pendingChannelFocusId = null
+            return true
+        }
         focusJob = scope.launch {
             revealRow(rowIdx)
             delay(16L)
@@ -676,7 +689,7 @@ fun EpgGrid(
                                     totalWidth = totalWidth,
                                     pxPerMin = pxPerMin,
                                     stripe = idx % 2 == 1,
-                                    isActive = isChannelActive && focusMode == EpgGridFocusMode.Epg,
+                                    isActive = false,
                                     epgMode = focusMode == EpgGridFocusMode.Epg,
                                     rowHeight = rowHeight,
                                     renderWindow = renderWindow,
@@ -784,11 +797,7 @@ private fun ProgramsRow(
             .height(rowHeight)
             .clipToBounds()
             .background(
-                when {
-                    isActive -> LiveColors.FocusBg
-                    stripe -> LiveColors.RowStripe
-                    else -> Color.Transparent
-                }
+                if (stripe) LiveColors.RowStripe else Color.Transparent
             ),
     ) {
         // Placement geometry (cell offsets/widths + gap placeholders) does NOT depend
@@ -800,8 +809,7 @@ private fun ProgramsRow(
         val placements = remember(programs, placeholderTitle, noProgrammeData, windowStartMillis, windowEndMillis) {
             buildProgramPlacements(programs, windowStartMillis, windowEndMillis, nowMillis, placeholderTitle, noProgrammeData)
         }
-        val focusablePlacementIndices = remember(placements, channel.catchupDays, nowMillis, epgMode) {
-            if (!epgMode) return@remember emptyList()
+        val focusablePlacementIndices = remember(placements, channel.catchupDays, nowMillis) {
             placements.mapIndexedNotNull { index, placement ->
                 val canFocus = placement.canFocus(channel, nowMillis)
                 if (canFocus) index else null

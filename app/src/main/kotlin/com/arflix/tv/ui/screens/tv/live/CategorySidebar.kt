@@ -146,7 +146,13 @@ fun CategorySidebar(
     val contentVisible = expanded || animatedWidth > 0.dp
     var expandedCountry by rememberSaveable { mutableStateOf<String?>(null) }
     var expandedAll by rememberSaveable { mutableStateOf(false) }
-    var expandedPlaylistIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var expandedPlaylistIds by rememberSaveable {
+        mutableStateOf(
+            playlistSections.firstOrNull { section ->
+                section.id == selectedId || section.categories.any { it.containsId(selectedId) }
+            }?.id?.let { listOf(it) } ?: emptyList()
+        )
+    }
     var activeMenu by remember { mutableStateOf<CategoryMenuState?>(null) }
     var hiddenCategoryPendingFocus by remember { mutableStateOf<String?>(null) }
     var menuSelectArmed by remember { mutableStateOf(false) }
@@ -398,7 +404,7 @@ fun CategorySidebar(
             expandedAll = true
         }
         playlistSections.firstOrNull { section ->
-            section.categories.any { it.containsId(selectedId) }
+            section.id == selectedId || section.categories.any { it.containsId(selectedId) }
         }?.id?.let { sectionId ->
             if (sectionId !in expandedPlaylistIds) {
                 expandedPlaylistIds = expandedPlaylistIds + sectionId
@@ -422,6 +428,8 @@ fun CategorySidebar(
             if (targetIdx >= 0) {
                 listState.scrollToItem((targetIdx - 2).coerceAtLeast(0))
             }
+            delay(50L)
+            runCatching { selectedCategoryFocusRequester.requestFocus() }
         }
     }
 
@@ -659,10 +667,12 @@ fun CategorySidebar(
                         item(key = "playlist-section:${section.id}") {
                             val isOpen = section.id in expandedPlaylistIds
                             val sectionKey = "playlist-section:${section.id}"
+                            val isSectionSelected = section.id == selectedId ||
+                                (!isOpen && section.categories.any { it.containsId(selectedId) })
                             val sectionRequester = rememberCategoryRequester(
                                 key = sectionKey,
                                 id = section.id,
-                                selectedId = null,
+                                selectedId = if (isSectionSelected) section.id else null,
                                 isTopFirst = false,
                                 selectedCategoryFocusRequester = selectedCategoryFocusRequester,
                                 firstCategoryFocusRequester = firstCategoryFocusRequester,

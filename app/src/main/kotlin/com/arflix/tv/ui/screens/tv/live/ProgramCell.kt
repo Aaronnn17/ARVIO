@@ -191,7 +191,7 @@ fun ProgramCell(
                     Modifier
                 }
             )
-            .padding(horizontal = 6.dp, vertical = 4.dp),
+            .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         if (isNow) {
             Box(
@@ -231,7 +231,7 @@ fun ProgramCell(
                 }
                 Text(
                     text = program.title,
-                    style = LiveType.CellTitle.copy(color = LiveColors.Fg, fontSize = 11.sp),
+                    style = LiveType.CellTitle.copy(color = LiveColors.Fg, fontSize = 9.5.sp, lineHeight = 12.sp),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
@@ -240,7 +240,7 @@ fun ProgramCell(
             if (!program.description.isNullOrBlank()) {
                 Text(
                     text = program.description!!,
-                    style = LiveType.BodySynopsis.copy(color = LiveColors.FgDim, fontSize = 9.sp),
+                    style = LiveType.BodySynopsis.copy(color = LiveColors.FgDim, fontSize = 8.sp, lineHeight = 10.sp),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -251,14 +251,14 @@ fun ProgramCell(
             ) {
                 Text(
                     text = formatClock(program.startUtcMillis),
-                    style = LiveType.TimeMono.copy(color = LiveColors.FgMute, fontSize = 9.sp),
+                    style = LiveType.TimeMono.copy(color = LiveColors.FgMute, fontSize = 8.sp, lineHeight = 10.sp),
                 )
                 val mins = ((program.endUtcMillis - program.startUtcMillis) / 60_000L)
                     .coerceAtLeast(0L)
                 if (mins > 0) {
                     Text(
                         text = stringResource(R.string.live_label_duration_min, mins),
-                        style = LiveType.TimeMono.copy(color = LiveColors.FgMute, fontSize = 9.sp),
+                        style = LiveType.TimeMono.copy(color = LiveColors.FgMute, fontSize = 8.sp, lineHeight = 10.sp),
                     )
                 }
             }
@@ -273,8 +273,8 @@ fun Badge(label: String, fg: Color, bg: Color) {
         modifier = Modifier
             .clip(RoundedCornerShape(3.dp))
             .background(bg)
-            .padding(horizontal = 5.dp, vertical = 1.dp),
+            .padding(horizontal = 4.dp, vertical = 0.5.dp),
     ) {
-        Text(label, style = LiveType.Badge.copy(color = fg, fontSize = 9.sp))
+        Text(label, style = LiveType.Badge.copy(color = fg, fontSize = 7.5.sp, lineHeight = 9.sp))
     }
 }
