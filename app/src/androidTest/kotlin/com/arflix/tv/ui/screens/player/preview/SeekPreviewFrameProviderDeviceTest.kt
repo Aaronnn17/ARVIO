@@ -48,7 +48,7 @@ class SeekPreviewFrameProviderDeviceTest {
             assertTimestampAndScene(ending!!, 22_000L, 22_000L, red = false)
             val earlier = provider.frameAt(2_000L)
             assertNotNull(earlier)
-            assertTimestampAndScene(earlier!!, 2_000L, 2_000L, red = true)
+            assertTimestampAndScene(earlier!!, 2_000L, 2_000L, red = true, origin = SeekPreviewOrigin.MEMORY)
         } finally {
             provider.close()
             file.delete()
@@ -150,13 +150,13 @@ class SeekPreviewFrameProviderDeviceTest {
         }
     }
 
-    private fun assertTimestampAndScene(frame: SeekPreviewFrame, requestedMs: Long, actualMs: Long, red: Boolean) {
+    private fun assertTimestampAndScene(frame: SeekPreviewFrame, requestedMs: Long, actualMs: Long, red: Boolean, origin: SeekPreviewOrigin = SeekPreviewOrigin.DECODER) {
         // Fixture is red at 0..10s, green at 10..20s, blue at 20..30s, with 1s sync frames.
         assertEquals(requestedMs, frame.requestedPositionMs)
         assertEquals(actualMs, frame.actualPositionMs)
         assertEquals(actualMs, frame.positionMs)
         assertEquals(SeekPreviewValidity.TIMESTAMP, frame.validity)
-        assertEquals(SeekPreviewOrigin.DECODER, frame.origin)
+        assertEquals(origin, frame.origin)
         assertTrue(frame.bitmap.width <= 480 && frame.bitmap.height <= 270)
         assertEquals(16f / 9f, frame.bitmap.width.toFloat() / frame.bitmap.height, 0.02f)
         val points = listOf(

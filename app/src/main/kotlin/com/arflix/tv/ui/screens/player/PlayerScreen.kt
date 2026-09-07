@@ -1853,9 +1853,10 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(seekInteraction.phase) {
-        if (seekInteraction.phase == SeekPhase.Exiting) {
+        val exiting = seekInteraction
+        if (exiting.phase == SeekPhase.Exiting) {
             delay(150L)
-            seekInteraction = seekInteraction.afterExit()
+            if (seekInteraction === exiting) seekInteraction = exiting.afterExit()
         }
     }
 
