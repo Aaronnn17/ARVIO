@@ -42,6 +42,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # CLI builds do not reliably inherit the site's browser build variables.
+      # Export only these public client values, never the OAuth client secret.
+      - name: Load required public build configuration
+        shell: bash
+        run: |
+          env_json=$(npx --yes netlify-cli@25.6.0 env:list --site "$NETLIFY_SITE_ID" --context production --scope builds --json)
+          trakt_id=$(printf '%s' "$env_json" | jq -r '[.NEXT_PUBLIC_TRAKT_CLIENT_ID, .TRAKT_CLIENT_ID] | map(select(type == "string" and length > 0)) | first // empty')
+          app_key=$(printf '%s' "$env_json" | jq -r '[.NEXT_PUBLIC_ARVIO_APP_ANON_KEY, .APP_ANON_KEY] | map(select(type == "string" and length > 0)) | first // empty')
+          if [[ -z "$trakt_id" || -z "$app_key" ]]; then
+            echo "Missing required public Trakt/cloud configuration; refusing to publish a stale-only client." >&2
+            exit 1
+          fi
+          echo "::add-mask::$trakt_id"
+          echo "::add-mask::$app_key"
+          printf 'NEXT_PUBLIC_TRAKT_CLIENT_ID=%s\n' "$trakt_id" >> "$GITHUB_ENV"
+          printf 'NEXT_PUBLIC_ARVIO_APP_ANON_KEY=%s\n' "$app_key" >> "$GITHUB_ENV"
+
       - name: Build Netlify bundle
         env:
           NEXT_PUBLIC_TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
