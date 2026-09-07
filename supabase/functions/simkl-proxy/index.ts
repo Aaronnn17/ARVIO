@@ -19,8 +19,9 @@ const REQUEST_RULES = [
   { path: /^\/users\/settings$/, methods: ['POST'] },
   { path: /^\/scrobble\/(?:start|pause|stop)$/, methods: ['POST'] },
   { path: /^\/sync\/activities$/, methods: ['GET'] },
-  { path: /^\/sync\/all-items\/(?:movies|shows|anime|all)\/(?:watching|plantowatch|hold|completed|dropped|all)$/, methods: ['GET'] },
-  { path: /^\/sync\/playback(?:\/(?:movies|shows|anime|all))?$/, methods: ['GET'] },
+  { path: /^\/sync\/all-items(?:\/(?:movies|shows|anime|all)(?:\/(?:watching|plantowatch|hold|completed|dropped|all))?)?$/, methods: ['GET'] },
+  { path: /^\/sync\/playback(?:\/(?:movies|episodes|shows|anime|all))?$/, methods: ['GET'] },
+  { path: /^\/sync\/playback\/\d+$/, methods: ['DELETE'] },
   { path: /^\/sync\/(?:history|history\/remove|add-to-list)$/, methods: ['POST'] },
 ]
 
@@ -177,8 +178,14 @@ serve(async (req) => {
       data = responseText ? { raw: responseText } : { status: response.status }
     }
 
+    const returnHeaders: Record<string, string> = { ...corsHeaders(req), 'Content-Type': 'application/json' }
+    const upstreamRetryAfter = response.headers.get('retry-after')
+    if (upstreamRetryAfter) {
+      returnHeaders['Retry-After'] = upstreamRetryAfter
+    }
+
     return new Response(JSON.stringify(data), {
-      headers: { ...corsHeaders(req), 'Content-Type': 'application/json' },
+      headers: returnHeaders,
       status: response.status,
     })
   } catch (error) {

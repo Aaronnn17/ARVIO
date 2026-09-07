@@ -10,8 +10,9 @@ const SIMKL_REQUEST_RULES = [
   { path: /^\/users\/settings$/, methods: new Set(["POST"]) },
   { path: /^\/scrobble\/(?:start|pause|stop)$/, methods: new Set(["POST"]) },
   { path: /^\/sync\/activities$/, methods: new Set(["GET"]) },
-  { path: /^\/sync\/all-items\/(?:movies|shows|anime|all)\/(?:watching|plantowatch|hold|completed|dropped|all)$/, methods: new Set(["GET"]) },
-  { path: /^\/sync\/playback(?:\/(?:movies|shows|anime|all))?$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/all-items(?:\/(?:movies|shows|anime|all)(?:\/(?:watching|plantowatch|hold|completed|dropped|all))?)?$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/playback(?:\/(?:movies|episodes|shows|anime|all))?$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/playback\/\d+$/, methods: new Set(["DELETE"]) },
   { path: /^\/sync\/(?:history|history\/remove|add-to-list)$/, methods: new Set(["POST"]) }
 ];
 
@@ -98,6 +99,10 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
 
   const responseHeaders = new Headers();
   responseHeaders.set("content-type", response.headers.get("content-type") ?? "application/json");
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) {
+    responseHeaders.set("retry-after", retryAfter);
+  }
 
   return new NextResponse(response.body, {
     status: response.status,

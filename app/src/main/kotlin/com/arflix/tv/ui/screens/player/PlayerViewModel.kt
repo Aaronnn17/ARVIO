@@ -4650,18 +4650,29 @@ class PlayerViewModel @Inject constructor(
                 lastScrobbleTime = currentTime
             } else if (!isLiveStreamOrSports && !isPlaying && lastIsPlaying) {
                 try {
-                    remoteSyncManager.scrobblePause(
-                        mediaType = currentMediaType,
-                        tmdbId = currentMediaId,
-                        progress = progressPercent.toFloat(),
-                        season = currentSeason,
-                        episode = currentEpisode,
-                        isAnime = isCurrentAnime()
-                    )
+                    if (progressPercent >= 80 && !hasMarkedWatched) {
+                        remoteSyncManager.scrobbleStop(
+                            mediaType = currentMediaType,
+                            tmdbId = currentMediaId,
+                            progress = progressPercent.toFloat(),
+                            season = currentSeason,
+                            episode = currentEpisode,
+                            isAnime = isCurrentAnime()
+                        )
+                    } else {
+                        remoteSyncManager.scrobblePause(
+                            mediaType = currentMediaType,
+                            tmdbId = currentMediaId,
+                            progress = progressPercent.toFloat(),
+                            season = currentSeason,
+                            episode = currentEpisode,
+                            isAnime = isCurrentAnime()
+                        )
+                    }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
 
-                    // Scrobble pause immediate failed
+                    // Scrobble pause/stop immediate failed
                 }
                 lastScrobbleTime = currentTime
             } else if (!isLiveStreamOrSports && isPlaying && currentTime - lastScrobbleTime >= SCROBBLE_UPDATE_INTERVAL_MS) {

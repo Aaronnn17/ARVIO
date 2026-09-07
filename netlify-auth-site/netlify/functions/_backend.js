@@ -1566,7 +1566,7 @@ const SIMKL_REQUEST_RULES = [
   { path: /^\/users\/settings$/, methods: new Set(["POST"]) },
   { path: /^\/scrobble\/(?:start|pause|stop)$/, methods: new Set(["POST"]) },
   { path: /^\/sync\/activities$/, methods: new Set(["GET"]) },
-  { path: /^\/sync\/all-items\/(?:movies|shows|anime|all)\/(?:watching|plantowatch|hold|completed|dropped|all)$/, methods: new Set(["GET"]) },
+  { path: /^\/sync\/all-items(?:\/(?:movies|shows|anime|all)(?:\/(?:watching|plantowatch|hold|completed|dropped|all))?)?$/, methods: new Set(["GET"]) },
   { path: /^\/sync\/playback(?:\/(?:movies|episodes|shows|anime|all))?$/, methods: new Set(["GET"]) },
   { path: /^\/sync\/playback\/\d+$/, methods: new Set(["DELETE"]) },
   { path: /^\/sync\/(?:history|history\/remove|add-to-list)$/, methods: new Set(["POST"]) }
@@ -1715,14 +1715,19 @@ async function handleSimklProxy(event) {
     } catch {
       data = text ? { raw: text } : { status: response.status };
     }
+    const returnHeaders = {
+      ...JSON_HEADERS,
+      "cache-control": "no-store",
+      "x-ratelimit-remaining": String(rate.remaining),
+      "x-ratelimit-reset": String(rate.resetSeconds)
+    };
+    const upstreamRetryAfter = response.headers.get("retry-after");
+    if (upstreamRetryAfter) {
+      returnHeaders["retry-after"] = upstreamRetryAfter;
+    }
     return {
       statusCode: response.status,
-      headers: {
-        ...JSON_HEADERS,
-        "cache-control": "no-store",
-        "x-ratelimit-remaining": String(rate.remaining),
-        "x-ratelimit-reset": String(rate.resetSeconds)
-      },
+      headers: returnHeaders,
       body: JSON.stringify(data)
     };
   } catch (error) {

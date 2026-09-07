@@ -144,7 +144,14 @@ object AppModule {
                     requestBuilder.header("Content-Type", "application/json")
                 }
 
-                chain.proceed(requestBuilder.build())
+                val response = chain.proceed(requestBuilder.build())
+                if (response.code == 429) {
+                    val retryAfter = response.header("Retry-After")?.toLongOrNull() ?: 5L
+                    com.arflix.tv.util.AppLogger.w("SimklApi", "HTTP 429 Too Many Requests received from Simkl. Retry-After: ${retryAfter}s")
+                } else if (response.code == 412) {
+                    com.arflix.tv.util.AppLogger.e("SimklApi", "HTTP 412 Precondition Failed / client_id_failed from Simkl. Check API key.")
+                }
+                response
             }
             .build()
 

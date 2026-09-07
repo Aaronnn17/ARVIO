@@ -1,6 +1,9 @@
 package com.arflix.tv.data.repository.simkl
 
+import android.content.Context
 import com.arflix.tv.data.api.SimklAddToListBody
+import com.arflix.tv.data.api.SimklAddToListMovie
+import com.arflix.tv.data.api.SimklAddToListShow
 import com.arflix.tv.data.api.SimklAllItemsResponse
 import com.arflix.tv.data.api.SimklApi
 import com.arflix.tv.data.api.SimklEpisodeRef
@@ -15,10 +18,12 @@ import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.repository.ContinueWatchingItem
+import com.arflix.tv.data.repository.sync.SyncProviderStore
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.google.gson.Gson
 import com.google.gson.JsonElement
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -26,6 +31,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import java.io.File
 import java.text.Normalizer
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -38,7 +44,9 @@ import kotlin.math.abs
 class SimklSyncService @Inject constructor(
     private val simklApi: SimklApi,
     private val authManager: SimklAuthManager,
-    private val tmdbApi: TmdbApi
+    private val tmdbApi: TmdbApi,
+    private val syncProviderStore: SyncProviderStore,
+    @ApplicationContext private val context: Context? = null
 ) {
     companion object {
         private const val SNAPSHOT_TTL_MS = 15 * 60 * 1000L
@@ -47,8 +55,19 @@ class SimklSyncService @Inject constructor(
         private val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
     }
 
+    private data class PersistedSimklSnapshot(
+        val watermark: String?,
+        val movies: SimklAllItemsResponse?,
+        val shows: SimklAllItemsResponse?,
+        val anime: SimklAllItemsResponse?,
+        val playback: List<com.arflix.tv.data.api.SimklPlaybackItem>?
+    )
+
     private val clientId: String get() = Constants.SIMKL_CLIENT_ID
     private val gson = Gson()
+
+    private val snapshotCacheFile: File?
+        get() = context?.filesDir?.let { File(it, "simkl_snapshot_cache.json") }
 
     private val syncMutex = Mutex()
     private var activeTokenScope: Int? = null
@@ -74,9 +93,36 @@ class SimklSyncService @Inject constructor(
 
     private fun episodePrefix(tmdbId: Int): String = "show_tmdb:$tmdbId:"
 
+    private fun persistSnapshot(watermark: String?) {
+        try {
+            val file = snapshotCacheFile ?: return
+            val data = PersistedSimklSnapshot(
+                watermark = watermark,
+                movies = snapshotMovies,
+                shows = snapshotShows,
+                anime = snapshotAnime,
+                playback = snapshotPlayback
+            )
+            file.writeText(gson.toJson(data))
+        } catch (e: Exception) {
+            AppLogger.w("SimklSyncService", "Failed to persist Simkl snapshot: ${e.message}")
+        }
+    }
+
+    private fun loadPersistedSnapshot(): PersistedSimklSnapshot? {
+        return try {
+            val file = snapshotCacheFile?.takeIf { it.exists() } ?: return null
+            val content = file.readText().takeIf { it.isNotBlank() } ?: return null
+            gson.fromJson(content, PersistedSimklSnapshot::class.java)
+        } catch (e: Exception) {
+            AppLogger.w("SimklSyncService", "Failed to load persisted Simkl snapshot: ${e.message}")
+            null
+        }
+    }
+
     /**
      * Follows official Simkl sync guidelines:
-     * Phase 1: Fetch libraries separately without date_from on initial load.
+     * Phase 1: Fetch libraries separately without date_from on initial load (sequentially).
      * Phase 2: Check /sync/activities first. If timestamp changed, fetch delta using /sync/all-items/?date_from=...
      * Throttles background checks to once every 15 minutes unless forced.
      */
@@ -92,6 +138,26 @@ class SimklSyncService @Inject constructor(
             activeTokenScope = tokenScope
         }
         val authHeader = "Bearer $token"
+
+        if (!hasInitialSnapshot) {
+            val persisted = loadPersistedSnapshot()
+            val storedWatermark = syncProviderStore.getSimklWatermark()
+            if (persisted != null && !storedWatermark.isNullOrBlank()) {
+                snapshotMovies = persisted.movies
+                snapshotShows = persisted.shows
+                snapshotAnime = persisted.anime
+                snapshotPlayback = persisted.playback
+                hasInitialSnapshot = snapshotMovies != null || snapshotShows != null || snapshotAnime != null
+                lastActivityTimestamp = storedWatermark
+                val stagedMovies = snapshotMovies ?: SimklAllItemsResponse()
+                val stagedShows = snapshotShows ?: SimklAllItemsResponse()
+                val stagedAnime = snapshotAnime ?: SimklAllItemsResponse()
+                val stagedPlayback = snapshotPlayback.orEmpty()
+                rebuildCaches(stagedMovies, stagedShows, stagedAnime, stagedPlayback)
+            } else if (!storedWatermark.isNullOrBlank()) {
+                lastActivityTimestamp = storedWatermark
+            }
+        }
 
         val now = System.currentTimeMillis()
         if (!force && hasInitialSnapshot && now - lastActivityCheckTime < SNAPSHOT_TTL_MS) {
@@ -109,12 +175,13 @@ class SimklSyncService @Inject constructor(
                 ?: activities.shows?.all
                 ?: activities.anime?.all
 
-            if (force || !hasInitialSnapshot || currentActivityDate != lastActivityTimestamp) {
-                AppLogger.d("SimklSyncService", "Refreshing complete Simkl snapshot")
-                val outcome = refreshSnapshot(authHeader)
+            if (!hasInitialSnapshot || currentActivityDate != lastActivityTimestamp) {
+                AppLogger.d("SimklSyncService", "Refreshing Simkl snapshot (hasInitial=$hasInitialSnapshot, current=$currentActivityDate, last=$lastActivityTimestamp)")
+                val outcome = refreshSnapshot(authHeader, currentActivityDate)
                 hasInitialSnapshot = outcome.hasUsableSnapshot
                 if (outcome.complete) {
                     lastActivityTimestamp = currentActivityDate
+                    syncProviderStore.setSimklWatermark(currentActivityDate)
                     lastActivityCheckTime = now
                 } else {
                     // Keep partial/previous data visible and retry after the short failure backoff.
@@ -152,30 +219,60 @@ class SimklSyncService @Inject constructor(
         }
     }
 
-    private suspend fun refreshSnapshot(authHeader: String): SnapshotRefreshOutcome = coroutineScope {
-        val moviesRequest = async {
-            fetchSnapshotPart("Movies") {
-                decodeAllItems("movies", simklApi.getAllItems(authHeader, clientId, "movies"))
+    private suspend fun refreshSnapshot(authHeader: String, watermark: String?): SnapshotRefreshOutcome = coroutineScope {
+        // Phase 2: Continuous delta sync if initial snapshot already exists and watermark is present
+        if (hasInitialSnapshot && !lastActivityTimestamp.isNullOrBlank()) {
+            AppLogger.d("SimklSyncService", "Performing Simkl delta sync from $lastActivityTimestamp")
+            val deltaFetch = fetchSnapshotPart("Delta") {
+                decodeDeltaItems(simklApi.getAllItemsDelta(authHeader, clientId, dateFrom = lastActivityTimestamp!!))
             }
-        }
-        val showsRequest = async {
-            fetchSnapshotPart("Shows") {
-                decodeAllItems("shows", simklApi.getAllItems(authHeader, clientId, "shows"))
+            val playbackFetch = fetchSnapshotPart("Playback") {
+                simklApi.getPlayback(authHeader, clientId)
             }
-        }
-        val animeRequest = async {
-            fetchSnapshotPart("Anime") {
-                decodeAllItems("anime", simklApi.getAllItems(authHeader, clientId, "anime"))
+            if (deltaFetch.succeeded && deltaFetch.value != null) {
+                val delta = deltaFetch.value
+                val mergedMovies = mergeMovieRows(snapshotMovies?.movies.orEmpty(), delta.movies.orEmpty())
+                val mergedShows = mergeShowRows(snapshotShows?.shows.orEmpty(), delta.shows.orEmpty())
+                val mergedAnime = mergeShowRows(snapshotAnime?.anime.orEmpty(), delta.anime.orEmpty())
+
+                snapshotMovies = SimklAllItemsResponse(movies = mergedMovies)
+                snapshotShows = SimklAllItemsResponse(shows = mergedShows)
+                snapshotAnime = SimklAllItemsResponse(anime = mergedAnime)
+                if (playbackFetch.succeeded) {
+                    snapshotPlayback = playbackFetch.value
+                }
+
+                val stagedMovies = snapshotMovies ?: SimklAllItemsResponse()
+                val stagedShows = snapshotShows ?: SimklAllItemsResponse()
+                val stagedAnime = snapshotAnime ?: SimklAllItemsResponse()
+                val stagedPlayback = snapshotPlayback.orEmpty()
+
+                resolveMissingTmdbIds(stagedMovies, stagedShows, stagedAnime, stagedPlayback)
+                rebuildCaches(stagedMovies, stagedShows, stagedAnime, stagedPlayback)
+                persistSnapshot(watermark)
+
+                return@coroutineScope SnapshotRefreshOutcome(hasUsableSnapshot = true, complete = deltaFetch.succeeded)
             }
-        }
-        val playbackRequest = async {
-            fetchSnapshotPart("Playback") { simklApi.getPlayback(authHeader, clientId) }
+            // If delta fetch failed, fall back to preserving usable snapshot or initial sync
+            if (snapshotMovies != null || snapshotShows != null || snapshotAnime != null) {
+                return@coroutineScope SnapshotRefreshOutcome(hasUsableSnapshot = true, complete = false)
+            }
         }
 
-        val movies = moviesRequest.await()
-        val shows = showsRequest.await()
-        val anime = animeRequest.await()
-        val playback = playbackRequest.await()
+        // Phase 1: Full bootstrap sync executed sequentially: movies -> shows -> anime -> playback
+        AppLogger.d("SimklSyncService", "Performing full sequential Simkl sync")
+        val movies = fetchSnapshotPart("Movies") {
+            decodeAllItems("movies", simklApi.getAllItems(authHeader, clientId, "movies"))
+        }
+        val shows = fetchSnapshotPart("Shows") {
+            decodeAllItems("shows", simklApi.getAllItems(authHeader, clientId, "shows"))
+        }
+        val anime = fetchSnapshotPart("Anime") {
+            decodeAllItems("anime", simklApi.getAllItems(authHeader, clientId, "anime", extended = "full_anime_seasons"))
+        }
+        val playback = fetchSnapshotPart("Playback") {
+            simklApi.getPlayback(authHeader, clientId)
+        }
 
         if (movies.succeeded) snapshotMovies = movies.value
         if (shows.succeeded) snapshotShows = shows.value
@@ -192,12 +289,54 @@ class SimklSyncService @Inject constructor(
         if (hasUsableSnapshot) {
             resolveMissingTmdbIds(stagedMovies, stagedShows, stagedAnime, stagedPlayback)
             rebuildCaches(stagedMovies, stagedShows, stagedAnime, stagedPlayback)
+            if (movies.succeeded && shows.succeeded && anime.succeeded) {
+                persistSnapshot(watermark)
+            }
         }
 
         SnapshotRefreshOutcome(
             hasUsableSnapshot = hasUsableSnapshot,
             complete = movies.succeeded && shows.succeeded && anime.succeeded
         )
+    }
+
+    private fun decodeDeltaItems(payload: JsonElement): SimklAllItemsResponse {
+        if (payload.isJsonObject) {
+            return gson.fromJson(payload, SimklAllItemsResponse::class.java)
+        }
+        return SimklAllItemsResponse()
+    }
+
+    private fun mergeMovieRows(
+        existing: List<SimklHistoryMovieItem>,
+        incoming: List<SimklHistoryMovieItem>
+    ): List<SimklHistoryMovieItem> {
+        val map = LinkedHashMap<String, SimklHistoryMovieItem>()
+        for (item in existing) {
+            val key = item.movie?.ids?.let { it.simkl?.toString() ?: it.tmdb?.toString() ?: it.imdb }
+            if (key != null) map[key] = item
+        }
+        for (item in incoming) {
+            val key = item.movie?.ids?.let { it.simkl?.toString() ?: it.tmdb?.toString() ?: it.imdb }
+            if (key != null) map[key] = item
+        }
+        return map.values.toList()
+    }
+
+    private fun mergeShowRows(
+        existing: List<SimklHistoryShowItem>,
+        incoming: List<SimklHistoryShowItem>
+    ): List<SimklHistoryShowItem> {
+        val map = LinkedHashMap<String, SimklHistoryShowItem>()
+        for (item in existing) {
+            val key = item.show?.ids?.let { it.simkl?.toString() ?: it.tmdb?.toString() ?: it.tvdb }
+            if (key != null) map[key] = item
+        }
+        for (item in incoming) {
+            val key = item.show?.ids?.let { it.simkl?.toString() ?: it.tmdb?.toString() ?: it.tvdb }
+            if (key != null) map[key] = item
+        }
+        return map.values.toList()
     }
 
     private fun decodeAllItems(type: String, payload: JsonElement): SimklAllItemsResponse {
@@ -240,6 +379,9 @@ class SimklSyncService @Inject constructor(
     }
 
     private fun clearCachedState() {
+        try {
+            snapshotCacheFile?.delete()
+        } catch (_: Exception) {}
         activeTokenScope = null
         hasInitialSnapshot = false
         lastActivityTimestamp = null
@@ -320,6 +462,8 @@ class SimklSyncService @Inject constructor(
             if (next != null && status == "watching") {
                 val season = next.season ?: 1
                 val episode = next.episode ?: return@forEach
+                val airedTotal = ((showItem.totalEpisodesCount ?: 0) - (showItem.notAiredEpisodesCount ?: 0))
+                    .coerceAtLeast(0)
                 cachedContinueWatching[MediaType.TV to showTmdb] = ContinueWatchingItem(
                     id = showTmdb,
                     title = show.title.orEmpty(),
@@ -333,7 +477,7 @@ class SimklSyncService @Inject constructor(
                     isUpNext = true,
                     updatedAtMs = parseTimestamp(showItem.lastWatchedAt),
                     watchedEpisodes = showItem.watchedEpisodesCount ?: 0,
-                    totalEpisodes = showItem.totalEpisodesCount ?: 0
+                    totalEpisodes = airedTotal
                 )
             }
         }
@@ -614,16 +758,18 @@ class SimklSyncService @Inject constructor(
         val token = authManager.getAccessToken() ?: return false
         val authHeader = "Bearer $token"
         val body = if (mediaType == MediaType.MOVIE) {
-            com.arflix.tv.data.api.SimklAddToListBody(
-                movies = listOf(com.arflix.tv.data.api.SimklAddToListMovie(to = "plantowatch", ids = SimklIds(tmdb = tmdbId)))
-            )
-        } else if (isAnime) {
             SimklAddToListBody(
-                anime = listOf(com.arflix.tv.data.api.SimklAddToListShow(to = "plantowatch", ids = SimklIds(tmdb = tmdbId)))
+                movies = listOf(SimklAddToListMovie(to = "plantowatch", ids = SimklIds(tmdb = tmdbId)))
             )
         } else {
-            com.arflix.tv.data.api.SimklAddToListBody(
-                shows = listOf(com.arflix.tv.data.api.SimklAddToListShow(to = "plantowatch", ids = SimklIds(tmdb = tmdbId)))
+            SimklAddToListBody(
+                shows = listOf(
+                    SimklAddToListShow(
+                        to = "plantowatch",
+                        ids = SimklIds(tmdb = tmdbId),
+                        useTvdbAnimeSeasons = if (isAnime) true else null
+                    )
+                )
             )
         }
         return try {
@@ -656,16 +802,18 @@ class SimklSyncService @Inject constructor(
             val res = if (isWatched) {
                 // If it was already watched, restore its status to "completed" so watch history is preserved
                 val body = if (mediaType == MediaType.MOVIE) {
-                    com.arflix.tv.data.api.SimklAddToListBody(
-                        movies = listOf(com.arflix.tv.data.api.SimklAddToListMovie(to = "completed", ids = SimklIds(tmdb = tmdbId)))
-                    )
-                } else if (isAnime) {
                     SimklAddToListBody(
-                        anime = listOf(com.arflix.tv.data.api.SimklAddToListShow(to = "completed", ids = SimklIds(tmdb = tmdbId)))
+                        movies = listOf(SimklAddToListMovie(to = "completed", ids = SimklIds(tmdb = tmdbId)))
                     )
                 } else {
-                    com.arflix.tv.data.api.SimklAddToListBody(
-                        shows = listOf(com.arflix.tv.data.api.SimklAddToListShow(to = "completed", ids = SimklIds(tmdb = tmdbId)))
+                    SimklAddToListBody(
+                        shows = listOf(
+                            SimklAddToListShow(
+                                to = "completed",
+                                ids = SimklIds(tmdb = tmdbId),
+                                useTvdbAnimeSeasons = if (isAnime) true else null
+                            )
+                        )
                     )
                 }
                 simklApi.addToList(authHeader, clientId, body)
@@ -673,10 +821,15 @@ class SimklSyncService @Inject constructor(
                 // Not watched, remove item completely from Simkl library
                 val body = if (mediaType == MediaType.MOVIE) {
                     SimklSyncHistoryBody(movies = listOf(SimklMovieRef(ids = SimklIds(tmdb = tmdbId))))
-                } else if (isAnime) {
-                    SimklSyncHistoryBody(anime = listOf(SimklShowRef(ids = SimklIds(tmdb = tmdbId))))
                 } else {
-                    SimklSyncHistoryBody(shows = listOf(SimklShowRef(ids = SimklIds(tmdb = tmdbId))))
+                    SimklSyncHistoryBody(
+                        shows = listOf(
+                            SimklShowRef(
+                                ids = SimklIds(tmdb = tmdbId),
+                                useTvdbAnimeSeasons = if (isAnime) true else null
+                            )
+                        )
+                    )
                 }
                 simklApi.removeFromHistory(authHeader, clientId, body)
             }
@@ -695,7 +848,13 @@ class SimklSyncService @Inject constructor(
         }
     }
 
-    suspend fun markWatched(mediaType: MediaType, tmdbId: Int, season: Int? = null, episode: Int? = null): Boolean {
+    suspend fun markWatched(
+        mediaType: MediaType,
+        tmdbId: Int,
+        season: Int? = null,
+        episode: Int? = null,
+        isAnime: Boolean = false
+    ): Boolean {
         val token = authManager.getAccessToken() ?: return false
         val authHeader = "Bearer $token"
         val body = if (mediaType == MediaType.MOVIE) {
@@ -705,6 +864,7 @@ class SimklSyncService @Inject constructor(
                 shows = listOf(
                     SimklShowRef(
                         ids = SimklIds(tmdb = tmdbId),
+                        useTvdbAnimeSeasons = if (isAnime) true else null,
                         seasons = if (season != null && episode != null) {
                             listOf(SimklSeasonRef(number = season, episodes = listOf(SimklEpisodeRef(number = episode))))
                         } else null
@@ -732,25 +892,36 @@ class SimklSyncService @Inject constructor(
         }
     }
 
-    suspend fun markUnwatched(mediaType: MediaType, tmdbId: Int, season: Int? = null, episode: Int? = null): Boolean {
+    suspend fun markUnwatched(
+        mediaType: MediaType,
+        tmdbId: Int,
+        season: Int? = null,
+        episode: Int? = null,
+        isAnime: Boolean = false
+    ): Boolean {
         val token = authManager.getAccessToken() ?: return false
         val authHeader = "Bearer $token"
-        val body = if (mediaType == MediaType.MOVIE) {
-            SimklSyncHistoryBody(movies = listOf(SimklMovieRef(ids = SimklIds(tmdb = tmdbId))))
-        } else {
-            SimklSyncHistoryBody(
-                shows = listOf(
-                    SimklShowRef(
-                        ids = SimklIds(tmdb = tmdbId),
-                        seasons = if (season != null && episode != null) {
-                            listOf(SimklSeasonRef(number = season, episodes = listOf(SimklEpisodeRef(number = episode))))
-                        } else null
+        return try {
+            val res = if (mediaType == MediaType.MOVIE) {
+                // Moving movie to "plantowatch" via addToList preserves the row and user ratings on Simkl
+                val body = SimklAddToListBody(
+                    movies = listOf(SimklAddToListMovie(to = "plantowatch", ids = SimklIds(tmdb = tmdbId)))
+                )
+                simklApi.addToList(authHeader, clientId, body)
+            } else {
+                val body = SimklSyncHistoryBody(
+                    shows = listOf(
+                        SimklShowRef(
+                            ids = SimklIds(tmdb = tmdbId),
+                            useTvdbAnimeSeasons = if (isAnime) true else null,
+                            seasons = if (season != null && episode != null) {
+                                listOf(SimklSeasonRef(number = season, episodes = listOf(SimklEpisodeRef(number = episode))))
+                            } else null
+                        )
                     )
                 )
-            )
-        }
-        return try {
-            val res = simklApi.removeFromHistory(authHeader, clientId, body)
+                simklApi.removeFromHistory(authHeader, clientId, body)
+            }
             if (res.isSuccessful) {
                 if (mediaType == MediaType.MOVIE) {
                     cachedWatchedMovies.remove(tmdbId)
@@ -773,7 +944,8 @@ class SimklSyncService @Inject constructor(
         showTmdbId: Int,
         season: Int,
         episodes: List<Int>,
-        watched: Boolean
+        watched: Boolean,
+        isAnime: Boolean = false
     ): Boolean {
         if (episodes.isEmpty()) return true
         val token = authManager.getAccessToken() ?: return false
@@ -782,6 +954,7 @@ class SimklSyncService @Inject constructor(
             shows = listOf(
                 SimklShowRef(
                     ids = SimklIds(tmdb = showTmdbId),
+                    useTvdbAnimeSeasons = if (isAnime) true else null,
                     seasons = listOf(
                         SimklSeasonRef(
                             number = season,

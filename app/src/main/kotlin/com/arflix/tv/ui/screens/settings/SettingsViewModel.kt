@@ -4267,6 +4267,9 @@ class SettingsViewModel @Inject constructor(
                         runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                         return@launch
                     }
+                } catch (e: com.arflix.tv.data.repository.simkl.SimklPinExpiredException) {
+                    AppLogger.w("SettingsViewModel", "Simkl PIN expired or invalidated: ${e.message}")
+                    break
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     AppLogger.e("SettingsViewModel", "Simkl polling error: ${e.message}")
