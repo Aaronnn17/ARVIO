@@ -205,14 +205,19 @@ fun EpgGrid(
 
     LaunchedEffect(scrollResetKey, channelWindowIdentity) {
         if (channels.isEmpty() || didPositionInitialSelection) return@LaunchedEffect
-        if (channelListState.firstVisibleItemIndex == 0 && channelListState.firstVisibleItemScrollOffset == 0) {
-            channelListState.scrollToItem(selectedChannelId?.let(channelIndexById::get) ?: 0)
+        val resolvedIdx = selectedChannelId?.let(channelIndexById::get)
+        if (resolvedIdx != null) {
+            val targetScroll = (resolvedIdx - 2).coerceAtLeast(0)
+            channelListState.scrollToItem(targetScroll)
+            activeChannelFocusId = selectedChannelId
+            activeChannelFocusIndex = resolvedIdx
+            pendingChannelFocusId = null
+            didPositionInitialSelection = true
+        } else if (channelListState.firstVisibleItemIndex == 0 && channelListState.firstVisibleItemScrollOffset == 0) {
+            activeChannelFocusId = channels.firstOrNull()?.id
+            activeChannelFocusIndex = 0
+            pendingChannelFocusId = null
         }
-        activeChannelFocusId = selectedChannelId
-            ?.takeIf { it in channelIndexById }
-            ?: channels.firstOrNull()?.id
-        pendingChannelFocusId = null
-        didPositionInitialSelection = true
     }
 
     val scope = rememberCoroutineScope()
@@ -312,18 +317,20 @@ fun EpgGrid(
         val anchorId = activeChannelFocusId ?: selectedChannelId
         val anchorIdx = anchorId?.let(channelIndexById::get)
             ?: selectedChannelId?.let(channelIndexById::get)
-            ?: return true
+            ?: return false
         val targetIdx = anchorIdx + delta
         return when {
             targetIdx < 0 -> {
-                onRequestPreviousChannels()
+                if (channelWindowOffset > 0) {
+                    onRequestPreviousChannels()
+                }
                 true
             }
             targetIdx >= channels.size -> {
                 onRequestNextChannels()
                 true
             }
-            else -> keepChannelFocus(targetIdx)
+            else -> false
         }
     }
 
@@ -343,7 +350,11 @@ fun EpgGrid(
         if (didPositionInitialSelection) return@LaunchedEffect
         val id = selectedChannelId ?: return@LaunchedEffect
         val idx = channelIndexById[id] ?: return@LaunchedEffect
-        channelListState.scrollToItem(idx)
+        val targetScroll = (idx - 2).coerceAtLeast(0)
+        channelListState.scrollToItem(targetScroll)
+        activeChannelFocusId = id
+        activeChannelFocusIndex = idx
+        pendingChannelFocusId = null
         didPositionInitialSelection = true
     }
 
@@ -356,7 +367,8 @@ fun EpgGrid(
         if (channelListState.layoutInfo.visibleItemsInfo.any { it.index == idx }) {
             revealRow(idx)
         } else {
-            channelListState.scrollToItem(idx)
+            val targetScroll = (idx - 2).coerceAtLeast(0)
+            channelListState.scrollToItem(targetScroll)
         }
         runCatching { selectedChannelFocusRequester.requestFocus() }
         handledSelectedFocusSignal = focusSelectedChannelSignal

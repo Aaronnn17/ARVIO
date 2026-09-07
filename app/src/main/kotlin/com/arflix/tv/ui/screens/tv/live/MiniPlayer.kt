@@ -2,8 +2,10 @@
 
 package com.arflix.tv.ui.screens.tv.live
 
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -32,6 +34,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -105,6 +110,8 @@ fun MiniPlayerRow(
     onOpenVariants: (() -> Unit)? = null,
     compact: Boolean = false,
     landscapeCompact: Boolean = false,
+    playerActive: Boolean = true,
+    onVideoBoundsPositioned: ((Rect) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     if (landscapeCompact) {
@@ -120,7 +127,9 @@ fun MiniPlayerRow(
                 exoPlayer = exoPlayer,
                 channel = channel,
                 landscapeCompact = true,
+                playerActive = playerActive,
                 onFullscreenClick = onFullscreenClick,
+                onVideoBoundsPositioned = onVideoBoundsPositioned,
             )
             InfoColumn(
                 channel = channel,
@@ -147,7 +156,9 @@ fun MiniPlayerRow(
                 exoPlayer = exoPlayer,
                 channel = channel,
                 compact = true,
+                playerActive = playerActive,
                 onFullscreenClick = onFullscreenClick,
+                onVideoBoundsPositioned = onVideoBoundsPositioned,
                 modifier = Modifier.fillMaxWidth(),
             )
             InfoColumn(
@@ -172,7 +183,9 @@ fun MiniPlayerRow(
             VideoCard(
                 exoPlayer = exoPlayer,
                 channel = channel,
+                playerActive = playerActive,
                 onFullscreenClick = onFullscreenClick,
+                onVideoBoundsPositioned = onVideoBoundsPositioned,
             )
             InfoColumn(
                 channel = channel,
@@ -195,12 +208,20 @@ private fun VideoCard(
     channel: EnrichedChannel?,
     compact: Boolean = false,
     landscapeCompact: Boolean = false,
+    playerActive: Boolean = true,
     onFullscreenClick: (() -> Unit)? = null,
+    onVideoBoundsPositioned: ((Rect) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val deviceType = LocalDeviceType.current
     val isTouchDevice = deviceType.isTouchDevice()
     val landscapeSpec = if (landscapeCompact) landscapePhoneMiniPlayerSpec() else null
+
+    val playerAlpha by animateFloatAsState(
+        targetValue = if (playerActive) 1f else 0f,
+        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+        label = "mini-player-fade",
+    )
 
     Box(
         modifier = modifier
@@ -212,6 +233,15 @@ private fun VideoCard(
                         landscapeSpec.videoHeightDp.dp,
                     )
                     else -> Modifier.size(LiveDims.MiniPlayerWidth, LiveDims.MiniPlayerHeight)
+                }
+            )
+            .then(
+                if (onVideoBoundsPositioned != null) {
+                    Modifier.onGloballyPositioned { coords ->
+                        onVideoBoundsPositioned(coords.boundsInRoot())
+                    }
+                } else {
+                    Modifier
                 }
             )
             .clickable(enabled = isTouchDevice && onFullscreenClick != null) {
@@ -244,19 +274,38 @@ private fun VideoCard(
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
-                        this.player = exoPlayer
+                        if (playerActive) {
+                            this.player = exoPlayer
+                        }
                         useController = false
                         setKeepContentOnPlayerReset(true)
                     }
                 },
                 update = { view ->
-                    if (view.player !== exoPlayer) {
-                        view.player = exoPlayer
+                    if (playerActive) {
+                        if (view.player !== exoPlayer) {
+                            view.player = exoPlayer
+                        }
+                    } else {
+                        if (view.player != null) {
+                            view.player = null
+                        }
                     }
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        alpha = playerAlpha
+                    },
             )
-            LiveBug(modifier = Modifier.align(Alignment.TopEnd).padding(10.dp))
+            LiveBug(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .graphicsLayer {
+                        alpha = playerAlpha
+                    },
+            )
         }
 
         if (isTouchDevice && onFullscreenClick != null) {
