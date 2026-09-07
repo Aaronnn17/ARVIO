@@ -302,4 +302,3 @@ internal fun getCustomDeviceNameOrNull(context: Context): String? = try {
 } catch (_: Throwable) {
     null
 }
-
