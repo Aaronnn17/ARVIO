@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="library_sort_release_newest">Release date: newest first</string>
+    <string name="library_sort_release_oldest">Release date: oldest first</string>
     <string name="app_name">ARVIO</string>
     <string name="about_credits">About &amp; Credits</string>
     <string name="about_credits_description">Metadata attribution and copyright information</string>

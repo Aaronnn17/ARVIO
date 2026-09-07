@@ -77,6 +77,7 @@ export function StabilizationFixture() {
       {toast && <div role="status" className="fixture-toast" onClick={() => setToast("")}>{toast}</div>}
       <PlayerOverlay />
       <div className="fixture-tools">
+        <button onClick={() => { setSettings((old) => ({ ...old, homeServers: (["plex", "jellyfin", "emby"] as const).map((type) => ({ id: type, type, name: `Fixture ${type}`, url: `https://${type}.invalid`, token: "fixture-only", userId: "fixture", enabled: true })) })); setPage("library"); }}>Test home server libraries</button>
         <button onClick={() => setActiveStream({ source: "YouTube player example", addonName: "Test fixture", quality: "", size: "", url: "https://www.youtube.com/watch?v=M7lc1UVf-VE" })}>Test YouTube embed</button>
         <button onClick={() => { sessionStorage.removeItem("arvio.web.noAddonsPrompt.v1:fixture"); setSettings((old) => ({ ...old, homeServers: [], iptvPlaylists: [] })); setPage("onboarding"); setShowOnboarding(true); }}>Test source setup</button>
       </div>

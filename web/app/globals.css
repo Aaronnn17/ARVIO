@@ -10261,6 +10261,7 @@ button,
 .library-mobile-select {
   display: none;
 }
+.library-mobile-sort { display: none; }
 
 .library-toolbar {
   min-height: 42px;
@@ -10368,6 +10369,8 @@ button,
   .library-heading { grid-template-columns: 1fr; align-items: start; gap: 16px; }
   .library-provider-tabs { width: 100%; }
   .library-provider-tabs button { flex: 1 0 auto; }
+  .library-provider-tabs .library-provider-sort { display: none; }
+  .library-toolbar .library-mobile-sort { display: block; min-width: 0; max-width: 100%; flex: 1; }
   .library-workspace.has-library-sidebar {
     display: block;
     padding: 0 0 64px;
