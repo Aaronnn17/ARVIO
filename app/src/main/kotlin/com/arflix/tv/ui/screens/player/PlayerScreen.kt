@@ -219,7 +219,6 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.asImageBitmap
 import kotlin.math.abs
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
@@ -3671,8 +3670,6 @@ fun PlayerScreen(
                 showCastButton = castAvailable && !streamNeedsHeaders,
                 showPipButton = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O,
                 seekPreviewFrame = previewFrameForTarget,
-                isSeekPreviewSupported = previewAvailable && !isLiveStream && !isCasting,
-                isSeekPreviewLoading = previewRequested && previewAvailable && previewFrameForTarget == null,
                 onScrubPreviewPosition = { position ->
                     if (position != null) dragSeek(position) else finishSeek(false)
                 },
@@ -4261,11 +4258,9 @@ fun PlayerScreen(
 
                         Spacer(modifier = Modifier.height(if (isTouchDevice) 4.dp else 6.dp))
 
-                        AnimatedVisibility(
-                            visible = isControlScrubbing && previewAvailable && duration > 0L && !isCasting && !isLiveStream,
-                            enter = fadeIn(animTween(70)),
-                            exit = fadeOut(animTween(90)),
-                        ) {
+                        // Reserve layout for the browsing session, not image readiness. Loading,
+                        // failed and stale targets paint nothing and cannot move the controls.
+                        if (isControlScrubbing && duration > 0L && !isCasting && !isLiveStream) {
                             val previewWidth = if (isTouchDevice) 168.dp else 224.dp
                             val previewHeight = previewWidth * 9f / 16f
                             BoxWithConstraints(
@@ -4276,17 +4271,18 @@ fun PlayerScreen(
                                 val progress = (controlsPreviewPosition.toFloat() / duration).coerceIn(0f, 1f)
                                 val offset = (maxWidth * progress - previewWidth / 2f)
                                     .coerceIn(0.dp, (maxWidth - previewWidth).coerceAtLeast(0.dp))
-                                Box(Modifier.offset(x = offset).size(previewWidth, previewHeight)) {
-                                    previewFrameForTarget?.let { frame ->
-                                        SeekPreviewCard(frame = frame, modifier = Modifier.fillMaxSize())
-                                    } ?: SeekPreviewPlaceholder(modifier = Modifier.fillMaxSize())
-                                }
+                                com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
+                                    frame = previewFrameForTarget,
+                                    positionMs = controlsPreviewPosition,
+                                    sourceGeneration = previewStatus.sourceGeneration,
+                                    modifier = Modifier.offset(x = offset).size(previewWidth, previewHeight),
+                                )
                             }
                         }
 
                         // Trackbar at the very bottom with time labels
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().testTag("player_controls_seekbar"),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
@@ -4644,22 +4640,12 @@ fun PlayerScreen(
                           Box(
                             modifier = Modifier.fillMaxWidth().height(previewHeight),
                           ) {
-                            Box(
-                                modifier = Modifier
-                                    .offset(x = previewOffset)
-                                    .width(previewWidth)
-                                    .height(previewHeight),
-                            ) {
-                                val frame = previewFrameForTarget
-                                if (frame != null) {
-                                    SeekPreviewCard(
-                                        frame = frame,
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                } else {
-                                    SeekPreviewPlaceholder(modifier = Modifier.fillMaxSize())
-                                }
-                            }
+                            com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
+                                frame = previewFrameForTarget,
+                                positionMs = previewPosition,
+                                sourceGeneration = previewStatus.sourceGeneration,
+                                modifier = Modifier.offset(x = previewOffset).size(previewWidth, previewHeight),
+                            )
                           }
                           Spacer(modifier = Modifier.height(2.dp))
                         }
@@ -6810,44 +6796,6 @@ private class PlaybackCookieJar : CookieJar {
             }
         }
         return valid
-    }
-}
-
-@Composable
-private fun SeekPreviewCard(
-    frame: SeekPreviewFrame,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(5.dp)
-    Box(
-        modifier = modifier
-            .shadow(14.dp, shape, clip = false)
-            .aspectRatio(16f / 9f)
-            .background(Color.Black, shape)
-            .border(1.dp, Color.White.copy(alpha = 0.68f), shape)
-            .clip(shape)
-    ) {
-        Image(
-            bitmap = frame.bitmap.asImageBitmap(),
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize(),
-        )
-    }
-}
-
-@Composable
-private fun SeekPreviewPlaceholder(modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(5.dp)
-    Box(
-        modifier = modifier
-            .shadow(14.dp, shape, clip = false)
-            .background(Color(0xFF101010), shape)
-            .border(1.dp, Color.White.copy(alpha = 0.35f), shape)
-            .clip(shape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(Modifier.width(32.dp).height(2.dp).background(Color.White.copy(alpha = 0.35f)))
     }
 }
 
