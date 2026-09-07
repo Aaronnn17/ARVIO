@@ -46,10 +46,12 @@ jobs:
       # Export only these public client values, never the OAuth client secret.
       - name: Load required public build configuration
         shell: bash
+        env:
+          PUBLIC_TRAKT_ID: ${{ secrets.WEB_PUBLIC_TRAKT_CLIENT_ID }}
+          PUBLIC_APP_KEY: ${{ secrets.WEB_PUBLIC_APP_ANON_KEY }}
         run: |
-          env_json=$(npx --yes netlify-cli@25.6.0 env:list --site "$NETLIFY_SITE_ID" --context production --scope builds --json)
-          trakt_id=$(printf '%s' "$env_json" | jq -r '[.NEXT_PUBLIC_TRAKT_CLIENT_ID, .TRAKT_CLIENT_ID] | map(select(type == "string" and length > 0)) | first // empty')
-          app_key=$(printf '%s' "$env_json" | jq -r '[.NEXT_PUBLIC_ARVIO_APP_ANON_KEY, .APP_ANON_KEY] | map(select(type == "string" and length > 0)) | first // empty')
+          trakt_id="$PUBLIC_TRAKT_ID"
+          app_key="$PUBLIC_APP_KEY"
           if [[ -z "$trakt_id" || -z "$app_key" ]]; then
             echo "Missing required public Trakt/cloud configuration; refusing to publish a stale-only client." >&2
             exit 1
