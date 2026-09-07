@@ -19,9 +19,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+
+/** Draw above the seek bar without contributing height or intercepting focus. */
+internal fun Modifier.seekPreviewOverlay(): Modifier = zIndex(1f).layout { measurable, constraints ->
+    val preview = measurable.measure(constraints.copy(minHeight = 0))
+    layout(preview.width, 0) {
+        preview.placeRelative(0, -preview.height)
+    }
+}
 
 /** Callers validate source identity; this also rejects stale positions during touch recomposition. */
 @Composable

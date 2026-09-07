@@ -252,6 +252,7 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.content.ContextCompat
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
+import com.arflix.tv.ui.screens.player.preview.seekPreviewOverlay
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewSource
 import com.arflix.tv.ui.screens.player.preview.SeekInteraction
@@ -4258,13 +4259,12 @@ fun PlayerScreen(
 
                         Spacer(modifier = Modifier.height(if (isTouchDevice) 4.dp else 6.dp))
 
-                        // Reserve layout for the browsing session, not image readiness. Loading,
-                        // failed and stale targets paint nothing and cannot move the controls.
+                        // Preview overlays the controls; entering/exiting seek must not move them.
                         if (isControlScrubbing && duration > 0L && !isCasting && !isLiveStream) {
                             val previewWidth = if (isTouchDevice) 168.dp else 224.dp
                             val previewHeight = previewWidth * 9f / 16f
                             BoxWithConstraints(
-                                modifier = Modifier.fillMaxWidth().height(previewHeight + 2.dp)
+                                modifier = Modifier.fillMaxWidth().seekPreviewOverlay().height(previewHeight + 2.dp)
                                     .padding(start = if (isTouchDevice) 48.dp else 55.dp,
                                         end = if (isTouchDevice) 56.dp else 63.dp),
                             ) {
@@ -4638,7 +4638,7 @@ fun PlayerScreen(
                     Column(modifier = Modifier.fillMaxWidth()) {
                         if (showQuickSeekPreview) {
                           Box(
-                            modifier = Modifier.fillMaxWidth().height(previewHeight),
+                            modifier = Modifier.fillMaxWidth().seekPreviewOverlay().height(previewHeight + 2.dp),
                           ) {
                             com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
                                 frame = previewFrameForTarget,
@@ -4647,7 +4647,6 @@ fun PlayerScreen(
                                 modifier = Modifier.offset(x = previewOffset).size(previewWidth, previewHeight),
                             )
                           }
-                          Spacer(modifier = Modifier.height(2.dp))
                         }
                         Box(
                             modifier = Modifier
