@@ -1859,6 +1859,23 @@ function TelegramSection() {
     );
   }
 
+  if (!mod.isTelegramConfigured) {
+    return (
+      <Panel title="Telegram">
+        <p className="empty">
+          Connect your Telegram account to stream video files from your chats and
+          channels as sources — the same feature as the Android app. Everything
+          runs in your browser; nothing is sent to ARVIO servers.
+        </p>
+        <div className="tg-center">
+          <p className="tg-lead" style={{ color: "var(--color-danger, #ff6b6b)" }}>
+            Telegram integration is not configured in this build. Please configure NEXT_PUBLIC_TELEGRAM_API_ID and NEXT_PUBLIC_TELEGRAM_API_HASH in your environment.
+          </p>
+        </div>
+      </Panel>
+    );
+  }
+
   const connect = () => {
     setUsePhone(false);
     void mod.startQrAuth();

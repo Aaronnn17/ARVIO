@@ -55,12 +55,12 @@ android {
         buildConfigField(
             "String",
             "DISCORD_APPLICATION_ID",
-            "\"${escapeBuildConfigString(localSecretValue("DISCORD_CLIENT_ID").ifBlank { "1501197333826637835" })}\""
+            "\"${escapeBuildConfigString(localSecretValue("DISCORD_CLIENT_ID"))}\""
         )
         buildConfigField(
             "String",
             "NETLIFY_BACKEND_URL",
-            "\"${escapeBuildConfigString(localSecretValue("NETLIFY_BACKEND_URL").ifBlank { "https://auth.arvio.tv/.netlify/functions" })}\""
+            "\"${escapeBuildConfigString(localSecretValue("NETLIFY_BACKEND_URL"))}\""
         )
         buildConfigField(
             "String",
@@ -490,6 +490,12 @@ fun localSecretValue(name: String): String {
     }
     providers.gradleProperty(name).orNull?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
     providers.environmentVariable(name).orNull?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+    val defaultsFile = rootProject.file("secrets.defaults.properties")
+    if (defaultsFile.exists()) {
+        val properties = Properties()
+        defaultsFile.readText(Charsets.UTF_8).removePrefix("\uFEFF").reader().use { properties.load(it) }
+        properties.getProperty(name)?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+    }
     return ""
 }
 
