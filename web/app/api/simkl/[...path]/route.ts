@@ -47,12 +47,18 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
     target = new URL(`${netlifyBackendUrl}/simkl-proxy`);
     target.searchParams.set("path", normalizedPath);
     target.searchParams.set("method", method);
+    target.searchParams.set("client_id", simklClientId);
+    target.searchParams.set("app-name", "arvio");
+    target.searchParams.set("app-version", "1.9.996");
     input.searchParams.forEach((value, key) => {
-      if (key !== "client_id" && key !== "client_secret") target.searchParams.set(key, value);
+      if (key !== "client_id" && key !== "client_secret" && key !== "app-name" && key !== "app-version") {
+        target.searchParams.set(key, value);
+      }
     });
     headers = {
       apikey: appAnonKey,
-      Authorization: `Bearer ${appAnonKey}`
+      Authorization: `Bearer ${appAnonKey}`,
+      "user-agent": request.headers.get("user-agent") || "ARVIO/1.9.996 (Web)"
     };
     const userToken = request.headers.get("x-user-token");
     if (userToken) headers["x-user-token" as keyof HeadersInit] = userToken;
@@ -61,10 +67,17 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
     input.searchParams.forEach((value, key) => {
       if (key !== "client_id" && key !== "client_secret") target.searchParams.set(key, value);
     });
-    if (normalizedPath.startsWith("/oauth/pin")) target.searchParams.set("client_id", simklClientId);
+    target.searchParams.set("client_id", simklClientId);
+    if (!target.searchParams.has("app-name") || target.searchParams.get("app-name") === "ARVIO") {
+      target.searchParams.set("app-name", "arvio");
+    }
+    if (!target.searchParams.has("app-version")) {
+      target.searchParams.set("app-version", "1.9.996");
+    }
     headers = {
       "content-type": "application/json",
-      "simkl-api-key": simklClientId
+      "simkl-api-key": simklClientId,
+      "user-agent": request.headers.get("user-agent") || "ARVIO/1.9.996 (Web)"
     };
     const userToken = request.headers.get("x-user-token");
     if (userToken) headers.Authorization = `Bearer ${userToken}`;

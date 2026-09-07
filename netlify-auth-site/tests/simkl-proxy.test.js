@@ -144,3 +144,42 @@ test("Simkl proxy rate limiting persists counts and resets after one minute", as
     resetSeconds: 60
   });
 });
+
+test("Simkl proxy appends client_id, app-name, app-version, and User-Agent to all requests", async () => {
+  const originalFetch = global.fetch;
+  let capturedUrl = "";
+  let capturedHeaders = null;
+  try {
+    global.fetch = async (url, options) => {
+      capturedUrl = String(url);
+      capturedHeaders = options.headers;
+      return new Response(JSON.stringify({ all: "2026-09-07T00:00:00Z" }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    };
+    const response = await backend.handleSimklProxy({
+      httpMethod: "GET",
+      headers: {
+        "x-user-token": "user-access-token"
+      },
+      queryStringParameters: {
+        path: "/sync/activities",
+        method: "GET"
+      }
+    });
+    assert.equal(response.statusCode, 200);
+    const target = new URL(capturedUrl);
+    assert.equal(target.origin, "https://api.simkl.com");
+    assert.equal(target.pathname, "/sync/activities");
+    assert.equal(target.searchParams.get("client_id"), "server-client-id");
+    assert.equal(target.searchParams.get("app-name"), "arvio");
+    assert.equal(target.searchParams.get("app-version"), "1.9.996");
+    assert.equal(capturedHeaders["simkl-api-key"], "server-client-id");
+    assert.equal(capturedHeaders["authorization"], "Bearer user-access-token");
+    assert.match(capturedHeaders["user-agent"], /^ARVIO\//);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+

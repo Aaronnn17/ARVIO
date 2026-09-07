@@ -157,7 +157,18 @@ export class SimklClient implements SyncClient {
       ...(options.headers as Record<string, string>)
     };
     if (accessToken) headers["x-user-token"] = accessToken;
-    return jsonRequest<T>(`/api/simkl${path}`, { ...options, headers });
+
+    const [pathname, queryString] = path.split("?");
+    const params = new URLSearchParams(queryString || "");
+    if (!params.has("app-name")) params.set("app-name", "arvio");
+    if (!params.has("app-version")) params.set("app-version", "1.9.996");
+    if (config.simklClientId && !params.has("client_id")) {
+      params.set("client_id", config.simklClientId);
+    }
+    const finalQuery = params.toString();
+    const finalUrl = `/api/simkl${pathname}${finalQuery ? `?${finalQuery}` : ""}`;
+
+    return jsonRequest<T>(finalUrl, { ...options, headers });
   }
 
   private scope(): string {

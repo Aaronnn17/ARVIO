@@ -123,11 +123,23 @@ serve(async (req) => {
         simklUrl.searchParams.set(key, value)
       }
     })
-    if (path.startsWith('/oauth/pin')) simklUrl.searchParams.set('client_id', SIMKL_CLIENT_ID)
+    simklUrl.searchParams.set('client_id', SIMKL_CLIENT_ID)
+    if (!simklUrl.searchParams.has('app-name') || simklUrl.searchParams.get('app-name') === 'ARVIO') {
+      simklUrl.searchParams.set('app-name', 'arvio')
+    }
+    if (!simklUrl.searchParams.has('app-version')) {
+      const incomingVersion = req.headers.get('x-app-version') || '1.9.996'
+      simklUrl.searchParams.set('app-version', incomingVersion)
+    }
+
+    const appVersion = simklUrl.searchParams.get('app-version') || '1.9.996'
+    const incomingUa = req.headers.get('user-agent')?.trim()
+    const userAgent = incomingUa || `ARVIO/${appVersion} (Supabase Proxy)`
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'simkl-api-key': SIMKL_CLIENT_ID,
+      'User-Agent': userAgent,
     }
 
     const userToken = req.headers.get('x-user-token')
