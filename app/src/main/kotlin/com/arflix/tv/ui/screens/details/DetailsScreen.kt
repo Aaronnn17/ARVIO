@@ -174,7 +174,7 @@ import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.SkeletonDetailsPage
 import com.arflix.tv.ui.components.SkeletonEpisodeCard
 import com.arflix.tv.ui.components.StreamSelector
-import com.arflix.tv.ui.components.TrailerPlayer
+import com.arflix.tv.ui.components.OpenYouTubeTrailer
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -1014,45 +1014,9 @@ fun DetailsScreen(
             }
         )
 
-        // In-app Trailer Player (fullscreen overlay)
         if (showTrailerPlayer && uiState.trailerKey != null) {
-            BackHandler { showTrailerPlayer = false }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black)
-                    .zIndex(50f)
-                    .clickable { showTrailerPlayer = false }
-            ) {
-                TrailerPlayer(
-                    youtubeKey = uiState.trailerKey!!,
-                    modifier = Modifier.fillMaxSize(),
-                    delayMs = 0L,
-                    volume = 1f
-                )
-                // Close button for touch devices
-                if (isMobile) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 48.dp, end = 16.dp)
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.6f))
-                            .clickable { showTrailerPlayer = false },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = stringResource(R.string.close),
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-            }
+            OpenYouTubeTrailer(uiState.trailerKey!!) { showTrailerPlayer = false }
         }
-
         // Stream Selector Modal
         StreamSelector(
             isVisible = showStreamSelector,

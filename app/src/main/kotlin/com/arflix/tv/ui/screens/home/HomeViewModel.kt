@@ -214,7 +214,6 @@ class HomeViewModel @Inject constructor(
     private val apkDownloader: com.arflix.tv.updater.ApkDownloader,
     private val updatePreferences: com.arflix.tv.updater.UpdatePreferences,
     private val updateStatusManager: com.arflix.tv.updater.UpdateStatusManager,
-    private val youTubeExtractor: com.arflix.tv.data.api.InAppYouTubeExtractor,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     private val imageLoader: ImageLoader by lazy(LazyThreadSafetyMode.NONE) {
@@ -1702,7 +1701,6 @@ class HomeViewModel @Inject constructor(
                     preferences = context.settingsDataStore.data
                 ).collect { preferences ->
                     val previousState = _uiState.value
-                    val autoplayJustEnabled = !previousState.trailerAutoPlay && preferences.trailerAutoPlay
                     mediaRepository.contentLanguage = preferences.contentLanguage
                     val normalizedLanguage = mediaRepository.contentLanguage
                     val langChanged = observedContentLanguage?.let { it != normalizedLanguage } ?: false
@@ -1713,7 +1711,7 @@ class HomeViewModel @Inject constructor(
                     observedIptvFavoritesOnHome = preferences.iptvFavoritesOnHome
 
                     _uiState.value = previousState.copy(
-                        trailerAutoPlay = preferences.trailerAutoPlay,
+                        trailerAutoPlay = false,
                         trailerSoundEnabled = preferences.trailerSoundEnabled,
                         trailerDelaySeconds = preferences.trailerDelaySeconds,
                         trailerInCards = preferences.trailerInCards,
@@ -1727,8 +1725,6 @@ class HomeViewModel @Inject constructor(
                         loadHomeData()
                     } else if (iptvFavoritesPlacementChanged) {
                         loadHomeData()
-                    } else if (autoplayJustEnabled) {
-                        _uiState.value.heroItem?.let(::hydrateHeroDetailsIfNeeded)
                     }
                 }
             } catch (e: Exception) {
@@ -4590,7 +4586,6 @@ class HomeViewModel @Inject constructor(
                     val trailerKey = mediaRepository.getTrailerKey(item.mediaType, item.id)
                     if (trailerKey != null && _uiState.value.heroItem?.id == item.id) {
                         _uiState.value = _uiState.value.copy(heroTrailerKey = trailerKey)
-                        prefetchTrailerUrl(trailerKey)
                     }
                         } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -4619,26 +4614,8 @@ class HomeViewModel @Inject constructor(
                 applyHeroDetailsSnapshotIfCurrent(item, snapshot)
                 snapshot.primaryNetworkLogo?.let { preloadLogoImages(listOf(it)) }
 
-                // Fetch trailer key for hero (YouTube)
-                try {
-                    val trailerKey = mediaRepository.getTrailerKey(item.mediaType, item.id)
-                    if (trailerKey != null && _uiState.value.heroItem?.id == item.id) {
-                        _uiState.value = _uiState.value.copy(heroTrailerKey = trailerKey)
-                        prefetchTrailerUrl(trailerKey)
-                    }
-                        } catch (e: Exception) {
-                if (e is CancellationException) throw e
-            }
                     } catch (e: Exception) {
                 if (e is CancellationException) throw e
-            }
-        }
-    }
-
-    private fun prefetchTrailerUrl(trailerKey: String) {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching {
-                youTubeExtractor.extractPlaybackSource("https://www.youtube.com/watch?v=$trailerKey")
             }
         }
     }
@@ -4656,7 +4633,6 @@ class HomeViewModel @Inject constructor(
                     val trailerKey = mediaRepository.getTrailerKey(item.mediaType, item.id)
                     if (trailerKey != null && _uiState.value.heroItem?.id == item.id) {
                         _uiState.value = _uiState.value.copy(heroTrailerKey = trailerKey)
-                        prefetchTrailerUrl(trailerKey)
                     }
                         } catch (e: Exception) {
                 if (e is CancellationException) throw e

@@ -141,7 +141,6 @@ import com.arflix.tv.ui.components.FeaturedMediaCard
 import com.arflix.tv.ui.components.movieGenreNameRes
 import com.arflix.tv.ui.components.tvGenreNameRes
 import com.arflix.tv.ui.components.MediaCard as ArvioMediaCard
-import com.arflix.tv.ui.components.TrailerPlayer
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
@@ -200,7 +199,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import dagger.hilt.android.EntryPointAccessors
-import com.arflix.tv.ui.components.TrailerPlayerEntryPoint
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.abs
@@ -1114,16 +1112,6 @@ fun HomeScreen(
                     )
                 }
 
-                // YouTube trailer auto-play — on TV, trailer plays inside the focused card instead
-                if ((isMobile || !uiState.trailerInCards) && heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null && !trailerSuppressed && !heroRowIsContinueWatching) {
-                    TrailerPlayer(
-                        youtubeKey = uiState.heroTrailerKey!!,
-                        delayMs = uiState.trailerDelaySeconds * 1000L,
-                        volume = if (uiState.trailerSoundEnabled) 1f else 0f,
-                        onPlayingChanged = { playing -> isTrailerPlaying = playing },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
 
                 // === SCRIM SYSTEM ===
                 Box(
@@ -1255,7 +1243,7 @@ fun HomeScreen(
             onNavigateToSettings = onNavigateToSettings,
             onSwitchProfile = onSwitchProfile,
             onExitApp = onExitApp,
-            featuredTrailerKey = if (!isMobile && uiState.trailerInCards && uiState.trailerAutoPlay && !trailerSuppressed && !heroRowIsContinueWatching) uiState.heroTrailerKey else null,
+            featuredTrailerKey = null,
             featuredTrailerDelayMs = uiState.trailerDelaySeconds * 1000L,
             featuredTrailerVolume = if (uiState.trailerSoundEnabled) 1f else 0f,
             onOpenContextMenu = { item, isContinue ->
@@ -3632,22 +3620,6 @@ private fun ContentRow(
     val featuredExpanded = hasFeaturedCard && isCurrentRow &&
         featuredExpandedForIndex == focusedItemIndex && focusedItemIndex >= 0
     val context = LocalContext.current
-    val trailerExtractor = remember {
-        EntryPointAccessors.fromApplication(
-            context.applicationContext,
-            TrailerPlayerEntryPoint::class.java
-        ).inAppYouTubeExtractor()
-    }
-    // Pre-warm the URL cache the moment a card gets focus — races ahead of the
-    // expansion delay so the cache is populated by the time the card expands.
-    LaunchedEffect(focusedItemIndex, featuredTrailerKey) {
-        val key = featuredTrailerKey ?: return@LaunchedEffect
-        if (!hasFeaturedCard || !isCurrentRow || focusedItemIndex < 0) return@LaunchedEffect
-        withContext(Dispatchers.IO) {
-            try { trailerExtractor.extractPlaybackSource("https://www.youtube.com/watch?v=$key") }
-            catch (_: Exception) {}
-        }
-    }
     LaunchedEffect(focusedItemIndex, hasFeaturedCard) {
         featuredExpandedForIndex = -1
         if (hasFeaturedCard && isCurrentRow && focusedItemIndex >= 0) {
