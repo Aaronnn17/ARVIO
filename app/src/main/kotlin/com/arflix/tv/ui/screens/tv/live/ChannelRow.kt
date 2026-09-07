@@ -98,8 +98,9 @@ fun ChannelRow(
     // can be swallowed before combinedClickable turns them into a click.
     var longPressConsumed by remember { mutableStateOf(false) }
     val bg = when {
-        visuallyFocused -> LiveColors.PanelRaised
+        visuallyFocused && isActive -> LiveColors.FocusBg
         isActive -> LiveColors.FocusBg
+        visuallyFocused -> LiveColors.PanelRaised
         stripe -> LiveColors.RowStripe
         else -> Color.Transparent
     }
@@ -140,7 +141,7 @@ fun ChannelRow(
                     )
                 }
             }
-            .background(if (visuallyFocused) LiveColors.PanelRaised else bg)
+            .background(bg)
             .focusable()
             // Long-press / MENU opens the channel menu. This has to live in the PREVIEW
             // phase, ahead of combinedClickable: combinedClickable arms a click on the

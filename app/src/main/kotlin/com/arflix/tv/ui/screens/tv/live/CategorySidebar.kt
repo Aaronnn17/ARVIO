@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -150,6 +151,8 @@ fun CategorySidebar(
     val searchFocusRequester = remember { FocusRequester() }
     val selectedCategoryFocusRequester = remember { FocusRequester() }
     val firstCategoryFocusRequester = remember { FocusRequester() }
+    val categoryFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    var lastFocusedCategoryKey by remember { mutableStateOf<String?>(null) }
     val focusManager = LocalFocusManager.current
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
@@ -320,15 +323,47 @@ fun CategorySidebar(
         if (activeMenu != null || (categoryHasHadFocus && sidebarHasFocus && !searchHasFocus)) return@LaunchedEffect
         claimingCategoryFocus = true
         try {
-            // requestFocus() in the Compose version used by ARVIO does not
-            // report whether a lazy item was attached. Check the actual focus
-            // state before accepting the selected row; otherwise retry with
-            // the always-composed first row as a reliable fallback.
             repeat(LiveTvStartup.INITIAL_FOCUS_ATTEMPTS) {
-                runCatching { selectedCategoryFocusRequester.requestFocus() }
-                delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
-                if (sidebarHasFocus && !searchHasFocus) return@LaunchedEffect
+                // 1. If we remember the last focused item in the sidebar, try restoring focus to it
+                val lastKey = lastFocusedCategoryKey
+                if (lastKey != null) {
+                    val req = categoryFocusRequesters[lastKey]
+                    if (req != null && runCatching { req.requestFocus() }.isSuccess) {
+                        delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+                        if (sidebarHasFocus && !searchHasFocus) return@LaunchedEffect
+                    }
+                }
 
+                // 2. Try selected category requester
+                if (runCatching { selectedCategoryFocusRequester.requestFocus() }.isSuccess) {
+                    delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+                    if (sidebarHasFocus && !searchHasFocus) return@LaunchedEffect
+                }
+                val selectedReq = categoryFocusRequesters[selectedId]
+                if (selectedReq != null && runCatching { selectedReq.requestFocus() }.isSuccess) {
+                    delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+                    if (sidebarHasFocus && !searchHasFocus) return@LaunchedEffect
+                }
+
+                // 3. Try visible items in LazyColumn
+                val visibleKeys = listState.layoutInfo.visibleItemsInfo.map { it.key.toString() }
+                for (vKey in visibleKeys) {
+                    val req = categoryFocusRequesters[vKey]
+                    if (req != null && runCatching { req.requestFocus() }.isSuccess) {
+                        delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+                        if (sidebarHasFocus && !searchHasFocus) return@LaunchedEffect
+                    }
+                }
+
+                // 4. Try any registered category requester that is currently composed
+                for (req in categoryFocusRequesters.values) {
+                    if (runCatching { req.requestFocus() }.isSuccess) {
+                        delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
+                        if (sidebarHasFocus && !searchHasFocus) return@LaunchedEffect
+                    }
+                }
+
+                // 5. Fallback to first row
                 runCatching { firstCategoryFocusRequester.requestFocus() }
                 delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
                 if (sidebarHasFocus && !searchHasFocus) return@LaunchedEffect
@@ -486,6 +521,16 @@ fun CategorySidebar(
             itemsIndexed(tree.top.distinctBy { it.id }, key = { _, cat -> "top:${cat.id}" }) { index, cat ->
                 val isAllGroup = cat.id == "all" && cat.children.isNotEmpty()
                 val isOpen = isAllGroup && expandedAll
+                val itemKey = "top:${cat.id}"
+                val requester = rememberCategoryRequester(
+                    key = itemKey,
+                    id = cat.id,
+                    selectedId = selectedId,
+                    isTopFirst = index == 0,
+                    selectedCategoryFocusRequester = selectedCategoryFocusRequester,
+                    firstCategoryFocusRequester = firstCategoryFocusRequester,
+                    categoryFocusRequesters = categoryFocusRequesters,
+                )
                 SidebarRow(
                     label = liveCategoryLabel(cat.label),
                     count = cat.count,
@@ -494,16 +539,11 @@ fun CategorySidebar(
                     expanded = expanded,
                     hasChildren = isAllGroup,
                     isOpenGroup = isOpen,
-                    // The selected category can be nested (or scrolled out of
-                    // the lazy list), in which case its requester is unattached
-                    // and cannot take focus. The first row always can, so it
-                    // acts as the guaranteed landing spot on entry.
-                    focusRequester = when {
-                        selectedId == cat.id -> selectedCategoryFocusRequester
-                        index == 0 -> firstCategoryFocusRequester
-                        else -> null
+                    focusRequester = requester,
+                    onFocused = {
+                        lastFocusedCategoryKey = itemKey
+                        onCategoryFocused()
                     },
-                    onFocused = { onCategoryFocused() },
                     onClick = {
                         if (isAllGroup) {
                             expandedAll = !expandedAll
@@ -513,6 +553,16 @@ fun CategorySidebar(
                 )
                 if (isOpen && expanded) {
                     cat.children.forEach { child ->
+                        val childKey = "top:child:${child.id}"
+                        val childRequester = rememberCategoryRequester(
+                            key = childKey,
+                            id = child.id,
+                            selectedId = selectedId,
+                            isTopFirst = false,
+                            selectedCategoryFocusRequester = selectedCategoryFocusRequester,
+                            firstCategoryFocusRequester = firstCategoryFocusRequester,
+                            categoryFocusRequesters = categoryFocusRequesters,
+                        )
                         SidebarRow(
                             label = liveCategoryLabel(child.label),
                             count = child.count,
@@ -524,12 +574,25 @@ fun CategorySidebar(
                             labelSize = 10.5.sp,
                             hasChildren = child.children.isNotEmpty(),
                             isOpenGroup = child.containsId(selectedId),
-                            focusRequester = if (selectedId == child.id) selectedCategoryFocusRequester else null,
-                            onFocused = { onCategoryFocused() },
+                            focusRequester = childRequester,
+                            onFocused = {
+                                lastFocusedCategoryKey = childKey
+                                onCategoryFocused()
+                            },
                             onClick = { onSelect(child.id) },
                         )
                         if (child.containsId(selectedId)) {
                             child.children.forEach { grandchild ->
+                                val gcKey = "top:grandchild:${grandchild.id}"
+                                val gcRequester = rememberCategoryRequester(
+                                    key = gcKey,
+                                    id = grandchild.id,
+                                    selectedId = selectedId,
+                                    isTopFirst = false,
+                                    selectedCategoryFocusRequester = selectedCategoryFocusRequester,
+                                    firstCategoryFocusRequester = firstCategoryFocusRequester,
+                                    categoryFocusRequesters = categoryFocusRequesters,
+                                )
                                 SidebarRow(
                                     label = liveCategoryLabel(grandchild.label),
                                     count = grandchild.count,
@@ -538,8 +601,11 @@ fun CategorySidebar(
                                     expanded = true,
                                     indent = 48.dp,
                                     labelSize = 9.5.sp,
-                                    focusRequester = if (selectedId == grandchild.id) selectedCategoryFocusRequester else null,
-                                    onFocused = { onCategoryFocused() },
+                                    focusRequester = gcRequester,
+                                    onFocused = {
+                                        lastFocusedCategoryKey = gcKey
+                                        onCategoryFocused()
+                                    },
                                     onClick = { onSelect(grandchild.id) },
                                 )
                             }
@@ -551,6 +617,16 @@ fun CategorySidebar(
                 playlistSections.forEach { section ->
                     item(key = "playlist-section:${section.id}") {
                         val isOpen = section.id in expandedPlaylistIds
+                        val sectionKey = "playlist-section:${section.id}"
+                        val sectionRequester = rememberCategoryRequester(
+                            key = sectionKey,
+                            id = section.id,
+                            selectedId = null,
+                            isTopFirst = false,
+                            selectedCategoryFocusRequester = selectedCategoryFocusRequester,
+                            firstCategoryFocusRequester = firstCategoryFocusRequester,
+                            categoryFocusRequesters = categoryFocusRequesters,
+                        )
                         SidebarRow(
                             label = section.label,
                             count = section.count,
@@ -559,7 +635,11 @@ fun CategorySidebar(
                             expanded = expanded,
                             hasChildren = true,
                             isOpenGroup = isOpen,
-                            onFocused = { onCategoryFocused() },
+                            focusRequester = sectionRequester,
+                            onFocused = {
+                                lastFocusedCategoryKey = sectionKey
+                                onCategoryFocused()
+                            },
                             onClick = {
                                 expandedPlaylistIds = if (isOpen) {
                                     expandedPlaylistIds - section.id
@@ -574,6 +654,16 @@ fun CategorySidebar(
                             section.categories.distinctBy { it.id },
                             key = { _, cat -> "playlist:${section.id}:${cat.id}" },
                         ) { _, cat ->
+                            val catKey = "playlist:${section.id}:${cat.id}"
+                            val catRequester = rememberCategoryRequester(
+                                key = catKey,
+                                id = cat.id,
+                                selectedId = selectedId,
+                                isTopFirst = false,
+                                selectedCategoryFocusRequester = selectedCategoryFocusRequester,
+                                firstCategoryFocusRequester = firstCategoryFocusRequester,
+                                categoryFocusRequesters = categoryFocusRequesters,
+                            )
                             SidebarRow(
                                 label = liveCategoryLabel(cat.label),
                                 count = cat.count,
@@ -581,8 +671,11 @@ fun CategorySidebar(
                                 active = selectedId == cat.id,
                                 expanded = true,
                                 indent = 28.dp,
-                                focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
-                                onFocused = { onCategoryFocused() },
+                                focusRequester = catRequester,
+                                onFocused = {
+                                    lastFocusedCategoryKey = catKey
+                                    onCategoryFocused()
+                                },
                                 locked = isCategoryLocked(cat),
                                 onLongClick = { openCategoryMenu(cat, hidden = false) },
                                 onClick = { onSelect(cat.id) },
@@ -593,14 +686,27 @@ fun CategorySidebar(
             } else if (tree.global.categories.isNotEmpty()) {
                 item { SectionHeader(liveSectionLabel(tree.global.label), expanded) }
                 itemsIndexed(tree.global.categories.distinctBy { it.id }, key = { _, cat -> "global:${cat.id}" }) { _, cat ->
+                    val catKey = "global:${cat.id}"
+                    val catRequester = rememberCategoryRequester(
+                        key = catKey,
+                        id = cat.id,
+                        selectedId = selectedId,
+                        isTopFirst = false,
+                        selectedCategoryFocusRequester = selectedCategoryFocusRequester,
+                        firstCategoryFocusRequester = firstCategoryFocusRequester,
+                        categoryFocusRequesters = categoryFocusRequesters,
+                    )
                     SidebarRow(
                         label = liveCategoryLabel(cat.label),
                         count = cat.count,
                         icon = iconFor(cat),
                         active = selectedId == cat.id,
                         expanded = expanded,
-                        focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
-                        onFocused = { onCategoryFocused() },
+                        focusRequester = catRequester,
+                        onFocused = {
+                            lastFocusedCategoryKey = catKey
+                            onCategoryFocused()
+                        },
                         locked = isCategoryLocked(cat),
                         onLongClick = {
                             openCategoryMenu(cat, hidden = false)
@@ -613,6 +719,16 @@ fun CategorySidebar(
                 item { SectionHeader(liveSectionLabel(tree.countries.label), expanded) }
                 itemsIndexed(tree.countries.categories.distinctBy { it.id }, key = { _, country -> "country:${country.id}" }) { _, country ->
                     val isExpanded = expandedCountry == country.id
+                    val countryKey = "country:${country.id}"
+                    val countryRequester = rememberCategoryRequester(
+                        key = countryKey,
+                        id = country.id,
+                        selectedId = selectedId,
+                        isTopFirst = false,
+                        selectedCategoryFocusRequester = selectedCategoryFocusRequester,
+                        firstCategoryFocusRequester = firstCategoryFocusRequester,
+                        categoryFocusRequesters = categoryFocusRequesters,
+                    )
                     SidebarRow(
                         label = liveCategoryLabel(country.label),
                         count = country.count,
@@ -622,8 +738,11 @@ fun CategorySidebar(
                         expanded = expanded,
                         hasChildren = country.children.isNotEmpty(),
                         isOpenGroup = isExpanded,
-                        focusRequester = if (selectedId == country.id) selectedCategoryFocusRequester else null,
-                        onFocused = { onCategoryFocused() },
+                        focusRequester = countryRequester,
+                        onFocused = {
+                            lastFocusedCategoryKey = countryKey
+                            onCategoryFocused()
+                        },
                         onClick = {
                             // Tap always toggles expansion. Opening also selects so
                             // the grid reflects the just-opened group; collapsing
@@ -639,6 +758,16 @@ fun CategorySidebar(
                     )
                     if (isExpanded && expanded) {
                         country.children.forEach { child ->
+                            val childKey = "country:child:${child.id}"
+                            val childRequester = rememberCategoryRequester(
+                                key = childKey,
+                                id = child.id,
+                                selectedId = selectedId,
+                                isTopFirst = false,
+                                selectedCategoryFocusRequester = selectedCategoryFocusRequester,
+                                firstCategoryFocusRequester = firstCategoryFocusRequester,
+                                categoryFocusRequesters = categoryFocusRequesters,
+                            )
                             SidebarRow(
                                 label = liveCategoryLabel(child.label),
                                 count = child.count,
@@ -647,8 +776,11 @@ fun CategorySidebar(
                                 expanded = true,
                                 indent = 40.dp,
                                 labelSize = 10.5.sp,
-                                focusRequester = if (selectedId == child.id) selectedCategoryFocusRequester else null,
-                                onFocused = { onCategoryFocused() },
+                                focusRequester = childRequester,
+                                onFocused = {
+                                    lastFocusedCategoryKey = childKey
+                                    onCategoryFocused()
+                                },
                                 onClick = { onSelect(child.id) },
                             )
                         }
@@ -657,15 +789,28 @@ fun CategorySidebar(
             }
             if (tree.adult.categories.isNotEmpty()) {
                 item { SectionHeader(liveSectionLabel(tree.adult.label), expanded) }
-                itemsIndexed(tree.adult.categories, key = { index, cat -> "adult:${cat.id}:$index" }) { _, cat ->
+                itemsIndexed(tree.adult.categories, key = { index, cat -> "adult:${cat.id}:$index" }) { index, cat ->
+                    val adultKey = "adult:${cat.id}:$index"
+                    val adultRequester = rememberCategoryRequester(
+                        key = adultKey,
+                        id = cat.id,
+                        selectedId = selectedId,
+                        isTopFirst = false,
+                        selectedCategoryFocusRequester = selectedCategoryFocusRequester,
+                        firstCategoryFocusRequester = firstCategoryFocusRequester,
+                        categoryFocusRequesters = categoryFocusRequesters,
+                    )
                     SidebarRow(
                         label = liveCategoryLabel(cat.label),
                         count = cat.count,
                         icon = Icons.Filled.Lock,
                         active = selectedId == cat.id,
                         expanded = expanded,
-                        focusRequester = if (selectedId == cat.id) selectedCategoryFocusRequester else null,
-                        onFocused = { onCategoryFocused() },
+                        focusRequester = adultRequester,
+                        onFocused = {
+                            lastFocusedCategoryKey = adultKey
+                            onCategoryFocused()
+                        },
                         onClick = { onSelect(cat.id) },
                     )
                 }
@@ -800,6 +945,39 @@ private fun SectionHeader(label: String, expanded: Boolean) {
             style = LiveType.SectionTag.copy(color = LiveColors.FgMute),
         )
     }
+}
+
+@Composable
+private fun rememberCategoryRequester(
+    key: String,
+    id: String?,
+    selectedId: String?,
+    isTopFirst: Boolean,
+    selectedCategoryFocusRequester: FocusRequester,
+    firstCategoryFocusRequester: FocusRequester,
+    categoryFocusRequesters: MutableMap<String, FocusRequester>,
+): FocusRequester {
+    val isSelected = id != null && id == selectedId
+    val requester = when {
+        isSelected -> selectedCategoryFocusRequester
+        isTopFirst -> firstCategoryFocusRequester
+        else -> remember(key) { FocusRequester() }
+    }
+    DisposableEffect(key, requester, id) {
+        categoryFocusRequesters[key] = requester
+        if (id != null) {
+            categoryFocusRequesters[id] = requester
+        }
+        onDispose {
+            if (categoryFocusRequesters[key] === requester) {
+                categoryFocusRequesters.remove(key)
+            }
+            if (id != null && categoryFocusRequesters[id] === requester) {
+                categoryFocusRequesters.remove(id)
+            }
+        }
+    }
+    return requester
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
