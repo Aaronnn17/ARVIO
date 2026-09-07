@@ -2666,6 +2666,11 @@ class TraktRepository @Inject constructor(
         return loadLocalContinueWatching()
     }
 
+    /** Profile-scoped saved playback, without waiting for metadata or tracker requests. */
+    internal suspend fun getLocalContinueWatchingSnapshot(): List<ContinueWatchingItem> {
+        return loadLocalContinueWatchingRaw()
+    }
+
     /**
      * Check if current profile has Trakt authentication
      */
