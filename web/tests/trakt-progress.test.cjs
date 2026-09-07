@@ -2,6 +2,28 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load, storage } = require('./load.cjs');
 
+test('production build exposes canonical public Trakt ID, never its secret', () => {
+  const config = load('next.config.mjs', {
+    'node:fs': { writeFileSync() {}, mkdirSync() {} }
+  }, { process: { cwd: () => '.', env: {
+    NEXT_PUBLIC_TRAKT_CLIENT_ID: '', TRAKT_CLIENT_ID: 'public-client-id',
+    TRAKT_CLIENT_SECRET: 'private-secret', APP_ANON_KEY: 'public-app-key',
+    NEXT_PUBLIC_ARVIO_APP_ANON_KEY: ''
+  } } }).default;
+  assert.equal(config.env.NEXT_PUBLIC_TRAKT_CLIENT_ID, 'public-client-id');
+  assert.equal(config.env.NEXT_PUBLIC_ARVIO_APP_ANON_KEY, 'public-app-key');
+  assert.equal(JSON.stringify(config.env).includes('private-secret'), false);
+});
+
+test('explicit browser client ID takes precedence over the canonical fallback', () => {
+  const config = load('next.config.mjs', {
+    'node:fs': { writeFileSync() {}, mkdirSync() {} }
+  }, { process: { cwd: () => '.', env: {
+    NEXT_PUBLIC_TRAKT_CLIENT_ID: 'explicit-id', TRAKT_CLIENT_ID: 'fallback-id'
+  } } }).default;
+  assert.equal(config.env.NEXT_PUBLIC_TRAKT_CLIENT_ID, 'explicit-id');
+});
+
 test('new episodes invalidate cached completed progress without new watch activity', async () => {
   let now = Date.now();
   class Clock extends Date { static now() { return now; } }
