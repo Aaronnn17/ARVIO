@@ -6,7 +6,7 @@ import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
-import { includeIptvContinueWatching, mergeTrackerContinueWatching } from "./continueWatching";
+import { includeIptvContinueWatching, isUnwatchedContinueWatching, mergeTrackerContinueWatching } from "./continueWatching";
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { trackPremiumEvent } from "./premiumAnalytics";
@@ -281,10 +281,7 @@ function traktWatchedKeys(movies: unknown[], shows: unknown[]) {
 function filterWatchedContinueWatching(items: MediaItem[], watchedKeys: Set<string>, addons: InstalledAddon[]) {
   const nonLive = items.filter((item) => !isLiveStreamOrSportsItem(item, addons));
   if (!watchedKeys.size) return nonLive;
-  return nonLive.filter((item) => {
-    const key = mediaWatchKey(item);
-    return !key || !watchedKeys.has(key);
-  });
+  return nonLive.filter((item) => isUnwatchedContinueWatching(item, watchedKeys));
 }
 
 
@@ -878,13 +875,21 @@ export function AppProvider({
       const traktReady = client.isConnected;
       const readFailures = new Set<string>();
       const failedRead = (feature: string) => { readFailures.add(feature); return []; };
+      const watchedMoviesRead = traktReady ? client.watched("movies").catch(() => failedRead("watched")) : Promise.resolve([]);
+      const watchedShowsRead = traktReady ? client.watched("shows").catch(() => failedRead("watched")) : Promise.resolve([]);
+      const cwUsesTrakt = readsFrom("continueWatching", "trakt");
+      const watchedOnlyTrakt = readsFrom("watched", "trakt") && !readsFrom("watched", "simkl") && !readsFrom("watched", "mdblist");
+      // Progress must use history from the same provider, not the separately selected badge source.
+      const cwTraktShowsRead = !cwUsesTrakt ? Promise.resolve([])
+        : watchedOnlyTrakt ? watchedShowsRead
+        : traktClient.watched("shows").catch(() => failedRead("cw-watched"));
       const watchlistReady = ["trakt", "simkl", "mdblist"].some((provider) => readsFrom("watchlist", provider as "trakt" | "simkl" | "mdblist"));
       const [historyRows, traktRows, playbackRows, watchedMoviesRows, watchedShowsRows, cloudWatchlistRows, cloudWatchedKeys, cloudDismissals, hiddenShowIds] = await Promise.all([
         authClient.session ? getContinueWatching(authClient, profileId, addonState).catch(() => []) : Promise.resolve([]),
         traktReady ? client.watchlist().catch(() => failedRead("watchlist")) : Promise.resolve([]),
         traktReady ? client.playback().catch(() => failedRead("playback")) : Promise.resolve([]),
-        traktReady ? client.watched("movies").catch(() => failedRead("watched")) : Promise.resolve([]),
-        traktReady ? client.watched("shows").catch(() => failedRead("watched")) : Promise.resolve([]),
+        watchedMoviesRead,
+        watchedShowsRead,
         authClient.session ? pullCloudWatchlist(authClient, profileId).catch(() => []) : Promise.resolve([]),
         authClient.session ? pullCloudWatchedKeys(authClient, profileId).catch(() => new Set<string>()) : Promise.resolve(new Set<string>()),
         authClient.session ? pullCloudContinueWatchingDismissals(authClient, profileId).catch(() => new Map<string, number>()) : Promise.resolve(new Map<string, number>()),
@@ -967,13 +972,17 @@ export function AppProvider({
       }
       // ───────────────────────────────────────────────────────────────────────
 
-      const upNext = readsFrom("continueWatching", "trakt")
-        ? await loadTraktUpNext(watchedShowsRows, effectiveSettings.includeSpecials, hiddenShowIds).catch(() => ({ items: [] as MediaItem[], fetchFailures: 1 }))
+      const cwTraktShows = await cwTraktShowsRead;
+      const upNext = cwUsesTrakt
+        ? await loadTraktUpNext(cwTraktShows, effectiveSettings.includeSpecials, hiddenShowIds).catch(() => ({ items: [] as MediaItem[], fetchFailures: 1 }))
         : { items: [] as MediaItem[], fetchFailures: 0 };
       const upNextRows = upNext.items;
       const watchedKeys = new Set([...traktWatchedKeys(watchedMoviesRows, watchedShowsRows), ...cloudWatchedKeys]);
+      // Cloud watched flags may be older than a provider's reset/progress response.
+      // Keep those flags for badges, but do not let them veto tracker Continue Watching.
+      const cwWatchedKeys = traktWatchedKeys(watchedMoviesRows, cwUsesTrakt ? cwTraktShows : watchedShowsRows);
       const traktCw = mergeTraktWithLocalResume(
-        mergeTrackerContinueWatching(traktPlaybackCw, upNextRows, watchedKeys), cloudCw
+        mergeTrackerContinueWatching(traktPlaybackCw, upNextRows, cwWatchedKeys), cloudCw
       );
       if (!readFailures.has("watched") && refreshKeyRef.current === key) setWatchedKeys(watchedKeys);
       const cwBase = includeIptvContinueWatching(
@@ -983,12 +992,12 @@ export function AppProvider({
       // Order newest-activity-first across playback + up-next (matches the app's
       // updatedAt-descending sort) so the row leads with what you last watched.
       const cwSorted = dedupeMedia(cwBase).filter((item) => !isDismissed(item)).sort((a, b) => (b.activityAt ?? 0) - (a.activityAt ?? 0));
-      const cw = await hydrateContinueWatchingItems(filterWatchedContinueWatching(cwSorted, watchedKeys, addonState));
+      const cw = await hydrateContinueWatchingItems(filterWatchedContinueWatching(cwSorted, traktReady ? cwWatchedKeys : watchedKeys, addonState));
       // Trakt outage guard: when Trakt is connected but every read came back
       // empty, the calls were blocked (Cloudflare challenges the CORS
       // preflight intermittently, especially on VPN/datacenter IPs) — keep
       // showing the cached rail instead of wiping it with an empty list.
-      const traktOutage = readFailures.has("playback") || readFailures.has("watched");
+      const traktOutage = readFailures.has("playback") || readFailures.has("cw-watched") || (watchedOnlyTrakt && readFailures.has("watched"));
       // Enriched CW (adds Trakt up-next episodes) replaces the fast paint. When
       // the fresh list is non-empty we swap it in. An empty result with Trakt
       // connected and reads healthy means the rail is GENUINELY empty — clear it

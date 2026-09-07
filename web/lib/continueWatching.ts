@@ -1,5 +1,14 @@
 import type { MediaItem } from "./types";
 
+/** Up Next is authoritative even after a Trakt progress reset/rewatch. */
+export function isUnwatchedContinueWatching(item: MediaItem, watchedKeys: Set<string>): boolean {
+  if (item.mediaType === "tv" && item.badge === "Up Next") return true;
+  const key = item.mediaType === "tv"
+    ? `tv:${item.id}:${item.seasonNumber}:${item.episodeNumber}`
+    : `movie:${item.id}`;
+  return !watchedKeys.has(key);
+}
+
 /** A stale pause on a watched episode must not suppress the show's next episode. */
 export function mergeTrackerContinueWatching(playback: MediaItem[], upNext: MediaItem[], watchedKeys: Set<string>): MediaItem[] {
   const unwatched = playback.filter((item) => !watchedKeys.has(item.mediaType === "tv"
