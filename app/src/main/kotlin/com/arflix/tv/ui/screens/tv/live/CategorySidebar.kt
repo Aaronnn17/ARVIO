@@ -356,7 +356,7 @@ fun CategorySidebar(
                 }
 
                 // 4. Try any registered category requester that is currently composed
-                for (req in categoryFocusRequesters.values) {
+                for (req in categoryFocusRequesters.values.toList()) {
                     if (runCatching { req.requestFocus() }.isSuccess) {
                         delay(LiveTvStartup.INITIAL_FOCUS_RETRY_MS)
                         if (sidebarHasFocus && !searchHasFocus) return@LaunchedEffect
