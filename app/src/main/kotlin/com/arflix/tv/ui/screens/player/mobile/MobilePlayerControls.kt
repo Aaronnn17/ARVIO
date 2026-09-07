@@ -704,7 +704,7 @@ fun MobilePlayerBottomSection(
                 val previewCardHeight = previewCardWidth * 9f / 16f
                 val previewDensity = LocalDensity.current
                 val previewCardWidthPx = with(previewDensity) { previewCardWidth.toPx() }
-                val previewCardHeightPx = with(previewDensity) { (previewCardHeight + 16.dp).roundToPx() }
+                val previewCardHeightPx = with(previewDensity) { (previewCardHeight + 4.dp).roundToPx() }
                 val previewX = if (trackWidthPx > 0) {
                     (progressFraction * trackWidthPx - previewCardWidthPx / 2f)
                         .coerceIn(0f, (trackWidthPx - previewCardWidthPx).coerceAtLeast(0f))

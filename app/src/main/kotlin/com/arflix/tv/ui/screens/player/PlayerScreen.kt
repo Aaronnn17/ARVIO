@@ -1841,6 +1841,17 @@ fun PlayerScreen(
     val latestFinishSeek by rememberUpdatedState(finishSeek)
     val latestQuickSeek by rememberUpdatedState(queueQuickSeek)
 
+    LaunchedEffect(seekInteraction.phase, seekInteraction.lastInputMs, seekInteraction.surface) {
+        val pending = seekInteraction
+        val remaining = pending.autoCommitDelayMs(android.os.SystemClock.elapsedRealtime())
+            ?: return@LaunchedEffect
+        delay(remaining)
+        if (seekInteraction === pending &&
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            finishSeek(true)
+        }
+    }
+
     LaunchedEffect(seekInteraction.phase) {
         if (seekInteraction.phase == SeekPhase.Exiting) {
             delay(150L)
@@ -4021,50 +4032,6 @@ fun PlayerScreen(
                             .padding(horizontal = if (isTouchDevice) 24.dp else 48.dp)
                             .padding(top = if (isTouchDevice) 16.dp else 24.dp, bottom = if (isTouchDevice) 32.dp else 24.dp)
                     ) {
-                        AnimatedVisibility(
-                            visible =
-                                isControlScrubbing && previewAvailable &&
-                                    duration > 0L &&
-                                    !isCasting &&
-                                    !isLiveStream,
-                            enter = fadeIn(animTween(70)),
-                            exit = fadeOut(animTween(90)),
-                        ) {
-                            val previewWidth = if (isTouchDevice) 168.dp else 224.dp
-                            val previewHeight = previewWidth * 9f / 16f
-                            val leadingTimeWidth = if (isTouchDevice) 48.dp else 55.dp
-                            val trailingTimeWidth = if (isTouchDevice) 56.dp else 63.dp
-                            BoxWithConstraints(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(previewHeight + 12.dp)
-                                    .padding(start = leadingTimeWidth, end = trailingTimeWidth),
-                            ) {
-                                val previewPosition = controlsPreviewPosition.coerceIn(0L, duration)
-                                val previewProgress =
-                                    (previewPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-                                val previewOffset = (maxWidth * previewProgress - previewWidth / 2f)
-                                    .coerceIn(0.dp, (maxWidth - previewWidth).coerceAtLeast(0.dp))
-
-                                Box(
-                                    modifier = Modifier
-                                        .offset(x = previewOffset)
-                                        .width(previewWidth)
-                                        .height(previewHeight),
-                                ) {
-                                    val frame = previewFrameForTarget
-                                    if (frame != null) {
-                                        SeekPreviewCard(
-                                            frame = frame,
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                    } else {
-                                        SeekPreviewPlaceholder(modifier = Modifier.fillMaxSize())
-                                    }
-                                }
-                            }
-                        }
-
                         // Icon buttons row. On tablet we center the row and use slightly
                         // larger buttons than TV to match the shorter viewing distance and
                         // the Material minimum touch-target of 48dp. Phone keeps the compact
@@ -4292,6 +4259,29 @@ fun PlayerScreen(
 
 
                         Spacer(modifier = Modifier.height(if (isTouchDevice) 4.dp else 6.dp))
+
+                        AnimatedVisibility(
+                            visible = isControlScrubbing && previewAvailable && duration > 0L && !isCasting && !isLiveStream,
+                            enter = fadeIn(animTween(70)),
+                            exit = fadeOut(animTween(90)),
+                        ) {
+                            val previewWidth = if (isTouchDevice) 168.dp else 224.dp
+                            val previewHeight = previewWidth * 9f / 16f
+                            BoxWithConstraints(
+                                modifier = Modifier.fillMaxWidth().height(previewHeight + 2.dp)
+                                    .padding(start = if (isTouchDevice) 48.dp else 55.dp,
+                                        end = if (isTouchDevice) 56.dp else 63.dp),
+                            ) {
+                                val progress = (controlsPreviewPosition.toFloat() / duration).coerceIn(0f, 1f)
+                                val offset = (maxWidth * progress - previewWidth / 2f)
+                                    .coerceIn(0.dp, (maxWidth - previewWidth).coerceAtLeast(0.dp))
+                                Box(Modifier.offset(x = offset).size(previewWidth, previewHeight)) {
+                                    previewFrameForTarget?.let { frame ->
+                                        SeekPreviewCard(frame = frame, modifier = Modifier.fillMaxSize())
+                                    } ?: SeekPreviewPlaceholder(modifier = Modifier.fillMaxSize())
+                                }
+                            }
+                        }
 
                         // Trackbar at the very bottom with time labels
                         Row(
@@ -4670,7 +4660,7 @@ fun PlayerScreen(
                                 }
                             }
                           }
-                          Spacer(modifier = Modifier.height(16.dp))
+                          Spacer(modifier = Modifier.height(2.dp))
                         }
                         Box(
                             modifier = Modifier

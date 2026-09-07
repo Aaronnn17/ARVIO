@@ -14,6 +14,9 @@ import java.net.ServerSocket
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
@@ -24,6 +27,34 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class SeekPreviewFrameProviderDeviceTest {
+    @Test
+    fun changingTargetDuringColdDecodeRetainsLateFrameAndLoadsNewTarget() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val file = File(context.cacheDir, "seek_preview_cancel_test.mp4")
+        InstrumentationRegistry.getInstrumentation().context.assets.open("seek_preview_device_test.mp4").use { input ->
+            file.outputStream().use(input::copyTo)
+        }
+        val provider = SeekPreviewFrameProvider(context, OkHttpClient(), 256)
+        try {
+            provider.configure(SeekPreviewSource(
+                Uri.fromFile(file).toString(), emptyMap(), UUID.randomUUID().toString(),
+                30_000L, false, false,
+            ))
+            val opening = async { provider.frameAt(2_000L) }
+            delay(350)
+            opening.cancelAndJoin()
+            val ending = provider.frameAt(22_000L)
+            assertNotNull("Changing target must not destroy the decoder or poison its next request", ending)
+            assertTimestampAndScene(ending!!, 22_000L, 22_000L, red = false)
+            val earlier = provider.frameAt(2_000L)
+            assertNotNull(earlier)
+            assertTimestampAndScene(earlier!!, 2_000L, 2_000L, red = true)
+        } finally {
+            provider.close()
+            file.delete()
+        }
+    }
+
     @Test
     fun localVideoReturnsDifferentFramesAcrossTimeline() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
