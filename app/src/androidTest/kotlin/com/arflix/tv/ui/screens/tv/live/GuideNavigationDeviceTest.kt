@@ -10,7 +10,10 @@ import androidx.activity.OnBackPressedDispatcher
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -26,7 +29,7 @@ import org.junit.runner.RunWith
 import kotlinx.coroutines.delay
 
 @RunWith(AndroidJUnit4::class)
-@OptIn(ExperimentalTestApi::class)
+@OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
 class GuideNavigationDeviceTest {
     @get:Rule val compose = createComposeRule()
     private val rows by lazy { (0 until 55_000).map { index ->
@@ -258,6 +261,10 @@ class GuideNavigationDeviceTest {
     @Test fun hidingFocusedCategoryKeepsRemoteFocusInTheDrawer() {
         val hidden = mutableStateOf(emptySet<String>())
         compose.setContent {
+            val inputModeManager = LocalInputModeManager.current
+            LaunchedEffect(inputModeManager) {
+                check(inputModeManager.requestInputMode(InputMode.Keyboard))
+            }
             val state = buildPagedStartupChannelState(
                 channels = rows.take(1).map { it.source }, totalChannelCount = 55_000,
                 playlistGroupCounts = listOf(Triple("test", "News", 54_990), Triple("test", "Movies", 10)),

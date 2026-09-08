@@ -376,8 +376,18 @@ fun EpgGrid(
             val targetScroll = (idx - 2).coerceAtLeast(0)
             channelListState.scrollToItem(targetScroll)
         }
-        runCatching { selectedChannelFocusRequester.requestFocus() }
-        handledSelectedFocusSignal = focusSelectedChannelSignal
+        // The shared anchor can still belong to the previously focused row.
+        // Resolve the requested ID, and wait for its lazy row to be attached.
+        activeChannelFocusId = id
+        activeChannelFocusIndex = idx
+        repeat(8) {
+            val requester = channelFocusRequesters[id]
+            if (requester != null && runCatching { requester.requestFocus() }.isSuccess) {
+                handledSelectedFocusSignal = focusSelectedChannelSignal
+                return@LaunchedEffect
+            }
+            delay(16L)
+        }
     }
 
     BackHandler(enabled = backHandlingEnabled && gridFocused) {

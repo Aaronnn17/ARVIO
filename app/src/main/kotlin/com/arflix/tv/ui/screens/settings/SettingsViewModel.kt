@@ -160,7 +160,7 @@ data class SettingsUiState(
     val trailerDelaySeconds: Int = 2,
     val trailerInCards: Boolean = true,
     val showBudget: Boolean = true,
-    val showEpisodeRatings: Boolean = true,
+    val showEpisodeRatings: Boolean = false,
     /** Pin the IPTV "Favorite TV" row to the top of the home screen. */
     val iptvFavoritesOnHome: Boolean = true,
     // Volume boost in decibels (0 = off, up to 15 dB). Applied via system LoudnessEnhancer
@@ -556,7 +556,7 @@ class SettingsViewModel @Inject constructor(
             val trailerInCards = prefs[trailerInCardsKey()] ?: true
             val spoilerBlurEnabled = prefs[spoilerBlurKey()] ?: false
             val showBudget = prefs[showBudgetKey()] ?: true
-            val showEpisodeRatings = prefs[showEpisodeRatingsKey()] ?: true
+            val showEpisodeRatings = prefs[showEpisodeRatingsKey()] ?: false
             val iptvFavoritesOnHome = prefs[iptvFavoritesOnHomeKey()] ?: true
             val clockFormat = prefs[clockFormatKey()] ?: "24h"
             // One-time migration: read old "focus_border_color" key if new "accent_color" is absent

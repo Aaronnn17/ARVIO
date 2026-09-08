@@ -338,6 +338,7 @@ fun CategorySidebar(
         claimingCategoryFocus = true
         try {
             repeat(LiveTvStartup.INITIAL_FOCUS_ATTEMPTS) {
+                if (activeMenu != null || (categoryHasHadFocus && sidebarHasFocus && !searchHasFocus)) return@LaunchedEffect
                 // 1. If we remember the last focused item in the sidebar, try restoring focus to it
                 val lastKey = lastFocusedCategoryKey
                 if (lastKey != null) {
@@ -416,6 +417,7 @@ fun CategorySidebar(
     }
 
     LaunchedEffect(selectedId, expanded, categoriesLoaded, expandedPlaylistIds) {
+        if (categoryHasHadFocus && sidebarHasFocus) return@LaunchedEffect
         if (expanded && categoriesLoaded && selectedId.isNotBlank()) {
             val targetIdx = findCategoryLazyIndex(
                 targetId = selectedId,
@@ -431,8 +433,6 @@ fun CategorySidebar(
             if (targetIdx >= 0) {
                 listState.scrollToItem((targetIdx - 2).coerceAtLeast(0))
             }
-            delay(50L)
-            runCatching { selectedCategoryFocusRequester.requestFocus() }
         }
     }
 
@@ -483,7 +483,8 @@ fun CategorySidebar(
                             }
                             true
                         }
-                        ev.key == Key.Menu && ev.type == KeyEventType.KeyUp -> {
+                        // Ignore release of the Menu press that opened this popup.
+                        ev.key == Key.Menu && ev.type == KeyEventType.KeyDown && ev.nativeKeyEvent.repeatCount == 0 -> {
                             activeMenu = null
                             menuSelectArmed = false
                             true
@@ -520,13 +521,13 @@ fun CategorySidebar(
             // hands it the selector on entry and again every time the lazy list
             // recomposes underneath the focused row — which is what pinned the
             // selector in the search box while the playlist loaded.
-            .arvioDpadFocusGroup()
             .onFocusChanged { focusState ->
                 sidebarHasFocus = focusState.hasFocus
                 if (focusState.hasFocus) {
                     onFocusEnter()
                 }
             }
+            .arvioDpadFocusGroup()
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {

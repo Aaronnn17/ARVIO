@@ -807,6 +807,21 @@ export async function saveCloudAddons(
   });
 }
 
+function iptvCloudSettings(settings: AppSettings): Record<string, unknown> {
+  return {
+    m3uUrl: settings.iptvPlaylists[0]?.m3uUrl ?? "",
+    epgUrl: settings.iptvPlaylists[0]?.epgUrl ?? "",
+    playlists: settings.iptvPlaylists,
+    stalkerPortalUrl: settings.iptvStalkerUrl,
+    stalkerMacAddress: settings.iptvStalkerMac,
+    favoriteChannels: settings.favoriteChannelIds,
+    favoriteGroups: settings.favoriteGroupIds,
+    hiddenGroups: settings.hiddenGroupIds,
+    groupOrder: settings.groupOrder,
+    sortOrder: settings.iptvSortOrder ?? "provider"
+  };
+}
+
 export async function saveCloudSettings(
   auth: AuthClient,
   settings: AppSettings,
@@ -906,18 +921,16 @@ export async function saveCloudSettings(
       setScopedValue(root, "catalogsByProfile", profileId, settings.catalogs);
       setScopedValue(root, "hiddenPreinstalledByProfile", profileId, settings.hiddenCatalogIds);
       setScopedValue(root, "hiddenHomeServerByProfile", profileId, settings.hiddenHomeServerCatalogIds);
-      setScopedValue(root, "iptvByProfile", profileId, {
-        m3uUrl: settings.iptvPlaylists[0]?.m3uUrl ?? "",
-        epgUrl: settings.iptvPlaylists[0]?.epgUrl ?? "",
-        playlists: settings.iptvPlaylists,
-        stalkerPortalUrl: settings.iptvStalkerUrl,
-        stalkerMacAddress: settings.iptvStalkerMac,
-        favoriteChannels: settings.favoriteChannelIds,
-        favoriteGroups: settings.favoriteGroupIds,
-        hiddenGroups: settings.hiddenGroupIds,
-        groupOrder: settings.groupOrder,
-        sortOrder: settings.iptvSortOrder ?? "provider"
-      });
+      const mergedIptv = { ...objectRecord<unknown>(scopedValue(root, "iptvByProfile", profileId)) };
+      const newIptv = iptvCloudSettings(settings);
+      const baseIptv = baseline ? iptvCloudSettings(baseline) : null;
+      for (const [field, value] of Object.entries(newIptv)) {
+        if (!baseIptv || !sameFieldValue(value, baseIptv[field])) {
+          mergedIptv[field] = value;
+          bumpFieldTs(root, `i:${profileId}:${field}`, changedAt);
+        }
+      }
+      setScopedValue(root, "iptvByProfile", profileId, mergedIptv);
     }
   });
 }

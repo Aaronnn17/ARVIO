@@ -4,8 +4,26 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.net.URI
 import java.util.Locale
+
+internal fun buildXtreamLiveStreamUrl(
+    baseUrl: String,
+    username: String,
+    password: String,
+    streamId: Int,
+    containerExtension: String?,
+): String {
+    val normalized = containerExtension?.trim()?.lowercase(Locale.ROOT)
+    val extension = when (normalized) {
+        "m3u8", "ts", "mp4", "mpd" -> normalized
+        else -> "ts"
+    }
+    return baseUrl.trimEnd('/').toHttpUrl().newBuilder()
+        .addPathSegment("live").addPathSegment(username).addPathSegment(password)
+        .addPathSegment("$streamId.$extension").build().toString()
+}
 
 internal data class IptvPlaybackTarget(
     val url: String,

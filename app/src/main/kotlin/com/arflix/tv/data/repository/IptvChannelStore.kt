@@ -199,6 +199,9 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
     /** Read every channel for [sourceKey] in original order, streamed from the cursor. */
     fun loadAll(sourceKey: String): List<IptvChannel> = window(sourceKey, offset = 0, limit = -1)
 
+    fun loadStartupChannels(sourceKey: String, fullLoadThreshold: Int, previewLimit: Int): List<IptvChannel> =
+        if (count(sourceKey) > fullLoadThreshold) window(sourceKey, 0, previewLimit) else loadAll(sourceKey)
+
     /**
      * Windowed read — `ORDER BY ord LIMIT/OFFSET`. Pass [limit] < 0 for "all".
      * Used by the paged channel list so only the visible slice is materialised.
@@ -315,9 +318,24 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         val byGroup = !groupTitle.isNullOrEmpty()
         val normalizedPlaylistId = playlistId?.trim().orEmpty()
         val byPlaylist = normalizedPlaylistId.isNotEmpty()
+        val targetSql = buildString {
+            append("SELECT ord FROM channels WHERE source_key = ? AND id = ?")
+            if (byPlaylist) append(" AND (id LIKE ? OR id LIKE ?)")
+            if (byGroup) append(" AND group_title = ?")
+            append(" LIMIT 1")
+        }
+        val targetArgs = buildList {
+            add(sourceKey)
+            add(channelId)
+            if (byPlaylist) {
+                add("$normalizedPlaylistId:%")
+                add("stalker:$normalizedPlaylistId:%")
+            }
+            if (byGroup) add(groupTitle!!)
+        }.toTypedArray()
         val target = readableDatabase.rawQuery(
-            "SELECT ord FROM channels WHERE source_key = ? AND id = ? LIMIT 1",
-            arrayOf(sourceKey, channelId)
+            targetSql,
+            targetArgs
         ).use { c -> if (c.moveToFirst()) c.getLong(0) else return -1 }
         val sql = buildString {
             append("SELECT COUNT(*) FROM channels WHERE source_key = ?")

@@ -214,7 +214,7 @@ private fun resolvePagedGroup(
  * Reads only the channel rows needed for the current viewport. Keeping this out
  * of [LiveTvScreen] also keeps the composable below ART's method-size limit on TV.
  */
-private fun loadPagedChannelWindow(
+internal fun loadPagedChannelWindow(
     repository: IptvRepository,
     categoryId: String,
     pageLimit: Int,
@@ -224,7 +224,6 @@ private fun loadPagedChannelWindow(
     /** Ordered — this is the favourites rail's display order, so a Set would lose it. */
     favorites: List<String>,
     recents: List<String>,
-    startupAnchorId: String?,
     excludedGroups: Set<String> = emptySet(),
 ): List<IptvChannel> {
     val favoriteChannels = if (categoryId == "fav") {
@@ -241,12 +240,6 @@ private fun loadPagedChannelWindow(
         repository.pagedChannelsByIds(recents).filterNot { isAdultGroup(it.group, it.name) }
     } else {
         emptyList()
-    }
-
-    fun anchoredOffset(playlistId: String?, groupTitle: String?): Int {
-        val channelId = startupAnchorId ?: return 0
-        val index = repository.pagedChannelIndexOf(playlistId, groupTitle, channelId)
-        return LiveTvStartup.anchoredWindowOffset(index, GuideInitialWindowRows / 3)
     }
 
     fun scanCategoryWindow(targetGroupTitle: String?): List<IptvChannel> {
@@ -283,7 +276,8 @@ private fun loadPagedChannelWindow(
         "all" -> repository.pagedChannelWindow(
             null,
             null,
-            anchoredOffset(null, null),
+            // Pagination grows a prefix. An anchored SQL offset permanently hides earlier rows.
+            0,
             pageLimit,
             excludedGroups,
         )
@@ -295,7 +289,7 @@ private fun loadPagedChannelWindow(
             val exact = repository.pagedChannelWindow(
                 playlistId,
                 groupTitle,
-                anchoredOffset(playlistId, groupTitle),
+                0,
                 pageLimit,
                 excludedGroups,
             )
@@ -303,7 +297,7 @@ private fun loadPagedChannelWindow(
                 repository.pagedChannelWindow(
                     null,
                     groupTitle,
-                    anchoredOffset(null, groupTitle),
+                    0,
                     pageLimit,
                 )
             } else {
@@ -704,8 +698,6 @@ fun LiveTvScreen(
             // category owns its own growing window below; tying this shell to
             // focus/session/recents caused every channel tune to rebuild it.
             val pageLimit = ChannelInitialLoadedRows
-            val startupAnchorId = state.tvSession.lastChannelId
-                .takeIf { state.tvSession.lastOpenedAt > 0L && it.isNotBlank() }
             val freshGroupCounts = withContext(Dispatchers.IO) { viewModel.iptvRepository.pagedPlaylistGroupCounts() }
             val groupCounts = if (freshGroupCounts.isNotEmpty()) {
                 lastKnownPlaylistGroupCounts = freshGroupCounts
@@ -726,7 +718,6 @@ fun LiveTvScreen(
                     tree = enrichedState.value.tree,
                     favorites = favoriteOrderIds,
                     recents = recents.value.toList().asReversed(),
-                    startupAnchorId = startupAnchorId,
                 )
             }
             val value = withContext(Dispatchers.Default) {
@@ -957,7 +948,6 @@ fun LiveTvScreen(
             // window. Previously the outer channel-state effect and this
             // effect both queried/rebuilt the same category, producing several
             // seconds of main-thread recomposition on a 50k playlist.
-            val startupAnchorId = state.tvSession.lastChannelId.takeIf { state.tvSession.lastOpenedAt > 0L && it.isNotBlank() }
             val directChannels = withContext(Dispatchers.IO) {
                 loadPagedChannelWindow(
                     repository = viewModel.iptvRepository,
@@ -968,7 +958,6 @@ fun LiveTvScreen(
                     tree = tree,
                     favorites = favoriteOrderIds,
                     recents = recents.value.toList().asReversed(),
-                    startupAnchorId = startupAnchorId,
                     excludedGroups = hiddenGroupSet + restrictedGroupSet,
                 )
             }
@@ -2506,11 +2495,7 @@ fun LiveTvScreen(
                     setMimeType(MimeTypes.VIDEO_MP2T)
                 }
                 if (playingCatchupProgram == null) {
-                    setLiveConfiguration(
-                        MediaItem.LiveConfiguration.Builder()
-                            .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
-                            .setTargetOffsetMs(8_000).build()
-                    )
+                    setLiveConfiguration(buildLiveTvConfiguration())
                 }
                 // DRM configuration from #KODIPROP directives
                 drmInfo?.let { drm ->
@@ -4019,7 +4004,14 @@ private fun classifyPlaybackError(error: PlaybackException): String {
     }
 }
 
-private data class LiveTvBufferProfile(
+internal fun buildLiveTvConfiguration(): MediaItem.LiveConfiguration =
+    MediaItem.LiveConfiguration.Builder()
+        // Respect the manifest's segment/hold-back timing. An arbitrary eight-second
+        // offset can start too close to unpublished segments on ordinary IPTV HLS.
+        .setMinPlaybackSpeed(1.0f).setMaxPlaybackSpeed(1.0f)
+        .build()
+
+internal data class LiveTvBufferProfile(
     val minBufferMs: Int,
     val maxBufferMs: Int,
     val bufferForPlaybackMs: Int,
@@ -4028,7 +4020,7 @@ private data class LiveTvBufferProfile(
     val backBufferMs: Int,
 )
 
-private fun buildLiveTvBufferProfile(
+internal fun buildLiveTvBufferProfile(
     memoryClassMb: Int,
     isLowRamDevice: Boolean,
 ): LiveTvBufferProfile {

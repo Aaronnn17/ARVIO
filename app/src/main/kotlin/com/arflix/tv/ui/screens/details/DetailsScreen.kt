@@ -1209,7 +1209,7 @@ private fun DetailsContent(
     hasTrailer: Boolean = false,
     contentHasFocus: Boolean = true,
     usePosterCards: Boolean = false,
-    showEpisodeRatings: Boolean = true,
+    showEpisodeRatings: Boolean = false,
     isMobile: Boolean = false,
     isLoading: Boolean = false,
     isSeasonLoading: Boolean = false,
