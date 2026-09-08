@@ -83,6 +83,14 @@ document.querySelector<HTMLButtonElement>("#remote-play")!.onclick = () => {
   if (/^https?:/.test(url)) void start(url);
 };
 document.querySelector<HTMLButtonElement>("#switch")!.onclick = () => { void start(sourceFile, 1, video.currentTime); };
+void fetch('/test-sources').then(response => response.json()).then(({ count }) => {
+  for (let i = 0; i < count; i++) {
+    const button = document.createElement('button');
+    button.textContent = `Configured source ${i + 1}`;
+    button.onclick = () => { void fetch(`/test-sources/${i}`).then(response => response.json()).then(({ url }) => start(url)); };
+    document.querySelector('main')!.insertBefore(button, status);
+  }
+}).catch(() => {});
 video.addEventListener("playing", () => { phase = "playing"; });
 video.addEventListener("error", () => { error = `${video.error?.code}: ${video.error?.message}`; });
 setInterval(() => {

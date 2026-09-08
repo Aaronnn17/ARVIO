@@ -18,6 +18,11 @@ function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpe
   const waits = [];
   const timers = new Map();
   const outputs = [];
+  const budgets = [];
+  const { RemuxBufferBudget } = load('lib/remuxBufferBudget.ts', { mp4box: require('mp4box') }, { Error });
+  class Budget extends RemuxBufferBudget {
+    constructor() { super(); budgets.push(this); }
+  }
   let options;
   let lastPacketTime;
   const emit = (message) => {
@@ -74,9 +79,10 @@ function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpe
   load('lib/remux.worker.ts', {
     mediabunny: { ...mb, Input: InputMock, UrlSource: UrlSourceMock, EncodedPacketSink: PacketSinkMock, Output },
     './remuxProtocol': load('lib/remuxProtocol.ts'),
+    './remuxBufferBudget': { RemuxBufferBudget: Budget },
     './dolbyVision': overrides.dolbyVision ?? { probeDolbyVision: async () => { throw new Error('Non-HEVC must not trigger Dolby Vision reads'); }, canExtractHdr10BaseLayer: () => false }
   }, {
-    self: port, WritableStream, fetch,
+    self: port, WritableStream, fetch, Error,
     setTimeout: (callback, ms) => {
       const timer = {};
       timers.set(timer, { callback, ms });
@@ -86,11 +92,11 @@ function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpe
     clearTimeout: (timer) => timers.delete(timer)
   });
   t.after(async () => {
-    for (const output of outputs) if (output.state !== 'finalized') await output.cancel();
+    for (const output of outputs) if (!['finalized', 'canceled'].includes(output.state)) await output.cancel();
     timers.clear();
   });
   return {
-    messages, timers,
+    messages, timers, budgets,
     options: () => options,
     send: (data) => port.onmessage({ data }),
     waitFor: (predicate) => {
@@ -173,7 +179,7 @@ test('A 40-second GOP emits a real MP4 media fragment before waiting for the pla
   } finally { input.dispose(); }
 });
 
-test('More than 24 MiB of unflushed video fails with an actionable error', { timeout: 5000 }, async (t) => {
+test('A single GOP over 24 MiB still fails with an actionable error', { timeout: 5000 }, async (t) => {
   const tooLarge = new mb.EncodedPacket(new Uint8Array(24 * 1024 * 1024 + 1), 'key', 0, 1);
   const worker = workerHarness(t, [tooLarge]);
   await probe(worker);
@@ -182,6 +188,43 @@ test('More than 24 MiB of unflushed video fails with an actionable error', { tim
   assert.equal(result.type, 'error');
   assert.match(result.message, /keyframes.*bounded browser playback/i);
   assert.match(result.message, /server conversion or an external player/i);
+});
+
+for (const packetMiB of [8, 10, 12]) {
+  test(`${packetMiB * 2} MiB GOPs are not mistaken for oversized fragments while audio catches up`, { timeout: 15000 }, async (t) => {
+    const data = new Uint8Array(packetMiB * 1024 * 1024);
+    data.set(keyData);
+    const packets = Array.from({ length: 10 }, (_, i) => new mb.EncodedPacket(data, i % 2 ? 'delta' : 'key', i, 1, i));
+    const audio = packets.map((_, i) => new mb.EncodedPacket(new Uint8Array([0x21, 0x10, 0x04, 0x60]), 'key', i, 1, i));
+    const worker = workerHarness(t, packets, undefined, audio);
+    await probe(worker);
+    worker.send({ type: 'start', generation: 0, time: 0, audioIndex: 0 });
+    worker.send({ type: 'clock', time: 100 });
+    for (let i = 0; i < 1000 && !worker.messages.some(({ type }) => type === 'end' || type === 'error'); i++) {
+      await flush();
+      worker.fireTimers(80);
+    }
+    const error = worker.messages.find(({ type }) => type === 'error');
+    assert.equal(error, undefined, error?.message);
+    assert.ok(worker.messages.some(({ type }) => type === 'end'));
+    assert.equal(worker.budgets[0].pendingBytes, 0, 'All video and audio bytes must be released, including queued GOPs');
+    const output = Buffer.concat(worker.messages.filter(({ type }) => type === 'chunk').map(({ data }) => Buffer.from(data)));
+    const input = new mb.Input({ formats: mb.ALL_FORMATS, source: new mb.BufferSource(output) });
+    try {
+      assert.equal(await input.computeDuration(), 10);
+      assert.equal((await input.getAudioTracks()).length, 1);
+      assert.equal((await new mb.EncodedPacketSink(await input.getPrimaryVideoTrack()).getKeyPacket(7)).timestamp, 6);
+    } finally { input.dispose(); }
+  });
+}
+
+test('The independent queue limit cannot be bypassed by frequent keyframes or audio packets', () => {
+  const { RemuxBufferBudget } = load('lib/remuxBufferBudget.ts', { mp4box: require('mp4box') });
+  const budget = new RemuxBufferBudget();
+  for (let i = 0; i < 4; i++) budget.addVideo(16 * 1024 * 1024, true);
+  assert.equal(budget.pendingBytes, 64 * 1024 * 1024);
+  assert.throws(() => budget.addVideo(1, true), /interleaved.*memory limit/);
+  assert.throws(() => budget.add(1), /interleaved.*memory limit/);
 });
 
 for (const audioTimes of [

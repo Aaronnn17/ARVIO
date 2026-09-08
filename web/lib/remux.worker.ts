@@ -5,6 +5,7 @@ import {
 } from "mediabunny";
 import { preferredAudioIndex, type RemuxCommand, type RemuxEvent, type RemuxProbe } from "./remuxProtocol";
 import { probeDolbyVision, canExtractHdr10BaseLayer, extractHdr10BaseLayer, type DolbyVisionProbeResult } from "./dolbyVision";
+import { RemuxBufferBudget } from "./remuxBufferBudget";
 
 const port = self as unknown as { postMessage: (message: RemuxEvent, transfer?: Transferable[]) => void; onmessage: ((event: MessageEvent<RemuxCommand>) => void) | null };
 let input: Input;
@@ -108,7 +109,8 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
   output = undefined;
   await previous?.cancel();
   if (run !== generation) return;
-  const active = () => run === generation;
+  let failed = false;
+  const active = () => run === generation && !failed;
   const throttle = async (timestamp: number) => {
     while (active() && timestamp > clock + 25) await sleep();
     if (!active()) throw new Error("Cancelled");
@@ -117,7 +119,7 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
   let videoFinished = false;
   let audioTimestamp = command.time;
   let audioFinished = false;
-  let fragmentBytes = 0;
+  const budget = new RemuxBufferBudget();
   const video = await input.getPrimaryVideoTrack();
   if (!video?.codec) throw new Error("Unsupported video codec");
   const videoSink = new EncodedPacketSink(video);
@@ -142,13 +144,14 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
     }
   }));
   const current = new Output({ format: new Mp4OutputFormat({ fastStart: "fragmented", minimumFragmentDuration: 1,
-    onMoof: () => { fragmentBytes = 0; }
+    onMoof: (data) => budget.releaseFragment(data)
   }), target });
   output = current;
   const videoSource = new EncodedVideoPacketSource(video.codec);
   current.addVideoTrack(videoSource, { rotation: video.rotation });
   const audioSource = audio?.codec ? transcode
-    ? new AudioSampleSource({ codec: "aac", bitrate: 192000, transform: { numberOfChannels: 2, sampleRate: 48000 } })
+    ? new AudioSampleSource({ codec: "aac", bitrate: 192000, transform: { numberOfChannels: 2, sampleRate: 48000 },
+      onEncodedPacket: (packet) => budget.add(packet.data.byteLength) })
     : new EncodedAudioPacketSource(audio.codec) : undefined;
   audioFinished = !audioSource;
   if (audioSource) current.addAudioTrack(audioSource);
@@ -160,13 +163,14 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
     for await (const packet of videoSink.packets(first)) {
       if (!active()) throw new Error("Cancelled");
       videoTimestamp = Math.max(videoTimestamp, packet.timestamp);
-      fragmentBytes += packet.data.byteLength;
-      if (fragmentBytes > 24 * 1024 * 1024) throw new Error("Keyframes are too far apart for bounded browser playback. Use server conversion or an external player.");
       const data = probe.hdr10BaseLayer && dolbyVision ? extractHdr10BaseLayer(packet.data, dolbyVision) : null;
-      if (!data || data.length) await videoSource.add(data ? packet.clone({ data }) : packet, videoConfig ? { decoderConfig: videoConfig } : undefined);
+      if (!data || data.length) {
+        budget.addVideo((data ?? packet.data).byteLength, packet.type === "key");
+        await videoSource.add(data ? packet.clone({ data }) : packet, videoConfig ? { decoderConfig: videoConfig } : undefined);
+      }
       // The muxer cannot flush video until audio catches up. Without backpressure,
       // fast packet copying queues many GOPs behind the slower audio decoder.
-      while (active() && !audioFinished && packet.timestamp > audioTimestamp + 2) await sleep();
+      while (active() && !audioFinished && packet.timestamp > audioTimestamp + 0.5) await sleep();
       // Only pause after a keyframe has flushed the preceding fragment. Pausing
       // halfway through a long GOP would wait for a playhead that cannot advance.
       if (packet.type === "key") await throttle(packet.timestamp);
@@ -184,7 +188,7 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
           audioTimestamp = Math.max(audioTimestamp, sample.timestamp);
           // Queue the next packet before waiting: its timestamp lets the muxer
           // flush across a delayed start or a gap in the audio track.
-          while (active() && !videoFinished && sample.timestamp > videoTimestamp + 2) await sleep();
+          while (active() && !videoFinished && sample.timestamp > videoTimestamp + 0.5) await sleep();
           if (videoFinished) await throttle(sample.timestamp);
         }
         finally { sample.close(); }
@@ -195,19 +199,26 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
       const config = await audio.getDecoderConfig();
       if (start) for await (const packet of sink.packets(start)) {
         if (!active()) throw new Error("Cancelled");
+        budget.add(packet.data.byteLength);
         await audioSource.add(packet, config ? { decoderConfig: config } : undefined);
         audioTimestamp = Math.max(audioTimestamp, packet.timestamp);
-        while (active() && !videoFinished && packet.timestamp > videoTimestamp + 2) await sleep();
+        while (active() && !videoFinished && packet.timestamp > videoTimestamp + 0.5) await sleep();
         if (videoFinished) await throttle(packet.timestamp);
       }
     }
     audioSource.close();
     audioFinished = true;
   };
-  await Promise.all([videoTask(), audioTask()]);
-  if (!active()) return;
-  await current.finalize();
-  port.postMessage({ type: "end", generation: run });
+  try {
+    await Promise.all([videoTask(), audioTask()]);
+    if (!active()) return;
+    await current.finalize();
+    port.postMessage({ type: "end", generation: run });
+  } catch (error) {
+    failed = true;
+    await current.cancel().catch(() => {});
+    throw error;
+  }
 }
 
 port.onmessage = ({ data }) => {
