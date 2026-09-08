@@ -236,6 +236,9 @@ class SeekPreviewFrameProvider internal constructor(
         override fun sizeOf(key: String, value: CachedPreview): Int = value.bitmap.allocationByteCount
     }
     private val disk = SeekPreviewDiskCache(File(appContext.cacheDir, "seek_previews/v5"), cacheLimitBytes)
+    private val diskWriter = SeekPreviewCacheWriter<Pair<String, CachedPreview>>(scope) { (key, entry) ->
+        disk.write(key, entry)
+    }
     private val mutableStatus = MutableStateFlow(SeekPreviewStatus())
     val status: StateFlow<SeekPreviewStatus> = mutableStatus.asStateFlow()
     val sourceGeneration: Long get() = status.value.sourceGeneration
@@ -411,8 +414,8 @@ class SeekPreviewFrameProvider internal constructor(
                     val frame = deliver(source, cached, target, requestId, origin) ?: return@withTimeout null
                     val key = frameKey(source, target)
                     memoryCache.put(key, cached)
-                    // Persist inline on the IO worker: no unbounded bitmap-holding disk queue.
-                    disk.write(key, cached)
+                    // Display is not held behind JPEG compression or disk pruning.
+                    diskWriter.offer(key to cached)
                     frame
                 }
                 if (result != null) {
@@ -643,6 +646,7 @@ class SeekPreviewFrameProvider internal constructor(
             if (closed) return
             closed = true
             scheduler.close()
+            diskWriter.close()
             active?.close()
             active = null
             memoryCache.evictAll()

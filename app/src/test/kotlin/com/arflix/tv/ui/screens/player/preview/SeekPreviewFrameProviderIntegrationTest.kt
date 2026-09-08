@@ -10,6 +10,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -96,13 +97,22 @@ class SeekPreviewFrameProviderIntegrationTest {
             assertEquals(28_160L, provider.memoryFrameAt(30_000)!!.positionMs)
             assertTrue(provider.matchesTarget(frame, 30_000))
             assertFalse(provider.matchesTarget(frame, 40_000))
-        }
-        provider().use { provider ->
-            provider.configure(source)
-            val diskFrame = provider.cachedFrameAt(30_000)!!
-            assertEquals(SeekPreviewOrigin.DISK, diskFrame.origin)
-            assertEquals(28_160L, diskFrame.positionMs)
-            assertEquals(30_000L, diskFrame.requestedPositionMs)
+            // Display returns before optional persistence. Keep the writer alive and verify
+            // a separate provider can read the completed entry without decoding it again.
+            provider().use { reader ->
+                reader.configure(source)
+                val diskFrame = withTimeout(3_000) {
+                    var cached = reader.cachedFrameAt(30_000)
+                    while (cached == null) {
+                        delay(10)
+                        cached = reader.cachedFrameAt(30_000)
+                    }
+                    cached
+                }
+                assertEquals(SeekPreviewOrigin.DISK, diskFrame.origin)
+                assertEquals(28_160L, diskFrame.positionMs)
+                assertEquals(30_000L, diskFrame.requestedPositionMs)
+            }
         }
     }
 
