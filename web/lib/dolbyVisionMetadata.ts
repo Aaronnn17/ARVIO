@@ -273,18 +273,24 @@ export async function probeDolbyVisionMetadata(url: string, options: DolbyVision
       const response = await abortable(fetch(url, { headers, signal: controller.signal, credentials: 'omit', cache: 'no-store' }), controller.signal);
       const cancelBody = () => { void response.body?.cancel().catch(() => {}); };
       if (response.status !== 206) { cancelBody(); return unknown('range-not-supported'); }
-      const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('Content-Range') ?? '');
-      const start = Number(range?.[1]);
-      const last = Number(range?.[2]);
+      const rangeHeader = response.headers.get('Content-Range');
+      // Content-Range is not CORS-safelisted. A readable 206 body can contain
+      // complete Matroska Tracks even when the CDN does not expose this header.
+      // Only inspect one bounded, self-identifying prefix in that case; never
+      // guess byte offsets or the total size for subsequent range requests.
+      const prefixOnly = rangeHeader === null && offset === 0;
+      const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(rangeHeader ?? '');
+      const start = prefixOnly ? 0 : Number(range?.[1]);
+      const last = prefixOnly ? end : Number(range?.[2]);
       const size = Number(range?.[3]);
-      if (!range || ![start, last, size].every(Number.isSafeInteger) || start !== offset || last < start || last > end || size <= last
-        || (total !== undefined && total !== size)) { cancelBody(); return unknown('invalid-content-range'); }
+      if (!prefixOnly && (!range || ![start, last, size].every(Number.isSafeInteger) || start !== offset || last < start || last > end || size <= last
+        || (total !== undefined && total !== size))) { cancelBody(); return unknown('invalid-content-range'); }
       const encoding = response.headers.get('Content-Encoding');
       if (encoding && encoding !== 'identity') { cancelBody(); return unknown('encoded-range-response'); }
       const currentValidator = response.headers.get('ETag') ?? response.headers.get('Last-Modified');
       if (validator !== undefined && validator !== currentValidator) { cancelBody(); return unknown('resource-changed'); }
       validator = currentValidator;
-      total = size;
+      if (!prefixOnly) total = size;
       const reader = response.body?.getReader();
       if (!reader) return unknown('missing-range-body');
       const bytes = new Uint8Array(last - start + 1);
@@ -297,21 +303,24 @@ export async function probeDolbyVisionMetadata(url: string, options: DolbyVision
           bytes.set(part.value, read); read += part.value.byteLength;
         }
       } finally { void reader.cancel().catch(() => {}); }
-      if (read !== bytes.length) return unknown('truncated-range-body');
+      if (!prefixOnly && read !== bytes.length) return unknown('truncated-range-body');
       transferred += read;
-      if (offset === 0 && bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
+      if (offset === 0 && read >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
         mkv = matroskaParser(options.trackId);
+      }
+      if (prefixOnly) {
+        return mkv?.(bytes.subarray(0, read)) ?? unknown('missing-content-range');
       }
       let next: number;
       if (mkv) { ready = mkv(bytes); next = offset + read; }
       else {
         const buffer = bytes.buffer as ArrayBuffer & { fileStart: number };
         buffer.fileStart = offset;
-        next = append(buffer, total);
+        next = append(buffer, total!);
         if (parserError) return unknown('invalid-mp4');
       }
       if (ready) return ready;
-      if (!Number.isSafeInteger(next) || next <= offset || next >= total) return unknown('incomplete-metadata');
+      if (!Number.isSafeInteger(next) || next <= offset || next >= total!) return unknown('incomplete-metadata');
       offset = next;
     }
     return unknown('metadata-budget-exceeded');

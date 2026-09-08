@@ -38,6 +38,43 @@ test('Generated ffmpeg Main10 MP4 metadata is explicitly absent, not unknown', a
   assert.deepEqual(structuredClone(result), { status: 'absent', trackId: 1 });
 });
 
+test('A CORS-readable 206 Matroska prefix does not require an exposed Content-Range', async () => {
+  for (const absent of [false, true]) {
+    const data = mkvFixture([{ absent }]);
+    const h = harness(data, async () => new Response(data, { status: 206 }));
+    const result = await h.probe({ trackId: 1 });
+    assert.equal(result.status, absent ? 'absent' : 'present');
+    if (!absent) assert.equal(canExtractHdr10BaseLayer(result), true);
+    assert.equal(h.requests.length, 1);
+  }
+});
+
+test('Hidden range headers do not make Profile 5 HDR10-compatible', async () => {
+  const data = mkvFixture([{ config: dvConfig({ profile: 5, compatibilityId: 0 }), mappingType: 0x64766343 }]);
+  const h = harness(data, async () => new Response(data, { status: 206 }));
+  const result = await h.probe({ trackId: 1 });
+  assert.equal(result.status, 'present');
+  assert.equal(result.config.profile, 5);
+  assert.equal(canExtractHdr10BaseLayer(result), false);
+});
+
+test('Unexposed ranges never cause guessed offset requests or full-file reads', async () => {
+  for (const data of [mkvFixture().subarray(0, 30), mp4Fixture(), Buffer.from('<html>Not media</html>')]) {
+    const h = harness(data, async () => new Response(data, { status: 206 }));
+    assert.equal((await h.probe()).status, 'unknown');
+    assert.equal(h.requests.length, 1);
+  }
+  const h = harness(null, async () => new Response(Buffer.alloc(256 * 1024 + 1), { status: 206 }));
+  assert.equal((await h.probe()).reason, 'oversized-range-body');
+  assert.equal(h.requests.length, 1);
+});
+
+test('Malformed visible range headers are still rejected, not treated as CORS-hidden', async () => {
+  const data = mkvFixture();
+  const h = harness(data, async () => new Response(data, { status: 206, headers: { 'Content-Range': 'invalid' } }));
+  assert.equal((await h.probe()).reason, 'invalid-content-range');
+});
+
 test('Huge declared sample counts fail closed in a tiny file without exhausting a 48 MiB heap', { timeout: 10000 }, () => {
   const data = mp4Fixture();
   const position = data.indexOf(Buffer.from('stsz'));
@@ -253,7 +290,7 @@ test('Range-ignorant responses are cancelled before any body read', async () => 
 test('Malformed Content-Range, transformed bodies and overlong/short bodies fail closed', async () => {
   for (const range of [null, 'bytes 1-8/100', 'bytes 0-8/*', 'bytes 0-100/90', 'bytes 0-262144/999999', 'bytes 0-8/9007199254740993']) {
     const h = harness(null, async () => new Response(Buffer.alloc(9), { status: 206, headers: range ? { 'Content-Range': range } : {} }));
-    assert.equal((await h.probe()).reason, 'invalid-content-range');
+    assert.equal((await h.probe()).reason, range === null ? 'missing-content-range' : 'invalid-content-range');
   }
   for (const length of [8, 10]) {
     const h = harness(null, async () => new Response(Buffer.alloc(length), { status: 206, headers: { 'Content-Range': 'bytes 0-8/100' } }));

@@ -67,7 +67,8 @@ async function probeInput(command: Extract<RemuxCommand, { type: "probe" }>) {
     if (dolbyVision.status === "present" && !canExtractHdr10BaseLayer(dolbyVision)) {
       videoReason = `Dolby Vision profile ${dolbyVision.config.profile} has no verified browser-safe HDR10 conversion. Choose a non-DV source or an external player.`;
     } else if (dolbyVision.status === "unknown" || (command.expectDolbyVision && dolbyVision.status === "absent")) {
-      videoReason = "The file's Dolby Vision compatibility could not be verified. Use provider conversion or an external player to avoid incorrect colours.";
+      const reason = dolbyVision.status === "unknown" ? dolbyVision.reason : "missing-dv-configuration";
+      videoReason = `The file's Dolby Vision compatibility could not be verified (${reason}). Use provider conversion or an external player to avoid incorrect colours.`;
     }
   } else if (command.expectDolbyVision) {
     videoReason = "This Dolby Vision format cannot be safely repackaged in this browser.";

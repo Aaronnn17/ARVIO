@@ -73,7 +73,11 @@ export function getMediaCapabilities(): BrowserMediaCapabilities {
     nativeHls: videoCanPlay(video, "application/vnd.apple.mpegurl"),
     h264: supports('video/mp4; codecs="avc1.640028"'),
     hevc: supports('video/mp4; codecs="hvc1.1.6.L120.90"') || supports('video/mp4; codecs="hev1.1.6.L120.90"'),
-    hevc10: supports('video/mp4; codecs="hvc1.2.4.L153.B0"') || supports('video/mp4; codecs="hev1.2.4.L153.B0"'),
+    // This is a discovery hint, not a promise about every resolution/frame rate.
+    // A decoder supporting level 5.0 (including 4K30) may reject level 5.1.
+    // The remux probe still checks the selected track's exact codec string.
+    hevc10: ["L123", "L150", "L153"].some((level) =>
+      ["hvc1", "hev1"].some((entry) => supports(`video/mp4; codecs="${entry}.2.4.${level}.B0"`))),
     // Profile 5 (single layer) and profile 8.1 (HDR10-compatible base) cover
     // the two shapes a browser could plausibly render.
     dolbyVision: supports('video/mp4; codecs="dvhe.05.06"')
