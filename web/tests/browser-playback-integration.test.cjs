@@ -114,12 +114,13 @@ function sessionEffect(stream, report, update = () => {}) {
     tick: () => { for (const fn of timers) fn(); }, emit: (name) => video.dispatchEvent(new Event(name)) };
 }
 
-function progressEffect() {
+function progressEffect(overrides = {}) {
   const video = new EventTarget();
   Object.assign(video, { currentTime: 10, duration: 1000, paused: true, readyState: 4 });
   const window = new EventTarget();
   const document = Object.assign(new EventTarget(), { visibilityState: 'visible' });
   const calls = [];
+  const scrobbles = [], watched = [], toasts = [];
   const authClient = { session: { userId: 'account-a' } };
   let now = 1_000_000;
   const setup = extracted('components/player/PlayerOverlay.tsx', (node, source) =>
@@ -131,11 +132,13 @@ function progressEffect() {
     selectedEpisode: { season: 1, episode: 3 }, authClient,
     Date: { now: () => now }, window, document, lastSavedRef: { current: 0 },
     isLiveStreamOrSportsItem: () => false, config: {}, settings: { autoPlayNext: false },
-    syncClient: () => ({ scrobble: async () => {} }), saveWatchedState: async () => {},
-    saveProgress: async (...args) => { calls.push(args); }
+    liveTv: false, onToast: message => toasts.push(message),
+    syncClient: profile => ({ scrobble: async (action, item) => scrobbles.push({ profile, action, item }) }),
+    saveWatchedState: async (...args) => watched.push(args),
+    saveProgress: async (...args) => { calls.push(args); }, ...overrides
   });
   const cleanup = setup();
-  return { video, window, document, calls, authClient, cleanup,
+  return { video, window, document, calls, authClient, scrobbles, watched, toasts, cleanup,
     advance: (seconds) => { now += seconds * 1000; video.currentTime += seconds; },
     emit: (name) => video.dispatchEvent(new Event(name)) };
 }
@@ -174,6 +177,99 @@ test('Progress cleanup cannot save the former profile into a new account', () =>
   h.authClient.session.userId = 'account-b';
   h.cleanup();
   assert.equal(h.calls.length, 1);
+});
+
+test('browser episode playback sends start, pause, resume and exactly one completed stop', () => {
+  const h = progressEffect();
+  h.video.paused = false; h.emit('playing'); h.emit('playing');
+  h.video.currentTime = 330; h.video.paused = true; h.emit('pause');
+  h.video.paused = false; h.emit('playing');
+  h.video.currentTime = 1000; h.video.ended = true; h.video.paused = true;
+  h.emit('pause'); h.emit('ended'); h.emit('arvio-tracking-stop'); h.cleanup();
+  assert.deepEqual(h.scrobbles.map(c => [c.action, c.item.progress]), [['start', 1], ['pause', 33], ['start', 33], ['stop', 100]]);
+  assert.ok(h.scrobbles.every(c => c.profile === 'profile-a' && c.item.tmdbId === 1 && c.item.season === 1 && c.item.episode === 3));
+  assert.equal(h.watched.length, 1);
+  assert.equal(h.watched[0][3], 'profile-a');
+});
+
+test('hiding and returning to a playing tab resumes tracking without extra heartbeat calls', () => {
+  const h = progressEffect();
+  h.video.paused = false; h.emit('playing');
+  for (let n = 0; n < 20; n++) { h.advance(1); h.emit('timeupdate'); h.emit('seeked'); }
+  h.document.visibilityState = 'hidden'; h.document.dispatchEvent(new Event('visibilitychange'));
+  h.document.visibilityState = 'visible'; h.document.dispatchEvent(new Event('visibilitychange'));
+  assert.deepEqual(h.scrobbles.map(c => c.action), ['start', 'pause', 'start']);
+  h.cleanup();
+});
+
+test('closing before completion remains resumable; closing during credits marks watched', () => {
+  for (const position of [450, 850, 950]) {
+    const h = progressEffect();
+    h.video.paused = false; h.emit('playing'); h.video.currentTime = position;
+    h.emit('arvio-tracking-stop'); h.cleanup();
+    assert.equal(h.scrobbles.at(-1).action, position >= 900 ? 'stop' : 'pause');
+    assert.equal(h.scrobbles.at(-1).item.progress, position / 10);
+    assert.equal(h.scrobbles.length, 2);
+    assert.equal(h.watched.length, position >= 900 ? 1 : 0);
+  }
+});
+
+test('re-render cleanup is a pause, not a watched stop during credits', () => {
+  const h = progressEffect();
+  h.video.paused = false; h.emit('playing'); h.video.currentTime = 950; h.cleanup();
+  assert.equal(h.scrobbles.at(-1).action, 'pause');
+  assert.equal(h.watched.length, 0);
+});
+
+test('tracking and cloud checkpoints include provider conversion start offsets', () => {
+  const h = progressEffect({ stream: { addonName: 'Jellyfin', playbackSession: { startOffset: 500 } } });
+  h.video.paused = false; h.video.currentTime = 250; h.emit('playing'); h.emit('pause');
+  assert.equal(h.scrobbles[0].item.progress, 50);
+  assert.equal(h.calls[0][1].position_seconds, 750);
+  assert.equal(h.calls[0][1].duration_seconds, 1500);
+  h.video.duration = NaN; h.video.currentTime = 0; h.cleanup();
+  assert.equal(h.calls.length, 1, 'destroyed media state cannot overwrite the captured resume position');
+});
+
+test('unknown home-server IDs are never submitted to trackers as TMDB IDs', () => {
+  const h = progressEffect({ item: { id: 991231, isHomeServer: true, title: 'Private file', mediaType: 'movie' } });
+  h.video.paused = false; h.emit('playing'); h.emit('arvio-tracking-stop'); h.cleanup();
+  assert.equal(h.scrobbles.length, 0);
+  assert.equal(h.calls.length, 1, 'ARVIO cloud progress still saves');
+});
+
+test('mapped home-server titles scrobble their TMDB ID instead of local server ID', () => {
+  const h = progressEffect({ item: { id: 991231, tmdbId: 42, isHomeServer: true, title: 'Mapped file', mediaType: 'movie' } });
+  h.video.paused = false; h.emit('playing'); h.emit('arvio-tracking-stop'); h.cleanup();
+  assert.equal(h.scrobbles[0].item.tmdbId, 42);
+});
+
+test('live TV and playback that never starts do not create watched history', () => {
+  for (const liveTv of [true, false]) {
+    const h = progressEffect({ liveTv });
+    if (liveTv) { h.video.paused = false; h.emit('playing'); }
+    h.video.currentTime = 1000; h.emit('ended'); h.emit('arvio-tracking-stop'); h.cleanup();
+    assert.equal(h.scrobbles.length, 0);
+    assert.equal(h.watched.length, 0);
+  }
+});
+
+test('an old player cannot mark watched after switching accounts', () => {
+  const h = progressEffect();
+  h.video.paused = false; h.emit('playing'); h.authClient.session.userId = 'account-b';
+  h.video.currentTime = 1000; h.emit('ended'); h.cleanup();
+  assert.equal(h.scrobbles.length, 1);
+  assert.equal(h.watched.length, 0);
+  assert.equal(h.calls.length, 0);
+});
+
+test('tracker failures are reported once, without blocking cloud progress or retry polling', async () => {
+  const h = progressEffect({ syncClient: () => ({ scrobble: async () => { throw new Error('HTTP 401'); } }) });
+  h.video.paused = false; h.emit('playing'); h.emit('pause'); await flush();
+  assert.equal(h.toasts.length, 1);
+  assert.match(h.toasts[0], /tracking service/);
+  assert.equal(h.calls.length, 1);
+  h.cleanup();
 });
 
 function actualHomeApi(respond = async () => '') {

@@ -264,9 +264,9 @@ function VideoPlayer({
   liveTv,
   canAdvance,
   onSelectStream: selectStream,
-  onAdvance,
+  onAdvance: advance,
   onToast,
-  onClose
+  onClose: close
 }: {
   title: string;
   subtitleLabel: string | null;
@@ -287,6 +287,17 @@ function VideoPlayer({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const onClose = useCallback(() => {
+    videoRef.current?.dispatchEvent(new Event("arvio-tracking-stop"));
+    close();
+  }, [close]);
+  const onAdvance = useCallback(async () => {
+    const video = videoRef.current;
+    video?.dispatchEvent(new Event("arvio-tracking-stop"));
+    const advanced = await advance();
+    if (!advanced && video && !video.paused && !video.ended) video.dispatchEvent(new Event("playing"));
+    return advanced;
+  }, [advance]);
   const onSelectStream = useCallback((next: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean }) => {
     const time = (videoRef.current?.currentTime ?? 0) + (stream.playbackSession?.startOffset ?? 0);
     selectStream({ ...next, resumePositionSeconds: time }, options);
@@ -1169,37 +1180,54 @@ function VideoPlayer({
       id: item.id,
       streamAddonId: stream.addonId,
       title: item.title
-    }, addons);
+    }, addons) || liveTv;
     const isAnime = item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16));
+    const tracker = syncClient(activeProfileId);
+    const trackingId = item.tmdbId ?? (item.isHomeServer ? null : item.id);
+    let trackingWarningShown = false;
     const scrobble = (action: "start" | "pause" | "stop", progress: number) => {
-      if (isLiveStream || authClient.session?.userId !== userId) return;
-      void syncClient().scrobble(action, {
+      if (isLiveStream || !trackingId || authClient.session?.userId !== userId) return;
+      void tracker.scrobble(action, {
         mediaType: item.mediaType,
-        tmdbId: item.id,
+        tmdbId: trackingId,
         season,
         episode,
         isAnime,
         progress
-      }).catch(() => undefined);
+      }).catch(() => {
+        if (trackingWarningShown || authClient.session?.userId !== userId) return;
+        trackingWarningShown = true;
+        onToast("A tracking service could not save playback. Check your tracking connections.");
+      });
     };
-    const playbackProgress = () => Number.isFinite(video.duration) && video.duration > 0
-      ? Math.min(100, Math.max(0, (video.currentTime / video.duration) * 100))
-      : item.progress ?? 0;
+    const capturePosition = () => {
+      if (Number.isFinite(video.duration) && video.duration > 0 && Number.isFinite(video.currentTime)) {
+        const offset = stream.playbackSession?.startOffset ?? 0;
+        lastPosition = { position: video.currentTime + offset, duration: video.duration + offset };
+      }
+      return lastPosition;
+    };
+    const playbackProgress = () => {
+      const position = capturePosition();
+      return position ? Math.min(100, Math.max(0, position.position / position.duration * 100)) : item.progress ?? 0;
+    };
     let scrobbleActive = false;
+    let playbackStarted = false;
+    let stopped = false;
     const onPlaying = () => {
-      if (scrobbleActive) return;
+      if (scrobbleActive || video.ended) return;
+      playbackStarted = true;
+      stopped = false;
       scrobbleActive = true;
       scrobble("start", playbackProgress());
     };
     const onPaused = () => {
-      if (!scrobbleActive || video.ended) return;
+      if (!scrobbleActive || video.ended || stopped) return;
       scrobbleActive = false;
       scrobble("pause", playbackProgress());
     };
     const save = (force: boolean | Event = false) => {
-      if (Number.isFinite(video.duration) && video.duration > 0 && Number.isFinite(video.currentTime)) {
-        lastPosition = { position: video.currentTime, duration: video.duration };
-      }
+      capturePosition();
       if (!lastPosition || !authClient.session || authClient.session.userId !== userId || isLiveStream) return;
       const now = Date.now();
       // The current backend saves an account snapshot per checkpoint. Bound
@@ -1229,10 +1257,13 @@ function VideoPlayer({
         stream_title: stream.source
       }, activeProfileId, addons).catch(() => { lastQueuedPosition = -1; });
     };
-    const onEnded = () => {
+    const stopTracking = (progress: number) => {
+      if (stopped || !playbackStarted) return;
+      stopped = true;
       scrobbleActive = false;
-      scrobble("stop", 100);
-      if (authClient.session && !isLiveStream) {
+      // Match ARVIO's 90% completion threshold; lower-progress stops remain resumable.
+      scrobble(progress >= 90 ? "stop" : "pause", progress);
+      if (progress >= 90 && authClient.session?.userId === userId && authClient.session && !isLiveStream) {
         void saveWatchedState(authClient, {
           id: item.id,
           mediaType: item.mediaType,
@@ -1240,30 +1271,39 @@ function VideoPlayer({
           episodeNumber: episode
         }, true, activeProfileId).catch(() => undefined);
       }
+    };
+    const onStopped = () => { stopTracking(playbackProgress()); save(true); };
+    const onEnded = () => {
+      stopTracking(100);
       save(true);
       if (settings.autoPlayNext && canAdvance && !nextDismissed.current) { setShowControls(true); setNextCountdown(10); }
     };
     const flush = () => { save(true); onPaused(); };
-    const background = () => { if (document.visibilityState === "hidden") flush(); };
+    const background = () => {
+      if (document.visibilityState === "hidden") flush();
+      else if (!video.paused && !video.ended && video.readyState >= 2) onPlaying();
+    };
     video.addEventListener("timeupdate", save);
     video.addEventListener("pause", flush);
-    window.addEventListener("pagehide", flush);
+    window.addEventListener("pagehide", onStopped);
     document.addEventListener("visibilitychange", background);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("pause", onPaused);
     video.addEventListener("ended", onEnded);
+    video.addEventListener("arvio-tracking-stop", onStopped);
     if (!video.paused && video.readyState >= 2) onPlaying();
     return () => {
       flush();
       video.removeEventListener("timeupdate", save);
       video.removeEventListener("pause", flush);
-      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("pagehide", onStopped);
       document.removeEventListener("visibilitychange", background);
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("pause", onPaused);
       video.removeEventListener("ended", onEnded);
+      video.removeEventListener("arvio-tracking-stop", onStopped);
     };
-  }, [item, stream, selectedEpisode, settings.autoPlayNext, activeProfileId, addons, canAdvance, onAdvance]);
+  }, [item, stream, selectedEpisode, settings.autoPlayNext, activeProfileId, addons, canAdvance, liveTv, onToast]);
 
   const flashControls = useCallback(() => {
     setShowControls(true);

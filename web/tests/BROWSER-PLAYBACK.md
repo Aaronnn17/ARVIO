@@ -138,3 +138,41 @@ evidence of either successful movie playback or a player crash. The exact
 23.27 GB Mayday source and real series/anime provider sources remain unverified
 on this deployment. The synthetic codec measurements above must not be
 represented as those real-source tests or as cross-device certification.
+
+## Browser tracking regression checks (2026-09-08)
+
+The browser player already had tracker event hooks, but Trakt scrobbles used
+the bulk history payload (`movies` / `shows`) instead of a singular `movie` or
+`show` plus `episode`. That request format is now corrected. Scrobbles validate
+TMDB and episode identifiers; unmatched private home-server IDs are not sent to
+trackers as unrelated TMDB titles. Existing home-server playback reports remain
+separate from tracker scrobbles.
+
+Player events are tested for start, pause, resume, completion, explicit close,
+background/foreground and profile/account changes. The app retains its 90%
+completion threshold: closing at or above 90% sends stop and saves watched
+state; earlier closes send pause and remain resumable. Seeking and periodic
+cloud checkpoints do not create tracker heartbeats. Conversion start offsets
+are included in both cloud progress and tracker percentages.
+
+Simkl's 20.5-second write queue now retains a completed episode before the next
+episode starts, coalesces quick play/pause changes, serializes slow requests,
+bounds pending entries and reports actual delivery failures. It expires cached
+library freshness after completion without discarding the metadata or delta
+watermark. Profile changes cancel queued writes. Both provider write toggles
+are tested independently of watchlist/Continue Watching read preferences.
+
+The final suite passes **438 tests**, including **31 new tracking regressions**.
+TypeScript and the production build pass. Tests execute the actual player
+effect and tracker/router methods with mocked provider responses. No synthetic
+watched history was inserted into a customer's live Trakt or Simkl account.
+
+Small dispatched scrobbles use fetch keepalive. This is not a durable offline
+outbox: browser termination can still lose unsent queued events, and service
+outages, expired credentials or unknown titles can prevent tracker acceptance.
+The other device must use the same ARVIO profile/connected tracker account and
+refresh its sync before displaying the new state. No instantaneous cross-device
+or crash-safe delivery guarantee is implied.
+
+References: [Simkl scrobble lifecycle](https://api.simkl.org/guides/scrobble),
+[Trakt movie scrobble schema](https://github.com/trakt/trakt-api/blob/master/projects/api/src/contracts/scrobble/schema/request/movieScrobbleRequestSchema.ts).

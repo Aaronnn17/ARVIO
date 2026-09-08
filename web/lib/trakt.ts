@@ -328,13 +328,25 @@ export class TraktClient {
   }
 
   async scrobble(action: "start" | "pause" | "stop", item: TraktMediaRef & { progress: number }) {
+    if (!Number.isSafeInteger(item.tmdbId) || item.tmdbId <= 0) return;
+    if (item.mediaType === "tv" && (!Number.isInteger(item.season) || item.season! < 0 ||
+      !Number.isInteger(item.episode) || item.episode! <= 0)) return;
+    const profileId = this.profileId;
     const token = await this.refreshIfNeeded();
-    if (!token) return;
-    await this.trakt(`/scrobble/${action}`, {
-      method: "POST",
-      headers: { "x-user-token": token.access_token },
-      body: JSON.stringify({ ...this.mediaBody(item), progress: Math.round(item.progress) })
-    });
+    if (!token || this.profileId !== profileId) return;
+    const media = item.mediaType === "movie"
+      ? { movie: { ids: { tmdb: item.tmdbId } } }
+      : { show: { ids: { tmdb: item.tmdbId } }, episode: { season: item.season, number: item.episode } };
+    try {
+      await this.trakt(`/scrobble/${action}`, {
+        method: "POST",
+        keepalive: true,
+        headers: { "x-user-token": token.access_token },
+        body: JSON.stringify({ ...media, progress: Number.isFinite(item.progress) ? Math.min(100, Math.max(0, item.progress)) : 0 })
+      });
+    } catch (error) {
+      if (action !== "stop" || (error as { status?: number }).status !== 409) throw error;
+    }
   }
 
   disconnect() {
@@ -376,6 +388,7 @@ export class TraktClient {
           // A 401 is an expired/revoked token, not a transport problem — the
           // proxy would fail identically, so let it bubble to the retry below.
           if ((error as { status?: number }).status === 401) throw error;
+          if (path.startsWith("/scrobble/") && [400, 404, 409, 422, 429].includes((error as { status?: number }).status ?? 0)) throw error;
           return jsonRequest<T>(url.toString(), request);
         }
       }

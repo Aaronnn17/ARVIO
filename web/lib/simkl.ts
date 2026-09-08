@@ -8,6 +8,14 @@ const LEGACY_SIMKL_TOKEN_KEY = "arvio.web.simkl.token";
 const SNAPSHOT_TTL_MS = 15 * 60 * 1000;
 const FAILED_SNAPSHOT_RETRY_MS = 60 * 1000;
 const SCROBBLE_WRITE_LOCK_MS = 20_500;
+const MAX_PENDING_SCROBBLES = 32;
+
+type PendingScrobble = {
+  scope: string;
+  action: "start" | "pause" | "stop";
+  item: SyncMediaRef & { progress: number };
+  waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }>;
+};
 
 export interface SimklToken {
   access_token: string;
@@ -135,11 +143,9 @@ export class SimklClient implements SyncClient {
   private snapshotPromise: Promise<SimklSnapshot> | null = null;
   private lastSnapshotFailureAt = 0;
   private lastScrobbleWriteAt = 0;
-  private pendingScrobble: {
-    scope: string;
-    action: "start" | "pause" | "stop";
-    item: SyncMediaRef & { progress: number };
-  } | null = null;
+  private pendingScrobbles: PendingScrobble[] = [];
+  private scrobbleInFlight = false;
+  private scrobbleGeneration = 0;
   private scrobbleTimer: ReturnType<typeof setTimeout> | null = null;
 
   get isConnected(): boolean {
@@ -227,7 +233,12 @@ export class SimklClient implements SyncClient {
   private resetScrobbleQueue() {
     if (this.scrobbleTimer) clearTimeout(this.scrobbleTimer);
     this.scrobbleTimer = null;
-    this.pendingScrobble = null;
+    this.scrobbleGeneration++;
+    this.scrobbleInFlight = false;
+    const pending = this.pendingScrobbles.splice(0);
+    for (const entry of pending) {
+      for (const waiter of entry.waiters) waiter.reject(new Error("Tracking account changed before playback was sent"));
+    }
     this.lastScrobbleWriteAt = 0;
   }
 
@@ -553,39 +564,70 @@ export class SimklClient implements SyncClient {
 
   private async sendScrobble(action: "start" | "pause" | "stop", item: SyncMediaRef & { progress: number }): Promise<void> {
     if (!this.isConnected) return;
-    const progress = Math.min(100, Math.max(0, item.progress));
+    const scope = this.scope();
+    const progress = Number.isFinite(item.progress) ? Math.min(100, Math.max(0, item.progress)) : 0;
     const body = item.mediaType === "movie"
       ? { movie: { ids: { tmdb: item.tmdbId } }, progress }
       : {
-          show: { ids: { tmdb: item.tmdbId } },
+          show: { ids: { tmdb: item.tmdbId }, ...(item.isAnime ? { use_tvdb_anime_seasons: true } : {}) },
           episode: typeof item.season === "number" && typeof item.episode === "number"
             ? { season: item.season, number: item.episode }
             : undefined,
           progress
         };
-    await this.simkl(`/scrobble/${action}`, { method: "POST", body: JSON.stringify(body) });
+    try {
+      await this.simkl(`/scrobble/${action}`, { method: "POST", body: JSON.stringify(body), keepalive: true });
+    } catch (error) {
+      if (action !== "stop" || (error as { status?: number }).status !== 409) throw error;
+    }
+    // Keep metadata and the incremental watermark; only expire freshness.
+    if (action === "stop" && scope === this.scope() && this.snapshot) this.snapshot.checkedAt = 0;
   }
 
   async scrobble(action: "start" | "pause" | "stop", item: SyncMediaRef & { progress: number }): Promise<void> {
     if (!this.isConnected) return;
-    const now = Date.now();
-    const remaining = SCROBBLE_WRITE_LOCK_MS - (now - this.lastScrobbleWriteAt);
-    if (!this.lastScrobbleWriteAt || (remaining <= 0 && !this.scrobbleTimer)) {
-      this.lastScrobbleWriteAt = now;
-      await this.sendScrobble(action, item);
+    return new Promise<void>((resolve, reject) => {
+      const last = this.pendingScrobbles.at(-1);
+      const sameItem = last && last.scope === this.scope() && last.item.mediaType === item.mediaType &&
+        last.item.tmdbId === item.tmdbId && last.item.season === item.season && last.item.episode === item.episode;
+      // Coalesce quick play/pause toggles, never erase a completed episode for the next one.
+      if (sameItem && last.action !== "stop") {
+        last.action = action;
+        last.item = { ...item };
+        last.waiters.push({ resolve, reject });
+      } else {
+        if (this.pendingScrobbles.length >= MAX_PENDING_SCROBBLES) {
+          reject(new Error("Too many pending playback updates. Please wait for tracking to finish."));
+          return;
+        }
+        this.pendingScrobbles.push({ scope: this.scope(), action, item: { ...item }, waiters: [{ resolve, reject }] });
+      }
+      this.drainScrobbles();
+    });
+  }
+
+  private drainScrobbles(): void {
+    if (this.scrobbleInFlight || this.scrobbleTimer || !this.pendingScrobbles.length) return;
+    const remaining = this.lastScrobbleWriteAt ? SCROBBLE_WRITE_LOCK_MS - (Date.now() - this.lastScrobbleWriteAt) : 0;
+    if (remaining > 0) {
+      this.scrobbleTimer = setTimeout(() => {
+        this.scrobbleTimer = null;
+        this.drainScrobbles();
+      }, remaining);
       return;
     }
-
-    this.pendingScrobble = { scope: this.scope(), action, item };
-    if (this.scrobbleTimer) return;
-    this.scrobbleTimer = setTimeout(() => {
-      this.scrobbleTimer = null;
-      const pending = this.pendingScrobble;
-      this.pendingScrobble = null;
-      if (!pending || pending.scope !== this.scope()) return;
-      this.lastScrobbleWriteAt = Date.now();
-      void this.sendScrobble(pending.action, pending.item).catch(() => undefined);
-    }, Math.max(1, remaining));
+    const pending = this.pendingScrobbles.shift()!;
+    const generation = this.scrobbleGeneration;
+    this.scrobbleInFlight = true;
+    this.lastScrobbleWriteAt = Date.now();
+    void this.sendScrobble(pending.action, pending.item).then(
+      () => { for (const waiter of pending.waiters) waiter.resolve(); },
+      error => { for (const waiter of pending.waiters) waiter.reject(error); }
+    ).finally(() => {
+      if (generation !== this.scrobbleGeneration) return;
+      this.scrobbleInFlight = false;
+      this.drainScrobbles();
+    });
   }
 }
 
