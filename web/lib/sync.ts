@@ -28,7 +28,7 @@ export interface SyncClient {
   readonly currentProfileId?: string | null;
   watchlist(): Promise<unknown[]>;
   playback(): Promise<unknown[]>;
-  watched(type: "movies" | "shows"): Promise<unknown[]>;
+  watched(type: "movies" | "shows", feature?: "watched" | "continueWatching"): Promise<unknown[]>;
   addToWatchlist(item: SyncMediaRef): Promise<void>;
   removeFromWatchlist(item: SyncMediaRef): Promise<void>;
   addToHistory(item: SyncMediaRef): Promise<void>;
@@ -95,6 +95,12 @@ export function readsFrom(feature: TrackingFeature, provider: "trakt" | "simkl" 
   return readClients(feature).includes(({ trakt: traktClient, simkl: simklClient, mdblist: mdblistClient })[provider] as unknown as SyncClient);
 }
 
+export function sameTrackingSources(a: TrackingFeature, b: TrackingFeature): boolean {
+  const first = readClients(a);
+  const second = readClients(b);
+  return first.length === second.length && first.every((client) => second.includes(client));
+}
+
 async function readAll(feature: TrackingFeature, operation: (client: SyncClient) => Promise<unknown[]>): Promise<unknown[]> {
   const settled = await Promise.allSettled(readClients(feature).map(operation));
   // A partial snapshot must not be treated as an authoritative deletion.
@@ -131,13 +137,13 @@ export async function syncSeasonWatched(
 
 class TrackingRouter implements SyncClient {
   constructor(private readonly profileId?: string | null) {}
-  get isConnected() { return readClients("watchlist").length > 0 || writeClients().length > 0; }
+  get isConnected() { return readClients("watchlist").length > 0 || readClients("continueWatching").length > 0 || readClients("watched").length > 0 || writeClients().length > 0; }
   watchlist() { return readAll("watchlist", (client) => client.watchlist()); }
   async playback() {
     return readAll("continueWatching", (client) => client.playback());
   }
-  async watched(type: "movies" | "shows") {
-    return readAll("watched", (client) => client.watched(type));
+  async watched(type: "movies" | "shows", feature: "watched" | "continueWatching" = "watched") {
+    return readAll(feature, (client) => client.watched(type));
   }
   addToWatchlist(item: SyncMediaRef) { return writeAll((client) => client.addToWatchlist(item)); }
   removeFromWatchlist(item: SyncMediaRef) { return writeAll((client) => client.removeFromWatchlist(item)); }

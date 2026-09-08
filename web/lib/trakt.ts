@@ -161,6 +161,17 @@ export class TraktClient {
     return rows;
   }
 
+  /** Background checks never invoke the paid proxy or refresh an expired token. */
+  async continueWatchingActivity(): Promise<unknown | null> {
+    const token = this.token;
+    const profileId = this.profileId;
+    if (!config.traktClientId || !token || token.expires_at <= Date.now()) return null;
+    const activities = await this.directTrakt<unknown>("/sync/last_activities", {
+      headers: { "x-user-token": token.access_token }
+    }, 3_000);
+    return this.profileId === profileId && this.token?.access_token === token.access_token ? activities : null;
+  }
+
   async playback() {
     const token = await this.refreshIfNeeded();
     if (!token) return [];
@@ -362,6 +373,7 @@ export class TraktClient {
     const url = new URL(`/api/trakt/${path.replace(/^\/+/, "")}`, window.location.origin);
     const request = {
       ...init,
+      cache: "no-store",
       // Hard timeout: a single hanging Trakt response (throttling that never
       // answers) used to block one of the up-next workers forever — and
       // Promise.all over the workers then hung the WHOLE enriched Continue
@@ -458,7 +470,7 @@ export class TraktClient {
     return Boolean(headers.get("x-user-token") || headers.get("Authorization"));
   }
 
-  private async directTrakt<T>(path: string, init: RequestInit) {
+  private async directTrakt<T>(path: string, init: RequestInit, timeoutMs = 15_000) {
     const target = new URL(`https://api.trakt.tv/${path.replace(/^\/+/, "")}`);
     const headers = new Headers(init.headers ?? {});
     const userToken = headers.get("x-user-token");
@@ -474,7 +486,7 @@ export class TraktClient {
       cache: "no-store",
       // Fresh timeout: the signal inherited from the proxy attempt may already
       // be (nearly) expired by the time this fallback runs.
-      signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(15_000) : undefined
+      signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined
     });
     if (!response.ok) {
       const raw = await response.text().catch(() => "");
@@ -599,10 +611,10 @@ function writeProgressCache(token: string, traktShowId: number, includeSpecials:
     ...cache,
     [progressCacheKey(token, traktShowId, includeSpecials, activityKey)]: { at: Date.now(), value: slimProgress(value) }
   };
-  // Cap must exceed the up-next scan width (120 shows) or entries churn out
+  // Cap must exceed the up-next scan width (300 shows) or entries churn out
   // before the next boot can reuse them.
   const entries = Object.entries(next)
     .sort((a, b) => b[1].at - a[1].at)
-    .slice(0, 240);
+    .slice(0, 400);
   saveStored(TRAKT_PROGRESS_CACHE_KEY, Object.fromEntries(entries));
 }
