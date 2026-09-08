@@ -109,7 +109,7 @@ fun ChannelRow(
         else -> Color.Transparent
     }
     val now = nowNext?.now
-    val animatedBorderWidth by animateDpAsState(
+    val animatedBorderWidth = animateDpAsState(
         targetValue = if (visuallyFocused) LiveDims.FocusBorder else 0.dp,
         animationSpec = tween(durationMillis = 70),
         label = "channel-row-border",
@@ -124,17 +124,36 @@ fun ChannelRow(
                 if (it.hasFocus) onFocused()
             }
             .drawWithContent {
-                drawRect(surface.value)
+                val inset = 2.dp.toPx()
+                val radius = 6.dp.toPx()
+                val surfaceSize = Size(
+                    (size.width - inset * 2).coerceAtLeast(0f),
+                    (size.height - inset * 2).coerceAtLeast(0f),
+                )
+                drawRoundRect(
+                    color = surface.value,
+                    topLeft = Offset(inset, inset),
+                    size = surfaceSize,
+                    cornerRadius = CornerRadius(radius),
+                )
+                if (isActive) {
+                    drawRoundRect(
+                        color = LiveColors.Accent,
+                        topLeft = Offset(inset + 2.dp.toPx(), 8.dp.toPx()),
+                        size = Size(2.dp.toPx(), (size.height - 16.dp.toPx()).coerceAtLeast(0f)),
+                        cornerRadius = CornerRadius(1.dp.toPx()),
+                    )
+                }
                 drawContent()
                 // Read animation state in drawing, not composition: channel
                 // text and logo layout should not rebuild for each border frame.
-                val stroke = animatedBorderWidth.toPx()
+                val stroke = animatedBorderWidth.value.toPx()
                 if (visuallyFocused && stroke > 0f) {
                     drawRoundRect(
                         color = LiveColors.FocusRing,
-                        topLeft = Offset(2.dp.toPx() + stroke / 2f, 2.dp.toPx() + stroke / 2f),
-                        size = Size((size.width - 4.dp.toPx() - stroke).coerceAtLeast(0f), (size.height - 4.dp.toPx() - stroke).coerceAtLeast(0f)),
-                        cornerRadius = CornerRadius(5.dp.toPx()),
+                        topLeft = Offset(inset + stroke / 2f, inset + stroke / 2f),
+                        size = Size((surfaceSize.width - stroke).coerceAtLeast(0f), (surfaceSize.height - stroke).coerceAtLeast(0f)),
+                        cornerRadius = CornerRadius((radius - stroke / 2f).coerceAtLeast(0f)),
                         style = Stroke(stroke),
                     )
                 }
@@ -200,8 +219,7 @@ fun ChannelRow(
         Box(
             modifier = Modifier
                 .fillMaxHeight()
-                .width(LiveDims.ActiveIndicator)
-                .background(if (isActive) LiveColors.Accent else Color.Transparent),
+                .width(LiveDims.ActiveIndicator),
         )
 
         // ─ channel number ────────────────────────────────────
