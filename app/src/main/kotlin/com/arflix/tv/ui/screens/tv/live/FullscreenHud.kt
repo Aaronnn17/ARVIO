@@ -73,8 +73,10 @@ import java.util.Locale
 
 /**
  * Fullscreen playback HUD matching the full-width reference player layout.
- * Auto-hides 5s after the last `pokeSignal` bump; parent bumps the counter on any DPAD key so the HUD re-surfaces.
- * Initial focus immediately lands on the central Play/Pause button when surfaced from hidden state.
+ * Auto-hides 5s after the last `pokeSignal` bump; `hideSignal` dismisses it straight away (Back).
+ * Focus lands on the central Play/Pause button only while `focusControls` is set — surfacing after a
+ * channel zap is informational, so the arrow keys stay with playback until the user opens the
+ * controls deliberately.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -100,6 +102,8 @@ fun FullscreenHud(
     onSeekToPosition: ((Long) -> Unit)? = null,
     onOpenQuickZap: (() -> Unit)? = null,
     onVisibilityChanged: ((Boolean) -> Unit)? = null,
+    hideSignal: Int = 0,
+    focusControls: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     var visible by remember { mutableStateOf(true) }
@@ -136,9 +140,19 @@ fun FullscreenHud(
     val playPauseFocusRequester = remember { FocusRequester() }
     var initialFocusApplied by remember { mutableStateOf(false) }
 
-    // Request initial focus ONLY when HUD first becomes visible from hidden state
-    LaunchedEffect(visible) {
-        if (visible && !initialFocusApplied) {
+    // Dismiss on request (Back), without leaving fullscreen.
+    LaunchedEffect(hideSignal) {
+        if (hideSignal > 0) {
+            visible = false
+            onVisibilityChanged?.invoke(false)
+        }
+    }
+
+    // Take the focus ONLY once the caller says the user engaged the controls.
+    // Surfacing after a zap is informational, so the arrow keys must stay with
+    // playback instead of being swallowed by the button row.
+    LaunchedEffect(visible, focusControls) {
+        if (visible && focusControls && !initialFocusApplied) {
             initialFocusApplied = true
             delay(100)
             runCatching {

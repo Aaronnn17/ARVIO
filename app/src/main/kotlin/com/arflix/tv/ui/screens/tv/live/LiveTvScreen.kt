@@ -165,6 +165,11 @@ private const val GuidePagedLoadStepRows = 192
 private const val GuideVisibleFirstRows = 28
 private const val GuideVisibleFirstRowsAllChannels = 18
 private const val CatchupSeekStepMs = 30_000L
+
+// Fullscreen zapping talks to the network on every step (stream resolve +
+// prepare), so a held or bouncing channel key must not turn into a burst of
+// requests. One step per this interval is still far faster than anyone zaps.
+private const val MinZapIntervalMs = 150L
 private const val CatchupUrlAnchorGranularityMs = 60_000L
 private const val IptvPlaybackUserAgent = "VLC/3.0.20 LibVLC/3.0.20"
 private const val VisibleGuidePastWindowMs = 48L * 60L * 60_000L
@@ -1077,6 +1082,12 @@ fun LiveTvScreen(
     // channel of the first non-empty category.
     val rememberedChannelByCategory = remember { mutableMapOf<String, String>() }
     var playingChannelId by rememberSaveable { mutableStateOf<String?>(initialChannelId) }
+    // The channel we were on before the current one. Tracked in a single place
+    // on purpose: five different paths change the channel (zapping, number
+    // entry, the quick-zap list, the guide and the HUD buttons), and a
+    // per-path copy would leave the toggle stale on whichever path was missed.
+    var previousChannelId by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastTunedChannelId by rememberSaveable { mutableStateOf<String?>(initialChannelId) }
     KeepScreenOn(active = playingChannelId != null)
     // Treat the entire Live TV surface as latency-sensitive. Waiting until the
     // first channel starts leaves a gap where a large XMLTV backfill can claim
@@ -1856,6 +1867,22 @@ fun LiveTvScreen(
 
     var hudPokeSignal by remember { mutableStateOf(0) }
     var isHudVisible by remember { mutableStateOf(false) }
+    // Bumped to dismiss the HUD from outside, so Back can close it without
+    // leaving fullscreen.
+    var hudHideSignal by remember { mutableStateOf(0) }
+    // The HUD shows itself for a few seconds after a zap, but only OK hands it
+    // the focus. While it is not engaged the arrow keys stay with playback.
+    var hudEngaged by remember { mutableStateOf(false) }
+    var lastZapAtMs by remember { mutableLongStateOf(0L) }
+
+    // Dismissing the controls takes the focused button out of composition, so
+    // hand the focus back to the playback surface — otherwise the next key
+    // press lands nowhere and the remote looks dead.
+    LaunchedEffect(isHudVisible) {
+        if (!isHudVisible && isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
+            runCatching { fsFocus.requestFocus() }
+        }
+    }
     var guideOpenedFromQuickZap by remember { mutableStateOf(false) }
     var guideChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
     val fullscreenGuideChannelId = (guideChannel ?: playingChannel)?.id
@@ -1969,24 +1996,52 @@ fun LiveTvScreen(
         }
     }
 
+    // Single source for the previous channel: every path that changes the
+    // channel ends up writing playingChannelId, so observing it here keeps the
+    // toggle correct no matter which one was used.
+    LaunchedEffect(playingChannelId) {
+        val current = playingChannelId ?: return@LaunchedEffect
+        val last = lastTunedChannelId
+        if (last != null && last != current) {
+            previousChannelId = last
+        }
+        lastTunedChannelId = current
+    }
+
+    // Tune straight to a channel without leaving fullscreen. Shared by zapping
+    // and by the previous-channel jump so both leave the same state behind.
+    fun tuneToDisplayChannel(channel: EnrichedChannel) {
+        noteGuideUserNavigation()
+        playingChannelId = channel.id
+        focusedChannelId = channel.id
+        epgPrefetchAnchorId = channel.id
+        rememberedChannelByCategory[categoryScope] = channel.id
+        playingCatchupProgram = null
+        catchupPlaybackOffsetMs = 0L
+        fullscreenGuideOpen = false
+    }
+
     // Prev/next zapping across the full enriched list (not the filtered
     // category) per user spec. Wraps around.
     fun zap(delta: Int) {
-        noteGuideUserNavigation()
         val all = allDisplayChannels
         if (all.isEmpty()) return
         val currentDisplayId = displayChannelIdFor(playingChannelId, visibleEnrichedState.value.index.byId, variantGroups)
         val currentIdx = currentDisplayId?.let { id -> all.indexOfFirst { channel -> channel.id == id } } ?: -1
         val start = if (currentIdx >= 0) currentIdx else 0
         val size = all.size
-        val nextIdx = ((start + delta) % size + size) % size
-        playingChannelId = all[nextIdx].id
-        focusedChannelId = all[nextIdx].id
-        epgPrefetchAnchorId = all[nextIdx].id
-        rememberedChannelByCategory[categoryScope] = all[nextIdx].id
-        playingCatchupProgram = null
-        catchupPlaybackOffsetMs = 0L
-        fullscreenGuideOpen = false
+        tuneToDisplayChannel(all[((start + delta) % size + size) % size])
+    }
+
+    // Jump back to the channel that was playing before this one, so the right
+    // arrow toggles between the last two. Returns false when there is no
+    // previous channel yet or it has dropped out of the visible list.
+    fun tunePreviousChannel(): Boolean {
+        val target = previousChannelId
+            ?.let { id -> allDisplayChannels.firstOrNull { channel -> channel.id == id } }
+            ?: return false
+        tuneToDisplayChannel(target)
+        return true
     }
 
     fun focusPlaylistSearch() {
@@ -3126,7 +3181,10 @@ fun LiveTvScreen(
         fullscreenGuideOpen = false
     }
     BackHandler(enabled = !searchOpen && isFullScreen && !fullscreenGuideOpen) {
-        if (playingCatchupProgram != null) {
+        if (hudEngaged) {
+            hudEngaged = false
+            hudHideSignal++
+        } else if (playingCatchupProgram != null) {
             returnCatchupToLive()
         } else {
             exitFullScreenPlayback()
@@ -3617,7 +3675,10 @@ fun LiveTvScreen(
                         fullscreenGuideOpen = false
                         hudPokeSignal++
                     } else if (!quickZapOpen) {
-                        if (playingCatchupProgram != null) {
+                        if (hudEngaged) {
+                            hudEngaged = false
+                            hudHideSignal++
+                        } else if (playingCatchupProgram != null) {
                             returnCatchupToLive()
                         } else {
                             exitFullScreenPlayback()
@@ -3684,17 +3745,63 @@ fun LiveTvScreen(
                                     hudPokeSignal++
                                     return@onPreviewKeyEvent handleChannelNumberDigit(digit)
                                 }
-                                if (!isHudVisible) {
-                                    if (ev.key in listOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight, Key.DirectionCenter, Key.Enter)) {
+                            }
+
+                            // Up/Down and the remote's channel keys zap straight
+                            // away — no overlay, no extra press. In catchup the
+                            // arrows stay with the HUD instead, because there the
+                            // user wants to seek inside the recording rather than
+                            // leave it; the channel keys still zap and drop back
+                            // to live, which is what leaving a recording means.
+                            val zapDelta = when (ev.key) {
+                                Key.ChannelUp -> -1
+                                Key.ChannelDown -> 1
+                                Key.DirectionUp -> if (playingCatchupProgram == null) -1 else 0
+                                Key.DirectionDown -> if (playingCatchupProgram == null) 1 else 0
+                                else -> 0
+                            }
+                            if (zapDelta != 0) {
+                                if (firstPress) {
+                                    val nowMs = System.currentTimeMillis()
+                                    if (nowMs - lastZapAtMs >= MinZapIntervalMs) {
+                                        lastZapAtMs = nowMs
+                                        zap(zapDelta)
+                                        hudPokeSignal++
+                                    }
+                                }
+                                return@onPreviewKeyEvent true
+                            }
+
+                            // Left, Right and OK belong to playback until the user
+                            // hands the HUD the focus with OK; from then on they
+                            // drive its button row instead.
+                            if (firstPress && !hudEngaged) {
+                                when (ev.key) {
+                                    Key.DirectionLeft -> {
+                                        quickZapOpen = true
+                                        return@onPreviewKeyEvent true
+                                    }
+                                    Key.DirectionRight -> {
+                                        if (tunePreviousChannel()) hudPokeSignal++
+                                        return@onPreviewKeyEvent true
+                                    }
+                                    Key.DirectionCenter, Key.Enter -> {
+                                        hudEngaged = true
                                         hudPokeSignal++
                                         return@onPreviewKeyEvent true
                                     }
+                                    else -> Unit
                                 }
                             }
+
                             when (ev.key) {
                                 Key.Back, Key.Escape -> {
                                     if (firstPress) {
-                                        if (playingCatchupProgram != null) {
+                                        if (hudEngaged) {
+                                            // Put the controls away and keep watching.
+                                            hudEngaged = false
+                                            hudHideSignal++
+                                        } else if (playingCatchupProgram != null) {
                                             returnCatchupToLive()
                                         } else {
                                             exitFullScreenPlayback()
@@ -3716,7 +3823,9 @@ fun LiveTvScreen(
                             }
                         } else if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
                             Modifier.onPreviewKeyEvent { ev ->
-                                if (ev.type == KeyEventType.KeyDown) {
+                                // Keep the HUD alive while it is on screen, but
+                                // never summon it: OK opens it, Back closes it.
+                                if (ev.type == KeyEventType.KeyDown && isHudVisible) {
                                     hudPokeSignal++
                                 }
                                 false
@@ -3842,7 +3951,12 @@ fun LiveTvScreen(
                             quickZapOpen = true
                             isHudVisible = false
                         },
-                        onVisibilityChanged = { isHudVisible = it },
+                        onVisibilityChanged = { visible ->
+                            isHudVisible = visible
+                            if (!visible) hudEngaged = false
+                        },
+                        hideSignal = hudHideSignal,
+                        focusControls = hudEngaged,
                         modifier = Modifier,
                     )
                 }
@@ -3898,8 +4012,9 @@ fun LiveTvScreen(
                     selectedCategoryId = selectedCategoryId,
                     onCategorySelected = { selectedCategoryId = it },
                     onDismiss = {
+                        // Back from the list goes straight back to plain
+                        // fullscreen — no HUD in the way.
                         quickZapOpen = false
-                        hudPokeSignal++
                     },
                     onChannelSelect = { channel ->
                         playingChannelId = channel.id
