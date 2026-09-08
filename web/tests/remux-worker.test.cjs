@@ -82,7 +82,7 @@ function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpe
     './remuxBufferBudget': { RemuxBufferBudget: Budget },
     './dolbyVision': overrides.dolbyVision ?? { probeDolbyVision: async () => { throw new Error('Non-HEVC must not trigger Dolby Vision reads'); }, canExtractHdr10BaseLayer: () => false }
   }, {
-    self: port, WritableStream, fetch, Error,
+    self: port, WritableStream, fetch, Error, TypeError,
     setTimeout: (callback, ms) => {
       const timer = {};
       timers.set(timer, { callback, ms });
@@ -263,6 +263,20 @@ test('Range-ignorant responses are cancelled without retry or a leaked deadline'
   assert.equal(cancelled, 1);
   assert.equal(options.getRetryDelay(1, new Error('Range unsupported')), null);
   assert.equal(worker.timers.size, 0);
+});
+
+test('Transient fetch retries are capped across the input, including body resumes and parallel ranges', async (t) => {
+  const worker = workerHarness(t, []);
+  await probe(worker);
+  const retry = worker.options().getRetryDelay;
+  assert.equal(retry(1, new Error('Range unsupported')), null);
+  assert.equal(retry(1, new DOMException('Playback cancelled', 'AbortError')), null);
+  assert.equal(retry(1, new TypeError('Invalid media packet')), null);
+  assert.equal(retry(2, new TypeError('Failed to fetch')), null);
+  assert.equal(retry(1, new TypeError('Failed to fetch')), 0.35);
+  assert.equal(retry(1, new TypeError('Load failed')), 0.35);
+  assert.equal(retry(1, new TypeError('Network error')), null);
+  assert.equal(retry(1, new TypeError('Failed to fetch')), null);
 });
 
 test('Fetch headers and stalled range bodies both have 15-second deadlines', async (t) => {

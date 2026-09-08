@@ -20,9 +20,17 @@ const acknowledgements = new Map<number, () => void>();
 const sleep = () => new Promise<void>((resolve) => setTimeout(resolve, 80));
 
 async function probeInput(command: Extract<RemuxCommand, { type: "probe" }>) {
+  let networkRetries = 0;
   input = new Input({ formats: ALL_FORMATS, source: new UrlSource(command.url, {
     maxCacheSize: 8 * 1024 * 1024,
-    getRetryDelay: () => null,
+    getRetryDelay: (attempts, error) => {
+      // UrlSource resumes failed bodies from their last byte but resets its
+      // attempt counter there. Cap retries across the entire input, not per range.
+      if (attempts !== 1 || networkRetries >= 2 || !(error instanceof TypeError)
+        || !/fetch|network|load failed/i.test(error.message)) return null;
+      networkRetries++;
+      return 0.35;
+    },
     requestInit: { headers: command.headers },
     fetchFn: async (url, init) => {
       const controller = new AbortController();
