@@ -18,7 +18,8 @@ import { mdblistClient, type MdbExternalRating } from "@/lib/mdblist";
 import { sourcePickerScore } from "@/lib/sourceRank";
 import { playbackPlan } from "@/lib/streamCompatibility";
 import { authClient, getPriorityConfig, useApp } from "@/lib/store";
-import { syncClient } from "@/lib/sync";
+import { simklClient, getSimklItemUrl } from "@/lib/simkl";
+import { syncClient, syncSeasonWatched } from "@/lib/sync";
 import { getDetails, getLogoUrl, getPersonDetails, getReviews, getSeasonEpisodes } from "@/lib/tmdb";
 import type { EpisodeInfo, InstalledAddon, MediaItem, PersonCredit, PersonDetails, ReviewInfo, StreamSource, SubtitleTrack } from "@/lib/types";
 
@@ -245,6 +246,17 @@ function DetailsView({ item }: { item: MediaItem }) {
               </span>
             ) : null}
             {detailWatched && <span className="detail-watched-chip"><BadgeCheck size={13} /> Watched</span>}
+            {simklClient.isConnected && (
+              <a
+                href={getSimklItemUrl((displayItem as unknown as { ids?: any })?.ids, displayItem.mediaType === "movie" ? "movie" : "tv") ?? `https://simkl.com/search?q=${encodeURIComponent(displayItem.title)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="simkl-lockup text-xs font-semibold px-1.5 py-0.5 rounded bg-surface-sunk hover:underline inline-flex items-center gap-1"
+                title="View on Simkl"
+              >
+                <span>Simkl</span>
+              </a>
+            )}
             {displayItem.genres?.slice(0, 3).map((genre) => <span key={genre}>{genre}</span>)}
           </div>
           {externalRatings.length ? (
@@ -926,9 +938,15 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
   const updateSeasonWatched = async (seasonNum: number, watched: boolean) => {
     try {
       const targetEpisodes = await getSeasonEpisodes(item.id, seasonNum, "en-US", priorityConfig, metadataContext);
+      const changedEpisodes = targetEpisodes.filter(ep => isWatched(item, seasonNum, ep.episodeNumber) !== watched);
+      await syncSeasonWatched({
+        mediaType: "tv",
+        tmdbId: item.id,
+        isAnime: item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16))
+      }, seasonNum, changedEpisodes.map(ep => ep.episodeNumber), watched);
       for (const ep of targetEpisodes) {
         if (isWatched(item, seasonNum, ep.episodeNumber) !== watched) {
-          await toggleWatched(item, seasonNum, ep.episodeNumber);
+          await toggleWatched(item, seasonNum, ep.episodeNumber, true);
         }
       }
       setToast(`Season ${seasonNum} marked as ${watched ? "watched" : "unwatched"}.`);

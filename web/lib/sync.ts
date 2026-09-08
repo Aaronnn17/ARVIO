@@ -113,6 +113,22 @@ async function writeAll(operation: (client: SyncClient) => Promise<void>): Promi
   }
 }
 
+export async function syncSeasonWatched(
+  item: SyncMediaRef, season: number, episodes: number[], watched: boolean
+): Promise<void> {
+  await writeAll(async client => {
+    if (client === simklClient) {
+      await simklClient.markSeasonWatched(item, season, watched);
+      return;
+    }
+    for (const episode of episodes) {
+      const ref = { ...item, season, episode };
+      if (watched) await client.addToHistory(ref);
+      else await client.removeFromHistory(ref);
+    }
+  });
+}
+
 class TrackingRouter implements SyncClient {
   get isConnected() { return readClients("watchlist").length > 0 || writeClients().length > 0; }
   watchlist() { return readAll("watchlist", (client) => client.watchlist()); }

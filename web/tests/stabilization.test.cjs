@@ -78,7 +78,7 @@ test('Trakt renewal is single flight for a profile', async () => {
   await Promise.all([client.refreshIfNeeded(), client.refreshIfNeeded()]); assert.equal(calls, 1);
 });
 test('Simkl Up Next survives optional playback failure; total failure is not empty success', async () => {
-  const { SimklClient } = load('lib/simkl.ts', { './sync': {}, './storage': storage(), './http': {}, './tmdb': {} });
+  const { SimklClient } = load('lib/simkl.ts', { './config': { config: {} }, './sync': {}, './storage': storage(), './http': {}, './tmdb': {} });
   const client = new SimklClient(); client.token = { access_token: 'fake' };
   client.simkl = async () => { throw new Error('offline'); };
   client.loadSnapshot = async () => ({ shows: [{ status: 'watching', show: { ids: { tmdb: 123 } }, next_to_watch: 'S1E2' }], anime: [] });
