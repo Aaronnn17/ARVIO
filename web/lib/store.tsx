@@ -15,7 +15,7 @@ import { playbackPlan } from "./streamCompatibility";
 import { prepareBrowserStream } from "./prepareBrowserStream";
 import { reportHomeServerPlayback } from "./homeServerPlayback";
 import { loadHomeServerRows } from "./homeserver";
-import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
+import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, migrateXtreamFavoriteIds, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId } from "./tmdb";
@@ -831,7 +831,10 @@ export function AppProvider({
           setMdblistConnected(mdblistClient.isConnected);
         }
       }
-      if (cloud?.settings) {
+      // A user can edit favorites while the cloud/tracker requests above are
+      // in flight. Do not replace those edits with the earlier cloud response.
+      const settingsChangedDuringPull = settingsRef.current !== currentSettings || hasPendingSettings(authClient, profileId);
+      if (cloud?.settings && !settingsChangedDuringPull) {
         effectiveSettings = {
           ...defaultSettings,
           ...currentSettings,
@@ -848,6 +851,8 @@ export function AppProvider({
         // effect compares against) so it doesn't push it straight back.
         lastSyncedSettingsRef.current = JSON.stringify({ settings: effectiveSettings, activeProfileId: profileId });
         savePlaylists(effectiveSettings.iptvPlaylists);
+      } else if (settingsChangedDuringPull) {
+        effectiveSettings = settingsRef.current;
       }
       // Addon-wipe protection. Prefer cloud, fall back to local, but NEVER let a
       // failed/empty pull replace a non-empty list. A null `cloud` means the pull
@@ -1086,6 +1091,16 @@ export function AppProvider({
     iptvRefresh.current = { key, promise: run };
     return run.finally(() => { if (iptvRefresh.current?.promise === run) iptvRefresh.current = null; });
   }, []);
+
+  useEffect(() => {
+    if (iptvSnapshot.signature !== iptvPlaylistSignature(settings.iptvPlaylists)) return;
+    const migrated = migrateXtreamFavoriteIds(settings.favoriteChannelIds, iptvSnapshot.allChannels ?? iptvSnapshot.channels);
+    if (migrated === settings.favoriteChannelIds) return;
+    setSettings((current) => ({
+      ...current,
+      favoriteChannelIds: migrateXtreamFavoriteIds(current.favoriteChannelIds, iptvSnapshot.allChannels ?? iptvSnapshot.channels)
+    }));
+  }, [iptvSnapshot, settings.iptvPlaylists, settings.favoriteChannelIds]);
 
   const loadIptvGuide = useCallback(async (channels: IptvChannel[]) => {
     if (!channels.length) return;
