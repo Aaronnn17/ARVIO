@@ -2,7 +2,7 @@ import { getMediaCapabilities } from "./capabilities";
 import { parseDebridStream } from "./debrid";
 import type { StreamSource } from "./types";
 
-type CompatStream = Pick<StreamSource, "url" | "originalUrl" | "source" | "description" | "behaviorHints" | "media" | "transport" | "homeServer">;
+type CompatStream = Pick<StreamSource, "url" | "originalUrl" | "source" | "description" | "behaviorHints" | "media" | "transport" | "homeServer" | "transcoded">;
 export type PlaybackMode = "direct" | "remux" | "transcode" | "external" | "locked";
 export type StreamPlayability = { mode: PlaybackMode; reason: string };
 export type PlaybackPlan = { route: "here" | "vlc" | "dead"; method: "direct" | "remux" | "transcode"; label: string; detail: string };
@@ -111,8 +111,13 @@ export function streamPlayability(stream: CompatStream): StreamPlayability {
   if (/^(zip|rar|7z|tar|gz|iso|exe|nfo|torrent)$/.test(container)) return { mode: "locked", reason: "Not a playable media file" };
   const key = compatibilityKey(stream);
   const failure = key ? failures.get(key) : undefined;
-  if (failure && failure.expires > Date.now()) return failure.result;
-  if (key && failure) failures.delete(key);
+  if (failure && failure.expires > Date.now() && (!stream.transcoded || failure.result.mode === "external")) return failure.result;
+  if (key && failure && failure.expires <= Date.now()) failures.delete(key);
+  if (stream.transcoded && streamTransport(stream) === "hls") {
+    const caps = getMediaCapabilities();
+    return caps.mse || caps.nativeHls ? { mode: "direct", reason: "" }
+      : { mode: "external", reason: "This browser has no HLS playback support" };
+  }
   const video = videoReason(stream);
   const audio = audioReason(stream);
   if (video) return { mode: canProviderTranscode(stream) ? "transcode" : "external", reason: video };

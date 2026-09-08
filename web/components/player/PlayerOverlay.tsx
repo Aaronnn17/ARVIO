@@ -299,9 +299,14 @@ function VideoPlayer({
     return advanced;
   }, [advance]);
   const onSelectStream = useCallback((next: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean }) => {
-    const time = (videoRef.current?.currentTime ?? 0) + (stream.playbackSession?.startOffset ?? 0);
+    const video = videoRef.current;
+    // A failed probe or destroyed MediaSource has a zero clock, not a new
+    // resume position. Keep the pending seek until replacement media is ready.
+    const time = video && video.readyState >= 1 && Number.isFinite(video.currentTime)
+      ? video.currentTime + (stream.playbackSession?.startOffset ?? 0)
+      : resumeAtRef.current || stream.resumePositionSeconds || 0;
     selectStream({ ...next, resumePositionSeconds: time }, options);
-  }, [selectStream, stream.playbackSession?.startOffset]);
+  }, [selectStream, stream.playbackSession?.startOffset, stream.resumePositionSeconds]);
   const transportRef = useRef<PlaybackHandle | null>(null);
   const [transportTracks, setTransportTracks] = useState<PlaybackTracks>({ audioTracks: [], qualities: [], selectedAudioTrackId: null, selectedQualityId: null });
   const lastSavedRef = useRef(0);
@@ -768,6 +773,7 @@ function VideoPlayer({
       transportRef.current = null;
       setTransportTracks({ audioTracks: [], qualities: [], selectedAudioTrackId: null, selectedQualityId: null });
       let cancelled = false;
+      let recovering = false;
       const controller = new AbortController();
       let handle: { destroy: () => void } | null = null;
       let remuxWatchdog: number | undefined;
@@ -777,69 +783,67 @@ function VideoPlayer({
       setActiveSubtitle(defaultSubtitleIndex(stream, settings.defaultSubtitle));
       setRemuxTracks([]);
       lastSavedRef.current = 0;
+      const remuxFailed = (message: string) => {
+        if (cancelled || recovering) return;
+        recovering = true;
+        window.clearInterval(remuxWatchdog);
+        video.pause();
+        // Callback + rejected start() + watchdog can report the same fault.
+        // Convert the selected file once, before considering another source.
+        // Capture the playhead before abort/destroy resets the video element.
+        if (canProviderTranscode(stream) && !stream.transcoded) {
+          onToast("Requesting provider conversion for this source...");
+          onSelectStream(stream, { forceBrowser: true, forceTranscode: true });
+        } else if (!tryNextSource()) {
+          setErrorDetail(message);
+          setBuffering(false); setError(true); setShowControls(true);
+        }
+        controller.abort();
+        handle?.destroy();
+        handle = null;
+      };
       void (async () => {
         try {
           const { probeAndPrepareRemux } = await import("@/lib/remux");
-          const remuxFailed = (message: string) => {
-            if (cancelled) return;
-            setErrorDetail(message);
-            setBuffering(false); setError(true); setShowControls(true);
-          };
           const prepared = await probeAndPrepareRemux(stream.url!, stream.behaviorHints?.proxyHeaders?.request, settings.audioLanguage, { signal: controller.signal, onError: remuxFailed, expectDolbyVision: hasDolbyVision(stream) });
-          if (cancelled) { prepared?.destroy(); return; }
+          if (cancelled || recovering) { prepared?.destroy(); return; }
+          handle = prepared;
           if (!prepared || (prepared.probe.audioTracks.length > 0 && prepared.probe.chosenAudioIndex < 0) || !prepared.probe.videoPlayable) {
-            if (prepared) {
-              const reason = !prepared.probe.videoPlayable ? prepared.probe.videoReason ?? "This browser cannot decode the selected video track."
-                : "No compatible audio track found. Use provider conversion or an external player.";
-              recordBrowserPlaybackFailure(stream, reason, !!stream.transcoded);
-              setErrorDetail(reason);
-            }
-            prepared?.destroy();
-            if (canProviderTranscode(stream) && !stream.transcoded) { onSelectStream(stream, { forceBrowser: true, forceTranscode: true }); return; }
-            if (tryNextSource()) return;
-            setBuffering(false);
-            setError(true);
+            const reason = !prepared ? "Browser preparation is unavailable for this source."
+              : !prepared.probe.videoPlayable ? prepared.probe.videoReason ?? "This browser cannot decode the selected video track."
+              : "No compatible audio track found. Use provider conversion or an external player.";
+            if (prepared) recordBrowserPlaybackFailure(stream, reason, !!stream.transcoded);
+            remuxFailed(reason);
             return;
           }
-          handle = prepared;
           setRemuxTracks(prepared.probe.audioTracks);
           const startIndex = remuxAudioIndexRef.current >= 0 ? remuxAudioIndexRef.current : prepared.probe.chosenAudioIndex;
           setRemuxAudioIndex(startIndex);
-          await prepared.start(video, startIndex, resumeAtRef.current);
-          if (cancelled) return;
+          try {
+            await prepared.start(video, startIndex, resumeAtRef.current);
+          } catch (error) {
+            remuxFailed(error instanceof Error ? error.message : "Browser playback could not start.");
+            return;
+          }
+          if (cancelled || recovering) return;
           resumeAtRef.current = 0;
           void video.play().catch(() => undefined);
-          // The remux pipeline can die silently (conversion abort, CDN cutting
-          // the range stream) — every internal error is swallowed and the UI
-          // would spin forever. Watchdog: if no actual frames arrived shortly
-          // after start resolved, declare the remux dead and move down the
-          // ladder (next source, then the error screen with its VLC handoff).
-          // Poll rather than fire once: a single timeout that lands while the
-          // element happens to report readyState>=2 gives up its only chance,
-          // and the remux then hangs with no error and no timeout at all —
-          // observed on device sitting at readyState 0 for 40s+ before the tab
-          // froze. Require real forward progress, not just a ready flag.
+          // A CDN can stop supplying packets without an error. Require clock
+          // progress too, and use the same bounded recovery as decoder failures.
           let lastSeen = -1;
           let stuckTicks = 0;
           remuxWatchdog = window.setInterval(() => {
-            if (cancelled) return;
+            if (cancelled || recovering) return;
             if (video.paused || video.ended || video.seeking) { lastSeen = video.currentTime; stuckTicks = 0; return; }
             const advancing = video.currentTime > lastSeen + 0.05;
             lastSeen = video.currentTime;
             if (advancing && video.readyState >= 2) { stuckTicks = 0; return; }
             stuckTicks += 1;
             if (stuckTicks < REMUX_STUCK_TICKS) return;
-            window.clearInterval(remuxWatchdog);
-            handle?.destroy();
-            handle = null;
-            onToast("This version could not be repackaged for the browser — trying another source.");
-            if (tryNextSource()) return;
-            setBuffering(false);
-            setError(true);
-            setShowControls(true);
+            remuxFailed("Browser preparation stopped delivering playable media.");
           }, 1000);
-        } catch {
-          if (!cancelled && !tryNextSource()) { setBuffering(false); setError(true); }
+        } catch (error) {
+          remuxFailed(error instanceof Error ? error.message : "Browser preparation failed.");
         }
       })();
       return () => {
@@ -964,7 +968,14 @@ function VideoPlayer({
       // exception — those bytes will never play here, so say so plainly rather
       // than letting the watchdog retry something that cannot work.
       if (hasPlayed) {
-        if (fault?.fatal || classifyMediaError(video.error?.code) === "fatal") {
+        const decodeFailure = fault ? fault.kind === "media" || fault.kind === "unsupported" : classifyMediaError(video.error?.code) === "fatal";
+        if (decodeFailure) {
+          if (!liveTv && !stream.transcoded && canProviderTranscode(stream)) {
+            cancelled = true;
+            onSelectStream(stream, { forceBrowser: true, forceTranscode: true });
+            detach?.();
+            return;
+          }
           setBuffering(false);
           setError(true);
           setShowControls(true);
@@ -980,7 +991,7 @@ function VideoPlayer({
       // the whole list. Drop the cached link and re-resolve once before
       // treating the source as dead; the sources themselves are usually fine,
       // which is why they still play in VLC and the APK.
-      if (!refreshedLink && !liveTv && stream.originalUrl && parseDebridStream(stream.originalUrl)) {
+      if (!refreshedLink && !liveTv && !stream.transcoded && stream.originalUrl && parseDebridStream(stream.originalUrl)) {
         refreshedLink = true;
         invalidateDebridDirectUrl(stream.originalUrl);
         const debridInfo = parseDebridStream(stream.originalUrl);
@@ -1026,15 +1037,16 @@ function VideoPlayer({
       // before failing, when the honest move is to fall through to VLC.
       if (!liveTv && !stream.homeServer && !stream.remux && !stream.transcoded && canTryRemux(stream)) {
         cancelled = true;
-        detach?.();
         const playhead = video.currentTime;
         if (playhead > 5) resumeAtRef.current = playhead;
         onSelectStream(stream, { forceRemux: true });
+        detach?.();
         return;
       }
       if (!liveTv && !stream.transcoded && canProviderTranscode(stream)) {
-        cancelled = true; detach?.();
+        cancelled = true;
         onSelectStream(stream, { forceTranscode: true, forceBrowser: true });
+        detach?.();
         return;
       }
       // This source is dead — hop to the next playable one before giving up.

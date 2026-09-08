@@ -5,6 +5,7 @@ const http = require('node:http');
 const { build } = require(process.env.ESBUILD_PATH || '../../netlify-auth-site/node_modules/esbuild');
 const root = path.resolve(__dirname, '..');
 const media = path.resolve(root, '../.playback-fixtures');
+const port = Number(process.env.PORT || 3099);
 (async () => {
   const bundle = await build({ entryPoints: { app: path.join(__dirname, 'fixtures/playback-ui.ts'), 'remux.worker': path.join(root, 'lib/remux.worker.ts'),
     'dolbyVisionProbe.worker': path.join(root, 'lib/dolbyVisionProbe.worker.ts') },
@@ -33,5 +34,5 @@ const media = path.resolve(root, '../.playback-fixtures');
     }
     res.setHeader('Content-Type', 'text/html');
     res.end('<!doctype html><html><head><title>ARVIO playback verification</title><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><script type="module" src="/app.js"></script></body></html>');
-  }).listen(3099, '127.0.0.1', () => console.log('http://127.0.0.1:3099'));
+  }).listen(port, '127.0.0.1', () => console.log(`http://127.0.0.1:${port}`));
 })().catch(error => { console.error(error); process.exit(1); });

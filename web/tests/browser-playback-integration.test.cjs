@@ -63,6 +63,156 @@ function extracted(relative, selector, globals) {
   return module.exports;
 }
 
+function conversionRecoveryHarness(overrides = {}) {
+  const state = { errors: [], details: [], selections: [], hops: 0, destroyed: 0, resolutions: 0 };
+  const video = Object.assign(new EventTarget(), { readyState: 4, currentTime: 420, duration: 3600, paused: false, ended: false, seeking: false,
+    pause() { this.paused = true; }, play() { this.paused = false; return Promise.resolve(); },
+    removeAttribute() { this.currentTime = 0; this.readyState = 0; }, load() {} });
+  const timers = new Map();
+  const stream = { ...file(), remux: true, originalUrl: 'https://provider.example/selected-file', ...overrides.stream };
+  const resumeAtRef = { current: stream.resumePositionSeconds ?? 0 };
+  let options;
+  let transport;
+  const prepared = { probe: { videoPlayable: true, audioTracks: [], chosenAudioIndex: -1 },
+    start: async () => {}, destroy: () => { state.destroyed++; video.removeAttribute('src'); }, ...overrides.prepared };
+  const noop = () => {};
+  const globals = {
+    stream, settings, videoRef: { current: video }, resumeAtRef, transportRef: { current: null },
+    liveTv: false, playbackRate: 1, config: { allowNetlifyMediaProxy: false },
+    setError: (value) => state.errors.push(value), setErrorDetail: (value) => state.details.push(value),
+    setBuffering: noop, setShowControls: noop, setActiveSubtitle: noop, setRemuxTracks: noop,
+    setRemuxAudioIndex: noop, setTransportTracks: noop, defaultSubtitleIndex: () => -1,
+    lastSavedRef: { current: 0 }, remuxAudioIndexRef: { current: -1 }, REMUX_STUCK_TICKS: 3,
+    onToast: noop, canProviderTranscode: () => overrides.canConvert ?? true,
+    canTryRemux: () => false, hasDolbyVision: () => false, recordBrowserPlaybackFailure: noop,
+    tryNextSource: () => { state.hops++; return !!overrides.autoSelect; },
+    parseDebridStream: () => ({ provider: 'torbox' }), invalidateDebridDirectUrl: noop,
+    resolveDebridDirectUrl: async () => { state.resolutions++; return { url: 'https://cdn.example/original.mkv' }; },
+    classifyMediaError: load('lib/playerRecovery.ts').classifyMediaError,
+    selectStream: (next, opts) => state.selections.push({ next, options: opts }),
+    attachPlayback: (_video, _url, opts) => { transport = opts; return () => { video.removeAttribute('src'); }; },
+    window: { setInterval: (fn) => { timers.set(fn, 'interval'); return fn; }, clearInterval: (fn) => timers.delete(fn),
+      setTimeout: (fn) => { timers.set(fn, 'timeout'); return fn; }, clearTimeout: (fn) => timers.delete(fn) },
+    require(name) {
+      assert.equal(name, '@/lib/remux');
+      return { probeAndPrepareRemux: async (...args) => {
+        options = args[3];
+        return overrides.probe ? overrides.probe(options, prepared) : prepared;
+      } };
+    }
+  };
+  globals.onSelectStream = extracted('components/player/PlayerOverlay.tsx', node =>
+    ts.isVariableDeclaration(node) && node.name.getText() === 'onSelectStream' && ts.isCallExpression(node.initializer)
+      ? node.initializer.arguments[0] : undefined, globals);
+  const setup = extracted('components/player/PlayerOverlay.tsx', (node, source) =>
+    ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect' && ts.isArrowFunction(node.arguments[0])
+      && node.arguments[0].getText(source).includes('const remuxFailed') ? node.arguments[0] : undefined, globals);
+  return { state, video, prepared, resumeAtRef, setup,
+    error: message => options.onError(message), transportError: error => transport.onError(error),
+    tick: () => { for (const [fn, kind] of [...timers]) if (kind === 'interval') fn(); },
+    emit: event => video.dispatchEvent(new Event(event)) };
+}
+
+test('remux start rejection requests conversion of the same file before hopping sources', async () => {
+  const h = conversionRecoveryHarness({ autoSelect: true, prepared: { start: async () => { throw new Error('Decoder rejected sample'); } } });
+  const cleanup = h.setup(); await flush();
+  assert.equal(h.state.selections.length, 1);
+  assert.equal(h.state.selections[0].next.originalUrl, 'https://provider.example/selected-file');
+  assert.equal(h.state.selections[0].next.resumePositionSeconds, 420);
+  assert.equal(h.state.selections[0].options.forceTranscode, true);
+  assert.equal(h.state.hops, 0);
+  assert.ok(h.state.destroyed > 0);
+  cleanup();
+});
+
+test('runtime callback and rejected start cannot request duplicate conversions', async () => {
+  const pending = deferred();
+  const h = conversionRecoveryHarness({ prepared: { start: () => pending.promise } });
+  const cleanup = h.setup(); await flush();
+  h.error('Decode error'); h.error('Duplicate decode error'); pending.reject(new Error('start failed'));
+  await flush();
+  assert.equal(h.state.selections.length, 1);
+  assert.equal(h.state.hops, 0);
+  assert.equal(h.state.errors.includes(true), false, 'Do not publish a terminal failure while conversion is being selected');
+  cleanup();
+});
+
+test('a probe failure preserves the pending resume position instead of replacing it with zero', async () => {
+  const h = conversionRecoveryHarness({ stream: { resumePositionSeconds: 930 },
+    probe: async (options) => { options.onError('Metadata unavailable'); return null; } });
+  h.video.readyState = 0; h.video.currentTime = 0;
+  const cleanup = h.setup(); await flush();
+  assert.equal(h.state.selections.length, 1);
+  assert.equal(h.state.selections[0].next.resumePositionSeconds, 930);
+  cleanup();
+});
+
+test('unsupported probe codecs and exhausted remux watchdogs both use provider conversion', async () => {
+  for (const phase of ['probe', 'watchdog']) {
+    const h = conversionRecoveryHarness(phase === 'probe'
+      ? { prepared: { probe: { videoPlayable: false, videoReason: 'Unsupported profile', audioTracks: [], chosenAudioIndex: -1 } } } : {});
+    const cleanup = h.setup(); await flush();
+    if (phase === 'watchdog') for (let n = 0; n < 5; n++) h.tick();
+    assert.equal(h.state.selections.length, 1, phase);
+    assert.equal(h.state.selections[0].options.forceTranscode, true);
+    cleanup();
+  }
+});
+
+test('closing or switching sources cancels late remux failure recovery', async () => {
+  const pending = deferred();
+  const h = conversionRecoveryHarness({ prepared: { start: () => pending.promise } });
+  const cleanup = h.setup(); await flush(); cleanup();
+  h.error('Late decoder event'); pending.reject(new Error('aborted')); await flush();
+  assert.equal(h.state.selections.length, 0);
+  assert.equal(h.state.hops, 0);
+  assert.equal(h.state.errors.includes(true), false);
+});
+
+test('no provider conversion or a previously converted file ends without a conversion loop', async () => {
+  for (const input of [{ canConvert: false }, { stream: { transcoded: true } }]) {
+    const h = conversionRecoveryHarness(input);
+    const cleanup = h.setup(); await flush();
+    h.error('No compatible decoder'); h.error('Duplicate failure');
+    assert.equal(h.state.selections.length, 0);
+    assert.equal(h.state.hops, 1);
+    assert.equal(h.state.details.at(-1), 'No compatible decoder');
+    assert.equal(h.state.errors.at(-1), true);
+    cleanup();
+  }
+});
+
+test('a fatal decoder error during direct playback converts without losing its playhead', async () => {
+  const h = conversionRecoveryHarness({ stream: { remux: false, playbackSession: { startOffset: 100 } } });
+  const cleanup = h.setup(); h.emit('playing');
+  h.transportError({ kind: 'media', fatal: true, message: 'Decode failed' });
+  h.transportError({ kind: 'media', fatal: true, message: 'Duplicate' });
+  assert.equal(h.state.selections.length, 1);
+  assert.equal(h.state.selections[0].next.resumePositionSeconds, 520);
+  assert.equal(h.state.selections[0].options.forceTranscode, true);
+  assert.equal(h.state.resolutions, 0);
+  cleanup();
+});
+
+test('a mid-playback network failure is not treated as a codec failure requiring conversion', () => {
+  const h = conversionRecoveryHarness({ stream: { remux: false } });
+  const cleanup = h.setup(); h.emit('playing');
+  h.transportError({ kind: 'network', fatal: true, message: 'Connection interrupted' });
+  assert.equal(h.state.selections.length, 0);
+  assert.equal(h.state.errors.includes(true), false);
+  cleanup();
+});
+
+test('failed converted HLS never refreshes back to the incompatible original CDN file', () => {
+  const h = conversionRecoveryHarness({ stream: { remux: false, transcoded: true, transport: 'hls' } });
+  const cleanup = h.setup();
+  h.transportError({ kind: 'media', fatal: true, message: 'Converted HLS failed' });
+  assert.equal(h.state.resolutions, 0);
+  assert.equal(h.state.selections.length, 0);
+  assert.equal(h.state.errors.at(-1), true);
+  cleanup();
+});
+
 function storeHarness(prepare, report = async () => {}, overrides = {}) {
   const state = { active: null, accepted: [], toasts: [], timers: new Map() };
   const globals = {
@@ -331,6 +481,73 @@ test('remux resolves an uncached debrid URL and preserves the original provider 
   assert.equal(result.url, 'https://cdn.example/file.mkv');
   assert.equal(result.originalUrl, input.url);
   assert.equal(result.remux, true);
+});
+
+test('provider HLS conversion preserves the selected file identity but drops original request headers/codecs', async () => {
+  const requests = [];
+  const info = { provider: 'torbox', infoHash: 'selected-hash', fileIndex: 3 };
+  const h = preparation({ debrid: { parseDebridStream: () => info,
+    resolveTranscodeStream: async (input) => { requests.push(input); return { url: 'https://cdn.example/master.m3u8' }; }
+  } });
+  const input = { ...file(), originalUrl: 'https://addon.example/selected-file', resumePositionSeconds: 420,
+    media: { container: 'mkv', videoCodec: 'hevc', audioCodec: 'truehd', hdr: 'dv' },
+    behaviorHints: { filename: 'original-DV.mkv', proxyHeaders: { request: { Authorization: 'original-header', Referer: 'https://addon.example' } } }
+  };
+  const result = await h.prepareBrowserStream(input, settings, { forceTranscode: true });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0], info);
+  assert.equal(result.originalUrl, input.originalUrl);
+  assert.equal(result.url, 'https://cdn.example/master.m3u8');
+  assert.equal(result.transcoded, true);
+  assert.equal(result.remux, false);
+  assert.equal(result.transport, 'hls');
+  assert.equal(result.resumePositionSeconds, 420);
+  assert.equal(result.media, undefined);
+  assert.equal(result.behaviorHints.proxyHeaders, undefined);
+  assert.equal(input.behaviorHints.proxyHeaders.request.Authorization, 'original-header', 'Original source remains unchanged');
+});
+
+test('reopening converted HLS does not request conversion again or follow the old direct URL', async () => {
+  let requests = 0;
+  const h = preparation({ debrid: { parseDebridStream: () => ({ provider: 'torbox' }),
+    resolveTranscodeStream: async () => { requests++; return { url: 'https://cdn.example/master.m3u8' }; }
+  } });
+  const input = { ...file(), url: 'https://cdn.example/master.m3u8', originalUrl: 'https://addon.example/file', transcoded: true, transport: 'hls',
+    source: '4K DV TrueHD original source', remux: true };
+  const result = await h.prepareBrowserStream(input, settings);
+  assert.equal(result.url, input.url);
+  assert.equal(result.remux, false);
+  assert.equal(requests, 0);
+  for (const option of ['forceRemux', 'forceTranscode']) {
+    await assert.rejects(h.prepareBrowserStream(input, settings, { [option]: true }), /already attempted/);
+  }
+  assert.equal(requests, 0);
+});
+
+test('converted HLS is classified independently from the original file failure', () => {
+  const compatibility = load('lib/streamCompatibility.ts', {
+    './capabilities': { getMediaCapabilities: () => capabilities },
+    './debrid': { parseDebridStream: () => ({ provider: 'torbox' }) }
+  });
+  const original = { ...file(), source: '4K DV TrueHD', media: { container: 'mkv', videoCodec: 'hevc', audioCodec: 'truehd' } };
+  const converted = { ...original, url: 'https://cdn.example/master.m3u8', originalUrl: original.url, media: undefined, transport: 'hls', transcoded: true };
+  compatibility.recordBrowserPlaybackFailure(original, 'Original video cannot decode');
+  assert.equal(compatibility.streamPlayability(converted).mode, 'direct');
+  assert.equal(compatibility.streamPlayability(original).mode, 'transcode');
+  compatibility.recordBrowserPlaybackFailure(converted, 'Conversion unavailable', true);
+  assert.equal(compatibility.streamPlayability(original).mode, 'external');
+  assert.equal(compatibility.streamPlayability(converted).mode, 'external');
+});
+
+test('provider conversion rejection is shown without repeated automatic API requests', async () => {
+  let requests = 0;
+  const h = preparation({ debrid: { parseDebridStream: () => ({ provider: 'torbox' }),
+    resolveTranscodeStream: async () => { requests++; return { error: 'Web transcoding requires the TorBox Pro plan.' }; }
+  } });
+  await assert.rejects(h.prepareBrowserStream(file(), settings, { forceTranscode: true }), /TorBox Pro/);
+  assert.equal(requests, 1);
+  await assert.rejects(h.prepareBrowserStream(file(), settings), /conversion is unavailable/);
+  assert.equal(requests, 1);
 });
 
 for (const route of ['remux', 'transcode']) test(`cancellation discards a late debrid ${route} response`, async () => {
@@ -615,7 +832,8 @@ test('in-player selection wrapper carries the absolute current position across c
   const selections = [];
   const select = extracted('components/player/PlayerOverlay.tsx', (node) => ts.isVariableDeclaration(node)
     && node.name.getText() === 'onSelectStream' && ts.isCallExpression(node.initializer) ? node.initializer.arguments[0] : undefined,
-    { videoRef: { current: { currentTime: 15 } }, stream: selected, selectStream: (...args) => selections.push(args) });
+    { videoRef: { current: { currentTime: 15, readyState: 4 } }, resumeAtRef: { current: 0 },
+      stream: selected, selectStream: (...args) => selections.push(args) });
   select(homeStream(), { forceTranscode: true });
   assert.equal(selections[0][0].resumePositionSeconds, 135);
   assert.equal(selections[0][1].forceTranscode, true);

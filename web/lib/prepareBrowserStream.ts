@@ -12,6 +12,13 @@ export async function prepareBrowserStream(stream: StreamSource, settings: AppSe
   if (stream.homeServer) {
     return prepareHomeServerPlayback(stream, settings, { forceTranscode: options.forceTranscode || options.forceRemux, signal: options.signal });
   }
+  // The converted HLS URL is already the provider's browser output. Reopening
+  // it must not reclassify the original filename (DV/TrueHD/MKV) or start another
+  // conversion. Explicitly reselecting the original source permits a new try.
+  if (stream.transcoded) {
+    if (options.forceRemux || options.forceTranscode) throw new Error("Provider conversion was already attempted. Choose another source or use an external player.");
+    return { ...stream, remux: false };
+  }
   const plan = playbackPlan(stream);
   const debrid = parseDebridStream(stream.originalUrl ?? stream.url);
   if (options.forceTranscode || plan.method === "transcode") {
@@ -25,7 +32,13 @@ export async function prepareBrowserStream(stream: StreamSource, settings: AppSe
       }
       throw new Error(reason);
     }
-    return { ...stream, url: result.url, originalUrl: stream.originalUrl ?? stream.url, remux: false, transcoded: true, transport: "hls" };
+    return {
+      ...stream, url: result.url, originalUrl: stream.originalUrl ?? stream.url,
+      remux: false, transcoded: true, transport: "hls", media: undefined,
+      // The original addon's headers do not belong to the provider's signed
+      // HLS URL. They also force iPad playback off the native HLS path.
+      behaviorHints: { ...stream.behaviorHints, notWebReady: false, proxyHeaders: undefined }
+    };
   }
   // Remux can extract a verified HDR10 base, but cannot convert profile 5 colours.
   if (plan.route !== "here" && (!options.forceRemux || !videoDecodableForDevice(stream))) throw new Error(plan.detail || "This format requires an external player");
