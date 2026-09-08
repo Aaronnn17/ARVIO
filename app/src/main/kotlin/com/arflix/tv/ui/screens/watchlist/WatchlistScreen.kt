@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,6 +53,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -67,7 +69,11 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.focused
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -107,6 +113,7 @@ import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.tr
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 
 private enum class WatchlistFocusZone {
     TOP_BAR,
@@ -333,10 +340,11 @@ fun WatchlistScreen(
 
     fun moveToContent() {
         focusZone = WatchlistFocusZone.CONTENT
+        val count = if (isLibraryMode) visibleLibraryItems.size else watchlistSections.firstOrNull()?.second?.size ?: 0
         focusedItemIndex = focusedItemIndex.coerceIn(
             0,
-            ((if (isLibraryMode) visibleLibraryItems.size else watchlistSections.firstOrNull()?.second?.size) ?: 1) - 1
-        ).coerceAtLeast(0)
+            (count - 1).coerceAtLeast(0)
+        )
     }
 
     fun activateProvider(index: Int) {
@@ -423,10 +431,19 @@ fun WatchlistScreen(
             watchlistColumnState.animateScrollToItem(focusedSectionIndex)
         }
     }
-    LaunchedEffect(focusedItemIndex, isLibraryMode, visibleLibraryItems.size) {
-        if (isLibraryMode && visibleLibraryItems.isNotEmpty()) {
+    LaunchedEffect(focusedItemIndex, isLibraryMode, focusZone, visibleLibraryItems.size, isMobile) {
+        if (!isMobile && isLibraryMode && focusZone == WatchlistFocusZone.CONTENT && visibleLibraryItems.isNotEmpty()) {
             val safe = focusedItemIndex.coerceIn(0, visibleLibraryItems.lastIndex)
-            libraryGridState.animateScrollToItem(safe)
+            val layout = snapshotFlow { libraryGridState.layoutInfo }.first { it.totalItemsCount > safe }
+            val target = layout.visibleItemsInfo.firstOrNull { it.index == safe }
+            if (target == null) {
+                libraryGridState.animateScrollToItem(safe)
+            } else {
+                val delta = libraryRevealScrollDelta(target.offset.y, target.size.height,
+                    layout.viewportStartOffset + layout.beforeContentPadding,
+                    layout.viewportEndOffset - layout.afterContentPadding)
+                if (delta != 0) libraryGridState.animateScrollBy(delta.toFloat(), tween(120))
+            }
             if (safe >= visibleLibraryItems.size - libraryColumns * 2) {
                 if (isHomeServerMode) viewModel.loadMoreLibrary() else viewModel.loadMoreActiveSource()
             }
@@ -445,6 +462,7 @@ fun WatchlistScreen(
 
     Box(
         modifier = Modifier
+            .testTag("library-screen")
             .fillMaxSize()
             .background(appBackgroundDark())
             .focusRequester(rootFocusRequester)
@@ -503,7 +521,10 @@ fun WatchlistScreen(
                                 WatchlistFocusZone.CONTENT -> {
                                     if (isLibraryMode) {
                                         if (focusedItemIndex % libraryColumns > 0) focusedItemIndex--
-                                        else if (providerLibraries.isNotEmpty()) focusZone = WatchlistFocusZone.LIBRARIES
+                                        else if (providerLibraries.isNotEmpty()) {
+                                            libraryFocusIndex = selectedLibraryIndex.coerceAtLeast(0)
+                                            focusZone = WatchlistFocusZone.LIBRARIES
+                                        }
                                     } else if (focusedItemIndex > 0) focusedItemIndex--
                                 }
                             }
@@ -520,7 +541,10 @@ fun WatchlistScreen(
                                         providerFocusIndex = (providerFocusIndex + 1).coerceAtMost(providers.lastIndex)
                                     }
                                 }
-                                WatchlistFocusZone.LIBRARIES -> focusZone = WatchlistFocusZone.FILTERS
+                                WatchlistFocusZone.LIBRARIES -> {
+                                    if (visibleLibraryItems.isNotEmpty()) moveToContent()
+                                    else focusZone = WatchlistFocusZone.FILTERS
+                                }
                                 WatchlistFocusZone.FILTERS -> filterFocusIndex = (filterFocusIndex + 1).coerceAtMost(filters.lastIndex)
                                 WatchlistFocusZone.CONTENT -> {
                                     val max = if (isLibraryMode) visibleLibraryItems.lastIndex else watchlistSections.getOrNull(focusedSectionIndex)?.second?.lastIndex ?: -1
@@ -563,7 +587,9 @@ fun WatchlistScreen(
                                 WatchlistFocusZone.CONTENT -> {
                                     if (isLibraryMode) {
                                         val next = focusedItemIndex + libraryColumns
-                                        if (next < visibleLibraryItems.size) focusedItemIndex = next
+                                        if (visibleLibraryItems.isNotEmpty()) {
+                                            focusedItemIndex = next.coerceAtMost(visibleLibraryItems.lastIndex)
+                                        }
                                     } else if (focusedSectionIndex < watchlistSections.lastIndex) {
                                         focusedSectionIndex++
                                         focusedItemIndex = 0
@@ -970,6 +996,21 @@ private fun LibrarySidebar(
     focusedIndex: Int,
     onSelect: (Int, HomeServerCatalogCandidate) -> Unit
 ) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(focusedIndex, selectedIndex, libraries.firstOrNull()?.sourceRef, libraries.size) {
+        if (libraries.isEmpty()) return@LaunchedEffect
+        val targetIndex = (if (focusedIndex >= 0) focusedIndex else selectedIndex).coerceIn(libraries.indices)
+        val layout = snapshotFlow { listState.layoutInfo }.first { it.totalItemsCount == libraries.size }
+        val target = layout.visibleItemsInfo.firstOrNull { it.index == targetIndex }
+        if (target == null) {
+            listState.animateScrollToItem(targetIndex)
+        } else {
+            val delta = libraryRevealScrollDelta(target.offset, target.size,
+                layout.viewportStartOffset + layout.beforeContentPadding,
+                layout.viewportEndOffset - layout.afterContentPadding)
+            if (delta != 0) listState.animateScrollBy(delta.toFloat(), tween(120))
+        }
+    }
     Column(
         modifier = Modifier
             .width(184.dp)
@@ -994,12 +1035,22 @@ private fun LibrarySidebar(
             color = Color.White.copy(alpha = 0.4f),
             modifier = Modifier.padding(start = 10.dp, top = 2.dp, bottom = 7.dp)
         )
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.testTag("library-sidebar").weight(1f),
+            contentPadding = PaddingValues(vertical = 2.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
             itemsIndexed(libraries, key = { _, item -> item.sourceRef }) { index, library ->
                 val selected = index == selectedIndex
                 val focused = index == focusedIndex
                 Row(
                     modifier = Modifier
+                        .testTag("library-sidebar-${library.sourceRef}")
+                        .semantics {
+                            this.selected = selected
+                            this.focused = focused
+                        }
                         .fillMaxWidth()
                         .height(44.dp)
                         .background(
@@ -1210,6 +1261,7 @@ private fun ColumnScope.LibraryResults(
                     columns = GridCells.Fixed(columns),
                     state = gridState,
                     modifier = Modifier
+                        .testTag("library-grid")
                         .fillMaxSize()
                         .graphicsLayer { alpha = contentAlpha }
                         .padding(horizontal = 24.dp),
@@ -1227,6 +1279,8 @@ private fun ColumnScope.LibraryResults(
                             onItemVisible(item)
                         }
                         MediaCard(
+                            modifier = Modifier.testTag("library-card-$index")
+                                .semantics { selected = index == focusedItemIndex },
                             item = item,
                             width = cardWidth,
                             isLandscape = isLandscape,
