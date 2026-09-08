@@ -1413,6 +1413,7 @@
 
     <!-- Extracted from code: Profile / TV / device-auth -->
     <string name="profile_avatar_import_failed">Could not import avatar image</string>
+    <string name="profile_image_picker_unavailable">No accessible image picker on this device. Choose a built-in avatar instead.</string>
     <string name="profile_created_success">Profile created successfully</string>
     <string name="profile_updated">Profile updated</string>
     <string name="profile_deleted">Profile deleted</string>

@@ -448,14 +448,18 @@ class TraktRepository @Inject constructor(
         return out
     }
 
-    suspend fun importLocalContinueWatchingForProfiles(values: Map<String, List<ContinueWatchingItem>>) {
+    suspend fun importLocalContinueWatchingForProfiles(values: Map<String, List<ContinueWatchingItem>?>) {
         context.traktDataStore.edit { prefs ->
             values.forEach { (profileId, items) ->
+                if (items == null) return@forEach
+                val validItems = sanitizeContinueWatchingItems(items)
+                // A corrupt non-empty snapshot must not erase this device's valid history.
+                if (items.isNotEmpty() && validItems.isEmpty()) return@forEach
                 val key = profileManager.profileStringKeyFor(profileId, "local_continue_watching_v1")
-                if (items.isEmpty()) {
+                if (validItems.isEmpty()) {
                     prefs.remove(key)
                 } else {
-                    prefs[key] = gson.toJson(items.take(Constants.MAX_CONTINUE_WATCHING))
+                    prefs[key] = gson.toJson(validItems.take(Constants.MAX_CONTINUE_WATCHING))
                 }
             }
         }
@@ -2146,8 +2150,7 @@ class TraktRepository @Inject constructor(
             val cacheKey = stringPreferencesKey("profile_${profileId}_trakt_continue_watching_cache_v1")
             val json = prefs[cacheKey] ?: return
 
-            val type = TypeToken.getParameterized(MutableList::class.java, ContinueWatchingItem::class.java).type
-            val parsed: List<ContinueWatchingItem> = gson.fromJson(json, type)
+            val parsed = decodeContinueWatchingCache(json, gson)
             val filtered = filterDismissedContinueWatchingItems(parsed, profileId)
             preloadedProfileCache[profileId] = filtered
 
@@ -2433,14 +2436,7 @@ class TraktRepository @Inject constructor(
     }
 
     private fun decodeContinueWatchingList(json: String): List<ContinueWatchingItem> {
-        if (json.isBlank()) return emptyList()
-        return try {
-            val type = TypeToken.getParameterized(MutableList::class.java, ContinueWatchingItem::class.java).type
-            val items: List<ContinueWatchingItem> = gson.fromJson(json, type)
-            items.distinctBy { "${it.mediaType}:${it.id}" }
-        } catch (_: Exception) {
-            emptyList()
-        }
+        return decodeContinueWatchingCache(json, gson)
     }
 
     private fun decodeIntList(json: String): List<Int> {
@@ -2910,9 +2906,7 @@ class TraktRepository @Inject constructor(
         val prefs = context.traktDataStore.data.first()
         val json = prefs[continueWatchingCacheKey()] ?: return emptyList()
         return try {
-            val type = TypeToken.getParameterized(MutableList::class.java, ContinueWatchingItem::class.java).type
-            val parsed: List<ContinueWatchingItem> = gson.fromJson(json, type)
-            parsed
+            decodeContinueWatchingCache(json, gson)
         } catch (_: Exception) {
             emptyList()
         }

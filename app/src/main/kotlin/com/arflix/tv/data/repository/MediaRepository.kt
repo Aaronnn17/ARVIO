@@ -368,10 +368,7 @@ class MediaRepository @Inject constructor(
                     }
                 }
 
-                val cwType = com.google.gson.reflect.TypeToken
-                    .getParameterized(MutableList::class.java, ContinueWatchingItem::class.java)
-                    .type
-                val cwItems: List<ContinueWatchingItem>? = runCatching { gson.fromJson<List<ContinueWatchingItem>>(json, cwType) }.getOrNull()
+                val cwItems = decodeContinueWatchingCache(json, gson)
                 if (cwItems != null) {
                     for (cw in cwItems) {
                         if (cw.id == mediaId && cw.mediaType == mediaType) {

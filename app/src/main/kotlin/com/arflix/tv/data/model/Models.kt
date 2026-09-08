@@ -71,7 +71,10 @@ data class MediaItem(
 ) : Serializable
 
 enum class MediaType {
-    MOVIE, TV
+    @com.google.gson.annotations.SerializedName(value = "MOVIE", alternate = ["movie"])
+    MOVIE,
+    @com.google.gson.annotations.SerializedName(value = "TV", alternate = ["tv"])
+    TV
 }
 
 /**

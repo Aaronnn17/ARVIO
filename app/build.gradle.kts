@@ -371,6 +371,10 @@ ksp {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    // Cloudstream/NiceHttp require OkHttp 5; its Android initializer is flavor-specific.
+    add("sideloadImplementation", "com.squareup.okhttp3:okhttp:5.3.2")
+    add("sideloadImplementation", "com.squareup.okhttp3:logging-interceptor:5.3.2")
+    add("sideloadImplementation", "com.squareup.okhttp3:okhttp-dnsoverhttps:5.3.2")
     implementation("com.squareup.moshi:moshi:1.15.1")
     implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
 

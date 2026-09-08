@@ -1170,10 +1170,7 @@ class HomeViewModel @Inject constructor(
         if (!file.exists() || file.length() > maxContinueWatchingCacheBytes) return emptyList()
         val json = file.readText()
         if (json.isBlank()) return emptyList()
-        val type = com.google.gson.reflect.TypeToken
-            .getParameterized(MutableList::class.java, ContinueWatchingItem::class.java)
-            .type
-        val parsed: List<ContinueWatchingItem> = gson.fromJson(json, type) ?: emptyList()
+        val parsed = com.arflix.tv.data.repository.decodeContinueWatchingCache(json, gson)
         parsed.filter { it.id > 0 && it.title.isNotBlank() }.take(Constants.MAX_CONTINUE_WATCHING)
     }.getOrDefault(emptyList())
 
