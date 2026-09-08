@@ -20,8 +20,11 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   outputFileTracingRoot: process.cwd(),
+  ...(process.env.ARVIO_STANDALONE === "true" ? { output: "standalone" } : {}),
   env: {
     NEXT_PUBLIC_BUILD_STAMP: buildStamp,
+    // Deployment mode is fixed at build time, never selected by a visitor.
+    NEXT_PUBLIC_SELF_HOSTED: process.env.NEXT_PUBLIC_SELF_HOSTED === "true" ? "true" : "false",
     // APP_ANON_KEY is intentionally a public client key (the same value is
     // bundled in Android). Expose it under Next's browser-visible name so a
     // production deploy cannot silently lose ARVIO Cloud login/sync when the
@@ -31,7 +34,9 @@ const nextConfig = {
     // The client ID is public, unlike the OAuth secret. Direct browser reads
     // avoid the Netlify egress block and must work with the canonical site env.
     NEXT_PUBLIC_TRAKT_CLIENT_ID:
-      process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID || process.env.TRAKT_CLIENT_ID || ""
+      process.env.NEXT_PUBLIC_TRAKT_CLIENT_ID || process.env.TRAKT_CLIENT_ID || "",
+    NEXT_PUBLIC_SIMKL_CLIENT_ID:
+      process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID || process.env.SIMKL_CLIENT_ID || ""
   },
   images: {
     remotePatterns: [

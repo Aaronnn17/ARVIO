@@ -12,6 +12,7 @@ import {
   TELEGRAM_API_HASH,
   TELEGRAM_API_ID,
   TELEGRAM_SESSION_KEY,
+  isTelegramConfigured,
 } from "./config";
 
 export type TgAuthState =
@@ -95,6 +96,9 @@ let gram: Gram | null = null;
 let loadingSession = false;
 
 async function loadGram(sessionString: string): Promise<Gram> {
+  if (!isTelegramConfigured) {
+    throw new Error("Telegram API credentials are not configured in this build.");
+  }
   const [{ TelegramClient, Api }, { StringSession }, bigIntMod] = await Promise.all([
     import("telegram"),
     import("telegram/sessions"),
@@ -156,6 +160,10 @@ async function ensureGram(): Promise<Gram> {
  */
 export async function restoreSession(): Promise<void> {
   if (typeof window === "undefined") return;
+  if (!isTelegramConfigured) {
+    setState({ k: "idle" });
+    return;
+  }
   if (state.k === "ready" || loadingSession) return;
   const saved = savedSession();
   if (!saved) return;
@@ -186,6 +194,10 @@ function base64Url(buf: Uint8Array): string {
 }
 
 export async function startQrAuth(): Promise<void> {
+  if (!isTelegramConfigured) {
+    setState({ k: "error", message: "Telegram API credentials are not configured in this build." });
+    return;
+  }
   setState({ k: "initializing" });
   pendingPassword = deferred<string>();
   try {
@@ -226,6 +238,10 @@ export async function startQrAuth(): Promise<void> {
 // ---- phone / code authentication (fallback) -------------------------------
 
 export async function startPhoneAuth(phone: string): Promise<void> {
+  if (!isTelegramConfigured) {
+    setState({ k: "error", message: "Telegram API credentials are not configured in this build." });
+    return;
+  }
   setState({ k: "initializing" });
   try {
     clearSession();

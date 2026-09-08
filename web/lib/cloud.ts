@@ -530,8 +530,8 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
   ]);
   return {
     iptvPlaylists: playlists,
-    favoriteChannelIds: stringArray(state.favoriteChannels).length ? stringArray(state.favoriteChannels) : stringArray(rootState.iptvFavoriteChannels),
-    favoriteGroupIds: stringArray(state.favoriteGroups).length ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
+    favoriteChannelIds: value !== undefined ? stringArray(state.favoriteChannels) : stringArray(rootState.iptvFavoriteChannels),
+    favoriteGroupIds: value !== undefined ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
     hiddenGroupIds: stringArray(state.hiddenGroups),
     groupOrder: stringArray(state.groupOrder),
     iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
@@ -680,10 +680,14 @@ async function writeRawPayload(auth: AuthClient, payload: RawPayload) {
   payload.updatedAt = Date.now();
   const userId = auth.session.userId;
   if (canUseBackendSync(auth)) {
-    await backendRequest(auth, "account-sync-push", {
+    const result = await backendRequest<{ accepted?: boolean; reason?: string }>(auth, "account-sync-push", {
       method: "POST",
       body: JSON.stringify({ payload })
     });
+    if (result.accepted !== true) {
+      invalidateRawPayloadCache();
+      throw new Error("Cloud did not accept your changes. They remain queued on this device; retry sync.");
+    }
     // The server merges concurrent device edits. Read its acknowledged result,
     // not our submitted document (which may omit those edits).
     if (auth.session?.userId === userId) invalidateRawPayloadCache();
@@ -713,6 +717,9 @@ export async function mutateCloudPayload(auth: AuthClient, mutator: (root: RawPa
   const userId = auth.session.userId;
   const task = (mutationQueues.get(userId) ?? Promise.resolve()).catch(() => undefined).then(async () => {
     if (auth.session?.userId !== userId) throw new Error("Account changed before sync completed");
+    // A recent read cache can predate another device's change. Mutations must
+    // start from a fresh snapshot, not echo that stale cached account back.
+    invalidateRawPayloadCache();
     const root = await pullRawPayload(auth);
     if (auth.session?.userId !== userId) throw new Error("Account changed before sync completed");
     mutator(root);
@@ -807,7 +814,7 @@ export async function saveCloudAddons(
   });
 }
 
-function iptvCloudSettings(settings: AppSettings): Record<string, unknown> {
+function androidIptvSettings(settings: AppSettings): Record<string, unknown> {
   return {
     m3uUrl: settings.iptvPlaylists[0]?.m3uUrl ?? "",
     epgUrl: settings.iptvPlaylists[0]?.epgUrl ?? "",
@@ -820,6 +827,31 @@ function iptvCloudSettings(settings: AppSettings): Record<string, unknown> {
     groupOrder: settings.groupOrder,
     sortOrder: settings.iptvSortOrder ?? "provider"
   };
+}
+
+function mergeFavoriteEdits(remote: string[], local: string[], baseline: string[]): string[] {
+  const base = new Set(baseline);
+  const remoteSet = new Set(remote);
+  const localSet = new Set(local);
+  // Apply this device's additions/removals/order, retaining additions from
+  // other devices and not resurrecting favorites they have already removed.
+  return [...new Set([
+    ...local.filter((id) => !base.has(id) || remoteSet.has(id)),
+    ...remote.filter((id) => !base.has(id) && !localSet.has(id))
+  ])];
+}
+
+export function mergeIptvSettings(existing: Record<string, unknown>, settings: AppSettings, baseline?: AppSettings | null) {
+  const incoming = androidIptvSettings(settings);
+  const base = baseline ? androidIptvSettings(baseline) : null;
+  const merged = { ...existing };
+  for (const [field, value] of Object.entries(incoming)) {
+    if (base && sameFieldValue(value, base[field])) continue;
+    merged[field] = base && field in existing && (field === "favoriteChannels" || field === "favoriteGroups")
+      ? mergeFavoriteEdits(stringArray(existing[field]), stringArray(value), stringArray(base[field]))
+      : value;
+  }
+  return merged;
 }
 
 export async function saveCloudSettings(
@@ -881,14 +913,16 @@ export async function saveCloudSettings(
     root.qualityFilters = settings.qualityFilters;
     root.catalogs = settings.catalogs;
     root.hiddenPreinstalledCatalogs = settings.hiddenCatalogIds;
-    root.iptvFavoriteChannels = settings.favoriteChannelIds;
-    root.iptvFavoriteGroups = settings.favoriteGroupIds;
-    root.iptvStalkerUrl = settings.iptvStalkerUrl;
-    root.iptvStalkerMac = settings.iptvStalkerMac;
-    if (settings.iptvPlaylists[0]) {
-      root.iptvM3uUrl = settings.iptvPlaylists[0].m3uUrl;
-      root.iptvEpgUrl = settings.iptvPlaylists[0].epgUrl ?? "";
-    }
+
+    const iptvExisting = objectRecord(scopedValue(root, "iptvByProfile", profileId));
+    const iptv = mergeIptvSettings(iptvExisting, settings, baseline);
+    root.iptvFavoriteChannels = iptv.favoriteChannels;
+    root.iptvFavoriteGroups = iptv.favoriteGroups;
+    root.iptvStalkerUrl = iptv.stalkerPortalUrl;
+    root.iptvStalkerMac = iptv.stalkerMacAddress;
+    root.iptvM3uUrl = iptv.m3uUrl;
+    root.iptvEpgUrl = iptv.epgUrl;
+    root.settings = { ...sanitizedSettings, ...iptvFromAndroid(iptv) };
 
     if (profiles.length) root.profiles = profiles;
     if (profileId) {
@@ -921,16 +955,14 @@ export async function saveCloudSettings(
       setScopedValue(root, "catalogsByProfile", profileId, settings.catalogs);
       setScopedValue(root, "hiddenPreinstalledByProfile", profileId, settings.hiddenCatalogIds);
       setScopedValue(root, "hiddenHomeServerByProfile", profileId, settings.hiddenHomeServerCatalogIds);
-      const mergedIptv = { ...objectRecord<unknown>(scopedValue(root, "iptvByProfile", profileId)) };
-      const newIptv = iptvCloudSettings(settings);
-      const baseIptv = baseline ? iptvCloudSettings(baseline) : null;
+      const newIptv = androidIptvSettings(settings);
+      const baseIptv = baseline ? androidIptvSettings(baseline) : null;
       for (const [field, value] of Object.entries(newIptv)) {
         if (!baseIptv || !sameFieldValue(value, baseIptv[field])) {
-          mergedIptv[field] = value;
           bumpFieldTs(root, `i:${profileId}:${field}`, changedAt);
         }
       }
-      setScopedValue(root, "iptvByProfile", profileId, mergedIptv);
+      setScopedValue(root, "iptvByProfile", profileId, iptv);
     }
   });
 }

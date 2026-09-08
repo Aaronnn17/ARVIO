@@ -32,13 +32,14 @@ import { proxiedUrl } from "@/lib/http";
 import { attachPlayback, type PlaybackHandle, type PlaybackTracks, type PlaybackError } from "@/lib/player";
 import { resolverMediaUrl, resolverSubtitleUrl } from "@/lib/resolver";
 import { sourcePickerScore, streamSizeBytes } from "@/lib/sourceRank";
-import { playbackPlan, streamPlayability, canTryRemux, canProviderTranscode } from "@/lib/streamCompatibility";
+import { playbackPlan, streamPlayability, canTryRemux, canProviderTranscode, hasDolbyVision, recordBrowserPlaybackFailure } from "@/lib/streamCompatibility";
 import { reportHomeServerPlayback, updateHomeServerPlaybackPosition } from "@/lib/homeServerPlayback";
 import {
   bufferedAhead,
   bufferedEndAt,
   classifyMediaError,
   isStalled,
+  monitorVideoFrames,
   nextStallAction,
 } from "@/lib/playerRecovery";
 import { authClient, useApp } from "@/lib/store";
@@ -263,9 +264,9 @@ function VideoPlayer({
   liveTv,
   canAdvance,
   onSelectStream: selectStream,
-  onAdvance,
+  onAdvance: advance,
   onToast,
-  onClose
+  onClose: close
 }: {
   title: string;
   subtitleLabel: string | null;
@@ -286,10 +287,26 @@ function VideoPlayer({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const onClose = useCallback(() => {
+    videoRef.current?.dispatchEvent(new Event("arvio-tracking-stop"));
+    close();
+  }, [close]);
+  const onAdvance = useCallback(async () => {
+    const video = videoRef.current;
+    video?.dispatchEvent(new Event("arvio-tracking-stop"));
+    const advanced = await advance();
+    if (!advanced && video && !video.paused && !video.ended) video.dispatchEvent(new Event("playing"));
+    return advanced;
+  }, [advance]);
   const onSelectStream = useCallback((next: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean }) => {
-    const time = (videoRef.current?.currentTime ?? 0) + (stream.playbackSession?.startOffset ?? 0);
+    const video = videoRef.current;
+    // A failed probe or destroyed MediaSource has a zero clock, not a new
+    // resume position. Keep the pending seek until replacement media is ready.
+    const time = video && video.readyState >= 1 && Number.isFinite(video.currentTime)
+      ? video.currentTime + (stream.playbackSession?.startOffset ?? 0)
+      : resumeAtRef.current || stream.resumePositionSeconds || 0;
     selectStream({ ...next, resumePositionSeconds: time }, options);
-  }, [selectStream, stream.playbackSession?.startOffset]);
+  }, [selectStream, stream.playbackSession?.startOffset, stream.resumePositionSeconds]);
   const transportRef = useRef<PlaybackHandle | null>(null);
   const [transportTracks, setTransportTracks] = useState<PlaybackTracks>({ audioTracks: [], qualities: [], selectedAudioTrackId: null, selectedQualityId: null });
   const lastSavedRef = useRef(0);
@@ -301,8 +318,6 @@ function VideoPlayer({
   // and blocks input until first frames are ready.
   const [booted, setBooted] = useState(false);
   const [bootLogo, setBootLogo] = useState<string | null>(null);
-  // Guards a one-time hop when a source plays audio but renders a black frame.
-  const switchedForBlackRef = useRef(false);
   // AI subtitle translation (same providers/prompt as the Android app).
   const [aiSubsActive, setAiSubsActive] = useState(false);
   const [aiTranslating, setAiTranslating] = useState(false);
@@ -479,25 +494,23 @@ function VideoPlayer({
   useEffect(() => {
     if (!booted || liveTv) return undefined;
     const video = videoRef.current;
-    if (!video || switchedForBlackRef.current) return undefined;
-    let timer = 0;
-    const startedAt = Date.now();
-    const check = () => {
-      // Audio-only fallback: a source that plays audio but never delivers a
-      // video frame (videoWidth stays 0 well into playback — some Dolby Vision
-      // streams) is broken here. Treat a long frameless stretch as black.
-      if (!switchedForBlackRef.current && !video.paused && video.currentTime > 6 && !video.videoWidth && Date.now() - startedAt > 12000) {
-        switchedForBlackRef.current = true;
-        onToast("This version's video won't render in the browser — switching source.");
-        if (!tryNextSource()) setError(true);
+    if (!video) return undefined;
+    return monitorVideoFrames(video, () => {
+      video.pause();
+      recordBrowserPlaybackFailure(stream, "This browser could not decode video frames from the selected source.", !!stream.transcoded);
+      if (!stream.transcoded && canProviderTranscode(stream)) {
+        onToast("No video frames decoded. Requesting provider conversion for this source.");
+        onSelectStream(stream, { forceTranscode: true, forceBrowser: true });
         return;
       }
-      if (!switchedForBlackRef.current) timer = window.setTimeout(check, 1500);
-    };
-    timer = window.setTimeout(check, 3500);
-    return () => window.clearTimeout(timer);
+      if (tryNextSource()) return;
+      setBuffering(false);
+      setShowControls(true);
+      setError(true);
+      onToast("Audio is playing but the browser cannot render this video's format. Choose a non-DV version or use a compatible external player.");
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booted, stream.url, liveTv]);
+  }, [booted, stream.url, remuxRestartKey, liveTv]);
 
   // Live cue translation: when AI subs are active, the selected (English
   // source) track's cues are translated in small batches and swapped in place;
@@ -704,7 +717,6 @@ function VideoPlayer({
     failedSourceUrlsRef.current = new Set();
     failedAddonStrikesRef.current = new Map();
     autoSourceHopsRef.current = 0;
-    switchedForBlackRef.current = false;
   }, [item?.id, selectedEpisode?.season, selectedEpisode?.episode]);
   const tryNextSource = useCallback(() => {
     if (liveTv || !currentStreamRef.current.autoSelect || autoSourceHopsRef.current >= 6) return false;
@@ -761,6 +773,7 @@ function VideoPlayer({
       transportRef.current = null;
       setTransportTracks({ audioTracks: [], qualities: [], selectedAudioTrackId: null, selectedQualityId: null });
       let cancelled = false;
+      let recovering = false;
       const controller = new AbortController();
       let handle: { destroy: () => void } | null = null;
       let remuxWatchdog: number | undefined;
@@ -770,63 +783,67 @@ function VideoPlayer({
       setActiveSubtitle(defaultSubtitleIndex(stream, settings.defaultSubtitle));
       setRemuxTracks([]);
       lastSavedRef.current = 0;
+      const remuxFailed = (message: string) => {
+        if (cancelled || recovering) return;
+        recovering = true;
+        window.clearInterval(remuxWatchdog);
+        video.pause();
+        // Callback + rejected start() + watchdog can report the same fault.
+        // Convert the selected file once, before considering another source.
+        // Capture the playhead before abort/destroy resets the video element.
+        if (canProviderTranscode(stream) && !stream.transcoded) {
+          onToast("Requesting provider conversion for this source...");
+          onSelectStream(stream, { forceBrowser: true, forceTranscode: true });
+        } else if (!tryNextSource()) {
+          setErrorDetail(message);
+          setBuffering(false); setError(true); setShowControls(true);
+        }
+        controller.abort();
+        handle?.destroy();
+        handle = null;
+      };
       void (async () => {
         try {
           const { probeAndPrepareRemux } = await import("@/lib/remux");
-          const remuxFailed = (message: string) => {
-            if (cancelled) return;
-            setErrorDetail(message);
-            setBuffering(false); setError(true); setShowControls(true);
-          };
-          const prepared = await probeAndPrepareRemux(stream.url!, stream.behaviorHints?.proxyHeaders?.request, settings.audioLanguage, { signal: controller.signal, onError: remuxFailed });
-          if (cancelled) { prepared?.destroy(); return; }
+          const prepared = await probeAndPrepareRemux(stream.url!, stream.behaviorHints?.proxyHeaders?.request, settings.audioLanguage, { signal: controller.signal, onError: remuxFailed, expectDolbyVision: hasDolbyVision(stream) });
+          if (cancelled || recovering) { prepared?.destroy(); return; }
+          handle = prepared;
           if (!prepared || (prepared.probe.audioTracks.length > 0 && prepared.probe.chosenAudioIndex < 0) || !prepared.probe.videoPlayable) {
-            prepared?.destroy();
-            if (stream.homeServer && !stream.transcoded) { onSelectStream(stream, { forceBrowser: true, forceTranscode: true }); return; }
-            if (tryNextSource()) return;
-            setBuffering(false);
-            setError(true);
+            const reason = !prepared ? "Browser preparation is unavailable for this source."
+              : !prepared.probe.videoPlayable ? prepared.probe.videoReason ?? "This browser cannot decode the selected video track."
+              : "No compatible audio track found. Use provider conversion or an external player.";
+            if (prepared) recordBrowserPlaybackFailure(stream, reason, !!stream.transcoded);
+            remuxFailed(reason);
             return;
           }
-          handle = prepared;
           setRemuxTracks(prepared.probe.audioTracks);
           const startIndex = remuxAudioIndexRef.current >= 0 ? remuxAudioIndexRef.current : prepared.probe.chosenAudioIndex;
           setRemuxAudioIndex(startIndex);
-          await prepared.start(video, startIndex, resumeAtRef.current);
-          if (cancelled) return;
+          try {
+            await prepared.start(video, startIndex, resumeAtRef.current);
+          } catch (error) {
+            remuxFailed(error instanceof Error ? error.message : "Browser playback could not start.");
+            return;
+          }
+          if (cancelled || recovering) return;
           resumeAtRef.current = 0;
           void video.play().catch(() => undefined);
-          // The remux pipeline can die silently (conversion abort, CDN cutting
-          // the range stream) — every internal error is swallowed and the UI
-          // would spin forever. Watchdog: if no actual frames arrived shortly
-          // after start resolved, declare the remux dead and move down the
-          // ladder (next source, then the error screen with its VLC handoff).
-          // Poll rather than fire once: a single timeout that lands while the
-          // element happens to report readyState>=2 gives up its only chance,
-          // and the remux then hangs with no error and no timeout at all —
-          // observed on device sitting at readyState 0 for 40s+ before the tab
-          // froze. Require real forward progress, not just a ready flag.
+          // A CDN can stop supplying packets without an error. Require clock
+          // progress too, and use the same bounded recovery as decoder failures.
           let lastSeen = -1;
           let stuckTicks = 0;
           remuxWatchdog = window.setInterval(() => {
-            if (cancelled) return;
+            if (cancelled || recovering) return;
             if (video.paused || video.ended || video.seeking) { lastSeen = video.currentTime; stuckTicks = 0; return; }
             const advancing = video.currentTime > lastSeen + 0.05;
             lastSeen = video.currentTime;
             if (advancing && video.readyState >= 2) { stuckTicks = 0; return; }
             stuckTicks += 1;
             if (stuckTicks < REMUX_STUCK_TICKS) return;
-            window.clearInterval(remuxWatchdog);
-            handle?.destroy();
-            handle = null;
-            onToast("This version could not be repackaged for the browser — trying another source.");
-            if (tryNextSource()) return;
-            setBuffering(false);
-            setError(true);
-            setShowControls(true);
+            remuxFailed("Browser preparation stopped delivering playable media.");
           }, 1000);
-        } catch {
-          if (!cancelled && !tryNextSource()) { setBuffering(false); setError(true); }
+        } catch (error) {
+          remuxFailed(error instanceof Error ? error.message : "Browser preparation failed.");
         }
       })();
       return () => {
@@ -951,7 +968,14 @@ function VideoPlayer({
       // exception — those bytes will never play here, so say so plainly rather
       // than letting the watchdog retry something that cannot work.
       if (hasPlayed) {
-        if (fault?.fatal || classifyMediaError(video.error?.code) === "fatal") {
+        const decodeFailure = fault ? fault.kind === "media" || fault.kind === "unsupported" : classifyMediaError(video.error?.code) === "fatal";
+        if (decodeFailure) {
+          if (!liveTv && !stream.transcoded && canProviderTranscode(stream)) {
+            cancelled = true;
+            onSelectStream(stream, { forceBrowser: true, forceTranscode: true });
+            detach?.();
+            return;
+          }
           setBuffering(false);
           setError(true);
           setShowControls(true);
@@ -967,7 +991,7 @@ function VideoPlayer({
       // the whole list. Drop the cached link and re-resolve once before
       // treating the source as dead; the sources themselves are usually fine,
       // which is why they still play in VLC and the APK.
-      if (!refreshedLink && !liveTv && stream.originalUrl && parseDebridStream(stream.originalUrl)) {
+      if (!refreshedLink && !liveTv && !stream.transcoded && stream.originalUrl && parseDebridStream(stream.originalUrl)) {
         refreshedLink = true;
         invalidateDebridDirectUrl(stream.originalUrl);
         const debridInfo = parseDebridStream(stream.originalUrl);
@@ -1013,15 +1037,16 @@ function VideoPlayer({
       // before failing, when the honest move is to fall through to VLC.
       if (!liveTv && !stream.homeServer && !stream.remux && !stream.transcoded && canTryRemux(stream)) {
         cancelled = true;
-        detach?.();
         const playhead = video.currentTime;
         if (playhead > 5) resumeAtRef.current = playhead;
         onSelectStream(stream, { forceRemux: true });
+        detach?.();
         return;
       }
       if (!liveTv && !stream.transcoded && canProviderTranscode(stream)) {
-        cancelled = true; detach?.();
+        cancelled = true;
         onSelectStream(stream, { forceTranscode: true, forceBrowser: true });
+        detach?.();
         return;
       }
       // This source is dead — hop to the next playable one before giving up.
@@ -1167,40 +1192,59 @@ function VideoPlayer({
       id: item.id,
       streamAddonId: stream.addonId,
       title: item.title
-    }, addons);
+    }, addons) || liveTv;
     const isAnime = item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16));
+    const tracker = syncClient(activeProfileId);
+    const trackingId = item.tmdbId ?? (item.isHomeServer ? null : item.id);
+    let trackingWarningShown = false;
     const scrobble = (action: "start" | "pause" | "stop", progress: number) => {
-      if (isLiveStream || authClient.session?.userId !== userId) return;
-      void syncClient().scrobble(action, {
+      if (isLiveStream || !trackingId || authClient.session?.userId !== userId) return;
+      void tracker.scrobble(action, {
         mediaType: item.mediaType,
-        tmdbId: item.id,
+        tmdbId: trackingId,
         season,
         episode,
         isAnime,
         progress
-      }).catch(() => undefined);
+      }).catch(() => {
+        if (trackingWarningShown || authClient.session?.userId !== userId) return;
+        trackingWarningShown = true;
+        onToast("A tracking service could not save playback. Check your tracking connections.");
+      });
     };
-    const playbackProgress = () => Number.isFinite(video.duration) && video.duration > 0
-      ? Math.min(100, Math.max(0, (video.currentTime / video.duration) * 100))
-      : item.progress ?? 0;
+    const capturePosition = () => {
+      if (Number.isFinite(video.duration) && video.duration > 0 && Number.isFinite(video.currentTime)) {
+        const offset = stream.playbackSession?.startOffset ?? 0;
+        lastPosition = { position: video.currentTime + offset, duration: video.duration + offset };
+      }
+      return lastPosition;
+    };
+    const playbackProgress = () => {
+      const position = capturePosition();
+      return position ? Math.min(100, Math.max(0, position.position / position.duration * 100)) : item.progress ?? 0;
+    };
     let scrobbleActive = false;
+    let playbackStarted = false;
+    let stopped = false;
     const onPlaying = () => {
-      if (scrobbleActive) return;
+      if (scrobbleActive || video.ended) return;
+      playbackStarted = true;
+      stopped = false;
       scrobbleActive = true;
       scrobble("start", playbackProgress());
     };
     const onPaused = () => {
-      if (!scrobbleActive || video.ended) return;
+      if (!scrobbleActive || video.ended || stopped) return;
       scrobbleActive = false;
       scrobble("pause", playbackProgress());
     };
     const save = (force: boolean | Event = false) => {
-      if (Number.isFinite(video.duration) && video.duration > 0 && Number.isFinite(video.currentTime)) {
-        lastPosition = { position: video.currentTime, duration: video.duration };
-      }
+      capturePosition();
       if (!lastPosition || !authClient.session || authClient.session.userId !== userId || isLiveStream) return;
       const now = Date.now();
-      if (force !== true && now - lastSavedRef.current < 15_000) return;
+      // The current backend saves an account snapshot per checkpoint. Bound
+      // periodic traffic while pause/close/background/end still flush immediately.
+      if (force !== true && now - lastSavedRef.current < 60_000) return;
       const { position, duration } = lastPosition;
       if (lastQueuedPosition === Math.round(position)) return;
       lastQueuedPosition = Math.round(position);
@@ -1225,10 +1269,13 @@ function VideoPlayer({
         stream_title: stream.source
       }, activeProfileId, addons).catch(() => { lastQueuedPosition = -1; });
     };
-    const onEnded = () => {
+    const stopTracking = (progress: number) => {
+      if (stopped || !playbackStarted) return;
+      stopped = true;
       scrobbleActive = false;
-      scrobble("stop", 100);
-      if (authClient.session && !isLiveStream) {
+      // Match ARVIO's 90% completion threshold; lower-progress stops remain resumable.
+      scrobble(progress >= 90 ? "stop" : "pause", progress);
+      if (progress >= 90 && authClient.session?.userId === userId && authClient.session && !isLiveStream) {
         void saveWatchedState(authClient, {
           id: item.id,
           mediaType: item.mediaType,
@@ -1236,30 +1283,39 @@ function VideoPlayer({
           episodeNumber: episode
         }, true, activeProfileId).catch(() => undefined);
       }
+    };
+    const onStopped = () => { stopTracking(playbackProgress()); save(true); };
+    const onEnded = () => {
+      stopTracking(100);
       save(true);
       if (settings.autoPlayNext && canAdvance && !nextDismissed.current) { setShowControls(true); setNextCountdown(10); }
     };
     const flush = () => { save(true); onPaused(); };
-    const background = () => { if (document.visibilityState === "hidden") flush(); };
+    const background = () => {
+      if (document.visibilityState === "hidden") flush();
+      else if (!video.paused && !video.ended && video.readyState >= 2) onPlaying();
+    };
     video.addEventListener("timeupdate", save);
     video.addEventListener("pause", flush);
-    window.addEventListener("pagehide", flush);
+    window.addEventListener("pagehide", onStopped);
     document.addEventListener("visibilitychange", background);
     video.addEventListener("playing", onPlaying);
     video.addEventListener("pause", onPaused);
     video.addEventListener("ended", onEnded);
+    video.addEventListener("arvio-tracking-stop", onStopped);
     if (!video.paused && video.readyState >= 2) onPlaying();
     return () => {
       flush();
       video.removeEventListener("timeupdate", save);
       video.removeEventListener("pause", flush);
-      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("pagehide", onStopped);
       document.removeEventListener("visibilitychange", background);
       video.removeEventListener("playing", onPlaying);
       video.removeEventListener("pause", onPaused);
       video.removeEventListener("ended", onEnded);
+      video.removeEventListener("arvio-tracking-stop", onStopped);
     };
-  }, [item, stream, selectedEpisode, settings.autoPlayNext, activeProfileId, addons, canAdvance, onAdvance]);
+  }, [item, stream, selectedEpisode, settings.autoPlayNext, activeProfileId, addons, canAdvance, liveTv, onToast]);
 
   const flashControls = useCallback(() => {
     setShowControls(true);

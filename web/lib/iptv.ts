@@ -522,7 +522,9 @@ async function fetchXtreamChannels(playlist: IptvPlaylistEntry, options: IptvLoa
     const streamId = String(stream.stream_id ?? "").trim();
     if (!streamId) return [];
     const streamUrl = buildXtreamStreamUrl(info, streamId);
-    const id = `${playlist.id}:${buildChannelId(streamUrl, stream.epg_channel_id)}`;
+    // Match Android's provider identity; the browser uses HLS while Android
+    // may use TS, so hashing the playback URL creates different favorites.
+    const id = `${playlist.id}:xtream:${streamId}`;
     if (seen.has(id)) return [];
     seen.add(id);
     const group = groupById.get(String(stream.category_id ?? "")) || "Uncategorized";
@@ -674,6 +676,29 @@ export function parseM3u(text: string, playlistId = "default") {
   }
 
   return channels;
+}
+
+export function migrateXtreamFavoriteIds(favorites: string[], channels: IptvChannel[]): string[] {
+  const legacyPrefixes = new Set(favorites.filter((id) => id.includes(":m3u:"))
+    .map((id) => id.slice(0, id.lastIndexOf(":") + 1)));
+  if (!legacyPrefixes.size) return favorites;
+  const favoriteSet = new Set(favorites);
+  const replacements = new Map<string, string>();
+  for (const channel of channels) {
+    const match = channel.id.match(/^(.+):xtream:\d+$/);
+    if (!match) continue;
+    const epg = normalizeChannelKey(channel.tvgId ?? "");
+    const prefix = `${match[1]}:m3u:${epg ? `${epg}:` : ""}`;
+    if (!legacyPrefixes.has(prefix)) continue;
+    // Recognize the previous web HLS hash and Android's M3U/TS hash without
+    // guessing by name (HD/SD variants and other playlists must stay distinct).
+    for (const url of [channel.streamUrl, channel.streamUrl.replace(/\.m3u8(?=[?#]|$)/i, ".ts")]) {
+      const legacy = `${match[1]}:${buildChannelId(url, channel.tvgId)}`;
+      if (favoriteSet.has(legacy)) replacements.set(legacy, channel.id);
+    }
+  }
+  if (!replacements.size) return favorites;
+  return [...new Set(favorites.map((id) => replacements.get(id) ?? id))];
 }
 
 function m3uHeaderName(name: string): string | undefined {

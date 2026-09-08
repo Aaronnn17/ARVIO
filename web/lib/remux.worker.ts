@@ -4,6 +4,8 @@ import {
   AudioSampleSink, AudioSampleSource,
 } from "mediabunny";
 import { preferredAudioIndex, type RemuxCommand, type RemuxEvent, type RemuxProbe } from "./remuxProtocol";
+import { probeDolbyVision, canExtractHdr10BaseLayer, extractHdr10BaseLayer, type DolbyVisionProbeResult } from "./dolbyVision";
+import { RemuxBufferBudget } from "./remuxBufferBudget";
 
 const port = self as unknown as { postMessage: (message: RemuxEvent, transfer?: Transferable[]) => void; onmessage: ((event: MessageEvent<RemuxCommand>) => void) | null };
 let input: Input;
@@ -13,13 +15,22 @@ let clock = 0;
 let output: Output | undefined;
 let nextId = 0;
 let aacEncoderRegistered = false;
+let dolbyVision: DolbyVisionProbeResult | undefined;
 const acknowledgements = new Map<number, () => void>();
 const sleep = () => new Promise<void>((resolve) => setTimeout(resolve, 80));
 
 async function probeInput(command: Extract<RemuxCommand, { type: "probe" }>) {
+  let networkRetries = 0;
   input = new Input({ formats: ALL_FORMATS, source: new UrlSource(command.url, {
     maxCacheSize: 8 * 1024 * 1024,
-    getRetryDelay: () => null,
+    getRetryDelay: (attempts, error) => {
+      // UrlSource resumes failed bodies from their last byte but resets its
+      // attempt counter there. Cap retries across the entire input, not per range.
+      if (attempts !== 1 || networkRetries >= 2 || !(error instanceof TypeError)
+        || !/fetch|network|load failed/i.test(error.message)) return null;
+      networkRetries++;
+      return 0.35;
+    },
     requestInit: { headers: command.headers },
     fetchFn: async (url, init) => {
       const controller = new AbortController();
@@ -56,6 +67,21 @@ async function probeInput(command: Extract<RemuxCommand, { type: "probe" }>) {
   const format = await input.getFormat();
   const video = await input.getPrimaryVideoTrack();
   if (!video) throw new Error("No supported video track found");
+  let videoReason: string | undefined;
+  dolbyVision = undefined;
+  if (video.codec === "hevc") {
+    // The demuxer otherwise discards dvcC/dvvC and incorrectly labels profile 5
+    // as ordinary HEVC. Probe only the chosen file, never every source in a list.
+    dolbyVision = await probeDolbyVision(command.url, { headers: command.headers, trackId: video.id });
+    if (dolbyVision.status === "present" && !canExtractHdr10BaseLayer(dolbyVision)) {
+      videoReason = `Dolby Vision profile ${dolbyVision.config.profile} has no verified browser-safe HDR10 conversion. Choose a non-DV source or an external player.`;
+    } else if (dolbyVision.status === "unknown" || (command.expectDolbyVision && dolbyVision.status === "absent")) {
+      const reason = dolbyVision.status === "unknown" ? dolbyVision.reason : "missing-dv-configuration";
+      videoReason = `The file's Dolby Vision compatibility could not be verified (${reason}). Use provider conversion or an external player to avoid incorrect colours.`;
+    }
+  } else if (command.expectDolbyVision) {
+    videoReason = "This Dolby Vision format cannot be safely repackaged in this browser.";
+  }
   const tracks = await input.getAudioTracks();
   if (tracks.some((track) => /ac3|eac3/.test(track.codec ?? ""))) {
     (await import("@mediabunny/ac3")).registerAc3Decoder();
@@ -65,20 +91,23 @@ async function probeInput(command: Extract<RemuxCommand, { type: "probe" }>) {
   }
   const audioTracks = [];
   for (const [index, track] of tracks.entries()) {
-    const codec = await track.getCodecParameterString() ?? track.codec ?? "unknown";
+    const codec = await track.getCodecParameterString().catch(() => null) ?? track.codec ?? "unknown";
     const passthrough = command.audioCodecs.includes(codec);
-    const browserPlayable = passthrough || await track.canDecode();
+    const browserPlayable = passthrough || await track.canDecode().catch(() => false);
     audioTracks.push({ index, codec, passthrough, browserPlayable,
       language: track.languageCode ?? undefined, channels: track.numberOfChannels,
       label: [track.languageCode?.toUpperCase(), codec.toUpperCase(), `${track.numberOfChannels}ch`, !passthrough && browserPlayable ? "converted" : ""].filter(Boolean).join(" / ") });
   }
   probe = { container: format.name, videoCodec: await video.getCodecParameterString() ?? undefined,
-    videoPlayable: true, audioTracks, chosenAudioIndex: preferredAudioIndex(audioTracks, command.language),
+    videoPlayable: !videoReason, videoReason, hdr10BaseLayer: !!dolbyVision && canExtractHdr10BaseLayer(dolbyVision),
+    videoProbeStatus: dolbyVision?.status === "unknown" ? dolbyVision.reason : dolbyVision?.status,
+    audioTracks, chosenAudioIndex: preferredAudioIndex(audioTracks, command.language),
     duration: await input.computeDuration() };
   port.postMessage({ type: "probe", probe });
 }
 
 async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
+  if (!probe?.videoPlayable) throw new Error(probe?.videoReason ?? "Video compatibility has not been verified");
   const run = command.generation;
   generation = run;
   clock = command.time;
@@ -88,14 +117,17 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
   output = undefined;
   await previous?.cancel();
   if (run !== generation) return;
-  const active = () => run === generation;
+  let failed = false;
+  const active = () => run === generation && !failed;
   const throttle = async (timestamp: number) => {
     while (active() && timestamp > clock + 25) await sleep();
     if (!active()) throw new Error("Cancelled");
   };
   let videoTimestamp = command.time;
   let videoFinished = false;
-  let fragmentBytes = 0;
+  let audioTimestamp = command.time;
+  let audioFinished = false;
+  const budget = new RemuxBufferBudget();
   const video = await input.getPrimaryVideoTrack();
   if (!video?.codec) throw new Error("Unsupported video codec");
   const videoSink = new EncodedPacketSink(video);
@@ -120,14 +152,16 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
     }
   }));
   const current = new Output({ format: new Mp4OutputFormat({ fastStart: "fragmented", minimumFragmentDuration: 1,
-    onMoof: () => { fragmentBytes = 0; }
+    onMoof: (data) => budget.releaseFragment(data)
   }), target });
   output = current;
   const videoSource = new EncodedVideoPacketSource(video.codec);
   current.addVideoTrack(videoSource, { rotation: video.rotation });
   const audioSource = audio?.codec ? transcode
-    ? new AudioSampleSource({ codec: "aac", bitrate: 192000, transform: { numberOfChannels: 2, sampleRate: 48000 } })
+    ? new AudioSampleSource({ codec: "aac", bitrate: 192000, transform: { numberOfChannels: 2, sampleRate: 48000 },
+      onEncodedPacket: (packet) => budget.add(packet.data.byteLength) })
     : new EncodedAudioPacketSource(audio.codec) : undefined;
+  audioFinished = !audioSource;
   if (audioSource) current.addAudioTrack(audioSource);
   await current.start();
   const videoConfig = await video.getDecoderConfig();
@@ -137,9 +171,14 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
     for await (const packet of videoSink.packets(first)) {
       if (!active()) throw new Error("Cancelled");
       videoTimestamp = Math.max(videoTimestamp, packet.timestamp);
-      fragmentBytes += packet.data.byteLength;
-      if (fragmentBytes > 24 * 1024 * 1024) throw new Error("Keyframes are too far apart for bounded browser playback. Use server conversion or an external player.");
-      await videoSource.add(packet, videoConfig ? { decoderConfig: videoConfig } : undefined);
+      const data = probe.hdr10BaseLayer && dolbyVision ? extractHdr10BaseLayer(packet.data, dolbyVision) : null;
+      if (!data || data.length) {
+        budget.addVideo((data ?? packet.data).byteLength, packet.type === "key");
+        await videoSource.add(data ? packet.clone({ data }) : packet, videoConfig ? { decoderConfig: videoConfig } : undefined);
+      }
+      // The muxer cannot flush video until audio catches up. Without backpressure,
+      // fast packet copying queues many GOPs behind the slower audio decoder.
+      while (active() && !audioFinished && packet.timestamp > audioTimestamp + 0.5) await sleep();
       // Only pause after a keyframe has flushed the preceding fragment. Pausing
       // halfway through a long GOP would wait for a playhead that cannot advance.
       if (packet.type === "key") await throttle(packet.timestamp);
@@ -152,10 +191,13 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
     if (audioSource instanceof AudioSampleSource) {
       for await (const sample of new AudioSampleSink(audio).samples(first.timestamp)) {
         try {
-          while (active() && !videoFinished && sample.timestamp > videoTimestamp + 2) await sleep();
-          if (videoFinished) await throttle(sample.timestamp);
           if (!active()) throw new Error("Cancelled");
           await audioSource.add(sample);
+          audioTimestamp = Math.max(audioTimestamp, sample.timestamp);
+          // Queue the next packet before waiting: its timestamp lets the muxer
+          // flush across a delayed start or a gap in the audio track.
+          while (active() && !videoFinished && sample.timestamp > videoTimestamp + 0.5) await sleep();
+          if (videoFinished) await throttle(sample.timestamp);
         }
         finally { sample.close(); }
       }
@@ -164,18 +206,27 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
       const start = await sink.getPacket(first.timestamp) ?? await sink.getFirstPacket();
       const config = await audio.getDecoderConfig();
       if (start) for await (const packet of sink.packets(start)) {
-        while (active() && !videoFinished && packet.timestamp > videoTimestamp + 2) await sleep();
-        if (videoFinished) await throttle(packet.timestamp);
         if (!active()) throw new Error("Cancelled");
+        budget.add(packet.data.byteLength);
         await audioSource.add(packet, config ? { decoderConfig: config } : undefined);
+        audioTimestamp = Math.max(audioTimestamp, packet.timestamp);
+        while (active() && !videoFinished && packet.timestamp > videoTimestamp + 0.5) await sleep();
+        if (videoFinished) await throttle(packet.timestamp);
       }
     }
     audioSource.close();
+    audioFinished = true;
   };
-  await Promise.all([videoTask(), audioTask()]);
-  if (!active()) return;
-  await current.finalize();
-  port.postMessage({ type: "end", generation: run });
+  try {
+    await Promise.all([videoTask(), audioTask()]);
+    if (!active()) return;
+    await current.finalize();
+    port.postMessage({ type: "end", generation: run });
+  } catch (error) {
+    failed = true;
+    await current.cancel().catch(() => {});
+    throw error;
+  }
 }
 
 port.onmessage = ({ data }) => {

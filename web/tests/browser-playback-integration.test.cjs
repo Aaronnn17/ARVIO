@@ -63,6 +63,156 @@ function extracted(relative, selector, globals) {
   return module.exports;
 }
 
+function conversionRecoveryHarness(overrides = {}) {
+  const state = { errors: [], details: [], selections: [], hops: 0, destroyed: 0, resolutions: 0 };
+  const video = Object.assign(new EventTarget(), { readyState: 4, currentTime: 420, duration: 3600, paused: false, ended: false, seeking: false,
+    pause() { this.paused = true; }, play() { this.paused = false; return Promise.resolve(); },
+    removeAttribute() { this.currentTime = 0; this.readyState = 0; }, load() {} });
+  const timers = new Map();
+  const stream = { ...file(), remux: true, originalUrl: 'https://provider.example/selected-file', ...overrides.stream };
+  const resumeAtRef = { current: stream.resumePositionSeconds ?? 0 };
+  let options;
+  let transport;
+  const prepared = { probe: { videoPlayable: true, audioTracks: [], chosenAudioIndex: -1 },
+    start: async () => {}, destroy: () => { state.destroyed++; video.removeAttribute('src'); }, ...overrides.prepared };
+  const noop = () => {};
+  const globals = {
+    stream, settings, videoRef: { current: video }, resumeAtRef, transportRef: { current: null },
+    liveTv: false, playbackRate: 1, config: { allowNetlifyMediaProxy: false },
+    setError: (value) => state.errors.push(value), setErrorDetail: (value) => state.details.push(value),
+    setBuffering: noop, setShowControls: noop, setActiveSubtitle: noop, setRemuxTracks: noop,
+    setRemuxAudioIndex: noop, setTransportTracks: noop, defaultSubtitleIndex: () => -1,
+    lastSavedRef: { current: 0 }, remuxAudioIndexRef: { current: -1 }, REMUX_STUCK_TICKS: 3,
+    onToast: noop, canProviderTranscode: () => overrides.canConvert ?? true,
+    canTryRemux: () => false, hasDolbyVision: () => false, recordBrowserPlaybackFailure: noop,
+    tryNextSource: () => { state.hops++; return !!overrides.autoSelect; },
+    parseDebridStream: () => ({ provider: 'torbox' }), invalidateDebridDirectUrl: noop,
+    resolveDebridDirectUrl: async () => { state.resolutions++; return { url: 'https://cdn.example/original.mkv' }; },
+    classifyMediaError: load('lib/playerRecovery.ts').classifyMediaError,
+    selectStream: (next, opts) => state.selections.push({ next, options: opts }),
+    attachPlayback: (_video, _url, opts) => { transport = opts; return () => { video.removeAttribute('src'); }; },
+    window: { setInterval: (fn) => { timers.set(fn, 'interval'); return fn; }, clearInterval: (fn) => timers.delete(fn),
+      setTimeout: (fn) => { timers.set(fn, 'timeout'); return fn; }, clearTimeout: (fn) => timers.delete(fn) },
+    require(name) {
+      assert.equal(name, '@/lib/remux');
+      return { probeAndPrepareRemux: async (...args) => {
+        options = args[3];
+        return overrides.probe ? overrides.probe(options, prepared) : prepared;
+      } };
+    }
+  };
+  globals.onSelectStream = extracted('components/player/PlayerOverlay.tsx', node =>
+    ts.isVariableDeclaration(node) && node.name.getText() === 'onSelectStream' && ts.isCallExpression(node.initializer)
+      ? node.initializer.arguments[0] : undefined, globals);
+  const setup = extracted('components/player/PlayerOverlay.tsx', (node, source) =>
+    ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect' && ts.isArrowFunction(node.arguments[0])
+      && node.arguments[0].getText(source).includes('const remuxFailed') ? node.arguments[0] : undefined, globals);
+  return { state, video, prepared, resumeAtRef, setup,
+    error: message => options.onError(message), transportError: error => transport.onError(error),
+    tick: () => { for (const [fn, kind] of [...timers]) if (kind === 'interval') fn(); },
+    emit: event => video.dispatchEvent(new Event(event)) };
+}
+
+test('remux start rejection requests conversion of the same file before hopping sources', async () => {
+  const h = conversionRecoveryHarness({ autoSelect: true, prepared: { start: async () => { throw new Error('Decoder rejected sample'); } } });
+  const cleanup = h.setup(); await flush();
+  assert.equal(h.state.selections.length, 1);
+  assert.equal(h.state.selections[0].next.originalUrl, 'https://provider.example/selected-file');
+  assert.equal(h.state.selections[0].next.resumePositionSeconds, 420);
+  assert.equal(h.state.selections[0].options.forceTranscode, true);
+  assert.equal(h.state.hops, 0);
+  assert.ok(h.state.destroyed > 0);
+  cleanup();
+});
+
+test('runtime callback and rejected start cannot request duplicate conversions', async () => {
+  const pending = deferred();
+  const h = conversionRecoveryHarness({ prepared: { start: () => pending.promise } });
+  const cleanup = h.setup(); await flush();
+  h.error('Decode error'); h.error('Duplicate decode error'); pending.reject(new Error('start failed'));
+  await flush();
+  assert.equal(h.state.selections.length, 1);
+  assert.equal(h.state.hops, 0);
+  assert.equal(h.state.errors.includes(true), false, 'Do not publish a terminal failure while conversion is being selected');
+  cleanup();
+});
+
+test('a probe failure preserves the pending resume position instead of replacing it with zero', async () => {
+  const h = conversionRecoveryHarness({ stream: { resumePositionSeconds: 930 },
+    probe: async (options) => { options.onError('Metadata unavailable'); return null; } });
+  h.video.readyState = 0; h.video.currentTime = 0;
+  const cleanup = h.setup(); await flush();
+  assert.equal(h.state.selections.length, 1);
+  assert.equal(h.state.selections[0].next.resumePositionSeconds, 930);
+  cleanup();
+});
+
+test('unsupported probe codecs and exhausted remux watchdogs both use provider conversion', async () => {
+  for (const phase of ['probe', 'watchdog']) {
+    const h = conversionRecoveryHarness(phase === 'probe'
+      ? { prepared: { probe: { videoPlayable: false, videoReason: 'Unsupported profile', audioTracks: [], chosenAudioIndex: -1 } } } : {});
+    const cleanup = h.setup(); await flush();
+    if (phase === 'watchdog') for (let n = 0; n < 5; n++) h.tick();
+    assert.equal(h.state.selections.length, 1, phase);
+    assert.equal(h.state.selections[0].options.forceTranscode, true);
+    cleanup();
+  }
+});
+
+test('closing or switching sources cancels late remux failure recovery', async () => {
+  const pending = deferred();
+  const h = conversionRecoveryHarness({ prepared: { start: () => pending.promise } });
+  const cleanup = h.setup(); await flush(); cleanup();
+  h.error('Late decoder event'); pending.reject(new Error('aborted')); await flush();
+  assert.equal(h.state.selections.length, 0);
+  assert.equal(h.state.hops, 0);
+  assert.equal(h.state.errors.includes(true), false);
+});
+
+test('no provider conversion or a previously converted file ends without a conversion loop', async () => {
+  for (const input of [{ canConvert: false }, { stream: { transcoded: true } }]) {
+    const h = conversionRecoveryHarness(input);
+    const cleanup = h.setup(); await flush();
+    h.error('No compatible decoder'); h.error('Duplicate failure');
+    assert.equal(h.state.selections.length, 0);
+    assert.equal(h.state.hops, 1);
+    assert.equal(h.state.details.at(-1), 'No compatible decoder');
+    assert.equal(h.state.errors.at(-1), true);
+    cleanup();
+  }
+});
+
+test('a fatal decoder error during direct playback converts without losing its playhead', async () => {
+  const h = conversionRecoveryHarness({ stream: { remux: false, playbackSession: { startOffset: 100 } } });
+  const cleanup = h.setup(); h.emit('playing');
+  h.transportError({ kind: 'media', fatal: true, message: 'Decode failed' });
+  h.transportError({ kind: 'media', fatal: true, message: 'Duplicate' });
+  assert.equal(h.state.selections.length, 1);
+  assert.equal(h.state.selections[0].next.resumePositionSeconds, 520);
+  assert.equal(h.state.selections[0].options.forceTranscode, true);
+  assert.equal(h.state.resolutions, 0);
+  cleanup();
+});
+
+test('a mid-playback network failure is not treated as a codec failure requiring conversion', () => {
+  const h = conversionRecoveryHarness({ stream: { remux: false } });
+  const cleanup = h.setup(); h.emit('playing');
+  h.transportError({ kind: 'network', fatal: true, message: 'Connection interrupted' });
+  assert.equal(h.state.selections.length, 0);
+  assert.equal(h.state.errors.includes(true), false);
+  cleanup();
+});
+
+test('failed converted HLS never refreshes back to the incompatible original CDN file', () => {
+  const h = conversionRecoveryHarness({ stream: { remux: false, transcoded: true, transport: 'hls' } });
+  const cleanup = h.setup();
+  h.transportError({ kind: 'media', fatal: true, message: 'Converted HLS failed' });
+  assert.equal(h.state.resolutions, 0);
+  assert.equal(h.state.selections.length, 0);
+  assert.equal(h.state.errors.at(-1), true);
+  cleanup();
+});
+
 function storeHarness(prepare, report = async () => {}, overrides = {}) {
   const state = { active: null, accepted: [], toasts: [], timers: new Map() };
   const globals = {
@@ -113,6 +263,164 @@ function sessionEffect(stream, report, update = () => {}) {
   return { video, selections, resumeAtRef, setup: effect, fail: terminalFailureEffect,
     tick: () => { for (const fn of timers) fn(); }, emit: (name) => video.dispatchEvent(new Event(name)) };
 }
+
+function progressEffect(overrides = {}) {
+  const video = new EventTarget();
+  Object.assign(video, { currentTime: 10, duration: 1000, paused: true, readyState: 4 });
+  const window = new EventTarget();
+  const document = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+  const calls = [];
+  const scrobbles = [], watched = [], toasts = [];
+  const authClient = { session: { userId: 'account-a' } };
+  let now = 1_000_000;
+  const setup = extracted('components/player/PlayerOverlay.tsx', (node, source) =>
+    ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect'
+      && ts.isArrowFunction(node.arguments[0]) && node.arguments[0].getText(source).includes('lastQueuedPosition')
+      ? node.arguments[0] : undefined, {
+    videoRef: { current: video }, item: { id: 1, title: 'Episode', mediaType: 'tv' },
+    stream: { addonId: 'fixture', addonName: 'Fixture' }, addons: [], activeProfileId: 'profile-a',
+    selectedEpisode: { season: 1, episode: 3 }, authClient,
+    Date: { now: () => now }, window, document, lastSavedRef: { current: 0 },
+    isLiveStreamOrSportsItem: () => false, config: {}, settings: { autoPlayNext: false },
+    liveTv: false, onToast: message => toasts.push(message),
+    syncClient: profile => ({ scrobble: async (action, item) => scrobbles.push({ profile, action, item }) }),
+    saveWatchedState: async (...args) => watched.push(args),
+    saveProgress: async (...args) => { calls.push(args); }, ...overrides
+  });
+  const cleanup = setup();
+  return { video, window, document, calls, authClient, scrobbles, watched, toasts, cleanup,
+    advance: (seconds) => { now += seconds * 1000; video.currentTime += seconds; },
+    emit: (name) => video.dispatchEvent(new Event(name)) };
+}
+
+test('Progress cloud checkpoints are once per minute, not every 15 seconds', () => {
+  const h = progressEffect();
+  h.emit('timeupdate');
+  assert.equal(h.calls.length, 1);
+  for (let n = 0; n < 3; n++) { h.advance(15); h.emit('timeupdate'); }
+  assert.equal(h.calls.length, 1);
+  h.advance(15); h.emit('timeupdate');
+  assert.equal(h.calls.length, 2);
+  h.cleanup();
+  assert.equal(h.calls.length, 2, 'unchanged teardown position is not saved twice');
+});
+
+test('Pause, background, pagehide, end and close bypass periodic checkpoint throttling', () => {
+  for (const event of ['pause', 'background', 'pagehide', 'ended', 'close']) {
+    const h = progressEffect();
+    h.emit('timeupdate');
+    h.advance(3);
+    if (event === 'background') { h.document.visibilityState = 'hidden'; h.document.dispatchEvent(new Event('visibilitychange')); }
+    else if (event === 'pagehide') h.window.dispatchEvent(new Event('pagehide'));
+    else if (event === 'close') h.cleanup();
+    else h.emit(event);
+    assert.equal(h.calls.length, 2, event);
+    assert.equal(h.calls[1][1].position_seconds, 13, event);
+    assert.equal(h.calls[1][1].episode, 3);
+    if (event !== 'close') h.cleanup();
+  }
+});
+
+test('Progress cleanup cannot save the former profile into a new account', () => {
+  const h = progressEffect();
+  h.emit('timeupdate'); h.advance(5);
+  h.authClient.session.userId = 'account-b';
+  h.cleanup();
+  assert.equal(h.calls.length, 1);
+});
+
+test('browser episode playback sends start, pause, resume and exactly one completed stop', () => {
+  const h = progressEffect();
+  h.video.paused = false; h.emit('playing'); h.emit('playing');
+  h.video.currentTime = 330; h.video.paused = true; h.emit('pause');
+  h.video.paused = false; h.emit('playing');
+  h.video.currentTime = 1000; h.video.ended = true; h.video.paused = true;
+  h.emit('pause'); h.emit('ended'); h.emit('arvio-tracking-stop'); h.cleanup();
+  assert.deepEqual(h.scrobbles.map(c => [c.action, c.item.progress]), [['start', 1], ['pause', 33], ['start', 33], ['stop', 100]]);
+  assert.ok(h.scrobbles.every(c => c.profile === 'profile-a' && c.item.tmdbId === 1 && c.item.season === 1 && c.item.episode === 3));
+  assert.equal(h.watched.length, 1);
+  assert.equal(h.watched[0][3], 'profile-a');
+});
+
+test('hiding and returning to a playing tab resumes tracking without extra heartbeat calls', () => {
+  const h = progressEffect();
+  h.video.paused = false; h.emit('playing');
+  for (let n = 0; n < 20; n++) { h.advance(1); h.emit('timeupdate'); h.emit('seeked'); }
+  h.document.visibilityState = 'hidden'; h.document.dispatchEvent(new Event('visibilitychange'));
+  h.document.visibilityState = 'visible'; h.document.dispatchEvent(new Event('visibilitychange'));
+  assert.deepEqual(h.scrobbles.map(c => c.action), ['start', 'pause', 'start']);
+  h.cleanup();
+});
+
+test('closing before completion remains resumable; closing during credits marks watched', () => {
+  for (const position of [450, 850, 950]) {
+    const h = progressEffect();
+    h.video.paused = false; h.emit('playing'); h.video.currentTime = position;
+    h.emit('arvio-tracking-stop'); h.cleanup();
+    assert.equal(h.scrobbles.at(-1).action, position >= 900 ? 'stop' : 'pause');
+    assert.equal(h.scrobbles.at(-1).item.progress, position / 10);
+    assert.equal(h.scrobbles.length, 2);
+    assert.equal(h.watched.length, position >= 900 ? 1 : 0);
+  }
+});
+
+test('re-render cleanup is a pause, not a watched stop during credits', () => {
+  const h = progressEffect();
+  h.video.paused = false; h.emit('playing'); h.video.currentTime = 950; h.cleanup();
+  assert.equal(h.scrobbles.at(-1).action, 'pause');
+  assert.equal(h.watched.length, 0);
+});
+
+test('tracking and cloud checkpoints include provider conversion start offsets', () => {
+  const h = progressEffect({ stream: { addonName: 'Jellyfin', playbackSession: { startOffset: 500 } } });
+  h.video.paused = false; h.video.currentTime = 250; h.emit('playing'); h.emit('pause');
+  assert.equal(h.scrobbles[0].item.progress, 50);
+  assert.equal(h.calls[0][1].position_seconds, 750);
+  assert.equal(h.calls[0][1].duration_seconds, 1500);
+  h.video.duration = NaN; h.video.currentTime = 0; h.cleanup();
+  assert.equal(h.calls.length, 1, 'destroyed media state cannot overwrite the captured resume position');
+});
+
+test('unknown home-server IDs are never submitted to trackers as TMDB IDs', () => {
+  const h = progressEffect({ item: { id: 991231, isHomeServer: true, title: 'Private file', mediaType: 'movie' } });
+  h.video.paused = false; h.emit('playing'); h.emit('arvio-tracking-stop'); h.cleanup();
+  assert.equal(h.scrobbles.length, 0);
+  assert.equal(h.calls.length, 1, 'ARVIO cloud progress still saves');
+});
+
+test('mapped home-server titles scrobble their TMDB ID instead of local server ID', () => {
+  const h = progressEffect({ item: { id: 991231, tmdbId: 42, isHomeServer: true, title: 'Mapped file', mediaType: 'movie' } });
+  h.video.paused = false; h.emit('playing'); h.emit('arvio-tracking-stop'); h.cleanup();
+  assert.equal(h.scrobbles[0].item.tmdbId, 42);
+});
+
+test('live TV and playback that never starts do not create watched history', () => {
+  for (const liveTv of [true, false]) {
+    const h = progressEffect({ liveTv });
+    if (liveTv) { h.video.paused = false; h.emit('playing'); }
+    h.video.currentTime = 1000; h.emit('ended'); h.emit('arvio-tracking-stop'); h.cleanup();
+    assert.equal(h.scrobbles.length, 0);
+    assert.equal(h.watched.length, 0);
+  }
+});
+
+test('an old player cannot mark watched after switching accounts', () => {
+  const h = progressEffect();
+  h.video.paused = false; h.emit('playing'); h.authClient.session.userId = 'account-b';
+  h.video.currentTime = 1000; h.emit('ended'); h.cleanup();
+  assert.equal(h.scrobbles.length, 1);
+  assert.equal(h.watched.length, 0);
+  assert.equal(h.calls.length, 0);
+});
+
+test('tracker failures are reported once, without blocking cloud progress or retry polling', async () => {
+  const h = progressEffect({ syncClient: () => ({ scrobble: async () => { throw new Error('HTTP 401'); } }) });
+  h.video.paused = false; h.emit('playing'); h.emit('pause'); await flush();
+  assert.equal(h.toasts.length, 1);
+  assert.match(h.toasts[0], /tracking service/);
+  assert.equal(h.calls.length, 1);
+  h.cleanup();
+});
 
 function actualHomeApi(respond = async () => '') {
   const calls = [];
@@ -175,6 +483,73 @@ test('remux resolves an uncached debrid URL and preserves the original provider 
   assert.equal(result.remux, true);
 });
 
+test('provider HLS conversion preserves the selected file identity but drops original request headers/codecs', async () => {
+  const requests = [];
+  const info = { provider: 'torbox', infoHash: 'selected-hash', fileIndex: 3 };
+  const h = preparation({ debrid: { parseDebridStream: () => info,
+    resolveTranscodeStream: async (input) => { requests.push(input); return { url: 'https://cdn.example/master.m3u8' }; }
+  } });
+  const input = { ...file(), originalUrl: 'https://addon.example/selected-file', resumePositionSeconds: 420,
+    media: { container: 'mkv', videoCodec: 'hevc', audioCodec: 'truehd', hdr: 'dv' },
+    behaviorHints: { filename: 'original-DV.mkv', proxyHeaders: { request: { Authorization: 'original-header', Referer: 'https://addon.example' } } }
+  };
+  const result = await h.prepareBrowserStream(input, settings, { forceTranscode: true });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0], info);
+  assert.equal(result.originalUrl, input.originalUrl);
+  assert.equal(result.url, 'https://cdn.example/master.m3u8');
+  assert.equal(result.transcoded, true);
+  assert.equal(result.remux, false);
+  assert.equal(result.transport, 'hls');
+  assert.equal(result.resumePositionSeconds, 420);
+  assert.equal(result.media, undefined);
+  assert.equal(result.behaviorHints.proxyHeaders, undefined);
+  assert.equal(input.behaviorHints.proxyHeaders.request.Authorization, 'original-header', 'Original source remains unchanged');
+});
+
+test('reopening converted HLS does not request conversion again or follow the old direct URL', async () => {
+  let requests = 0;
+  const h = preparation({ debrid: { parseDebridStream: () => ({ provider: 'torbox' }),
+    resolveTranscodeStream: async () => { requests++; return { url: 'https://cdn.example/master.m3u8' }; }
+  } });
+  const input = { ...file(), url: 'https://cdn.example/master.m3u8', originalUrl: 'https://addon.example/file', transcoded: true, transport: 'hls',
+    source: '4K DV TrueHD original source', remux: true };
+  const result = await h.prepareBrowserStream(input, settings);
+  assert.equal(result.url, input.url);
+  assert.equal(result.remux, false);
+  assert.equal(requests, 0);
+  for (const option of ['forceRemux', 'forceTranscode']) {
+    await assert.rejects(h.prepareBrowserStream(input, settings, { [option]: true }), /already attempted/);
+  }
+  assert.equal(requests, 0);
+});
+
+test('converted HLS is classified independently from the original file failure', () => {
+  const compatibility = load('lib/streamCompatibility.ts', {
+    './capabilities': { getMediaCapabilities: () => capabilities },
+    './debrid': { parseDebridStream: () => ({ provider: 'torbox' }) }
+  });
+  const original = { ...file(), source: '4K DV TrueHD', media: { container: 'mkv', videoCodec: 'hevc', audioCodec: 'truehd' } };
+  const converted = { ...original, url: 'https://cdn.example/master.m3u8', originalUrl: original.url, media: undefined, transport: 'hls', transcoded: true };
+  compatibility.recordBrowserPlaybackFailure(original, 'Original video cannot decode');
+  assert.equal(compatibility.streamPlayability(converted).mode, 'direct');
+  assert.equal(compatibility.streamPlayability(original).mode, 'transcode');
+  compatibility.recordBrowserPlaybackFailure(converted, 'Conversion unavailable', true);
+  assert.equal(compatibility.streamPlayability(original).mode, 'external');
+  assert.equal(compatibility.streamPlayability(converted).mode, 'external');
+});
+
+test('provider conversion rejection is shown without repeated automatic API requests', async () => {
+  let requests = 0;
+  const h = preparation({ debrid: { parseDebridStream: () => ({ provider: 'torbox' }),
+    resolveTranscodeStream: async () => { requests++; return { error: 'Web transcoding requires the TorBox Pro plan.' }; }
+  } });
+  await assert.rejects(h.prepareBrowserStream(file(), settings, { forceTranscode: true }), /TorBox Pro/);
+  assert.equal(requests, 1);
+  await assert.rejects(h.prepareBrowserStream(file(), settings), /conversion is unavailable/);
+  assert.equal(requests, 1);
+});
+
 for (const route of ['remux', 'transcode']) test(`cancellation discards a late debrid ${route} response`, async () => {
   const pending = deferred();
   const controller = new AbortController();
@@ -192,6 +567,55 @@ test('provider conversion errors reach the caller verbatim', async () => {
   const h = preparation({ debrid: { parseDebridStream: () => ({ provider: 'torbox' }),
     resolveTranscodeStream: async () => ({ error: 'Transcoding permission denied' }) } });
   await assert.rejects(h.prepareBrowserStream(file(), settings, { forceTranscode: true }), /Transcoding permission denied/);
+});
+
+test('forced audio remux cannot bypass an unsupported video or Dolby Vision gate', async () => {
+  const h = preparation();
+  for (const media of [{ videoCodec: 'hevc' }, { videoCodec: 'h264', hdr: 'Dolby Vision' }]) {
+    await assert.rejects(h.prepareBrowserStream({ ...file(), media }, settings, { forceRemux: true }), /HEVC|Dolby Vision/);
+  }
+});
+
+test('Dolby Vision conversion keeps the manually selected file and propagates failures', async () => {
+  const input = { ...file(), description: 'Mayday.2160p.DV.HDR10+.MP4', media: { videoCodec: 'hevc' } };
+  let requested;
+  const provider = { provider: 'torbox', fileName: 'selected.mp4' };
+  const h = preparation({ debrid: {
+    parseDebridStream: () => provider,
+    resolveTranscodeStream: async (info) => { requested = info; return { error: 'Provider conversion unavailable' }; }
+  } });
+  await assert.rejects(h.prepareBrowserStream(input, settings), /Provider conversion unavailable/);
+  assert.equal(requested, provider);
+});
+
+for (const converted of [false, true]) test(`missing video ${converted ? 'after conversion stops with an error' : 'requests conversion of the same file'}`, () => {
+  const stream = { ...file(), transcoded: converted };
+  const video = { pause: () => { paused = true; } };
+  let missing, paused = false, failure = false;
+  const selections = [];
+  const toasts = [];
+  const failures = [];
+  const effect = extracted('components/player/PlayerOverlay.tsx', (node, source) =>
+    ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect'
+      && ts.isArrowFunction(node.arguments[0]) && node.arguments[0].getText(source).includes('monitorVideoFrames(')
+      ? node.arguments[0] : undefined, {
+    booted: true, liveTv: false, videoRef: { current: video }, stream,
+    monitorVideoFrames: (_, callback) => { missing = callback; return () => {}; },
+    canProviderTranscode: () => true,
+    recordBrowserPlaybackFailure: (...args) => failures.push(args),
+    onSelectStream: (...args) => selections.push(args), tryNextSource: () => false,
+    setError: (value) => { failure = value; }, setBuffering: () => {}, setShowControls: () => {},
+    onToast: (message) => toasts.push(message)
+  });
+  effect();
+  missing();
+  assert.equal(paused, true);
+  assert.equal(failure, converted);
+  assert.equal(failures[0][0], stream);
+  assert.equal(failures[0][2], converted);
+  assert.equal(selections.length, converted ? 0 : 1);
+  if (!converted) { assert.equal(selections[0][0], stream); assert.equal(selections[0][1].forceTranscode, true); }
+  assert.doesNotMatch(toasts.join(' '), /switching source/i);
 });
 
 test('store forwards preparation errors to the visible toast and does not mount a failed source', async () => {
@@ -408,7 +832,8 @@ test('in-player selection wrapper carries the absolute current position across c
   const selections = [];
   const select = extracted('components/player/PlayerOverlay.tsx', (node) => ts.isVariableDeclaration(node)
     && node.name.getText() === 'onSelectStream' && ts.isCallExpression(node.initializer) ? node.initializer.arguments[0] : undefined,
-    { videoRef: { current: { currentTime: 15 } }, stream: selected, selectStream: (...args) => selections.push(args) });
+    { videoRef: { current: { currentTime: 15, readyState: 4 } }, resumeAtRef: { current: 0 },
+      stream: selected, selectStream: (...args) => selections.push(args) });
   select(homeStream(), { forceTranscode: true });
   assert.equal(selections[0][0].resumePositionSeconds, 135);
   assert.equal(selections[0][1].forceTranscode, true);

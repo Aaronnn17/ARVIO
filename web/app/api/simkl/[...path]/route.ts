@@ -28,7 +28,7 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
     "https://auth.arvio.tv/.netlify/functions"
   ).replace(/\/+$/, "");
   const appAnonKey = envValue(process.env.NEXT_PUBLIC_ARVIO_APP_ANON_KEY, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "");
-  const simklClientId = process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID ?? process.env.SIMKL_CLIENT_ID ?? "";
+  const simklClientId = process.env.NEXT_PUBLIC_SIMKL_CLIENT_ID || process.env.SIMKL_CLIENT_ID || "";
   const simklSecret = process.env.SIMKL_CLIENT_SECRET ?? "";
   const input = new URL(request.url);
   const method = request.method;
@@ -42,7 +42,7 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
   let target: URL;
   let headers: HeadersInit;
 
-  const usesNetlifyProxy = netlifyBackendUrl.startsWith("https://") && appAnonKey.length > 40;
+  const usesNetlifyProxy = process.env.NEXT_PUBLIC_SELF_HOSTED !== "true" && netlifyBackendUrl.startsWith("https://") && appAnonKey.length > 40;
 
   if (usesNetlifyProxy) {
     target = new URL(`${netlifyBackendUrl}/simkl-proxy`);

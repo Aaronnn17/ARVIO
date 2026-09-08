@@ -1,5 +1,5 @@
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
-import { playbackPlan, canProviderTranscode, canTryRemux } from "./streamCompatibility";
+import { playbackPlan, canProviderTranscode, canTryRemux, videoDecodableForDevice, recordBrowserPlaybackFailure } from "./streamCompatibility";
 import { prepareHomeServerPlayback } from "./homeServerPlayback";
 import type { AppSettings, StreamSource } from "./types";
 
@@ -12,16 +12,36 @@ export async function prepareBrowserStream(stream: StreamSource, settings: AppSe
   if (stream.homeServer) {
     return prepareHomeServerPlayback(stream, settings, { forceTranscode: options.forceTranscode || options.forceRemux, signal: options.signal });
   }
+  // The converted HLS URL is already the provider's browser output. Reopening
+  // it must not reclassify the original filename (DV/TrueHD/MKV) or start another
+  // conversion. Explicitly reselecting the original source permits a new try.
+  if (stream.transcoded) {
+    if (options.forceRemux || options.forceTranscode) throw new Error("Provider conversion was already attempted. Choose another source or use an external player.");
+    return { ...stream, remux: false };
+  }
   const plan = playbackPlan(stream);
   const debrid = parseDebridStream(stream.originalUrl ?? stream.url);
   if (options.forceTranscode || plan.method === "transcode") {
     if (!debrid || !canProviderTranscode(stream)) throw new Error("This source cannot be converted by its provider. Use an external player.");
     const result = await resolveTranscodeStream(debrid);
     check();
-    if (!result.url) throw new Error(result.error ?? "Server conversion is unavailable");
-    return { ...stream, url: result.url, originalUrl: stream.originalUrl ?? stream.url, remux: false, transcoded: true, transport: "hls" };
+    if (!result.url) {
+      const reason = result.error ?? "Server conversion is unavailable";
+      if (/not supported|unsupported|permission|forbidden|subscription|premium|pro plan|not available|unavailable/i.test(reason)) {
+        recordBrowserPlaybackFailure(stream, `Provider conversion is unavailable: ${reason}`, true);
+      }
+      throw new Error(reason);
+    }
+    return {
+      ...stream, url: result.url, originalUrl: stream.originalUrl ?? stream.url,
+      remux: false, transcoded: true, transport: "hls", media: undefined,
+      // The original addon's headers do not belong to the provider's signed
+      // HLS URL. They also force iPad playback off the native HLS path.
+      behaviorHints: { ...stream.behaviorHints, notWebReady: false, proxyHeaders: undefined }
+    };
   }
-  if (plan.route !== "here" && !options.forceRemux) throw new Error(plan.detail || "This format requires an external player");
+  // Remux can extract a verified HDR10 base, but cannot convert profile 5 colours.
+  if (plan.route !== "here" && (!options.forceRemux || !videoDecodableForDevice(stream))) throw new Error(plan.detail || "This format requires an external player");
   const remux = !!options.forceRemux || plan.method === "remux"
     || (Object.keys(stream.behaviorHints?.proxyHeaders?.request ?? {}).length > 0 && canTryRemux(stream));
   const cached = cachedDebridDirectUrl(stream.originalUrl ?? stream.url);

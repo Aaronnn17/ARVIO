@@ -5,6 +5,9 @@ const allowed = new Set(["auth-refresh", "auth-login", "cloud-auth-email"]);
 export async function POST(request: NextRequest, context: { params: Promise<{ action: string }> }) {
   const { action } = await context.params;
   if (!allowed.has(action)) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (process.env.NEXT_PUBLIC_SELF_HOSTED === "true") {
+    return NextResponse.json({ error: "This self-hosted installation uses local profiles, not ARVIO Cloud." }, { status: 503 });
+  }
   const key = process.env.APP_ANON_KEY || process.env.NEXT_PUBLIC_ARVIO_APP_ANON_KEY;
   if (!key) return NextResponse.json({ error: "Cloud authentication is not configured on this server" }, { status: 503 });
   const base = (process.env.NETLIFY_BACKEND_URL || process.env.NEXT_PUBLIC_NETLIFY_BACKEND_URL || "https://auth.arvio.tv/.netlify/functions").replace(/\/+$/, "");

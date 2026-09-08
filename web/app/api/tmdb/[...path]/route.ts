@@ -18,7 +18,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pat
   input.searchParams.delete("api_key");
 
   let target: URL;
-  const usesNetlifyProxy = !customKey && netlifyBackendUrl.startsWith("https://") && appAnonKey.length > 40;
+  const usesNetlifyProxy = process.env.NEXT_PUBLIC_SELF_HOSTED !== "true" && !customKey && netlifyBackendUrl.startsWith("https://") && appAnonKey.length > 40;
   if (usesNetlifyProxy) {
     target = new URL(`${netlifyBackendUrl}/tmdb-proxy`);
     target.searchParams.set("path", `/${path.join("/")}`);

@@ -1,5 +1,6 @@
 import { probeAndPrepareRemux, type RemuxHandle } from "../../lib/remux";
 import { attachPlayback } from "../../lib/player";
+import { parseDebridStream, resolveDebridDirectUrl } from "../../lib/debrid";
 
 document.body.innerHTML = `<main><h1>ARVIO browser playback verification</h1>
 <video controls playsinline width="960" height="540"></video><p>
@@ -7,8 +8,12 @@ document.body.innerHTML = `<main><h1>ARVIO browser playback verification</h1>
 <button data-file="dts.mkv">MKV / DTS</button> <button data-file="silent.mkv">Silent MKV</button>
 <button data-file="multi.mkv">Two audio tracks</button> <button data-direct="hls/index.m3u8">HLS</button>
 <button data-direct="aac.mp4">MP4</button> <button id="seek">Seek to 65s</button>
+<button data-file="hevc.mp4">HEVC Main10</button> <button data-file="vp9.webm">VP9 / Opus</button>
+<button data-file="av1.mp4">AV1 / AAC</button>
 <button id="back">Seek to 12s</button> <button id="pause">Pause</button> <button id="play">Play</button>
-<button id="switch">Second audio track</button> <button id="close">Close</button></p><pre id="status"></pre></main>`;
+<button id="switch">Second audio track</button> <button id="close">Close</button></p>
+<p><label>Selected test URL <input id="remote" type="password" autocomplete="off"></label>
+<button id="remote-play">Test selected URL</button></p><pre id="status"></pre></main>`;
 document.body.style.cssText = "background:#080808;color:white;font:16px system-ui;padding:24px";
 const video = document.querySelector("video")!;
 video.style.cssText = "max-width:100%;height:auto;background:#161616";
@@ -37,10 +42,19 @@ function audioMeter() {
 const stop = () => { selection++; abort?.abort(); handle?.destroy(); handle = undefined; detach?.(); detach = undefined; phase = "closed"; };
 async function start(file: string, audioIndex?: number, position = 0) {
   stop(); audioMeter(); started = performance.now(); phase = "probing"; error = ""; sourceFile = file;
+  probeMs = 0; firstFrameMs = 0;
   const run = selection;
   abort = new AbortController();
   try {
-    const prepared = await probeAndPrepareRemux(`${location.origin}/media/${file}`, undefined, "English", { signal: abort.signal, onError: (message) => { if (run === selection) { error = message; phase = "failed"; } } });
+    let url = /^https?:/.test(file) ? file : `${location.origin}/media/${file}`;
+    const debrid = parseDebridStream(url);
+    if (debrid) {
+      const resolved = await resolveDebridDirectUrl(debrid);
+      if (run !== selection) return;
+      if (!resolved.url) throw new Error(resolved.error);
+      url = resolved.url;
+    }
+    const prepared = await probeAndPrepareRemux(url, undefined, "English", { signal: abort.signal, onError: (message) => { if (run === selection) { error = message; phase = "failed"; } } });
     if (run !== selection) { prepared?.destroy(); return; }
     probeMs = performance.now() - started;
     if (!prepared) throw new Error(error || "Probe failed");
@@ -62,7 +76,21 @@ document.querySelector<HTMLButtonElement>("#back")!.onclick = () => { video.curr
 document.querySelector<HTMLButtonElement>("#pause")!.onclick = () => video.pause();
 document.querySelector<HTMLButtonElement>("#play")!.onclick = () => { void video.play(); };
 document.querySelector<HTMLButtonElement>("#close")!.onclick = stop;
+document.querySelector<HTMLButtonElement>("#remote-play")!.onclick = () => {
+  const input = document.querySelector<HTMLInputElement>("#remote")!;
+  const url = input.value.trim();
+  input.value = "";
+  if (/^https?:/.test(url)) void start(url);
+};
 document.querySelector<HTMLButtonElement>("#switch")!.onclick = () => { void start(sourceFile, 1, video.currentTime); };
+void fetch('/test-sources').then(response => response.json()).then(({ count }) => {
+  for (let i = 0; i < count; i++) {
+    const button = document.createElement('button');
+    button.textContent = `Configured source ${i + 1}`;
+    button.onclick = () => { void fetch(`/test-sources/${i}`).then(response => response.json()).then(({ url }) => start(url)); };
+    document.querySelector('main')!.insertBefore(button, status);
+  }
+}).catch(() => {});
 video.addEventListener("playing", () => { phase = "playing"; });
 video.addEventListener("error", () => { error = `${video.error?.code}: ${video.error?.message}`; });
 setInterval(() => {

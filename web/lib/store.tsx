@@ -3,10 +3,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getStreams, getStreamsProgressive, installAddon as installAddonManifest, loadLocalAddons, normalizeAddons, saveLocalAddons } from "./addons";
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
-import { getAuthPortalUrl } from "./config";
+import { config, getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
-import { includeIptvContinueWatching, isUnwatchedContinueWatching, mergeTrackerContinueWatching } from "./continueWatching";
+import { completionTimes, includeIptvContinueWatching, isUnwatchedContinueWatching, mergePartialContinueWatching, mergeTrackerContinueWatching, pruneCompletedResume, traktProgressActivityKey } from "./continueWatching";
 import { cachedDebridDirectUrl, parseDebridStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { trackPremiumEvent } from "./premiumAnalytics";
@@ -15,7 +15,7 @@ import { playbackPlan } from "./streamCompatibility";
 import { prepareBrowserStream } from "./prepareBrowserStream";
 import { reportHomeServerPlayback } from "./homeServerPlayback";
 import { loadHomeServerRows } from "./homeserver";
-import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
+import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, migrateXtreamFavoriteIds, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId } from "./tmdb";
@@ -23,6 +23,7 @@ import { verifyProfilePin } from "./profilePin";
 import { flushSettingsOutbox, hasPendingSettings, queueSettings } from "./settingsOutbox";
 import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
+import { continueWatchingActivitySignature, createTraktActivityCheck, type TraktActivitySnapshot } from "./traktActivity";
 import { mdblistClient } from "./mdblist";
 import { simklClient, type SimklPinCode } from "./simkl";
 import {
@@ -30,6 +31,7 @@ import {
   defaultTrackingPreferences,
   loadTrackingPreferences,
   readsFrom,
+  sameTrackingSources,
   saveTrackingPreferences,
   syncClient,
   type TrackingPreferences
@@ -280,10 +282,10 @@ function traktWatchedKeys(movies: unknown[], shows: unknown[]) {
   return keys;
 }
 
-function filterWatchedContinueWatching(items: MediaItem[], watchedKeys: Set<string>, addons: InstalledAddon[]) {
+function filterWatchedContinueWatching(items: MediaItem[], watchedKeys: Set<string>, addons: InstalledAddon[], completions?: Map<string, number>) {
   const nonLive = items.filter((item) => !isLiveStreamOrSportsItem(item, addons));
   if (!watchedKeys.size) return nonLive;
-  return nonLive.filter((item) => isUnwatchedContinueWatching(item, watchedKeys));
+  return nonLive.filter((item) => isUnwatchedContinueWatching(item, watchedKeys, completions));
 }
 
 
@@ -317,7 +319,7 @@ const UP_NEXT_SHOW_LIMIT = 300;
 // us — instead of being dropped from the rail entirely.
 const CW_HYDRATE_LIMIT = 50;
 
-async function loadTraktUpNext(watchedShowsRows: unknown[], includeSpecials: boolean, hiddenShowIds: Set<number>) {
+async function loadTraktUpNext(watchedShowsRows: unknown[], includeSpecials: boolean, hiddenShowIds: Set<number>, isCurrent = () => true) {
   // Fetch per-show progress for the whole watched-shows list (newest-activity
   // first) so Continue Watching surfaces every show with an unwatched next
   // episode — not just the most recent handful. The activity-keyed cache means
@@ -340,17 +342,16 @@ async function loadTraktUpNext(watchedShowsRows: unknown[], includeSpecials: boo
   // outage, not an empty Continue Watching.
   let fetchFailures = 0;
   const workers = Array.from({ length: Math.min(8, watchedShows.length) }, async () => {
-    while (cursor < watchedShows.length) {
+    while (cursor < watchedShows.length && isCurrent()) {
       const index = cursor;
       cursor += 1;
       const watched = watchedShows[index];
       const row = watched as { show?: { ids?: { trakt?: number } } };
       const traktId = row.show?.ids?.trakt;
       if (!traktId) continue;
-      const activityAt = traktActivityTime(watched);
       // The client owns the account-scoped, expiring cache. A second, timeless
       // cache here hid newly aired episodes and could leak progress by profile.
-      const progress = await traktClient.showProgress(traktId, includeSpecials, activityAt).catch(() => null);
+      const progress = await traktClient.showProgress(traktId, includeSpecials, traktProgressActivityKey(watched)).catch(() => null);
       if (!progress) fetchFailures += 1;
       results[index] = traktUpNextToMedia(watched, progress);
     }
@@ -598,12 +599,16 @@ export function AppProvider({
   // previous profile check this before writing state, so switching profiles can
   // never end with the old profile's rows landing after the new profile's.
   const refreshKeyRef = useRef<string | null>(null);
+  const refreshGenerationRef = useRef(0);
+  const traktActivityRef = useRef<TraktActivitySnapshot>(null);
   const [watchedKeys, setWatchedKeys] = useState<Set<string>>(() => new Set());
   const [selected, setSelected] = useState<MediaItem | null>(null);
   const [streams, setStreams] = useState<StreamSource[]>([]);
   const [selectedEpisode, setSelectedEpisode] = useState<{ season: number; episode: number } | null>(null);
   const [activeStream, setActiveStream] = useState<StreamSource | null>(null);
   const [activeChannel, setActiveChannel] = useState<IptvChannel | null>(null);
+  const playingRef = useRef(false);
+  playingRef.current = Boolean(activeStream || activeChannel);
   const [addons, setAddons] = useState<InstalledAddon[]>([]);
   const [addonsReady, setAddonsReady] = useState(false);
   const [iptvSnapshot, setIptvSnapshot] = useState<IptvSnapshot>(emptyIptv);
@@ -754,12 +759,16 @@ export function AppProvider({
     await saveCloudAddons(authClient, normalized, activeProfileId, { removedIds: options.removedIds }).catch(() => undefined);
   }, [activeProfileId]);
 
-  const refreshData = useCallback((profileIdOverride?: string | null) => {
+  const refreshData = useCallback((profileIdOverride?: string | null, background = false) => {
     const profileId = profileIdOverride ?? activeProfileId;
-    const key = profileId ?? "no-profile";
+    const accountId = authClient.session?.userId;
+    const key = `${accountId ?? "local"}:${profileId ?? "no-profile"}`;
     refreshKeyRef.current = key;
     const existing = refreshInFlightRef.current;
     if (existing?.key === key) return existing.promise;
+    const generation = ++refreshGenerationRef.current;
+    const isCurrent = () => refreshGenerationRef.current === generation && refreshKeyRef.current === key &&
+      activeProfileIdRef.current === profileId && authClient.session?.userId === accountId;
     traktClient.setProfile(profileId);
     mdblistClient.setProfile(profileId);
     simklClient.setProfile(profileId);
@@ -767,10 +776,16 @@ export function AppProvider({
     setTraktConnected(traktClient.isConnected);
     setMdblistConnected(mdblistClient.isConnected);
     setSimklConnected(simklClient.isConnected);
+    // Capture the version BEFORE history reads; otherwise a watch arriving mid-
+    // refresh could be acknowledged without ever fetching that updated history.
+    const activityRead = readsFrom("continueWatching", "trakt")
+      ? traktClient.continueWatchingActivity().catch(() => null) : Promise.resolve(null);
     const run = (async () => {
       const currentSettings = settingsRef.current;
-      setAddonsReady(false);
-      setBusy("Syncing catalogs");
+      if (!background) {
+        setAddonsReady(false);
+        setBusy("Syncing catalogs");
+      }
       // Paint Continue Watching instantly from the last known list for this
       // profile — the fresh Trakt fetch replaces it seconds later. Without
       // this the rail sits empty while up to ~17 Trakt calls round-trip.
@@ -801,7 +816,7 @@ export function AppProvider({
       let effectiveSettings = currentSettings;
       if (authClient.session && profileId) {
         const cloudTracking = await pullCloudTrackingSelection(authClient, profileId).catch(() => null);
-        if (refreshKeyRef.current !== key) return;
+        if (!isCurrent()) return;
         if (cloudTracking) {
           if (!cloudTracking.hasCloudState) {
             const localPreferences = loadTrackingPreferences(profileId);
@@ -816,7 +831,7 @@ export function AppProvider({
               : null;
             if (localTracking) {
               await saveCloudTrackingSelection(authClient, profileId, localTracking).catch(() => undefined);
-              if (refreshKeyRef.current !== key) return;
+              if (!isCurrent()) return;
             }
           } else {
             traktClient.setToken(cloudTracking.traktToken);
@@ -831,7 +846,11 @@ export function AppProvider({
           setMdblistConnected(mdblistClient.isConnected);
         }
       }
-      if (cloud?.settings) {
+      if (!isCurrent()) return;
+      // A user can edit favorites while the cloud/tracker requests above are
+      // in flight. Do not replace those edits with the earlier cloud response.
+      const settingsChangedDuringPull = settingsRef.current !== currentSettings || hasPendingSettings(authClient, profileId);
+      if (cloud?.settings && !settingsChangedDuringPull) {
         effectiveSettings = {
           ...defaultSettings,
           ...currentSettings,
@@ -848,6 +867,8 @@ export function AppProvider({
         // effect compares against) so it doesn't push it straight back.
         lastSyncedSettingsRef.current = JSON.stringify({ settings: effectiveSettings, activeProfileId: profileId });
         savePlaylists(effectiveSettings.iptvPlaylists);
+      } else if (settingsChangedDuringPull) {
+        effectiveSettings = settingsRef.current;
       }
       // Addon-wipe protection. Prefer cloud, fall back to local, but NEVER let a
       // failed/empty pull replace a non-empty list. A null `cloud` means the pull
@@ -883,18 +904,50 @@ export function AppProvider({
 
       const client = syncClient();
       const traktReady = client.isConnected;
+      const activitySignature = continueWatchingActivitySignature(await activityRead);
+      if (!isCurrent()) return;
       const readFailures = new Set<string>();
       const failedRead = (feature: string) => { readFailures.add(feature); return []; };
-      const watchedMoviesRead = traktReady ? client.watched("movies").catch(() => failedRead("watched")) : Promise.resolve([]);
-      const watchedShowsRead = traktReady ? client.watched("shows").catch(() => failedRead("watched")) : Promise.resolve([]);
+      const watchedMoviesRead = traktReady ? client.watched("movies").catch(() => failedRead("watched-movies")) : Promise.resolve([]);
+      const watchedShowsRead = traktReady ? client.watched("shows").catch(() => failedRead("watched-shows")) : Promise.resolve([]);
       const cwUsesTrakt = readsFrom("continueWatching", "trakt");
-      const watchedOnlyTrakt = readsFrom("watched", "trakt") && !readsFrom("watched", "simkl") && !readsFrom("watched", "mdblist");
-      // Progress must use history from the same provider, not the separately selected badge source.
+      const cwOnlyTrakt = cwUsesTrakt && !readsFrom("continueWatching", "simkl") && !readsFrom("continueWatching", "mdblist");
+      const sameHistorySources = sameTrackingSources("watched", "continueWatching");
+      // Reconcile each successful history read before progress, watchlist or artwork requests finish.
+      const readCwHistory = (type: "movies" | "shows", shared: Promise<unknown[]>) => {
+        const read = sameHistorySources
+          ? shared.then((rows) => {
+            if (readFailures.has(`watched-${type}`)) readFailures.add(`cw-${type}`);
+            return rows;
+          })
+          : client.watched(type, "continueWatching").catch(() => failedRead(`cw-${type}`));
+        return read.then((rows) => {
+          if (!isCurrent()) return rows;
+          const completions = completionTimes(type === "movies" ? rows : [], type === "shows" ? rows : []);
+          if (!completions.size) return rows;
+          setContinueWatching((current) => pruneCompletedResume(current, completions));
+          setCategories((current) => current.flatMap((category) => {
+            if (category.id !== "continue_watching") return [category];
+            const items = pruneCompletedResume(category.items, completions);
+            return items.length ? [items === category.items ? category : { ...category, items }] : [];
+          }));
+          const cached = readCachedList(cwCacheKey);
+          const pruned = pruneCompletedResume(cached, completions);
+          if (pruned !== cached) {
+            if (pruned.length) saveCachedList(cwCacheKey, pruned, 20);
+            else removeStored(cwCacheKey);
+          }
+          return rows;
+        });
+      };
+      const cwMoviesRead = traktReady ? readCwHistory("movies", watchedMoviesRead) : Promise.resolve([]);
+      const cwShowsRead = traktReady ? readCwHistory("shows", watchedShowsRead) : Promise.resolve([]);
+      // Per-show progress specifically needs Trakt history, even when both trackers supply CW.
       const cwTraktShowsRead = !cwUsesTrakt ? Promise.resolve([])
-        : watchedOnlyTrakt ? watchedShowsRead
+        : cwOnlyTrakt ? cwShowsRead
         : traktClient.watched("shows").catch(() => failedRead("cw-watched"));
       const watchlistReady = ["trakt", "simkl", "mdblist"].some((provider) => readsFrom("watchlist", provider as "trakt" | "simkl" | "mdblist"));
-      const [historyRows, traktRows, playbackRows, watchedMoviesRows, watchedShowsRows, cloudWatchlistRows, cloudWatchedKeys, cloudDismissals, hiddenShowIds] = await Promise.all([
+      const [historyRows, traktRows, playbackRows, watchedMoviesRows, watchedShowsRows, cloudWatchlistRows, cloudWatchedKeys, cloudDismissals, hiddenShowIds, cwMovies, cwShows] = await Promise.all([
         authClient.session ? getContinueWatching(authClient, profileId, addonState).catch(() => []) : Promise.resolve([]),
         traktReady ? client.watchlist().catch(() => failedRead("watchlist")) : Promise.resolve([]),
         traktReady ? client.playback().catch(() => failedRead("playback")) : Promise.resolve([]),
@@ -907,8 +960,13 @@ export function AppProvider({
         // empty set so the filters below are no-ops for it.
         readsFrom("continueWatching", "trakt")
           ? traktClient.hiddenProgressShowIds().catch(() => new Set<number>())
-          : Promise.resolve(new Set<number>())
+          : Promise.resolve(new Set<number>()),
+        cwMoviesRead,
+        cwShowsRead
       ]);
+      if (!isCurrent()) return;
+      const cwCompletions = completionTimes(cwMovies, cwShows);
+      const cwWatchedKeys = traktWatchedKeys(cwMovies, cwShows);
 
       // Shows dropped on Trakt ("hide from progress") must not resurface here —
       // Trakt omits them from Up Next, so both the playback and up-next paths
@@ -940,7 +998,7 @@ export function AppProvider({
         : cloudWatchlistRows;
       if (fastWatchlistSource.length) {
         void hydrateTraktItems(fastWatchlistSource).then((hydrated) => {
-          if (hydrated.length && refreshKeyRef.current === key) {
+          if (hydrated.length && isCurrent()) {
             setWatchlist((current) => current.length ? current : hydrated);
             saveCachedList(watchlistCacheKey, hydrated, 60);
           }
@@ -952,7 +1010,7 @@ export function AppProvider({
       // episode subtitle — which rendered that series twice until the enriched
       // pass tidied up. Trakt playback is the newer truth, so it wins.
       const fastSeen = new Set<string>();
-      const fastCw = [...traktPlaybackCw, ...cloudCw.filter((item) => !isHiddenShow(item) && !isDismissed(item))]
+      const fastCw = pruneCompletedResume([...traktPlaybackCw, ...cloudCw.filter((item) => isPausedPlaybackItem(item) && !isHiddenShow(item) && !isDismissed(item))], cwCompletions)
         .filter((item) => {
           const key = `${item.mediaType}:${item.id}`;
           if (fastSeen.has(key)) return false;
@@ -965,7 +1023,7 @@ export function AppProvider({
           // Only fill an empty rail: replacing a seeded cache list with this
           // playback-only list would visibly shrink the rail for a few seconds
           // until the enriched list lands.
-          if (refreshKeyRef.current !== key || cwSourceRef.current !== "none") return;
+          if (!isCurrent() || cwSourceRef.current !== "none") return;
           cwSourceRef.current = "fast";
           setContinueWatching(hydrated);
           setCategories((current) => current.some((c) => c.id === "continue_watching")
@@ -984,17 +1042,16 @@ export function AppProvider({
 
       const cwTraktShows = await cwTraktShowsRead;
       const upNext = cwUsesTrakt
-        ? await loadTraktUpNext(cwTraktShows, effectiveSettings.includeSpecials, hiddenShowIds).catch(() => ({ items: [] as MediaItem[], fetchFailures: 1 }))
+        ? await loadTraktUpNext(cwTraktShows, effectiveSettings.includeSpecials, hiddenShowIds, isCurrent).catch(() => ({ items: [] as MediaItem[], fetchFailures: 1 }))
         : { items: [] as MediaItem[], fetchFailures: 0 };
       const upNextRows = upNext.items;
       const watchedKeys = new Set([...traktWatchedKeys(watchedMoviesRows, watchedShowsRows), ...cloudWatchedKeys]);
       // Cloud watched flags may be older than a provider's reset/progress response.
       // Keep those flags for badges, but do not let them veto tracker Continue Watching.
-      const cwWatchedKeys = traktWatchedKeys(watchedMoviesRows, cwUsesTrakt ? cwTraktShows : watchedShowsRows);
       const traktCw = mergeTraktWithLocalResume(
-        mergeTrackerContinueWatching(traktPlaybackCw, upNextRows, cwWatchedKeys), cloudCw
+        mergeTrackerContinueWatching(traktPlaybackCw, upNextRows, cwWatchedKeys, cwCompletions), cloudCw
       );
-      if (!readFailures.has("watched") && refreshKeyRef.current === key) setWatchedKeys(watchedKeys);
+      if (!readFailures.has("watched-movies") && !readFailures.has("watched-shows") && isCurrent()) setWatchedKeys(watchedKeys);
       const cwBase = includeIptvContinueWatching(
         traktReady ? traktCw : cloudCw.filter(isPausedPlaybackItem),
         cloudCw.filter((item) => !isHiddenShow(item) && !isDismissed(item))
@@ -1002,25 +1059,32 @@ export function AppProvider({
       // Order newest-activity-first across playback + up-next (matches the app's
       // updatedAt-descending sort) so the row leads with what you last watched.
       const cwSorted = dedupeMedia(cwBase).filter((item) => !isDismissed(item)).sort((a, b) => (b.activityAt ?? 0) - (a.activityAt ?? 0));
-      const cw = await hydrateContinueWatchingItems(filterWatchedContinueWatching(cwSorted, traktReady ? cwWatchedKeys : watchedKeys, addonState));
+      const cw = await hydrateContinueWatchingItems(filterWatchedContinueWatching(cwSorted, traktReady ? cwWatchedKeys : watchedKeys, addonState, traktReady ? cwCompletions : undefined));
       // Trakt outage guard: when Trakt is connected but every read came back
       // empty, the calls were blocked (Cloudflare challenges the CORS
       // preflight intermittently, especially on VPN/datacenter IPs) — keep
       // showing the cached rail instead of wiping it with an empty list.
-      const traktOutage = readFailures.has("playback") || readFailures.has("cw-watched") || (watchedOnlyTrakt && readFailures.has("watched"));
+      const traktOutage = readFailures.has("playback") || readFailures.has("cw-watched") || readFailures.has("cw-movies") || readFailures.has("cw-shows");
+      if (!traktOutage && upNext.fetchFailures === 0 && isCurrent() && activitySignature) {
+        traktActivityRef.current = { key: `${accountId ?? "local"}:${profileId}`, signature: activitySignature };
+      }
       // Enriched CW (adds Trakt up-next episodes) replaces the fast paint. When
       // the fresh list is non-empty we swap it in. An empty result with Trakt
       // connected and reads healthy means the rail is GENUINELY empty — clear it
       // and its cache so a finished library can't resurrect a stale rail. During
       // an outage (all reads empty) we keep whatever is painted.
-      if (!traktOutage && refreshKeyRef.current === key) {
+      if (!traktOutage && isCurrent()) {
+        const reconcile = (current: MediaItem[]) => upNext.fetchFailures > 0
+          ? mergePartialContinueWatching(cw, current.filter((item) => !isHiddenShow(item) && !isDismissed(item)), cwCompletions)
+          : cw;
         if (cw.length) {
           cwSourceRef.current = "fresh";
-          setContinueWatching(cw);
-          saveCachedList(cwCacheKey, cw, 20);
+          setContinueWatching(reconcile);
+          saveCachedList(cwCacheKey, reconcile(readCachedList(cwCacheKey)), 20);
           setCategories((current) => {
             const others = current.filter((c) => c.id !== "continue_watching");
-            return [{ id: "continue_watching", title: "Continue Watching", items: cw }, ...others];
+            const previous = current.find((c) => c.id === "continue_watching")?.items ?? [];
+            return [{ id: "continue_watching", title: "Continue Watching", items: reconcile(previous) }, ...others];
           });
         } else if (traktReady && upNext.fetchFailures === 0) {
           // Only clear on a CLEAN pass: any per-show progress failure means this
@@ -1037,15 +1101,17 @@ export function AppProvider({
         ? dedupeMedia(traktRows.map(traktItemToMedia))
         : cloudWatchlistRows;
       const hydratedWatchlist = await hydrateTraktItems(watchlistSource);
-      if (!readFailures.has("watchlist") && refreshKeyRef.current === key) {
+      if (!readFailures.has("watchlist") && isCurrent()) {
         setWatchlist(hydratedWatchlist);
         saveCachedList(watchlistCacheKey, hydratedWatchlist, 60);
       }
       } catch (error) {
-        setAddonsReady(true);
-        setToast(error instanceof Error ? error.message : "Failed to load ARVIO");
+        if (isCurrent()) {
+          setAddonsReady(true);
+          if (!background) setToast(error instanceof Error ? error.message : "Failed to load ARVIO");
+        }
       } finally {
-        setBusy("");
+        if (isCurrent() && !background) setBusy("");
       }
     })();
     refreshInFlightRef.current = { key, promise: run };
@@ -1086,6 +1152,16 @@ export function AppProvider({
     iptvRefresh.current = { key, promise: run };
     return run.finally(() => { if (iptvRefresh.current?.promise === run) iptvRefresh.current = null; });
   }, []);
+
+  useEffect(() => {
+    if (iptvSnapshot.signature !== iptvPlaylistSignature(settings.iptvPlaylists)) return;
+    const migrated = migrateXtreamFavoriteIds(settings.favoriteChannelIds, iptvSnapshot.allChannels ?? iptvSnapshot.channels);
+    if (migrated === settings.favoriteChannelIds) return;
+    setSettings((current) => ({
+      ...current,
+      favoriteChannelIds: migrateXtreamFavoriteIds(current.favoriteChannelIds, iptvSnapshot.allChannels ?? iptvSnapshot.channels)
+    }));
+  }, [iptvSnapshot, settings.iptvPlaylists, settings.favoriteChannelIds]);
 
   const loadIptvGuide = useCallback(async (channels: IptvChannel[]) => {
     if (!channels.length) return;
@@ -1128,6 +1204,10 @@ export function AppProvider({
     if (typeof window === "undefined") return;
     const hash = window.location.hash || "";
     if (hash.includes("access_token=") && hash.includes("refresh_token=")) {
+      if (config.selfHosted) {
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+        return;
+      }
       try {
         const params = new URLSearchParams(hash.replace(/^#/, ""));
         const access_token = params.get("access_token");
@@ -1180,6 +1260,21 @@ export function AppProvider({
     if (authClient.session && !cloudProfilesHydrated) return;
     void refreshData();
   }, [cloudProfilesHydrated, refreshData, view]);
+
+  useEffect(() => {
+    if (view !== "app" || !traktConnected || (authClient.session && !cloudProfilesHydrated)) return;
+    const monitor = createTraktActivityCheck({
+      key: `${auth?.userId ?? "local"}:${activeProfileId}`,
+      snapshot: traktActivityRef,
+      isActive: () => document.visibilityState === "visible" && !playingRef.current && !refreshInFlightRef.current && readsFrom("continueWatching", "trakt"),
+      read: async () => continueWatchingActivitySignature(await traktClient.continueWatchingActivity()),
+      refresh: () => refreshData(undefined, true)
+    });
+    // No media polling or full sync loop: one tiny direct Trakt check every two
+    // visible, idle minutes. Unchanged activity costs zero Netlify calls.
+    const timer = window.setInterval(() => { void monitor.check(); }, 120_000);
+    return () => { monitor.dispose(); window.clearInterval(timer); };
+  }, [activeProfileId, auth?.userId, cloudProfilesHydrated, refreshData, traktConnected, view]);
 
   useEffect(() => {
     if (view === "login" || (authClient.session && !cloudProfilesHydrated)) return undefined;
@@ -2195,6 +2290,7 @@ export function AppProvider({
   }, []);
 
   const goToLogin = useCallback(() => {
+    if (config.selfHosted) { setView("profiles"); return; }
     if (typeof window !== "undefined") {
       const redirectUri = window.location.origin + "/";
       const portalUrl = getAuthPortalUrl();

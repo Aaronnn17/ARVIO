@@ -22,7 +22,7 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
   let target: URL;
   let headers: HeadersInit;
 
-  const usesNetlifyProxy = netlifyBackendUrl.startsWith("https://") && appAnonKey.length > 40;
+  const usesNetlifyProxy = process.env.NEXT_PUBLIC_SELF_HOSTED !== "true" && netlifyBackendUrl.startsWith("https://") && appAnonKey.length > 40;
 
   if (usesNetlifyProxy) {
     target = new URL(`${netlifyBackendUrl}/trakt-proxy`);
@@ -78,6 +78,6 @@ export const DELETE = handler;
 function cacheControlForTrakt(method: string, path: string, request: NextRequest) {
   if (method !== "GET") return "no-store";
   if (path.startsWith("oauth/")) return "no-store";
-  if (request.headers.get("x-user-token")) return "private, max-age=45, stale-while-revalidate=120";
+  if (request.headers.get("x-user-token")) return "private, no-store";
   return "public, max-age=120, s-maxage=900, stale-while-revalidate=3600";
 }

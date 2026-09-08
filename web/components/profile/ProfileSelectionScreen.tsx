@@ -3,6 +3,7 @@
 import { Cloud, Pencil, Plus } from "lucide-react";
 import { useState } from "react";
 import { useApp } from "@/lib/store";
+import { config } from "@/lib/config";
 import type { Profile } from "@/lib/types";
 import { ProfileAvatarVisual } from "./ProfileAvatar";
 import { ProfileDialog } from "./ProfileDialog";
@@ -71,7 +72,7 @@ export function ProfileSelectionScreen() {
           {manageMode ? "Done" : "Manage Profiles"}
         </button>
 
-        {!auth && (
+        {!auth && !config.selfHosted && (
           <button
             type="button"
             className="cloud-connect-btn"

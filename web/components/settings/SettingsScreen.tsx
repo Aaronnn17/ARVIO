@@ -36,6 +36,7 @@ import { Component, CSSProperties, useEffect, useState, type ReactNode } from "r
 import { createPortal } from "react-dom";
 import { defaultCatalogs, mergeCatalogs } from "@/lib/catalogs";
 import {
+  config,
   hasNetlifyBackendConfig,
   hasSupabaseConfig,
   hasTraktConfig,
@@ -1341,11 +1342,10 @@ function AccountsSection() {
   return (
     <>
       <PremiumAccount />
-      <Panel title="ARVIO Account">
+      <Panel title={config.selfHosted ? "Local Account" : "ARVIO Account"}>
         {!cloudConfigured && (
           <p className="empty">
-            ARVIO Cloud backend env is missing. Add backend values in
-            web/.env.local.
+            {config.selfHosted ? "Profiles and settings are saved in this browser. ARVIO Cloud is not connected." : "ARVIO Cloud backend env is missing. Add backend values in web/.env.local."}
           </p>
         )}
         <div className="settings-status-grid">
@@ -1356,7 +1356,7 @@ function AccountsSection() {
                 ? "Connected"
                 : cloudConfigured
                   ? "Ready"
-                  : "Missing config"}
+                  : config.selfHosted ? "Disabled" : "Missing config"}
             </strong>
           </div>
           <div>
@@ -1399,7 +1399,7 @@ function AccountsSection() {
               <LogOut size={18} /> Sign out
             </button>
           </div>
-        ) : (
+        ) : !config.selfHosted ? (
           <div className="login-form">
             <button
               type="button"
@@ -1410,7 +1410,7 @@ function AccountsSection() {
               Sign In with ARVIO Cloud
             </button>
           </div>
-        )}
+        ) : null}
       </Panel>
 
       <Panel title="Trakt">
@@ -1569,7 +1569,7 @@ function AccountsSection() {
       </Panel>
 
       <Panel title="Sync & Updates">
-        <button
+        {!config.selfHosted && <button
           type="button"
           className="secondary text-button"
           disabled={syncBusy}
@@ -1577,7 +1577,7 @@ function AccountsSection() {
         >
           <RefreshCw size={18} />{" "}
           {syncBusy ? "Syncing..." : "Force cloud sync now"}
-        </button>
+        </button>}
         <p className="empty">
           Telegram bot setup is available in the Android app. The web app
           updates itself when a new version is deployed.
@@ -1857,6 +1857,23 @@ function TelegramSection() {
     return (
       <Panel title="Telegram">
         <p className="empty">Loading…</p>
+      </Panel>
+    );
+  }
+
+  if (!mod.isTelegramConfigured) {
+    return (
+      <Panel title="Telegram">
+        <p className="empty">
+          Connect your Telegram account to stream video files from your chats and
+          channels as sources — the same feature as the Android app. Everything
+          runs in your browser; nothing is sent to ARVIO servers.
+        </p>
+        <div className="tg-center">
+          <p className="tg-lead" style={{ color: "var(--color-danger, #ff6b6b)" }}>
+            Telegram integration is not configured in this build. Please configure NEXT_PUBLIC_TELEGRAM_API_ID and NEXT_PUBLIC_TELEGRAM_API_HASH in your environment.
+          </p>
+        </div>
       </Panel>
     );
   }

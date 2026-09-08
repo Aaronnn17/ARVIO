@@ -10,7 +10,7 @@ export type RemuxHandle = {
 
 export async function probeAndPrepareRemux(
   url: string, requestHeaders?: Record<string, string>, preferredAudioLang?: string,
-  options: { signal?: AbortSignal; onError?: (message: string) => void } = {}
+  options: { signal?: AbortSignal; onError?: (message: string) => void; expectDolbyVision?: boolean } = {}
 ): Promise<RemuxHandle | null> {
   const Mse = mediaSourceConstructor();
   if (!Mse || options.signal?.aborted) return null;
@@ -73,9 +73,10 @@ export async function probeAndPrepareRemux(
         if (data.type === "probe") finish(data.probe);
         if (data.type === "error") finish(undefined, data.message);
       };
-      send({ type: "probe", url, headers: requestHeaders, audioCodecs, language: preferredAudioLang });
+      send({ type: "probe", url, headers: requestHeaders, audioCodecs, language: preferredAudioLang, expectDolbyVision: options.expectDolbyVision });
     });
-    probe.videoPlayable = !!probe.videoCodec && Mse.isTypeSupported(`video/mp4; codecs="${probe.videoCodec}"`);
+    probe.videoPlayable = probe.videoPlayable && !!probe.videoCodec && Mse.isTypeSupported(`video/mp4; codecs="${probe.videoCodec}"`);
+    if (!probe.videoPlayable && !probe.videoReason) probe.videoReason = `This browser cannot decode the selected video track (${probe.videoCodec ?? "unknown codec"}).`;
   } catch (error) {
     destroy();
     if (!options.signal?.aborted) options.onError?.(error instanceof Error ? error.message : "Source probe failed");
@@ -84,7 +85,7 @@ export async function probeAndPrepareRemux(
 
   const start = async (video: HTMLVideoElement, audioIndex = probe.chosenAudioIndex, startTime = 0) => {
     if (destroyed || element) throw new Error("Conversion is closed or already started");
-    if (!probe.videoPlayable) throw new Error("The browser cannot decode this video codec");
+    if (!probe.videoPlayable) throw new Error(probe.videoReason ?? "The browser cannot decode this video codec");
     if (probe.audioTracks.length && (audioIndex < 0 || !probe.audioTracks[audioIndex]?.browserPlayable)) {
       throw new Error("No compatible audio track; use server conversion or an external player");
     }
