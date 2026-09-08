@@ -122,3 +122,19 @@ only in bounded tab memory for 10 minutes, never cloud-synced. Debrid URL caches
 are account/file scoped, bounded and single-flight; a missing requested episode
 cannot fall back to the largest file. Merely browsing sources performs no debrid
 resolution or torrent creation.
+
+## Production acceptance status
+
+Commit `901834b32d2fdce9ee59c2cbf8f3b6c0199ac798` was deployed to
+`https://web.arvio.tv/`. GitHub Actions run `34245573964` passed its tests,
+build, deployment and live build-stamp verification. The final local suite
+passed 407 tests with no failures, skips or TODOs; TypeScript and the production
+build also passed.
+
+The signed-in production profile, Mayday details and its source picker opened.
+The browser automation connection then repeatedly detached before a source
+could be selected and measured. That is an incomplete acceptance test, not
+evidence of either successful movie playback or a player crash. The exact
+23.27 GB Mayday source and real series/anime provider sources remain unverified
+on this deployment. The synthetic codec measurements above must not be
+represented as those real-source tests or as cross-device certification.
