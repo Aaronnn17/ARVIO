@@ -288,6 +288,8 @@ private const val PIP_ACTION_PLAY_PAUSE = "com.arflix.tv.pip.PLAY_PAUSE"
 private const val PIP_ACTION_FORWARD = "com.arflix.tv.pip.FORWARD"
 private const val QUICK_SEEK_DISMISS_DELAY_MS = 2_200L
 private const val SEEK_PREVIEW_DEBOUNCE_MS = 60L
+private const val MAX_SUBTITLE_OFFSET_MS = 120L
+private const val SUBTITLE_OFFSET_STEP_MS = 100L
 
 private fun isSafePlaybackHeader(name: String, value: String): Boolean {
     return name.isNotBlank() &&
@@ -3186,7 +3188,7 @@ fun PlayerScreen(
                             }
                             Key.DirectionLeft -> {
                                 when (subtitleSettingsRow) {
-                                    0 -> subtitleSyncOffsetMs = (subtitleSyncOffsetMs - 100L).coerceAtLeast(-10000L)
+                                    0 -> subtitleSyncOffsetMs = (subtitleSyncOffsetMs - SUBTITLE_OFFSET_STEP_MS).coerceAtLeast(-MAX_SUBTITLE_OFFSET_MS)
                                     1 -> subtitleSizePct = (subtitleSizePct - 10).coerceAtLeast(50)
                                     2 -> subtitleVerticalPct = (subtitleVerticalPct - 1).coerceAtLeast(0)
                                 }
@@ -3194,7 +3196,7 @@ fun PlayerScreen(
                             }
                             Key.DirectionRight -> {
                                 when (subtitleSettingsRow) {
-                                    0 -> subtitleSyncOffsetMs = (subtitleSyncOffsetMs + 100L).coerceAtMost(10000L)
+                                    0 -> subtitleSyncOffsetMs = (subtitleSyncOffsetMs + SUBTITLE_OFFSET_STEP_MS).coerceAtMost(MAX_SUBTITLE_OFFSET_MS)
                                     1 -> subtitleSizePct = (subtitleSizePct + 10).coerceAtMost(300)
                                     2 -> subtitleVerticalPct = (subtitleVerticalPct + 1).coerceAtMost(50)
                                 }
@@ -4415,8 +4417,8 @@ fun PlayerScreen(
                     sizePct = subtitleSizePct,
                     verticalPct = subtitleVerticalPct,
                     onRowSelect = { subtitleSettingsRow = it },
-                    onOffsetDecrease = { subtitleSyncOffsetMs = (subtitleSyncOffsetMs - 100L).coerceAtLeast(-10000L) },
-                    onOffsetIncrease = { subtitleSyncOffsetMs = (subtitleSyncOffsetMs + 100L).coerceAtMost(10000L) },
+                    onOffsetDecrease = { subtitleSyncOffsetMs = (subtitleSyncOffsetMs - SUBTITLE_OFFSET_STEP_MS).coerceAtLeast(-MAX_SUBTITLE_OFFSET_MS) },
+                    onOffsetIncrease = { subtitleSyncOffsetMs = (subtitleSyncOffsetMs + SUBTITLE_OFFSET_STEP_MS).coerceAtMost(MAX_SUBTITLE_OFFSET_MS) },
                     onSizeDecrease = { subtitleSizePct = (subtitleSizePct - 10).coerceAtLeast(50) },
                     onSizeIncrease = { subtitleSizePct = (subtitleSizePct + 10).coerceAtMost(300) },
                     onVerticalDecrease = { subtitleVerticalPct = (subtitleVerticalPct - 1).coerceAtLeast(0) },
