@@ -68,13 +68,36 @@ archive on a fresh installation.
 - Final Android unit runs: 866 sideload tests and 867 Play tests, zero failures
   or errors, one skipped per flavor (1,731 executed tests passed).
 
-## Delivery limits
+## Release build and installation follow-up
 
-Backend/web changes have not been deployed. No release APK has been published or
-installed on a physical TV. Live cloud synchronization across two authenticated
-devices has not been exercised. Catch-up history retention was tested; actual
-catch-up stream playback was not verified in this audit. Trailer opening in the
-official YouTube player is an existing intentional behavior, not reversed here.
+- Combined these changes and the preceding stability/search/library fixes with
+  current GitHub main in commit `2fd626559`. Pushed that commit to main.
+- The merged web run passed 508 tests and type checking. Backend passed 69 tests.
+  Android passed 870 executed sideload tests and 871 executed Play tests, with
+  one skipped test per flavor and no failures or errors.
+- The normal ARM sideload release build completed successfully, including R8
+  and release lint. No audit init script or debug application suffix was used.
+- Update-installed `com.arvio.tv` version 1.9.996 (312), targeting API 36, on
+  the physical TV on September 8 at 21:55 local time. No uninstall or data clear.
+  Its original installation date of August 14 was preserved.
+- The APK's signing certificate exactly matched the previously installed app:
+  SHA-256 `9778d7533d4bc1aee80c1d2d7043fb22cba3b79cd11911d3b131c1316d5f17c1`.
+  The installed APK hash matched the build output:
+  `49007f8cb2d13e94bb4245af042f5bbce45ea120bd1f0ed1079f67742d92075c`.
+- The new process opened with the existing profile and addons. A subsequent
+  screenshot showed video playback. No fatal exception, OOM or SQLite exception
+  appeared in the captured new-process log. Playback was left undisturbed;
+  post-update physical-TV guide navigation and timings were not re-measured.
+- GitHub's `Build and deploy web.arvio.tv` check completed successfully for the
+  merged commit. Backend production deployment was not independently verified.
+
+## Remaining validation limits
+
+No GitHub Release was published. Live cloud synchronization across two
+authenticated devices has not been exercised. Catch-up history retention was
+tested; actual catch-up stream playback was not verified in this audit. Trailer
+opening in the official YouTube player is an existing intentional behavior,
+not reversed here.
 
 Fresh import speed and complete playback smoothness remain below the requested
 standard. Cached reopening must be measured separately from network imports;
