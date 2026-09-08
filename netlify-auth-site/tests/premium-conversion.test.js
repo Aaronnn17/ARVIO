@@ -143,3 +143,44 @@ test("website handoff measurement preserves every CTA and cannot redirect off th
   assert.match(html, /noindex,nofollow/);
   assert.match(html, /<noscript>/);
 });
+
+test("7 and 14 day conversion excludes immature trials and late conversions", () => {
+  const key = (date, account, event) => `events/date/${date}/account/${account}/${event}.json`;
+  const dates = ['2026-08-20', '2026-08-21', '2026-08-29', '2026-09-01', '2026-09-07'];
+  const result = funnel._test.summarizePremiumKeys([
+    key('2026-08-20', 'early', 'trial_started'), key('2026-08-21', 'early', 'subscription_started'),
+    key('2026-08-20', 'late', 'trial_started'), key('2026-09-01', 'late', 'subscription_started'),
+    key('2026-08-29', 'unpaid', 'trial_started'), key('2026-09-07', 'new', 'trial_started'),
+    key('2026-09-07', 'renewal', 'subscription_renewed')
+  ], dates, '2026-09-08T00:00:00Z');
+  assert.deepEqual(result.maturedCohorts.sevenDays, { observationDays: 7, eligibleTrials: 3, paidWithinWindow: 1, rate: 0.3333 });
+  assert.deepEqual(result.maturedCohorts.fourteenDays, { observationDays: 14, eligibleTrials: 2, paidWithinWindow: 2, rate: 1 });
+});
+
+test("trial activation includes usage after trial even with an earlier usage event", () => {
+  const keys = [
+    'events/date/2026-09-01/account/a/playback_started.json',
+    'events/date/2026-09-02/account/a/trial_started.json',
+    'events/date/2026-09-03/account/a/playback_started.json',
+    'events/date/2026-09-02/account/b/trial_started.json',
+    'events/date/2026-09-01/account/b/playback_started.json',
+    'events/date/2026-09-03/account/b/external_playback_requested.json'
+  ];
+  const result = funnel._test.summarizePremiumKeys(keys, ['2026-09-01', '2026-09-02', '2026-09-03']);
+  assert.equal(result.trialActivation.browserPlaybackStarted, 1);
+  assert.equal(result.trialActivation.externalPlayerRequested, 1);
+});
+
+test("trial emails suppress paid accounts and stale welcomes, not genuine expiry notices", () => {
+  const suppress = trialEmails._test.trialEmailSuppression;
+  const paid = { status: 'active', source: 'kofi', expiresAt: '2099-01-01' };
+  const trial = { status: 'active', source: 'trial', expiresAt: '2099-01-01' };
+  const job = { type: 'reminder', expiresAt: '2099-01-01' };
+  assert.equal(suppress(job, paid), 'already_paid');
+  assert.equal(suppress(job, trial, paid), 'already_paid');
+  assert.equal(suppress(job, null), 'no_entitlement');
+  assert.equal(suppress(job, trial), null);
+  assert.equal(suppress({ ...job, type: 'welcome', expiresAt: '2000-01-01' }, trial), 'stale_trial_message');
+  assert.equal(suppress({ ...job, type: 'expired', expiresAt: '2000-01-01' }, trial), 'trial_still_active');
+  assert.equal(suppress({ ...job, type: 'expired', expiresAt: '2000-01-01' }, { ...trial, expiresAt: '2000-01-01' }), null);
+});

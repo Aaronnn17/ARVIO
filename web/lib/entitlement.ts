@@ -25,6 +25,7 @@ export interface EntitlementState {
 
 const CACHE_KEY_PREFIX = "arvio.web.entitlement.v2";
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+export const ENTITLEMENT_REFRESH_EVENT = "arvio:membership-refresh";
 
 async function backendRequest<T>(auth: AuthClient, path: string, init: RequestInit = {}): Promise<T> {
   const token = await auth.accessToken();

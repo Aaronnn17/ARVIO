@@ -74,3 +74,40 @@ test('simultaneous session events coalesce without delaying playback', async () 
   await Promise.all([m.trackPremiumEvent(auth, 'download_handoff', {}, true), m.trackPremiumEvent(auth, 'download_handoff', {}, true)]);
   assert.equal(requests, 1);
 });
+
+test('daily playback diagnostics are bounded, repeat next day, and isolate accounts', async () => {
+  const requests = [];
+  const m = load('lib/premiumAnalytics.ts', { './config': { config: { paywallEnabled: true, netlifyBackendUrl: 'https://backend.invalid' } }, './http': { jsonRequest: async (_url, init) => { requests.push(JSON.parse(init.body)); } } });
+  const auth = { session: { userId: 'a' }, accessToken: async () => 'fixture' };
+  const today = new Date('2026-09-08T12:00:00Z');
+  await Promise.all(Array.from({length: 30}, () => m.trackPremiumDaily(auth, 'playback_started', {}, today)));
+  await m.trackPremiumDaily(auth, 'playback_started', {}, today);
+  assert.equal(requests.length, 1);
+  await m.trackPremiumDaily(auth, 'playback_started', {}, new Date('2026-09-09T12:00:00Z'));
+  assert.equal(requests.length, 2);
+  auth.session.userId = 'b';
+  await m.trackPremiumDaily(auth, 'playback_started', {}, today);
+  assert.equal(requests.length, 3);
+});
+
+test('new usage diagnostics do not run on self-hosted instances or signed-out visitors', async () => {
+  let requests = 0;
+  const m = load('lib/premiumAnalytics.ts', { './config': { config: { paywallEnabled: false } }, './http': { jsonRequest: async () => { requests++; } } });
+  await m.trackPremiumDaily({ session: { userId: 'a' } }, 'web_opened');
+  await m.trackPremiumDaily({ session: null }, 'web_opened');
+  assert.equal(requests, 0);
+});
+
+test('failed daily diagnostics can retry and cannot mark a different account as recorded', async () => {
+  let fail = true; let requests = 0; let finish;
+  const m = load('lib/premiumAnalytics.ts', { './config': { config: { paywallEnabled: true, netlifyBackendUrl: 'https://backend.invalid' } }, './http': { jsonRequest: async () => { requests++; if (fail) throw Error('offline'); if (finish !== false) await new Promise(resolve => { finish = resolve; }); } } });
+  const auth = { session: { userId: 'a' }, accessToken: async () => 'fixture' };
+  assert.equal(await m.trackPremiumDaily(auth, 'web_opened'), false);
+  fail = false;
+  const pending = m.trackPremiumDaily(auth, 'web_opened');
+  await new Promise(resolve => setImmediate(resolve));
+  auth.session.userId = 'b'; finish(); await pending;
+  auth.session.userId = 'a'; finish = false;
+  await m.trackPremiumDaily(auth, 'web_opened');
+  assert.equal(requests, 3);
+});

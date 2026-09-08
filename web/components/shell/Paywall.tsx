@@ -8,7 +8,6 @@ import {
   cachedEntitlement,
   fetchEntitlement,
   kofiSubscribeUrl,
-  linkKofiEmail,
   startTrial,
   type EntitlementState
 } from "@/lib/entitlement";
@@ -16,6 +15,8 @@ import { authClient, useApp } from "@/lib/store";
 import { capturePremiumAttribution, trackPremiumEvent, trackPremiumMilestone, TRIAL_INTENT_KEY } from "@/lib/premiumAnalytics";
 import { currentEntitlement, entitlementCheckDelay } from "@/lib/entitlementPolicy";
 import { EntitlementContext } from "@/lib/entitlementContext";
+import { BillingEmailForm } from "./BillingEmailForm";
+import { ENTITLEMENT_REFRESH_EVENT } from "@/lib/entitlement";
 
 // Three-day free trial: enabled — enough time to use ARVIO Web on normal days,
 // blind $2.99 ask. One trial per account (trialUsed is stamped server-side).
@@ -95,12 +96,14 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
       if (document.visibilityState === "visible") refreshAccess(true);
     };
     window.addEventListener("focus", onFocus);
+    window.addEventListener(ENTITLEMENT_REFRESH_EVENT, onFocus);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
       if (retryTimer) clearTimeout(retryTimer);
       if (expiryTimer) clearTimeout(expiryTimer);
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener(ENTITLEMENT_REFRESH_EVENT, onFocus);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [accountId, state?.entitled, state?.reason, state?.expiresAt, retry]);
@@ -158,12 +161,8 @@ export function PaywallScreen({
   onConnect: () => void;
   onSignOut: () => void;
 }) {
-  const [busy, setBusy] = useState<"trial" | "link" | "check" | null>(null);
+  const [busy, setBusy] = useState<"trial" | "check" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [linkOpen, setLinkOpen] = useState(false);
-  const [kofiEmail, setKofiEmail] = useState("");
-  const [verificationRequired, setVerificationRequired] = useState(false);
-  const [verificationCode, setVerificationCode] = useState("");
   const trialAvailable = state?.trialAvailable ?? true;
   const trialDays = state?.trialDurationDays ?? 3;
   const expired = state?.reason === "expired" || state?.status === "cancelled";
@@ -236,29 +235,6 @@ export function PaywallScreen({
     }
   }, [beginTrial, busy, expired, isSignedIn, trialAvailable]);
 
-  const link = useCallback(async () => {
-    if (!kofiEmail.trim()) return;
-    void trackPremiumEvent(authClient, "membership_link_started");
-    setBusy("link"); setError(null);
-    try {
-      const next = await linkKofiEmail(authClient, kofiEmail.trim(), verificationRequired ? verificationCode : undefined);
-      if (next.verificationRequired) setVerificationRequired(true);
-      else if (next.entitled) {
-        void trackPremiumEvent(authClient, "membership_linked");
-        onEntitled(next);
-      }
-      else setError("No active membership was found for that email.");
-    } catch (err) {
-      void trackPremiumEvent(authClient, "membership_link_failed", {
-        status: err instanceof HttpError ? err.status : 0,
-        error: err instanceof Error ? err.message : "unknown"
-      });
-      setError(err instanceof Error ? err.message : "Could not verify your membership. Try again.");
-    } finally {
-      setBusy(null);
-    }
-  }, [kofiEmail, verificationCode, verificationRequired, onEntitled]);
-
   return (
     <main className="paywall">
       <div className="paywall-card">
@@ -294,7 +270,7 @@ export function PaywallScreen({
         >
           <BadgeCheck size={18} /> Subscribe on Ko-fi <ExternalLink size={15} />
         </a>
-        <p className="paywall-disclaimer">Use the same email as your ARVIO Cloud account at checkout, or link your billing email below.</p>
+        <p className="paywall-disclaimer">Use the email on your ARVIO Cloud account at checkout, or link your billing email below. Membership does not include media or subscriptions to other services.</p>
 
         {SHOW_TRIAL && trialAvailable && !expired && (
           <button type="button" className="paywall-trial" onClick={() => void beginTrial()} disabled={busy !== null}>
@@ -306,25 +282,7 @@ export function PaywallScreen({
         <button type="button" className="paywall-trial" onClick={() => void checkAccess()} disabled={busy !== null}>
           {busy === "check" ? <Loader2 className="paywall-spinner" size={16} /> : <RefreshCw size={16} />} I have paid, check access
         </button>
-        <button type="button" className="paywall-link-toggle" onClick={() => setLinkOpen((v) => !v)}>
-          Paid with a different email? Link your Ko-fi email
-        </button>
-
-        {linkOpen && (
-          <div className="paywall-link-row">
-            <input
-              type="email"
-              placeholder="Your Ko-fi / PayPal email"
-              value={kofiEmail}
-              onChange={(e) => { setKofiEmail(e.target.value); setVerificationRequired(false); setVerificationCode(""); }}
-              aria-label="Billing email"
-            />
-            {verificationRequired && <label>Enter the code sent to your billing email<input value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} autoComplete="one-time-code" maxLength={16} aria-label="Email verification code" /></label>}
-            <button type="button" onClick={() => void link()} disabled={busy !== null || !kofiEmail.trim() || (verificationRequired && verificationCode.trim().length !== 16)}>
-              {busy === "link" ? <Loader2 className="paywall-spinner" size={16} /> : verificationRequired ? "Verify" : "Link"}
-            </button>
-          </div>
-        )}
+        <BillingEmailForm key={accountId} onEntitled={onEntitled} />
 
         {error && <p className="paywall-error">{error}</p>}
 

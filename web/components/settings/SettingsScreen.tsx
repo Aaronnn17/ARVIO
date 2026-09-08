@@ -54,6 +54,7 @@ import {
 } from "@/lib/externalPlayers";
 import { buildHomeServerCatalogConfigs } from "@/lib/homeserver";
 import { defaultSettings, useApp } from "@/lib/store";
+import { PremiumAccount } from "@/components/shell/PremiumAccount";
 import type {
   AppSettings,
   CatalogConfig,
@@ -1339,6 +1340,7 @@ function AccountsSection() {
 
   return (
     <>
+      <PremiumAccount />
       <Panel title="ARVIO Account">
         {!cloudConfigured && (
           <p className="empty">

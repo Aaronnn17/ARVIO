@@ -41,7 +41,7 @@ import {
   nextStallAction,
 } from "@/lib/playerRecovery";
 import { authClient, useApp } from "@/lib/store";
-import { trackPremiumEvent, trackPremiumMilestone } from "@/lib/premiumAnalytics";
+import { trackPremiumDaily, trackPremiumEvent, trackPremiumMilestone } from "@/lib/premiumAnalytics";
 import { syncClient } from "@/lib/sync";
 import { SubtitleTranslator, subtitleLanguageName } from "@/lib/subtitleAi";
 import { getLogoUrl } from "@/lib/tmdb";
@@ -341,6 +341,9 @@ function VideoPlayer({
   }, [nextCountdown, onAdvance]);
   const [fullscreen, setFullscreen] = useState(false);
   const [error, setError] = useState(false);
+  useEffect(() => {
+    if (error) void trackPremiumDaily(authClient, "playback_failed", { playback_type: liveTv ? "live" : "vod" });
+  }, [error, liveTv]);
   const [activePanel, setActivePanel] = useState<PlayerPanel>(null);
   const [activeSubtitle, setActiveSubtitle] = useState(-1);
   const [skipOverlay, setSkipOverlay] = useState<number | null>(null);
@@ -407,9 +410,11 @@ function VideoPlayer({
     const video = videoRef.current;
     if (!video) return undefined;
     const onReady = () => setBooted(true);
+    void trackPremiumDaily(authClient, "playback_requested", { playback_type: liveTv ? "live" : "vod" });
     const onPlaying = () => {
       onReady();
       void trackPremiumMilestone(authClient, "first_playback", { playback_type: liveTv ? "live" : "vod" });
+      void trackPremiumDaily(authClient, "playback_started", { playback_type: liveTv ? "live" : "vod" });
     };
     video.addEventListener("playing", onPlaying);
     video.addEventListener("loadeddata", onReady);

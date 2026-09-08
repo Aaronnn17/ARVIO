@@ -3,6 +3,12 @@ import { config } from "./config";
 import { jsonRequest } from "./http";
 
 export type PremiumFunnelEvent =
+  | "web_opened"
+  | "sources_configured"
+  | "sources_missing"
+  | "playback_requested"
+  | "playback_started"
+  | "playback_failed"
   | "paywall_view"
   | "account_connected"
   | "trial_requested"
@@ -20,6 +26,7 @@ export type PremiumFunnelEvent =
 const ATTRIBUTION_KEY = "arvio.premium.attribution.v1";
 export const TRIAL_INTENT_KEY = "arvio.premium.trial-intent.v1";
 const inFlight = new Set<string>();
+const dailyRecorded = new Map<string, string>();
 
 function browserStorage(kind: "sessionStorage" | "localStorage") {
   try { return typeof window === "undefined" ? undefined : window[kind]; } catch { return undefined; }
@@ -99,4 +106,30 @@ export async function trackPremiumMilestone(
   const recorded = await trackPremiumEvent(auth, eventName, metadata);
   if (recorded) storageSet(browserStorage("localStorage"), key, "1");
   return recorded;
+}
+
+// One diagnostic per account/event/UTC day, not one write per seek, buffer or
+// render. The in-memory guard also works when Safari blocks browser storage.
+export async function trackPremiumDaily(
+  auth: AuthClient,
+  eventName: PremiumFunnelEvent,
+  metadata: Record<string, string | number | boolean> = {},
+  now = new Date()
+) {
+  if (!config.paywallEnabled || !auth.session) return false;
+  const accountId = auth.session.userId;
+  const date = now.toISOString().slice(0, 10);
+  const key = `arvio.premium.daily.${accountId}.${eventName}`;
+  const disk = browserStorage("localStorage");
+  if (dailyRecorded.get(key) === date || storageGet(disk, key) === date) return true;
+  if (inFlight.has(key)) return false;
+  inFlight.add(key);
+  try {
+    const recorded = await trackPremiumEvent(auth, eventName, metadata);
+    if (recorded && auth.session?.userId === accountId) {
+      dailyRecorded.set(key, date);
+      storageSet(disk, key, date);
+    }
+    return recorded;
+  } finally { inFlight.delete(key); }
 }

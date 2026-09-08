@@ -2,6 +2,8 @@ const { connectLambda, getStore } = require("@netlify/blobs");
 const { privacyHash } = require("./_backend");
 
 const PREMIUM_EVENTS = new Set([
+  "web_opened", "sources_configured", "sources_missing",
+  "playback_requested", "playback_started", "playback_failed",
   "paywall_view",
   "account_connected",
   "trial_requested",
@@ -27,6 +29,8 @@ const PREMIUM_EVENTS = new Set([
 // Payment and trial-success events must come from their server handlers, never
 // from a browser claiming that payment succeeded.
 const CLIENT_PREMIUM_EVENTS = new Set([
+  "web_opened", "sources_configured", "sources_missing",
+  "playback_requested", "playback_started", "playback_failed",
   "paywall_view", "account_connected", "trial_requested", "trial_start_failed",
   "checkout_opened", "membership_link_started", "membership_linked", "membership_link_failed", "first_playback", "external_playback_requested",
   "download_requested", "download_handoff", "download_failed"
@@ -77,6 +81,9 @@ async function recordPremiumEvent(event, { email, accountId, eventName, metadata
   const store = premiumFunnelStore(event);
   const key = `events/date/${date}/account/${accountKey}/${eventName}.json`;
   const existing = await getJSON(store, key);
+  // Reports count unique account-event-days, not clicks. Repeated browser
+  // callbacks must not rewrite the same blob or replace its first attribution.
+  if (existing && CLIENT_PREMIUM_EVENTS.has(eventName)) return existing;
   const record = {
     date,
     eventName,
@@ -134,6 +141,7 @@ function summarizePremiumKeys(keys, dates, generatedAt = new Date().toISOString(
   const unique = {};
   const daily = Object.fromEntries(dates.map(date => [date, {}]));
   const firstDates = {};
+  const eventDates = {};
   const billingOwners = new Map();
   for (const { billingKey, accountKey } of verifiedLinks) {
     if (!billingKey || !accountKey) continue;
@@ -156,6 +164,8 @@ function summarizePremiumKeys(keys, dates, generatedAt = new Date().toISOString(
       unique[eventName].add(accountKey);
       const account = firstDates[accountKey] ||= {};
       if (!account[eventName] || date < account[eventName]) account[eventName] = date;
+      const accountDates = eventDates[accountKey] ||= {};
+      (accountDates[eventName] ||= new Set()).add(date);
   }
 
   const uniqueAccounts = Object.fromEntries(
@@ -168,6 +178,14 @@ function summarizePremiumKeys(keys, dates, generatedAt = new Date().toISOString(
   const connectedTrials = accounts.filter(row => transitioned(row, "account_connected", "trial_started")).length;
   const trialPaid = accounts.filter(row => transitioned(row, "trial_started", "subscription_started")).length;
   const matureTrials = accounts.filter(row => row.trial_started && Date.parse(row.trial_started) + 4 * 86400000 <= Date.parse(generatedAt));
+  const observedCohort = days => {
+    // Only day precision is available: allow the entire start day plus N full
+    // days before including a trial in this denominator.
+    const eligible = accounts.filter(row => row.trial_started && Date.parse(row.trial_started) + (days + 1) * 86400000 <= Date.parse(generatedAt));
+    const paid = eligible.filter(row => transitioned(row, "trial_started", "subscription_started") && Date.parse(row.subscription_started) < Date.parse(row.trial_started) + (days + 1) * 86400000).length;
+    return { observationDays: days, eligibleTrials: eligible.length, paidWithinWindow: paid, rate: eligible.length ? Number((paid / eligible.length).toFixed(4)) : null };
+  };
+  const trialUsage = event => Object.entries(firstDates).filter(([account, row]) => row.trial_started && [...(eventDates[account][event] || [])].some(date => date >= row.trial_started)).length;
   return {
     days: dates.length,
     generatedAt,
@@ -184,10 +202,20 @@ function summarizePremiumKeys(keys, dates, generatedAt = new Date().toISOString(
       atLeastThreeCompleteDaysObserved: matureTrials.length,
       maturePaidByReportEnd: matureTrials.filter(row => transitioned(row, "trial_started", "subscription_started")).length
     },
+    maturedCohorts: { sevenDays: observedCohort(7), fourteenDays: observedCohort(14) },
+    trialActivation: {
+      sourcesConfigured: trialUsage("sources_configured"),
+      playbackRequested: trialUsage("playback_requested"),
+      browserPlaybackStarted: trialUsage("playback_started"),
+      browserPlaybackFailed: trialUsage("playback_failed"),
+      externalPlayerRequested: trialUsage("external_playback_requested"),
+      checkoutOpened: trialUsage("checkout_opened")
+    },
     measurementNotes: [
       "Conversion matches anonymized account identities inside this window, with day-level ordering; it is not a lifetime cohort.",
       "Different billing emails are joined only after verified ownership within this report window; older unverified links remain unmatched. Renewals are separate from starts.",
-      "Event-days are deduplicated per account/event/day, not total clicks. External-player and download handoffs do not confirm successful playback or completed downloads."
+      "Event-days are deduplicated per account/event/day, not total clicks. External-player and download handoffs do not confirm successful playback or completed downloads.",
+      "Daily activation diagnostics begin with the September 2026 activation release; missing earlier diagnostics mean unmeasured usage, not failed playback. Cohorts use full calendar days and exclude trials without enough observation time."
     ],
     daily
   };
