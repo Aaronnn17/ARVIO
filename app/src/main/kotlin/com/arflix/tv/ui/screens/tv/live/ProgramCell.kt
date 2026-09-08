@@ -1,5 +1,8 @@
 package com.arflix.tv.ui.screens.tv.live
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.ui.layout.layout
+
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -76,7 +79,7 @@ fun ProgramCell(
     onMoveUp: () -> Boolean = { false },
     onMoveDown: () -> Boolean = { false },
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
-    contentStartOffsetDp: androidx.compose.ui.unit.Dp = 0.dp,
+    contentStartOffsetPx: () -> Int = { 0 },
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -89,7 +92,10 @@ fun ProgramCell(
         isNow -> LiveColors.FocusBg
         else -> LiveColors.Panel
     }
-    val bg = if (focused) LiveColors.PanelRaised else baseBg
+    val bg by animateColorAsState(
+        if (focused) LiveColors.PanelRaised else baseBg,
+        tween(120), label = "programme-surface",
+    )
     val borderColor = when {
         focused -> LiveColors.FocusRing
         isNow -> LiveColors.Accent.copy(alpha = 0.45f)
@@ -97,17 +103,17 @@ fun ProgramCell(
     }
     val borderWidth = if (focusable) {
         val animated by animateDpAsState(
-            targetValue = if (focused) 3.dp else 1.dp,
+            targetValue = if (focused) LiveDims.FocusBorder else 1.dp,
             animationSpec = tween(durationMillis = 80),
             label = "program-cell-border",
         )
         animated
     } else {
-        if (focused) 3.dp else 1.dp
+        if (focused) LiveDims.FocusBorder else 1.dp
     }
     val scale = if (focusable) {
         val animated by animateFloatAsState(
-            targetValue = if (focused) 1.008f else 1f,
+            targetValue = 1f,
             animationSpec = tween(durationMillis = 90),
             label = "program-cell-scale",
         )
@@ -210,15 +216,25 @@ fun ProgramCell(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = contentStartOffsetDp),
+                // Read scroll position in measurement, not row composition.
+                .layout { measurable, constraints ->
+                    val shift = contentStartOffsetPx().coerceIn(0, constraints.maxWidth)
+                    val content = measurable.measure(constraints.copy(
+                        minWidth = (constraints.minWidth - shift).coerceAtLeast(0),
+                        maxWidth = (constraints.maxWidth - shift).coerceAtLeast(0),
+                    ))
+                    layout(content.width + shift, content.height) {
+                        content.placeRelative(shift, 0)
+                    }
+                },
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val nowMs = clockTickMillis
-                if (isNow) {
+                if (isNow && width >= 150.dp) {
                     Badge(stringResource(R.string.live_badge_live), Color.White, LiveColors.LiveRed)
                     Spacer(Modifier.size(6.dp))
-                } else if (isPast && isCatchupSupported) {
+                } else if (isPast && isCatchupSupported && width >= 150.dp) {
                     Badge(stringResource(R.string.live_badge_archive), LiveColors.Bg, LiveColors.Accent)
                     Spacer(Modifier.size(6.dp))
                 } else if (!isPast) {
@@ -231,13 +247,13 @@ fun ProgramCell(
                 }
                 Text(
                     text = program.title,
-                    style = LiveType.CellTitle.copy(color = LiveColors.Fg, fontSize = 9.5.sp, lineHeight = 12.sp),
-                    maxLines = 1,
+                    style = LiveType.CellTitle.copy(color = LiveColors.Fg, fontSize = 10.sp, lineHeight = 12.sp),
+                    maxLines = if (width < 120.dp) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
             }
-            if (!program.description.isNullOrBlank()) {
+            if (rowHeight >= 60.dp && width >= 150.dp && !program.description.isNullOrBlank()) {
                 Text(
                     text = program.description!!,
                     style = LiveType.BodySynopsis.copy(color = LiveColors.FgDim, fontSize = 8.sp, lineHeight = 10.sp),
@@ -245,7 +261,7 @@ fun ProgramCell(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Row(
+            if (width >= 120.dp) Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {

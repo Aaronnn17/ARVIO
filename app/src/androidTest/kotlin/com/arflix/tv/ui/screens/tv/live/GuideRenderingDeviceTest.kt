@@ -70,6 +70,18 @@ class GuideRenderingDeviceTest {
         compose.onNodeWithText("Programme render:0:23").assertDoesNotExist()
     }
 
+    @Test fun verticalChannelNavigationCannotEnterProgrammes() {
+        showGuide()
+        repeat(12) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+        compose.onNodeWithTag("iptv-channel:render:12").assertIsFocused()
+        repeat(5) { compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) } }
+        compose.onNodeWithTag("iptv-channel:render:7").assertIsFocused()
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+        compose.onNodeWithTag("iptv-channel:render:7").assertIsNotFocused()
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+        compose.runOnIdle { assertEquals("render:8", focused) }
+    }
+
     @Test fun epgNavigationStillReachesOffscreenProgrammesAndAdjacentChannel() {
         showGuide()
         compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }

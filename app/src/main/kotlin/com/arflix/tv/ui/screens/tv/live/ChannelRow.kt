@@ -1,5 +1,8 @@
 package com.arflix.tv.ui.screens.tv.live
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.ui.geometry.CornerRadius
+
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -107,23 +110,15 @@ fun ChannelRow(
     }
     val now = nowNext?.now
     val animatedBorderWidth by animateDpAsState(
-        targetValue = if (visuallyFocused) 3.dp else 0.dp,
+        targetValue = if (visuallyFocused) LiveDims.FocusBorder else 0.dp,
         animationSpec = tween(durationMillis = 70),
         label = "channel-row-border",
     )
-    val animatedScale by animateFloatAsState(
-        targetValue = if (visuallyFocused) 1.004f else 1f,
-        animationSpec = tween(durationMillis = 80),
-        label = "channel-row-scale",
-    )
+    val surface by animateColorAsState(bg, tween(120), label = "channel-surface")
     Row(
         modifier = modifier
             .fillMaxWidth()
             .height(rowHeight)
-            .graphicsLayer {
-                scaleX = animatedScale
-                scaleY = animatedScale
-            }
             .onFocusChanged {
                 focused = it.hasFocus
                 if (it.hasFocus) onFocused()
@@ -134,15 +129,16 @@ fun ChannelRow(
                 // text and logo layout should not rebuild for each border frame.
                 val stroke = animatedBorderWidth.toPx()
                 if (visuallyFocused && stroke > 0f) {
-                    drawRect(
+                    drawRoundRect(
                         color = LiveColors.FocusRing,
-                        topLeft = Offset(stroke / 2f, stroke / 2f),
-                        size = Size((size.width - stroke).coerceAtLeast(0f), (size.height - stroke).coerceAtLeast(0f)),
+                        topLeft = Offset(2.dp.toPx() + stroke / 2f, 2.dp.toPx() + stroke / 2f),
+                        size = Size((size.width - 4.dp.toPx() - stroke).coerceAtLeast(0f), (size.height - 4.dp.toPx() - stroke).coerceAtLeast(0f)),
+                        cornerRadius = CornerRadius(5.dp.toPx()),
                         style = Stroke(stroke),
                     )
                 }
             }
-            .background(bg)
+            .background(surface)
             .focusable()
             // Long-press / MENU opens the channel menu. This has to live in the PREVIEW
             // phase, ahead of combinedClickable: combinedClickable arms a click on the
@@ -211,8 +207,8 @@ fun ChannelRow(
         // ─ channel number ────────────────────────────────────
         Box(
             modifier = Modifier
-                .width(48.dp)
-                .padding(start = 10.dp, end = 6.dp),
+                .width(36.dp)
+                .padding(start = 8.dp, end = 4.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(
@@ -224,9 +220,9 @@ fun ChannelRow(
         }
 
         // ─ logo ──────────────────────────────────────────────
-        ChannelLogo(channel = channel, size = 36.dp)
+        ChannelLogo(channel = channel, size = 32.dp)
 
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(8.dp))
 
         // ─ name / program / progress / time ──────────────────
         Column(

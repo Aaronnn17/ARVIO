@@ -1,5 +1,7 @@
 package com.arflix.tv.ui.screens.tv.live
 
+import androidx.compose.animation.animateColorAsState
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateDpAsState
@@ -716,7 +718,7 @@ fun CategorySidebar(
                                     categoryFocusRequesters = categoryFocusRequesters,
                                 )
                                 SidebarRow(
-                                    label = liveCategoryLabel(cat.label),
+                                    label = liveCategoryLabel(cat.playlistGroupName ?: cat.label),
                                     count = cat.count,
                                     icon = iconFor(cat),
                                     active = selectedId == cat.id,
@@ -1065,6 +1067,10 @@ private fun SidebarRow(
         focused -> LiveColors.Panel
         else -> Color.Transparent
     }
+    val surface by animateColorAsState(
+        if (focused) LiveColors.PanelRaised else bg,
+        animationSpec = tween(120), label = "category-surface",
+    )
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1083,19 +1089,19 @@ private fun SidebarRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight()
-                .padding(start = if (active) 12.dp else 10.dp, end = 12.dp)
+                .padding(start = 12.dp, end = 12.dp)
                 .onFocusChanged {
                     focused = it.isFocused
                     if (it.isFocused) onFocused?.invoke()
                 }
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .border(
-                    width = if (focused) 3.dp else 0.dp,
+                    width = if (focused) LiveDims.FocusBorder else 0.dp,
                     color = if (focused) LiveColors.FocusRing else Color.Transparent,
                     shape = RoundedCornerShape(8.dp),
                 )
                 .clip(RoundedCornerShape(8.dp))
-                .background(if (focused) LiveColors.PanelRaised else bg)
+                .background(surface)
                 .onPreviewKeyEvent { ev ->
                     val isSelect = ev.key == Key.DirectionCenter || ev.key == Key.Enter
                     when {

@@ -508,10 +508,8 @@ private fun NowCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(LiveDims.CardRadius))
-            .background(LiveColors.PanelRaised)
             .padding(
-                horizontal = if (landscapeCompact) 8.dp else 10.dp,
+                horizontal = 0.dp,
                 vertical = if (landscapeCompact) 5.dp else 8.dp,
             ),
         verticalArrangement = Arrangement.spacedBy(if (landscapeCompact) 2.dp else 4.dp),

@@ -56,6 +56,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -483,12 +484,13 @@ fun EpgGrid(
                     .background(LiveColors.DividerStrong)
             )
             // Scrolling time ruler with NOW pill pinned to the current minute.
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
-                    .horizontalScroll(hScroll),
+                    .clipToBounds(),
             ) {
-                Row {
+                val rulerWidthPx = with(density) { maxWidth.toPx() }
+                Row(Modifier.horizontalScroll(hScroll)) {
                     slots.forEach { slot ->
                         Box(
                             modifier = Modifier
@@ -510,7 +512,18 @@ fun EpgGrid(
                     val nowOffset = (nowMin * pxPerMin).dp
                     Box(
                         modifier = Modifier
-                            .offset(x = nowOffset - 46.dp, y = 6.dp)
+                            .layout { measurable, constraints ->
+                                val label = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
+                                val nowX = nowOffset.toPx() - hScroll.value
+                                layout(label.width, label.height) {
+                                    if (nowX in 0f..rulerWidthPx) {
+                                        label.placeRelative(
+                                            (nowX - label.width / 2f).coerceIn(0f, (rulerWidthPx - label.width).coerceAtLeast(0f)).toInt(),
+                                            4.dp.roundToPx(),
+                                        )
+                                    }
+                                }
+                            }
                             .clip(RoundedCornerShape(4.dp))
                             .background(LiveColors.Accent)
                             .padding(horizontal = 8.dp, vertical = 3.dp),
@@ -705,7 +718,7 @@ fun EpgGrid(
                                     epgMode = focusMode == EpgGridFocusMode.Epg,
                                     rowHeight = rowHeight,
                                     renderWindow = renderWindow,
-                                    hScrollOffsetPx = hScroll.value,
+                                    hScrollOffsetPx = { hScroll.value },
                                     onClick = { program ->
                                         onExitEpg(ch)
                                         onProgramSelect(ch, program)
@@ -792,7 +805,7 @@ private fun ProgramsRow(
     epgMode: Boolean,
     rowHeight: Dp,
     renderWindow: GuideRenderWindow,
-    hScrollOffsetPx: Int = 0,
+    hScrollOffsetPx: () -> Int = { 0 },
     onClick: (IptvProgram?) -> Unit,
     onFocused: () -> Unit,
     onMoveVertically: (rowIdx: Int, anchorStartMin: Int) -> Boolean,
@@ -869,9 +882,7 @@ private fun ProgramsRow(
                 val width = (placement.durationMin * pxPerMin).dp
                 val cellOffsetPx = with(density) { offset.toPx() }
                 val cellWidthPx = with(density) { width.toPx() }
-                val scrolledPastPx = (hScrollOffsetPx - cellOffsetPx).coerceAtLeast(0f)
                 val maxShiftPx = (cellWidthPx - with(density) { 50.dp.toPx() }).coerceAtLeast(0f)
-                val shiftDp = with(density) { scrolledPastPx.coerceAtMost(maxShiftPx).toDp() }
                 val isCatchupSupported = placement.isCatchupSupported(channel, nowMillis)
                 val focusableIndex = focusableIndexByPlacementIndex[placementIndex] ?: -1
                 val isFocusable = focusableIndex >= 0
@@ -885,9 +896,11 @@ private fun ProgramsRow(
                         isNow = placementIsNow,
                         isPast = placementIsPast,
                         isFocusTarget = placementIsNow,
-                        focusable = isFocusable,
+                        focusable = isFocusable && epgMode,
                         isCatchupSupported = isCatchupSupported,
-                        contentStartOffsetDp = shiftDp,
+                        contentStartOffsetPx = {
+                            (hScrollOffsetPx() - cellOffsetPx).coerceIn(0f, maxShiftPx).toInt()
+                        },
                         onClick = {
                             epgProgramActionTarget(
                                 program = placement.program,
