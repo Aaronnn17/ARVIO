@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
@@ -329,8 +330,11 @@ class HomeServerRepository @Inject constructor(
         profileManager.activeProfileId,
         context.settingsDataStore.data
     ) { profileId, prefs ->
-        parseConnections(prefs[connectionKeyFor(profileId)])
+        prefs[connectionKeyFor(profileId)]
     }.distinctUntilChanged()
+        .map { parseConnections(it) }
+        .distinctUntilChanged()
+        .flowOn(Dispatchers.IO)
 
     val connection: Flow<HomeServerConnection?> = connections
         .map { it.firstOrNull() }
@@ -624,13 +628,23 @@ class HomeServerRepository @Inject constructor(
 
     suspend fun hasUsableConnections(): Boolean = currentConnections().any { it.isUsable }
 
+    /** Library navigation uses the saved connection snapshot, never server discovery. */
+    fun getSavedCatalogCandidates(connections: List<HomeServerConnection>): List<HomeServerCatalogCandidate> =
+        connections.asSequence()
+            .filter { it.isUsable }
+            .flatMap { connection ->
+                connection.collections.asSequence()
+                    .filter { it.enabled && it.id.isNotBlank() }
+                    .map { connection.toCatalogCandidate(it) }
+            }
+            .distinctBy { it.sourceRef }
+            .toList()
+
     suspend fun getCatalogCandidates(): List<HomeServerCatalogCandidate> = withContext(Dispatchers.IO) {
         currentConnections()
             .filter { it.isUsable }
             .flatMap { connection ->
-                val libraryCandidates = connection.collections
-                    .filter { it.enabled && it.id.isNotBlank() }
-                    .map { collection -> connection.toCatalogCandidate(collection) }
+                val libraryCandidates = getSavedCatalogCandidates(listOf(connection))
                 val serverCollectionCandidates = try {
                     fetchServerCollectionCatalogs(connection)
                 } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
