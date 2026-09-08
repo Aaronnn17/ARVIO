@@ -1,5 +1,5 @@
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
-import { playbackPlan, canProviderTranscode, canTryRemux } from "./streamCompatibility";
+import { playbackPlan, canProviderTranscode, canTryRemux, videoDecodableForDevice } from "./streamCompatibility";
 import { prepareHomeServerPlayback } from "./homeServerPlayback";
 import type { AppSettings, StreamSource } from "./types";
 
@@ -21,7 +21,8 @@ export async function prepareBrowserStream(stream: StreamSource, settings: AppSe
     if (!result.url) throw new Error(result.error ?? "Server conversion is unavailable");
     return { ...stream, url: result.url, originalUrl: stream.originalUrl ?? stream.url, remux: false, transcoded: true, transport: "hls" };
   }
-  if (plan.route !== "here" && !options.forceRemux) throw new Error(plan.detail || "This format requires an external player");
+  // Remux changes packaging/audio, not the video codec or Dolby Vision colours.
+  if (plan.route !== "here" && (!options.forceRemux || !videoDecodableForDevice(stream))) throw new Error(plan.detail || "This format requires an external player");
   const remux = !!options.forceRemux || plan.method === "remux"
     || (Object.keys(stream.behaviorHints?.proxyHeaders?.request ?? {}).length > 0 && canTryRemux(stream));
   const cached = cachedDebridDirectUrl(stream.originalUrl ?? stream.url);

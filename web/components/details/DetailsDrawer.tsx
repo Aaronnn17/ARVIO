@@ -633,7 +633,7 @@ function SourcePickerModal({
             <h2>{title}</h2>
             <span>
               {streams.length} sources — highest quality and largest files first.
-              Playback uses an external player like VLC.
+              Choose browser playback or a compatible external player.
             </span>
           </div>
           <button type="button" className="person-close" onClick={onClose} aria-label="Close source picker"><X size={24} /></button>
@@ -682,18 +682,16 @@ function SourcePickerModal({
           )}
           {filtered.map((stream, index) => {
             const locked = !stream.url;
-            // No browser-playback claims at all. The "Plays here" verdict was
-            // inferred from release names and failed often enough that users
-            // stopped trusting the list — the product decision is to promise
-            // only what always works: an external player. In-browser Play is
-            // removed with it; a button that usually fails is worse than none.
             const uncached = isUncachedDebridStream(stream);
-            const browserOption = !locked && !uncached && playbackPlan(stream).route === "here";
+            const plan = playbackPlan(stream);
+            const browserOption = !locked && !uncached && plan.route === "here";
             const statusLabel = uncached
               ? "Not cached — downloads first, slow start"
               : locked
                 ? "Needs a debrid resolver"
-                : browserOption ? "Browser or external player" : "External player recommended";
+                : browserOption
+                  ? plan.method === "transcode" ? "Provider conversion required" : "Browser or external player"
+                  : plan.detail || "External player recommended";
             const statusClass = "needs-vlc";
             return (
               <article key={`${stream.addonId}-${stream.url ?? stream.source}`} className={`source-picker-row ${locked ? "is-locked" : ""}`}>
@@ -714,7 +712,7 @@ function SourcePickerModal({
                 </span>
                 <span className="source-side">
                   <b>{stream.quality || "Unknown"}</b>
-                  <small>{locked ? "Needs resolver" : "External"}</small>
+                  <small>{locked ? "Needs resolver" : browserOption ? plan.method === "transcode" ? "Conversion" : "Browser" : "External"}</small>
                   <span className="source-row-actions">
                     {browserOption && <button type="button" className="source-action primary-action" onClick={() => { playStream(stream, { forceBrowser: true }); onClose(); }}><Play size={13} /> Play</button>}
                     <button

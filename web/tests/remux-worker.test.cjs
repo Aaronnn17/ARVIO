@@ -13,7 +13,7 @@ const decoderConfig = {
 };
 const flush = () => new Promise(setImmediate);
 
-function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpected fetch'); }) {
+function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpected fetch'); }, audioPackets = []) {
   const messages = [];
   const waits = [];
   const timers = new Map();
@@ -34,20 +34,32 @@ function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpe
     getCodecParameterString: async () => decoderConfig.codec,
     getDecoderConfig: async () => decoderConfig
   };
+  const audio = {
+    codec: 'aac', languageCode: 'eng', numberOfChannels: 2,
+    getCodecParameterString: async () => 'mp4a.40.2', canDecode: async () => true,
+    getDecoderConfig: async () => ({ codec: 'mp4a.40.2', sampleRate: 48000, numberOfChannels: 2,
+      description: new Uint8Array([0x11, 0x90]) })
+  };
   class InputMock {
     async getFormat() { return { name: 'Matroska' }; }
     async getPrimaryVideoTrack() { return video; }
-    async getAudioTracks() { return []; }
+    async getAudioTracks() { return audioPackets.length ? [audio] : []; }
     async computeDuration() { return 90; }
   }
   class UrlSourceMock {
     constructor(_url, value) { options = value; }
   }
   class PacketSinkMock {
+    constructor(track) { this.isAudio = track === audio; }
     async getKeyPacket() { return packets[0]; }
-    async getFirstPacket() { return packets[0]; }
+    async getFirstPacket() { return this.isAudio ? audioPackets[0] : packets[0]; }
+    async getPacket() { return this.getFirstPacket(); }
     async *packets() {
-      for (const packet of packets) { lastPacketTime = packet.timestamp; yield packet; }
+      for (const packet of this.isAudio ? audioPackets : packets) {
+        if (this.isAudio) await flush();
+        else lastPacketTime = packet.timestamp;
+        yield packet;
+      }
     }
   }
   class Output extends mb.Output {
@@ -93,7 +105,7 @@ function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpe
 }
 
 async function probe(harness) {
-  harness.send({ type: 'probe', url: 'https://fixture.invalid/film.mkv', audioCodecs: [] });
+  harness.send({ type: 'probe', url: 'https://fixture.invalid/film.mkv', audioCodecs: ['mp4a.40.2'] });
   return harness.waitFor(({ type }) => type === 'probe');
 }
 
@@ -138,6 +150,30 @@ test('More than 24 MiB of unflushed video fails with an actionable error', { tim
   assert.match(result.message, /keyframes.*bounded browser playback/i);
   assert.match(result.message, /server conversion or an external player/i);
 });
+
+for (const audioTimes of [
+  Array.from({ length: 40 }, (_, i) => i),
+  [10, 11, 12, 30, 31], // Delayed start, gap and audio ending before video.
+]) {
+  test(`High-bitrate video stays bounded while slower audio catches up (${audioTimes.length} packets)`, { timeout: 15000 }, async (t) => {
+    const data = new Uint8Array(1024 * 1024);
+    data.set(keyData);
+    const packets = Array.from({ length: 40 }, (_, i) => new mb.EncodedPacket(data, i % 2 ? 'delta' : 'key', i, 1, i));
+    const audio = audioTimes.map((i) => new mb.EncodedPacket(new Uint8Array([0x21, 0x10, 0x04, 0x60]), 'key', i, 1, i));
+    const worker = workerHarness(t, packets, undefined, audio);
+    await probe(worker);
+    worker.send({ type: 'start', generation: 0, time: 0, audioIndex: 0 });
+    worker.send({ type: 'clock', time: 100 });
+    for (let i = 0; i < 500 && !worker.messages.some(({ type }) => type === 'end' || type === 'error'); i++) {
+      await flush();
+      worker.fireTimers(80);
+    }
+    const error = worker.messages.find(({ type }) => type === 'error');
+    assert.equal(error, undefined, error?.message);
+    assert.ok(worker.messages.some(({ type }) => type === 'end'), 'Both tracks must finish without waiting on each other');
+    assert.ok(worker.messages.filter(({ type, data }) => type === 'chunk' && Buffer.from(data).includes(Buffer.from('moof'))).length > 5);
+  });
+}
 
 test('Range-ignorant responses are cancelled without retry or a leaked deadline', async (t) => {
   let cancelled = 0;

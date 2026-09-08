@@ -194,6 +194,51 @@ test('provider conversion errors reach the caller verbatim', async () => {
   await assert.rejects(h.prepareBrowserStream(file(), settings, { forceTranscode: true }), /Transcoding permission denied/);
 });
 
+test('forced audio remux cannot bypass an unsupported video or Dolby Vision gate', async () => {
+  const h = preparation();
+  for (const media of [{ videoCodec: 'hevc' }, { videoCodec: 'h264', hdr: 'Dolby Vision' }]) {
+    await assert.rejects(h.prepareBrowserStream({ ...file(), media }, settings, { forceRemux: true }), /HEVC|Dolby Vision/);
+  }
+});
+
+test('Dolby Vision conversion keeps the manually selected file and propagates failures', async () => {
+  const input = { ...file(), description: 'Mayday.2160p.DV.HDR10+.MP4', media: { videoCodec: 'hevc' } };
+  let requested;
+  const provider = { provider: 'torbox', fileName: 'selected.mp4' };
+  const h = preparation({ debrid: {
+    parseDebridStream: () => provider,
+    resolveTranscodeStream: async (info) => { requested = info; return { error: 'Provider conversion unavailable' }; }
+  } });
+  await assert.rejects(h.prepareBrowserStream(input, settings), /Provider conversion unavailable/);
+  assert.equal(requested, provider);
+});
+
+for (const converted of [false, true]) test(`missing video ${converted ? 'after conversion stops with an error' : 'requests conversion of the same file'}`, () => {
+  const stream = { ...file(), transcoded: converted };
+  const video = { pause: () => { paused = true; } };
+  let missing, paused = false, failure = false;
+  const selections = [];
+  const toasts = [];
+  const effect = extracted('components/player/PlayerOverlay.tsx', (node, source) =>
+    ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect'
+      && ts.isArrowFunction(node.arguments[0]) && node.arguments[0].getText(source).includes('monitorVideoFrames(')
+      ? node.arguments[0] : undefined, {
+    booted: true, liveTv: false, videoRef: { current: video }, stream,
+    monitorVideoFrames: (_, callback) => { missing = callback; return () => {}; },
+    canProviderTranscode: () => true,
+    onSelectStream: (...args) => selections.push(args), tryNextSource: () => false,
+    setError: (value) => { failure = value; }, setBuffering: () => {}, setShowControls: () => {},
+    onToast: (message) => toasts.push(message)
+  });
+  effect();
+  missing();
+  assert.equal(paused, true);
+  assert.equal(failure, converted);
+  assert.equal(selections.length, converted ? 0 : 1);
+  if (!converted) { assert.equal(selections[0][0], stream); assert.equal(selections[0][1].forceTranscode, true); }
+  assert.doesNotMatch(toasts.join(' '), /switching source/i);
+});
+
 test('store forwards preparation errors to the visible toast and does not mount a failed source', async () => {
   const h = storeHarness(async () => { throw new Error('Plex refused playback. Check server availability and transcoding permissions.'); });
   h.play(homeStream());

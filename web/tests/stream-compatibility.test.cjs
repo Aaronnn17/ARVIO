@@ -60,6 +60,29 @@ test('Resolution alone is not a codec, and measured codec metadata wins over rel
   assertPlan(module, hevc, 'external', 'vlc', 'direct');
 });
 
+test('HEVC metadata does not hide Dolby Vision in addon filenames or descriptions', () => {
+  const module = compatibility({ hevc: true, hevc10: true });
+  for (const metadata of [
+    { description: 'Film.2160p.DV.HDR10+.HEVC' },
+    { behaviorHints: { filename: 'Film.DoVi.mkv' } },
+    { source: 'Addon Dolby Vision' },
+    { media: { videoCodec: 'dvh1.05.06', audioCodec: 'aac' } },
+    { media: { videoCodec: 'dvhe.08.06', audioCodec: 'aac' } }
+  ]) {
+    const source = stream({ media: { videoCodec: 'hevc', audioCodec: 'aac' }, ...metadata });
+    assertPlan(module, source, 'external', 'vlc', 'direct');
+    assert.equal(module.canTryRemux(source), false);
+    assert.match(module.playbackWarning(source), /Dolby Vision/);
+  }
+});
+
+test('SDR, HDR10, DVD and unrelated names are not mistaken for Dolby Vision', () => {
+  const module = compatibility({ hevc: true, hevc10: true });
+  for (const description of ['Film.2160p.SDR', 'Film.HDR10+', 'Film.DVD', 'Film.DVDRip', 'Advantage']) {
+    assertPlan(module, stream({ description, media: { videoCodec: 'hevc', audioCodec: 'aac' } }), 'direct', 'here', 'direct');
+  }
+});
+
 test('Extensionless and proxied URLs use the MKV filename hint for routing', () => {
   const url = 'https://media.invalid/download/123?token=fixture';
   const sources = [url, `https://proxy.invalid/api/proxy?url=${encodeURIComponent(url)}`].map((url) => stream({

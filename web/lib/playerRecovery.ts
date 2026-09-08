@@ -82,6 +82,51 @@ export function isStalled(opts: {
   return currentTime <= lastProgressTime;
 }
 
+/** Detect audio advancing without video, including streams with known dimensions. */
+export function monitorVideoFrames(video: HTMLVideoElement, onMissing: () => void): () => void {
+  let stopped = false;
+  let frame: number | undefined;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let lastTime = video.currentTime;
+  let lastCheck = Date.now();
+  let framelessPlayingMs = 0;
+  let presented = false;
+  const stop = () => {
+    stopped = true;
+    if (timer !== undefined) clearInterval(timer);
+    if (frame !== undefined) video.cancelVideoFrameCallback?.(frame);
+  };
+  const decodedFrame = () => {
+    try {
+      const quality = video.getVideoPlaybackQuality?.();
+      return quality && quality.totalVideoFrames - quality.droppedVideoFrames > 0;
+    } catch { return false; }
+  };
+  if (video.requestVideoFrameCallback) {
+    frame = video.requestVideoFrameCallback(() => { presented = true; stop(); });
+  }
+  timer = setInterval(() => {
+    if (stopped) return;
+    if (presented || decodedFrame()) { stop(); return; }
+    const now = Date.now();
+    const advancing = video.currentTime > lastTime;
+    const elapsed = Math.min(2000, Math.max(0, now - lastCheck));
+    lastCheck = now;
+    lastTime = video.currentTime;
+    // Background tabs may intentionally stop presenting frames. Pauses, seeks
+    // and ordinary buffering must not consume the missing-video grace period.
+    if (document.visibilityState === "hidden" || video.paused || video.seeking || video.ended || !advancing) {
+      framelessPlayingMs = 0;
+      return;
+    }
+    const hasFrameTelemetry = !!video.requestVideoFrameCallback || !!video.getVideoPlaybackQuality;
+    if (!hasFrameTelemetry && video.videoWidth > 0) { stop(); return; }
+    framelessPlayingMs += elapsed;
+    if (framelessPlayingMs >= 12000) { stop(); onMissing(); }
+  }, 1500);
+  return stop;
+}
+
 /**
  * Total buffered seconds ahead of the playhead.
  *

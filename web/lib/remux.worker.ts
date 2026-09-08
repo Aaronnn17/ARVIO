@@ -95,6 +95,8 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
   };
   let videoTimestamp = command.time;
   let videoFinished = false;
+  let audioTimestamp = command.time;
+  let audioFinished = false;
   let fragmentBytes = 0;
   const video = await input.getPrimaryVideoTrack();
   if (!video?.codec) throw new Error("Unsupported video codec");
@@ -128,6 +130,7 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
   const audioSource = audio?.codec ? transcode
     ? new AudioSampleSource({ codec: "aac", bitrate: 192000, transform: { numberOfChannels: 2, sampleRate: 48000 } })
     : new EncodedAudioPacketSource(audio.codec) : undefined;
+  audioFinished = !audioSource;
   if (audioSource) current.addAudioTrack(audioSource);
   await current.start();
   const videoConfig = await video.getDecoderConfig();
@@ -140,6 +143,9 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
       fragmentBytes += packet.data.byteLength;
       if (fragmentBytes > 24 * 1024 * 1024) throw new Error("Keyframes are too far apart for bounded browser playback. Use server conversion or an external player.");
       await videoSource.add(packet, videoConfig ? { decoderConfig: videoConfig } : undefined);
+      // The muxer cannot flush video until audio catches up. Without backpressure,
+      // fast packet copying queues many GOPs behind the slower audio decoder.
+      while (active() && !audioFinished && packet.timestamp > audioTimestamp + 2) await sleep();
       // Only pause after a keyframe has flushed the preceding fragment. Pausing
       // halfway through a long GOP would wait for a playhead that cannot advance.
       if (packet.type === "key") await throttle(packet.timestamp);
@@ -152,10 +158,13 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
     if (audioSource instanceof AudioSampleSource) {
       for await (const sample of new AudioSampleSink(audio).samples(first.timestamp)) {
         try {
-          while (active() && !videoFinished && sample.timestamp > videoTimestamp + 2) await sleep();
-          if (videoFinished) await throttle(sample.timestamp);
           if (!active()) throw new Error("Cancelled");
           await audioSource.add(sample);
+          audioTimestamp = Math.max(audioTimestamp, sample.timestamp);
+          // Queue the next packet before waiting: its timestamp lets the muxer
+          // flush across a delayed start or a gap in the audio track.
+          while (active() && !videoFinished && sample.timestamp > videoTimestamp + 2) await sleep();
+          if (videoFinished) await throttle(sample.timestamp);
         }
         finally { sample.close(); }
       }
@@ -164,13 +173,15 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
       const start = await sink.getPacket(first.timestamp) ?? await sink.getFirstPacket();
       const config = await audio.getDecoderConfig();
       if (start) for await (const packet of sink.packets(start)) {
-        while (active() && !videoFinished && packet.timestamp > videoTimestamp + 2) await sleep();
-        if (videoFinished) await throttle(packet.timestamp);
         if (!active()) throw new Error("Cancelled");
         await audioSource.add(packet, config ? { decoderConfig: config } : undefined);
+        audioTimestamp = Math.max(audioTimestamp, packet.timestamp);
+        while (active() && !videoFinished && packet.timestamp > videoTimestamp + 2) await sleep();
+        if (videoFinished) await throttle(packet.timestamp);
       }
     }
     audioSource.close();
+    audioFinished = true;
   };
   await Promise.all([videoTask(), audioTask()]);
   if (!active()) return;

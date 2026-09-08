@@ -11,9 +11,8 @@ export type BrowserMediaCapabilities = {
   /**
    * True only when the browser advertises a Dolby Vision decoder.
    *
-   * Without one, a DV title decodes its HEVC layer but renders black while the
-   * audio and subtitles play — the exact symptom users report. Desktop Chrome,
-   * Edge and Firefox all report false here; some TV and mobile builds do not.
+   * HEVC support alone does not prove correct Dolby Vision decoding. Unsupported
+   * profiles can produce a black picture or incorrect colours with working audio.
    */
   dolbyVision: boolean;
   av1: boolean;

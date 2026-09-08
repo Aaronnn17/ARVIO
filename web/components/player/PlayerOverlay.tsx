@@ -39,6 +39,7 @@ import {
   bufferedEndAt,
   classifyMediaError,
   isStalled,
+  monitorVideoFrames,
   nextStallAction,
 } from "@/lib/playerRecovery";
 import { authClient, useApp } from "@/lib/store";
@@ -301,8 +302,6 @@ function VideoPlayer({
   // and blocks input until first frames are ready.
   const [booted, setBooted] = useState(false);
   const [bootLogo, setBootLogo] = useState<string | null>(null);
-  // Guards a one-time hop when a source plays audio but renders a black frame.
-  const switchedForBlackRef = useRef(false);
   // AI subtitle translation (same providers/prompt as the Android app).
   const [aiSubsActive, setAiSubsActive] = useState(false);
   const [aiTranslating, setAiTranslating] = useState(false);
@@ -479,25 +478,22 @@ function VideoPlayer({
   useEffect(() => {
     if (!booted || liveTv) return undefined;
     const video = videoRef.current;
-    if (!video || switchedForBlackRef.current) return undefined;
-    let timer = 0;
-    const startedAt = Date.now();
-    const check = () => {
-      // Audio-only fallback: a source that plays audio but never delivers a
-      // video frame (videoWidth stays 0 well into playback — some Dolby Vision
-      // streams) is broken here. Treat a long frameless stretch as black.
-      if (!switchedForBlackRef.current && !video.paused && video.currentTime > 6 && !video.videoWidth && Date.now() - startedAt > 12000) {
-        switchedForBlackRef.current = true;
-        onToast("This version's video won't render in the browser — switching source.");
-        if (!tryNextSource()) setError(true);
+    if (!video) return undefined;
+    return monitorVideoFrames(video, () => {
+      video.pause();
+      if (!stream.transcoded && canProviderTranscode(stream)) {
+        onToast("No video frames decoded. Requesting provider conversion for this source.");
+        onSelectStream(stream, { forceTranscode: true, forceBrowser: true });
         return;
       }
-      if (!switchedForBlackRef.current) timer = window.setTimeout(check, 1500);
-    };
-    timer = window.setTimeout(check, 3500);
-    return () => window.clearTimeout(timer);
+      if (tryNextSource()) return;
+      setBuffering(false);
+      setShowControls(true);
+      setError(true);
+      onToast("Audio is playing but the browser cannot render this video's format. Choose a non-DV version or use a compatible external player.");
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booted, stream.url, liveTv]);
+  }, [booted, stream.url, remuxRestartKey, liveTv]);
 
   // Live cue translation: when AI subs are active, the selected (English
   // source) track's cues are translated in small batches and swapped in place;
@@ -704,7 +700,6 @@ function VideoPlayer({
     failedSourceUrlsRef.current = new Set();
     failedAddonStrikesRef.current = new Map();
     autoSourceHopsRef.current = 0;
-    switchedForBlackRef.current = false;
   }, [item?.id, selectedEpisode?.season, selectedEpisode?.episode]);
   const tryNextSource = useCallback(() => {
     if (liveTv || !currentStreamRef.current.autoSelect || autoSourceHopsRef.current >= 6) return false;

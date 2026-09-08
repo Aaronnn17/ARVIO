@@ -53,6 +53,26 @@ Jellyfin and Emby accounts, Safari/iOS hardware, provider outages and large remo
 remuxes still need provider/device acceptance tests. Do not describe fixtures as
 proof that every server or codec works.
 
+## Mayday investigation (2026-09-08)
+
+- The selected 23.27 GB MP4 was probed as 3840x1606 HEVC Main 10, Dolby Vision
+  profile 8 with HDR10-compatible base-layer signalling. This is not profile 5;
+  a file-size or "4K" label alone cannot establish browser compatibility.
+- Before the fix, a separate 16.39 GB non-DV Mayday source failed with the
+  unflushed-video memory guard. Video could run ahead of audio conversion and
+  queue multiple GOPs. The worker now paces both tracks together while retaining
+  the 24 MiB guard; tests exercise high-bitrate video, delayed audio, gaps and
+  early audio EOF using the real MP4 muxer.
+- After the change, the Chromium E-AC-3 fixture rendered picture and nonzero
+  audio RMS (probe 323 ms, startup 1,854 ms in one run). Backward seek to 12 s and
+  forward seek to 65 s rendered the requested timeline and completed playback.
+- Missing-video checks now use frame presentation telemetry, not just dimensions.
+  Tests cover known dimensions with zero frames, dropped frames, legitimate black
+  frames, pauses, buffering, background tabs, source cleanup and one-time recovery.
+- These checks do not establish that the exact 23.27 GB provider-converted source
+  plays correctly. Provider conversion failed during investigation; no new video
+  decoder or Dolby Vision tone mapper was added to the browser.
+
 ## Operational limits
 
 No video relay/transcoder was added to Netlify. File repackaging and supported

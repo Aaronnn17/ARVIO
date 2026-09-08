@@ -33,10 +33,11 @@ export function streamTransport(stream: CompatStream): NonNullable<StreamSource[
 function videoReason(stream: CompatStream): string | null {
   const caps = getMediaCapabilities();
   const video = stream.media?.videoCodec?.toLowerCase() || text(stream);
-  const hdr = stream.media?.hdr?.toLowerCase() || (stream.media?.videoCodec ? "" : text(stream));
-  if (/dolby[. _-]?vision|\bdovi\b|\bdv\b/.test(hdr) && !caps.dolbyVision) return "Dolby Vision is not supported by this browser";
+  // Knowing the codec (HEVC) does not tell us whether it carries Dolby Vision.
+  const hdr = `${stream.media?.hdr ?? ""} ${video} ${text(stream)}`.toLowerCase();
+  if (/dolby[. _-]?vision|\bdovi\b|\bdv\b|\bdvhe\b|\bdvh1\b/.test(hdr) && !caps.dolbyVision) return "Dolby Vision needs compatible video decoding. Use a non-DV version or a compatible external player.";
   if (/\bav1\b|av01/.test(video)) return caps.av1 ? null : "This device has no AV1 decoder";
-  if (/x265|h\.?265|hevc|hvc1|hev1/.test(video) && !caps.hevc && !caps.hevc10) return "This device has no HEVC decoder";
+  if (/x265|h\.?265|hevc|hvc1|hev1|dvhe|dvh1/.test(video) && !caps.hevc && !caps.hevc10) return "This device has no HEVC decoder";
   if (/vp9|vp09/.test(video) && !caps.vp9) return "This device has no VP9 decoder";
   // Resolution is not a codec. Unknown metadata is checked on selection.
   return null;
