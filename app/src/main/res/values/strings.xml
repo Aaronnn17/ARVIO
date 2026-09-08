@@ -1569,6 +1569,7 @@
     <string name="sync_in_progress">Sync already in progress</string>
     <string name="telegram_tdlib_failed">TDLib failed to start: %1$s</string>
     <string name="telegram_tdlib_unavailable">TDLib not available on this device</string>
+    <string name="telegram_not_configured">Telegram integration is not configured in this build</string>
 
 
     <!-- Live TV category context menu -->
