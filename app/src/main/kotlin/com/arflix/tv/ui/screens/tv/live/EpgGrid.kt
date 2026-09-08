@@ -287,7 +287,6 @@ fun EpgGrid(
         activeChannelFocusId = channel.id
         activeChannelFocusIndex = rowIdx
         pendingChannelFocusId = channel.id
-        onChannelFocused(channel)
         focusJob?.cancel()
         val directRequester = channelFocusRequesters[channel.id]
             ?: if (rowIdx == 0) firstChannelFocusRequester
@@ -334,7 +333,10 @@ fun EpgGrid(
                 onRequestNextChannels()
                 true
             }
-            else -> false
+            // The target is already known by channel index. Avoid a spatial
+            // search through the programme tree, and retain pending key repeats
+            // when the next row has not been composed yet.
+            else -> keepChannelFocus(targetIdx)
         }
     }
 
@@ -493,13 +495,23 @@ fun EpgGrid(
                     .clipToBounds(),
             ) {
                 val rulerWidthPx = with(density) { maxWidth.toPx() }
-                Row(Modifier.horizontalScroll(hScroll)) {
-                    slots.forEach { slot ->
+                val rulerWindow by remember(hScroll, density, rulerWidthPx, pxPerMin) {
+                    derivedStateOf {
+                        guideRenderWindow(hScroll.value, rulerWidthPx, with(density) { pxPerMin.dp.toPx() })
+                    }
+                }
+                // Retain the full scroll extent without laying out and visiting
+                // accessibility bounds for every offscreen label on each frame.
+                Box(Modifier.horizontalScroll(hScroll).width(halfHourWidth * slots.size).fillMaxHeight()) {
+                    slots.forEachIndexed { index, slot ->
+                        if (!rulerWindow.intersects(index * 30, (index + 1) * 30)) return@forEachIndexed
                         Box(
                             modifier = Modifier
+                                .offset(x = halfHourWidth * index)
                                 .width(halfHourWidth)
                                 .fillMaxHeight()
-                                .padding(start = 12.dp),
+                                .padding(start = 12.dp)
+                                .testTag("iptv-time-slot:$index"),
                             contentAlignment = Alignment.CenterStart,
                         ) {
                             Text(
@@ -831,7 +843,6 @@ private fun ProgramsRow(
         modifier = Modifier
             .width(totalWidth)
             .height(rowHeight)
-            .clipToBounds()
             .background(
                 if (stripe) LiveColors.RowStripe else Color.Transparent
             ),
