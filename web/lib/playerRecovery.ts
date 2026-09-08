@@ -113,12 +113,12 @@ export function bufferedAhead(ranges: TimeRanges | null, currentTime: number): n
 export type MediaFaultKind = "retryable" | "fatal";
 
 export function classifyMediaError(code: number | null | undefined): MediaFaultKind {
-  // NETWORK (2) and ABORTED (1) say nothing about whether the browser can play
-  // this content — the bytes just stopped arriving.
-  if (code === 1 || code === 2) return "retryable";
   // DECODE (3) and SRC_NOT_SUPPORTED (4) mean this browser genuinely cannot
   // play these bytes; retrying the same URL will fail the same way.
-  return "fatal";
+  if (code === 3 || code === 4) return "fatal";
+  // Missing/unknown codes, NETWORK (2), and ABORTED (1) are not evidence of an
+  // unsupported codec. Adaptive engines often fail without setting video.error.
+  return "retryable";
 }
 
 /** End of the buffered range holding the playhead, for the scrubber's buffer bar. */

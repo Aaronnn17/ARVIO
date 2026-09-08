@@ -45,7 +45,7 @@ let cached: BrowserMediaCapabilities | null = null;
 
 function mseSupports(type: string) {
   try {
-    return typeof MediaSource !== "undefined" && MediaSource.isTypeSupported(type);
+    return mediaSourceConstructor()?.isTypeSupported(type) ?? false;
   } catch {
     return false;
   }
@@ -59,13 +59,18 @@ function videoCanPlay(video: HTMLVideoElement, type: string) {
   }
 }
 
+export function mediaSourceConstructor(): typeof MediaSource | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as Window & { ManagedMediaSource?: typeof MediaSource }).ManagedMediaSource ?? window.MediaSource;
+}
+
 export function getMediaCapabilities(): BrowserMediaCapabilities {
   if (cached) return cached;
   if (typeof window === "undefined" || typeof document === "undefined") return NO_CAPABILITIES;
   const video = document.createElement("video");
   const supports = (type: string) => mseSupports(type) || videoCanPlay(video, type);
   cached = {
-    mse: typeof MediaSource !== "undefined",
+    mse: !!mediaSourceConstructor(),
     nativeHls: videoCanPlay(video, "application/vnd.apple.mpegurl"),
     h264: supports('video/mp4; codecs="avc1.640028"'),
     hevc: supports('video/mp4; codecs="hvc1.1.6.L120.90"') || supports('video/mp4; codecs="hev1.1.6.L120.90"'),

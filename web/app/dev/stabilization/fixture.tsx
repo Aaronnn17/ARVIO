@@ -79,6 +79,8 @@ export function StabilizationFixture() {
       <div className="fixture-tools">
         <button onClick={() => { setSettings((old) => ({ ...old, homeServers: (["plex", "jellyfin", "emby"] as const).map((type) => ({ id: type, type, name: `Fixture ${type}`, url: `https://${type}.invalid`, token: "fixture-only", userId: "fixture", enabled: true })) })); setPage("library"); }}>Test home server libraries</button>
         <button onClick={() => setActiveStream({ source: "YouTube player example", addonName: "Test fixture", quality: "", size: "", url: "https://www.youtube.com/watch?v=M7lc1UVf-VE" })}>Test YouTube embed</button>
+        <button onClick={() => setActiveStream({ source: "Browser conversion test", addonName: "Local fixture", quality: "540p", size: "", url: "http://127.0.0.1:3099/media/multi.mkv", remux: true })}>Test MKV browser player</button>
+        <button onClick={() => setActiveStream({ source: "Adaptive playback test", addonName: "Local fixture", quality: "540p", size: "", url: "http://127.0.0.1:3099/media/hls/index.m3u8", transport: "hls" })}>Test HLS browser player</button>
         <button onClick={() => { sessionStorage.removeItem("arvio.web.noAddonsPrompt.v1:fixture"); setSettings((old) => ({ ...old, homeServers: [], iptvPlaylists: [] })); setPage("onboarding"); setShowOnboarding(true); }}>Test source setup</button>
       </div>
       {showOnboarding && <NoAddonsPrompt />}

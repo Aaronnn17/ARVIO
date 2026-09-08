@@ -29,10 +29,11 @@ import { cachedDebridDirectUrl, invalidateDebridDirectUrl, isUncachedDebridStrea
 import type { RemuxAudioTrack } from "@/lib/remux";
 import { copyStreamUrl, externalLaunchMode, openExternalPlayer, openInAnyPlayer } from "@/lib/externalPlayers";
 import { proxiedUrl } from "@/lib/http";
-import { attachPlayback } from "@/lib/player";
+import { attachPlayback, type PlaybackHandle, type PlaybackTracks, type PlaybackError } from "@/lib/player";
 import { resolverMediaUrl, resolverSubtitleUrl } from "@/lib/resolver";
 import { sourcePickerScore, streamSizeBytes } from "@/lib/sourceRank";
-import { playbackPlan, streamPlayability } from "@/lib/streamCompatibility";
+import { playbackPlan, streamPlayability, canTryRemux, canProviderTranscode } from "@/lib/streamCompatibility";
+import { reportHomeServerPlayback, updateHomeServerPlaybackPosition } from "@/lib/homeServerPlayback";
 import {
   bufferedAhead,
   bufferedEndAt,
@@ -127,7 +128,7 @@ function directManifestUrl(url: string) {
 
 function workerManifestUrl(url: string) {
   // Manifest via the app backend (reaches hosts that block Cloudflare),
-  // segments via the resolver worker (free bandwidth, CORS-clean).
+  // segments via the configured resolver worker with its CORS/header handling.
   const target = new URL(proxiedUrl(url, liveTvProxyHeaders()));
   target.searchParams.set("rewrite", "worker");
   return target.toString();
@@ -192,7 +193,9 @@ export function PlayerOverlay() {
     closePlayer
   } = useApp();
 
-  if (!activeStream?.url) return null;
+  const enrichment = streams.find((candidate) => activeStream && (isSameStream(candidate, activeStream) || (candidate.url && candidate.url === activeStream.url)));
+  const enrichedStream = useMemo(() => activeStream ? mergeSubtitleTracks(activeStream, enrichment) : null, [activeStream, enrichment]);
+  if (!activeStream?.url || !enrichedStream) return null;
 
   const ytId = youTubeId(activeStream.url);
   const title = activeChannel?.name ?? selected?.title ?? activeStream.source;
@@ -224,10 +227,6 @@ export function PlayerOverlay() {
   }
 
   const canAdvance = Boolean(selected?.mediaType === "tv" && selectedEpisode && !activeChannel);
-  const enrichedStream = mergeSubtitleTracks(
-    activeStream,
-    streams.find((candidate) => isSameStream(candidate, activeStream) || (candidate.url && candidate.url === activeStream.url))
-  );
   return (
     <VideoPlayer
       title={title}
@@ -263,7 +262,7 @@ function VideoPlayer({
   activeProfileId,
   liveTv,
   canAdvance,
-  onSelectStream,
+  onSelectStream: selectStream,
   onAdvance,
   onToast,
   onClose
@@ -287,6 +286,12 @@ function VideoPlayer({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const onSelectStream = useCallback((next: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean }) => {
+    const time = (videoRef.current?.currentTime ?? 0) + (stream.playbackSession?.startOffset ?? 0);
+    selectStream({ ...next, resumePositionSeconds: time }, options);
+  }, [selectStream, stream.playbackSession?.startOffset]);
+  const transportRef = useRef<PlaybackHandle | null>(null);
+  const [transportTracks, setTransportTracks] = useState<PlaybackTracks>({ audioTracks: [], qualities: [], selectedAudioTrackId: null, selectedQualityId: null });
   const lastSavedRef = useRef(0);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -341,6 +346,7 @@ function VideoPlayer({
   }, [nextCountdown, onAdvance]);
   const [fullscreen, setFullscreen] = useState(false);
   const [error, setError] = useState(false);
+  const [errorDetail, setErrorDetail] = useState("");
   useEffect(() => {
     if (error) void trackPremiumDaily(authClient, "playback_failed", { playback_type: liveTv ? "live" : "vod" });
   }, [error, liveTv]);
@@ -353,6 +359,45 @@ function VideoPlayer({
   // effect); -1 means "use the probe's automatic choice".
   const remuxAudioIndexRef = useRef(-1);
   const [remuxRestartKey, setRemuxRestartKey] = useState(0);
+  useEffect(() => {
+    if (!stream.playbackSession) return;
+    const video = videoRef.current;
+    if (!video) return;
+    const offset = stream.playbackSession.startOffset ?? 0;
+    let position = offset;
+    let started = false;
+    let stopped = false;
+    const report = (event: "start" | "progress" | "stop") => {
+      void reportHomeServerPlayback(stream, settings, event, { positionSeconds: position, durationSeconds: video.duration + offset, paused: video.paused }).catch(() => undefined);
+    };
+    const capture = () => {
+      if (video.readyState >= 1) position = video.currentTime + offset;
+      updateHomeServerPlaybackPosition(stream, { positionSeconds: position, durationSeconds: video.duration + offset, paused: video.paused });
+    };
+    const playing = () => {
+      if (stopped) { resumeAtRef.current = video.currentTime + offset; onSelectStream(stream, { forceBrowser: true }); return; }
+      capture(); started = true;
+      // The session reporter deduplicates acknowledged starts and retries failures.
+      report("start");
+    };
+    const paused = () => { capture(); if (started) report("progress"); };
+    const stop = () => { capture(); if (!stopped) { stopped = true; report("stop"); } };
+    video.addEventListener("timeupdate", capture);
+    video.addEventListener("playing", playing);
+    video.addEventListener("pause", paused);
+    video.addEventListener("ended", stop);
+    video.addEventListener("arvio-playback-failed", stop);
+    const timer = window.setInterval(() => { capture(); if (started && !video.paused) report("progress"); }, 15000);
+    return () => {
+      window.clearInterval(timer);
+      video.removeEventListener("timeupdate", capture); video.removeEventListener("playing", playing); video.removeEventListener("pause", paused);
+      video.removeEventListener("ended", stop); video.removeEventListener("arvio-playback-failed", stop);
+      // The store owns the session and releases it even if this effect never mounts.
+    };
+    // Session/server credentials are captured for this source, not the next profile.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream.url, stream.playbackSession?.sessionId]);
+  useEffect(() => { if (error) videoRef.current?.dispatchEvent(new Event("arvio-playback-failed")); }, [error]);
   const switchRemuxAudio = useCallback((index: number) => {
     remuxAudioIndexRef.current = index;
     setRemuxAudioIndex(index);
@@ -373,12 +418,14 @@ function VideoPlayer({
   // (TorBox limits connections per link) — so the container is probed ONLY
   // when the user opens the Audio panel, on demand.
   const [audioProbeState, setAudioProbeState] = useState<"idle" | "probing" | "done">("idle");
+  const audioProbeAbort = useRef<AbortController | null>(null);
   useEffect(() => {
     setAudioProbeState("idle");
     if (!stream.remux) {
       setRemuxTracks([]);
       setRemuxAudioIndex(-1);
     }
+    return () => audioProbeAbort.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.url]);
   const probeAudioTracks = useCallback(() => {
@@ -387,19 +434,22 @@ function VideoPlayer({
     const text = `${current.url} ${current.originalUrl ?? ""} ${current.source ?? ""} ${current.description ?? ""}`.toLowerCase();
     if (!/\.mkv|matroska|remux/.test(text)) return;
     setAudioProbeState("probing");
+    audioProbeAbort.current?.abort();
+    const controller = new AbortController();
+    audioProbeAbort.current = controller;
     void (async () => {
       try {
         const { probeAndPrepareRemux } = await import("@/lib/remux");
         const probeUrl = cachedDebridDirectUrl(current.url) ?? current.url!;
-        const prepared = await probeAndPrepareRemux(probeUrl, undefined, settings.audioLanguage);
-        if (prepared && prepared.probe.audioTracks.length > 1) {
+        const prepared = await probeAndPrepareRemux(probeUrl, current.behaviorHints?.proxyHeaders?.request, settings.audioLanguage, { signal: controller.signal });
+        if (!controller.signal.aborted && prepared && prepared.probe.audioTracks.length > 1) {
           setRemuxTracks(prepared.probe.audioTracks);
         }
         prepared?.destroy();
       } catch {
         // Probe is best-effort; the source keeps direct-playing either way.
       } finally {
-        setAudioProbeState("done");
+        if (!controller.signal.aborted) setAudioProbeState("done");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -515,6 +565,7 @@ function VideoPlayer({
     if (!booted || liveTv) return undefined;
     const video = videoRef.current;
     if (!video) return undefined;
+    if (stream.remux) return undefined;
     // Mid-playback stall recovery. Previously this only reacted after three
     // stalls in 90s AND only if a strictly smaller source existed — so a single
     // source, an equal-sized source, or a source with unknown size (all common)
@@ -584,23 +635,15 @@ function VideoPlayer({
       if (action.kind === "reload") {
         reloaded = true;
         const resumeAt = action.resumeAt;
-        // Re-attaching drops a dead socket and re-requests the byte range; the
-        // resume seek has to wait until the fresh element can accept it.
-        const onLoaded = () => {
-          video.removeEventListener("loadedmetadata", onLoaded);
-          try { video.currentTime = resumeAt; } catch { /* ignore */ }
-          void video.play().catch(() => undefined);
-        };
-        video.addEventListener("loadedmetadata", onLoaded);
-        video.load();
+        transportRef.current?.reload(resumeAt);
         return;
       }
       // escalate
       escalated = true;
       const lighter = lighterSource();
-      if (lighter) {
+      if (lighter && currentStreamRef.current.autoSelect) {
         onToast("Your connection can't keep up with this version — switching to a lighter one.");
-        onSelectStream(lighter, { forceBrowser: true });
+        onSelectStream({ ...lighter, autoSelect: true }, { forceBrowser: true });
         return;
       }
       // Nothing lighter: surface the failure instead of buffering silently so
@@ -652,7 +695,7 @@ function VideoPlayer({
   // Where to resume when the player re-attaches for the SAME title: a source
   // hop, a remux escalation or a stall reload. Without this every switch
   // restarted at 0, which is punishing 40 minutes into a film.
-  const resumeAtRef = useRef(0);
+  const resumeAtRef = useRef(stream.resumePositionSeconds ?? 0);
   const sourceListRef = useRef(sourceList);
   sourceListRef.current = sourceList;
   const currentStreamRef = useRef(stream);
@@ -664,7 +707,7 @@ function VideoPlayer({
     switchedForBlackRef.current = false;
   }, [item?.id, selectedEpisode?.season, selectedEpisode?.episode]);
   const tryNextSource = useCallback(() => {
-    if (liveTv || autoSourceHopsRef.current >= 6) return false;
+    if (liveTv || !currentStreamRef.current.autoSelect || autoSourceHopsRef.current >= 6) return false;
     // Carry the watched position across the switch — the replacement source is
     // the same title, so restarting at 0 loses the user's place.
     const playhead = videoRef.current?.currentTime ?? 0;
@@ -695,7 +738,7 @@ function VideoPlayer({
     if (!next) return false;
     autoSourceHopsRef.current += 1;
     onToast(`Source failed — trying ${next.source || next.addonName || "the next source"}`);
-    onSelectStream(next, { forceBrowser: true });
+    onSelectStream({ ...next, autoSelect: true }, { forceBrowser: true });
     return true;
   }, [liveTv, onSelectStream, onToast]);
   const badges = useMemo(() => {
@@ -705,6 +748,8 @@ function VideoPlayer({
     return stream.transcoded ? ["TRANSCODE", ...base] : base;
   }, [stream, liveTv]);
   const mediaMeta = [subtitleLabel, stream.quality, stream.size, stream.addonName].filter(Boolean).join(" - ");
+  const playbackIdentity = JSON.stringify([stream.url, stream.remux, stream.transcoded, stream.transport, stream.behaviorHints?.proxyHeaders?.request]);
+  useEffect(() => { setActiveSubtitle(defaultSubtitleIndex(stream, settings.defaultSubtitle)); }, [stream.subtitles, stream.url, settings.defaultSubtitle]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -713,20 +758,31 @@ function VideoPlayer({
     // In-browser remux path (Tier 3): repackage an MKV direct link and play the
     // browser-safe audio track. Takes over the element entirely for this source.
     if (stream.remux) {
+      transportRef.current = null;
+      setTransportTracks({ audioTracks: [], qualities: [], selectedAudioTrackId: null, selectedQualityId: null });
       let cancelled = false;
+      const controller = new AbortController();
       let handle: { destroy: () => void } | null = null;
       let remuxWatchdog: number | undefined;
       setError(false);
+      setErrorDetail("");
       setBuffering(true);
-      setActiveSubtitle(-1);
+      setActiveSubtitle(defaultSubtitleIndex(stream, settings.defaultSubtitle));
       setRemuxTracks([]);
       lastSavedRef.current = 0;
       void (async () => {
         try {
           const { probeAndPrepareRemux } = await import("@/lib/remux");
-          const prepared = await probeAndPrepareRemux(stream.url!, undefined, settings.audioLanguage);
+          const remuxFailed = (message: string) => {
+            if (cancelled) return;
+            setErrorDetail(message);
+            setBuffering(false); setError(true); setShowControls(true);
+          };
+          const prepared = await probeAndPrepareRemux(stream.url!, stream.behaviorHints?.proxyHeaders?.request, settings.audioLanguage, { signal: controller.signal, onError: remuxFailed });
           if (cancelled) { prepared?.destroy(); return; }
-          if (!prepared || prepared.probe.chosenAudioIndex < 0 || !prepared.probe.videoPlayable) {
+          if (!prepared || (prepared.probe.audioTracks.length > 0 && prepared.probe.chosenAudioIndex < 0) || !prepared.probe.videoPlayable) {
+            prepared?.destroy();
+            if (stream.homeServer && !stream.transcoded) { onSelectStream(stream, { forceBrowser: true, forceTranscode: true }); return; }
             if (tryNextSource()) return;
             setBuffering(false);
             setError(true);
@@ -736,20 +792,9 @@ function VideoPlayer({
           setRemuxTracks(prepared.probe.audioTracks);
           const startIndex = remuxAudioIndexRef.current >= 0 ? remuxAudioIndexRef.current : prepared.probe.chosenAudioIndex;
           setRemuxAudioIndex(startIndex);
-          await prepared.start(video, startIndex);
+          await prepared.start(video, startIndex, resumeAtRef.current);
           if (cancelled) return;
-          // Restore the position carried in from a source hop or an audio-track
-          // switch, which routes through this same remux path.
-          const resumeAt = resumeAtRef.current;
-          if (resumeAt > 5) {
-            const seekWhenReady = () => {
-              const target = video.duration > 0 ? Math.min(resumeAt, video.duration - 5) : resumeAt;
-              if (target > 0) { try { video.currentTime = target; } catch { /* ignore */ } }
-            };
-            if (video.readyState >= 1) seekWhenReady();
-            else video.addEventListener("loadedmetadata", seekWhenReady, { once: true });
-            resumeAtRef.current = 0;
-          }
+          resumeAtRef.current = 0;
           void video.play().catch(() => undefined);
           // The remux pipeline can die silently (conversion abort, CDN cutting
           // the range stream) — every internal error is swallowed and the UI
@@ -765,8 +810,9 @@ function VideoPlayer({
           let stuckTicks = 0;
           remuxWatchdog = window.setInterval(() => {
             if (cancelled) return;
+            if (video.paused || video.ended || video.seeking) { lastSeen = video.currentTime; stuckTicks = 0; return; }
             const advancing = video.currentTime > lastSeen + 0.05;
-            lastSeen = Math.max(lastSeen, video.currentTime);
+            lastSeen = video.currentTime;
             if (advancing && video.readyState >= 2) { stuckTicks = 0; return; }
             stuckTicks += 1;
             if (stuckTicks < REMUX_STUCK_TICKS) return;
@@ -785,6 +831,7 @@ function VideoPlayer({
       })();
       return () => {
         cancelled = true;
+        controller.abort();
         window.clearInterval(remuxWatchdog);
         handle?.destroy();
         video.removeAttribute("src");
@@ -793,13 +840,25 @@ function VideoPlayer({
     }
 
     setError(false);
+    setErrorDetail("");
     setBuffering(true);
     setActiveSubtitle(defaultSubtitleIndex(stream, settings.defaultSubtitle));
     lastSavedRef.current = 0;
-    const headers = config.allowNetlifyMediaProxy ? stream.behaviorHints?.proxyHeaders?.request : undefined;
+    const headers = stream.behaviorHints?.proxyHeaders?.request;
     let handlingError = false;
     let cancelled = false;
-    let detach: (() => void) | undefined;
+    let detach: PlaybackHandle | undefined;
+    setTransportTracks({ audioTracks: [], qualities: [], selectedAudioTrackId: null, selectedQualityId: null });
+    const attach = (url: string) => {
+      const handle = attachPlayback(video, url, {
+        onError: handlePlaybackError, live: liveTv,
+        transport: url === stream.url ? stream.transport : undefined,
+        requestHeaders: url === stream.url ? headers : undefined,
+        onTracks: (tracks) => { if (!cancelled) setTransportTracks(tracks); }
+      });
+      transportRef.current = handle;
+      return handle;
+    };
     // Set once this source has actually rendered frames. Everything below is
     // STARTUP logic — "can this URL be opened at all?" — and must stand down
     // afterwards. Without this, an error five seconds into a working stream ran
@@ -811,17 +870,17 @@ function VideoPlayer({
     // Playback ladder: direct first (free for CORS-friendly providers), then the
     // Cloudflare resolver media proxy for live TV (fixes CORS/ORB without Netlify
     // bandwidth), then the legacy Netlify fallbacks.
-    const attempts: string[] = [headers ? proxiedUrl(stream.url, headers) : stream.url];
+    const attempts: string[] = [stream.url];
     // Catch-up recordings come from the same IPTV panels as live channels, so
     // they get the live relay hops — but keep VOD controls (seekable).
     const iptvRelay = liveTv || stream.addonName === "Catch-up";
     if (iptvRelay) {
       const hlsTwin = xtreamHlsVariant(stream.url);
       if (hlsTwin) attempts.push(hlsTwin);
-      const workerUrl = resolverMediaUrl(stream.url, liveTvProxyHeaders());
+      const workerUrl = resolverMediaUrl(stream.url, { ...liveTvProxyHeaders(), ...headers });
       if (workerUrl) attempts.push(workerUrl);
       if (hlsTwin) {
-        const workerTwin = resolverMediaUrl(hlsTwin, liveTvProxyHeaders());
+        const workerTwin = resolverMediaUrl(hlsTwin, { ...liveTvProxyHeaders(), ...headers });
         if (workerTwin) attempts.push(workerTwin);
         attempts.push(workerManifestUrl(hlsTwin));
       }
@@ -882,8 +941,9 @@ function VideoPlayer({
       }
     };
     let refreshedLink = false;
-    const handlePlaybackError = () => {
+    const handlePlaybackError = (fault?: PlaybackError) => {
       if (cancelled || handlingError) return;
+      if (fault) setErrorDetail(fault.message);
       // A source that already played is not a startup failure. Walking the
       // ladder here would re-attach a different URL (or hop to another source)
       // mid-film; the stall watchdog recovers in place instead, keeping the
@@ -891,7 +951,7 @@ function VideoPlayer({
       // exception — those bytes will never play here, so say so plainly rather
       // than letting the watchdog retry something that cannot work.
       if (hasPlayed) {
-        if (classifyMediaError(video.error?.code) === "fatal") {
+        if (fault?.fatal || classifyMediaError(video.error?.code) === "fatal") {
           setBuffering(false);
           setError(true);
           setShowControls(true);
@@ -918,7 +978,7 @@ function VideoPlayer({
             if (result.url && result.url !== stream.url) {
               setError(false);
               setBuffering(true);
-              detach = attachPlayback(video, result.url, { onError: handlePlaybackError, live: liveTv });
+              detach = attach(result.url);
               armStallTimer();
               requestPlayback();
               handlingError = false;
@@ -939,7 +999,7 @@ function VideoPlayer({
         setError(false);
         setBuffering(true);
         detach?.();
-        detach = attachPlayback(video, nextUrl, { onError: handlePlaybackError, live: liveTv });
+        detach = attach(nextUrl);
         armStallTimer();
         requestPlayback();
         handlingError = false;
@@ -951,12 +1011,17 @@ function VideoPlayer({
       // Only when the plan says a remux can actually succeed here: escalating a
       // source whose audio this browser cannot decode just burns CPU and time
       // before failing, when the honest move is to fall through to VLC.
-      if (!liveTv && !stream.remux && playbackPlan(stream).route === "here" && playbackPlan(stream).method === "remux") {
+      if (!liveTv && !stream.homeServer && !stream.remux && !stream.transcoded && canTryRemux(stream)) {
         cancelled = true;
         detach?.();
         const playhead = video.currentTime;
         if (playhead > 5) resumeAtRef.current = playhead;
         onSelectStream(stream, { forceRemux: true });
+        return;
+      }
+      if (!liveTv && !stream.transcoded && canProviderTranscode(stream)) {
+        cancelled = true; detach?.();
+        onSelectStream(stream, { forceTranscode: true, forceBrowser: true });
         return;
       }
       // This source is dead — hop to the next playable one before giving up.
@@ -969,7 +1034,7 @@ function VideoPlayer({
       setError(true);
       handlingError = false;
     };
-    detach = attachPlayback(video, uniqueAttempts[0], { onError: handlePlaybackError, live: liveTv });
+    detach = attach(uniqueAttempts[0]);
     armStallTimer();
     const onReadyToStart = () => {
       window.clearTimeout(stallTimer);
@@ -1019,8 +1084,11 @@ function VideoPlayer({
       video.removeEventListener("canplay", onReadyToStart);
       video.removeEventListener("error", onErr);
       detach?.();
+      if (transportRef.current === detach) transportRef.current = null;
     };
-  }, [stream, stream.remux, remuxRestartKey, settings.defaultSubtitle, liveTv]);
+    // Artwork, source enrichment and subtitle updates must not restart a playing URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playbackIdentity, remuxRestartKey, liveTv]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1486,9 +1554,7 @@ function VideoPlayer({
         <div className="player-error">
           <p>{liveTv ? "This channel could not be played right now." : "This source could not be played in the browser."}</p>
           <span>
-            {liveTv
-              ? "Most IPTV providers serve live channels over plain HTTP, which a secure web page can't play (mixed content), and many also block anything that isn't a real player app. Open it in VLC — it plays the exact same stream from your own connection, with no browser restrictions."
-              : "This title's versions use a codec (often Dolby Vision or HEVC) your browser can't render. Open it in an external player, which decodes anything — ARVIO still tracks your progress on Trakt when you come back."}
+            {errorDetail || "The source could not be opened. Its network access, browser permissions or media format may be unsupported. Try another source or an external player."}
           </span>
           <div className="player-error-actions">
             <button type="button" className="player-error-external" onClick={() => openExternal("vlc", stream)}>
@@ -1584,7 +1650,12 @@ function VideoPlayer({
 
           {activePanel === "audio" && (
             <div className="player-panel-list">
-              {remuxTracks.length > 0 ? (
+              {transportTracks.audioTracks.length > 0 ? transportTracks.audioTracks.map((track) => (
+                <button type="button" key={track.id} className={`player-panel-row ${transportTracks.selectedAudioTrackId === track.id ? "is-active" : ""}`} onClick={() => transportRef.current?.selectAudioTrack(track.id)}>
+                  <span className="player-row-icon">{transportTracks.selectedAudioTrackId === track.id ? <Check size={17} /> : ""}</span>
+                  <span><strong>{track.label}</strong><em>{track.language ?? ""}</em></span>
+                </button>
+              )) : remuxTracks.length > 0 ? (
                 remuxTracks.map((track) => (
                   <button
                     type="button"
@@ -1656,6 +1727,16 @@ function VideoPlayer({
 
           {activePanel === "settings" && (
             <div className="player-settings-panel">
+              <div className="player-setting-row"><span><strong>Playback</strong></span><span>{stream.transcoded ? "Server conversion" : stream.remux ? "On-device conversion" : stream.transport === "hls" ? "HLS" : stream.transport === "dash" ? "DASH" : stream.transport === "mpegts" ? "MPEG-TS" : "Direct"}</span></div>
+              <div className="player-setting-row"><span><strong>Video</strong></span><span>{videoRef.current?.videoWidth ? `${videoRef.current.videoWidth} x ${videoRef.current.videoHeight}` : "Loading"}</span></div>
+              <div className="player-setting-row"><span><strong>Buffered ahead</strong></span><span>{Math.round(bufferAheadSec)} s</span></div>
+              {transportTracks.qualities.length > 0 && <div className="player-setting-row">
+                <span><strong>Quality</strong></span>
+                <select aria-label="Playback quality" value={transportTracks.selectedQualityId ?? "auto"} onChange={(event) => transportRef.current?.selectQuality(event.target.value === "auto" ? null : event.target.value)}>
+                  <option value="auto">Auto</option>
+                  {transportTracks.qualities.map((quality) => <option key={quality.id} value={quality.id}>{quality.label}</option>)}
+                </select>
+              </div>}
               <button type="button" className="player-setting-toggle" onClick={() => updateSettings({ autoPlayNext: !settings.autoPlayNext })}>
                 <span><strong>Auto-play next episode</strong><em>Play the next episode automatically</em></span>
                 <span className={`player-switch ${settings.autoPlayNext ? "is-on" : ""}`} />
@@ -1827,7 +1908,7 @@ function VideoPlayer({
               />
             </div>
             {liveTv
-              ? <span className="player-time player-live-indicator"><span className="live-dot" /> LIVE</span>
+              ? <button type="button" className="player-time player-live-indicator" title="Return to live" onClick={() => { if (transportRef.current?.goLive()) void videoRef.current?.play().catch(() => undefined); }}><span className="live-dot" /> LIVE</button>
               : (
                 <span className="player-time">
                   {fmt(scrubDisplayTime)} <em>/</em> {fmt(duration)}

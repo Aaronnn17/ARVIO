@@ -207,6 +207,12 @@ export interface SubtitleTrack {
 }
 
 export interface StreamSource {
+  transport?: "file" | "hls" | "dash" | "mpegts";
+  media?: { container?: string; videoCodec?: string; audioCodec?: string; hdr?: string };
+  homeServer?: { serverId: string; itemId: string; mediaSourceId?: string; mediaIndex?: number; partIndex?: number };
+  playbackSession?: { serverId: string; itemId: string; sessionId: string; mediaSourceId?: string; transcoding: boolean; startOffset?: number };
+  autoSelect?: boolean;
+  resumePositionSeconds?: number;
   source: string;
   addonName: string;
   addonId?: string;
@@ -327,6 +333,7 @@ export interface IptvPlaylistEntry {
 }
 
 export interface IptvChannel {
+  requestHeaders?: Record<string, string>;
   id: string;
   name: string;
   group: string;

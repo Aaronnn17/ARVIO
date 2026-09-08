@@ -601,29 +601,52 @@ export function parseM3u(text: string, playlistId = "default") {
   const channels: IptvChannel[] = [];
   const seen = new Set<string>();
   let pending: Record<string, string> | null = null;
+  let requestHeaders: Record<string, string> = Object.create(null);
 
-  for (const line of lines) {
-    if (line.startsWith("#EXTINF")) {
-      const title = line.split(",").slice(1).join(",").trim();
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (/^#EXTINF:/i.test(line)) {
+      // Header values can contain commas; only an unquoted comma starts the title.
+      const [, metadata = line, title = ""] = line.match(/^#EXTINF:((?:[^"',]|"[^"]*"|'[^']*')*),(.*)$/i) ?? [];
       pending = {
-        name: attr(line, "tvg-name") || title || "Unknown Channel",
-        group: attr(line, "group-title") || "Uncategorized",
-        logo: attr(line, "tvg-logo"),
-        tvgId: attr(line, "tvg-id"),
-        number: firstAttr(line, ["tvg-chno", "tvg-ch-number", "channel-number", "ch-number", "number"]),
-        catchupDays: attr(line, "catchup-days") || attr(line, "timeshift"),
-        catchupType: attr(line, "catchup"),
-        catchupSource: attr(line, "catchup-source"),
-        language: firstAttr(line, ["tvg-language", "tvg-lang", "language", "lang"]),
-        country: firstAttr(line, ["tvg-country", "country"]),
-        qualityLabel: firstAttr(line, ["quality", "tvg-quality", "resolution"])
+        name: attr(metadata, "tvg-name") || title.trim() || "Unknown Channel",
+        group: attr(metadata, "group-title") || "Uncategorized",
+        logo: attr(metadata, "tvg-logo"),
+        tvgId: attr(metadata, "tvg-id"),
+        number: firstAttr(metadata, ["tvg-chno", "tvg-ch-number", "channel-number", "ch-number", "number"]),
+        catchupDays: attr(metadata, "catchup-days") || attr(metadata, "timeshift"),
+        catchupType: attr(metadata, "catchup"),
+        catchupSource: attr(metadata, "catchup-source"),
+        language: firstAttr(metadata, ["tvg-language", "tvg-lang", "language", "lang"]),
+        country: firstAttr(metadata, ["tvg-country", "country"]),
+        qualityLabel: firstAttr(metadata, ["quality", "tvg-quality", "resolution"])
       };
-    } else if (pending && line.trim() && !line.startsWith("#")) {
+      requestHeaders = Object.create(null);
+      for (const match of metadata.matchAll(/(?:^|\s)([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s,]+))/g)) {
+        const name = m3uHeaderName(match[1]);
+        if (name) setM3uHeader(requestHeaders, name, match[2] ?? match[3] ?? match[4] ?? "");
+      }
+    } else if (pending && /^#EXTVLCOPT:/i.test(line)) {
+      const option = line.match(/^#EXTVLCOPT:\s*([^=]+)=(.*)$/i);
+      const name = option && m3uHeaderName(option[1]);
+      if (name && option) setM3uHeader(requestHeaders, name, option[2].trim().replace(/^(["'])(.*)\1$/, "$2"));
+    } else if (pending && line && !line.startsWith("#")) {
       if (isDividerChannelName(pending.name)) {
         pending = null;
         continue;
       }
-      const streamUrl = line.trim();
+      const pipe = line.indexOf("|");
+      const streamUrl = (pipe < 0 ? line : line.slice(0, pipe)).trim();
+      // URL headers override entry options, without decoding/re-serializing a signed stream URL.
+      if (pipe >= 0) {
+        for (const [name, value] of new URLSearchParams(line.slice(pipe + 1).replace(/\|/g, "&"))) {
+          setM3uHeader(requestHeaders, name, value);
+        }
+      }
+      if (!streamUrl) {
+        pending = null;
+        continue;
+      }
       const id = `${playlistId}:${buildChannelId(streamUrl, pending.tvgId)}`;
       if (seen.has(id)) {
         pending = null;
@@ -643,13 +666,31 @@ export function parseM3u(text: string, playlistId = "default") {
         language: pending.language,
         country: pending.country,
         qualityLabel: pending.qualityLabel || inferQualityLabel(pending.name, pending.group),
-        streamUrl
+        streamUrl,
+        ...(Object.keys(requestHeaders).length ? { requestHeaders: { ...requestHeaders } } : {})
       });
       pending = null;
     }
   }
 
   return channels;
+}
+
+function m3uHeaderName(name: string): string | undefined {
+  switch (name.trim().toLowerCase()) {
+    case "http-user-agent": case "user-agent": case "useragent": return "User-Agent";
+    case "http-referrer": case "http-referer": case "referrer": case "referer": return "Referer";
+    case "http-origin": case "origin": return "Origin";
+    default: return undefined;
+  }
+}
+
+function setM3uHeader(headers: Record<string, string>, rawName: string, rawValue: string) {
+  const name = m3uHeaderName(rawName) ?? rawName.trim();
+  const value = rawValue.trim();
+  if (!/^[!#$%&'*+.^_`|~0-9a-z-]+$/i.test(name) || !value || /[^\t\x20-\x7e]/.test(rawValue)) return;
+  const existing = Object.keys(headers).find((key) => key.toLowerCase() === name.toLowerCase());
+  headers[existing ?? name] = value;
 }
 
 export function isDividerChannelName(name?: string) {

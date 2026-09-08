@@ -13,12 +13,15 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@mediabunny/ac3": "^1.50.6",
+    "@mediabunny/aac-encoder": "^1.55.7",
+    "@mediabunny/ac3": "^1.55.7",
+    "@mediabunny/dts": "^1.55.7",
     "@tanstack/react-virtual": "^3.14.10",
+    "dashjs": "^5.2.1",
     "hls.js": "^1.5.20",
     "ipaddr.js": "^2.5.0",
     "lucide-react": "^0.468.0",
-    "mediabunny": "^1.50.6",
+    "mediabunny": "^1.55.7",
     "mpegts.js": "^1.8.0",
     "next": "^15.0.4",
     "qrcode": "^1.5.4",

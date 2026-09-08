@@ -7,11 +7,13 @@ import { getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
 import { includeIptvContinueWatching, isUnwatchedContinueWatching, mergeTrackerContinueWatching } from "./continueWatching";
-import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
+import { cachedDebridDirectUrl, parseDebridStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { trackPremiumEvent } from "./premiumAnalytics";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
-import { canDirectPlayMkvStream, playbackPlan, streamPlayability } from "./streamCompatibility";
+import { playbackPlan } from "./streamCompatibility";
+import { prepareBrowserStream } from "./prepareBrowserStream";
+import { reportHomeServerPlayback } from "./homeServerPlayback";
 import { loadHomeServerRows } from "./homeserver";
 import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
@@ -635,6 +637,13 @@ export function AppProvider({
   const lastSyncedSettingsRef = useRef<string | null>(null);
   const sourceGeneration = useRef(0);
   const playbackGeneration = useRef(0);
+  const playbackPreparation = useRef<AbortController | null>(null);
+  const ownedPlayback = useRef<{ stream: StreamSource; settings: AppSettings } | null>(null);
+  const stopOwnedPlayback = useCallback(() => {
+    const owned = ownedPlayback.current;
+    ownedPlayback.current = null;
+    if (owned) void reportHomeServerPlayback(owned.stream, owned.settings, "stop").catch(() => undefined);
+  }, []);
   const iptvRefresh = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const guideRetryAfter = useRef(new Map<string, number>());
 
@@ -649,6 +658,7 @@ export function AppProvider({
   );
   const activeProfileIdRef = useRef(activeProfileId);
   activeProfileIdRef.current = activeProfileId;
+  useEffect(() => () => { playbackPreparation.current?.abort(); stopOwnedPlayback(); }, [activeProfileId, auth?.userId, stopOwnedPlayback]);
   const [trackingPreferences, setTrackingPreferences] = useState<TrackingPreferences>(() =>
     loadTrackingPreferences(activeProfileId)
   );
@@ -1536,6 +1546,15 @@ export function AppProvider({
   }, []);
 
   const playStream = useCallback((stream: StreamSource, options: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean } = {}) => {
+    playbackPreparation.current?.abort();
+    stopOwnedPlayback();
+    setActiveStream(null);
+    const sameEpisode = selected?.mediaType === "movie" || (selected?.seasonNumber === selectedEpisode?.season && selected?.episodeNumber === selectedEpisode?.episode);
+    if (stream.resumePositionSeconds === undefined && selected && sameEpisode && !selected.isWatched) {
+      stream = { ...stream, resumePositionSeconds: selected.resumePositionSeconds };
+    }
+    const controller = new AbortController();
+    playbackPreparation.current = controller;
     const generation = ++playbackGeneration.current;
     const profileId = activeProfileIdRef.current;
     const accountId = authClient.session?.userId;
@@ -1579,90 +1598,19 @@ export function AppProvider({
       void trackPremiumEvent(authClient, "external_playback_requested", { player: preferredPlayer, playback_type: "vod" }, true);
       return;
     }
-    // Explicit escalations (from the player's fallback buttons) resolve the
-    // heavier paths. These are opt-in, never the default click.
-    if (options.forceTranscode) {
-      const debrid = parseDebridStream(stream.url);
-      if (debrid) {
-        setToast("Preparing transcoded stream...");
-        void resolveTranscodeStream(debrid).then((result) => {
-          if (!isCurrent()) return;
-          if (result.url) setActiveStream({ ...stream, url: result.url, originalUrl: stream.url, transcoded: true });
-          else setToast(result.error ?? "Transcoding is unavailable for this source.");
-        });
+    setToast(stream.homeServer || options.forceTranscode ? "Preparing browser playback..." : null);
+    const timeout = window.setTimeout(() => { controller.abort(); if (isCurrent()) setToast("The source did not respond. Please try again or choose another source."); }, 20000);
+    void prepareBrowserStream(stream, settingsRef.current, { ...options, signal: controller.signal }).then((prepared) => {
+      if (!isCurrent() || controller.signal.aborted) {
+        void reportHomeServerPlayback(prepared, settingsRef.current, "stop").catch(() => undefined);
         return;
       }
-    }
-    if (options.forceRemux) {
-      const debrid = parseDebridStream(stream.url);
-      if (debrid) {
-        // Remux reads via fetch/UrlSource, which the torrentio /resolve/ redirect
-        // blocks with CORS — so resolve to the direct CDN URL first for remux only.
-        setToast("Preparing stream...");
-        void resolveDebridDirectUrl(debrid).then((result) => {
-          if (!isCurrent()) return;
-          if (result.url) {
-            setActiveStream({ ...stream, url: result.url, originalUrl: stream.url, remux: true });
-          } else {
-            // Resolution failed (uncached, quota, provider hiccup) — hand the raw
-            // stream back to the player so its ladder fails fast and auto-hops to
-            // the next source instead of dead-ending on a toast.
-            setToast(result.error ?? "Source not ready — trying the next one.");
-            setActiveStream({ ...stream, remux: true });
-          }
-        });
-        return;
-      }
-      setActiveStream({ ...stream, remux: true });
-      return;
-    }
-    // A debrid source the browser can only play after remuxing (MKV / lossless
-    // audio): go STRAIGHT to remux with the resolved CDN URL instead of first
-    // handing the raw torrentio link to <video>, which can only fail and burn a
-    // ~13s stall-timeout before escalating. This is the biggest "not instant"
-    // win — the top pick is almost always an MKV.
-    //
-    // EXCEPT on Chromium, whose <video> demuxes Matroska natively: an MKV whose
-    // codecs the device decodes (H.264/HEVC + AAC/Opus) plays directly from the
-    // CDN URL — instant, zero remux CPU, and immune to remux-pipeline stalls.
-    // The player's ladder still auto-escalates to remux if direct really fails.
-    const debrid = parseDebridStream(stream.url);
-    if (debrid && streamPlayability(stream).mode === "remux" && canDirectPlayMkvStream(stream)) {
-      const cachedDirect = cachedDebridDirectUrl(stream.url);
-      if (cachedDirect) {
-        setActiveStream({ ...stream, url: cachedDirect, originalUrl: stream.url });
-        return;
-      }
-      void resolveDebridDirectUrl(debrid).then((result) => {
-        if (!isCurrent()) return;
-        if (result.url) setActiveStream({ ...stream, url: result.url, originalUrl: stream.url });
-        else { setToast(result.error ?? "Source not ready — trying the next one."); setActiveStream(stream); }
-      });
-      return;
-    }
-    // Only pre-resolve into the remux pipeline when the plan actually calls for
-    // it. A source the plan routes to VLC must not silently start a CPU-heavy
-    // in-browser remux that is going to fail anyway.
-    if (debrid && playbackPlan(stream).method === "remux" && playbackPlan(stream).route === "here") {
-      const cached = cachedDebridDirectUrl(stream.url);
-      if (cached) {
-        setActiveStream({ ...stream, url: cached, originalUrl: stream.url, remux: true });
-        return;
-      }
-      void resolveDebridDirectUrl(debrid).then((result) => {
-        if (!isCurrent()) return;
-        if (result.url) setActiveStream({ ...stream, url: result.url, originalUrl: stream.url, remux: true });
-        else { setToast(result.error ?? "Source not ready — trying the next one."); setActiveStream({ ...stream, remux: true }); }
-      });
-      return;
-    }
-    // Otherwise hand the URL straight to the player for instant playback (like
-    // the Android app — the <video>/hls element follows redirects itself). If
-    // the source-list prefetch already resolved the debrid CDN URL, start on
-    // that directly and skip the torrentio redirect chain. The player escalates
-    // to remux/transcode only if playback actually fails to decode.
-    const resolved = cachedDebridDirectUrl(stream.url);
-    setActiveStream(resolved ? { ...stream, url: resolved, originalUrl: stream.url } : stream);
+      setActiveChannel(null);
+      ownedPlayback.current = { stream: prepared, settings: settingsRef.current };
+      setActiveStream(prepared);
+    }).catch((error: unknown) => {
+      if (isCurrent() && !controller.signal.aborted) setToast(error instanceof Error ? error.message : "Could not prepare this source.");
+    }).finally(() => window.clearTimeout(timeout));
   }, [selected, activeProfile, selectedEpisode]);
 
   const advanceEpisode = useCallback(async (): Promise<boolean> => {
@@ -1686,7 +1634,7 @@ export function AppProvider({
         setSelectedEpisode({ season: next.seasonNumber!, episode: next.episodeNumber! });
         setSelected((item) => item ? { ...item, seasonNumber: next.seasonNumber, episodeNumber: next.episodeNumber, episodeTitle: episode.name, episodeStill: episode.still } : item);
         setActiveStream(null);
-        playStream(candidate, { forceBrowser: true });
+        playStream({ ...candidate, autoSelect: true, resumePositionSeconds: 0 }, { forceBrowser: true });
       };
       setStreams([]);
       const publish = (rows: StreamSource[]) => { if (sourceGeneration.current === generation) { mergeStreams(rows); choose(rows); } };
@@ -1749,6 +1697,8 @@ export function AppProvider({
   }, []);
 
   const playChannel = useCallback((channel: IptvChannel) => {
+    playbackPreparation.current?.abort();
+    stopOwnedPlayback();
     playbackGeneration.current++;
     const stream: StreamSource = {
       source: channel.name,
@@ -1756,7 +1706,8 @@ export function AppProvider({
       quality: "Live",
       size: "",
       url: channel.streamUrl,
-      description: channel.group
+      description: channel.group,
+      behaviorHints: { proxyHeaders: { request: channel.requestHeaders } }
     };
     if (openLiveExternally(stream, channel.name)) return;
     setActiveChannel(channel);
@@ -1767,6 +1718,8 @@ export function AppProvider({
   // seekable VOD stream (no activeChannel → scrubber works), but the player
   // still gives it the IPTV proxy ladder via the "Catch-up" addonName marker.
   const playCatchup = useCallback((channel: IptvChannel, program: IptvProgram) => {
+    playbackPreparation.current?.abort();
+    stopOwnedPlayback();
     playbackGeneration.current++;
     const url = buildXtreamCatchupUrl(settingsRef.current.iptvPlaylists, channel, program);
     if (!url) {
@@ -1780,7 +1733,8 @@ export function AppProvider({
       quality: "Catch-up",
       size: "",
       url,
-      description: channel.group
+      description: channel.group,
+      behaviorHints: { proxyHeaders: { request: channel.requestHeaders } }
     };
     if (openLiveExternally(stream, title)) return;
     setActiveChannel(null);
@@ -1788,6 +1742,8 @@ export function AppProvider({
   }, [setToast, openLiveExternally]);
 
   const closePlayer = useCallback(() => {
+    playbackPreparation.current?.abort();
+    stopOwnedPlayback();
     playbackGeneration.current++;
     setActiveStream(null);
     setActiveChannel(null);
