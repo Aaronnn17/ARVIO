@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.tv.live
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.ui.draw.drawBehind
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
@@ -1067,7 +1068,7 @@ private fun SidebarRow(
         focused -> LiveColors.Panel
         else -> Color.Transparent
     }
-    val surface by animateColorAsState(
+    val surface = animateColorAsState(
         if (focused) LiveColors.PanelRaised else bg,
         animationSpec = tween(120), label = "category-surface",
     )
@@ -1101,7 +1102,7 @@ private fun SidebarRow(
                     shape = RoundedCornerShape(8.dp),
                 )
                 .clip(RoundedCornerShape(8.dp))
-                .background(surface)
+                .drawBehind { drawRect(surface.value) }
                 .onPreviewKeyEvent { ev ->
                     val isSelect = ev.key == Key.DirectionCenter || ev.key == Key.Enter
                     when {

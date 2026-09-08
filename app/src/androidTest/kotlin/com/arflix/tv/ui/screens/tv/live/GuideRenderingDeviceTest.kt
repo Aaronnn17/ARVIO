@@ -42,6 +42,7 @@ class GuideRenderingDeviceTest {
         }
     }
     private var focused = ""
+    private var focusedTitle = ""
 
     private fun showGuide() {
         val mode = mutableStateOf(EpgGridFocusMode.ChannelList)
@@ -52,6 +53,7 @@ class GuideRenderingDeviceTest {
                     focusSelectedChannelSignal = 1, scrollResetKey = "render-test",
                     favorites = emptySet(), onChannelSelect = {}, gridFocused = true,
                     onChannelFocused = { focused = it.id }, focusMode = mode.value,
+                    onProgramFocused = { _, programme -> focusedTitle = programme.title },
                     onEnterEpg = { mode.value = EpgGridFocusMode.Epg },
                     onExitEpg = { mode.value = EpgGridFocusMode.ChannelList })
             }
@@ -90,6 +92,15 @@ class GuideRenderingDeviceTest {
         compose.runOnIdle { assertEquals("render:1", focused) }
         compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) }
         compose.runOnIdle { assertEquals("render:0", focused) }
+        compose.runOnIdle { assertTrue(focusedTitle.startsWith("Programme render:0:")) }
+    }
+
+    @Test fun sustainedChannelScrollKeepsItsPosition() {
+        showGuide()
+        repeat(60) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+        compose.onNodeWithTag("iptv-channel:render:60").assertIsFocused()
+        repeat(40) { compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) } }
+        compose.onNodeWithTag("iptv-channel:render:20").assertIsFocused()
     }
 
 }

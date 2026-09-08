@@ -451,8 +451,15 @@ fun PlaybackDiagnosticBanner(
     diagnostic: PlaybackDiagnostic?,
     modifier: Modifier = Modifier,
 ) {
+    var visible by remember(diagnostic) { mutableStateOf(diagnostic != null) }
+    LaunchedEffect(diagnostic) {
+        if (diagnostic != null) {
+            kotlinx.coroutines.delay(8_000)
+            visible = false
+        }
+    }
     AnimatedVisibility(
-        visible = diagnostic != null,
+        visible = visible,
         enter = fadeIn(),
         exit = fadeOut(),
         modifier = modifier,

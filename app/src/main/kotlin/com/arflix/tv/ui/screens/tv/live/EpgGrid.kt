@@ -115,6 +115,7 @@ fun EpgGrid(
     onChannelSelect: (EnrichedChannel) -> Unit,
     onProgramSelect: (EnrichedChannel, IptvProgram?) -> Unit = { channel, _ -> onChannelSelect(channel) },
     onChannelFocused: (EnrichedChannel) -> Unit = {},
+    onProgramFocused: (EnrichedChannel, IptvProgram) -> Unit = { _, _ -> },
     /** Long-press / MENU on a channel row — opens the channel menu. */
     onChannelLongPress: (EnrichedChannel, Boolean) -> Unit = { _, _ -> },
     favorites: Set<String>,
@@ -724,9 +725,10 @@ fun EpgGrid(
                                         onProgramSelect(ch, program)
                                         keepChannelFocus(idx)
                                     },
-                                    onFocused = {
+                                    onFocused = { program ->
                                         if (focusMode == EpgGridFocusMode.Epg) {
                                             onChannelFocused(ch)
+                                            onProgramFocused(ch, program)
                                         }
                                     },
                                     onMoveVertically = { targetRowIdx, anchorStartMin ->
@@ -807,7 +809,7 @@ private fun ProgramsRow(
     renderWindow: GuideRenderWindow,
     hScrollOffsetPx: () -> Int = { 0 },
     onClick: (IptvProgram?) -> Unit,
-    onFocused: () -> Unit,
+    onFocused: (IptvProgram) -> Unit,
     onMoveVertically: (rowIdx: Int, anchorStartMin: Int) -> Boolean,
     onMoveLeftFromStart: () -> Boolean,
     rowIdx: Int,
@@ -909,7 +911,7 @@ private fun ProgramsRow(
                                 isCatchupSupported = isCatchupSupported,
                             )?.let(onClick)
                         },
-                        onFocused = onFocused,
+                        onFocused = { onFocused(placement.program) },
                         onMoveLeft = {
                             if (focusableIndex > 0) {
                                 runCatching { rowFocusRequesters[focusableIndex - 1].requestFocus() }

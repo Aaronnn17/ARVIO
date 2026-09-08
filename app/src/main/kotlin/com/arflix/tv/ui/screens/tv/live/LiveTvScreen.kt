@@ -1102,12 +1102,16 @@ fun LiveTvScreen(
     // lastChannelId, but nothing consumed it on entry, so Live TV always
     // started at the top of the list. Rules live in LiveTvStartup so they are
     // unit tested rather than only verifiable on a device.
+    val startupChannelIds = remember(state.snapshot.channels) {
+        LiveTvStartup.channelIds(state.snapshot.channels)
+    }
     val resumeChannelId = LiveTvStartup.resumeChannelId(
         explicitChannelId = initialChannelId,
         lastChannelId = state.tvSession.lastChannelId,
-        availableChannelIds = LiveTvStartup.channelIds(state.snapshot.channels),
+        availableChannelIds = startupChannelIds,
     )
     var focusedChannelId by rememberSaveable { mutableStateOf<String?>(resumeChannelId) }
+    var focusedProgramme by remember { mutableStateOf<Pair<EnrichedChannel, IptvProgram>?>(null) }
     // The focused row's channel object, reported by the row itself on focus. Not saveable —
     // it is rebuilt on the next focus event, and only the id needs to survive process death.
     // Only event handlers need the current row; keep it separate from settled UI selection.
@@ -2763,6 +2767,7 @@ fun LiveTvScreen(
                     return
                 }
                 val preparedIsHls = lastPreparedIsHls
+                val unsupportedContainer = error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED
                 val nextAttempt = playerRetryCount + 1
                 playerRetryCount = nextAttempt
                 val retryChannel = playingChannel?.source
@@ -2778,6 +2783,9 @@ fun LiveTvScreen(
                 }
                 val maxRetryCount = if (retryProgram != null) {
                     (catchupCandidateCount - 1).coerceAtLeast(0).coerceAtMost(2)
+                } else if (unsupportedContainer) {
+                    // One bounded content-type recovery, not repeated identical prepares.
+                    1
                 } else {
                     3
                 }
@@ -2805,7 +2813,8 @@ fun LiveTvScreen(
                                 channel = retryChannel,
                                 program = retryStreamProgram ?: retryProgram,
                                 forceRefresh = true,
-                                catchupAttempt = if (retryProgram != null) nextAttempt else 0
+                                catchupAttempt = if (retryProgram != null) nextAttempt else 0,
+                                probeKnownUrl = unsupportedContainer,
                             )
                         } else {
                             IptvPlaybackTarget(prepared, preparedIsHls)
@@ -3140,6 +3149,7 @@ fun LiveTvScreen(
                         )
                     }
                     MiniPlayerRow(
+                        focusedProgramme = focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG },
                         exoPlayer = exoPlayer,
                         channel = playingDisplayChannel,
                         clockTickMillis = guideClockMillis,
@@ -3196,6 +3206,7 @@ fun LiveTvScreen(
                             program?.let { selectEpgProgram(channel, it) }
                         },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
+                        onProgramFocused = { channel, programme -> focusedProgramme = channel to programme },
                         onChannelLongPress = { channel, fromKeyHold -> openChannelMenu(channel, fromKeyHold) },
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
@@ -3297,6 +3308,7 @@ fun LiveTvScreen(
                         )
                     }
                     MiniPlayerRow(
+                        focusedProgramme = focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG },
                         exoPlayer = exoPlayer,
                         channel = playingDisplayChannel,
                         clockTickMillis = guideClockMillis,
@@ -3341,6 +3353,7 @@ fun LiveTvScreen(
                             program?.let { selectEpgProgram(channel, it) }
                         },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
+                        onProgramFocused = { channel, programme -> focusedProgramme = channel to programme },
                         onChannelLongPress = { channel, fromKeyHold -> openChannelMenu(channel, fromKeyHold) },
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },

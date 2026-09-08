@@ -114,7 +114,7 @@ fun ChannelRow(
         animationSpec = tween(durationMillis = 70),
         label = "channel-row-border",
     )
-    val surface by animateColorAsState(bg, tween(120), label = "channel-surface")
+    val surface = animateColorAsState(bg, tween(120), label = "channel-surface")
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -124,6 +124,7 @@ fun ChannelRow(
                 if (it.hasFocus) onFocused()
             }
             .drawWithContent {
+                drawRect(surface.value)
                 drawContent()
                 // Read animation state in drawing, not composition: channel
                 // text and logo layout should not rebuild for each border frame.
@@ -138,7 +139,6 @@ fun ChannelRow(
                     )
                 }
             }
-            .background(surface)
             .focusable()
             // Long-press / MENU opens the channel menu. This has to live in the PREVIEW
             // phase, ahead of combinedClickable: combinedClickable arms a click on the

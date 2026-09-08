@@ -111,6 +111,7 @@ fun MiniPlayerRow(
     compact: Boolean = false,
     landscapeCompact: Boolean = false,
     playerActive: Boolean = true,
+    focusedProgramme: Pair<EnrichedChannel, IptvProgram>? = null,
     onVideoBoundsPositioned: ((Rect) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -132,6 +133,7 @@ fun MiniPlayerRow(
                 onVideoBoundsPositioned = onVideoBoundsPositioned,
             )
             InfoColumn(
+                focusedProgramme = focusedProgramme,
                 channel = channel,
                 clockTickMillis = clockTickMillis,
                 nowNext = nowNext,
@@ -162,6 +164,7 @@ fun MiniPlayerRow(
                 modifier = Modifier.fillMaxWidth(),
             )
             InfoColumn(
+                focusedProgramme = focusedProgramme,
                 channel = channel,
                 clockTickMillis = clockTickMillis,
                 nowNext = nowNext,
@@ -188,6 +191,7 @@ fun MiniPlayerRow(
                 onVideoBoundsPositioned = onVideoBoundsPositioned,
             )
             InfoColumn(
+                focusedProgramme = focusedProgramme,
                 channel = channel,
                 clockTickMillis = clockTickMillis,
                 nowNext = nowNext,
@@ -369,6 +373,7 @@ private fun LiveBug(modifier: Modifier = Modifier) {
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun InfoColumn(
+    focusedProgramme: Pair<EnrichedChannel, IptvProgram>? = null,
     channel: EnrichedChannel?,
     clockTickMillis: Long,
     nowNext: IptvNowNext?,
@@ -384,6 +389,16 @@ private fun InfoColumn(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(if (landscapeCompact) 5.dp else 8.dp),
     ) {
+        if (focusedProgramme != null) {
+            val (focusedChannel, programme) = focusedProgramme
+            Text(focusedChannel.source.name, style = LiveType.SectionTag.copy(color = LiveColors.FgDim))
+            Text("${formatClock(programme.startUtcMillis)} - ${formatClock(programme.endUtcMillis)}", style = LiveType.TimeMono.copy(color = LiveColors.FgDim))
+            Text(programme.title, style = LiveType.CellTitle.copy(color = LiveColors.Fg), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            programme.description?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = LiveType.BodySynopsis.copy(color = LiveColors.FgDim), maxLines = if (landscapeCompact) 1 else 3, overflow = TextOverflow.Ellipsis)
+            }
+            return@Column
+        }
         ChannelIdentityRow(channel = channel, variantCount = variantCount, onOpenVariants = onOpenVariants)
         NowCard(
             channel = channel,

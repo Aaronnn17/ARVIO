@@ -3,7 +3,6 @@ package com.arflix.tv.ui.screens.tv.live
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.layout.layout
 
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -32,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -92,7 +92,7 @@ fun ProgramCell(
         isNow -> LiveColors.FocusBg
         else -> LiveColors.Panel
     }
-    val bg by animateColorAsState(
+    val bg = animateColorAsState(
         if (focused) LiveColors.PanelRaised else baseBg,
         tween(120), label = "programme-surface",
     )
@@ -101,36 +101,12 @@ fun ProgramCell(
         isNow -> LiveColors.Accent.copy(alpha = 0.45f)
         else -> Color.Transparent
     }
-    val borderWidth = if (focusable) {
-        val animated by animateDpAsState(
-            targetValue = if (focused) LiveDims.FocusBorder else 1.dp,
-            animationSpec = tween(durationMillis = 80),
-            label = "program-cell-border",
-        )
-        animated
-    } else {
-        if (focused) LiveDims.FocusBorder else 1.dp
-    }
-    val scale = if (focusable) {
-        val animated by animateFloatAsState(
-            targetValue = 1f,
-            animationSpec = tween(durationMillis = 90),
-            label = "program-cell-scale",
-        )
-        animated
-    } else {
-        1f
-    }
-    val contentAlpha = if (focusable) {
-        val animated by animateFloatAsState(
-            targetValue = if (isPast && !focused && !isCatchupSupported) 0.55f else 1f,
-            animationSpec = tween(durationMillis = 90),
-            label = "program-cell-alpha",
-        )
-        animated
-    } else {
-        if (isPast && !isCatchupSupported) 0.55f else 1f
-    }
+    val borderWidth = if (focused) LiveDims.FocusBorder else 1.dp
+    val contentAlpha = animateFloatAsState(
+        targetValue = if (isPast && !focused && !isCatchupSupported) 0.55f else 1f,
+        animationSpec = tween(durationMillis = 90),
+        label = "program-cell-alpha",
+    )
     Box(
         modifier = modifier
             .height(rowHeight)
@@ -141,8 +117,7 @@ fun ProgramCell(
             // blocks visually empty. Total horizontal overhead is now 8dp.
             .padding(horizontal = 1.dp, vertical = 3.dp)
             .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
+                alpha = contentAlpha.value
             }
             .then(
                 if (focusable && focusRequester != null) {
@@ -167,8 +142,7 @@ fun ProgramCell(
                 shape = RoundedCornerShape(LiveDims.CellRadius),
             )
             .clip(RoundedCornerShape(LiveDims.CellRadius))
-            .background(bg)
-            .alpha(contentAlpha)
+            .drawBehind { drawRect(bg.value) }
             .then(if (focusable) Modifier.focusable() else Modifier)
             .then(
                 if (focusable) {
