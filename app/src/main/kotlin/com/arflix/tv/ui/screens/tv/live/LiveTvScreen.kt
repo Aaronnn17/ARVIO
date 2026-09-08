@@ -2455,6 +2455,7 @@ fun LiveTvScreen(
 
     var lastPreparedStreamUrl by remember { mutableStateOf<String?>(null) }
     var lastPreparedIsHls by remember { mutableStateOf(false) }
+    var lastPreparedMimeType by remember { mutableStateOf<String?>(null) }
     var lastPreparedHeaders by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var lastPreparedCatchupOffsetMs by remember { mutableLongStateOf(-1L) }
     var playerRetryCount by remember { mutableIntStateOf(0) }
@@ -2468,6 +2469,7 @@ fun LiveTvScreen(
         initialPositionMs: Long = 0L,
         drmInfo: com.arflix.tv.data.model.DrmInfo? = null,
         forcePrepare: Boolean = false,
+        resolvedMimeType: String? = null,
     ) {
         val mergedHeaders = (baseRequestHeaders + headers).safePlaybackHeaders()
         iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
@@ -2491,6 +2493,9 @@ fun LiveTvScreen(
             .apply {
                 if (isHls) {
                     setMimeType(MimeTypes.APPLICATION_M3U8)
+                } else if (resolvedMimeType != null) {
+                    // What the server actually answered beats anything read off the URL.
+                    setMimeType(resolvedMimeType)
                 } else if (looksLikeMpegTsUrl(stream)) {
                     setMimeType(MimeTypes.VIDEO_MP2T)
                 }
@@ -2523,6 +2528,7 @@ fun LiveTvScreen(
         exoPlayer.play()
         lastPreparedStreamUrl = stream
         lastPreparedIsHls = isHls
+        lastPreparedMimeType = resolvedMimeType
         lastPreparedHeaders = headers
         lastPreparedCatchupOffsetMs = if (playingCatchupProgram != null) catchupUrlAnchorOffsetMs else -1L
         if (resetRetry) playerRetryCount = 0
@@ -2690,6 +2696,7 @@ fun LiveTvScreen(
             resetRetry = true,
             initialPositionMs = initialSeekMs,
             drmInfo = playingChannel?.source?.drmInfo,
+            resolvedMimeType = target.mimeType,
         )
         // Persist "recent" as soon as playback starts.
         playingChannelId?.let { id ->
@@ -2774,7 +2781,18 @@ fun LiveTvScreen(
                 } else {
                     3
                 }
-                if (nextAttempt > maxRetryCount || httpResponseCode(error) in setOf(401, 403, 429, 513)) {
+                // Catch-up walks through *different* candidate URLs and Stalker asks the
+                // portal for a fresh temporary link, so a not-found answer can still be
+                // recovered from there. A plain live channel re-requests the very same
+                // address, which makes that family futile too.
+                val retryYieldsDifferentUrl = retryProgram != null ||
+                    retryChannel?.id?.startsWith("stalker:") == true
+                val terminalCodes = if (retryYieldsDifferentUrl) {
+                    TERMINAL_PLAYBACK_HTTP_CODES
+                } else {
+                    TERMINAL_PLAYBACK_HTTP_CODES + UNRECOVERABLE_ON_SAME_URL_HTTP_CODES
+                }
+                if (nextAttempt > maxRetryCount || httpResponseCode(error) in terminalCodes) {
                     playbackDiagnostic = PlaybackDiagnostic(
                         title = context.getString(R.string.live_diag_playback_failed),
                         detail = "${error.errorCodeName}: ${classifyPlaybackError(error)}",
@@ -2834,6 +2852,7 @@ fun LiveTvScreen(
                         initialPositionMs = retryChannel?.catchupInSegmentSeekOffset(catchupPlaybackOffsetMs) ?: 0L,
                         drmInfo = retryChannel?.drmInfo,
                         forcePrepare = true,
+                        resolvedMimeType = retryTarget.mimeType,
                     )
                 }
             }
@@ -3583,6 +3602,7 @@ fun LiveTvScreen(
                                         resetRetry = true,
                                         drmInfo = playingChannel?.source?.drmInfo,
                                         forcePrepare = true,
+                                        resolvedMimeType = lastPreparedMimeType,
                                     )
                                 }
                                 hudPokeSignal++
@@ -4044,6 +4064,17 @@ internal fun buildLiveTvBufferProfile(
         backBufferMs = 5_000,
     )
 }
+
+/**
+ * HTTP verdicts a provider repeats verbatim, so a second identical request only adds
+ * black screen. 444 is nginx's "closed the connection without answering" and is what
+ * portals with an exhausted or rejected session send; without it a dead channel burned
+ * three attempts and roughly twenty seconds before the existing error banner appeared.
+ */
+private val TERMINAL_PLAYBACK_HTTP_CODES = setOf(401, 403, 429, 444, 451, 513)
+
+/** Futile only when the retry would re-request the exact same address. */
+private val UNRECOVERABLE_ON_SAME_URL_HTTP_CODES = setOf(404, 410)
 
 private fun httpResponseCode(error: PlaybackException): Int? {
     var cause: Throwable? = error

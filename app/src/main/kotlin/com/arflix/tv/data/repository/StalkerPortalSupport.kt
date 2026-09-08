@@ -3,6 +3,8 @@ package com.arflix.tv.data.repository
 import com.arflix.tv.data.model.PlaylistGroupKey
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import java.net.URI
+import java.util.Locale
 
 /** Pseudo playlist id for the Stalker/Ministra portal source. */
 const val STALKER_PLAYLIST_ID = "stalker"
@@ -17,6 +19,9 @@ const val MAX_STALKER_PORTALS = 3
 internal object StalkerPortalSupport {
 
     private val gson = Gson()
+
+    /** Hosts a portal placeholder points at; none of them can serve a stream to a device. */
+    private val UNROUTABLE_STREAM_HOSTS = setOf("localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]")
 
     /**
      * Channel ids use the `stalker:<portalId>:<origId>` shape. Returns the
@@ -34,6 +39,21 @@ internal object StalkerPortalSupport {
     fun playlistIdFromChannelId(channelId: String): String {
         return portalIdFromChannelId(channelId)
             ?: channelId.substringBefore(':').trim()
+    }
+
+    /**
+     * Portals that require `create_link` publish an unroutable placeholder as the
+     * channel's `cmd` (`ffmpeg http://localhost/ch/1234_`, alongside
+     * `use_http_tmp_link: 1`). Such an address can never play, so it must not be used
+     * as a fallback when the link call fails. A `cmd` that names a real host is a
+     * legitimate direct address and stays usable.
+     */
+    fun isRoutableStreamAddress(url: String): Boolean {
+        val trimmed = url.trim()
+        if (trimmed.isBlank()) return false
+        val host = runCatching { URI(trimmed).host }.getOrNull().orEmpty().lowercase(Locale.US)
+        if (host.isBlank()) return false
+        return host !in UNROUTABLE_STREAM_HOSTS
     }
 
     fun streamCacheKey(channelId: String, command: String): String {

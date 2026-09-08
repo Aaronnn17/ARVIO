@@ -230,4 +230,20 @@ class StalkerPortalSupportTest {
         assertThat(normalized).isNotNull()
         assertThat(normalized!!.enabled).isFalse()
     }
+
+    @Test
+    fun isRoutableStreamAddressRejectsPortalPlaceholders() {
+        assertThat(StalkerPortalSupport.isRoutableStreamAddress("http://localhost/ch/1234_")).isFalse()
+        assertThat(StalkerPortalSupport.isRoutableStreamAddress("http://127.0.0.1:8080/ch/1")).isFalse()
+        assertThat(StalkerPortalSupport.isRoutableStreamAddress("http://0.0.0.0/ch/1")).isFalse()
+        assertThat(StalkerPortalSupport.isRoutableStreamAddress("")).isFalse()
+        assertThat(StalkerPortalSupport.isRoutableStreamAddress("   ")).isFalse()
+        assertThat(StalkerPortalSupport.isRoutableStreamAddress("not a url")).isFalse()
+    }
+
+    @Test
+    fun isRoutableStreamAddressAcceptsRealHosts() {
+        assertThat(StalkerPortalSupport.isRoutableStreamAddress("http://provider.test/live/1")).isTrue()
+        assertThat(StalkerPortalSupport.isRoutableStreamAddress("https://provider.test:8080/token")).isTrue()
+    }
 }

@@ -141,6 +141,59 @@ class IptvPlaybackUrlResolverTest {
     }
 
     @Test
+    fun `single segment token URL is probed and keeps the stated transport stream type`() = runBlocking {
+        val calls = AtomicInteger()
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                calls.incrementAndGet()
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .header("Content-Type", "video/mp2t")
+                    .body("".toResponseBody("video/mp2t".toMediaType()))
+                    .build()
+            }
+            .build()
+        val resolver = IptvPlaybackUrlResolver(client)
+
+        val target = resolver.resolve(
+            rawUrl = "http://provider.test/N2Q4ZjhiMGEyYzFlNGY2ZA",
+            headers = emptyMap(),
+        )
+
+        assertThat(target.isHls).isFalse()
+        assertThat(target.mimeType).isEqualTo("video/mp2t")
+        assertThat(calls.get()).isEqualTo(1)
+    }
+
+    @Test
+    fun `probed HLS target carries no transport stream mime type`() = runBlocking {
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .header("Content-Type", "application/vnd.apple.mpegurl")
+                    .body("".toResponseBody("application/vnd.apple.mpegurl".toMediaType()))
+                    .build()
+            }
+            .build()
+        val resolver = IptvPlaybackUrlResolver(client)
+
+        val target = resolver.resolve(
+            rawUrl = "http://provider.test/live/user/pass/channel-slug",
+            headers = emptyMap(),
+        )
+
+        assertThat(target.isHls).isTrue()
+        assertThat(target.mimeType).isNull()
+    }
+
+    @Test
     fun `known direct and adaptive URLs skip redirect probe`() = runBlocking {
         val client = OkHttpClient.Builder()
             .addInterceptor { error("Redirect probe should not run") }

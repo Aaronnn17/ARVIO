@@ -2079,17 +2079,26 @@ class TvViewModel @Inject constructor(
         val resolved = withContext(Dispatchers.IO) {
             iptvRepository.resolveStalkerStreamUrl(channelId, trimmed)
         }?.trim().orEmpty()
-        val playable = resolved.ifBlank { trimmed.removePrefix("ffmpeg").trim() }
-        if (playable.isNotBlank()) {
-            synchronized(resolvedStalkerStreamCache) {
-                resolvedStalkerStreamCache[cacheKey] = playable
-                while (resolvedStalkerStreamCache.size > 200) {
-                    val firstKey = resolvedStalkerStreamCache.keys.firstOrNull() ?: break
-                    resolvedStalkerStreamCache.remove(firstKey)
-                }
+        // Falling back to the raw `cmd` used to hand the player an unroutable
+        // placeholder ("http://localhost/ch/1234_") whenever create_link failed. The
+        // player then spent three attempts on an address that can never work before
+        // the error banner showed. Fail loudly instead; the caller turns the message
+        // into the diagnostic banner right away.
+        val rawAddress = trimmed.removePrefix("ffmpeg").trim()
+        val playable = resolved.ifBlank {
+            if (StalkerPortalSupport.isRoutableStreamAddress(rawAddress)) rawAddress else ""
+        }
+        if (playable.isBlank()) {
+            throw IllegalStateException("Stalker portal returned no playable link")
+        }
+        synchronized(resolvedStalkerStreamCache) {
+            resolvedStalkerStreamCache[cacheKey] = playable
+            while (resolvedStalkerStreamCache.size > 200) {
+                val firstKey = resolvedStalkerStreamCache.keys.firstOrNull() ?: break
+                resolvedStalkerStreamCache.remove(firstKey)
             }
         }
-        return playable.ifBlank { trimmed }
+        return playable
     }
 
     private fun setUiState(nextState: TvUiState) {
