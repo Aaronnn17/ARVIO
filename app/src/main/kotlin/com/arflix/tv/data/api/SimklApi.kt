@@ -77,6 +77,14 @@ interface SimklApi {
         @Query("next_watch_info") nextWatchInfo: String = "yes"
     ): JsonElement
 
+    @GET("sync/all-items/{type}")
+    suspend fun getAllItemIds(
+        @Header("Authorization") auth: String,
+        @Header("simkl-api-key") clientId: String,
+        @Path("type") type: String,
+        @Query("extended") extended: String = "ids_only"
+    ): JsonElement
+
     @GET("sync/all-items")
     suspend fun getAllItemsDelta(
         @Header("Authorization") auth: String,
@@ -206,7 +214,8 @@ data class SimklActivityGroup(
     @SerializedName("plantowatch") val planToWatch: String? = null,
     @SerializedName("watching") val watching: String? = null,
     @SerializedName("completed") val completed: String? = null,
-    @SerializedName("playback") val playback: String? = null
+    @SerializedName("playback") val playback: String? = null,
+    @SerializedName("removed_from_list") val removedFromList: String? = null
 )
 
 data class SimklAllItemsResponse(

@@ -48,6 +48,8 @@ type SimklSnapshot = {
   activity: string | null;
   checkedAt: number;
   complete: boolean;
+  initialized?: boolean;
+  removals?: Partial<Record<"movies" | "shows" | "anime", string>>;
   movies: SimklMovieRow[];
   shows: SimklShowRow[];
   anime: SimklShowRow[];
@@ -63,6 +65,13 @@ function extractItems<T>(res: unknown, key: "movies" | "shows" | "anime"): T[] {
   return [];
 }
 
+function rowKey(ids?: SimklIds): string | null {
+  const simkl = ids?.simkl ?? ids?.simkl_id;
+  if (simkl != null) return `simkl:${simkl}`;
+  if (ids?.tmdb != null) return `tmdb:${ids.tmdb}`;
+  return ids?.imdb ? `imdb:${ids.imdb}` : null;
+}
+
 function mergeRows<T extends { movie?: { ids?: SimklIds }; show?: { ids?: SimklIds } }>(
   existing: T[],
   incoming: T[],
@@ -71,12 +80,12 @@ function mergeRows<T extends { movie?: { ids?: SimklIds }; show?: { ids?: SimklI
   const map = new Map<string, T>();
   for (const item of existing) {
     const ids = key === "movie" ? item.movie?.ids : item.show?.ids;
-    const id = ids?.simkl ?? ids?.simkl_id ?? ids?.tmdb;
+    const id = rowKey(ids);
     if (id != null) map.set(String(id), item);
   }
   for (const item of incoming) {
     const ids = key === "movie" ? item.movie?.ids : item.show?.ids;
-    const id = ids?.simkl ?? ids?.simkl_id ?? ids?.tmdb;
+    const id = rowKey(ids);
     if (id != null) map.set(String(id), item);
   }
   return Array.from(map.values());
@@ -93,6 +102,17 @@ function activityMarker(value: unknown): string | null {
     }
   }
   return null;
+}
+
+function removalMarkers(value: unknown): NonNullable<SimklSnapshot["removals"]> {
+  if (!value || typeof value !== "object") return {};
+  const root = value as Record<string, { removed_from_list?: unknown } | undefined>;
+  const result: NonNullable<SimklSnapshot["removals"]> = {};
+  for (const type of ["movies", "shows", "anime"] as const) {
+    const group = type === "shows" ? root.tv_shows ?? root.shows : root[type];
+    if (typeof group?.removed_from_list === "string") result[type] = group.removed_from_list;
+  }
+  return result;
 }
 
 function parseNextToWatch(value?: string | null): NonNullable<SimklShowRow["next_to_watch_info"]> | null {
@@ -234,7 +254,10 @@ export class SimklClient implements SyncClient {
     const request = (async () => {
       const activities = await this.simkl<unknown>("/sync/activities", {}, accessToken).catch(() => null);
       const marker = activityMarker(activities);
-      if (cached?.complete && marker && marker === cached.activity) {
+      const removals = removalMarkers(activities);
+      const removedTypes = (["movies", "shows", "anime"] as const)
+        .filter(type => removals[type] && removals[type] !== cached?.removals?.[type]);
+      if (cached?.complete && marker && marker === cached.activity && !removedTypes.length) {
         return { ...cached, checkedAt: Date.now() };
       }
 
@@ -243,11 +266,14 @@ export class SimklClient implements SyncClient {
       let animeResult: SimklShowRow[] = [];
       let complete = false;
 
-      if (cached?.complete && cached?.activity) {
+      if (cached?.initialized && cached.activity) {
         // Continuous sync delta (Phase 2): single request for all types modified since watermark
         try {
           const deltaQuery = `?date_from=${encodeURIComponent(cached.activity)}&extended=full&episode_watched_at=yes&include_all_episodes=yes&next_watch_info=yes`;
           const deltaRes = await this.simkl<unknown>(`/sync/all-items${deltaQuery}`, {}, accessToken);
+          if (!deltaRes || typeof deltaRes !== "object" || Array.isArray(deltaRes)) {
+            throw new Error("Unexpected Simkl delta response");
+          }
           const moviesDelta = extractItems<SimklMovieRow>(deltaRes, "movies");
           const showsDelta = extractItems<SimklShowRow>(deltaRes, "shows");
           const animeDelta = extractItems<SimklShowRow>(deltaRes, "anime");
@@ -255,6 +281,19 @@ export class SimklClient implements SyncClient {
           moviesResult = mergeRows(cached.movies, moviesDelta, "movie");
           showsResult = mergeRows(cached.shows, showsDelta, "show");
           animeResult = mergeRows(cached.anime, animeDelta, "show");
+          // Incremental responses omit deletions; only reconcile categories with a changed removal marker.
+          for (const type of removedTypes) {
+            const idsRes = await this.simkl<unknown>(`/sync/all-items/${type}?extended=ids_only`, {}, accessToken);
+            if (!idsRes || typeof idsRes !== "object" || (!Array.isArray(idsRes) &&
+              Object.keys(idsRes).length > 0 && !Array.isArray((idsRes as Record<string, unknown>)[type]))) {
+              throw new Error(`Unexpected Simkl ${type} IDs response`);
+            }
+            const ids = new Set(extractItems<SimklMovieRow & SimklShowRow>(idsRes, type)
+              .map(row => rowKey(type === "movies" ? row.movie?.ids : row.show?.ids)));
+            if (type === "movies") moviesResult = moviesResult.filter(row => ids.has(rowKey(row.movie?.ids)));
+            if (type === "shows") showsResult = showsResult.filter(row => ids.has(rowKey(row.show?.ids)));
+            if (type === "anime") animeResult = animeResult.filter(row => ids.has(rowKey(row.show?.ids)));
+          }
           complete = true;
         } catch {
           complete = false;
@@ -281,6 +320,8 @@ export class SimklClient implements SyncClient {
       return {
         scope,
         activity: complete ? marker : cached?.activity ?? null,
+        initialized: complete || cached?.initialized || false,
+        removals: complete ? removals : cached?.removals,
         checkedAt: Date.now(),
         complete,
         movies: complete ? moviesResult : cached?.movies ?? [],

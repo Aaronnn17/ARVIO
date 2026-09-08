@@ -19,7 +19,7 @@ import { sourcePickerScore } from "@/lib/sourceRank";
 import { playbackPlan } from "@/lib/streamCompatibility";
 import { authClient, getPriorityConfig, useApp } from "@/lib/store";
 import { simklClient, getSimklItemUrl } from "@/lib/simkl";
-import { syncClient } from "@/lib/sync";
+import { syncClient, syncSeasonWatched } from "@/lib/sync";
 import { getDetails, getLogoUrl, getPersonDetails, getReviews, getSeasonEpisodes } from "@/lib/tmdb";
 import type { EpisodeInfo, InstalledAddon, MediaItem, PersonCredit, PersonDetails, ReviewInfo, StreamSource, SubtitleTrack } from "@/lib/types";
 
@@ -937,18 +937,16 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
 
   const updateSeasonWatched = async (seasonNum: number, watched: boolean) => {
     try {
-      if (simklClient.isConnected) {
-        const isAnime = item.mediaType === "tv" && item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16));
-        await simklClient.markSeasonWatched({
-          mediaType: "tv",
-          tmdbId: item.id,
-          isAnime
-        }, seasonNum, watched).catch(() => undefined);
-      }
       const targetEpisodes = await getSeasonEpisodes(item.id, seasonNum, "en-US", priorityConfig, metadataContext);
+      const changedEpisodes = targetEpisodes.filter(ep => isWatched(item, seasonNum, ep.episodeNumber) !== watched);
+      await syncSeasonWatched({
+        mediaType: "tv",
+        tmdbId: item.id,
+        isAnime: item.originalLanguage === "ja" && Boolean(item.genreIds?.includes(16))
+      }, seasonNum, changedEpisodes.map(ep => ep.episodeNumber), watched);
       for (const ep of targetEpisodes) {
         if (isWatched(item, seasonNum, ep.episodeNumber) !== watched) {
-          await toggleWatched(item, seasonNum, ep.episodeNumber, simklClient.isConnected);
+          await toggleWatched(item, seasonNum, ep.episodeNumber, true);
         }
       }
       setToast(`Season ${seasonNum} marked as ${watched ? "watched" : "unwatched"}.`);
