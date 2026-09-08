@@ -535,7 +535,7 @@ export interface AppStore {
   searchState: "idle" | "loading" | "error";
 
   toggleWatchlist: (item: MediaItem) => Promise<void>;
-  toggleWatched: (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => Promise<void>;
+  toggleWatched: (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null, skipSync?: boolean) => Promise<void>;
   removeFromContinueWatching: (item: MediaItem) => Promise<void>;
   activeContextMenu: ContextMenuTarget | null;
   openContextMenu: (target: ContextMenuTarget) => void;
@@ -2297,7 +2297,7 @@ export function AppProvider({
     }
   }, [watchlist, activeProfileId, authClient]);
 
-  const toggleWatched = useCallback(async (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => {
+  const toggleWatched = useCallback(async (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null, skipSync?: boolean) => {
     const currentlyWatched = isWatched(item, seasonNumber, episodeNumber);
     markWatchedLocally({ mediaType: item.mediaType, id: item.id, season: seasonNumber, episode: episodeNumber }, !currentlyWatched);
     setToast(!currentlyWatched ? "Marked as watched." : "Marked as unwatched.");
@@ -2315,7 +2315,7 @@ export function AppProvider({
       }
     }
 
-    if (activeSyncProvider() !== "none") {
+    if (!skipSync && activeSyncProvider() !== "none") {
       try {
         const ref = {
           mediaType: item.mediaType,

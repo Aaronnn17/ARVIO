@@ -2,6 +2,7 @@ import { SyncClient, SyncMediaRef } from "./sync";
 import { loadStored, removeStored, saveStored } from "./storage";
 import { jsonRequest } from "./http";
 import { resolveTmdbId } from "./tmdb";
+import { config } from "./config";
 
 const LEGACY_SIMKL_TOKEN_KEY = "arvio.web.simkl.token";
 const SNAPSHOT_TTL_MS = 15 * 60 * 1000;
@@ -19,7 +20,7 @@ export interface SimklPinCode {
   interval: number;
 }
 
-type SimklIds = { tmdb?: number; simkl?: number; imdb?: string };
+type SimklIds = { tmdb?: number; simkl?: number; simkl_id?: number; imdb?: string; slug?: string };
 type SimklMovieRow = {
   movie?: { title?: string; year?: number; ids?: SimklIds };
   status?: string;
@@ -47,6 +48,8 @@ type SimklSnapshot = {
   activity: string | null;
   checkedAt: number;
   complete: boolean;
+  initialized?: boolean;
+  removals?: Partial<Record<"movies" | "shows" | "anime", string>>;
   movies: SimklMovieRow[];
   shows: SimklShowRow[];
   anime: SimklShowRow[];
@@ -62,6 +65,32 @@ function extractItems<T>(res: unknown, key: "movies" | "shows" | "anime"): T[] {
   return [];
 }
 
+function rowKey(ids?: SimklIds): string | null {
+  const simkl = ids?.simkl ?? ids?.simkl_id;
+  if (simkl != null) return `simkl:${simkl}`;
+  if (ids?.tmdb != null) return `tmdb:${ids.tmdb}`;
+  return ids?.imdb ? `imdb:${ids.imdb}` : null;
+}
+
+function mergeRows<T extends { movie?: { ids?: SimklIds }; show?: { ids?: SimklIds } }>(
+  existing: T[],
+  incoming: T[],
+  key: "movie" | "show"
+): T[] {
+  const map = new Map<string, T>();
+  for (const item of existing) {
+    const ids = key === "movie" ? item.movie?.ids : item.show?.ids;
+    const id = rowKey(ids);
+    if (id != null) map.set(String(id), item);
+  }
+  for (const item of incoming) {
+    const ids = key === "movie" ? item.movie?.ids : item.show?.ids;
+    const id = rowKey(ids);
+    if (id != null) map.set(String(id), item);
+  }
+  return Array.from(map.values());
+}
+
 function activityMarker(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const root = value as Record<string, unknown>;
@@ -73,6 +102,17 @@ function activityMarker(value: unknown): string | null {
     }
   }
   return null;
+}
+
+function removalMarkers(value: unknown): NonNullable<SimklSnapshot["removals"]> {
+  if (!value || typeof value !== "object") return {};
+  const root = value as Record<string, { removed_from_list?: unknown } | undefined>;
+  const result: NonNullable<SimklSnapshot["removals"]> = {};
+  for (const type of ["movies", "shows", "anime"] as const) {
+    const group = type === "shows" ? root.tv_shows ?? root.shows : root[type];
+    if (typeof group?.removed_from_list === "string") result[type] = group.removed_from_list;
+  }
+  return result;
 }
 
 function parseNextToWatch(value?: string | null): NonNullable<SimklShowRow["next_to_watch_info"]> | null {
@@ -137,11 +177,14 @@ export class SimklClient implements SyncClient {
 
   setToken(token: SimklToken | null) {
     const next = token?.access_token ? token : null;
-    if (next?.access_token !== this.token?.access_token) this.resetScrobbleQueue();
+    const tokenChanged = next?.access_token !== this.token?.access_token;
+    if (tokenChanged) {
+      this.resetScrobbleQueue();
+      this.snapshot = null;
+      this.snapshotPromise = null;
+      this.lastSnapshotFailureAt = 0;
+    }
     this.token = next;
-    this.snapshot = null;
-    this.snapshotPromise = null;
-    this.lastSnapshotFailureAt = 0;
     if (!this.profileId) return;
     if (this.token) saveStored(this.tokenKey(this.profileId), this.token);
     else removeStored(this.tokenKey(this.profileId));
@@ -157,7 +200,18 @@ export class SimklClient implements SyncClient {
       ...(options.headers as Record<string, string>)
     };
     if (accessToken) headers["x-user-token"] = accessToken;
-    return jsonRequest<T>(`/api/simkl${path}`, { ...options, headers });
+
+    const [pathname, queryString] = path.split("?");
+    const params = new URLSearchParams(queryString || "");
+    if (!params.has("app-name")) params.set("app-name", "arvio");
+    if (!params.has("app-version")) params.set("app-version", "1.9.996");
+    if (config.simklClientId && !params.has("client_id")) {
+      params.set("client_id", config.simklClientId);
+    }
+    const finalQuery = params.toString();
+    const finalUrl = `/api/simkl${pathname}${finalQuery ? `?${finalQuery}` : ""}`;
+
+    return jsonRequest<T>(finalUrl, { ...options, headers });
   }
 
   private scope(): string {
@@ -200,35 +254,79 @@ export class SimklClient implements SyncClient {
     const request = (async () => {
       const activities = await this.simkl<unknown>("/sync/activities", {}, accessToken).catch(() => null);
       const marker = activityMarker(activities);
-      if (cached?.complete && marker && marker === cached.activity) {
+      const removals = removalMarkers(activities);
+      const removedTypes = (["movies", "shows", "anime"] as const)
+        .filter(type => removals[type] && removals[type] !== cached?.removals?.[type]);
+      if (cached?.complete && marker && marker === cached.activity && !removedTypes.length) {
         return { ...cached, checkedAt: Date.now() };
       }
 
-      const query = "?extended=full&episode_watched_at=yes&include_all_episodes=yes&next_watch_info=yes";
-      const [moviesResult, showsResult, animeResult] = await Promise.allSettled([
-        this.simkl<unknown>(`/sync/all-items/movies/all${query}`, {}, accessToken),
-        this.simkl<unknown>(`/sync/all-items/shows/all${query}`, {}, accessToken),
-        this.simkl<unknown>(`/sync/all-items/anime/all${query}`, {}, accessToken)
-      ]);
-      const complete = moviesResult.status === "fulfilled" &&
-        showsResult.status === "fulfilled" && animeResult.status === "fulfilled";
+      let moviesResult: SimklMovieRow[] = [];
+      let showsResult: SimklShowRow[] = [];
+      let animeResult: SimklShowRow[] = [];
+      let complete = false;
+
+      if (cached?.initialized && cached.activity) {
+        // Continuous sync delta (Phase 2): single request for all types modified since watermark
+        try {
+          const deltaQuery = `?date_from=${encodeURIComponent(cached.activity)}&extended=full&episode_watched_at=yes&include_all_episodes=yes&next_watch_info=yes`;
+          const deltaRes = await this.simkl<unknown>(`/sync/all-items${deltaQuery}`, {}, accessToken);
+          if (!deltaRes || typeof deltaRes !== "object" || Array.isArray(deltaRes)) {
+            throw new Error("Unexpected Simkl delta response");
+          }
+          const moviesDelta = extractItems<SimklMovieRow>(deltaRes, "movies");
+          const showsDelta = extractItems<SimklShowRow>(deltaRes, "shows");
+          const animeDelta = extractItems<SimklShowRow>(deltaRes, "anime");
+
+          moviesResult = mergeRows(cached.movies, moviesDelta, "movie");
+          showsResult = mergeRows(cached.shows, showsDelta, "show");
+          animeResult = mergeRows(cached.anime, animeDelta, "show");
+          // Incremental responses omit deletions; only reconcile categories with a changed removal marker.
+          for (const type of removedTypes) {
+            const idsRes = await this.simkl<unknown>(`/sync/all-items/${type}?extended=ids_only`, {}, accessToken);
+            if (!idsRes || typeof idsRes !== "object" || (!Array.isArray(idsRes) &&
+              Object.keys(idsRes).length > 0 && !Array.isArray((idsRes as Record<string, unknown>)[type]))) {
+              throw new Error(`Unexpected Simkl ${type} IDs response`);
+            }
+            const ids = new Set(extractItems<SimklMovieRow & SimklShowRow>(idsRes, type)
+              .map(row => rowKey(type === "movies" ? row.movie?.ids : row.show?.ids)));
+            if (type === "movies") moviesResult = moviesResult.filter(row => ids.has(rowKey(row.movie?.ids)));
+            if (type === "shows") showsResult = showsResult.filter(row => ids.has(rowKey(row.show?.ids)));
+            if (type === "anime") animeResult = animeResult.filter(row => ids.has(rowKey(row.show?.ids)));
+          }
+          complete = true;
+        } catch {
+          complete = false;
+        }
+      } else {
+        // Initial sync (Phase 1): pull type by type sequentially
+        const query = "?extended=full&episode_watched_at=yes&include_all_episodes=yes&next_watch_info=yes";
+        try {
+          const moviesRes = await this.simkl<unknown>(`/sync/all-items/movies/all${query}`, {}, accessToken);
+          moviesResult = extractItems<SimklMovieRow>(moviesRes, "movies");
+          const showsRes = await this.simkl<unknown>(`/sync/all-items/shows/all${query}`, {}, accessToken);
+          showsResult = extractItems<SimklShowRow>(showsRes, "shows");
+          const animeRes = await this.simkl<unknown>(`/sync/all-items/anime/all?extended=full_anime_seasons&episode_watched_at=yes&include_all_episodes=yes&next_watch_info=yes`, {}, accessToken);
+          animeResult = extractItems<SimklShowRow>(animeRes, "anime");
+          complete = true;
+        } catch {
+          complete = false;
+        }
+      }
+
       if (complete) this.lastSnapshotFailureAt = 0;
       else this.lastSnapshotFailureAt = Date.now();
 
       return {
         scope,
         activity: complete ? marker : cached?.activity ?? null,
+        initialized: complete || cached?.initialized || false,
+        removals: complete ? removals : cached?.removals,
         checkedAt: Date.now(),
         complete,
-        movies: moviesResult.status === "fulfilled"
-          ? extractItems<SimklMovieRow>(moviesResult.value, "movies")
-          : cached?.movies ?? [],
-        shows: showsResult.status === "fulfilled"
-          ? extractItems<SimklShowRow>(showsResult.value, "shows")
-          : cached?.shows ?? [],
-        anime: animeResult.status === "fulfilled"
-          ? extractItems<SimklShowRow>(animeResult.value, "anime")
-          : cached?.anime ?? []
+        movies: complete ? moviesResult : cached?.movies ?? [],
+        shows: complete ? showsResult : cached?.shows ?? [],
+        anime: complete ? animeResult : cached?.anime ?? []
       };
     })();
     this.snapshotPromise = request;
@@ -286,13 +384,21 @@ export class SimklClient implements SyncClient {
 
   async playback(): Promise<unknown[]> {
     if (!this.isConnected) return [];
-    const [playbackResult, snapshotResult] = await Promise.allSettled([
-      this.simkl<SimklPlaybackRow[]>("/sync/playback"),
-      this.loadSnapshot()
-    ]);
-    if (playbackResult.status === "rejected" && snapshotResult.status === "rejected") throw snapshotResult.reason;
-    const rows = playbackResult.status === "fulfilled" ? playbackResult.value : [];
-    const snapshot = snapshotResult.status === "fulfilled" ? snapshotResult.value : { shows: [], anime: [] };
+    let rows: SimklPlaybackRow[] = [];
+    let playbackError: unknown = null;
+    try {
+      rows = await this.simkl<SimklPlaybackRow[]>("/sync/playback");
+    } catch (err) {
+      playbackError = err;
+      rows = [];
+    }
+    let snapshot: SimklSnapshot;
+    try {
+      snapshot = await this.loadSnapshot();
+    } catch (err) {
+      if (playbackError) throw err;
+      snapshot = { shows: [], anime: [] } as unknown as SimklSnapshot;
+    }
     const normalized = (await Promise.all(rows.map(async (row) => ({
       ...row,
       movie: await this.resolveMedia(row.movie, "movie"),
@@ -367,22 +473,47 @@ export class SimklClient implements SyncClient {
   async addToHistory(item: SyncMediaRef): Promise<void> {
     if (!this.isConnected) return;
     const hasEpisode = typeof item.season === "number" && typeof item.episode === "number";
-    const series = { ids: { tmdb: item.tmdbId }, seasons: hasEpisode ? [{ number: item.season!, episodes: [{ number: item.episode! }] }] : undefined };
+    const series = {
+      ids: { tmdb: item.tmdbId },
+      ...(item.isAnime ? { use_tvdb_anime_seasons: true } : {}),
+      seasons: hasEpisode ? [{ number: item.season!, episodes: [{ number: item.episode! }] }] : undefined
+    };
     const body = item.mediaType === "movie"
       ? { movies: [{ ids: { tmdb: item.tmdbId } }] }
-      : item.isAnime ? { anime: [series] } : { shows: [series] };
+      : { shows: [series] };
     await this.simkl("/sync/history", { method: "POST", body: JSON.stringify(body) });
     this.invalidateSnapshot();
   }
 
   async removeFromHistory(item: SyncMediaRef): Promise<void> {
     if (!this.isConnected) return;
-    const hasEpisode = typeof item.season === "number" && typeof item.episode === "number";
-    const series = { ids: { tmdb: item.tmdbId }, seasons: hasEpisode ? [{ number: item.season!, episodes: [{ number: item.episode! }] }] : undefined };
-    const body = item.mediaType === "movie"
-      ? { movies: [{ ids: { tmdb: item.tmdbId } }] }
-      : item.isAnime ? { anime: [series] } : { shows: [series] };
-    await this.simkl("/sync/history/remove", { method: "POST", body: JSON.stringify(body) });
+    if (item.mediaType === "movie") {
+      // Use add-to-list to move to plantowatch instead of removing the movie and user rating completely
+      const body = { movies: [{ to: "plantowatch", ids: { tmdb: item.tmdbId } }] };
+      await this.simkl("/sync/add-to-list", { method: "POST", body: JSON.stringify(body) });
+    } else {
+      const hasEpisode = typeof item.season === "number" && typeof item.episode === "number";
+      const series = {
+        ids: { tmdb: item.tmdbId },
+        ...(item.isAnime ? { use_tvdb_anime_seasons: true } : {}),
+        seasons: hasEpisode ? [{ number: item.season!, episodes: [{ number: item.episode! }] }] : undefined
+      };
+      const body = { shows: [series] };
+      await this.simkl("/sync/history/remove", { method: "POST", body: JSON.stringify(body) });
+    }
+    this.invalidateSnapshot();
+  }
+
+  async markSeasonWatched(item: SyncMediaRef, seasonNumber: number, watched: boolean): Promise<void> {
+    if (!this.isConnected) return;
+    const series = {
+      ids: { tmdb: item.tmdbId },
+      ...(item.isAnime ? { use_tvdb_anime_seasons: true } : {}),
+      seasons: [{ number: seasonNumber }]
+    };
+    const body = { shows: [series] };
+    const endpoint = watched ? "/sync/history" : "/sync/history/remove";
+    await this.simkl(endpoint, { method: "POST", body: JSON.stringify(body) });
     this.invalidateSnapshot();
   }
 
@@ -397,10 +528,11 @@ export class SimklClient implements SyncClient {
       return (item.season == null || row.episode?.season === item.season) &&
         (item.episode == null || number === item.episode);
     });
-    await Promise.all(matching.map((row) => row.id
-      ? this.simkl(`/sync/playback/${row.id}`, { method: "DELETE" })
-      : Promise.resolve()
-    ));
+    for (const row of matching) {
+      if (row.id) {
+        await this.simkl(`/sync/playback/${row.id}`, { method: "DELETE" }).catch(() => null);
+      }
+    }
   }
 
   private async resolveMedia<T extends { ids?: SimklIds; title?: string; year?: number }>(
@@ -421,13 +553,11 @@ export class SimklClient implements SyncClient {
 
   private async sendScrobble(action: "start" | "pause" | "stop", item: SyncMediaRef & { progress: number }): Promise<void> {
     if (!this.isConnected) return;
-    const progress = item.progress <= 1 ? item.progress * 100 : item.progress;
+    const progress = Math.min(100, Math.max(0, item.progress));
     const body = item.mediaType === "movie"
       ? { movie: { ids: { tmdb: item.tmdbId } }, progress }
       : {
-          ...(item.isAnime
-            ? { anime: { ids: { tmdb: item.tmdbId } } }
-            : { show: { ids: { tmdb: item.tmdbId } } }),
+          show: { ids: { tmdb: item.tmdbId } },
           episode: typeof item.season === "number" && typeof item.episode === "number"
             ? { season: item.season, number: item.episode }
             : undefined,
@@ -460,3 +590,11 @@ export class SimklClient implements SyncClient {
 }
 
 export const simklClient = new SimklClient();
+
+export function getSimklItemUrl(ids?: SimklIds | null, type: "movie" | "tv" | "anime" = "movie"): string | null {
+  if (!ids) return null;
+  if (ids.slug) return `https://simkl.com/${type === "movie" ? "movies" : type}/${ids.slug}`;
+  const simklId = ids.simkl ?? ids.simkl_id;
+  if (simklId) return `https://simkl.com/${type === "movie" ? "movies" : type}/${simklId}`;
+  return null;
+}
