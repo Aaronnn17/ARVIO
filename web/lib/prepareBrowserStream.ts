@@ -1,5 +1,5 @@
 import { cachedDebridDirectUrl, parseDebridStream, resolveDebridDirectUrl, resolveTranscodeStream } from "./debrid";
-import { playbackPlan, canProviderTranscode, canTryRemux, videoDecodableForDevice } from "./streamCompatibility";
+import { playbackPlan, canProviderTranscode, canTryRemux, videoDecodableForDevice, recordBrowserPlaybackFailure } from "./streamCompatibility";
 import { prepareHomeServerPlayback } from "./homeServerPlayback";
 import type { AppSettings, StreamSource } from "./types";
 
@@ -18,10 +18,16 @@ export async function prepareBrowserStream(stream: StreamSource, settings: AppSe
     if (!debrid || !canProviderTranscode(stream)) throw new Error("This source cannot be converted by its provider. Use an external player.");
     const result = await resolveTranscodeStream(debrid);
     check();
-    if (!result.url) throw new Error(result.error ?? "Server conversion is unavailable");
+    if (!result.url) {
+      const reason = result.error ?? "Server conversion is unavailable";
+      if (/not supported|unsupported|permission|forbidden|subscription|premium|pro plan|not available|unavailable/i.test(reason)) {
+        recordBrowserPlaybackFailure(stream, `Provider conversion is unavailable: ${reason}`, true);
+      }
+      throw new Error(reason);
+    }
     return { ...stream, url: result.url, originalUrl: stream.originalUrl ?? stream.url, remux: false, transcoded: true, transport: "hls" };
   }
-  // Remux changes packaging/audio, not the video codec or Dolby Vision colours.
+  // Remux can extract a verified HDR10 base, but cannot convert profile 5 colours.
   if (plan.route !== "here" && (!options.forceRemux || !videoDecodableForDevice(stream))) throw new Error(plan.detail || "This format requires an external player");
   const remux = !!options.forceRemux || plan.method === "remux"
     || (Object.keys(stream.behaviorHints?.proxyHeaders?.request ?? {}).length > 0 && canTryRemux(stream));

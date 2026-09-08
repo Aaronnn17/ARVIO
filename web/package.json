@@ -22,12 +22,14 @@
     "ipaddr.js": "^2.5.0",
     "lucide-react": "^0.468.0",
     "mediabunny": "^1.55.7",
+    "mp4box": "2.4.1",
     "mpegts.js": "^1.8.0",
     "next": "^15.0.4",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "telegram": "^2.26.22",
+    "ts-ebml": "3.0.2",
     "undici": "^8.10.2"
   },
   "devDependencies": {

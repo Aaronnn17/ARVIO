@@ -32,7 +32,7 @@ import { proxiedUrl } from "@/lib/http";
 import { attachPlayback, type PlaybackHandle, type PlaybackTracks, type PlaybackError } from "@/lib/player";
 import { resolverMediaUrl, resolverSubtitleUrl } from "@/lib/resolver";
 import { sourcePickerScore, streamSizeBytes } from "@/lib/sourceRank";
-import { playbackPlan, streamPlayability, canTryRemux, canProviderTranscode } from "@/lib/streamCompatibility";
+import { playbackPlan, streamPlayability, canTryRemux, canProviderTranscode, hasDolbyVision, recordBrowserPlaybackFailure } from "@/lib/streamCompatibility";
 import { reportHomeServerPlayback, updateHomeServerPlaybackPosition } from "@/lib/homeServerPlayback";
 import {
   bufferedAhead,
@@ -481,6 +481,7 @@ function VideoPlayer({
     if (!video) return undefined;
     return monitorVideoFrames(video, () => {
       video.pause();
+      recordBrowserPlaybackFailure(stream, "This browser could not decode video frames from the selected source.", !!stream.transcoded);
       if (!stream.transcoded && canProviderTranscode(stream)) {
         onToast("No video frames decoded. Requesting provider conversion for this source.");
         onSelectStream(stream, { forceTranscode: true, forceBrowser: true });
@@ -773,11 +774,17 @@ function VideoPlayer({
             setErrorDetail(message);
             setBuffering(false); setError(true); setShowControls(true);
           };
-          const prepared = await probeAndPrepareRemux(stream.url!, stream.behaviorHints?.proxyHeaders?.request, settings.audioLanguage, { signal: controller.signal, onError: remuxFailed });
+          const prepared = await probeAndPrepareRemux(stream.url!, stream.behaviorHints?.proxyHeaders?.request, settings.audioLanguage, { signal: controller.signal, onError: remuxFailed, expectDolbyVision: hasDolbyVision(stream) });
           if (cancelled) { prepared?.destroy(); return; }
           if (!prepared || (prepared.probe.audioTracks.length > 0 && prepared.probe.chosenAudioIndex < 0) || !prepared.probe.videoPlayable) {
+            if (prepared) {
+              const reason = !prepared.probe.videoPlayable ? prepared.probe.videoReason ?? "This browser cannot decode the selected video track."
+                : "No compatible audio track found. Use provider conversion or an external player.";
+              recordBrowserPlaybackFailure(stream, reason, !!stream.transcoded);
+              setErrorDetail(reason);
+            }
             prepared?.destroy();
-            if (stream.homeServer && !stream.transcoded) { onSelectStream(stream, { forceBrowser: true, forceTranscode: true }); return; }
+            if (canProviderTranscode(stream) && !stream.transcoded) { onSelectStream(stream, { forceBrowser: true, forceTranscode: true }); return; }
             if (tryNextSource()) return;
             setBuffering(false);
             setError(true);
@@ -1195,7 +1202,9 @@ function VideoPlayer({
       }
       if (!lastPosition || !authClient.session || authClient.session.userId !== userId || isLiveStream) return;
       const now = Date.now();
-      if (force !== true && now - lastSavedRef.current < 15_000) return;
+      // The current backend saves an account snapshot per checkpoint. Bound
+      // periodic traffic while pause/close/background/end still flush immediately.
+      if (force !== true && now - lastSavedRef.current < 60_000) return;
       const { position, duration } = lastPosition;
       if (lastQueuedPosition === Math.round(position)) return;
       lastQueuedPosition = Math.round(position);

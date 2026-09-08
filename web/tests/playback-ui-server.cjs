@@ -6,14 +6,17 @@ const { build } = require(process.env.ESBUILD_PATH || '../../netlify-auth-site/n
 const root = path.resolve(__dirname, '..');
 const media = path.resolve(root, '../.playback-fixtures');
 (async () => {
-  const bundle = await build({ entryPoints: { app: path.join(__dirname, 'fixtures/playback-ui.ts'), 'remux.worker': path.join(root, 'lib/remux.worker.ts') },
-    bundle: true, splitting: true, format: 'esm', outdir: '/fixture', write: false, define: { 'process.env.NODE_ENV': '"test"' } });
+  const bundle = await build({ entryPoints: { app: path.join(__dirname, 'fixtures/playback-ui.ts'), 'remux.worker': path.join(root, 'lib/remux.worker.ts'),
+    'dolbyVisionProbe.worker': path.join(root, 'lib/dolbyVisionProbe.worker.ts') },
+    bundle: true, splitting: true, format: 'esm', outdir: '/fixture', write: false, define: {
+      'process.env': JSON.stringify({ NODE_ENV: 'test', NEXT_PUBLIC_ARVIO_RESOLVER_URL: process.env.NEXT_PUBLIC_ARVIO_RESOLVER_URL || '' })
+    } });
   const files = new Map(bundle.outputFiles.map(file => [path.basename(file.path), file.contents]));
   http.createServer((req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
     const url = new URL(req.url, 'http://localhost');
-    const name = path.basename(url.pathname).replace('remux.worker.ts', 'remux.worker.js');
+    const name = path.basename(url.pathname).replace(/\.worker\.ts$/, '.worker.js');
     if (files.has(name)) { res.setHeader('Content-Type', 'text/javascript'); res.end(files.get(name)); return; }
     if (url.pathname.startsWith('/media/')) {
       const file = path.resolve(media, decodeURIComponent(url.pathname.slice(7)));

@@ -15,7 +15,7 @@ const code = ts.transpileModule(source, {
 }).outputText;
 const flush = () => new Promise(setImmediate);
 
-function harness() {
+function harness(probeOverrides = {}) {
   const state = { trace: [], timeouts: new Set(), revoked: [], terminated: 0, errors: [] };
 
   class SourceBufferMock extends EventTarget {
@@ -95,7 +95,7 @@ function harness() {
       if (message.type === 'probe') {
         queueMicrotask(() => this.emit({ type: 'probe', probe: {
           container: 'Matroska', videoCodec: 'avc1.42001e', videoPlayable: true,
-          audioTracks: [], chosenAudioIndex: -1, duration: 100
+          audioTracks: [], chosenAudioIndex: -1, duration: 100, ...probeOverrides
         } }));
       }
       if (message.type === 'start') {
@@ -135,6 +135,18 @@ function harness() {
   state.tick = () => state.clock?.();
   return state;
 }
+
+test('A container-safety rejection cannot be overwritten by HEVC MSE support', async () => {
+  const state = harness({ videoCodec: 'hev1.2.4.L153.B0', videoPlayable: false,
+    videoReason: 'Dolby Vision profile 5 requires compatible conversion' });
+  const handle = await state.prepare('https://fixture.invalid/film.mp4', undefined, undefined, { expectDolbyVision: true });
+  assert.equal(state.worker.messages[0].expectDolbyVision, true);
+  assert.equal(handle.probe.videoPlayable, false);
+  await assert.rejects(handle.start(state.video), /Dolby Vision profile 5/);
+  handle.destroy();
+  assert.equal(state.terminated, 1);
+  assert.equal(state.timeouts.size, 0);
+});
 
 async function playing(t) {
   const state = harness();

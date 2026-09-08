@@ -4,10 +4,11 @@ export type RemuxAudioTrack = {
 };
 export type RemuxProbe = {
   container: string; videoCodec?: string; videoPlayable: boolean;
+  videoReason?: string; hdr10BaseLayer?: boolean; videoProbeStatus?: string;
   audioTracks: RemuxAudioTrack[]; chosenAudioIndex: number; duration: number;
 };
 export type RemuxCommand =
-  | { type: "probe"; url: string; headers?: Record<string, string>; audioCodecs: string[]; language?: string }
+  | { type: "probe"; url: string; headers?: Record<string, string>; audioCodecs: string[]; language?: string; expectDolbyVision?: boolean }
   | { type: "start"; generation: number; time: number; audioIndex: number }
   | { type: "clock"; time: number }
   | { type: "ack"; id: number };

@@ -114,6 +114,68 @@ function sessionEffect(stream, report, update = () => {}) {
     tick: () => { for (const fn of timers) fn(); }, emit: (name) => video.dispatchEvent(new Event(name)) };
 }
 
+function progressEffect() {
+  const video = new EventTarget();
+  Object.assign(video, { currentTime: 10, duration: 1000, paused: true, readyState: 4 });
+  const window = new EventTarget();
+  const document = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+  const calls = [];
+  const authClient = { session: { userId: 'account-a' } };
+  let now = 1_000_000;
+  const setup = extracted('components/player/PlayerOverlay.tsx', (node, source) =>
+    ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect'
+      && ts.isArrowFunction(node.arguments[0]) && node.arguments[0].getText(source).includes('lastQueuedPosition')
+      ? node.arguments[0] : undefined, {
+    videoRef: { current: video }, item: { id: 1, title: 'Episode', mediaType: 'tv' },
+    stream: { addonId: 'fixture', addonName: 'Fixture' }, addons: [], activeProfileId: 'profile-a',
+    selectedEpisode: { season: 1, episode: 3 }, authClient,
+    Date: { now: () => now }, window, document, lastSavedRef: { current: 0 },
+    isLiveStreamOrSportsItem: () => false, config: {}, settings: { autoPlayNext: false },
+    syncClient: () => ({ scrobble: async () => {} }), saveWatchedState: async () => {},
+    saveProgress: async (...args) => { calls.push(args); }
+  });
+  const cleanup = setup();
+  return { video, window, document, calls, authClient, cleanup,
+    advance: (seconds) => { now += seconds * 1000; video.currentTime += seconds; },
+    emit: (name) => video.dispatchEvent(new Event(name)) };
+}
+
+test('Progress cloud checkpoints are once per minute, not every 15 seconds', () => {
+  const h = progressEffect();
+  h.emit('timeupdate');
+  assert.equal(h.calls.length, 1);
+  for (let n = 0; n < 3; n++) { h.advance(15); h.emit('timeupdate'); }
+  assert.equal(h.calls.length, 1);
+  h.advance(15); h.emit('timeupdate');
+  assert.equal(h.calls.length, 2);
+  h.cleanup();
+  assert.equal(h.calls.length, 2, 'unchanged teardown position is not saved twice');
+});
+
+test('Pause, background, pagehide, end and close bypass periodic checkpoint throttling', () => {
+  for (const event of ['pause', 'background', 'pagehide', 'ended', 'close']) {
+    const h = progressEffect();
+    h.emit('timeupdate');
+    h.advance(3);
+    if (event === 'background') { h.document.visibilityState = 'hidden'; h.document.dispatchEvent(new Event('visibilitychange')); }
+    else if (event === 'pagehide') h.window.dispatchEvent(new Event('pagehide'));
+    else if (event === 'close') h.cleanup();
+    else h.emit(event);
+    assert.equal(h.calls.length, 2, event);
+    assert.equal(h.calls[1][1].position_seconds, 13, event);
+    assert.equal(h.calls[1][1].episode, 3);
+    if (event !== 'close') h.cleanup();
+  }
+});
+
+test('Progress cleanup cannot save the former profile into a new account', () => {
+  const h = progressEffect();
+  h.emit('timeupdate'); h.advance(5);
+  h.authClient.session.userId = 'account-b';
+  h.cleanup();
+  assert.equal(h.calls.length, 1);
+});
+
 function actualHomeApi(respond = async () => '') {
   const calls = [];
   const http = {
@@ -219,6 +281,7 @@ for (const converted of [false, true]) test(`missing video ${converted ? 'after 
   let missing, paused = false, failure = false;
   const selections = [];
   const toasts = [];
+  const failures = [];
   const effect = extracted('components/player/PlayerOverlay.tsx', (node, source) =>
     ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect'
       && ts.isArrowFunction(node.arguments[0]) && node.arguments[0].getText(source).includes('monitorVideoFrames(')
@@ -226,6 +289,7 @@ for (const converted of [false, true]) test(`missing video ${converted ? 'after 
     booted: true, liveTv: false, videoRef: { current: video }, stream,
     monitorVideoFrames: (_, callback) => { missing = callback; return () => {}; },
     canProviderTranscode: () => true,
+    recordBrowserPlaybackFailure: (...args) => failures.push(args),
     onSelectStream: (...args) => selections.push(args), tryNextSource: () => false,
     setError: (value) => { failure = value; }, setBuffering: () => {}, setShowControls: () => {},
     onToast: (message) => toasts.push(message)
@@ -234,6 +298,8 @@ for (const converted of [false, true]) test(`missing video ${converted ? 'after 
   missing();
   assert.equal(paused, true);
   assert.equal(failure, converted);
+  assert.equal(failures[0][0], stream);
+  assert.equal(failures[0][2], converted);
   assert.equal(selections.length, converted ? 0 : 1);
   if (!converted) { assert.equal(selections[0][0], stream); assert.equal(selections[0][1].forceTranscode, true); }
   assert.doesNotMatch(toasts.join(' '), /switching source/i);

@@ -15,6 +15,8 @@ credentials, failed-start retries, stale results, StrictMode and source changes.
 
 1. Install FFmpeg with libx264, AAC, E-AC-3 and DTS encoding support.
 2. Run `powershell -File tests/create-playback-fixtures.ps1` from `web`.
+   For HEVC Main10, VP9/Opus and AV1/AAC also run
+   `powershell -File tests/create-codec-fixtures.ps1` (FFmpeg with those encoders).
 3. Install `netlify-auth-site` dependencies with `npm ci` in that directory. The
    fixture server uses its existing esbuild package; alternatively set `ESBUILD_PATH`
    to an installed esbuild module's absolute path.
@@ -78,6 +80,45 @@ proof that every server or codec works.
 No video relay/transcoder was added to Netlify. File repackaging and supported
 audio conversion run in a browser worker. Unsupported video codecs require an
 authorized home-server/provider conversion route or an external player. Browser
-HTTPS, CORS, byte-range and codec restrictions still apply. The existing optional
-media relay is not a promise of free or unlimited bandwidth. No automatic probing
-of every source or background torrent download was added.
+HTTPS, CORS, byte-range and codec restrictions still apply. Media forwarding is
+hard-disabled on Netlify and in production, regardless of the optional local
+development flag. No automatic probing of every source or background torrent
+download is performed.
+
+## Shared codec changes (2026-09-08)
+
+The route does not depend on a title, genre, movie/series/anime classification,
+or file size. It uses source metadata, selected-track configuration and the
+browser's codec support. Plex/Emby/Jellyfin can supply authorized conversion;
+that does not imply every home server or debrid plan permits transcoding.
+
+- HEVC Main10 MP4: live Chromium probe 210 ms, startup 370 ms, picture and audio;
+  forward seek to 65 seconds completed playback without error.
+- VP9/Opus WebM: probe 263 ms, startup 381 ms; 1,026 frames at 42.6 seconds,
+  audio RMS 0.0625 and no error.
+- AV1/AAC MP4: probe 171 ms, startup 348 ms; 914 frames at 37.9 seconds,
+  audio RMS 0.0623 and no error.
+- E-AC-3 MKV conversion: probe 145 ms, startup 1,020 ms; 1,763 frames at
+  73.3 seconds, audio RMS 0.0625 and no error.
+- DTS MKV conversion: probe 280 ms, startup 1,216 ms; 758 frames at 31.4
+  seconds, audio RMS 0.0625 and no error.
+
+These synthetic local tests validate the shared playback engine, not every
+Internet provider, device, 4K bitrate or HDR display. The direct Torrentio
+redirect URL failed CORS in the minimal fixture page, which intentionally does
+not include the app's debrid-resolution API. Production provider tests must use
+the full app and its resolved CDN URL.
+
+Dolby Vision metadata checks run in a cancellable child worker with an 8 MiB,
+32-request and 10-second budget, directly against the selected provider file.
+Only verified HEVC profile 8, compatibility ID 1, base layer present and no
+enhancement layer is eligible for HDR10-base extraction. Profile 5, profile 7,
+unknown/ambiguous configurations and unsafe packet layouts are not stripped.
+No Dolby Vision-to-SDR tone mapper or general software video encoder was added.
+
+Source warnings distinguish unsupported browser playback, provider conversion,
+browser preparation and unverified playback. Selected-file failures are retained
+only in bounded tab memory for 10 minutes, never cloud-synced. Debrid URL caches
+are account/file scoped, bounded and single-flight; a missing requested episode
+cannot fall back to the largest file. Merely browsing sources performs no debrid
+resolution or torrent creation.

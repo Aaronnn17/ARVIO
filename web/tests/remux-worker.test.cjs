@@ -13,7 +13,7 @@ const decoderConfig = {
 };
 const flush = () => new Promise(setImmediate);
 
-function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpected fetch'); }, audioPackets = []) {
+function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpected fetch'); }, audioPackets = [], overrides = {}) {
   const messages = [];
   const waits = [];
   const timers = new Map();
@@ -30,9 +30,9 @@ function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpe
     }
   };
   const video = {
-    codec: 'avc', rotation: 0,
+    codec: 'avc', rotation: 0, id: 7,
     getCodecParameterString: async () => decoderConfig.codec,
-    getDecoderConfig: async () => decoderConfig
+    getDecoderConfig: async () => decoderConfig, ...overrides.video
   };
   const audio = {
     codec: 'aac', languageCode: 'eng', numberOfChannels: 2,
@@ -73,7 +73,8 @@ function workerHarness(t, packets, fetch = async () => { throw new Error('Unexpe
   };
   load('lib/remux.worker.ts', {
     mediabunny: { ...mb, Input: InputMock, UrlSource: UrlSourceMock, EncodedPacketSink: PacketSinkMock, Output },
-    './remuxProtocol': load('lib/remuxProtocol.ts')
+    './remuxProtocol': load('lib/remuxProtocol.ts'),
+    './dolbyVision': overrides.dolbyVision ?? { probeDolbyVision: async () => { throw new Error('Non-HEVC must not trigger Dolby Vision reads'); }, canExtractHdr10BaseLayer: () => false }
   }, {
     self: port, WritableStream, fetch,
     setTimeout: (callback, ms) => {
@@ -108,6 +109,38 @@ async function probe(harness) {
   harness.send({ type: 'probe', url: 'https://fixture.invalid/film.mkv', audioCodecs: ['mp4a.40.2'] });
   return harness.waitFor(({ type }) => type === 'probe');
 }
+
+test('The worker verifies the selected HEVC track and refuses profile 5 before emitting media', async (t) => {
+  const helpers = load('lib/dolbyVision.ts', { './dolbyVisionProbeClient': {} });
+  let options;
+  const h = workerHarness(t, [], undefined, [], { video: { codec: 'hevc' }, dolbyVision: { ...helpers,
+    probeDolbyVision: async (_url, value) => { options = value; return { status: 'present', trackId: 7, codec: 'hevc', nalLengthSize: 4,
+      config: { profile: 5, compatibilityId: 0, baseLayer: true, enhancementLayer: false, rpu: true } }; }
+  } });
+  const { probe: result } = await probe(h);
+  assert.equal(options.trackId, 7);
+  assert.equal(result.videoPlayable, false);
+  assert.match(result.videoReason, /profile 5/);
+  h.send({ type: 'start', generation: 0, time: 0, audioIndex: -1 });
+  await h.waitFor(({ type }) => type === 'error');
+  assert.equal(h.messages.some(({ type }) => type === 'chunk'), false);
+});
+
+test('Profile 8.1 extraction is enabled only by confirmed file metadata, while normal HEVC remains valid', async (t) => {
+  const helpers = load('lib/dolbyVision.ts', { './dolbyVisionProbeClient': {} });
+  for (const metadata of [
+    { status: 'present', trackId: 7, codec: 'hevc', nalLengthSize: 4,
+      config: { profile: 8, compatibilityId: 1, baseLayer: true, enhancementLayer: false, rpu: true } },
+    { status: 'absent', trackId: 7 },
+    { status: 'unknown', reason: 'range-not-supported' }
+  ]) {
+    const h = workerHarness(t, [], undefined, [], { video: { codec: 'hevc' },
+      dolbyVision: { ...helpers, probeDolbyVision: async () => metadata } });
+    const { probe: result } = await probe(h);
+    assert.equal(result.videoPlayable, metadata.status !== 'unknown');
+    assert.equal(result.hdr10BaseLayer, metadata.status === 'present');
+  }
+});
 
 test('A 40-second GOP emits a real MP4 media fragment before waiting for the playback clock', { timeout: 5000 }, async (t) => {
   const packets = Array.from({ length: 90 }, (_, timestamp) => {

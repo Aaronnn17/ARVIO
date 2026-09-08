@@ -4,6 +4,7 @@ import {
   AudioSampleSink, AudioSampleSource,
 } from "mediabunny";
 import { preferredAudioIndex, type RemuxCommand, type RemuxEvent, type RemuxProbe } from "./remuxProtocol";
+import { probeDolbyVision, canExtractHdr10BaseLayer, extractHdr10BaseLayer, type DolbyVisionProbeResult } from "./dolbyVision";
 
 const port = self as unknown as { postMessage: (message: RemuxEvent, transfer?: Transferable[]) => void; onmessage: ((event: MessageEvent<RemuxCommand>) => void) | null };
 let input: Input;
@@ -13,6 +14,7 @@ let clock = 0;
 let output: Output | undefined;
 let nextId = 0;
 let aacEncoderRegistered = false;
+let dolbyVision: DolbyVisionProbeResult | undefined;
 const acknowledgements = new Map<number, () => void>();
 const sleep = () => new Promise<void>((resolve) => setTimeout(resolve, 80));
 
@@ -56,6 +58,20 @@ async function probeInput(command: Extract<RemuxCommand, { type: "probe" }>) {
   const format = await input.getFormat();
   const video = await input.getPrimaryVideoTrack();
   if (!video) throw new Error("No supported video track found");
+  let videoReason: string | undefined;
+  dolbyVision = undefined;
+  if (video.codec === "hevc") {
+    // The demuxer otherwise discards dvcC/dvvC and incorrectly labels profile 5
+    // as ordinary HEVC. Probe only the chosen file, never every source in a list.
+    dolbyVision = await probeDolbyVision(command.url, { headers: command.headers, trackId: video.id });
+    if (dolbyVision.status === "present" && !canExtractHdr10BaseLayer(dolbyVision)) {
+      videoReason = `Dolby Vision profile ${dolbyVision.config.profile} has no verified browser-safe HDR10 conversion. Choose a non-DV source or an external player.`;
+    } else if (dolbyVision.status === "unknown" || (command.expectDolbyVision && dolbyVision.status === "absent")) {
+      videoReason = "The file's Dolby Vision compatibility could not be verified. Use provider conversion or an external player to avoid incorrect colours.";
+    }
+  } else if (command.expectDolbyVision) {
+    videoReason = "This Dolby Vision format cannot be safely repackaged in this browser.";
+  }
   const tracks = await input.getAudioTracks();
   if (tracks.some((track) => /ac3|eac3/.test(track.codec ?? ""))) {
     (await import("@mediabunny/ac3")).registerAc3Decoder();
@@ -65,20 +81,23 @@ async function probeInput(command: Extract<RemuxCommand, { type: "probe" }>) {
   }
   const audioTracks = [];
   for (const [index, track] of tracks.entries()) {
-    const codec = await track.getCodecParameterString() ?? track.codec ?? "unknown";
+    const codec = await track.getCodecParameterString().catch(() => null) ?? track.codec ?? "unknown";
     const passthrough = command.audioCodecs.includes(codec);
-    const browserPlayable = passthrough || await track.canDecode();
+    const browserPlayable = passthrough || await track.canDecode().catch(() => false);
     audioTracks.push({ index, codec, passthrough, browserPlayable,
       language: track.languageCode ?? undefined, channels: track.numberOfChannels,
       label: [track.languageCode?.toUpperCase(), codec.toUpperCase(), `${track.numberOfChannels}ch`, !passthrough && browserPlayable ? "converted" : ""].filter(Boolean).join(" / ") });
   }
   probe = { container: format.name, videoCodec: await video.getCodecParameterString() ?? undefined,
-    videoPlayable: true, audioTracks, chosenAudioIndex: preferredAudioIndex(audioTracks, command.language),
+    videoPlayable: !videoReason, videoReason, hdr10BaseLayer: !!dolbyVision && canExtractHdr10BaseLayer(dolbyVision),
+    videoProbeStatus: dolbyVision?.status === "unknown" ? dolbyVision.reason : dolbyVision?.status,
+    audioTracks, chosenAudioIndex: preferredAudioIndex(audioTracks, command.language),
     duration: await input.computeDuration() };
   port.postMessage({ type: "probe", probe });
 }
 
 async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
+  if (!probe?.videoPlayable) throw new Error(probe?.videoReason ?? "Video compatibility has not been verified");
   const run = command.generation;
   generation = run;
   clock = command.time;
@@ -142,7 +161,8 @@ async function produce(command: Extract<RemuxCommand, { type: "start" }>) {
       videoTimestamp = Math.max(videoTimestamp, packet.timestamp);
       fragmentBytes += packet.data.byteLength;
       if (fragmentBytes > 24 * 1024 * 1024) throw new Error("Keyframes are too far apart for bounded browser playback. Use server conversion or an external player.");
-      await videoSource.add(packet, videoConfig ? { decoderConfig: videoConfig } : undefined);
+      const data = probe.hdr10BaseLayer && dolbyVision ? extractHdr10BaseLayer(packet.data, dolbyVision) : null;
+      if (!data || data.length) await videoSource.add(data ? packet.clone({ data }) : packet, videoConfig ? { decoderConfig: videoConfig } : undefined);
       // The muxer cannot flush video until audio catches up. Without backpressure,
       // fast packet copying queues many GOPs behind the slower audio decoder.
       while (active() && !audioFinished && packet.timestamp > audioTimestamp + 2) await sleep();

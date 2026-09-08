@@ -1,7 +1,7 @@
 "use client";
 
-import { BadgeCheck, Bookmark, CalendarDays, Check, Clapperboard, Copy, Download, ExternalLink, EyeOff, Filter, MapPin, Play, Search, Star, Trash2, UserCircle, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { BadgeCheck, Bookmark, CalendarDays, Check, Clapperboard, Copy, Download, ExternalLink, EyeOff, Filter, Info, MapPin, Play, Search, Star, Trash2, TriangleAlert, UserCircle, X } from "lucide-react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { MediaCard } from "@/components/media/MediaCard";
 import { RailScroller } from "@/components/media/RailScroller";
@@ -16,12 +16,13 @@ import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/service
 import { getImdbRating } from "@/lib/imdbRatings";
 import { mdblistClient, type MdbExternalRating } from "@/lib/mdblist";
 import { sourcePickerScore } from "@/lib/sourceRank";
-import { playbackPlan } from "@/lib/streamCompatibility";
+import { playbackCompatibilityRevision, playbackPlan, subscribePlaybackCompatibility } from "@/lib/streamCompatibility";
 import { authClient, getPriorityConfig, useApp } from "@/lib/store";
 import { simklClient, getSimklItemUrl } from "@/lib/simkl";
 import { syncClient, syncSeasonWatched } from "@/lib/sync";
 import { getDetails, getLogoUrl, getPersonDetails, getReviews, getSeasonEpisodes } from "@/lib/tmdb";
 import type { EpisodeInfo, InstalledAddon, MediaItem, PersonCredit, PersonDetails, ReviewInfo, StreamSource, SubtitleTrack } from "@/lib/types";
+import { sourcePlaybackPresentation } from "./sourcePlaybackPresentation";
 
 export function DetailsDrawer() {
   const { selected: item } = useApp();
@@ -406,6 +407,8 @@ function SourcePickerModal({
   loading: boolean;
 }) {
   const { settings, playStream } = useApp();
+  // Recompute visible plans after selected-source failures without probing the result list.
+  useSyncExternalStore(subscribePlaybackCompatibility, playbackCompatibilityRevision, () => 0);
   const [addonFilter, setAddonFilter] = useState("all");
   const [query, setQuery] = useState("");
   // Windows-only: offer the one-time vlc:// setup so "Open in VLC" launches VLC
@@ -483,9 +486,7 @@ function SourcePickerModal({
       if (addonFilter !== "all" && (stream.addonId || stream.addonName) !== addonFilter) return false;
       if (!needle) return true;
       return `${stream.source} ${stream.addonName} ${stream.description ?? ""} ${stream.quality ?? ""} ${stream.size ?? ""}`.toLowerCase().includes(needle);
-      // Every source opens in an external player, so quality-first ("external")
-      // is the right order for everyone — the browser-aware reordering only
-      // made sense while in-browser Play existed here.
+      // Keep quality-first ordering independent of the playback warning.
     }).sort((a, b) => sourcePickerScore(b, "external") - sourcePickerScore(a, "external"));
   }, [addonFilter, query, streams]);
 
@@ -651,9 +652,7 @@ function SourcePickerModal({
             <Search size={18} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search quality, release, provider" />
           </label>
-          {/* The "Browser playable" filter is gone with the in-browser Play
-              path: it counted a name-based guess that was wrong often enough
-              to be a broken promise. All sources, searchable, one order. */}
+          {/* Possible browser routes are not proof of playback; keep every source searchable. */}
           <div className="source-filter-group" aria-label="Source count">
             <button type="button" className="is-active" disabled>
               <Filter size={16} /> All sources{streams.length ? ` ${streams.length}` : ""}
@@ -684,25 +683,20 @@ function SourcePickerModal({
             const locked = !stream.url;
             const uncached = isUncachedDebridStream(stream);
             const plan = playbackPlan(stream);
-            const browserOption = !locked && !uncached && plan.route === "here";
-            const statusLabel = uncached
-              ? "Not cached — downloads first, slow start"
-              : locked
-                ? "Needs a debrid resolver"
-                : browserOption
-                  ? plan.method === "transcode" ? "Provider conversion required" : "Browser or external player"
-                  : plan.detail || "External player recommended";
-            const statusClass = "needs-vlc";
+            const playback = sourcePlaybackPresentation(stream, plan, uncached);
+            const StatusIcon = playback.state === "blocked" ? TriangleAlert : Info;
             return (
               <article key={`${stream.addonId}-${stream.url ?? stream.source}`} className={`source-picker-row ${locked ? "is-locked" : ""}`}>
                 <span className="source-rank">{index + 1}</span>
                 <span className="source-main">
                   <strong>{stream.source || stream.addonName}</strong>
                   <em>{stream.addonName}{stream.description ? ` - ${stream.description}` : ""}</em>
-                  <span className="source-status-line">
-                    <span className={`source-playback-status ${statusClass}`}>
-                      {statusLabel}
+                  <span className="source-status-line" data-playback-state={playback.state}>
+                    <span className={`source-playback-status ${playback.className}`} style={{ maxWidth: "100%", whiteSpace: "normal", overflowWrap: "anywhere", gap: 6, paddingBlock: 4 }}>
+                      <StatusIcon size={13} aria-hidden="true" style={{ flexShrink: 0 }} />
+                      <span>{playback.label}</span>
                     </span>
+                    {playback.detail && <span className="source-warning">{playback.detail}</span>}
                   </span>
                   <span className="stream-badges">
                     {streamBadges(stream).map((badge) => (
@@ -712,9 +706,9 @@ function SourcePickerModal({
                 </span>
                 <span className="source-side">
                   <b>{stream.quality || "Unknown"}</b>
-                  <small>{locked ? "Needs resolver" : browserOption ? plan.method === "transcode" ? "Conversion" : "Browser" : "External"}</small>
+                  <small>{locked ? "Needs resolver" : playback.state === "conversion" ? "Conversion required" : playback.state === "blocked" ? "Not browser-playable" : "Unverified"}</small>
                   <span className="source-row-actions">
-                    {browserOption && <button type="button" className="source-action primary-action" onClick={() => { playStream(stream, { forceBrowser: true }); onClose(); }}><Play size={13} /> Play</button>}
+                    {playback.canTryBrowser && <button type="button" className="source-action primary-action" aria-label={playback.state === "conversion" ? "Try provider conversion in browser" : "Try browser playback"} title={playback.detail || "Try browser playback"} onClick={() => { playStream(stream, { forceBrowser: true }); onClose(); }}><Play size={13} /> Try</button>}
                     <button
                       type="button"
                       className={`source-action ${locked ? "" : "primary-action"}`}
@@ -839,10 +833,9 @@ function streamBadges(stream: StreamSource) {
   if (size) labels.push({ label: size });
   if (stream.behaviorHints?.cached) labels.push({ label: "CACHED", tone: "ok" });
   if (parseDebridStream(stream.url) || /real-?debrid|premiumize|alldebrid|torbox|\brd\b|\bpm\b|\bad\b|\bdebrid\b/i.test(text)) labels.push({ label: "DEBRID", tone: "ok" });
-  if (stream.url) labels.push({ label: "DIRECT", tone: "ok" });
-  // The WEB/REMUX/TRANSCODE badges were browser-playability claims inferred
-  // from the release name; they left with the in-browser Play path.
-  if (!stream.url) labels.push({ label: "ANDROID", tone: "warn" });
+  // A URL is not evidence of browser support, or of a resolved direct media link.
+  if (stream.url) labels.push({ label: "URL" });
+  if (!stream.url) labels.push({ label: "NO URL", tone: "warn" });
   const seen = new Set<string>();
   return labels.filter((badge) => {
     if (seen.has(badge.label)) return false;

@@ -60,20 +60,59 @@ test('Resolution alone is not a codec, and measured codec metadata wins over rel
   assertPlan(module, hevc, 'external', 'vlc', 'direct');
 });
 
-test('HEVC metadata does not hide Dolby Vision in addon filenames or descriptions', () => {
+test('Dolby Vision with HEVC Main10 takes a conditional selected-file probe, not blind direct playback', () => {
   const module = compatibility({ hevc: true, hevc10: true });
   for (const metadata of [
     { description: 'Film.2160p.DV.HDR10+.HEVC' },
     { behaviorHints: { filename: 'Film.DoVi.mkv' } },
     { source: 'Addon Dolby Vision' },
-    { media: { videoCodec: 'dvh1.05.06', audioCodec: 'aac' } },
     { media: { videoCodec: 'dvhe.08.06', audioCodec: 'aac' } }
   ]) {
     const source = stream({ media: { videoCodec: 'hevc', audioCodec: 'aac' }, ...metadata });
-    assertPlan(module, source, 'external', 'vlc', 'direct');
-    assert.equal(module.canTryRemux(source), false);
+    assertPlan(module, source, 'remux', 'here', 'remux');
+    assert.equal(module.canTryRemux(source), true);
     assert.match(module.playbackWarning(source), /Dolby Vision/);
   }
+});
+
+test('Known profile 5 and devices without Main10 never claim a stripped HDR10 fallback', () => {
+  const source = stream({ media: { videoCodec: 'dvh1.05.06', audioCodec: 'aac' } });
+  assertPlan(compatibility({ hevc: true, hevc10: true }), source, 'external', 'vlc', 'direct');
+  assertPlan(compatibility({ hevc: true, hevc10: false }), { ...source, media: { videoCodec: 'hevc', hdr: 'DV' } }, 'external', 'vlc', 'direct');
+  const noMse = compatibility({ hevc: true, hevc10: true, mse: false });
+  assertPlan(noMse, { ...source, media: { videoCodec: 'dvhe.08.06' } }, 'external', 'vlc', 'direct');
+});
+
+test('Hi10P anime and older video codecs are explicit external/provider-conversion routes', () => {
+  const module = compatibility({ hevc: true, hevc10: true });
+  for (const codec of ['Hi10P', 'avc1.6e0033', 'VC-1', 'XviD', 'MPEG-2']) {
+    const source = stream({ media: { videoCodec: codec } });
+    assertPlan(module, source, 'external', 'vlc', 'direct');
+    assertPlan(module, { ...source, homeServer: { serverId: 'jellyfin', itemId: 'anime' } }, 'transcode', 'here', 'transcode');
+  }
+});
+
+test('Selected-file failures update all source rows, remain account URL scoped and bounded, and can recover', () => {
+  const module = compatibility();
+  const source = stream();
+  let changes = 0;
+  const stop = module.subscribePlaybackCompatibility(() => changes++);
+  module.recordBrowserPlaybackFailure(source, 'No compatible audio track');
+  assertPlan(module, source, 'external', 'vlc', 'direct');
+  assert.equal(changes, 1);
+  assertPlan(module, { ...source, url: source.url + '?account=other' }, 'direct', 'here', 'direct');
+  module.clearBrowserPlaybackFailure(source);
+  assertPlan(module, source, 'direct', 'here', 'direct');
+  const debrid = { ...source, url: `https://resolver.invalid/resolve/torbox/fixture-key/${'a'.repeat(40)}/0/Film.mkv` };
+  module.recordBrowserPlaybackFailure({ ...debrid, originalUrl: debrid.url, url: 'https://cdn.invalid/film.mkv' }, 'Unsupported video');
+  assertPlan(module, debrid, 'transcode', 'here', 'transcode');
+  module.recordBrowserPlaybackFailure(debrid, 'Conversion not permitted', true);
+  assertPlan(module, debrid, 'external', 'vlc', 'direct');
+  stop();
+  const previous = changes;
+  for (let i = 0; i < 101; i++) module.recordBrowserPlaybackFailure({ ...source, url: source.url + '?file=' + i }, 'Unsupported');
+  assert.equal(changes, previous);
+  assertPlan(module, debrid, 'remux', 'here', 'remux');
 });
 
 test('SDR, HDR10, DVD and unrelated names are not mistaken for Dolby Vision', () => {
@@ -214,6 +253,19 @@ for (const provider of ['premiumize', 'alldebrid', 'torbox', 'realdebrid']) {
 test('Home-server conversion remains available without implying debrid conversion', () => {
   const source = stream({ homeServer: { type: 'jellyfin', serverId: 'fixture' }, media: { videoCodec: 'hevc' } });
   assertPlan(compatibility(), source, 'transcode', 'here', 'transcode');
+});
+
+test('Anime Hi10P filename is respected even with generic H264 metadata', () => {
+  const module = compatibility();
+  const source = stream({ media: { videoCodec: 'h264', audioCodec: 'aac' }, behaviorHints: { filename: 'Anime.S01E03.Hi10P.mkv' } });
+  assertPlan(module, source, 'external', 'vlc', 'direct');
+  assert.match(module.playbackPlan(source).detail, /Hi10P/);
+});
+
+test('MPEG-4 AVC is H264 rather than unsupported MPEG-4 Part 2', () => {
+  const module = compatibility();
+  const source = stream({ url: 'https://media.invalid/movie.mp4', media: { videoCodec: 'MPEG-4 AVC', audioCodec: 'aac' } });
+  assertPlan(module, source, 'direct', 'here', 'direct');
 });
 
 test('Unresolved and non-media sources stay locked', () => {
