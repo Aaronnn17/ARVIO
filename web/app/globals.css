@@ -11216,9 +11216,11 @@ button,
 .player-controls .scrubber {
   -webkit-appearance: none;
   appearance: none;
+  --scrubber-track-height: 6px;
+  --scrubber-thumb-size: 13px;
   /* 3px was too thin to see the played/buffered split at a glance and too
      fiddly to aim at; 6px reads clearly and still looks slim. */
-  height: 6px !important;
+  height: var(--scrubber-track-height) !important;
   border-radius: 999px;
   background: linear-gradient(90deg,
     var(--accent, #e50914) 0, var(--accent, #e50914) var(--pct, 0%),
@@ -11232,7 +11234,7 @@ button,
    reveals the thumb — the 3px bar itself is an awkward pointer target. */
 .player-controls .scrubber:hover,
 .scrubber-track:hover .scrubber,
-.scrubber-track:focus-within .scrubber { height: 9px !important; }
+.scrubber-track:focus-within .scrubber { --scrubber-track-height: 9px; }
 
 /* iOS renders the native track unless it is explicitly zeroed out. */
 .player-controls .scrubber::-webkit-slider-runnable-track {
@@ -11247,15 +11249,16 @@ button,
    and grow it on hover/drag instead. */
 .player-controls .scrubber::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 13px;
-  height: 13px;
-  margin-top: 0;
+  width: var(--scrubber-thumb-size);
+  height: var(--scrubber-thumb-size);
+  /* WebKit aligns the thumb's top to the track; Firefox centers it natively. */
+  margin-top: calc((var(--scrubber-track-height) - var(--scrubber-thumb-size)) / 2);
   border: 0;
   border-radius: 999px;
   background: #fff;
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.6);
   opacity: 1;
-  transition: transform 0.12s ease;
+  transition: transform 0.12s ease, margin-top 0.12s ease;
 }
 
 .player-controls .scrubber:hover::-webkit-slider-thumb,
@@ -11264,7 +11267,7 @@ button,
 .scrubber-track:focus-within .scrubber::-webkit-slider-thumb { transform: scale(1.35); }
 .player-controls .scrubber::-moz-range-track { background: transparent; height: 100%; border: 0; }
 .player-controls .scrubber::-moz-range-thumb {
-  width: 13px; height: 13px; border: 0; border-radius: 999px; background: #fff;
+  width: var(--scrubber-thumb-size); height: var(--scrubber-thumb-size); border: 0; border-radius: 999px; background: #fff;
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.6); opacity: 1;
 }
 .player-controls .scrubber:hover::-moz-range-thumb,
