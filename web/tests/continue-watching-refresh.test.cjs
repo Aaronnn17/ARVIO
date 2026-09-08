@@ -198,6 +198,14 @@ test('cached replay newer than completion survives; exact old episode is removed
   assert.equal(cw.pruneCompletedResume(local, times), local);
 });
 
+test('older Simkl Up Next in the combined playback feed cannot override a newer Trakt completion', () => {
+  const staleSimkl = { ...episode, badge: 'Up Next' };
+  const next = { ...episode, episodeNumber: 3, badge: 'Up Next', activityAt: Date.parse(after) };
+  const result = cw.mergeTrackerContinueWatching([staleSimkl], [next], new Set(['tv:2:1:2']), cw.completionTimes([], [watchedShow]));
+  assert.equal(result.length, 1);
+  assert.equal(result[0].episodeNumber, 3);
+});
+
 test('unknown completion time cannot erase a cached reset Up Next', () => {
   const next = [{ ...episode, badge: 'Up Next' }];
   assert.equal(cw.pruneCompletedResume(next, new Map([['tv:2:1:2', 0]])), next);

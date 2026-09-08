@@ -61,7 +61,9 @@ export function isUnwatchedContinueWatching(item: MediaItem, watchedKeys: Set<st
 
 /** A stale pause on a watched episode must not suppress the show's next episode. */
 export function mergeTrackerContinueWatching(playback: MediaItem[], upNext: MediaItem[], watchedKeys: Set<string>, completions?: Map<string, number>): MediaItem[] {
-  const unwatched = playback.filter((item) => isUnwatchedContinueWatching(item, watchedKeys, completions));
+  const unwatched = completions ? pruneCompletedResume(playback, completions)
+    : playback.filter((item) => !watchedKeys.has(item.mediaType === "tv"
+      ? `tv:${item.id}:${item.seasonNumber}:${item.episodeNumber}` : `movie:${item.id}`));
   const pausedShows = new Set(unwatched.filter((item) => item.mediaType === "tv").map((item) => item.id));
   return [...unwatched, ...upNext.filter((item) => !pausedShows.has(item.id))];
 }
