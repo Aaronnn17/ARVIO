@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -43,6 +44,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,6 +52,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -165,18 +168,16 @@ fun SearchScreen(
 
     val hasSearchResults = uiState.movieResults.isNotEmpty() || uiState.tvResults.isNotEmpty() || uiState.personResults.isNotEmpty()
     val hasAiResults = uiState.isAiSearch && uiState.aiResults.isNotEmpty()
-    val searchTopResults = remember(uiState.movieResults, uiState.tvResults) {
-        interleaveSearchResults(uiState.movieResults, uiState.tvResults).take(24)
-    }
+    val searchTopResults = uiState.results
 
     // Determine which categories to show in rows (filter out empty ones)
     val activeCategories: List<Category> = when {
         hasSearchResults -> {
             val list = mutableListOf<Category>()
-            list.addAll(uiState.personResults)
             if (searchTopResults.isNotEmpty()) list.add(Category("s_all", "${stringResource(R.string.search)} (${searchTopResults.size})", searchTopResults))
             if (uiState.movieResults.isNotEmpty()) list.add(Category("s_m", "${stringResource(R.string.movies)} (${uiState.movieResults.size})", uiState.movieResults))
             if (uiState.tvResults.isNotEmpty()) list.add(Category("s_t", "${stringResource(R.string.tv_shows)} (${uiState.tvResults.size})", uiState.tvResults))
+            list.addAll(uiState.personResults)
             list
         }
         uiState.query.isEmpty() -> uiState.discoverCategories.filter { it.items.isNotEmpty() }
@@ -187,7 +188,7 @@ fun SearchScreen(
         else -> uiState.discoverLogoUrls
     }
 
-    var focusZone by remember { mutableStateOf(FocusZone.SEARCH_INPUT) }
+    var focusZone by rememberSaveable { mutableStateOf(FocusZone.SEARCH_INPUT) }
     val hasProfile = currentProfile != null
     val maxSidebarIndex = topBarMaxIndex(hasProfile)
     var sidebarFocusIndex by remember { mutableIntStateOf(if (hasProfile) 1 else 0) }
@@ -196,8 +197,11 @@ fun SearchScreen(
     val fastScrollThresholdMs = 220L
 
     // Manual row/item focus tracking (like HomeScreen)
-    var currentRowIndex by remember { mutableIntStateOf(0) }
-    var currentItemIndex by remember { mutableIntStateOf(0) }
+    var currentRowIndex by rememberSaveable(uiState.query) { mutableIntStateOf(0) }
+    var currentItemIndex by rememberSaveable(uiState.query) { mutableIntStateOf(0) }
+    val rowPositions = rememberSaveable(uiState.query) { mutableMapOf<String, Int>() }
+    var enterResultsOnLoad by remember { mutableStateOf(false) }
+    var consumedDpadKey by remember { mutableStateOf<Key?>(null) }
     var focusedFilterIndex by remember { mutableIntStateOf(0) }
     var resultsLastNavEventTime by remember { mutableLongStateOf(0L) }
     var isSearchEditing by remember { mutableStateOf(false) }
@@ -205,6 +209,7 @@ fun SearchScreen(
 
     val searchFocusRequester = remember { FocusRequester() }
     val filtersFocusRequester = remember { FocusRequester() }
+    val resultsFocusRequester = remember { FocusRequester() }
     val textInputFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val actionGenre = remember { ALL_GENRES.firstOrNull { it.id == 28 } }
@@ -304,17 +309,39 @@ fun SearchScreen(
         val maxItem = (activeCategories.getOrNull(currentRowIndex)?.items?.size ?: 1) - 1
         currentItemIndex = currentItemIndex.coerceIn(0, maxItem.coerceAtLeast(0))
     }
-    LaunchedEffect(uiState.selectedType, uiState.selectedGenre?.id, uiState.selectedCountry?.code) {
-        currentRowIndex = 0
-        currentItemIndex = 0
+    val filterSelection = "${uiState.selectedType}:${uiState.selectedGenre?.id}:${uiState.selectedCountry?.code}"
+    var previousFilterSelection by rememberSaveable { mutableStateOf(filterSelection) }
+    LaunchedEffect(filterSelection) {
+        if (previousFilterSelection != filterSelection) {
+            previousFilterSelection = filterSelection
+            rowPositions.clear()
+            currentRowIndex = 0
+            currentItemIndex = 0
+        }
     }
 
-    // LaunchedEffect to restore RESULTS focus when results become available
-    LaunchedEffect(activeCategories, hasAiResults) {
-        if ((activeCategories.isNotEmpty() || hasAiResults) && focusZone == FocusZone.SEARCH_INPUT && isSearchInputFocused.not()) {
-            // If we have results and just returned from details, stay in search input but prepare for results
-            // This prevents the "back to keyboard" issue when returning from details
+    LaunchedEffect(uiState.isLoading, enterResultsOnLoad) {
+        if (enterResultsOnLoad && !uiState.isLoading) {
+            enterResultsOnLoad = false
+            if (activeCategories.isNotEmpty()) {
+                focusZone = FocusZone.RESULTS
+                resultsLastNavEventTime = SystemClock.elapsedRealtime()
+            }
         }
+    }
+    LaunchedEffect(focusZone, activeCategories.isNotEmpty(), isSearchEditing) {
+        if (!isTouchDevice && focusZone == FocusZone.RESULTS && activeCategories.isNotEmpty() && !isSearchEditing) {
+            resultsFocusRequester.requestFocus()
+        }
+    }
+
+    fun moveResultRow(offset: Int) {
+        activeCategories.getOrNull(currentRowIndex)?.let { rowPositions[it.id] = currentItemIndex }
+        currentRowIndex = (currentRowIndex + offset).coerceIn(0, (activeCategories.size - 1).coerceAtLeast(0))
+        val row = activeCategories.getOrNull(currentRowIndex)
+        currentItemIndex = (rowPositions[row?.id] ?: currentItemIndex)
+            .coerceIn(0, (row?.items?.lastIndex ?: 0).coerceAtLeast(0))
+        resultsLastNavEventTime = SystemClock.elapsedRealtime()
     }
 
     LaunchedEffect(isTouchDevice) {
@@ -323,7 +350,7 @@ fun SearchScreen(
         // the screen is composed then immediately navigated away). Swallow that
         // specific case so it doesn't surface to the user as a crash — TalkBack
         // focus will re-claim on next frame.
-        if (!isTouchDevice) runCatching { searchFocusRequester.requestFocus() }
+        if (!isTouchDevice && focusZone != FocusZone.RESULTS) runCatching { searchFocusRequester.requestFocus() }
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
     }
     LaunchedEffect(isSearchEditing, searchEditRequestNonce) {
@@ -370,19 +397,25 @@ fun SearchScreen(
     // One D-pad handler owns zone transitions and filter selection.
     val dpadModifier = if (!isTouchDevice) {
         Modifier.onPreviewKeyEvent { event ->
+            if (event.type == KeyEventType.KeyUp && consumedDpadKey == event.key) {
+                consumedDpadKey = null
+                return@onPreviewKeyEvent true
+            }
             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
             if (isSearchEditing && (event.key == Key.Back || event.key == Key.Escape)) {
                 isSearchEditing = false
                 keyboardController?.hide()
                 runCatching { searchFocusRequester.requestFocus() }
+                consumedDpadKey = event.key
                 return@onPreviewKeyEvent true
             }
+            if (isSearchEditing) return@onPreviewKeyEvent false
             val effectiveKey = when (event.key) {
                 Key.DirectionLeft  -> if (isRtl) Key.DirectionRight else Key.DirectionLeft
                 Key.DirectionRight -> if (isRtl) Key.DirectionLeft  else Key.DirectionRight
                 else -> event.key
             }
-            when (effectiveKey) {
+            val handled = when (effectiveKey) {
                 Key.Back, Key.Escape -> when (focusZone) {
                     FocusZone.RESULTS -> {
                         if (showFilters && quickFilters.isNotEmpty()) {
@@ -416,9 +449,7 @@ fun SearchScreen(
                     FocusZone.RESULTS -> {
                         if (hasAiResults) false // AI grid: let native focus handle navigation
                         else if (currentRowIndex > 0) {
-                            resultsLastNavEventTime = SystemClock.elapsedRealtime()
-                            currentRowIndex--
-                            currentItemIndex = 0
+                            moveResultRow(-1)
                             true
                         }
                         else if (showFilters && quickFilters.isNotEmpty()) {
@@ -445,8 +476,8 @@ fun SearchScreen(
                         else if (activeCategories.isNotEmpty() || hasAiResults) {
                             resultsLastNavEventTime = SystemClock.elapsedRealtime()
                             focusZone = FocusZone.RESULTS
-                            currentRowIndex = 0
-                            currentItemIndex = 0
+                        } else if (uiState.isLoading) {
+                            enterResultsOnLoad = true
                         }
                         true
                     }
@@ -454,17 +485,13 @@ fun SearchScreen(
                         if (activeCategories.isNotEmpty() || hasAiResults) {
                             resultsLastNavEventTime = SystemClock.elapsedRealtime()
                             focusZone = FocusZone.RESULTS
-                            currentRowIndex = 0
-                            currentItemIndex = 0
                         }
                         true
                     }
                     FocusZone.RESULTS -> {
                         if (hasAiResults) false // AI grid: let native focus handle navigation
                         else if (currentRowIndex < activeCategories.size - 1) {
-                            resultsLastNavEventTime = SystemClock.elapsedRealtime()
-                            currentRowIndex++
-                            currentItemIndex = 0
+                            moveResultRow(1)
                             true
                         }
                         else true
@@ -543,6 +570,8 @@ fun SearchScreen(
                 }
                 else -> false
             }
+            if (handled) consumedDpadKey = event.key
+            handled
         }
     } else Modifier
 
@@ -578,11 +607,12 @@ fun SearchScreen(
                     isEditing = isSearchEditing,
                     searchFocusRequester = searchFocusRequester,
                     textInputFocusRequester = textInputFocusRequester,
-                    onQueryChange = { viewModel.updateQuery(it) },
+                    onQueryChange = { enterResultsOnLoad = false; viewModel.updateQuery(it) },
                     onSearch = {
                         viewModel.search()
                         keyboardController?.hide()
                         isSearchEditing = false
+                        enterResultsOnLoad = !isTouchDevice
                     },
                     onFocused = {
                         if (focusZone == FocusZone.SEARCH_INPUT) {
@@ -611,8 +641,6 @@ fun SearchScreen(
                         } else if (activeCategories.isNotEmpty() || hasAiResults) {
                             resultsLastNavEventTime = SystemClock.elapsedRealtime()
                             focusZone = FocusZone.RESULTS
-                            currentRowIndex = 0
-                            currentItemIndex = 0
                         }
                     }
                 )
@@ -642,8 +670,6 @@ fun SearchScreen(
                         if (activeCategories.isNotEmpty() || hasAiResults) {
                             resultsLastNavEventTime = SystemClock.elapsedRealtime()
                             focusZone = FocusZone.RESULTS
-                            currentRowIndex = 0
-                            currentItemIndex = 0
                         }
                     },
                     onMoveLeft = {
@@ -661,7 +687,7 @@ fun SearchScreen(
 
             // ── Content ──
             when {
-                uiState.isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator(color = Pink, size = 48.dp) }
+                uiState.isLoading && !hasSearchResults -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator(color = Pink, size = 48.dp) }
 
                 hasAiResults -> {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)) {
@@ -672,14 +698,18 @@ fun SearchScreen(
                 }
 
                 uiState.query.isNotEmpty() && !uiState.isAiSearch && !hasSearchResults -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("${stringResource(R.string.no_results_for)} \"${uiState.query}\"", style = ArflixTypography.body, color = TextSecondary) }
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(if (uiState.error != null) stringResource(R.string.error_loading)
+                            else "${stringResource(R.string.no_results_for)} \"${uiState.query}\"",
+                            style = ArflixTypography.body, color = TextSecondary)
+                    }
                 }
 
                 uiState.isDiscoverLoading && activeCategories.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator(color = Pink, size = 48.dp) }
 
                 activeCategories.isNotEmpty() -> {
                     // Row-based content (discover rows or search results) - HomeScreen pattern
-                    RowsLayer(
+                    key(uiState.query) { RowsLayer(
                         categories = activeCategories,
                         cardLogoUrls = activeLogoUrls,
                         currentRowIndex = currentRowIndex,
@@ -688,8 +718,9 @@ fun SearchScreen(
                         fastScrollThresholdMs = fastScrollThresholdMs,
                         isFocused = focusZone == FocusZone.RESULTS,
                         isTouchDevice = isTouchDevice,
+                        modifier = if (isTouchDevice) Modifier else Modifier.focusRequester(resultsFocusRequester).focusable(),
                         onItemClick = { onNavigateToDetails(it.mediaType, it.id) }
-                    )
+                    ) }
                 }
             }
         }
@@ -761,7 +792,7 @@ private fun SearchInputBar(
             .width(searchBarWidth)
             .height(54.dp)
             .onPreviewKeyEvent { event ->
-                if (!isFocused) return@onPreviewKeyEvent false
+                if (!isFocused || isEditing) return@onPreviewKeyEvent false
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {
                     Key.DirectionUp -> { onMoveUp(); true }
@@ -954,6 +985,7 @@ private fun RowsLayer(
     fastScrollThresholdMs: Long,
     isFocused: Boolean,
     isTouchDevice: Boolean,
+    modifier: Modifier = Modifier,
     onItemClick: (MediaItem) -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -968,7 +1000,7 @@ private fun RowsLayer(
 
     // Only move the results viewport in response to actual D-pad navigation on TV.
     if (!isTouchDevice) {
-        LaunchedEffect(targetIndex, lastNavEventTime) {
+        LaunchedEffect(targetIndex, isFocused) {
             val currentFirst = listState.firstVisibleItemIndex
             val initialPlacement = lastAppliedTargetIndex < 0
             if (currentFirst == targetIndex) {
@@ -990,7 +1022,7 @@ private fun RowsLayer(
         }
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             contentPadding = PaddingValues(
@@ -1056,51 +1088,27 @@ private fun RowsLayer(
                         }
 
                         val rowState = rememberLazyListState()
-                        var lastScrollIndex by remember(category.id) { mutableIntStateOf(-1) }
-                        var lastScrollOffset by remember(category.id) { mutableIntStateOf(Int.MIN_VALUE) }
-                        // Scroll to focused item in current row (TV only)
+                        // Keep visible cards still; only scroll enough to reveal a clipped selection.
                         if (!isTouchDevice) {
-                            LaunchedEffect(isCurrentRow, currentItemIndex, lastNavEventTime) {
+                            LaunchedEffect(isCurrentRow, currentItemIndex) {
                                 if (!isCurrentRow) return@LaunchedEffect
                                 val safeIndex = currentItemIndex.coerceIn(0, (category.items.size - 1).coerceAtLeast(0))
                                 val first = rowState.firstVisibleItemIndex
                                 val visibleItems = rowState.layoutInfo.visibleItemsInfo
-                                val last = visibleItems.lastOrNull()?.index ?: first
                                 val targetInfo = visibleItems.firstOrNull { it.index == safeIndex }
-                                val targetOutsideViewport = safeIndex < first || safeIndex > last
-                                val viewportEnd = rowState.layoutInfo.viewportEndOffset
-                                val trailingPaddingPx = rowState.layoutInfo.afterContentPadding
-                                val targetNearViewportEnd = targetInfo != null &&
-                                    targetInfo.offset + targetInfo.size > viewportEnd - trailingPaddingPx
-                                val scrollTargetIndex = safeIndex
-                                val extraOffset = if (targetNearViewportEnd) {
-                                    (with(density) { itemWidth.roundToPx() } * 0.35f).toInt()
-                                } else 0
-
-                                if (lastScrollIndex == scrollTargetIndex && lastScrollOffset == extraOffset) {
-                                    return@LaunchedEffect
-                                }
-                                if (lastScrollIndex == -1) {
-                                    rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-                                    lastScrollIndex = scrollTargetIndex
-                                    lastScrollOffset = extraOffset
-                                    return@LaunchedEffect
-                                }
-
-                                val recentUserNav = lastNavEventTime > 0L &&
-                                    (SystemClock.elapsedRealtime() - lastNavEventTime) <= fastScrollThresholdMs
-                                if (!recentUserNav) return@LaunchedEffect
-
-                                val jumpDistance = kotlin.math.abs(scrollTargetIndex - first)
-                                if (jumpDistance > 6) {
-                                    rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
-                                } else if (scrollTargetIndex != first || targetOutsideViewport) {
-                                    rowState.animateScrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+                                if (targetInfo == null) {
+                                    if (kotlin.math.abs(safeIndex - first) > 6) rowState.scrollToItem(safeIndex)
+                                    else rowState.animateScrollToItem(safeIndex)
                                 } else {
-                                    rowState.scrollToItem(index = scrollTargetIndex, scrollOffset = extraOffset)
+                                    val margin = with(density) { focusBleedPadding.roundToPx() }
+                                    val end = rowState.layoutInfo.viewportEndOffset - margin
+                                    val delta = when {
+                                        targetInfo.offset < 0 -> targetInfo.offset
+                                        targetInfo.offset + targetInfo.size > end -> targetInfo.offset + targetInfo.size - end
+                                        else -> 0
+                                    }
+                                    if (delta != 0) rowState.animateScrollBy(delta.toFloat())
                                 }
-                                lastScrollIndex = scrollTargetIndex
-                                lastScrollOffset = extraOffset
                             }
                         }
 
@@ -1132,13 +1140,15 @@ private fun RowsLayer(
                                     isLandscape = !isPortrait,
                                     logoImageUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
                                     showProgress = false,
-                                    titleMaxLines = 1,
+                                    titleMaxLines = 2,
                                     subtitleMaxLines = 1,
                                     isFocusedOverride = itemIsFocused,
                                     enableSystemFocus = false,
                                     onFocused = {},
                                     onClick = { onItemClick(item) },
-                                    modifier = if (isTouchDevice) Modifier.clickable { onItemClick(item) } else Modifier
+                                    modifier = Modifier.testTag("search-card-${category.id}-${item.mediaType}-${item.id}")
+                                        .semantics { selected = itemIsFocused }
+                                        .then(if (isTouchDevice) Modifier.clickable { onItemClick(item) } else Modifier)
                                 )
                             }
                         }
@@ -1214,16 +1224,6 @@ private fun buildCardSubtitle(item: MediaItem): String {
     }
     val year = item.year.takeIf { it.isNotBlank() }
     return if (year != null) "$mediaLabel · $year" else mediaLabel
-}
-
-private fun interleaveSearchResults(movies: List<MediaItem>, shows: List<MediaItem>): List<MediaItem> {
-    val combined = ArrayList<MediaItem>(movies.size + shows.size)
-    val maxSize = maxOf(movies.size, shows.size)
-    for (index in 0 until maxSize) {
-        if (index < movies.size) combined.add(movies[index])
-        if (index < shows.size) combined.add(shows[index])
-    }
-    return combined.distinctBy { "${it.mediaType}_${it.id}" }
 }
 
 private enum class FocusZone { SIDEBAR, SEARCH_INPUT, FILTERS, RESULTS }

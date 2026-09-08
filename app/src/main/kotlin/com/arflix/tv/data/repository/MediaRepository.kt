@@ -84,6 +84,11 @@ data class PersonMediaSearchResult(
     val items: List<MediaItem>
 )
 
+data class MediaSearchResults(
+    val items: List<MediaItem>,
+    val people: List<PersonMediaSearchResult>
+)
+
 internal object HomeServerLibraryIdentity {
     fun stableNativeId(sourceRef: String, itemId: String): Int {
         return -("$sourceRef:$itemId".hashCode() and Int.MAX_VALUE).coerceAtLeast(1)
@@ -3405,18 +3410,16 @@ class MediaRepository @Inject constructor(
         return items
     }
 
-    /**
-     * Search people and expose their known-for media as result rows.
-     *
-     * TMDB multi-search already returns person hits, but normal title search
-     * cannot display a person card. Returning rows keeps actor/director queries
-     * useful without changing the media-card detail flow.
-     */
-    suspend fun searchPeopleKnownFor(query: String, maxPeople: Int = 3): List<PersonMediaSearchResult> {
+    /** Titles and known-for rows share one request; optional artwork must not delay them. */
+    suspend fun searchWithPeople(query: String, maxPeople: Int = 3): MediaSearchResults {
         val trimmed = query.trim()
-        if (trimmed.length < 2) return emptyList()
+        if (trimmed.isEmpty()) return MediaSearchResults(emptyList(), emptyList())
 
         val response = tmdbApi.searchMulti(apiKey, trimmed, language = contentLanguage)
+        val items = response.results
+            .filter { it.mediaType == "movie" || it.mediaType == "tv" }
+            .map { it.toMediaItem(if (it.mediaType == "tv") MediaType.TV else MediaType.MOVIE) }
+            .distinctBy { it.mediaType to it.id }
         val people = response.results
             .asSequence()
             .filter { it.mediaType == "person" && it.id > 0 && !it.name.isNullOrBlank() }
@@ -3425,7 +3428,7 @@ class MediaRepository @Inject constructor(
             .take(maxPeople)
             .toList()
 
-        val rows = people.mapNotNull { person ->
+        val rows = people.map { person ->
             val knownForItems = person.knownFor
                 .asSequence()
                 .filter { it.posterPath != null && (it.mediaType == "movie" || it.mediaType == "tv") }
@@ -3441,23 +3444,12 @@ class MediaRepository @Inject constructor(
                 .distinctBy { "${it.mediaType}_${it.id}" }
                 .take(20)
                 .toList()
-                .ifEmpty {
-                    runCatching { getPersonDetails(person.id).knownFor }.getOrDefault(emptyList())
-                }
 
-            if (knownForItems.isEmpty()) {
-                null
-            } else {
-                PersonMediaSearchResult(
-                    personId = person.id,
-                    name = person.name.orEmpty(),
-                    items = knownForItems
-                )
-            }
+            PersonMediaSearchResult(personId = person.id, name = person.name.orEmpty(), items = knownForItems)
         }
 
-        rows.flatMap { it.items }.takeIf { it.isNotEmpty() }?.let(::cacheItems)
-        return rows
+        cacheItems(items + rows.flatMap { it.items })
+        return MediaSearchResults(items, rows)
     }
 
     /**

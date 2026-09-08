@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -34,10 +35,88 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SearchScreenDeviceTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+    private val restoration = StateRestorationTester(compose)
 
     private val state = MutableStateFlow(SearchUiState(discoverCategories = rows("initial")))
     private val viewModel = mockk<SearchViewModel>(relaxed = true)
     private var openedId: Int? = null
+
+    @Test fun tvExactTitleIsFirstEvenWhenPeopleAndMovieMatchesExist() {
+        searchResults()
+        show(DeviceType.TV)
+        keys(listOf(Key.DirectionDown))
+        card("s_all", MediaType.TV, 100).assertIsSelected().assertIsDisplayed()
+        keys(listOf(Key.DirectionCenter))
+        compose.runOnIdle { assertEquals(100, openedId) }
+        capture("search-title-first")
+    }
+
+    @Test fun tvMovingBetweenVisibleCardsDoesNotScrollAndRowsRememberPosition() {
+        searchResults()
+        show(DeviceType.TV)
+        keys(listOf(Key.DirectionDown))
+        val before = card("s_all", MediaType.TV, 100).fetchSemanticsNode().boundsInRoot
+        keys(listOf(Key.DirectionRight))
+        val after = card("s_all", MediaType.TV, 100).fetchSemanticsNode().boundsInRoot
+        assertEquals("Visible cards should not slide with each key press", before.left, after.left, 1f)
+        keys(List(5) { Key.DirectionRight })
+        card("s_all", MediaType.TV, 106).assertIsSelected().assertIsDisplayed()
+        keys(listOf(Key.DirectionDown, Key.DirectionUp))
+        card("s_all", MediaType.TV, 106).assertIsSelected().assertIsDisplayed()
+        keys(listOf(Key.Escape, Key.DirectionDown))
+        card("s_all", MediaType.TV, 106).assertIsSelected().assertIsDisplayed()
+        compose.runOnIdle {
+            state.value = state.value.copy(cardLogoUrls = mapOf("TV_106" to "https://example.invalid/logo.png"))
+        }
+        card("s_all", MediaType.TV, 106).assertIsSelected().assertIsDisplayed()
+        capture("search-row-memory")
+    }
+
+    @Test fun tvNewQueryStartsAtFirstResultAndDoneEntersResults() {
+        searchResults()
+        show(DeviceType.TV)
+        keys(listOf(Key.DirectionDown) + List(7) { Key.DirectionRight } + listOf(Key.Escape, Key.DirectionCenter))
+        compose.onNodeWithTag("search-input").performTextReplacement("new query")
+        compose.onNodeWithTag("search-input").performImeAction()
+        card("s_all", MediaType.TV, 100).assertIsSelected().assertIsDisplayed()
+        verify(exactly = 1) { viewModel.search() }
+    }
+
+    @Test fun tvDownWhileLoadingEntersFirstResultWhenReady() {
+        state.value = SearchUiState(query = "Loki", isLoading = true)
+        show(DeviceType.TV)
+        keys(listOf(Key.DirectionDown))
+        compose.runOnIdle { searchResults() }
+        card("s_all", MediaType.TV, 100).assertIsSelected().assertIsDisplayed()
+    }
+
+    @Test fun tvSelectionSurvivesScreenStateRestoration() {
+        searchResults()
+        show(DeviceType.TV)
+        keys(listOf(Key.DirectionDown) + List(5) { Key.DirectionRight })
+        restoration.emulateSavedInstanceStateRestore()
+        card("s_all", MediaType.TV, 105).assertIsSelected().assertIsDisplayed()
+        keys(listOf(Key.DirectionCenter))
+        compose.runOnIdle { assertEquals(105, openedId) }
+    }
+
+    @Test fun tvPeopleOnlyQueryStillOpensKnownForTitles() {
+        state.value = SearchUiState(query = "actor", personResults = listOf(
+            Category("person_1", "Actor", listOf(MediaItem(id = 300, title = "Known For", mediaType = MediaType.MOVIE)))
+        ))
+        show(DeviceType.TV)
+        keys(listOf(Key.DirectionDown, Key.DirectionCenter))
+        compose.runOnIdle { assertEquals(300, openedId) }
+    }
+
+    private fun searchResults() {
+        val shows = (0..14).map { MediaItem(id = 100 + it, title = if (it == 0) "Loki" else "Loki: Related Show $it", mediaType = MediaType.TV) }
+        val films = listOf(MediaItem(id = 200, title = "Loki: A Behind the Scenes Documentary", mediaType = MediaType.MOVIE))
+        state.value = SearchUiState(query = "Loki", results = shows + films, movieResults = films, tvResults = shows,
+            personResults = listOf(Category("person_1", "Actor", films)))
+    }
+
+    private fun card(row: String, type: MediaType, id: Int) = compose.onNodeWithTag("search-card-$row-$type-$id")
 
     @Test fun tvSelectionSurvivesKeyUpAndCategoryReload() {
         show(DeviceType.TV)
@@ -130,7 +209,7 @@ class SearchScreenDeviceTest {
             )
         }
         every { viewModel.updateQuery(any()) } answers { state.value = state.value.copy(query = firstArg()) }
-        compose.setContent {
+        restoration.setContent {
             CompositionLocalProvider(LocalDeviceType provides device, LocalLayoutDirection provides direction) {
                 SearchScreen(viewModel = viewModel, onNavigateToDetails = { _, id -> openedId = id })
             }
