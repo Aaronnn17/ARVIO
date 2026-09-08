@@ -2037,9 +2037,9 @@ class TvViewModel @Inject constructor(
     }
 
     fun rememberTvSession(
-        lastChannelId: String?,
-        lastGroupName: String?,
-        lastFocusedZone: String,
+        lastChannelId: String? = null,
+        lastGroupName: String? = null,
+        lastFocusedZone: String = "GUIDE",
         markOpened: Boolean = false
     ) {
         val current = _uiState.value.tvSession
@@ -2080,7 +2080,8 @@ class TvViewModel @Inject constructor(
         channel: IptvChannel,
         program: IptvProgram? = null,
         forceRefresh: Boolean = false,
-        catchupAttempt: Int = 0
+        catchupAttempt: Int = 0,
+        probeKnownUrl: Boolean = false,
     ): IptvPlaybackTarget {
         val rawUrl = if (program != null) {
             iptvRepository.resolvePlayableCatchupUrl(channel, program, catchupAttempt)
@@ -2097,6 +2098,7 @@ class TvViewModel @Inject constructor(
             rawUrl = resolvedUrl,
             headers = channel.requestHeaders,
             forceRefresh = forceRefresh,
+            probeKnownUrl = probeKnownUrl,
         )
     }
 

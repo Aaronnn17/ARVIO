@@ -5,8 +5,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
@@ -20,7 +27,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-@OptIn(ExperimentalTestApi::class)
+@OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
 class GuideRenderingDeviceTest {
     @get:Rule val compose = createComposeRule()
     private val now = 1_783_000_000_000L / 1_800_000L * 1_800_000L
@@ -42,16 +49,24 @@ class GuideRenderingDeviceTest {
         }
     }
     private var focused = ""
+    private var focusedTitle = ""
+    private var longPressed = false
 
     private fun showGuide() {
         val mode = mutableStateOf(EpgGridFocusMode.ChannelList)
         compose.setContent {
+            val inputModeManager = LocalInputModeManager.current
+            LaunchedEffect(inputModeManager) {
+                check(inputModeManager.requestInputMode(InputMode.Keyboard))
+            }
             Box(Modifier.width(900.dp).height(400.dp)) {
                 EpgGrid(channels = rows.take(144), totalChannelCount = 55_000,
                     clockTickMillis = now, nowNext = guide, selectedChannelId = "render:0",
                     focusSelectedChannelSignal = 1, scrollResetKey = "render-test",
                     favorites = emptySet(), onChannelSelect = {}, gridFocused = true,
                     onChannelFocused = { focused = it.id }, focusMode = mode.value,
+                    onChannelLongPress = { _, _ -> longPressed = true },
+                    onProgramFocused = { _, programme -> focusedTitle = programme.title },
                     onEnterEpg = { mode.value = EpgGridFocusMode.Epg },
                     onExitEpg = { mode.value = EpgGridFocusMode.ChannelList })
             }
@@ -62,22 +77,87 @@ class GuideRenderingDeviceTest {
     @Test fun channelModeDoesNotComposeTheEntireDayForEveryVisibleRow() {
         showGuide()
         val count = compose.onAllNodes(hasText("Programme ", substring = true),
-            useUnmergedTree = true).fetchSemanticsNodes().size
+            useUnmergedTree = false).fetchSemanticsNodes().size
         Log.i("GuideRenderCells", "composedProgrammeCells=$count")
         assertTrue("Visible guide has no programmes", count > 0)
         assertTrue("Too many offscreen programme cells: $count", count < 90)
         compose.onNodeWithText("Programme render:0:4").assertIsDisplayed()
+        // Channel-mode rendering exposes one entry without a child Text layout.
+        compose.onAllNodes(hasText("Programme render:0:4"), useUnmergedTree = true)
+            .assertCountEquals(1)
         compose.onNodeWithText("Programme render:0:23").assertDoesNotExist()
+        val rulerCount = compose.onAllNodes(SemanticsMatcher("time ruler label") {
+            it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("iptv-time-slot:") == true
+        }).fetchSemanticsNodes().size
+        assertTrue("Ruler labels should be viewport-bounded: $rulerCount", rulerCount in 1..15)
+        compose.onNodeWithTag("iptv-time-slot:23").assertDoesNotExist()
+    }
+
+    @Test fun verticalChannelNavigationCannotEnterProgrammes() {
+        showGuide()
+        repeat(12) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+        compose.onNodeWithTag("iptv-channel:render:12").assertIsFocused()
+        repeat(5) { compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) } }
+        compose.onNodeWithTag("iptv-channel:render:7").assertIsFocused()
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+        compose.onNodeWithTag("iptv-channel:render:7").assertIsNotFocused()
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+        compose.runOnIdle { assertEquals("render:8", focused) }
+    }
+
+    @Test fun liveProgrammeHasOneAccessibleEntryWithAnAction() {
+        showGuide()
+        compose.onNodeWithText("Programme render:0:4")
+            .assertHasClickAction()
+            .assert(hasText("A programme description for rendering cost."))
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+        compose.onNodeWithText("Programme render:0:4").assertIsFocused()
+    }
+
+    @Test fun channelKeepsFocusAndAccessibleLongPress() {
+        showGuide()
+        compose.onNodeWithTag("iptv-channel:render:0")
+            .assertIsFocused().assertHasClickAction().assert(hasText("Channel 0"))
+            .performSemanticsAction(SemanticsActions.OnLongClick)
+        compose.runOnIdle { assertTrue(longPressed) }
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNodeWithTag("iptv-channel:render:1").assertIsFocused()
     }
 
     @Test fun epgNavigationStillReachesOffscreenProgrammesAndAdjacentChannel() {
         showGuide()
         compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
         repeat(10) { compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) } }
+        compose.onNodeWithTag("iptv-time-slot:14").assertExists()
         compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
         compose.runOnIdle { assertEquals("render:1", focused) }
         compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) }
         compose.runOnIdle { assertEquals("render:0", focused) }
+        compose.runOnIdle { assertTrue(focusedTitle.startsWith("Programme render:0:")) }
+    }
+
+    @Test fun sustainedChannelScrollKeepsItsPosition() {
+        showGuide()
+        repeat(60) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+        compose.onNodeWithTag("iptv-channel:render:60").assertIsFocused()
+        repeat(40) { compose.onRoot().performKeyInput { pressKey(Key.DirectionUp) } }
+        compose.onNodeWithTag("iptv-channel:render:20").assertIsFocused()
+    }
+
+    @Test fun rapidChannelKeysRetainTheRequestedIndex() {
+        showGuide()
+        compose.onRoot().performKeyInput { repeat(26) { pressKey(Key.DirectionDown) } }
+        compose.waitUntil(5_000) {
+            compose.onAllNodes(hasTestTag("iptv-channel:render:26") and isFocused())
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("iptv-channel:render:26").assertIsFocused()
+        compose.onRoot().performKeyInput { repeat(10) { pressKey(Key.DirectionUp) } }
+        compose.waitUntil(5_000) {
+            compose.onAllNodes(hasTestTag("iptv-channel:render:16") and isFocused())
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("iptv-channel:render:16").assertIsFocused()
     }
 
 }

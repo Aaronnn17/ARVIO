@@ -33,13 +33,14 @@ internal class IptvPlaybackUrlResolver(
         rawUrl: String,
         headers: Map<String, String>,
         forceRefresh: Boolean = false,
+        probeKnownUrl: Boolean = false,
     ): IptvPlaybackTarget {
         val url = rawUrl.trim()
         val inferredTarget = IptvPlaybackTarget(
             url = url,
             isHls = looksLikeHlsPlaybackUrl(url),
         )
-        if (!shouldResolveIptvPlaybackRedirect(url)) return inferredTarget
+        if (!probeKnownUrl && !shouldResolveIptvPlaybackRedirect(url)) return inferredTarget
 
         val now = System.currentTimeMillis()
         if (!forceRefresh) {
@@ -55,10 +56,11 @@ internal class IptvPlaybackUrlResolver(
             if (headProbe?.isConclusive == true) {
                 headProbe.target
             } else {
-                executeProbe(url, headers, useHead = false)?.target ?: inferredTarget
+                executeProbe(url, headers, useHead = false)?.takeIf { it.isConclusive }?.target
             }
         }
 
+        if (resolved == null) return inferredTarget
         synchronized(cache) {
             cache[url] = CachedTarget(resolved, now)
             while (cache.size > maxCacheEntries) {
@@ -112,9 +114,8 @@ internal class IptvPlaybackUrlResolver(
                 )
                 ProbeResult(
                     target = target,
-                    isConclusive = finalUrl != url ||
-                        target.isHls ||
-                        contentType.isDirectMediaContentType(),
+                    isConclusive = response.isSuccessful && (target.isHls ||
+                        contentType.isDirectMediaContentType()),
                 )
             }
         } catch (e: kotlinx.coroutines.CancellationException) {

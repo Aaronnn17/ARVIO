@@ -11,6 +11,33 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 class IptvPlaybackUrlResolverTest {
+    @Test fun `failed numeric stream can explicitly recover an HLS content type`() = runBlocking {
+        val calls = AtomicInteger()
+        val resolver = IptvPlaybackUrlResolver(OkHttpClient.Builder().addInterceptor { chain ->
+            calls.incrementAndGet()
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                .code(200).message("OK").header("Content-Type", "application/vnd.apple.mpegurl")
+                .body("".toResponseBody()).build()
+        }.build())
+        val url = "https://provider.test/live/user/pass/123.ts"
+        assertThat(resolver.resolve(url, emptyMap()).isHls).isFalse()
+        assertThat(calls.get()).isEqualTo(0)
+        assertThat(resolver.resolve(url, emptyMap(), forceRefresh = true, probeKnownUrl = true).isHls).isTrue()
+        assertThat(calls.get()).isEqualTo(1)
+    }
+
+    @Test fun `HTML error redirect is not cached as a media target`() = runBlocking {
+        val calls = AtomicInteger()
+        val resolver = IptvPlaybackUrlResolver(OkHttpClient.Builder().addInterceptor { chain ->
+            calls.incrementAndGet()
+            Response.Builder().request(chain.request().newBuilder().url("https://provider.test/error").build())
+                .protocol(Protocol.HTTP_1_1).code(403).message("Forbidden")
+                .header("Content-Type", "text/html").body("Denied".toResponseBody()).build()
+        }.build())
+        val url = "https://provider.test/live/user/pass/channel-slug"
+        repeat(2) { assertThat(resolver.resolve(url, emptyMap()).url).isEqualTo(url) }
+        assertThat(calls.get()).isEqualTo(4)
+    }
 
     @Test
     fun `extensionless slug live URL resolves redirect and HLS type`() = runBlocking {

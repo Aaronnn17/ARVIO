@@ -161,7 +161,7 @@ private fun rememberTouchRailItems(
     expandedPlaylistIds: List<String>,
 ): List<TouchCategoryRailItem> {
     val base = buildList {
-        tree.top.forEach { add(TouchCategoryRailItem(it.id, liveCategoryLabel(it.label), it.count)) }
+        tree.top.filter { it.id != "fav" || it.count > 0 }.forEach { add(TouchCategoryRailItem(it.id, liveCategoryLabel(it.label), it.count)) }
         if (playlistSections.isEmpty()) {
             tree.global.categories.forEach { add(TouchCategoryRailItem(it.id, liveCategoryLabel(it.label), it.count)) }
             tree.countries.categories.forEach { add(TouchCategoryRailItem(it.id, liveCategoryLabel(it.label), it.count)) }

@@ -21,9 +21,9 @@ object LiveColors {
     // the top bar.
     val Bg           = Color(0xFF070709)
     val Panel        = Color(0xFF121319)
-    val PanelDeep    = Color(0xFF0B0B0F)
-    val PanelRaised  = Color(0xFF1B1D25)
-    val RowStripe    = Color(0xFF0D0D11)
+    val PanelDeep    = Bg
+    val PanelRaised  = Color(0xFF202022)
+    val RowStripe    = Color(0xFF0B0B0D)
 
     val Divider       = Color(0x992B2D36)
     val DividerStrong = Color(0xE6333542)
@@ -80,11 +80,11 @@ object LiveDims {
     val SidebarCollapsed = 52.dp
     val SidebarRowHeight = 26.dp
 
-    val MiniPlayerWidth  = 300.dp
-    val MiniPlayerHeight = 168.dp
+    val MiniPlayerWidth  = 256.dp
+    val MiniPlayerHeight = 144.dp
 
     val EpgChannelColWidth = 220.dp
-    val EpgChannelWideColWidth = 292.dp
+    val EpgChannelWideColWidth = 256.dp
     val EpgRowHeight       = 42.dp
     val EpgHeaderHeight    = 26.dp
     val EpgPxPerMinute     = 4
@@ -93,7 +93,7 @@ object LiveDims {
     val PanelRadius     = 12.dp
     val CardRadius      = 10.dp
     val CellRadius      = 6.dp
-    val VideoRadius     = 12.dp
+    val VideoRadius     = 8.dp
     val FocusBorder     = 2.dp
     val ActiveIndicator = 3.dp
 }

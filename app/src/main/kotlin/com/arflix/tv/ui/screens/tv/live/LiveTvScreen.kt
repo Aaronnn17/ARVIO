@@ -53,6 +53,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -559,7 +562,9 @@ fun LiveTvScreen(
             value = System.currentTimeMillis()
         }
     }
-    var selectedCategoryId by rememberSaveable { mutableStateOf("all") }
+    var selectedCategoryId by rememberSaveable {
+        mutableStateOf(state.tvSession.lastGroupName.takeIf { it.isNotBlank() } ?: "all")
+    }
     var startupCategoryApplied by rememberSaveable { mutableStateOf(false) }
     var selectedProviderId by rememberSaveable { mutableStateOf("all") }
     val categoryScope = "${currentProfile?.id}|$selectedProviderId|$selectedCategoryId"
@@ -721,7 +726,7 @@ fun LiveTvScreen(
                     tree = enrichedState.value.tree,
                     favorites = favoriteOrderIds,
                     recents = recents.value.toList().asReversed(),
-                    startupAnchorId = null,
+                    startupAnchorId = startupAnchorId,
                 )
             }
             val value = withContext(Dispatchers.Default) {
@@ -884,9 +889,11 @@ fun LiveTvScreen(
         }
         visibleEnrichedState.value = EnrichedChannels(all = visibleChannels, tree = tree, index = index)
     }
-    LaunchedEffect(hiddenGroupSet, selectedCategoryId, visibleEnrichedState.value.tree) {
+    LaunchedEffect(hiddenGroupSet, selectedCategoryId, visibleEnrichedState.value.tree, favSet) {
         val tree = visibleEnrichedState.value.tree
-        if (tree.top.isNotEmpty() && selectedCategoryId != "all" &&
+        if (selectedCategoryId == "fav" && favSet.isEmpty()) {
+            selectedCategoryId = "all"
+        } else if (tree.top.isNotEmpty() && selectedCategoryId != "all" &&
             (tree.byId(selectedCategoryId) == null || tree.hidden.categories.any { it.id == selectedCategoryId })
         ) {
             selectedCategoryId = "all"
@@ -950,6 +957,7 @@ fun LiveTvScreen(
             // window. Previously the outer channel-state effect and this
             // effect both queried/rebuilt the same category, producing several
             // seconds of main-thread recomposition on a 50k playlist.
+            val startupAnchorId = state.tvSession.lastChannelId.takeIf { state.tvSession.lastOpenedAt > 0L && it.isNotBlank() }
             val directChannels = withContext(Dispatchers.IO) {
                 loadPagedChannelWindow(
                     repository = viewModel.iptvRepository,
@@ -960,7 +968,7 @@ fun LiveTvScreen(
                     tree = tree,
                     favorites = favoriteOrderIds,
                     recents = recents.value.toList().asReversed(),
-                    startupAnchorId = null,
+                    startupAnchorId = startupAnchorId,
                     excludedGroups = hiddenGroupSet + restrictedGroupSet,
                 )
             }
@@ -1094,12 +1102,16 @@ fun LiveTvScreen(
     // lastChannelId, but nothing consumed it on entry, so Live TV always
     // started at the top of the list. Rules live in LiveTvStartup so they are
     // unit tested rather than only verifiable on a device.
+    val startupChannelIds = remember(state.snapshot.channels) {
+        LiveTvStartup.channelIds(state.snapshot.channels)
+    }
     val resumeChannelId = LiveTvStartup.resumeChannelId(
         explicitChannelId = initialChannelId,
         lastChannelId = state.tvSession.lastChannelId,
-        availableChannelIds = LiveTvStartup.channelIds(state.snapshot.channels),
+        availableChannelIds = startupChannelIds,
     )
     var focusedChannelId by rememberSaveable { mutableStateOf<String?>(resumeChannelId) }
+    var focusedProgramme by remember { mutableStateOf<Pair<EnrichedChannel, IptvProgram>?>(null) }
     // The focused row's channel object, reported by the row itself on focus. Not saveable —
     // it is rebuilt on the next focus event, and only the id needs to survive process death.
     // Only event handlers need the current row; keep it separate from settled UI selection.
@@ -1143,6 +1155,9 @@ fun LiveTvScreen(
     }
     val selectedDisplayChannelId = remember(focusedChannelId, playingChannelId, visibleChannelsById, variantGroups) {
         displayChannelIdFor(focusedChannelId ?: playingChannelId, visibleChannelsById, variantGroups)
+    }
+    val playingDisplayChannelId = remember(playingChannelId, visibleChannelsById, variantGroups) {
+        displayChannelIdFor(playingChannelId, visibleChannelsById, variantGroups)
     }
     val indexedPlayingChannel = remember(playingChannelId, visibleEnrichedState.value, filteredChannels) {
         playingChannelId?.let { visibleEnrichedState.value.index.byId[it] }
@@ -1530,7 +1545,7 @@ fun LiveTvScreen(
         val playingVisible = playingChannelId?.let { id -> id in visibleEnrichedState.value.index.byId } == true
         if (!startupChannelApplied && filteredChannels.isNotEmpty() && (initialChannelId != null || startupStateReady)) {
             val savedId = state.tvSession.lastChannelId.takeIf { state.tvSession.lastOpenedAt > 0L && it.isNotBlank() }
-            val savedChannel = if (savedId != null && savedId !in filteredChannelIndexById && lastKnownPagedTotal > 10_000) {
+            val savedChannel = if (savedId != null && savedId !in filteredChannelIndexById) {
                 withContext(Dispatchers.IO) {
                     viewModel.iptvRepository.pagedChannelsByIds(listOf(savedId)).firstOrNull()
                 }?.enrichForFastStartup(1)?.takeUnless {
@@ -1624,6 +1639,13 @@ fun LiveTvScreen(
     var isFullScreen by rememberSaveable {
         mutableStateOf(initialChannelId != null || initialStreamUrl != null)
     }
+    val fsProgress by animateFloatAsState(
+        targetValue = if (isFullScreen) 1f else 0f,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "tv-fullscreen-progress",
+    )
+    val miniPlayerActive = !isFullScreen && fsProgress == 0f
+    var pendingFocusAfterFullscreenExit by remember { mutableStateOf<String?>(null) }
     // Set while we are still in that launched-to-play session. Backing out of it should
     // return to whoever launched us (Home), not strand the user in the Live TV guide
     // they never asked for. Cleared on the first exit so later fullscreen sessions
@@ -1711,6 +1733,11 @@ fun LiveTvScreen(
                 }
             }
         }
+        playlistCategorySections.forEach { section ->
+            section.categories.forEach { cat ->
+                if (cat.count > 0) list.add(cat.id)
+            }
+        }
         tree.global.categories.forEach { cat ->
             if (cat.count > 0) list.add(cat.id)
         }
@@ -1728,10 +1755,10 @@ fun LiveTvScreen(
         return list.distinct()
     }
 
-    LaunchedEffect(state.tvSessionLoaded, state.tvSession.lastGroupName, visibleEnrichedState.value.tree, startupCategoryApplied) {
+    LaunchedEffect(state.tvSessionLoaded, state.tvSession.lastGroupName, visibleEnrichedState.value.tree, playlistCategorySections, startupCategoryApplied) {
         if (startupCategoryApplied || !state.tvSessionLoaded) return@LaunchedEffect
         val tree = visibleEnrichedState.value.tree
-        if (tree.top.isEmpty() && tree.global.categories.isEmpty()) return@LaunchedEffect
+        if (tree.top.isEmpty() && tree.global.categories.isEmpty() && playlistCategorySections.isEmpty()) return@LaunchedEffect
         selectedCategoryId = LiveTvStartup.resumeCategoryId(
             lastGroupName = state.tvSession.lastGroupName,
             availableCategoryIds = getAvailableCategoryIds(tree).toSet(),
@@ -1827,6 +1854,7 @@ fun LiveTvScreen(
         categoryDrawerOpen = true
         focusCategoryAfterDrawerOpen = true
         focusZone = LiveTvFocusZone.CATEGORY_LIST
+        runCatching { sidebarFocus.requestFocus() }
     }
 
     // Keep focus in the sidebar while that zone is active — but NOT while the
@@ -1873,7 +1901,9 @@ fun LiveTvScreen(
         }
         focusZone = LiveTvFocusZone.CHANNEL_LIST
         focusSelectedChannelSignal += 1
-        runCatching { epgFocus.requestFocus() }
+        if (channelId == null) {
+            runCatching { epgFocus.requestFocus() }
+        }
     }
 
     fun focusEpg(channelId: String) {
@@ -1887,7 +1917,6 @@ fun LiveTvScreen(
         }
         focusZone = LiveTvFocusZone.EPG
         focusEpgSignal += 1
-        runCatching { epgFocus.requestFocus() }
     }
 
     fun enterSelectedCategory(categoryId: String) {
@@ -1897,6 +1926,20 @@ fun LiveTvScreen(
         selectedCategoryId = categoryId
         categoryDrawerOpen = false
         focusGuideAfterDrawerClose = true
+        viewModel.rememberTvSession(
+            lastGroupName = categoryId,
+            lastFocusedZone = "CATEGORY",
+            markOpened = false,
+        )
+    }
+
+    LaunchedEffect(selectedCategoryId, startupCategoryApplied) {
+        if (startupCategoryApplied && selectedCategoryId.isNotBlank()) {
+            viewModel.rememberTvSession(
+                lastGroupName = selectedCategoryId,
+                markOpened = false,
+            )
+        }
     }
 
     fun requestCategorySelection(categoryId: String) {
@@ -1967,11 +2010,16 @@ fun LiveTvScreen(
         fullscreenGuideOpen = false
         isFullScreen = false
         hudPokeSignal++
-        focusCommitScope.launch {
-            // Let the fullscreen layer start collapsing before returning focus
-            // to the large guide. On big IPTV lists this keeps Back immediate.
-            delay(16L)
-            focusChannelList(returnFocusChannelId)
+        pendingFocusAfterFullscreenExit = returnFocusChannelId
+    }
+
+    LaunchedEffect(isFullScreen, fsProgress) {
+        if (!isFullScreen && fsProgress == 0f) {
+            val target = pendingFocusAfterFullscreenExit
+            if (target != null) {
+                pendingFocusAfterFullscreenExit = null
+                focusChannelList(target)
+            }
         }
     }
 
@@ -2719,6 +2767,7 @@ fun LiveTvScreen(
                     return
                 }
                 val preparedIsHls = lastPreparedIsHls
+                val unsupportedContainer = error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED
                 val nextAttempt = playerRetryCount + 1
                 playerRetryCount = nextAttempt
                 val retryChannel = playingChannel?.source
@@ -2734,6 +2783,9 @@ fun LiveTvScreen(
                 }
                 val maxRetryCount = if (retryProgram != null) {
                     (catchupCandidateCount - 1).coerceAtLeast(0).coerceAtMost(2)
+                } else if (unsupportedContainer) {
+                    // One bounded content-type recovery, not repeated identical prepares.
+                    1
                 } else {
                     3
                 }
@@ -2761,7 +2813,8 @@ fun LiveTvScreen(
                                 channel = retryChannel,
                                 program = retryStreamProgram ?: retryProgram,
                                 forceRefresh = true,
-                                catchupAttempt = if (retryProgram != null) nextAttempt else 0
+                                catchupAttempt = if (retryProgram != null) nextAttempt else 0,
+                                probeKnownUrl = unsupportedContainer,
                             )
                         } else {
                             IptvPlaybackTarget(prepared, preparedIsHls)
@@ -3096,6 +3149,7 @@ fun LiveTvScreen(
                         )
                     }
                     MiniPlayerRow(
+                        focusedProgramme = focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG },
                         exoPlayer = exoPlayer,
                         channel = playingDisplayChannel,
                         clockTickMillis = guideClockMillis,
@@ -3107,6 +3161,7 @@ fun LiveTvScreen(
                         onOpenVariants = playingChannel?.let { channel -> { openVariantPicker(channel) } },
                         compact = true,
                         landscapeCompact = landscapeCompactMiniPlayer,
+                        playerActive = miniPlayerActive,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     TouchCategoryRail(
@@ -3130,6 +3185,7 @@ fun LiveTvScreen(
                         isGuideBackfillLoading = false,
                         hasGuideSource = state.hasPotentialGuideSource,
                         selectedChannelId = selectedDisplayChannelId,
+                        playingChannelId = playingDisplayChannelId ?: playingChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,
                         focusEpgSignal = focusEpgSignal,
                         focusMode = if (focusZone == LiveTvFocusZone.EPG) {
@@ -3150,6 +3206,7 @@ fun LiveTvScreen(
                             program?.let { selectEpgProgram(channel, it) }
                         },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
+                        onProgramFocused = { channel, programme -> focusedProgramme = channel to programme },
                         onChannelLongPress = { channel, fromKeyHold -> openChannelMenu(channel, fromKeyHold) },
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
@@ -3202,7 +3259,13 @@ fun LiveTvScreen(
                     },
                     onMoveRight = {
                         categoryDrawerOpen = false
-                        focusGuideAfterDrawerClose = true
+                        focusGuideAfterDrawerClose = false
+                        val target = rememberedChannelByCategory[categoryScope]
+                            ?.takeIf { it in filteredChannelIndexById }
+                            ?: playingChannelId?.let { displayChannelIdFor(it, visibleEnrichedState.value.index.byId, variantGroups) }
+                                ?.takeIf { it in filteredChannelIndexById }
+                            ?: filteredChannels.firstOrNull()?.id
+                        focusChannelList(target)
                     },
                     onMoveUpFromSearch = {
                         topBarFocusIndex = topBarSelectedIndex(SidebarItem.TV, hasProfile)
@@ -3245,6 +3308,7 @@ fun LiveTvScreen(
                         )
                     }
                     MiniPlayerRow(
+                        focusedProgramme = focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG },
                         exoPlayer = exoPlayer,
                         channel = playingDisplayChannel,
                         clockTickMillis = guideClockMillis,
@@ -3255,6 +3319,7 @@ fun LiveTvScreen(
                         variantCount = playingChannel?.let { variantCountFor(it, variantGroups) } ?: 1,
                         onOpenVariants = playingChannel?.let { channel -> { openVariantPicker(channel) } },
                         compact = compactTouchLayout,
+                        playerActive = miniPlayerActive,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     EpgGrid(
@@ -3268,6 +3333,7 @@ fun LiveTvScreen(
                         isGuideBackfillLoading = false,
                         hasGuideSource = state.hasPotentialGuideSource,
                         selectedChannelId = selectedDisplayChannelId,
+                        playingChannelId = playingDisplayChannelId ?: playingChannelId,
                         focusSelectedChannelSignal = focusSelectedChannelSignal,
                         focusEpgSignal = focusEpgSignal,
                         focusMode = if (focusZone == LiveTvFocusZone.EPG) {
@@ -3287,6 +3353,7 @@ fun LiveTvScreen(
                             program?.let { selectEpgProgram(channel, it) }
                         },
                         onChannelFocused = { channel -> commitFocusedChannel(channel) },
+                        onProgramFocused = { channel, programme -> focusedProgramme = channel to programme },
                         onChannelLongPress = { channel, fromKeyHold -> openChannelMenu(channel, fromKeyHold) },
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
@@ -3300,11 +3367,6 @@ fun LiveTvScreen(
                         channelColumnWidthOverride = guideChannelColumnWidth,
                         modifier = Modifier
                             .fillMaxSize()
-                            .onFocusChanged {
-                                if (it.hasFocus && focusZone == LiveTvFocusZone.CATEGORY_LIST) {
-                                    focusZone = LiveTvFocusZone.CHANNEL_LIST
-                                }
-                            }
                             .then(if (!isTouchDevice) Modifier.focusRequester(epgFocus) else Modifier),
                     )
                 }
@@ -3313,48 +3375,36 @@ fun LiveTvScreen(
         }
 
         // Full-screen playback: same ExoPlayer, covers the entire screen.
-        //
-        // The overlay animates a scale+alpha transition so it looks like the
-        // mini-player is growing into fullscreen. The transform pivot is
-        // roughly the mini-player's center (sidebar ≈ 20% of width, mini-
-        // player sits just below the 52dp top bar), which keeps the grow
-        // anchored visually to where the user tapped instead of from screen
-        // center. fsProgress stays mounted until it reaches 0, so the
-        // reverse animation also plays on Back.
-        val fsProgress by animateFloatAsState(
-            targetValue = if (isFullScreen) 1f else 0f,
-            animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
-            label = "tv-fullscreen-progress",
-        )
+        // Cinematic 3D Depth Push:
+        // Video stays anchored at the exact screen center (0.5f, 0.5f).
+        // Entering punches forward from depth (0.92 -> 1.0); exiting eases back into depth (1.0 -> 0.92).
         LiveTvRenderBoundary {
             if (fsProgress > 0f && playingChannel != null) {
-            val scale = 0.35f + 0.65f * fsProgress
-    BackHandler(enabled = isFullScreen) {
-        if (fullscreenGuideOpen) {
-            fullscreenGuideOpen = false
-            hudPokeSignal++
-        } else if (!quickZapOpen) {
-            if (playingCatchupProgram != null) {
-                returnCatchupToLive()
-            } else {
-                exitFullScreenPlayback()
-            }
-        }
-    }
+                val depthScale = 0.92f + 0.08f * fsProgress
 
-    Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        transformOrigin = TransformOrigin(
-                            pivotFractionX = 0.22f,
-                            pivotFractionY = 0.18f,
-                        )
-                        scaleX = scale
-                        scaleY = scale
-                        alpha = fsProgress
+                BackHandler(enabled = isFullScreen) {
+                    if (fullscreenGuideOpen) {
+                        fullscreenGuideOpen = false
+                        hudPokeSignal++
+                    } else if (!quickZapOpen) {
+                        if (playingCatchupProgram != null) {
+                            returnCatchupToLive()
+                        } else {
+                            exitFullScreenPlayback()
+                        }
                     }
-                    .background(Color.Black)
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            transformOrigin = TransformOrigin(0.5f, 0.5f)
+                            scaleX = depthScale
+                            scaleY = depthScale
+                            alpha = fsProgress
+                        }
+                        .background(Color.Black)
                     .focusRequester(fsFocus)
                     .focusable()
                     .onPreviewKeyEvent { ev ->

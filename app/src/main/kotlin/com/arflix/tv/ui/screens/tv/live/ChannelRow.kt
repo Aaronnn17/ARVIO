@@ -1,5 +1,8 @@
 package com.arflix.tv.ui.screens.tv.live
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.ui.geometry.CornerRadius
+
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -32,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -98,49 +102,62 @@ fun ChannelRow(
     // can be swallowed before combinedClickable turns them into a click.
     var longPressConsumed by remember { mutableStateOf(false) }
     val bg = when {
-        visuallyFocused -> LiveColors.PanelRaised
+        visuallyFocused && isActive -> LiveColors.FocusBg
         isActive -> LiveColors.FocusBg
+        visuallyFocused -> LiveColors.PanelRaised
         stripe -> LiveColors.RowStripe
         else -> Color.Transparent
     }
     val now = nowNext?.now
-    val animatedBorderWidth by animateDpAsState(
-        targetValue = if (visuallyFocused) 3.dp else 0.dp,
+    val animatedBorderWidth = animateDpAsState(
+        targetValue = if (visuallyFocused) LiveDims.FocusBorder else 0.dp,
         animationSpec = tween(durationMillis = 70),
         label = "channel-row-border",
     )
-    val animatedScale by animateFloatAsState(
-        targetValue = if (visuallyFocused) 1.004f else 1f,
-        animationSpec = tween(durationMillis = 80),
-        label = "channel-row-scale",
-    )
+    val surface = animateColorAsState(bg, tween(120), label = "channel-surface")
     Row(
         modifier = modifier
             .fillMaxWidth()
             .height(rowHeight)
-            .graphicsLayer {
-                scaleX = animatedScale
-                scaleY = animatedScale
-            }
             .onFocusChanged {
                 focused = it.hasFocus
                 if (it.hasFocus) onFocused()
             }
             .drawWithContent {
+                val inset = 2.dp.toPx()
+                val radius = 6.dp.toPx()
+                val surfaceSize = Size(
+                    (size.width - inset * 2).coerceAtLeast(0f),
+                    (size.height - inset * 2).coerceAtLeast(0f),
+                )
+                drawRoundRect(
+                    color = surface.value,
+                    topLeft = Offset(inset, inset),
+                    size = surfaceSize,
+                    cornerRadius = CornerRadius(radius),
+                )
+                if (isActive) {
+                    drawRoundRect(
+                        color = LiveColors.Accent,
+                        topLeft = Offset(inset + 2.dp.toPx(), 8.dp.toPx()),
+                        size = Size(2.dp.toPx(), (size.height - 16.dp.toPx()).coerceAtLeast(0f)),
+                        cornerRadius = CornerRadius(1.dp.toPx()),
+                    )
+                }
                 drawContent()
                 // Read animation state in drawing, not composition: channel
                 // text and logo layout should not rebuild for each border frame.
-                val stroke = animatedBorderWidth.toPx()
+                val stroke = animatedBorderWidth.value.toPx()
                 if (visuallyFocused && stroke > 0f) {
-                    drawRect(
+                    drawRoundRect(
                         color = LiveColors.FocusRing,
-                        topLeft = Offset(stroke / 2f, stroke / 2f),
-                        size = Size((size.width - stroke).coerceAtLeast(0f), (size.height - stroke).coerceAtLeast(0f)),
+                        topLeft = Offset(inset + stroke / 2f, inset + stroke / 2f),
+                        size = Size((surfaceSize.width - stroke).coerceAtLeast(0f), (surfaceSize.height - stroke).coerceAtLeast(0f)),
+                        cornerRadius = CornerRadius((radius - stroke / 2f).coerceAtLeast(0f)),
                         style = Stroke(stroke),
                     )
                 }
             }
-            .background(if (visuallyFocused) LiveColors.PanelRaised else bg)
             .focusable()
             // Long-press / MENU opens the channel menu. This has to live in the PREVIEW
             // phase, ahead of combinedClickable: combinedClickable arms a click on the
@@ -202,15 +219,14 @@ fun ChannelRow(
         Box(
             modifier = Modifier
                 .fillMaxHeight()
-                .width(LiveDims.ActiveIndicator)
-                .background(if (isActive) LiveColors.Accent else Color.Transparent),
+                .width(LiveDims.ActiveIndicator),
         )
 
         // ─ channel number ────────────────────────────────────
         Box(
             modifier = Modifier
-                .width(48.dp)
-                .padding(start = 10.dp, end = 6.dp),
+                .width(36.dp)
+                .padding(start = 8.dp, end = 4.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(
@@ -222,13 +238,15 @@ fun ChannelRow(
         }
 
         // ─ logo ──────────────────────────────────────────────
-        ChannelLogo(channel = channel, size = 36.dp)
+        ChannelLogo(channel = channel, size = 32.dp)
 
-        Spacer(Modifier.width(10.dp))
+        Spacer(Modifier.width(8.dp))
 
         // ─ name / program / progress / time ──────────────────
         Column(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .clipToBounds(),
             verticalArrangement = Arrangement.spacedBy(1.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
