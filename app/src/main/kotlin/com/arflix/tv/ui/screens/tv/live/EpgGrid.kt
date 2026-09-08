@@ -59,6 +59,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -593,6 +595,11 @@ fun EpgGrid(
                                 ch.id == activeChannelFocusId && focusMode == EpgGridFocusMode.ChannelList
                             }
                         }
+                        val isFocusAnchor by remember(ch.id, scrollResetKey, selectedChannelId, channels.firstOrNull()?.id) {
+                            derivedStateOf {
+                                ch.id == (activeChannelFocusId ?: selectedChannelId ?: channels.firstOrNull()?.id)
+                            }
+                        }
                         DisposableEffect(ch.id, channelFocusRequester) {
                             channelFocusRequesters[ch.id] = channelFocusRequester
                             onDispose {
@@ -616,6 +623,8 @@ fun EpgGrid(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(rowHeight)
+                                // Keep accessibility geometry sorting local to each guide row.
+                                .semantics { isTraversalGroup = true }
                         ) {
                             val isChannelActive = if (playingChannelId != null) {
                                 ch.id == playingChannelId
@@ -667,7 +676,7 @@ fun EpgGrid(
                                     .focusRequester(channelFocusRequester)
                                     .then(if (idx == 0) Modifier.focusRequester(firstChannelFocusRequester) else Modifier)
                                     .then(
-                                        if (ch.id == (activeChannelFocusId ?: selectedChannelId ?: channels.firstOrNull()?.id)) {
+                                        if (isFocusAnchor) {
                                             Modifier.focusRequester(selectedChannelFocusRequester)
                                         } else Modifier
                                     ),

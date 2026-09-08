@@ -64,7 +64,7 @@ class GuideRenderingDeviceTest {
     @Test fun channelModeDoesNotComposeTheEntireDayForEveryVisibleRow() {
         showGuide()
         val count = compose.onAllNodes(hasText("Programme ", substring = true),
-            useUnmergedTree = true).fetchSemanticsNodes().size
+            useUnmergedTree = false).fetchSemanticsNodes().size
         Log.i("GuideRenderCells", "composedProgrammeCells=$count")
         assertTrue("Visible guide has no programmes", count > 0)
         assertTrue("Too many offscreen programme cells: $count", count < 90)
@@ -82,6 +82,13 @@ class GuideRenderingDeviceTest {
         compose.onNodeWithTag("iptv-channel:render:7").assertIsNotFocused()
         compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) }
         compose.runOnIdle { assertEquals("render:8", focused) }
+    }
+
+    @Test fun liveProgrammeHasOneAccessibleEntryWithAnAction() {
+        showGuide()
+        compose.onNodeWithText("Programme render:0:4")
+            .assertHasClickAction()
+            .assert(hasText("A programme description for rendering cost."))
     }
 
     @Test fun epgNavigationStillReachesOffscreenProgrammesAndAdjacentChannel() {

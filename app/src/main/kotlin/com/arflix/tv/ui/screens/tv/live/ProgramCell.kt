@@ -46,6 +46,12 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -111,14 +117,23 @@ fun ProgramCell(
         modifier = modifier
             .height(rowHeight)
             .width(width)
+            // Announce the programme as one entry, not separate title/time/badge nodes.
+            .semantics(mergeDescendants = true) {
+                if (isNow || (isPast && isCatchupSupported)) {
+                    onClick {
+                        currentOnClick()
+                        true
+                    }
+                }
+            }
             // Outer gutter was 3dp×2 + inner 10dp×2 = 26dp of horizontal
             // overhead. On a 60dp min-width block that left only ~34dp for
             // text + badges, which the LIVE pill alone consumed — leaving
             // blocks visually empty. Total horizontal overhead is now 8dp.
             .padding(horizontal = 1.dp, vertical = 3.dp)
-            .graphicsLayer {
+            .then(if (isPast && !isCatchupSupported) Modifier.graphicsLayer {
                 alpha = contentAlpha.value
-            }
+            } else Modifier)
             .then(
                 if (focusable && focusRequester != null) {
                     Modifier.focusRequester(focusRequester)
@@ -141,8 +156,10 @@ fun ProgramCell(
                 color = borderColor,
                 shape = RoundedCornerShape(LiveDims.CellRadius),
             )
-            .clip(RoundedCornerShape(LiveDims.CellRadius))
-            .drawBehind { drawRect(bg.value) }
+            .drawBehind {
+                val radius = LiveDims.CellRadius.toPx()
+                drawRoundRect(bg.value, cornerRadius = CornerRadius(radius))
+            }
             .then(if (focusable) Modifier.focusable() else Modifier)
             .then(
                 if (focusable) {
@@ -177,19 +194,27 @@ fun ProgramCell(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.horizontalGradient(
+                    .drawBehind {
+                        val radius = LiveDims.CellRadius.toPx()
+                        drawRoundRect(Brush.horizontalGradient(
                             listOf(
                                 LiveColors.Accent.copy(alpha = 0.22f),
                                 Color.Transparent,
                             )
-                        )
-                    )
+                        ), cornerRadius = CornerRadius(radius))
+                    }
             )
         }
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .clearAndSetSemantics {
+                    this[SemanticsProperties.Text] = listOfNotNull(
+                        AnnotatedString(program.title),
+                        AnnotatedString(formatClock(program.startUtcMillis)),
+                        program.description?.takeIf { it.isNotBlank() }?.let(::AnnotatedString),
+                    )
+                }
                 // Read scroll position in measurement, not row composition.
                 .layout { measurable, constraints ->
                     val shift = contentStartOffsetPx().coerceIn(0, constraints.maxWidth)

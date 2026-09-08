@@ -1,0 +1,46 @@
+# TV guide scrolling performance
+
+## Changes
+
+- Isolate the selected focus-requester anchor with derived state so changing focus
+  does not invalidate every visible channel row.
+- Group accessibility traversal by channel row and expose each programme as one
+  combined entry, including its full title, time and description.
+- Keep programme accessibility actions available for live/catch-up playback.
+- Draw rounded programme backgrounds directly. Avoid clip/opacity graphics layers
+  for ordinary opaque programme cells; retain fading where needed.
+
+## Verification
+
+Five GuideRenderingDeviceTest instrumentation tests passed on an Android 12 TV
+emulator configured with 2 GB RAM. The fixture has 55,000 channels, with 144 in
+the rendering window. Tests cover bounded programme entries, accessible programme
+details/actions, vertical channel navigation, offscreen EPG navigation, and
+60-down/40-up position retention. This is not a full provider-load benchmark.
+
+The signed sideload release built successfully and was installed as an update on
+the TCL. The certificate matches the existing release. Live NPO 1 HD playback,
+channel scrolling, programme focus and return to the channel column were checked.
+
+## Device measurements
+
+Baseline: 933c5352b. Same TCL, NL ALGEMEEN category, NPO 1 HD playing, category
+drawer closed, ten down and ten up key events starting at channel 17. Statistics
+were reset before each run and collected after settling. No sampling profiler ran
+during frame measurements. The existing launcher accessibility service stayed on.
+
+| Build/run | Frames | Janky | Median | P90 | P99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline 1 | 148 | 37.16% | 32 ms | 93 ms | 200 ms |
+| Baseline 2 | 152 | 34.87% | 31 ms | 81 ms | 150 ms |
+| Final 1 | 140 | 30.71% | 32 ms | 69 ms | 150 ms |
+| Final 2 | 151 | 27.15% | 30 ms | 81 ms | 150 ms |
+
+These are short device comparisons, not a controlled lab benchmark. Live content,
+EPG time windows and background activity can vary. Improvements are modest and
+do not establish lag-free scrolling, 60 fps, or parity on every low-memory device.
+
+Method sampling still identifies Compose accessibility geometry processing as a
+major main-thread cost. A broader rendering/runtime change needs separate
+accessibility and navigation regression coverage. Near-lag-free acceptance remains
+unmet; do not advertise this patch as eliminating stutter.
