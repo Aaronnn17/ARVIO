@@ -39,7 +39,7 @@ function sessionFromResponse(response: SupabaseAuthResponse, fallbackEmail: stri
 }
 
 export class AuthClient {
-  session = loadStored<AuthSession | null>(SESSION_KEY, null);
+  session = config.selfHosted ? null : loadStored<AuthSession | null>(SESSION_KEY, null);
   private refreshInFlight: Promise<void> | null = null;
 
   get isAuthenticated() {

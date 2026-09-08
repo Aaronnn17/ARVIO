@@ -45,7 +45,7 @@ function clean(value: string | null, max = 80) {
 }
 
 export function capturePremiumAttribution() {
-  if (typeof window === "undefined") return {};
+  if (config.selfHosted || typeof window === "undefined") return {};
   const params = new URLSearchParams(window.location.search);
   const existing = (() => {
     try { return JSON.parse(storageGet(browserStorage("localStorage"), ATTRIBUTION_KEY) || "{}"); } catch { return {}; }
@@ -69,7 +69,7 @@ export async function trackPremiumEvent(
   metadata: Record<string, string | number | boolean> = {},
   oncePerSession = false
 ) {
-  if (!auth.session) return false;
+  if (config.selfHosted || !auth.session) return false;
   const sessionKey = `arvio.premium.session.${auth.session.userId}.${eventName}`;
   const sessionStore = browserStorage("sessionStorage");
   if (oncePerSession && storageGet(sessionStore, sessionKey)) return true;

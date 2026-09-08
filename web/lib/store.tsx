@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getStreams, getStreamsProgressive, installAddon as installAddonManifest, loadLocalAddons, normalizeAddons, saveLocalAddons } from "./addons";
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
-import { getAuthPortalUrl } from "./config";
+import { config, getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
 import { includeIptvContinueWatching, isUnwatchedContinueWatching, mergeTrackerContinueWatching } from "./continueWatching";
@@ -1143,6 +1143,10 @@ export function AppProvider({
     if (typeof window === "undefined") return;
     const hash = window.location.hash || "";
     if (hash.includes("access_token=") && hash.includes("refresh_token=")) {
+      if (config.selfHosted) {
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+        return;
+      }
       try {
         const params = new URLSearchParams(hash.replace(/^#/, ""));
         const access_token = params.get("access_token");
@@ -2210,6 +2214,7 @@ export function AppProvider({
   }, []);
 
   const goToLogin = useCallback(() => {
+    if (config.selfHosted) { setView("profiles"); return; }
     if (typeof window !== "undefined") {
       const redirectUri = window.location.origin + "/";
       const portalUrl = getAuthPortalUrl();

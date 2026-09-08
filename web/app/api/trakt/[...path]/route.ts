@@ -22,7 +22,7 @@ async function handler(request: NextRequest, context: { params: Promise<{ path: 
   let target: URL;
   let headers: HeadersInit;
 
-  const usesNetlifyProxy = netlifyBackendUrl.startsWith("https://") && appAnonKey.length > 40;
+  const usesNetlifyProxy = process.env.NEXT_PUBLIC_SELF_HOSTED !== "true" && netlifyBackendUrl.startsWith("https://") && appAnonKey.length > 40;
 
   if (usesNetlifyProxy) {
     target = new URL(`${netlifyBackendUrl}/trakt-proxy`);
