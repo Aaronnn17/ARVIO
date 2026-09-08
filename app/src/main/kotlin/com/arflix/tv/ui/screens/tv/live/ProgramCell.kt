@@ -47,7 +47,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.geometry.CornerRadius
@@ -91,6 +90,13 @@ fun ProgramCell(
 ) {
     val deviceType = LocalDeviceType.current
     val isTouchDevice = deviceType.isTouchDevice()
+    // Retain the standard layout for touch, expanded rows and RTL text layout.
+    if (!focusable && !isTouchDevice && rowHeight < 60.dp &&
+        LocalLayoutDirection.current == LayoutDirection.Ltr) {
+        ChannelProgrammeCanvas(program, width, rowHeight, isNow, isPast,
+            isCatchupSupported, contentStartOffsetPx, onClick, modifier)
+        return
+    }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val currentOnClick by rememberUpdatedState(onClick)
     var focused by remember { mutableStateOf(false) }
@@ -117,15 +123,6 @@ fun ProgramCell(
         modifier = modifier
             .height(rowHeight)
             .width(width)
-            // Announce the programme as one entry, not separate title/time/badge nodes.
-            .semantics(mergeDescendants = true) {
-                if (isNow || (isPast && isCatchupSupported)) {
-                    onClick {
-                        currentOnClick()
-                        true
-                    }
-                }
-            }
             // Outer gutter was 3dp×2 + inner 10dp×2 = 26dp of horizontal
             // overhead. On a 60dp min-width block that left only ~34dp for
             // text + badges, which the LIVE pill alone consumed — leaving
@@ -188,6 +185,21 @@ fun ProgramCell(
                     Modifier
                 }
             )
+            // Keep focus semantics above this node, but stop accessibility from
+            // walking the decorative/text layout beneath each programme.
+            .clearAndSetSemantics {
+                this[SemanticsProperties.Text] = listOfNotNull(
+                    AnnotatedString(program.title),
+                    AnnotatedString(formatClock(program.startUtcMillis)),
+                    program.description?.takeIf { it.isNotBlank() }?.let(::AnnotatedString),
+                )
+                if (isNow || (isPast && isCatchupSupported)) {
+                    onClick {
+                        currentOnClick()
+                        true
+                    }
+                }
+            }
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         if (isNow) {
@@ -208,13 +220,6 @@ fun ProgramCell(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .clearAndSetSemantics {
-                    this[SemanticsProperties.Text] = listOfNotNull(
-                        AnnotatedString(program.title),
-                        AnnotatedString(formatClock(program.startUtcMillis)),
-                        program.description?.takeIf { it.isNotBlank() }?.let(::AnnotatedString),
-                    )
-                }
                 // Read scroll position in measurement, not row composition.
                 .layout { measurable, constraints ->
                     val shift = contentStartOffsetPx().coerceIn(0, constraints.maxWidth)

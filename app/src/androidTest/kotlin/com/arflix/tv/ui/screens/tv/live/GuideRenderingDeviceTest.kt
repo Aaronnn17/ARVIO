@@ -69,6 +69,9 @@ class GuideRenderingDeviceTest {
         assertTrue("Visible guide has no programmes", count > 0)
         assertTrue("Too many offscreen programme cells: $count", count < 90)
         compose.onNodeWithText("Programme render:0:4").assertIsDisplayed()
+        // Channel-mode rendering exposes one entry without a child Text layout.
+        compose.onAllNodes(hasText("Programme render:0:4"), useUnmergedTree = true)
+            .assertCountEquals(1)
         compose.onNodeWithText("Programme render:0:23").assertDoesNotExist()
     }
 
@@ -89,6 +92,8 @@ class GuideRenderingDeviceTest {
         compose.onNodeWithText("Programme render:0:4")
             .assertHasClickAction()
             .assert(hasText("A programme description for rendering cost."))
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+        compose.onNodeWithText("Programme render:0:4").assertIsFocused()
     }
 
     @Test fun epgNavigationStillReachesOffscreenProgrammesAndAdjacentChannel() {

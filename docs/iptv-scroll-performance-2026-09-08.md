@@ -44,3 +44,25 @@ Method sampling still identifies Compose accessibility geometry processing as a
 major main-thread cost. A broader rendering/runtime change needs separate
 accessibility and navigation regression coverage. Near-lag-free acceptance remains
 unmet; do not advertise this patch as eliminating stutter.
+
+## Follow-up: lightweight channel-mode programme rendering
+
+Compact LTR TV programme cells now draw their read-only content on a canvas with
+one accessible entry. Entering EPG mode restores the interactive programme layout;
+touch devices, RTL layouts and taller rows retain the existing renderer. Programme
+focus, full accessible descriptions and live/archive accessibility actions remain.
+
+Two warmed TCL channel-scroll runs with live NPO 1 HD playing measured:
+
+| Run | Frames | Janky | Median | P90 | P99 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Canvas 1 | 151 | 21.85% | 23 ms | 77 ms | 150 ms |
+| Canvas 2 | 155 | 21.29% | 24 ms | 61 ms | 113 ms |
+| Final compatibility-guard build | 160 | 21.88% | 29 ms | 61 ms | 121 ms |
+
+The EPG clock/content changed during builds, so these are directional measurements,
+not a strict A/B percentage claim. Earlier runs in this session varied from 14.71%
+in a future-time viewport to 32-36% in other guide windows before the canvas change.
+The five emulator guide tests passed with canvas rendering, including the switch
+to an actually focused interactive programme. Remaining jank is still noticeable
+under rapid scrolling; there is no claim of lag-free operation on all devices.
