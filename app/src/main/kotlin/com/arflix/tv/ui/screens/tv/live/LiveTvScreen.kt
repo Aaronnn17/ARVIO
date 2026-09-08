@@ -3747,17 +3747,24 @@ fun LiveTvScreen(
                                 }
                             }
 
+                            // Everything below is the remote's fullscreen key plan.
+                            // Touch devices drive playback by tapping and keep the
+                            // behaviour they have always had.
+                            if (isTouchDevice) return@onPreviewKeyEvent false
+
                             // Up/Down and the remote's channel keys zap straight
-                            // away — no overlay, no extra press. In catchup the
+                            // away — no overlay, no extra press. Up and CH+ go to
+                            // the next channel, the way a television has always
+                            // answered CH+. In catchup the
                             // arrows stay with the HUD instead, because there the
                             // user wants to seek inside the recording rather than
                             // leave it; the channel keys still zap and drop back
                             // to live, which is what leaving a recording means.
                             val zapDelta = when (ev.key) {
-                                Key.ChannelUp -> -1
-                                Key.ChannelDown -> 1
-                                Key.DirectionUp -> if (playingCatchupProgram == null) -1 else 0
-                                Key.DirectionDown -> if (playingCatchupProgram == null) 1 else 0
+                                Key.ChannelUp -> 1
+                                Key.ChannelDown -> -1
+                                Key.DirectionUp -> if (playingCatchupProgram == null) 1 else 0
+                                Key.DirectionDown -> if (playingCatchupProgram == null) -1 else 0
                                 else -> 0
                             }
                             if (zapDelta != 0) {
@@ -3956,7 +3963,10 @@ fun LiveTvScreen(
                             if (!visible) hudEngaged = false
                         },
                         hideSignal = hudHideSignal,
-                        focusControls = hudEngaged,
+                        // On a remote the controls wait for OK; on a touch device
+                        // a tap is the only way to reach them, so they stay part
+                        // of what a tap brings up, exactly as before.
+                        showControls = isTouchDevice || hudEngaged,
                         modifier = Modifier,
                     )
                 }
