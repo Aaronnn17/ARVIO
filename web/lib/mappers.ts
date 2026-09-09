@@ -73,7 +73,7 @@ export function traktPlaybackToMedia(raw: unknown): MediaItem {
   const media = item.movie ?? item.show;
   const isShow = Boolean(item.show);
   return {
-    activityAt: Date.parse(item.paused_at ?? "") || Date.now(),
+    activityAt: Date.parse(item.paused_at ?? "") || 0,
     id: trackerIdentity(media),
     title: isShow && item.episode?.title ? `${media?.title ?? "Series"}: ${item.episode.title}` : media?.title ?? "Untitled",
     year: media?.year ? String(media.year) : "",
@@ -99,6 +99,7 @@ export function traktUpNextToMedia(watchedRaw: unknown, progressRaw: unknown): M
   const progress = progressRaw as {
     aired?: number;
     completed?: number;
+    reset_at?: string | null;
     last_watched_at?: string;
     next_episode?: { season?: number; number?: number; title?: string };
   } | null;
@@ -122,6 +123,7 @@ export function traktUpNextToMedia(watchedRaw: unknown, progressRaw: unknown): M
     episodeTitle: nextEpisode.title ?? null,
     progress: aired > 0 ? Math.round((Math.min(completed, aired) / aired) * 100) : 0,
     badge: "Up Next",
+    progressResetAt: Date.parse(progress?.reset_at ?? "") || 0,
     timeRemainingLabel: "Up next",
     activityAt: Date.parse(progress?.last_watched_at ?? watched.last_watched_at ?? watched.last_updated_at ?? "") || 0,
     releaseDate: progress?.last_watched_at ?? watched.last_watched_at ?? watched.last_updated_at ?? null

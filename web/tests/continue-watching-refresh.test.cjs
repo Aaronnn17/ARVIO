@@ -146,12 +146,28 @@ test('partial history failure still prunes confirmed movies but keeps unconfirme
 });
 
 test('fresh reset Up Next remains authoritative even when old history lists that episode', async () => {
-  const next = { ...episode, badge: 'Up Next' };
+  const next = { ...episode, badge: 'Up Next', progressResetAt: Date.parse(after) + 60000 };
   const h = harness({ progress: async () => ({ items: [next], fetchFailures: 0 }) });
   await h.refresh();
   assert.equal(h.state.cw.length, 1);
   assert.equal(h.state.cw[0].badge, 'Up Next');
   assert.equal(h.state.cw[0].episodeNumber, 2);
+});
+
+test('later show activity cannot resurrect an already completed Up Next episode in state or cache', async () => {
+  const stale = { ...episode, badge: 'Up Next', activityAt: Date.parse(after) + 86400000 };
+  const h = harness({ initial: [stale], playback: [], progress: async () => ({ items: [stale], fetchFailures: 0 }) });
+  await h.refresh();
+  assert.equal(h.state.cw.length, 0);
+  assert.equal(h.state.categories.some(row => row.id === 'continue_watching'), false);
+  assert.equal(h.cache.has('cw:a'), false);
+  assert.deepEqual(h.state.errors, []);
+});
+
+test('watching an episode again after a progress reset removes its old Up Next entry', () => {
+  const staleReset = { ...episode, badge: 'Up Next', progressResetAt: before,
+    activityAt: Date.parse(after) + 86400000 };
+  assert.equal(cw.pruneCompletedResume([staleReset], cw.completionTimes([], [watchedShow])).length, 0);
 });
 
 test('stale profile read cannot prune the newly selected profile', async () => {
