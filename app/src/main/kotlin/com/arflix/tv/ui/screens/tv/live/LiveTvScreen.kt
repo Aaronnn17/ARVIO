@@ -2781,12 +2781,16 @@ fun LiveTvScreen(
                 } else {
                     3
                 }
-                // Catch-up walks through *different* candidate URLs and Stalker asks the
-                // portal for a fresh temporary link, so a not-found answer can still be
-                // recovered from there. A plain live channel re-requests the very same
-                // address, which makes that family futile too.
+                // Catch-up walks through *different* candidate URLs, and a Stalker channel
+                // whose portal hands out temporary links asks for a fresh one, so a
+                // not-found answer can still be recovered from there. A plain live channel
+                // re-requests the very same address — as does a Stalker channel whose
+                // portal published the finished address — which makes that family futile.
                 val retryYieldsDifferentUrl = retryProgram != null ||
-                    retryChannel?.id?.startsWith("stalker:") == true
+                    (
+                        retryChannel?.id?.startsWith("stalker:") == true &&
+                            !StalkerPortalSupport.isDirectStreamAddress(retryChannel.streamUrl)
+                        )
                 val terminalCodes = if (retryYieldsDifferentUrl) {
                     TERMINAL_PLAYBACK_HTTP_CODES
                 } else {

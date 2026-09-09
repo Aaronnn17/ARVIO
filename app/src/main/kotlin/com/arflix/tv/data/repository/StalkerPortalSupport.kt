@@ -56,6 +56,68 @@ internal object StalkerPortalSupport {
         return host !in UNROUTABLE_STREAM_HOSTS
     }
 
+    /**
+     * Strips the player command a portal writes in front of an address. Measured
+     * portals use `ffmpeg http://…` and `auto http://…`, so the leading word is
+     * dropped whatever it says; a bare address (or one whose first word already
+     * carries the scheme) is returned untouched.
+     */
+    fun sanitizePlaybackCommand(command: String?): String {
+        val trimmed = command?.trim().orEmpty()
+        if (trimmed.isEmpty()) return ""
+        val firstWord = trimmed.substringBefore(' ')
+        if (firstWord.length == trimmed.length || "://" in firstWord) return trimmed
+        return trimmed.substringAfter(' ').trim()
+    }
+
+    /**
+     * True when an address can go straight to the player: an absolute http(s) URL on a
+     * reachable host, with no portal command word in front of it and not shaped like the
+     * `create_link` placeholder.
+     */
+    fun isDirectStreamAddress(url: String): Boolean {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty() || trimmed.any { it.isWhitespace() }) return false
+        val scheme = trimmed.substringBefore("://", missingDelimiterValue = "").lowercase(Locale.US)
+        if (scheme != "http" && scheme != "https") return false
+        // The placeholder is "http://<host>/ch/<id>_" — a path ending in an underscore.
+        // A play_token can end that way too, so only the path is judged, never the query.
+        if (trimmed.substringBefore('?').substringBefore('#').endsWith("_")) return false
+        return isRoutableStreamAddress(trimmed)
+    }
+
+    /**
+     * Stalker channels carry either a ready-to-play address or a placeholder that has to
+     * be exchanged for a temporary link via `create_link`; the `*_tmp_link` flags say
+     * which. Portals that answer `use_http_tmp_link: 0` publish the complete address in
+     * `cmd` — asking such a portal for a link is not just a wasted round trip: one
+     * measured portal answers it with HTTP 200, `"error": ""` and an address whose
+     * `stream=` id is empty, which then fails to play. A full client skips the call there.
+     *
+     * Returns the playable address when the portal stated that no temporary link is
+     * needed and what it published really is one. Null keeps the `create_link` round
+     * trip, including when a portal states nothing at all — guessing there would change
+     * behaviour for portals nobody has measured.
+     */
+    fun directLiveStreamUrl(
+        cmd: String?,
+        useHttpTmpLink: String?,
+        wowzaTmpLink: String?,
+        flussonicTmpLink: String?,
+    ): String? {
+        if (statesTemporaryLink(useHttpTmpLink) ||
+            statesTemporaryLink(wowzaTmpLink) ||
+            statesTemporaryLink(flussonicTmpLink)
+        ) {
+            return null
+        }
+        if (useHttpTmpLink?.trim() != "0") return null
+        return sanitizePlaybackCommand(cmd).takeIf { isDirectStreamAddress(it) }
+    }
+
+    /** Portals send the flags as `1`/`0`, quoted or not; anything else states nothing. */
+    private fun statesTemporaryLink(flag: String?): Boolean = flag?.trim() == "1"
+
     fun streamCacheKey(channelId: String, command: String): String {
         return "${playlistIdFromChannelId(channelId)}|${command.trim()}"
     }

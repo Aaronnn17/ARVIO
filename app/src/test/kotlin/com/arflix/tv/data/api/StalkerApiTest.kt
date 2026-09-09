@@ -3,6 +3,7 @@ package com.arflix.tv.data.api
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.Reader
@@ -519,5 +520,149 @@ class StalkerApiTest {
         val programs = api.getShortEpg("1")
 
         assertTrue(programs.isEmpty())
+    }
+
+    @Test
+    fun `channels of a portal that needs no temporary link keep their finished address`() = runTest {
+        // Measured portal: all 21295 channels report use_http_tmp_link 0 and publish a
+        // complete address, so playback must not ask create_link for one.
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("action=get_genres") -> """{ "js": [{ "id": "1", "title": "News" }] }"""
+                url.contains("action=get_all_channels") -> """{
+                    "js": {
+                        "data": [
+                            {
+                                "id": 1,
+                                "name": "Direct",
+                                "cmd": "ffmpeg http://portal.example.com/play/live.php?stream=1&extension=ts",
+                                "tv_genre_id": "1",
+                                "use_http_tmp_link": "0",
+                                "wowza_tmp_link": "0",
+                                "flussonic_tmp_link": "0"
+                            }
+                        ],
+                        "total_items": 1,
+                        "max_page_items": 1
+                    }
+                }"""
+                else -> null
+            }
+        }
+
+        val channels = api.getChannels()
+
+        assertEquals(
+            "http://portal.example.com/play/live.php?stream=1&extension=ts",
+            channels.single().streamUrl
+        )
+    }
+
+    @Test
+    fun `channels of a portal that asks for a temporary link keep the raw command`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("action=get_genres") -> """{ "js": [] }"""
+                url.contains("action=get_all_channels") -> """{
+                    "js": {
+                        "data": [
+                            {
+                                "id": 7,
+                                "name": "Placeholder",
+                                "cmd": "ffmpeg http://localhost/ch/7_",
+                                "use_http_tmp_link": 1
+                            }
+                        ],
+                        "total_items": 1,
+                        "max_page_items": 1
+                    }
+                }"""
+                else -> null
+            }
+        }
+
+        val channels = api.getChannels()
+
+        assertEquals("ffmpeg http://localhost/ch/7_", channels.single().streamUrl)
+    }
+
+    @Test
+    fun `channels of a portal that states nothing keep the raw command`() = runTest {
+        // No flag at all is not a statement, so the create_link round trip stays.
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("action=get_genres") -> """{ "js": [] }"""
+                url.contains("action=get_all_channels") -> """{
+                    "js": {
+                        "data": [
+                            { "id": 3, "name": "Unknown", "cmd": "ffmpeg http://host/live/3" }
+                        ],
+                        "total_items": 1,
+                        "max_page_items": 1
+                    }
+                }"""
+                else -> null
+            }
+        }
+
+        val channels = api.getChannels()
+
+        assertEquals("ffmpeg http://host/live/3", channels.single().streamUrl)
+    }
+
+    @Test
+    fun `an empty tmp link flag does not take the whole channel page down`() = runTest {
+        // Portals have been seen sending "" where a number belongs; a numeric field
+        // would abort parsing and lose every channel of the page.
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("action=get_genres") -> """{ "js": [] }"""
+                url.contains("action=get_all_channels") -> """{
+                    "js": {
+                        "data": [
+                            { "id": 5, "name": "Odd", "cmd": "ffmpeg http://host/live/5", "use_http_tmp_link": "" }
+                        ],
+                        "total_items": 1,
+                        "max_page_items": 1
+                    }
+                }"""
+                else -> null
+            }
+        }
+
+        val channels = api.getChannels()
+
+        assertEquals(listOf("5"), channels.map { it.id })
+        assertEquals("ffmpeg http://host/live/5", channels.single().streamUrl)
+    }
+
+    @Test
+    fun `resolveStreamUrl strips whichever command word the portal used`() = runTest {
+        // A third portal writes "auto http://..."; only "ffmpeg " used to be removed,
+        // which left an address no player can open.
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=create_link")) {
+                """{ "js": { "cmd": "auto http://host/live.ts?channelId=9" } }"""
+            } else null
+        }
+
+        val resolved = api.resolveStreamUrl("ffmpeg http://host/ch/9_")
+
+        assertEquals("http://host/live.ts?channelId=9", resolved)
+    }
+
+    @Test
+    fun `resolveStreamUrl returns null when the portal answers without a command`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            if (url.contains("action=create_link")) """{ "js": { "id": null } }""" else null
+        }
+
+        assertNull(api.resolveStreamUrl("ffmpeg http://host/ch/9_"))
     }
 }

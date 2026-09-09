@@ -2081,6 +2081,12 @@ class TvViewModel @Inject constructor(
     ): String {
         val trimmed = rawUrl.trim()
         if (!isStalkerChannel) return trimmed
+        // Channels of portals that announce no temporary link were stored with their
+        // finished address, so there is nothing to resolve: a full client plays those
+        // straight from the channel list and never calls create_link. At one measured
+        // portal the call answers HTTP 200 with `"error": ""` and an address whose
+        // channel id is missing, and every attempt at it ends in HTTP 444.
+        if (StalkerPortalSupport.isDirectStreamAddress(trimmed)) return trimmed
         val cacheKey = StalkerPortalSupport.streamCacheKey(channelId, trimmed)
 
         val now = System.currentTimeMillis()
@@ -2100,7 +2106,7 @@ class TvViewModel @Inject constructor(
         // player then spent three attempts on an address that can never work before
         // the error banner showed. Fail loudly instead; the caller turns the message
         // into the diagnostic banner right away.
-        val rawAddress = trimmed.removePrefix("ffmpeg").trim()
+        val rawAddress = StalkerPortalSupport.sanitizePlaybackCommand(trimmed)
         val playable = resolved.ifBlank {
             if (StalkerPortalSupport.isRoutableStreamAddress(rawAddress)) rawAddress else ""
         }
