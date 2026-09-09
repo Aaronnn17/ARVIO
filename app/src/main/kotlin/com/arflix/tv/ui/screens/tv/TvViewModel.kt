@@ -2061,8 +2061,8 @@ class TvViewModel @Inject constructor(
         }
         val resolvedUrl = resolveStalkerStreamIfNeeded(
             rawUrl = rawUrl,
-            channelId = channel.id,
-            isStalkerChannel = channel.id.startsWith("stalker:"),
+            channel = channel,
+            isCatchup = program != null,
             forceRefresh = forceRefresh,
         )
         return iptvPlaybackUrlResolver.resolve(
@@ -2075,18 +2075,14 @@ class TvViewModel @Inject constructor(
 
     private suspend fun resolveStalkerStreamIfNeeded(
         rawUrl: String,
-        channelId: String,
-        isStalkerChannel: Boolean,
+        channel: IptvChannel,
+        isCatchup: Boolean,
         forceRefresh: Boolean,
     ): String {
         val trimmed = rawUrl.trim()
-        if (!isStalkerChannel) return trimmed
-        // Channels of portals that announce no temporary link were stored with their
-        // finished address, so there is nothing to resolve: a full client plays those
-        // straight from the channel list and never calls create_link. At one measured
-        // portal the call answers HTTP 200 with `"error": ""` and an address whose
-        // channel id is missing, and every attempt at it ends in HTTP 444.
-        if (StalkerPortalSupport.isDirectStreamAddress(trimmed)) return trimmed
+        val channelId = channel.id
+        if (!channelId.startsWith("stalker:")) return trimmed
+        if (StalkerPortalSupport.canPlayDirectLiveStream(channel, trimmed, isCatchup)) return trimmed
         val cacheKey = StalkerPortalSupport.streamCacheKey(channelId, trimmed)
 
         val now = System.currentTimeMillis()

@@ -64,6 +64,7 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
                 quality_label TEXT,
                 variant_key TEXT,
                 drm_json TEXT,
+                stalker_direct_stream INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(source_key, ord)
             )
             """.trimIndent()
@@ -83,7 +84,7 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion in 3..5) {
+        if (oldVersion in 3..6) {
             if (oldVersion < 4 && newVersion >= 4) {
                 db.execSQL("ALTER TABLE channel_sources ADD COLUMN group_summary_json TEXT")
             }
@@ -94,9 +95,12 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
                 db.execSQL("DROP INDEX IF EXISTS idx_channels_group")
                 db.execSQL("CREATE INDEX idx_channels_group ON channels(source_key, group_title, ord)")
             }
+            if (oldVersion < 7 && newVersion >= 7) {
+                db.execSQL("ALTER TABLE channels ADD COLUMN stalker_direct_stream INTEGER NOT NULL DEFAULT 0")
+            }
             return
         }
-        if (oldVersion !in 3..5) {
+        if (oldVersion !in 3..6) {
             db.execSQL("DROP TABLE IF EXISTS channels")
             db.execSQL("DROP TABLE IF EXISTS channel_sources")
             onCreate(db)
@@ -126,7 +130,7 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
                                 (source_key, ord, id, name, stream_url, group_title, logo, epg_id, raw_title,
                                  xtream_stream_id, catchup_days, catchup_type, catchup_source, tvg_name,
                                  provider_channel_number, request_headers_json, language, country, quality_label,
-                                 variant_key, drm_json)
+                                 variant_key, drm_json, stalker_direct_stream)
                                 VALUES $values
                                 """.trimIndent()
                             )
@@ -532,6 +536,7 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
             qualityLabel = if (cursor.isNull(c.quality)) null else cursor.getString(c.quality),
             variantKey = if (cursor.isNull(c.variantKey)) null else cursor.getString(c.variantKey),
             drmInfo = drm,
+            stalkerDirectStream = cursor.getInt(c.stalkerDirectStream) != 0,
         )
     }
 
@@ -555,6 +560,7 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         val quality = cursor.getColumnIndexOrThrow("quality_label")
         val variantKey = cursor.getColumnIndexOrThrow("variant_key")
         val drm = cursor.getColumnIndexOrThrow("drm_json")
+        val stalkerDirectStream = cursor.getColumnIndexOrThrow("stalker_direct_stream")
     }
 
     private data class StoredGroupSummary(
@@ -625,6 +631,7 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         bindNullableString(statement, index++, channel.qualityLabel)
         bindNullableString(statement, index++, channel.variantKey)
         bindNullableString(statement, index++, channel.drmInfo?.let { gson.toJson(it) })
+        statement.bindLong(index++, if (channel.stalkerDirectStream) 1L else 0L)
         return index
     }
 
@@ -638,9 +645,10 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         // v4 stores the provider/category summary next to the snapshot.
         // v5 indexes channel ids so focus/EPG actions never scan a 50k-row table.
         // v6 keeps provider order in the group index for instant deep-category reads.
-        const val DATABASE_VERSION = 6
+        // v7 preserves the portal's direct-live decision; old snapshots still resolve links.
+        const val DATABASE_VERSION = 7
         const val MAX_SQL_ARGS = 900
-        const val CHANNEL_BINDINGS_PER_ROW = 21
+        const val CHANNEL_BINDINGS_PER_ROW = 22
         const val MAX_CHANNEL_INSERT_ROWS = MAX_SQL_ARGS / CHANNEL_BINDINGS_PER_ROW
     }
 }

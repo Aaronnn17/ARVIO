@@ -550,6 +550,7 @@ class StalkerApiTest {
             "http://portal.example.com/play/live.php?stream=1&extension=ts",
             channels.single().streamUrl
         )
+        assertTrue(channels.single().stalkerDirectStream)
     }
 
     @Test
@@ -579,6 +580,7 @@ class StalkerApiTest {
         val channels = api.getChannels()
 
         assertEquals("ffmpeg http://localhost/ch/7_", channels.single().streamUrl)
+        assertFalse(channels.single().stalkerDirectStream)
     }
 
     @Test
@@ -604,6 +606,40 @@ class StalkerApiTest {
         val channels = api.getChannels()
 
         assertEquals("ffmpeg http://host/live/3", channels.single().streamUrl)
+        assertFalse(channels.single().stalkerDirectStream)
+    }
+
+    @Test
+    fun `bare URL does not erase temporary link requirements`() = runTest {
+        val cases = listOf(
+            "" to false,
+            "\"use_http_tmp_link\": 1," to false,
+            "\"use_http_tmp_link\": \"1\"," to false,
+            "\"use_http_tmp_link\": \"\"," to false,
+            "\"use_http_tmp_link\": 0, \"wowza_tmp_link\": 1," to false,
+            "\"use_http_tmp_link\": 0, \"flussonic_tmp_link\": \"1\"," to false,
+            "\"use_http_tmp_link\": 0," to true,
+            "\"use_http_tmp_link\": \"0\"," to true,
+        )
+        for ((flags, direct) in cases) {
+            val api = stubApi(requests = mutableListOf()) { url ->
+                when {
+                    url.contains("action=get_genres") -> """{"js": []}"""
+                    url.contains("action=get_all_channels") -> """{"js": {
+                        "data": [{$flags "id": 1, "name": "News", "cmd": "https://portal.test/live/one"}],
+                        "total_items": 1, "max_page_items": 1
+                    }}"""
+                    else -> null
+                }
+            }
+            val channel = api.getChannels().single().copy(id = "stalker:stalker1:1")
+            assertEquals(flags, "https://portal.test/live/one", channel.streamUrl)
+            assertEquals(flags, direct, channel.stalkerDirectStream)
+            assertEquals(flags, direct, com.arflix.tv.data.repository.StalkerPortalSupport
+                .canPlayDirectLiveStream(channel, channel.streamUrl, isCatchup = false))
+            assertFalse(com.arflix.tv.data.repository.StalkerPortalSupport
+                .canPlayDirectLiveStream(channel, channel.streamUrl, isCatchup = true))
+        }
     }
 
     @Test

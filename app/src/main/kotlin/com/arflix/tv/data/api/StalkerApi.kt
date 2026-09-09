@@ -144,8 +144,8 @@ open class StalkerApi(
                     val streamCmd = ch.cmd ?: continue
                     val groupName = ch.tvGenreId?.let { genreMap[it] } ?: "Uncategorized"
                     // Portals that announce no temporary link publish the finished
-                    // address here; storing it as-is lets playback skip create_link.
-                    // Everything else keeps the raw cmd and is resolved before playback.
+                    // address here. Preserve that decision separately: even bare URLs
+                    // can require create_link when the portal says so or omits the flags.
                     val directUrl = StalkerPortalSupport.directLiveStreamUrl(
                         cmd = streamCmd,
                         useHttpTmpLink = ch.useHttpTmpLink,
@@ -158,7 +158,8 @@ open class StalkerApi(
                             name = ch.name ?: "Unknown",
                             logo = ch.logo,
                             group = groupName,
-                            streamUrl = directUrl ?: streamCmd
+                            streamUrl = directUrl ?: streamCmd,
+                            stalkerDirectStream = directUrl != null,
                         )
                     )
                 }

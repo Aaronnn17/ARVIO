@@ -1,5 +1,6 @@
 package com.arflix.tv.data.repository
 
+import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.PlaylistGroupKey
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -117,6 +118,9 @@ internal object StalkerPortalSupport {
 
     /** Portals send the flags as `1`/`0`, quoted or not; anything else states nothing. */
     private fun statesTemporaryLink(flag: String?): Boolean = flag?.trim() == "1"
+
+    fun canPlayDirectLiveStream(channel: IptvChannel, rawUrl: String, isCatchup: Boolean): Boolean =
+        !isCatchup && channel.stalkerDirectStream && isDirectStreamAddress(rawUrl)
 
     fun streamCacheKey(channelId: String, command: String): String {
         return "${playlistIdFromChannelId(channelId)}|${command.trim()}"
