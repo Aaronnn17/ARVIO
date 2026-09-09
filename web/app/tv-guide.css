@@ -1,4 +1,18 @@
 /* TV workspace: shared charcoal surfaces, independent selected/focused states. */
+.player-overlay.player-docked { z-index: 40; border-radius: 4px; overflow: hidden; background: #080808; }
+.player-overlay.player-docked > .player-top, .player-overlay.player-docked > .player-controls,
+.player-overlay.player-docked > .player-panel { display: none; }
+.player-overlay.player-docked .player-boot-title { font-size: 16px; }
+.player-overlay.player-docked .player-error { padding: 12px; gap: 4px; font-size: 12px; }
+.player-overlay.player-docked .player-error > span { display: none; }
+.player-overlay.player-docked .player-error p { font-size: 13px; }
+.player-overlay.player-docked .player-error-actions { flex-wrap: wrap; gap: 4px; }
+.player-overlay.player-docked .player-error-actions button { font-size: 12px; padding: 6px; min-height: 32px; }
+.player-dock-controls { position: absolute; z-index: 5; bottom: 8px; inset-inline: 8px; display: flex; gap: 6px; align-items: center; pointer-events: none; }
+.player-dock-controls span { color: white; background: #000b; border-radius: 3px; padding: 4px 6px; font-size: 11px; margin-inline-end: auto; }
+.player-dock-controls button, .player-dock-return { pointer-events: auto; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 4px; background: #000b; color: white; }
+.player-dock-return { position: absolute; inset-inline-end: 24px; top: 90px; z-index: 20; }
+.player-dock-controls button:focus-visible, .player-dock-return:focus-visible { outline: 2px solid white; }
 .screen.livetv-shell { padding-inline: 16px; }
 .tv-guide-workspace { gap: 0; border-radius: 0; grid-template-columns: 320px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
 .tv-guide-workspace.groups-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
@@ -29,8 +43,8 @@
 .tv-guide-workspace .livetv-cats button.is-active em { color: #ccc; }
 .tv-guide-workspace button:focus-visible, .tv-event-picker button:focus-visible { outline: 2px solid #fff; outline-offset: -2px; box-shadow: none; }
 .tv-guide-workspace .livetv-list { grid-column: 2; grid-row: 2; background: #080808; border: 0; border-radius: 0; min-width: 0; }
-.tv-guide-workspace .livetv-detail { grid-column: 2; grid-row: 1; position: static; display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 40%); gap: 6px 24px; background: #080808; border: 0; border-radius: 0; padding: 8px 24px; max-height: 290px; overflow: auto; }
-.tv-guide-workspace .livetv-detail-art { grid-column: 2; grid-row: 1 / 7; width: 100%; aspect-ratio: 16 / 9; max-height: 255px; border-radius: 4px; background: #141414; }
+.tv-guide-workspace .livetv-detail { grid-column: 2; grid-row: 1; position: static; display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, min(40%, 453px)); gap: 6px 24px; background: #080808; border: 0; border-radius: 0; padding: 8px 24px; max-height: 290px; overflow: auto; }
+.tv-guide-workspace .livetv-detail-art { grid-column: 2; grid-row: 1 / 7; width: 100%; height: auto; aspect-ratio: 16 / 9; max-height: none; border-radius: 4px; background: #141414; }
 .tv-guide-workspace .livetv-detail-art img { width: 100%; height: 100%; object-fit: contain; padding: 22px; }
 .tv-guide-workspace .livetv-detail > :not(.livetv-detail-art) { grid-column: 1; margin: 0; }
 .tv-guide-workspace .livetv-detail h2 { font-size: 30px; }
@@ -38,6 +52,13 @@
 .tv-guide-workspace .livetv-detail-actions button { background: transparent; color: #f5f5f5; border-color: transparent; box-shadow: none; }
 .tv-guide-workspace .livetv-detail .is-next, .tv-guide-workspace .livetv-detail-group { display: none; }
 .tv-guide-workspace .livetv-program p { -webkit-line-clamp: 2; display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+.tv-guide-workspace .livetv-program { background: transparent; border-radius: 0; padding: 0; }
+.tv-guide-workspace .livetv-program-head { justify-content: flex-start; gap: 16px; }
+.tv-guide-workspace .livetv-program-head span { color: #bfc3ca; letter-spacing: 0; }
+.tv-guide-workspace .livetv-program p { font-size: 16px; color: #d4d7dd; }
+.tv-guide-workspace .livetv-guide-channel { font-size: 16px; }
+.tv-guide-workspace .livetv-guide-block strong { font-size: 16px; }
+.tv-guide-workspace .livetv-guide-nowline { background: #56d8c5; }
 .tv-guide-workspace .livetv-catchup { max-height: 120px; }
 .tv-guide-workspace .livetv-guide-block { background: #171717; color: #ddd; }
 .tv-guide-workspace .livetv-progress > span { background: #56d8c5; }
@@ -71,6 +92,8 @@
 .tv-event-card small { font-size: 15px; color: #b9c0cb; }
 .tv-event-meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .tv-event-meta span { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.tv-event-meta .tv-event-competition { display: block; min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tv-event-meta > span:last-child { flex-shrink: 0; }
 .tv-sports-empty { min-height: 340px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: #bbb; padding: 24px; text-align: center; }
 .tv-sports-empty button { width: auto; min-height: 44px; padding: 10px 16px; }
 .tv-event-picker { color: #eee; background: #111315; border: 1px solid #555; border-radius: 6px; margin: auto; width: min(1020px, 92vw); max-height: 86dvh; padding: 30px; }
@@ -111,8 +134,8 @@
   .tv-guide-workspace .livetv-cats .virtual-list { height: 100%; min-height: 0; }
   .tv-guide-workspace.groups-collapsed .livetv-cats { transform: translateX(-100%); padding: 8px; }
   .tv-guide-workspace .livetv-list, .tv-guide-workspace .livetv-detail { grid-column: 1; }
-  .tv-guide-workspace .livetv-detail { grid-template-columns: minmax(0, 1fr); max-height: 220px; }
-  .tv-guide-workspace .livetv-detail-art { display: none; }
+  .tv-guide-workspace .livetv-detail { grid-template-columns: minmax(0, 1fr); max-height: none; }
+  .tv-guide-workspace .livetv-detail-art { display: block; grid-column: 1; grid-row: auto; width: 100%; max-height: 210px; }
   .tv-sports h2 { font-size: 24px; padding-inline: 12px; }
   .tv-sports-row-heading { margin-inline: 12px; }
   .tv-sports-row-heading h3 { font-size: 18px; }

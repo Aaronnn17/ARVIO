@@ -33,6 +33,12 @@ class SportsArtworkTest {
         assertNull(attachSportsArtwork(listOf(event.copy(title = "Barcelona vs Madrid")), artwork).single().artwork)
         assertNull(attachSportsArtwork(listOf(event.copy(sport = GuideSport.BASKETBALL)), artwork).single().artwork)
     }
+    @Test fun artworkRequiresCompatibleEventDateWhenAddonProvidesIt() {
+        val dated = meta.copy(released = "2026-09-09T18:00:00Z").toSportsEventArtwork()!!
+        assertNull(attachSportsArtwork(listOf(event), listOf(dated)).single().artwork)
+        val sameDay = event.copy(programme = event.programme.copy(startUtcMillis = dated.startsAt!!, endUtcMillis = dated.startsAt + 60_000))
+        assertEquals(meta.background, attachSportsArtwork(listOf(sameDay), listOf(dated)).single().artwork)
+    }
     @Test fun removingAddonArtworkClearsOldBanner() {
         assertNull(attachSportsArtwork(listOf(event.copy(artwork = meta.background)), emptyList()).single().artwork)
     }

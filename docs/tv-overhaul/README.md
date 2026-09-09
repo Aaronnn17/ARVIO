@@ -10,6 +10,8 @@ Do not merge until the remaining gates below have been addressed.
 
 - Charcoal guide surfaces, neutral selection, white focus and turquoise time markers.
 - Programme information on the left, existing Android mini-player anchored on the right.
+  The web guide now docks its existing video element into the same position; expanding
+  and collapsing it retains the decoder/connection. Mobile also keeps the video visible.
 - Current profile avatar and, on wide TV layouts, its name in the top-left corner.
 - A 200 ms reversible category drawer that moves the viewport without measuring
   every EPG cell on every animation frame. Guide/Sports scroll state is retained
@@ -40,8 +42,18 @@ Do not merge until the remaining gates below have been addressed.
 - Web Sports indexing in a worker; Android scans lightweight channel labels and
   reads the existing local guide index in batches. No stream probes on card focus
   and no new provider network request loop.
-- Existing guide paging, provider request limits, cache schema and playback resolver
+- Existing guide paging, provider request limits and playback resolver
   are retained. No provider credentials, full EPG or new large data enter cloud sync.
+- XMLTV programme artwork/category metadata is retained in both parsers and in the
+  Android guide index. The v7-to-v8 migration retains existing guide/catch-up data.
+- Cosmetic title differences, reversed opponents and small broadcast padding differences
+  can match across channels, while each source retains its own start/end time.
+  Cancelled/postponed/abandoned programme titles are excluded.
+- Android discovers sports on general channels with cached EPG, not only currently
+  visible channels. Classification is bounded/cached across variants; aggregation
+  avoids repeatedly copying growing source lists. No extra provider requests are added.
+- The native touch category rail can collapse/reopen. Android pauses the hidden
+  mini-player while browsing Sports; web stops the player when its guide slot disappears.
 
 ## Critical comparison with the references
 
@@ -62,9 +74,10 @@ silently cutting off logos. Missing event artwork still uses a readable title fa
 | Bulky web header unrelated to reference | Provider/search moved into sidebar; compact workspace commands |
 | Invalid screenshot evidence | Capture now rejects black windows; the previously blank guide-open image is replaced |
 
-Still missing from the reference: reliably complete artwork coverage, competition metadata,
-verified live/trending event data, broad cross-provider event identity matching, and an
-embedded web mini-player. No popularity, channel availability or official-artwork claims
+Still missing from the reference: reliably complete artwork coverage, verified
+live/trending event data and reliable mapping of abbreviated/localized event names.
+Competition labels are only extracted when explicitly present in programme text.
+No popularity, channel availability or official-artwork claims
 are invented to make the screenshots look fuller. Fixtures intentionally retain synthetic
 schedules, inactive video and missing channel-logo fallback states.
 
@@ -75,10 +88,11 @@ Variable-font configuration follows the Android O+ API with an older-platform fa
 
 This pass uses **the user's EPG**, not a live event/popularity service. "On air"
 means the provider schedule overlaps the current time. It does not certify a live
-sporting fixture rather than an unlabelled replay. Matching currently requires the
-same normalized programme title, time interval and sport; differently named EPG
-entries for the same match may remain separate. General channels outside the
-visible cache may not be discovered yet.
+sporting fixture rather than an unlabelled replay. Matching requires a compatible
+normalized identity and sport, start times within 15 minutes and substantial schedule
+overlap. Each channel's actual interval still controls availability. Localized or
+abbreviated names may remain separate. General channels with cached schedules are
+included, but channels with no EPG cannot be discovered this way.
 
 There are deliberately no invented viewer counts, "trending" claims, default
 third-party streams or hardcoded credentials. Artwork is addon-provided, not a claim
@@ -89,7 +103,7 @@ each, five seconds per catalog, with ten-minute caching and shared in-flight wor
 No IPTV stream is probed for an image. UTC-stamped posters and channel-recording
 covers are rejected. Devices render schedule labels in their local time separately.
 
-## Verification (2026-09-09)
+## Verification (2026-09-09/10)
 
 Android testing uses an isolated `com.arvio.tv.overhaul` debug package on the
 Android 31 Google TV x86 emulator, 1280x720, 2 GB RAM, software GPU. The physical
@@ -98,21 +112,24 @@ TV was not used. These are not release-device performance measurements.
 | Check | Observed result |
 | --- | --- |
 | Android build | Sideload debug + instrumentation APK compile/package succeeded |
-| Focused Android JVM suite | 62 passed, 0 failed |
-| Android instrumentation | 11 passed, including six decoded remote event banners, five-state captures, drawer/picker focus, first-click favorites, sustained/rapid channel navigation, bounded cells and 50k storage regression |
-| Web sports/artwork rules | 13 passed, 0 failed, including local-day boundaries, cache/request bounds and wrong-match rejection |
+| Focused Android JVM suite | 66 passed, 0 failed |
+| Android instrumentation | 13 passed, including six decoded remote event banners, five-state captures, drawer/picker focus, first-click favorites, sustained/rapid channel navigation, bounded cells, 50k storage regression and metadata migration/roundtrip |
+| Web sports/artwork rules | 15 passed, 0 failed, including local-day boundaries, cache/request bounds and wrong-match rejection |
 | Web TypeScript | No errors |
-| Browser checks | Desktop 1672px, tablet 768px, phone 390px passed; date filter, four complete desktop cards, uncropped artwork, first-source focus and origin focus return, playback callback, no page overflow or uncaught errors |
+| Browser checks | Desktop 1672px, tablet 768px, phone 390px passed; date filter, four complete desktop cards, uncropped artwork, first-source focus/origin return, decoded CC0 mini-player playback and retained video identity across expand/collapse, 16:9 preview bounds, no overflow or uncaught errors |
 | Supplied provider import | 54,502 channels, 833 groups, 240 in-memory startup rows |
-| Fresh import | First channels callback 16,036 ms; complete channel import 22,418 ms |
+| Fresh import | Latest: first channels callback 11,846 ms; complete channel import 28,901 ms |
 | Provider short guide | 0 matches for 2 sampled channels |
-| Full XMLTV fallback | 45,734 ms; 8,955 indexed channel identities and 285,952 programmes; both sampled channels matched |
-| Cache reopening | Channel index ready in 300 ms, two cached EPG entries available in 358 ms; no list redownload |
+| Full XMLTV fallback | Latest: 69,044 ms; 8,955 indexed channel identities and 313,855 programmes; both sampled channels matched |
+| Cache reopening | Latest in-process audit: channels in 35 ms, two cached EPG entries in 70 ms; no list redownload. Earlier separate cache reopen measured 300/358 ms |
+| Real Sports scan | Latest complete scan: 30,880 ms (5,833 ms database, 24,357 ms matching), down from 67,651 ms before the allocation/pattern changes. 8,848 cached channel IDs, 295,884 programme entries, 2,615 grouped events, 114 scheduled on air |
+| Real artwork coverage | Provider programme art: 0. Installed addon returned 18 artwork entries; 0 safely matched the tested EPG events. Curated fixture banner coverage is not real-list coverage |
 | Stale cloud apply regression | Ten identical config applies plus a favorites-only apply retained all 54,502 channels |
-| Real provider playback smoke test | ESPN mini-player rendered video; 87.3% of sampled interior pixels changed between captures |
+| Earlier real provider playback smoke test | ESPN mini-player rendered video; 87.3% of sampled interior pixels changed between captures. This preceded the latest scan changes |
 
 The cache timings measure repository readiness, not navigation-to-rendered-pixel
-P95. A still screenshot is not playback proof. The video pixel check is a smoke
+P95. The complete Sports scan is still not instant; first partial rows can appear
+before it finishes. A still screenshot is not playback proof. The video pixel check is a smoke
 test, not a decoder, rebuffer or long-soak guarantee. Fresh import does **not** meet
 the five-second objective. EPG coverage is not 100% of the provider's channels.
 
@@ -145,14 +162,13 @@ The guide fixture has a 55k logical count and a bounded
 
 ## Remaining merge gates
 
-1. Complete installed-addon event metadata/stream adapters, explicit event status/freshness,
-   cancellation/postponement handling, and event identity mapping beyond exact
-   artwork-title matching. Audit artwork
+1. Complete installed-addon event metadata/stream adapters and explicit event status/freshness
+   beyond provider text. Improve localized/abbreviated identity mapping without attaching
+   the wrong match image. Audit artwork
    permissions separately from code; generic fallback photos are no longer used
    in event cards, but an addon without a matching background still has no event image.
-2. Match the reference spacing and all five states more closely. Web still uses
-   its existing detail art and separate player, not the Android mini-player.
-   Finish native phone drawer parity and localization of new Sports strings.
+2. Match the reference spacing and all five states more closely. Verify the new
+   native phone drawer on actual phone/tablet configurations and localize new Sports strings.
 3. Measure repeated optimized-build input/render percentiles with moving video,
    including a 2 GB physical device when authorized, 100k stress, animation
    interruptions and a 30-minute soak. The renderer comparison and baseline
@@ -160,11 +176,12 @@ The guide fixture has a 55k logical count and a bounded
 4. Finish cross-device cloud/PIN, native phone/tablet rotation, RTL, large text,
    TalkBack/VoiceOver and Safari checks. Existing hidden/locked groups must never
    be bypassed through event lookup.
-5. Improve first useful Sports data latency, focused-event retention during row
-   refresh, complete general-channel event discovery, and cached UI pixel timing.
-   Define the background playback policy when Sports hides the mini-player.
+5. Further improve first useful Sports data latency and cached UI pixel timing.
+   Existing event order is retained on refresh, but changed IDs/timestamps need
+   stronger focused-event reconciliation.
 6. Same-certificate release/update testing after approval. No version bump, release
-   publication, production web deployment or merge is part of this draft.
+   publication, production web deployment or merge is part of this draft. A user-requested
+   same-package TV preview update is being built separately from the isolated emulator APK.
 
 ## Reproducing local checks
 
@@ -180,4 +197,5 @@ The guide fixture has a 55k logical count and a bounded
   `ARVIO_BUILD_DIR=.next-overhaul`, then run `node tests/tv-overhaul-browser.cjs`
   in an environment with Playwright and Chrome installed. The fixture route is
   development-only. The browser test mocks catalog metadata and allows only the
-  fixture's image CDN externally to verify real event artwork decoding.
+  fixture's image CDN and a CC0 MP4 sample externally to verify decoding. Neither is
+  evidence of actual provider event availability.

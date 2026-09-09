@@ -15,6 +15,8 @@ import com.arflix.tv.util.findActivity
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material3.Text
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -1577,7 +1579,7 @@ fun LiveTvScreen(
     var sportsError by remember { mutableStateOf(false) }
     var sportsRefresh by remember { mutableIntStateOf(0) }
     var sportsArtwork by remember(currentProfile?.id) { mutableStateOf(emptyList<com.arflix.tv.data.model.SportsEventArtwork>()) }
-    LaunchedEffect(sportsSelected, currentProfile?.id, sportsRefresh) {
+    LaunchedEffect(sportsSelected, currentProfile?.id, sportsRefresh, guideClockMillis / 600_000L) {
         if (sportsSelected) sportsArtwork = viewModel.loadSportsGuideArtwork()
     }
     val illustratedSportsEvents = remember(sportsEvents, sportsArtwork) { attachSportsArtwork(sportsEvents, sportsArtwork) }
@@ -1588,7 +1590,7 @@ fun LiveTvScreen(
         visibleEnrichedState.value.tree.withSportsDestination()
     }
     LaunchedEffect(sportsSelected, currentProfile?.id, selectedProviderId, hiddenGroupSet,
-        restrictedGroupSet, state.snapshot.loadedAt, state.epgBackfillInProgress, sportsRefresh, guideClockMillis / 120_000L) {
+        restrictedGroupSet, state.snapshot.loadedAt, state.epgBackfillInProgress, sportsRefresh, guideClockMillis / 600_000L) {
         if (!sportsSelected) return@LaunchedEffect
         sportsLoading = true
         sportsError = false
@@ -1596,6 +1598,8 @@ fun LiveTvScreen(
             val result = withContext(Dispatchers.IO) {
                 val context = kotlinx.coroutines.currentCoroutineContext()
                 val candidateIds = linkedSetOf<String>()
+                val generalIds = linkedSetOf<String>()
+                val indexedIds = viewModel.iptvRepository.cachedGuideChannelIds(guideClockMillis, guideClockMillis + 48 * 60 * 60_000L)
                 val groupSports = hashMapOf<String, Boolean>()
                 val excluded = hiddenGroupSet + restrictedGroupSet
                 val genericSports = Regex("\\b(sports?|espn|eurosport)\\b", RegexOption.IGNORE_CASE)
@@ -1604,33 +1608,36 @@ fun LiveTvScreen(
                     val key = PlaylistGroupKey.build(channelPlaylistId(id), group.trim())
                     if (key !in excluded && group !in excluded) {
                         val sportsGroup = groupSports.getOrPut(group) { GuideSport.fromText(group) != null || genericSports.containsMatchIn(group) }
-                        if (sportsGroup || GuideSport.fromText(name) != null || genericSports.containsMatchIn(name)) candidateIds.add(id)
+                        if ((sportsGroup || GuideSport.fromText(name) != null || genericSports.containsMatchIn(name)) &&
+                            (id in indexedIds || state.snapshot.nowNext.containsKey(id))) candidateIds.add(id)
+                        else if (id in indexedIds) generalIds.add(id)
                     }
                 }
                 // Include national/general channels whose visible schedule identifies sport.
                 allDisplayChannels.filter { !it.isAdult && !isHiddenPlaylistGroup(it, hiddenGroupSet) && !isRestrictedPlaylistGroup(it, restrictedGroupSet) }
                     .forEach { candidateIds.add(it.id) }
-                val events = linkedMapOf<String, SportsGuideEvent>()
+                candidateIds.addAll(generalIds)
+                val events = SportsEventIndex()
+                val programmeResolver = SportsProgrammeResolver()
                 var lastPublish = android.os.SystemClock.elapsedRealtime()
                 for (ids in candidateIds.toList().chunked(128)) {
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     val batch = viewModel.iptvRepository.pagedChannelsByIds(ids).filter { !it.enrichForFastStartup(0).isAdult }
                     val indexed = viewModel.iptvRepository.indexedGuideWindow(batch.map { it.id }.toSet(),
-                        guideClockMillis - 12 * 60 * 60_000L, guideClockMillis + 48 * 60 * 60_000L)
+                        guideClockMillis, guideClockMillis + 48 * 60 * 60_000L)
                     val guide = batch.associate { it.id to (indexed[it.id] ?: state.snapshot.nowNext[it.id] ?: IptvNowNext()) }
-                    buildSportsGuideEvents(batch, guide, guideClockMillis).forEach { event ->
-                        val old = events[event.id]
-                        events[event.id] = if (old == null) event else old.copy(channels = (old.channels + event.channels).distinctBy { it.id })
+                    buildSportsGuideEvents(batch, guide, guideClockMillis, resolver = programmeResolver).forEach { event ->
+                        events.add(event)
                     }
-                    if (events.isNotEmpty() && android.os.SystemClock.elapsedRealtime() - lastPublish >= 500) {
-                        val partial = events.values.toList()
+                    if (android.os.SystemClock.elapsedRealtime() - lastPublish >= 500) {
+                        val partial = events.events()
                         withContext(Dispatchers.Main) { if (sportsEvents.isEmpty()) sportsEvents = partial }
                         lastPublish = android.os.SystemClock.elapsedRealtime()
                     }
                 }
-                events.values.toList()
+                events.events()
             }
-            sportsEvents = result
+            sportsEvents = retainSportsEventOrder(sportsEvents, result)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -2499,12 +2506,23 @@ fun LiveTvScreen(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    val sportsHiddenPlayback by rememberUpdatedState(sportsSelected && !isFullScreen)
+    var resumeAfterSports by remember(exoPlayer) { mutableStateOf(false) }
+    LaunchedEffect(sportsSelected, isFullScreen, exoPlayer) {
+        if (sportsSelected && !isFullScreen) {
+            resumeAfterSports = resumeAfterSports || exoPlayer.playWhenReady
+            exoPlayer.pause()
+        } else if (resumeAfterSports) {
+            resumeAfterSports = false
+            exoPlayer.play()
+        }
+    }
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, ev ->
             when (ev) {
                 Lifecycle.Event.ON_PAUSE -> exoPlayer.pause()
                 Lifecycle.Event.ON_RESUME -> {
-                    if (playingChannelId != null) exoPlayer.play()
+                    if (playingChannelId != null && !sportsHiddenPlayback) exoPlayer.play()
                     if (currentUiState.isConfigured &&
                         currentUiState.snapshot.channels.isNotEmpty() &&
                         viewModel.iptvRepository.cachedEpgAgeMs() > 6 * 60 * 60_000L
@@ -3239,16 +3257,28 @@ fun LiveTvScreen(
                         playerActive = miniPlayerActive,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    if (!categoryDrawerOpen && !sportsSelected) Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.TextButton(onClick = { categoryDrawerOpen = true }) {
+                            Text("Categories", color = LiveColors.Fg)
+                        }
+                        Text(sportsSidebarTree.byId(selectedCategoryId)?.label ?: "All channels", color = LiveColors.FgDim,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    AnimatedVisibility(visible = categoryDrawerOpen,
+                        enter = androidx.compose.animation.expandVertically(animationSpec = tween(200)) + fadeIn(tween(150)),
+                        exit = androidx.compose.animation.shrinkVertically(animationSpec = tween(200)) + fadeOut(tween(100))) {
                     TouchCategoryRail(
                         tree = sportsSidebarTree,
                         selectedId = if (sportsSelected) SPORTS_GUIDE_CATEGORY else selectedCategoryId,
                         playlistSections = playlistCategorySections,
                         onSelect = { id ->
                             requestCategorySelection(id)
+                            categoryDrawerOpen = false
                         },
                         onOpenSearch = { searchOpen = true },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    }
                     if (sportsSelected) SportsGuidePane(
                         events = illustratedSportsEvents, now = guideClockMillis, loading = sportsLoading,
                         failed = sportsError, onRetry = { sportsRefresh++ }, providerNames = sportsProviderNames,

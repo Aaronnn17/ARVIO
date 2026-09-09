@@ -1,12 +1,9 @@
 import { jsonRequest, proxiedUrl } from "./http";
-import { guideSports, type SportsGuideEvent } from "./sportsGuide";
+import { guideSports, sportsArtworkKey, sportsEventIdentity, safeSportsImage, type SportsGuideEvent } from "./sportsGuide";
+export { sportsArtworkKey } from "./sportsGuide";
 import type { InstalledAddon } from "./types";
 
-export interface SportsEventArtwork { title: string; key: string; background: string; genres: string[] }
-export const sportsArtworkKey = (title: string) => title.normalize("NFD").replace(/\p{M}+/gu, "").toLowerCase()
-  .replace(/^(live\s*[:|-]\s*|live\s+)/, "").replace(/^(football|soccer|basketball|baseball|tennis|ice hockey|american football|boxing|mma|cricket)\s*:\s*/, "")
-  .replace(/\b(vs\.?|versus|v\.)\s+/g, "vs ")
-  .replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+export interface SportsEventArtwork { title: string; key: string; background: string; genres: string[]; startsAt?: number }
 
 export function toSportsEventArtwork(meta: Record<string, unknown>): SportsEventArtwork | null {
   if (!meta || typeof meta !== "object") return null;
@@ -15,15 +12,16 @@ export function toSportsEventArtwork(meta: Record<string, unknown>): SportsEvent
   if (typeof meta.background !== "string" || /_UTC/i.test(meta.background)) return null;
   try { if (!["https:", "http:"].includes(new URL(meta.background).protocol)) return null; } catch { return null; }
   return { title: meta.name, key: sportsArtworkKey(meta.name), background: meta.background,
+    startsAt: typeof meta.released === "string" && Number.isFinite(Date.parse(meta.released)) ? Date.parse(meta.released) : undefined,
     genres: Array.isArray(meta.genres) ? meta.genres.filter((g): g is string => typeof g === "string") : [] };
 }
 
 export function attachSportsArtwork(events: SportsGuideEvent[], artwork: SportsEventArtwork[]): SportsGuideEvent[] {
   const byTitle = new Map<string, SportsEventArtwork[]>();
-  for (const item of artwork) byTitle.set(item.key, [...(byTitle.get(item.key) ?? []), item]);
-  return events.map(event => ({ ...event, artwork: byTitle.get(sportsArtworkKey(event.title))?.find(item => {
+  for (const item of artwork) { const key = sportsEventIdentity(item.title); byTitle.set(key, [...(byTitle.get(key) ?? []), item]); }
+  return events.map(event => ({ ...event, artwork: safeSportsImage(event.programme.artworkUrl) ?? byTitle.get(sportsEventIdentity(event.title))?.find(item => {
     const sport = guideSports.find(s => s.pattern.test(item.genres.join(" ")));
-    return !sport || sport.id === event.sportId;
+    return (!sport || sport.id === event.sportId) && (item.startsAt === undefined || Math.abs(item.startsAt - event.programme.startUtcMillis) <= 6 * 60 * 60_000);
   })?.background }));
 }
 

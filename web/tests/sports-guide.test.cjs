@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const code = ts.transpileModule(fs.readFileSync(require.resolve('../lib/sportsGuide.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
 }).outputText;
-const sandbox = { exports: {}, Date, Map, Set };
+const sandbox = { exports: {}, Date, Map, Set, URL };
 vm.runInNewContext(code, sandbox);
 const { buildSportsGuideEvents, sportsGuideRows, sportsDayIncludes, guideSports, isOnAir } = sandbox.exports;
 const now = Date.parse('2026-09-09T18:00:00Z');
@@ -42,7 +42,24 @@ test('replays, invalid and expired intervals are excluded', () => {
   }
 });
 test('different broadcasts of similar names are not silently merged', () => {
-  assert.equal(buildSportsGuideEvents([a, b], { [a.id]: slice(p), [b.id]: slice({ ...p, startUtcMillis: now + 10_000 }) }, now).length, 2);
+  assert.equal(buildSportsGuideEvents([a, b], { [a.id]: slice(p), [b.id]: slice({ ...p, startUtcMillis: now + 120_000, endUtcMillis: now + 240_000 }) }, now).length, 2);
+});
+test('provider padding matches but each source keeps its actual start time', () => {
+  const first = { ...p, title: 'Premier League: North versus South', endUtcMillis: now + 7_200_000 };
+  const second = { ...first, title: 'LIVE: South v North [HD]', startUtcMillis: now + 60_000 };
+  const events = buildSportsGuideEvents([a, b], { [a.id]: slice(first), [b.id]: slice(second) }, now);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].competition, 'Premier League');
+  assert.equal(sandbox.exports.availableEventChannels(events[0], now).length, 1);
+  assert.equal(sandbox.exports.availableEventChannels(events[0], now + 120_000).length, 2);
+});
+test('general channels use programme category and safe artwork without addon', () => {
+  const channel = { ...a, name: 'National One', group: 'General' };
+  const programme = { ...p, title: 'North vs South', category: 'Football', artworkUrl: 'https://example.com/event.webp' };
+  const event = buildSportsGuideEvents([channel], { [a.id]: slice(programme) }, now)[0];
+  assert.equal(event.artwork, programme.artworkUrl);
+  for (const title of ['North vs South cancelled', 'North vs South postponed']) assert.equal(buildSportsGuideEvents([channel], { [a.id]: slice({ ...programme, title }) }, now).length, 0);
+  assert.equal(buildSportsGuideEvents([a, b], { [a.id]: slice(p), [b.id]: slice({ ...p, title: 'North Women vs South Women' }) }, now).length, 2);
 });
 test('American football and football remain separate', () => {
   assert.equal(guideSports.find((s) => s.pattern.test('American football NFL')).id, 'american-football');

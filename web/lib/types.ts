@@ -357,6 +357,8 @@ export interface IptvProgram {
   startUtcMillis: number;
   endUtcMillis: number;
   catchupAvailable?: boolean;
+  artworkUrl?: string;
+  category?: string;
 }
 
 export interface IptvNowNext {

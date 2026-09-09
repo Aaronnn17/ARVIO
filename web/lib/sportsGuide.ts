@@ -20,10 +20,29 @@ export interface SportsGuideEvent {
   programme: IptvProgram;
   channels: IptvChannel[];
   artwork?: string;
+  schedules?: Record<string, IptvProgram>;
+  competition?: string;
 }
-const nonEvent = /\b(highlights?|replay|re-?run|classic|news|magazine|review|preview)\b/i;
+const nonEvent = /\b(highlights?|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned)\b/i;
 export const sportsProgrammeKey = (p: IptvProgram) => `${p.title.trim().toLowerCase().replace(/\s+/g, " ")}|${p.startUtcMillis}|${p.endUtcMillis}`;
-export const isOnAir = (event: SportsGuideEvent, now: number) => event.programme.startUtcMillis <= now && now < event.programme.endUtcMillis;
+const programmeOnAir = (p: IptvProgram, now: number) => p.startUtcMillis <= now && now < p.endUtcMillis;
+export function safeSportsImage(value?: string): string | undefined {
+  try { return value && value.length <= 2048 && !/_UTC/i.test(value) && ["http:", "https:"].includes(new URL(value).protocol) ? value : undefined; } catch { return undefined; }
+}
+export const isOnAir = (event: SportsGuideEvent, now: number) => Object.values(event.schedules ?? { fallback: event.programme }).some(p => programmeOnAir(p, now));
+export const availableEventChannels = (event: SportsGuideEvent, now: number) => event.channels.filter(ch => programmeOnAir(event.schedules?.[ch.id] ?? event.programme, now));
+export const sportsArtworkKey = (title: string) => title.normalize("NFD").replace(/\p{M}+/gu, "").toLowerCase()
+  .replace(/^(live\s*[:|-]\s*|live\s+)/, "").replace(/^(football|soccer|basketball|baseball|tennis|ice hockey|american football|boxing|mma|cricket)\s*:\s*/, "")
+  .replace(/\b(vs\.?|versus|v\.)\s+/g, "vs ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+export function sportsEventIdentity(title: string): string {
+  const plain = title.replace(/\s*[\[(](?:live|hd|fhd|uhd|4k)[\])]\s*/gi, " ");
+  const matchup = plain.split(":").at(-1)!.trim();
+  const normalized = sportsArtworkKey(/\s(?:vs?\.?|versus|at)\s/i.test(matchup) ? matchup : plain).replace(/\s+(?:v|at)\s+/g, " vs ");
+  const sides = normalized.split(" vs ");
+  return sides.length === 2 && sides.every(s => s.length >= 3) ? sides.sort().join(" vs ") : normalized;
+}
+const competitions = ["UEFA Champions League", "Premier League", "La Liga", "Eredivisie", "Bundesliga", "Serie A", "Ligue 1", "WNBA", "NBA", "Euroleague", "NFL", "MLB", "NHL", "Wimbledon", "UFC", "Formula 1"]
+  .map(name => ({ name, pattern: new RegExp(`\\b${name}\\b`, "i") }));
 
 /** Inputs must already exclude hidden/locked groups. This never requests a stream. */
 export function buildSportsGuideEvents(channels: IptvChannel[], guide: Record<string, IptvNowNext>, now: number, end?: number): SportsGuideEvent[] {
@@ -31,7 +50,7 @@ export function buildSportsGuideEvents(channels: IptvChannel[], guide: Record<st
   tomorrowEnd.setDate(tomorrowEnd.getDate() + 2);
   tomorrowEnd.setHours(0, 0, 0, 0);
   const until = end ?? tomorrowEnd.getTime();
-  const events = new Map<string, SportsGuideEvent>();
+  const events = new Map<string, SportsGuideEvent[]>();
   for (const channel of channels) {
     const slice = guide[channel.id];
     if (!slice) continue;
@@ -40,16 +59,29 @@ export function buildSportsGuideEvents(channels: IptvChannel[], guide: Record<st
       if (!Number.isFinite(programme.startUtcMillis) || !Number.isFinite(programme.endUtcMillis) ||
           programme.endUtcMillis <= now || programme.startUtcMillis >= until || programme.endUtcMillis <= programme.startUtcMillis ||
           !programme.title.trim() || nonEvent.test(programme.title)) continue;
-      const sport = guideSports.find((s) => s.pattern.test(`${programme.title} ${programme.description ?? ""}`))
+      const sport = guideSports.find((s) => s.pattern.test(`${programme.category ?? ""} ${programme.title} ${programme.description ?? ""}`))
         ?? guideSports.find((s) => s.pattern.test(`${channel.group} ${channel.name}`));
       if (!sport) continue;
-      const id = `${sport.id}|${sportsProgrammeKey(programme)}`;
-      const old = events.get(id);
-      if (!old) events.set(id, { id, title: programme.title, sportId: sport.id, programme, channels: [channel] });
-      else if (!old.channels.some((ch) => ch.id === channel.id)) old.channels.push(channel);
+      const key = `${sport.id}|${sportsEventIdentity(programme.title)}`;
+      const group = events.get(key) ?? [];
+      const old = group.find(event => {
+        const p = event.programme;
+        const overlap = Math.min(p.endUtcMillis, programme.endUtcMillis) - Math.max(p.startUtcMillis, programme.startUtcMillis);
+        return Math.abs(p.startUtcMillis - programme.startUtcMillis) <= 15 * 60_000 && overlap > 0 &&
+          overlap >= Math.min(p.endUtcMillis - p.startUtcMillis, programme.endUtcMillis - programme.startUtcMillis) / 2;
+      });
+      if (!old) group.push({ id: `${key}|${programme.startUtcMillis}`, title: programme.title, sportId: sport.id, programme, channels: [channel], schedules: { [channel.id]: programme },
+        artwork: safeSportsImage(programme.artworkUrl),
+        competition: competitions.find(entry => entry.pattern.test(`${programme.title} ${programme.description ?? ""}`))?.name });
+      else {
+        if (!old.channels.some(ch => ch.id === channel.id)) old.channels.push(channel);
+        old.schedules![channel.id] = programme;
+        if (!old.programme.artworkUrl && programme.artworkUrl) old.programme = { ...old.programme, artworkUrl: programme.artworkUrl };
+      }
+      events.set(key, group);
     }
   }
-  return [...events.values()].sort((a, b) => Number(isOnAir(b, now)) - Number(isOnAir(a, now)) || a.programme.startUtcMillis - b.programme.startUtcMillis || a.title.localeCompare(b.title));
+  return [...events.values()].flat().sort((a, b) => Number(isOnAir(b, now)) - Number(isOnAir(a, now)) || a.programme.startUtcMillis - b.programme.startUtcMillis || a.title.localeCompare(b.title));
 }
 
 export type SportsDay = "both" | "today" | "tomorrow";

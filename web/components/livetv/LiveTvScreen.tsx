@@ -465,7 +465,7 @@ export function LiveTvScreen() {
           {activeCategory !== "sports" && <aside className="livetv-detail" aria-label="Channel details">
             {selectedChannel ? (
               <>
-                <div className="livetv-detail-art">
+                <div id="live-tv-player-dock" className="livetv-detail-art" aria-label="Live player">
                   {selectedChannel.logo ? <img src={selectedChannel.logo} alt="" loading="lazy" /> : <Tv size={48} />}
                 </div>
                 <p className="livetv-detail-group">{selectedChannel.group || "Live TV"}</p>

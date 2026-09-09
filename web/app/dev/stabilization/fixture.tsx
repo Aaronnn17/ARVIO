@@ -37,6 +37,8 @@ export function StabilizationFixture() {
   const [toast, setToast] = useState("");
   const [failLibrary, setFailLibrary] = useState(false);
   const [activeStream, setActiveStream] = useState<StreamSource | null>(null);
+  const [activeChannel, setActiveChannel] = useState<IptvChannel | null>(null);
+  const closePlayer = useCallback(() => { setActiveStream(null); setActiveChannel(null); }, []);
   const [settings, setSettings] = useState<AppSettings>({ ...defaultSettings, cardLayoutMode: "poster", iptvPlaylists: [{ id: "fixture", name: "Reference playlist", enabled: true, m3uUrl: "https://example.invalid/playlist.m3u" }], favoriteChannelIds: channels.slice(0, 8).map((ch) => ch.id) });
   const [nowNext, setNowNext] = useState<Record<string, IptvNowNext>>({});
   const loadIptvGuide = useCallback(async (rows: IptvChannel[]) => {
@@ -66,8 +68,8 @@ export function StabilizationFixture() {
     playChannel: (channel: IptvChannel) => setToast(`Selected: ${channel.name}`), playCatchup: noop, setToast,
     trackingPreferences: { watchlistReadMode: "trakt", continueWatchingReadMode: "both", watchedReadMode: "both", writeToTrakt: true, writeToSimkl: true },
     settingsSyncState: "local", saveTrackingPreferences: noop, setSection: setPage, signOut: noop, refreshData: empty,
-    homeServerRows: [], categories: [], catalogConfigs: [], selected: null, streams: [], activeStream, activeChannel: null, selectedEpisode: null,
-    playStream: setActiveStream, closePlayer: () => setActiveStream(null), advanceEpisode: async () => false,
+    homeServerRows: [], categories: [], catalogConfigs: [], selected: null, streams: [], activeStream, activeChannel, selectedEpisode: null,
+    playStream: setActiveStream, closePlayer, advanceEpisode: async () => false,
   } as unknown as AppStore;
   return <AppContext.Provider value={app}>
     <div data-fixture-ready={ready} style={{ maxWidth: 1600, margin: "auto", padding: "18px 20px" }}>
@@ -80,6 +82,7 @@ export function StabilizationFixture() {
       {toast && <div role="status" className="fixture-toast" onClick={() => setToast("")}>{toast}</div>}
       <PlayerOverlay />
       <div className="fixture-tools">
+        <button onClick={() => { setPage("tv"); setActiveChannel(channels[0]); setActiveStream({ source: "CC0 live-player sample", addonName: "Test fixture", quality: "HD", size: "", url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" }); }}>Test guide mini-player</button>
         <button onClick={() => { setSettings((old) => ({ ...old, homeServers: (["plex", "jellyfin", "emby"] as const).map((type) => ({ id: type, type, name: `Fixture ${type}`, url: `https://${type}.invalid`, token: "fixture-only", userId: "fixture", enabled: true })) })); setPage("library"); }}>Test home server libraries</button>
         <button onClick={() => setActiveStream({ source: "YouTube player example", addonName: "Test fixture", quality: "", size: "", url: "https://www.youtube.com/watch?v=M7lc1UVf-VE" })}>Test YouTube embed</button>
         <button onClick={() => setActiveStream({ source: "Browser conversion test", addonName: "Local fixture", quality: "540p", size: "", url: "http://127.0.0.1:3099/media/multi.mkv", remux: true })}>Test MKV browser player</button>

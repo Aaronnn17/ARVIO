@@ -187,10 +187,11 @@ internal fun SportsGuidePane(
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(top = 4.dp))
                                 Row(Modifier.fillMaxWidth().height(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(event.sport.title, color = LiveColors.FgDim, fontSize = 10.sp, lineHeight = 13.sp, modifier = Modifier.weight(1f))
+                                    Text(listOfNotNull(event.sport.title, event.competition).joinToString(" · "), color = LiveColors.FgDim, fontSize = 10.sp, lineHeight = 13.sp,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                     if (event.isOnAir(now)) {
                                         Icon(Icons.Default.Tv, null, tint = LiveColors.FgDim, modifier = Modifier.size(13.dp))
-                                        Text(channelCount(event.channels.size), color = LiveColors.FgDim, fontSize = 9.sp, lineHeight = 12.sp,
+                                        Text(channelCount(event.availableChannels(now).size), color = LiveColors.FgDim, fontSize = 9.sp, lineHeight = 12.sp,
                                             modifier = Modifier.padding(start = 6.dp))
                                     }
                                 }
@@ -212,6 +213,7 @@ internal fun SportsGuidePane(
             window?.setDimAmount(.65f)
         }
         val onAir = event?.isOnAir(now) == true
+        val sourceChannels = if (onAir) event?.availableChannels(now).orEmpty() else event?.channels.orEmpty()
         val initialFocus = remember(event?.id) { FocusRequester() }
         LaunchedEffect(event?.id) {
             // The native dialog window must own focus before Compose assigns its row.
@@ -233,23 +235,25 @@ internal fun SportsGuidePane(
                 }
                 Icon(Icons.Default.Close, "Close", tint = LiveColors.Fg,
                     modifier = Modifier.size(44.dp)
-                        .then(if (!onAir || event?.channels.isNullOrEmpty()) Modifier.focusRequester(initialFocus) else Modifier)
+                        .then(if (!onAir || sourceChannels.isEmpty()) Modifier.focusRequester(initialFocus) else Modifier)
                         .clickable(onClick = ::dismiss).padding(10.dp))
             }
             Row(Modifier.fillMaxWidth().padding(top = 9.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(if (onAir) "Available channels" else "Scheduled channels", fontSize = 14.sp, color = LiveColors.Fg,
                     fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                Text(channelCount(event?.channels?.size ?: 0), fontSize = 11.sp, color = LiveColors.FgDim)
+                Text(channelCount(sourceChannels.size), fontSize = 11.sp, color = LiveColors.FgDim)
             }
-            LazyColumn(Modifier.heightIn(max = (if (narrow) 49.dp else 41.dp) * (event?.channels?.size ?: 1).coerceIn(1, 20))) {
-                itemsIndexed(event?.channels.orEmpty(), key = { _, channel -> channel.id }) { index, channel ->
+            LazyColumn(Modifier.heightIn(max = (if (narrow) 49.dp else 41.dp) * sourceChannels.size.coerceIn(1, 20))) {
+                itemsIndexed(sourceChannels, key = { _, channel -> channel.id }) { index, channel ->
                     var focused by remember { mutableStateOf(false) }
                     Row(Modifier.fillMaxWidth().heightIn(min = if (narrow) 48.dp else 40.dp).clip(RoundedCornerShape(4.dp))
                         .then(if (index == 0 && onAir) Modifier.focusRequester(initialFocus) else Modifier)
                         .border(1.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(4.dp))
                         .background(if (focused) LiveColors.FocusBg else Color.Transparent)
                         .onFocusChanged { focused = it.isFocused }
-                        .clickable(enabled = onAir) { dismiss(); onPlay(channel) }.padding(horizontal = 12.dp),
+                        .clickable(enabled = onAir) {
+                            if (event?.availableChannels(System.currentTimeMillis())?.any { it.id == channel.id } == true) { dismiss(); onPlay(channel) }
+                        }.padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         if (channel.logo.isNullOrBlank()) Box(Modifier.size(if (narrow) 40.dp else 88.dp, 30.dp), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.Tv, null, tint = LiveColors.FgDim, modifier = Modifier.size(24.dp))

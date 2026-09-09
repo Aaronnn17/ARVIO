@@ -15,6 +15,54 @@ import org.junit.Test
 
 /** Opt-in live-provider audit, isolated from both production and other emulator accounts. */
 class GuideProviderAuditDeviceTest {
+    @Test fun installExplicitSportsAddon() = runBlocking {
+        val url = InstrumentationRegistry.getArguments().getString("sportsAddon") ?: return@runBlocking
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        check(context.packageName.endsWith(".overhaul"))
+        require(url.startsWith("https://"))
+        val access = EntryPointAccessors.fromApplication(context, RepositoryAccessEntryPoint::class.java)
+        val result = access.streamRepository().addCustomAddon(url)
+        assertTrue("Explicit test addon must install", result.isSuccess)
+        report("Sports addon installed in isolated test app")
+    }
+
+    @Test fun sportsGuideUsesRealCachedProviderPrograms() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("cachedStartup") == "true")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        check(context.packageName.endsWith(".overhaul"))
+        val repository = EntryPointAccessors.fromApplication(context, GuideAuditEntryPoint::class.java).iptvRepository()
+        repository.warmupFromCacheOnly()
+        val now = System.currentTimeMillis()
+        val start = SystemClock.elapsedRealtime()
+        val ids = repository.cachedGuideChannelIds(now, now + 48 * 60 * 60_000L)
+        val events = SportsEventIndex()
+        val resolver = SportsProgrammeResolver()
+        var databaseMs = 0L
+        var matchingMs = 0L
+        var loadedProgrammes = 0
+        for (batchIds in ids.toList().chunked(128)) {
+            val dbStart = SystemClock.elapsedRealtime()
+            val channels = repository.pagedChannelsByIds(batchIds).filter { !it.enrichForFastStartup(0).isAdult }
+            val guide = repository.indexedGuideWindow(channels.map { it.id }.toSet(), now, now + 48 * 60 * 60_000L)
+            databaseMs += SystemClock.elapsedRealtime() - dbStart
+            loadedProgrammes += guide.values.sumOf { it.upcoming.size + if (it.now != null) 1 else 0 }
+            val matchStart = SystemClock.elapsedRealtime()
+            buildSportsGuideEvents(channels, guide, now, resolver = resolver).forEach(events::add)
+            matchingMs += SystemClock.elapsedRealtime() - matchStart
+        }
+        val result = events.events()
+        assertTrue("The real guide must contain sport events", result.isNotEmpty())
+        assertTrue(result.all { it.channels.all { c -> c.streamUrl.startsWith("http") } })
+        val allowed = result.flatMap { it.channels }.take(1)
+        val sampledIds = (allowed.map { it.id } + ids.take(2)).toSet()
+        val restricted = buildSportsGuideEvents(allowed, repository.indexedGuideWindow(sampledIds, now, now + 48 * 60 * 60_000), now)
+        assertTrue(restricted.all { event -> event.channels.all { channel -> allowed.any { it.id == channel.id } } })
+        report("real_sports_scan_ms=${SystemClock.elapsedRealtime() - start} database_ms=$databaseMs matching_ms=$matchingMs cached_ids=${ids.size} read_programmes=$loadedProgrammes events=${result.size} on_air=${result.count { it.isOnAir(now) }} provider_artwork=${result.count { it.artwork != null }}")
+        val artwork = EntryPointAccessors.fromApplication(context, GuideAuditEntryPoint::class.java).sportsRepository().loadGuideArtwork()
+        val illustrated = attachSportsArtwork(result, artwork)
+        report("installed_addon_artwork=${artwork.size} matched_event_artwork=${illustrated.count { it.artwork != null }}")
+    }
+
     @Test fun loadProvidedProviderAndKeepItsIndexAcrossCloudApplies() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

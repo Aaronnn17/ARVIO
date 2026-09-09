@@ -19,7 +19,7 @@ const fs = require('node:fs');
       if (url.pathname === '/api/proxy' && url.searchParams.get('url')?.startsWith('https://example.invalid/sports/catalog/')) {
         return route.fulfill({ json: require('../app/dev/stabilization/sports-artwork.json') });
       }
-      return ['127.0.0.1', 'cdn.highfly.dev'].includes(url.hostname) ? route.continue() : route.abort();
+      return ['127.0.0.1', 'cdn.highfly.dev', 'interactive-examples.mdn.mozilla.net'].includes(url.hostname) ? route.continue() : route.abort();
     });
     await page.goto('http://127.0.0.1:3109/dev/stabilization', { waitUntil: 'domcontentloaded', timeout: 120_000 });
     await page.locator('[data-fixture-ready="true"]').waitFor({ timeout: 120_000 });
@@ -29,6 +29,30 @@ const fs = require('node:fs');
     await page.getByRole('button', { name: 'Toggle categories' }).click();
     await page.waitForTimeout(240);
     await page.screenshot({ path: path.join(output, 'web-02-guide-closed.png'), animations: 'disabled' });
+    await page.getByRole('button', { name: 'Test guide mini-player', exact: true }).click();
+    await page.locator('.player-docked video').waitFor();
+    await page.locator('video').evaluate(video => { video.loop = true; window.__dockVideo = video; });
+    await page.waitForFunction(() => document.querySelector('video')?.currentTime > 0.25, { timeout: 30_000 });
+    await page.locator('#live-tv-player-dock').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(300);
+    const dockBox = await page.locator('#live-tv-player-dock').boundingBox();
+    const playerBox = await page.locator('.player-docked').boundingBox();
+    assert.ok(Math.abs(dockBox.x - playerBox.x) < 2 && Math.abs(dockBox.width - playerBox.width) < 2, 'Player occupies guide preview bounds');
+    assert.ok(Math.abs(dockBox.width / dockBox.height - 16/9) < .05, 'Guide preview has a stable video aspect ratio');
+    await page.screenshot({ path: path.join(output, 'web-guide-playing.png'), animations: 'disabled' });
+    await page.getByRole('button', { name: 'Expand player', exact: true }).click();
+    assert.equal(await page.locator('.player-docked').count(), 0);
+    await page.getByRole('button', { name: 'Return to guide', exact: true }).click();
+    assert.ok(await page.locator('video').evaluate(video => video === window.__dockVideo), 'Expanding/collapsing must retain the same video/connection');
+    for (const width of [390, 768, 1672]) {
+      await page.setViewportSize({ width, height: 941 });
+      await page.locator('#live-tv-player-dock').scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+      const rect = await page.locator('.player-docked').boundingBox();
+      assert.ok(rect.width > 100 && rect.x >= 0 && rect.x + rect.width <= width + 1, `Mini-player fits ${width}px`);
+    }
+    await page.getByRole('button', { name: 'Stop channel', exact: true }).click();
+    assert.equal(await page.locator('video').count(), 0);
     await page.getByRole('button', { name: 'Toggle categories' }).click();
     await page.getByRole('button', { name: 'Sports', exact: true }).click();
     await page.locator('.tv-event-card').first().waitFor({ timeout: 30_000 });

@@ -871,12 +871,18 @@ function parseXmltv(xml: string) {
       program: {
         title: decodeXml(textTag(body, "title") || "Untitled"),
         description: decodeXml(textTag(body, "desc") || ""),
+        artworkUrl: safeGuideImage(decodeXml(attr(body.match(/<icon\b([^>]*)\/?\s*>/i)?.[1] ?? "", "src"))),
+        category: decodeXml(textTag(body, "category") || "").slice(0, 200) || undefined,
         startUtcMillis: start,
         endUtcMillis: stop
       }
     });
   }
   return results;
+}
+
+function safeGuideImage(value: string): string | undefined {
+  try { return value.length <= 2048 && ["https:", "http:"].includes(new URL(value).protocol) ? value : undefined; } catch { return undefined; }
 }
 
 function parseXmltvTime(value: string) {

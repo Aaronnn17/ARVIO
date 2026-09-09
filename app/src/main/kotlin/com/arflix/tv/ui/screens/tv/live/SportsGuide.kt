@@ -4,7 +4,8 @@ import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.SportsEventArtwork
-import com.arflix.tv.data.model.sportsArtworkKey
+import com.arflix.tv.data.model.sportsEventIdentity
+import com.arflix.tv.data.model.safeSportsImage
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
@@ -17,18 +18,23 @@ internal data class SportsGuideEvent(
     val programme: IptvProgram,
     val channels: List<IptvChannel>,
     val artwork: String? = null,
+    val schedules: Map<String, IptvProgram> = channels.associate { it.id to programme },
+    val competition: String? = null,
 ) {
-    fun isOnAir(now: Long) = programme.isLive(now)
+    val identity: String = sportsEventIdentity(title)
+    fun isOnAir(now: Long) = if (schedules.isEmpty()) programme.isLive(now) else schedules.values.any { it.isLive(now) }
+    fun availableChannels(now: Long) = channels.filter { (schedules[it.id] ?: programme).isLive(now) }
 }
 
 internal fun attachSportsArtwork(events: List<SportsGuideEvent>, artwork: List<SportsEventArtwork>): List<SportsGuideEvent> {
-    val byTitle = artwork.groupBy { it.key }
+    val byTitle = artwork.groupBy { sportsEventIdentity(it.title) }
     return events.map { event ->
-        val candidates = byTitle[sportsArtworkKey(event.title)].orEmpty().filter {
+        val candidates = byTitle[event.identity].orEmpty().filter {
             val sport = GuideSport.fromText(it.genres.joinToString(" "))
-            sport == null || sport == event.sport
+            (sport == null || sport == event.sport) &&
+                (it.startsAt == null || kotlin.math.abs(it.startsAt - event.programme.startUtcMillis) <= 6 * 60 * 60_000L)
         }
-        event.copy(artwork = candidates.firstOrNull()?.background)
+        event.copy(artwork = safeSportsImage(event.programme.artworkUrl) ?: candidates.firstOrNull()?.background)
     }
 }
 
@@ -45,17 +51,78 @@ internal enum class GuideSport(val title: String, val asset: String, val terms: 
     HOCKEY("Ice hockey", "hockey", Regex("\\b(ice hockey|hockey|nhl)\\b"));
 
     companion object {
+        private val priority = listOf(AMERICAN_FOOTBALL, BASKETBALL, F1, TENNIS, MMA, BOXING,
+            CRICKET, BASEBALL, HOCKEY, FOOTBALL)
         fun fromText(text: String): GuideSport? {
             val value = text.lowercase(Locale.ROOT)
             // Specific football codes must win over the generic word football.
-            return listOf(AMERICAN_FOOTBALL, BASKETBALL, F1, TENNIS, MMA, BOXING,
-                CRICKET, BASEBALL, HOCKEY, FOOTBALL).firstOrNull { it.terms.containsMatchIn(value) }
+            return priority.firstOrNull { it.terms.containsMatchIn(value) }
         }
     }
 }
 
-private val nonEvent = Regex("\\b(highlights?|replay|re-?run|classic|news|magazine|review|preview)\\b", RegexOption.IGNORE_CASE)
+private val nonEvent = Regex("\\b(highlights?|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned)\\b", RegexOption.IGNORE_CASE)
 private val space = Regex("\\s+")
+
+private val competitions = listOf("UEFA Champions League", "Premier League", "La Liga", "Eredivisie", "Bundesliga",
+    "Serie A", "Ligue 1", "WNBA", "NBA", "Euroleague", "NFL", "MLB", "NHL", "Wimbledon", "UFC", "Formula 1")
+    .map { it to Regex("\\b${Regex.escape(it)}\\b", RegexOption.IGNORE_CASE) }
+private fun competition(text: String) = competitions.firstOrNull { it.second.containsMatchIn(text) }?.first
+
+/** Small broadcast padding differences may match; a later replay or a different opponent may not. */
+internal class SportsEventIndex {
+    private class Entry(val first: SportsGuideEvent) {
+        val channels = linkedMapOf<String, IptvChannel>()
+        val schedules = linkedMapOf<String, IptvProgram>()
+        var artwork = first.programme.artworkUrl
+        var competition = first.competition
+        fun add(event: SportsGuideEvent) {
+            event.channels.forEach { channels.putIfAbsent(it.id, it) }
+            schedules.putAll(event.schedules)
+            artwork = artwork ?: event.programme.artworkUrl
+            competition = competition ?: event.competition
+        }
+        fun snapshot() = first.copy(channels = channels.values.toList(), schedules = schedules.toMap(),
+            programme = first.programme.copy(artworkUrl = artwork), competition = competition)
+    }
+    private val groups = linkedMapOf<String, MutableList<Entry>>()
+    fun add(event: SportsGuideEvent) {
+        val key = "${event.sport.name}|${event.identity}"
+        val group = groups.getOrPut(key) { mutableListOf() }
+        val old = group.firstOrNull { old ->
+            val a = old.first.programme; val b = event.programme
+            val overlap = minOf(a.endUtcMillis, b.endUtcMillis) - maxOf(a.startUtcMillis, b.startUtcMillis)
+            kotlin.math.abs(a.startUtcMillis - b.startUtcMillis) <= 15 * 60_000L &&
+                overlap > 0 && overlap >= minOf(a.endUtcMillis - a.startUtcMillis, b.endUtcMillis - b.startUtcMillis) / 2
+        }
+        (old ?: Entry(event).also(group::add)).add(event)
+    }
+    fun events(): List<SportsGuideEvent> = groups.values.flatMap { group -> group.map { it.snapshot() } }
+}
+
+/** XMLTV variants share programme text. Classify it once per scan, with bounded memory. */
+internal class SportsProgrammeResolver {
+    data class Metadata(val sport: GuideSport, val identity: String, val competition: String?)
+    private data class Key(val title: String, val category: String?, val description: String?, val fallback: GuideSport?)
+    private val cache = object : LinkedHashMap<Key, Metadata?>(512, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, Metadata?>?) = size > 4096
+    }
+    fun resolve(programme: IptvProgram, fallback: GuideSport?): Metadata? {
+        val key = Key(programme.title, programme.category, programme.description, fallback)
+        if (cache.containsKey(key)) return cache[key]
+        val metadata = if (nonEvent.containsMatchIn(programme.title)) null else {
+            val text = "${programme.category.orEmpty()} ${programme.title} ${programme.description.orEmpty()}"
+            (GuideSport.fromText(text) ?: fallback)?.let { Metadata(it, sportsEventIdentity(programme.title), competition(text)) }
+        }
+        cache[key] = metadata
+        return metadata
+    }
+}
+
+internal fun retainSportsEventOrder(previous: List<SportsGuideEvent>, incoming: List<SportsGuideEvent>): List<SportsGuideEvent> {
+    val rank = previous.withIndex().associate { it.value.id to it.index }
+    return incoming.sortedBy { rank[it.id] ?: Int.MAX_VALUE }
+}
 
 internal fun sportsProgrammeKey(programme: IptvProgram): String =
     "${programme.title.trim().lowercase(Locale.ROOT).replace(space, " ")}|${programme.startUtcMillis}|${programme.endUtcMillis}"
@@ -65,28 +132,27 @@ internal fun buildSportsGuideEvents(
     guide: Map<String, IptvNowNext>,
     now: Long,
     zone: ZoneId = ZoneId.systemDefault(),
+    resolver: SportsProgrammeResolver = SportsProgrammeResolver(),
 ): List<SportsGuideEvent> {
     val end = Instant.ofEpochMilli(now).atZone(zone).toLocalDate().plusDays(2)
         .atStartOfDay(zone).toInstant().toEpochMilli()
-    val events = linkedMapOf<String, SportsGuideEvent>()
+    val events = SportsEventIndex()
     for (channel in channels) {
         val slice = guide[channel.id] ?: continue
+        val fallback = GuideSport.fromText("${channel.group} ${channel.name}")
         val programmes = (listOfNotNull(slice.now, slice.next, slice.later) + slice.upcoming)
             .distinctBy(::sportsProgrammeKey)
         for (programme in programmes) {
             if (programme.endUtcMillis <= now || programme.startUtcMillis >= end ||
-                programme.endUtcMillis <= programme.startUtcMillis || programme.title.isBlank() ||
-                nonEvent.containsMatchIn(programme.title)) continue
-            val sport = GuideSport.fromText("${programme.title} ${programme.description.orEmpty()}")
-                ?: GuideSport.fromText("${channel.group} ${channel.name}") ?: continue
-            val id = "${sport.name}|${sportsProgrammeKey(programme)}"
-            val previous = events[id]
-            events[id] = if (previous == null) SportsGuideEvent(id, programme.title, sport, programme, listOf(channel))
-            else if (previous.channels.none { it.id == channel.id }) previous.copy(channels = previous.channels + channel)
-            else previous
+                programme.endUtcMillis <= programme.startUtcMillis || programme.title.isBlank()) continue
+            val meta = resolver.resolve(programme, fallback) ?: continue
+            val id = "${meta.sport.name}|${meta.identity}|${programme.startUtcMillis}"
+            events.add(SportsGuideEvent(id, programme.title, meta.sport, programme, listOf(channel),
+                artwork = safeSportsImage(programme.artworkUrl),
+                competition = meta.competition))
         }
     }
-    return events.values.sortedWith(compareByDescending<SportsGuideEvent> { it.isOnAir(now) }
+    return events.events().sortedWith(compareByDescending<SportsGuideEvent> { it.isOnAir(now) }
         .thenBy { it.programme.startUtcMillis }.thenBy { it.title })
 }
 

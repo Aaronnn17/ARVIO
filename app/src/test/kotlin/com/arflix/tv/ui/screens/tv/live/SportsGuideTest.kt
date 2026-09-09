@@ -24,7 +24,7 @@ class SportsGuideTest {
         assertTrue(rows.single().events.isEmpty())
     }
     private val now = Instant.parse("2026-09-09T18:00:00Z").toEpochMilli()
-    private val a = IptvChannel("one:1", "Football 1", "Football", "https://example.invalid/a")
+    private val a = IptvChannel("one:1", "Football 1", streamUrl = "https://example.invalid/a", group = "Football")
     private val b = a.copy(id = "two:1", streamUrl = "https://example.invalid/b")
     private fun programme(title: String = "Football: North vs South", start: Long = now - 60_000, end: Long = now + 60_000) =
         IptvProgram(title, startUtcMillis = start, endUtcMillis = end)
@@ -35,6 +35,32 @@ class SportsGuideTest {
         val events = buildSportsGuideEvents(listOf(a, b), mapOf(a.id to slice(p), b.id to slice(p)), now)
         assertEquals(1, events.size)
         assertEquals(listOf(a.id, b.id), events.single().channels.map { it.id })
+    }
+    @Test fun paddedProviderSchedulesMatchButOnlyOnAirSourcesArePlayable() {
+        val p = programme("Premier League: North versus South", now - 60_000, now + 7_200_000)
+        val q = programme("LIVE: South v North [HD]", now + 60_000, now + 7_320_000)
+        val event = buildSportsGuideEvents(listOf(a, b), mapOf(a.id to slice(p), b.id to slice(q)), now).single()
+        assertEquals(2, event.channels.size)
+        assertEquals(listOf(a.id), event.availableChannels(now).map { it.id })
+        assertEquals(2, event.availableChannels(now + 120_000).size)
+        assertEquals("Premier League", event.competition)
+    }
+    @Test fun qualifiersCancellationAndGeneralChannelMetadataArePreserved() {
+        val p = programme("North vs South").copy(category = "Football", artworkUrl = "https://example.com/event.webp")
+        val channel = a.copy(name = "National One", group = "General")
+        val event = buildSportsGuideEvents(listOf(channel), mapOf(channel.id to slice(p)), now).single()
+        assertEquals(p.artworkUrl, attachSportsArtwork(listOf(event), emptyList()).single().artwork)
+        for (title in listOf("North vs South postponed", "North vs South cancelled")) {
+            assertTrue(buildSportsGuideEvents(listOf(a), mapOf(a.id to slice(p.copy(title = title))), now).isEmpty())
+        }
+        assertEquals(2, buildSportsGuideEvents(listOf(a, b), mapOf(a.id to slice(p), b.id to slice(p.copy(title = "North Women vs South Women"))), now).size)
+    }
+    @Test fun refreshDoesNotReorderExistingCardsAndRevokedSourcesAreRemoved() {
+        val p = programme()
+        val one = buildSportsGuideEvents(listOf(a), mapOf(a.id to slice(p)), now).single()
+        val two = one.copy(id = "other", title = "Another event")
+        assertEquals(listOf(one.id, two.id), retainSportsEventOrder(listOf(one, two), listOf(two, one)).map { it.id })
+        assertEquals(listOf(two.id), retainSportsEventOrder(listOf(one, two), listOf(two)).map { it.id })
     }
     @Test fun similarTeamsAtAnotherTimeDoNotMatch() {
         val events = buildSportsGuideEvents(listOf(a, b), mapOf(a.id to slice(programme()),
