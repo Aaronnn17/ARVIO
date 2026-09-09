@@ -35,6 +35,7 @@ function normalizeToken(token: TraktToken | null): TraktToken | null {
 export class TraktClient {
   token: TraktToken | null = null;
   private profileId: string | null = null;
+  private refreshInFlight: { profileId: string | null; token: string; promise: Promise<TraktToken | null> } | null = null;
 
   get currentProfileId(): string | null {
     return this.profileId;
@@ -160,6 +161,17 @@ export class TraktClient {
     return rows;
   }
 
+  /** Background checks never invoke the paid proxy or refresh an expired token. */
+  async continueWatchingActivity(): Promise<unknown | null> {
+    const token = this.token;
+    const profileId = this.profileId;
+    if (!config.traktClientId || !token || token.expires_at <= Date.now()) return null;
+    const activities = await this.directTrakt<unknown>("/sync/last_activities", {
+      headers: { "x-user-token": token.access_token }
+    }, 3_000);
+    return this.profileId === profileId && this.token?.access_token === token.access_token ? activities : null;
+  }
+
   async playback() {
     const token = await this.refreshIfNeeded();
     if (!token) return [];
@@ -219,10 +231,8 @@ export class TraktClient {
     return ids;
   }
 
-  // `activityKey` (the show's last_watched_at) makes the persistent cache
-  // activity-keyed: a show whose activity hasn't moved has IDENTICAL progress,
-  // so entries stay valid for days instead of the blanket 15-minute TTL — a
-  // repeat app boot then costs ~zero progress calls instead of ~120.
+  // Activity changes invalidate immediately; the TTL also catches new episodes
+  // airing or corrected episode metadata without any new watch activity.
   async showProgress(traktShowId: number, includeSpecials = false, activityKey?: string | number) {
     const token = await this.refreshIfNeeded();
     if (!token) return null;
@@ -329,13 +339,25 @@ export class TraktClient {
   }
 
   async scrobble(action: "start" | "pause" | "stop", item: TraktMediaRef & { progress: number }) {
+    if (!Number.isSafeInteger(item.tmdbId) || item.tmdbId <= 0) return;
+    if (item.mediaType === "tv" && (!Number.isInteger(item.season) || item.season! < 0 ||
+      !Number.isInteger(item.episode) || item.episode! <= 0)) return;
+    const profileId = this.profileId;
     const token = await this.refreshIfNeeded();
-    if (!token) return;
-    await this.trakt(`/scrobble/${action}`, {
-      method: "POST",
-      headers: { "x-user-token": token.access_token },
-      body: JSON.stringify({ ...this.mediaBody(item), progress: Math.round(item.progress) })
-    });
+    if (!token || this.profileId !== profileId) return;
+    const media = item.mediaType === "movie"
+      ? { movie: { ids: { tmdb: item.tmdbId } } }
+      : { show: { ids: { tmdb: item.tmdbId } }, episode: { season: item.season, number: item.episode } };
+    try {
+      await this.trakt(`/scrobble/${action}`, {
+        method: "POST",
+        keepalive: true,
+        headers: { "x-user-token": token.access_token },
+        body: JSON.stringify({ ...media, progress: Number.isFinite(item.progress) ? Math.min(100, Math.max(0, item.progress)) : 0 })
+      });
+    } catch (error) {
+      if (action !== "stop" || (error as { status?: number }).status !== 409) throw error;
+    }
   }
 
   disconnect() {
@@ -351,6 +373,7 @@ export class TraktClient {
     const url = new URL(`/api/trakt/${path.replace(/^\/+/, "")}`, window.location.origin);
     const request = {
       ...init,
+      cache: "no-store",
       // Hard timeout: a single hanging Trakt response (throttling that never
       // answers) used to block one of the up-next workers forever — and
       // Promise.all over the workers then hung the WHOLE enriched Continue
@@ -377,6 +400,7 @@ export class TraktClient {
           // A 401 is an expired/revoked token, not a transport problem — the
           // proxy would fail identically, so let it bubble to the retry below.
           if ((error as { status?: number }).status === 401) throw error;
+          if (path.startsWith("/scrobble/") && [400, 404, 409, 422, 429].includes((error as { status?: number }).status ?? 0)) throw error;
           return jsonRequest<T>(url.toString(), request);
         }
       }
@@ -446,7 +470,7 @@ export class TraktClient {
     return Boolean(headers.get("x-user-token") || headers.get("Authorization"));
   }
 
-  private async directTrakt<T>(path: string, init: RequestInit) {
+  private async directTrakt<T>(path: string, init: RequestInit, timeoutMs = 15_000) {
     const target = new URL(`https://api.trakt.tv/${path.replace(/^\/+/, "")}`);
     const headers = new Headers(init.headers ?? {});
     const userToken = headers.get("x-user-token");
@@ -462,7 +486,7 @@ export class TraktClient {
       cache: "no-store",
       // Fresh timeout: the signal inherited from the proxy attempt may already
       // be (nearly) expired by the time this fallback runs.
-      signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(15_000) : undefined
+      signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined
     });
     if (!response.ok) {
       const raw = await response.text().catch(() => "");
@@ -477,6 +501,16 @@ export class TraktClient {
   }
 
   private async refreshIfNeeded(): Promise<TraktToken | null> {
+    const profileId = this.profileId;
+    const token = this.token?.refresh_token ?? "";
+    if (this.refreshInFlight?.profileId === profileId && this.refreshInFlight.token === token) return this.refreshInFlight.promise;
+    const promise = this.refreshToken();
+    this.refreshInFlight = { profileId, token, promise };
+    try { return await promise; }
+    finally { if (this.refreshInFlight?.promise === promise) this.refreshInFlight = null; }
+  }
+
+  private async refreshToken(): Promise<TraktToken | null> {
     const profileId = this.profileId;
     const token = this.token;
     if (!token?.refresh_token) return null;
@@ -537,12 +571,6 @@ interface TraktMediaRef {
 
 type ProgressCacheEntry = { at: number; value: unknown };
 
-// Activity-keyed entries (key includes the show's last_watched_at) stay valid
-// for a week — progress can only change when activity changes, and a changed
-// activity produces a NEW key so stale entries are never read, just evicted by
-// the size cap. Legacy keys without an activity component keep the short TTL.
-const TRAKT_PROGRESS_ACTIVITY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
 function progressCacheKey(token: string, traktShowId: number, includeSpecials: boolean, activityKey?: string | number) {
   const activity = activityKey !== undefined && activityKey !== null && activityKey !== "" ? `:${activityKey}` : "";
   return `${token.slice(0, 12)}:${traktShowId}:${includeSpecials ? "specials" : "regular"}${activity}`;
@@ -551,8 +579,7 @@ function progressCacheKey(token: string, traktShowId: number, includeSpecials: b
 function readProgressCache(token: string, traktShowId: number, includeSpecials: boolean, activityKey?: string | number) {
   const cache = loadStored<Record<string, ProgressCacheEntry>>(TRAKT_PROGRESS_CACHE_KEY, {});
   const entry = cache[progressCacheKey(token, traktShowId, includeSpecials, activityKey)];
-  const ttl = activityKey !== undefined ? TRAKT_PROGRESS_ACTIVITY_TTL_MS : TRAKT_PROGRESS_TTL_MS;
-  if (!entry || Date.now() - entry.at > ttl) return undefined;
+  if (!entry || Date.now() - entry.at >= TRAKT_PROGRESS_TTL_MS) return undefined;
   return entry.value;
 }
 
@@ -584,10 +611,10 @@ function writeProgressCache(token: string, traktShowId: number, includeSpecials:
     ...cache,
     [progressCacheKey(token, traktShowId, includeSpecials, activityKey)]: { at: Date.now(), value: slimProgress(value) }
   };
-  // Cap must exceed the up-next scan width (120 shows) or entries churn out
+  // Cap must exceed the up-next scan width (300 shows) or entries churn out
   // before the next boot can reuse them.
   const entries = Object.entries(next)
     .sort((a, b) => b[1].at - a[1].at)
-    .slice(0, 240);
+    .slice(0, 400);
   saveStored(TRAKT_PROGRESS_CACHE_KEY, Object.fromEntries(entries));
 }

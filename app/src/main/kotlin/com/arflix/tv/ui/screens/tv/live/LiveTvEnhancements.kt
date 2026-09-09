@@ -49,14 +49,17 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.R
 import com.arflix.tv.data.repository.IptvConfig
+import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 
 data class TvProviderFilter(
     val id: String,
@@ -251,6 +254,7 @@ private fun Quality.rank(): Int = when (this) {
     Quality.FHD -> 3
     Quality.HD -> 2
     Quality.SD -> 1
+    Quality.UNKNOWN -> 0
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -266,6 +270,7 @@ fun ProviderSelector(
 ) {
     if (providers.size <= 1) return
     var focusedId by remember { mutableStateOf<String?>(null) }
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -296,7 +301,7 @@ fun ProviderSelector(
                     .focusable()
                     .onKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
-                        when (event.key) {
+                        when (event.key.mirrorHorizontalForRtl(isRtl)) {
                             Key.DirectionLeft -> {
                                 val next = providers.getOrNull((selectedIndex - 1).coerceAtLeast(0)) ?: provider
                                 focusedId = next.id
@@ -446,8 +451,15 @@ fun PlaybackDiagnosticBanner(
     diagnostic: PlaybackDiagnostic?,
     modifier: Modifier = Modifier,
 ) {
+    var visible by remember(diagnostic) { mutableStateOf(diagnostic != null) }
+    LaunchedEffect(diagnostic) {
+        if (diagnostic != null) {
+            kotlinx.coroutines.delay(8_000)
+            visible = false
+        }
+    }
     AnimatedVisibility(
-        visible = diagnostic != null,
+        visible = visible,
         enter = fadeIn(),
         exit = fadeOut(),
         modifier = modifier,
@@ -624,7 +636,7 @@ private fun VariantRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(
+        if (channel.quality != Quality.UNKNOWN) Text(
             text = channel.quality.label,
             style = LiveType.Badge.copy(color = LiveColors.Fg),
             modifier = Modifier

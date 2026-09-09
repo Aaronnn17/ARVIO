@@ -17,6 +17,8 @@ import com.arflix.tv.ui.components.catalogueRowLayoutPreferencePrefixFor
 import com.arflix.tv.ui.components.normalizeCardLayoutMode
 import com.arflix.tv.ui.components.profileCatalogueRowLayoutModeKey
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
+import com.arflix.tv.util.resolveAppLanguage
+import com.arflix.tv.util.IPTV_FAVORITES_ON_HOME
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.ACCENT_COLOR_KEY
 import com.arflix.tv.util.OLED_BLACK_BACKGROUND_KEY
@@ -285,7 +287,8 @@ class CloudSyncRepository @Inject constructor(
         val trailerInCards: Boolean = true,
         val clockFormat: String = "24h",
         val showBudget: Boolean = true,
-        val showEpisodeRatings: Boolean = true,
+        val showEpisodeRatings: Boolean = false,
+        val iptvFavoritesOnHome: Boolean = true,
         val showLoadingStats: Boolean? = null,
         val spoilerBlurEnabled: Boolean = false,
         val volumeBoostDb: Int = 0,
@@ -318,6 +321,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileBooleanKeyFor(profileId, "show_budget_on_home")
     private fun showEpisodeRatingsKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "show_episode_ratings")
+    private fun iptvFavoritesOnHomeKeyFor(profileId: String) =
+        profileManager.profileBooleanKeyFor(profileId, IPTV_FAVORITES_ON_HOME)
     private fun showLoadingStatsKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, "show_loading_stats")
     private fun spoilerBlurKeyFor(profileId: String) =
@@ -458,10 +463,12 @@ class CloudSyncRepository @Inject constructor(
                 }
             }
         }
+        keys.addAll(IptvCloudFields.keys(root))
         return keys
     }
 
     private fun mergeFieldValue(root: JSONObject, key: String): Any? {
+        if (key.startsWith("i:")) return IptvCloudFields.value(root, key)
         if (key.startsWith("g:")) {
             val k = key.substring(2)
             return if (root.has(k)) root.get(k) else null
@@ -510,32 +517,31 @@ class CloudSyncRepository @Inject constructor(
      * caller can embed it as `fieldUpdatedAt`. Generic — no per-write hooks; a change is stamped on
      * the next snapshot build, within the push debounce.
      */
-    private suspend fun stampAndLoadFieldTs(localRoot: JSONObject): JSONObject {
-        val tsMap = loadJsonMap(cloudSyncFieldTsKey)
-        val baseMap = loadJsonMap(cloudSyncFieldBaseKey)
+    private suspend fun stampAndLoadFieldTs(localRoot: JSONObject, capturedTimestamps: JSONObject): JSONObject {
+        var tsMap = JSONObject()
         val now = System.currentTimeMillis()
-        var changed = false
-        for (key in mergeKeysOf(localRoot)) {
-            val current = mergeFieldValue(localRoot, key)?.toString() ?: continue
-            val base = if (baseMap.has(key)) baseMap.optString(key) else null
-            if (base == null) {
-                // First time we've seen this field (e.g. a fresh upgrade): record the baseline but
-                // do NOT stamp a timestamp. A field with no prior baseline is not evidence of a
-                // local change, so it must not out-timestamp a peer's newer cloud value and revert
-                // it — it stays untimestamped (loses to any real cloud timestamp) until the user
-                // actually changes it, which the next build detects via this baseline.
-                baseMap.put(key, current)
-                changed = true
-            } else if (base != current) {
-                baseMap.put(key, current)
-                tsMap.put(key, now)
-                changed = true
+        context.settingsDataStore.edit { prefs ->
+            tsMap = prefs[cloudSyncFieldTsKey]?.let(::JSONObject) ?: JSONObject()
+            val baseMap = prefs[cloudSyncFieldBaseKey]?.let(::JSONObject) ?: JSONObject()
+            IptvCloudFields.reconcileSnapshot(localRoot, tsMap, baseMap, capturedTimestamps)
+            var changed = false
+            for (key in mergeKeysOf(localRoot)) {
+                val current = mergeFieldValue(localRoot, key)?.toString() ?: continue
+                val base = if (baseMap.has(key)) baseMap.optString(key) else null
+                if (base == null) {
+                    // A first baseline is not evidence of a local edit. Keep it untimestamped
+                    // so a fresh installation cannot overwrite a peer's existing preferences.
+                    baseMap.put(key, current)
+                    changed = true
+                } else if (base != current) {
+                    baseMap.put(key, current)
+                    tsMap.put(key, maxOf(now, tsMap.optLong(key, 0) + 1))
+                    changed = true
+                }
             }
-        }
-        if (changed) {
-            context.settingsDataStore.edit {
-                it[cloudSyncFieldTsKey] = tsMap.toString()
-                it[cloudSyncFieldBaseKey] = baseMap.toString()
+            if (changed) {
+                prefs[cloudSyncFieldTsKey] = tsMap.toString()
+                prefs[cloudSyncFieldBaseKey] = baseMap.toString()
             }
         }
         return tsMap
@@ -553,6 +559,16 @@ class CloudSyncRepository @Inject constructor(
             mergeFieldValue(appliedRoot, key)?.let { base.put(key, it.toString()) }
         }
         context.settingsDataStore.edit {
+            // A user can edit IPTV while a remote snapshot is being applied.
+            // Do not erase its atomic deletion timestamp or its matching baseline.
+            val currentTs = it[cloudSyncFieldTsKey]?.let(::JSONObject) ?: JSONObject()
+            val currentBase = it[cloudSyncFieldBaseKey]?.let(::JSONObject) ?: JSONObject()
+            for (key in currentTs.keys()) {
+                if (key.startsWith("i:") && currentTs.optLong(key) > ts.optLong(key)) {
+                    ts.put(key, currentTs.get(key))
+                    if (currentBase.has(key)) base.put(key, currentBase.get(key))
+                }
+            }
             it[cloudSyncFieldTsKey] = ts.toString()
             it[cloudSyncFieldBaseKey] = base.toString()
         }
@@ -576,6 +592,7 @@ class CloudSyncRepository @Inject constructor(
         val otherWon = HashSet<String>()
         val allKeys = LinkedHashSet<String>().apply { addAll(mergeKeysOf(base)); addAll(mergeKeysOf(other)) }
         for (key in allKeys) {
+            if (key.startsWith("i:")) continue
             val bt = baseTs.optLong(key, 0L)
             val ot = otherTs.optLong(key, 0L)
             if (ot > bt) {
@@ -590,6 +607,7 @@ class CloudSyncRepository @Inject constructor(
             }
         }
         base.put("fieldUpdatedAt", mergedTs)
+        otherWon.addAll(IptvCloudFields.merge(base, other))
         return SettingsMergeResult(base.toString(), otherWon)
     }
 
@@ -615,7 +633,7 @@ class CloudSyncRepository @Inject constructor(
                     CloudProfileSettings(
                         defaultSubtitle = prefs[defaultSubtitleKeyFor(profile.id)] ?: "Off",
                         defaultAudioLanguage = prefs[defaultAudioLanguageKeyFor(profile.id)] ?: "Auto (Original)",
-                        contentLanguage = prefs[contentLanguageKeyFor(profile.id)] ?: "en-US",
+                        contentLanguage = resolveAppLanguage(prefs, profile.id),
 
                         trailerAutoPlay = prefs[trailerAutoPlayKeyFor(profile.id)] ?: false,
                         trailerSoundEnabled = prefs[trailerSoundEnabledKeyFor(profile.id)] ?: false,
@@ -623,7 +641,8 @@ class CloudSyncRepository @Inject constructor(
                         trailerInCards = prefs[trailerInCardsKeyFor(profile.id)] ?: true,
                         clockFormat = prefs[clockFormatKeyFor(profile.id)] ?: "24h",
                         showBudget = prefs[showBudgetKeyFor(profile.id)] ?: true,
-                        showEpisodeRatings = prefs[showEpisodeRatingsKeyFor(profile.id)] ?: true,
+                        showEpisodeRatings = prefs[showEpisodeRatingsKeyFor(profile.id)] ?: false,
+                        iptvFavoritesOnHome = prefs[iptvFavoritesOnHomeKeyFor(profile.id)] ?: true,
                         showLoadingStats = prefs[showLoadingStatsKeyFor(profile.id)] ?: true,
                         spoilerBlurEnabled = prefs[spoilerBlurKeyFor(profile.id)] ?: false,
                         volumeBoostDb = prefs[volumeBoostDbKeyFor(profile.id)]?.toIntOrNull()?.coerceIn(0, 15) ?: 0,
@@ -704,14 +723,6 @@ class CloudSyncRepository @Inject constructor(
             profileAvatarImageManager.buildInlineAvatarImagesJson(profiles, existingAvatarImagesById)
         )
         root.put("profileSettingsById", JSONObject(gson.toJson(profileSettingsById)))
-
-        // Validate active Trakt auth before exporting so revoked tokens do not
-        // get written back to cloud and restored on the next launch.
-        try {
-            traktRepository.hasTrakt()
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-        }
 
         // Trakt tokens per profile
         val traktTokens = traktRepository.exportTokensForProfiles(profiles.map { it.id })
@@ -843,7 +854,10 @@ class CloudSyncRepository @Inject constructor(
 
         // Per-field last-writer-wins timestamps (multi-device merge). Diff-stamps any locally
         // changed scalar setting and embeds the map so push/apply can merge field-by-field.
-        root.put("fieldUpdatedAt", stampAndLoadFieldTs(root))
+        val capturedTimestamps = runCatching {
+            prefs[cloudSyncFieldTsKey]?.let(::JSONObject) ?: JSONObject()
+        }.getOrDefault(JSONObject())
+        root.put("fieldUpdatedAt", stampAndLoadFieldTs(root, capturedTimestamps))
 
         return root.toString()
     }
@@ -957,13 +971,23 @@ class CloudSyncRepository @Inject constructor(
         } else {
             payload
         }
+        val traktMerged = if (existingRemotePayload != null) {
+            mergeRemoteTraktTokens(groupOrderMerged, existingRemotePayload)
+        } else {
+            groupOrderMerged
+        }
+        val trackingMerged = if (existingRemotePayload != null) {
+            mergeRemoteTrackingPreferences(traktMerged, existingRemotePayload)
+        } else {
+            traktMerged
+        }
         // Field-level merge against the already-loaded remote: keep local fields we changed more
         // recently, but never overwrite a cloud field with an older local value. This is what stops
         // a stale device from reverting a peer's setting (even via the pull's pre-push).
         val effectivePayload = if (existingRemotePayload != null) {
-            mergeSettingsByTimestamp(baseStr = groupOrderMerged, otherStr = existingRemotePayload).json
+            mergeSettingsByTimestamp(baseStr = trackingMerged, otherStr = existingRemotePayload).json
         } else {
-            groupOrderMerged
+            trackingMerged
         }
 
         val payloadHash = try {
@@ -1035,6 +1059,119 @@ class CloudSyncRepository @Inject constructor(
             }
             local.toString()
         } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; localPayload }
+    }
+
+    /**
+     * Tracking routing is a profile-scoped domain rather than a normal scalar setting. Keep the
+     * newest per-profile selection while pushing so a device that was already open cannot replace
+     * a newer Trakt/Simkl choice with its stale snapshot.
+     */
+    private fun mergeRemoteTrackingPreferences(localPayload: String, remotePayload: String): String {
+        return try {
+            val localRoot = JSONObject(localPayload)
+            val remoteRoot = JSONObject(remotePayload)
+            val remoteSelections = remoteRoot.optJSONObject("mdbListSyncByProfile")
+                ?: return localPayload
+            val localSelections = localRoot.optJSONObject("mdbListSyncByProfile")
+                ?: JSONObject().also { localRoot.put("mdbListSyncByProfile", it) }
+
+            val profileIds = remoteSelections.keys()
+            while (profileIds.hasNext()) {
+                val profileId = profileIds.next()
+                val remoteSelection = remoteSelections.optJSONObject(profileId) ?: continue
+                val localSelection = localSelections.optJSONObject(profileId)
+                if (localSelection == null) {
+                    localSelections.put(profileId, JSONObject(remoteSelection.toString()))
+                    continue
+                }
+
+                mergeTrackingRouting(localSelection, remoteSelection)
+                mergeTrackingCredential(
+                    local = localSelection,
+                    remote = remoteSelection,
+                    credentialField = "simklAccessToken",
+                    timestampField = "simklCredentialUpdatedAt"
+                )
+                mergeTrackingCredential(
+                    local = localSelection,
+                    remote = remoteSelection,
+                    credentialField = "mdbListApiKey",
+                    timestampField = "mdbListCredentialUpdatedAt"
+                )
+            }
+            localRoot.toString()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            localPayload
+        }
+    }
+
+    private fun mergeRemoteTraktTokens(localPayload: String, remotePayload: String): String {
+        return try {
+            val localRoot = JSONObject(localPayload)
+            val remoteTokens = JSONObject(remotePayload).optJSONObject("traktTokens")
+                ?: return localPayload
+            val localTokens = localRoot.optJSONObject("traktTokens")
+                ?: JSONObject().also { localRoot.put("traktTokens", it) }
+            val profileIds = remoteTokens.keys()
+            while (profileIds.hasNext()) {
+                val profileId = profileIds.next()
+                val remoteToken = remoteTokens.optJSONObject(profileId) ?: continue
+                val localToken = localTokens.optJSONObject(profileId)
+                val remoteUpdatedAt = remoteToken.optLong("updatedAt", 0L)
+                val localUpdatedAt = localToken?.optLong("updatedAt", 0L) ?: 0L
+                if (localToken == null || remoteUpdatedAt >= localUpdatedAt) {
+                    localTokens.put(profileId, JSONObject(remoteToken.toString()))
+                }
+            }
+            localRoot.toString()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            localPayload
+        }
+    }
+
+    private fun mergeTrackingRouting(local: JSONObject, remote: JSONObject) {
+        val remoteUpdatedAt = remote.optLong("updatedAt", 0L)
+        val localUpdatedAt = local.optLong("updatedAt", 0L)
+        if (remoteUpdatedAt < localUpdatedAt) return
+
+        listOf(
+            "provider",
+            "watchlistReadMode",
+            "continueWatchingReadMode",
+            "watchedReadMode",
+            "writeToTrakt",
+            "writeToSimkl",
+            "updatedAt"
+        ).forEach { field -> copyOptionalJsonField(local, remote, field) }
+    }
+
+    private fun mergeTrackingCredential(
+        local: JSONObject,
+        remote: JSONObject,
+        credentialField: String,
+        timestampField: String
+    ) {
+        val remoteUpdatedAt = remote.optLong(timestampField, 0L)
+        val localUpdatedAt = local.optLong(timestampField, 0L)
+        val remoteIsModern = remoteUpdatedAt > 0L
+        val remoteWins = remoteUpdatedAt > localUpdatedAt ||
+            (remoteIsModern && remoteUpdatedAt == localUpdatedAt)
+        val legacyRemoteCanRestore = remoteUpdatedAt == 0L && localUpdatedAt == 0L &&
+            remote.has(credentialField)
+        if (!remoteWins && !legacyRemoteCanRestore) return
+
+        copyOptionalJsonField(local, remote, credentialField)
+        copyOptionalJsonField(local, remote, timestampField)
+    }
+
+    private fun copyOptionalJsonField(target: JSONObject, source: JSONObject, field: String) {
+        if (source.has(field)) {
+            target.put(field, source.get(field))
+        } else {
+            target.remove(field)
+        }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1204,21 +1341,15 @@ class CloudSyncRepository @Inject constructor(
         // Field-level merge BEFORE applying: overlay any local scalar setting that is NEWER than the
         // remote's onto the incoming payload, so a pull can't overwrite a not-yet-pushed local
         // change. `defaultSubtitle` is excluded (kept by its own subtitleSettingsUpdatedAt logic
-        // below). Skipped when the remote predates this feature (no `fieldUpdatedAt`) so rollout
-        // behaves exactly like today until every device is on the new code. The rest of this
-        // function then writes the merged values exactly as before.
-        val incomingHasFieldTs = try {
-            JSONObject(payload).optJSONObject("fieldUpdatedAt") != null
-        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; false }
-        val localSnapshotForMerge = if (incomingHasFieldTs) {
-            try { buildCloudSnapshotJson() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
-        } else {
-            null
-        }
+        // below). Legacy payloads have timestamp zero; they must not undo a newer local deletion.
+        // The rest of this function writes the merged values exactly as before.
+        val localSnapshotForMerge = try {
+            buildCloudSnapshotJson()
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; null }
         val settingsMerge = localSnapshotForMerge?.let {
             mergeSettingsByTimestamp(baseStr = payload, otherStr = it)
         }
-        val preservedLocalSettings = settingsMerge?.otherWonKeys?.isNotEmpty() == true
+        var preservedLocalSettings = settingsMerge?.otherWonKeys?.isNotEmpty() == true
         val root = JSONObject(settingsMerge?.json ?: payload)
 
         val fallbackDefaultSubtitle = root.optString("defaultSubtitle", "Off")
@@ -1335,6 +1466,7 @@ class CloudSyncRepository @Inject constructor(
                         prefs[clockFormatKeyFor(profileId)] = state.clockFormat
                         prefs[showBudgetKeyFor(profileId)] = state.showBudget
                         prefs[showEpisodeRatingsKeyFor(profileId)] = state.showEpisodeRatings
+                        prefs[iptvFavoritesOnHomeKeyFor(profileId)] = state.iptvFavoritesOnHome
                         state.showLoadingStats?.let { prefs[showLoadingStatsKeyFor(profileId)] = it }
                         prefs[spoilerBlurKeyFor(profileId)] = state.spoilerBlurEnabled
                         prefs[volumeBoostDbKeyFor(profileId)] = state.volumeBoostDb.coerceIn(0, 15).toString()
@@ -1641,7 +1773,10 @@ class CloudSyncRepository @Inject constructor(
                 val type = TypeToken.getParameterized(Map::class.java, String::class.java, IptvCloudProfileState::class.java).type
                 val map: Map<String, IptvCloudProfileState> = gson.fromJson(json, type) ?: emptyMap()
                 map.forEach { (profileId, state) ->
-                    iptvRepository.importCloudConfigForProfile(profileId, state)
+                    val preserved = iptvRepository.importCloudConfigForProfile(
+                        profileId, state, root.optJSONObject("fieldUpdatedAt") ?: JSONObject(),
+                    )
+                    if (preserved) preservedLocalSettings = true
                     if (profileId == activeProfileId) {
                         importedActiveProfileIptv = true
                     }
@@ -1740,7 +1875,7 @@ class CloudSyncRepository @Inject constructor(
                     .orEmpty()
 
                 traktTokens.forEach { (profileId, token) ->
-                    if (profileId.isNotBlank() && token.accessToken.isNotBlank()) {
+                    if (profileId.isNotBlank() && !token.accessToken.isNullOrBlank()) {
                         traktProfiles.add(profileId)
                     }
                 }
@@ -1808,7 +1943,7 @@ class CloudSyncRepository @Inject constructor(
         // does not see remote-applied values as fresh local changes (ping-pong guard). If we
         // preserved a newer-local setting, mark dirty so it gets pushed up — safe now that push
         // merges by timestamp and can't revert a peer.
-        if (incomingHasFieldTs) {
+        if (root.has("fieldUpdatedAt")) {
             persistFieldStateFromApplied(root)
             if (preservedLocalSettings) markLocalStateDirty()
         }

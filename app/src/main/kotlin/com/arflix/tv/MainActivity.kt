@@ -60,6 +60,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.arflix.tv.ui.components.AppBottomBar
+import com.arflix.tv.ui.components.shouldShowBottomBar
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -72,7 +73,7 @@ import com.arflix.tv.util.ACCENT_COLOR_KEY
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.LocalHasTouchScreen
 import com.arflix.tv.util.LocalAppLanguage
-import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
+import com.arflix.tv.util.resolveAppLanguage
 import com.arflix.tv.util.detectDeviceType
 import com.arflix.tv.util.deviceHasTouchScreen
 import com.arflix.tv.util.findActivity
@@ -294,17 +295,16 @@ class MainActivity : ComponentActivity() {
             val activeProfileId by remember {
                 profileRepository.get().activeProfileId
             }.collectAsStateWithLifecycle(initialValue = null)
+            val initialAppLanguage = remember {
+                getSharedPreferences("app_locale", Context.MODE_PRIVATE)
+                    .getString("locale_tag", null)?.takeIf { it.isNotBlank() }
+                    ?: com.arflix.tv.util.defaultAppLanguage()
+            }
             val appLanguage by remember(activeProfileId) {
                 this@MainActivity.settingsDataStore.data.map { prefs ->
-                    val fallbackLanguage = prefs[LAST_APP_LANGUAGE_KEY] ?: "en-US"
-                    val profileId = activeProfileId
-                    if (profileId.isNullOrBlank()) {
-                        fallbackLanguage
-                    } else {
-                        prefs[stringPreferencesKey("profile_${profileId}_content_language")] ?: fallbackLanguage
-                    }
+                    resolveAppLanguage(prefs, activeProfileId)
                 }
-            }.collectAsStateWithLifecycle(initialValue = "en-US")
+            }.collectAsStateWithLifecycle(initialValue = initialAppLanguage)
             LaunchedEffect(appLanguage) {
                 mediaRepository.get().contentLanguage = appLanguage
             }
@@ -634,12 +634,14 @@ fun ArflixApp(
     // Hide bottom bar on player, profile selection, and login screens.
     // TV route shows the bottom bar on mobile (touch devices) for easy navigation;
     // the fullscreen IPTV player uses BackHandler to return to the guide.
-    val showBottomBar = isMobile && activeProfile != null &&
-        currentRoute != null &&
-        !iptvFullscreen &&
-        !currentRoute.contains("player") &&
-        !currentRoute.contains("profile") &&
-        !currentRoute.contains("login")
+    val isPlayerScreen = currentRoute?.startsWith("player") == true
+    val isFullscreenRoute = isPlayerScreen || iptvFullscreen
+    val showBottomBar = shouldShowBottomBar(
+        isMobile = isMobile,
+        currentRoute = currentRoute,
+        isFullscreenRoute = isFullscreenRoute
+    )
+    val applySystemBarsPadding = isMobile && !isFullscreenRoute
 
     val isPlayerRoute = iptvFullscreen || currentRoute?.contains("player") == true
 
@@ -677,11 +679,10 @@ fun ArflixApp(
                     )
                 }
             )
-            // On mobile, push content below the status bar (except player).
-            // Applied AFTER background so the gradient fills behind the bars.
-            // statusBarsPadding() reads live WindowInsets, so it automatically
-            // becomes 0 when the player hides the bars.
-            .then(if (isMobile && !isPlayerRoute) Modifier.statusBarsPadding() else Modifier)
+            // On mobile, push non-player screens between the status bar and navigation bar.
+            // Player screens remain completely stable edge-to-edge without jumping when
+            // transient system bars appear or disappear.
+            .then(if (applySystemBarsPadding) Modifier.systemBarsPadding() else Modifier)
     ) {
         Box(modifier = Modifier.weight(1f)) {
             AppNavigation(

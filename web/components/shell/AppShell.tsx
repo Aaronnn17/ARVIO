@@ -19,6 +19,7 @@ import { NoAddonsPrompt } from "./NoAddonsPrompt";
 import { EntitlementGate } from "./Paywall";
 import { Toast } from "./Toast";
 import { TopNav } from "./TopNav";
+import { PremiumUsage } from "./PremiumUsage";
 
 const ACCENTS: Record<string, string> = {
   arctic: "#ededed",
@@ -108,6 +109,7 @@ export function AppShell() {
       <ExternalPlaybackPrompt />
       <MediaContextMenu />
       <NoAddonsPrompt />
+      <PremiumUsage />
       <BackHandler />
       <Toast />
     </main>

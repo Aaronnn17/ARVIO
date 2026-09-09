@@ -10,6 +10,8 @@ import com.arflix.tv.data.model.IptvChannel
  */
 object LiveTvStartup {
 
+    enum class GuideBackAction { OPEN_CATEGORIES, EXIT_TV }
+
     /**
      * Which channel Live TV should open on.
      *
@@ -35,6 +37,62 @@ object LiveTvStartup {
         if (availableChannelIds.isEmpty()) return remembered
         return remembered.takeIf { it in availableChannelIds }
     }
+
+    /**
+     * Resolves the first playable channel after the filtered guide has loaded.
+     * Explicit navigation wins, followed by the persisted session channel,
+     * then a favorite and finally provider order.
+     */
+    fun chooseStartupChannelId(
+        availableChannelIds: Set<String>,
+        firstAvailableChannelId: String?,
+        explicitChannelId: String?,
+        sessionLastChannelId: String?,
+        hasOpenedBefore: Boolean,
+        favoriteChannelIds: List<String>,
+        isFullyLoaded: Boolean,
+        resolvedSessionChannelId: String? = null,
+    ): String? {
+        // Prefer the in-window match so the guide can also scroll to it.
+        explicitChannelId
+            ?.takeIf { it in availableChannelIds }
+            ?.let { return it }
+        // Still honour it when it is NOT in availableChannelIds. A caller-supplied channel
+        // (Home's Favorite TV row, launcher deep links) is an instruction, not a hint, and
+        // on a large playlist it is routinely outside the currently paged category window.
+        // Falling through from here returned firstAvailableChannelId — a completely
+        // unrelated channel — which is what made picking a favourite on Home tune channel
+        // #1. LiveTvScreen hydrates an out-of-window channel by id from the store, so
+        // returning it here is safe.
+        if (explicitChannelId != null) return explicitChannelId
+
+        if (hasOpenedBefore) {
+            // A validated SQLite lookup is authoritative even when the saved
+            // channel is not among the first 144 rows of the selected category.
+            resolvedSessionChannelId?.takeIf { it.isNotBlank() && it == sessionLastChannelId }
+                ?.let { return it }
+            sessionLastChannelId
+                ?.takeIf { it.isNotBlank() && it in availableChannelIds }
+                ?.let { return it }
+            if (!sessionLastChannelId.isNullOrBlank() && !isFullyLoaded) return null
+        }
+
+        favoriteChannelIds.firstOrNull { it in availableChannelIds }?.let { return it }
+        if (favoriteChannelIds.isNotEmpty() && !isFullyLoaded) return null
+        return firstAvailableChannelId
+    }
+
+    fun resumeCategoryId(lastGroupName: String?, availableCategoryIds: Set<String>): String {
+        val remembered = lastGroupName?.trim().orEmpty()
+        return remembered.takeIf { it.isNotBlank() && (it == "all" || it in availableCategoryIds) }
+            ?: "all"
+    }
+
+    fun guideBackAction(isTouchDevice: Boolean, categoryDrawerOpen: Boolean): GuideBackAction =
+        if (!isTouchDevice && !categoryDrawerOpen) GuideBackAction.OPEN_CATEGORIES else GuideBackAction.EXIT_TV
+
+    fun anchoredWindowOffset(channelIndex: Int, visibleRowsBeforeAnchor: Int): Int =
+        if (channelIndex < 0) 0 else (channelIndex - visibleRowsBeforeAnchor.coerceAtLeast(0)).coerceAtLeast(0)
 
     /**
      * Whether the sidebar may claim D-pad focus right now.

@@ -20,15 +20,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
-import java.util.zip.GZIPInputStream
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Response
 import okhttp3.ResponseBody
@@ -74,7 +71,11 @@ object OkHttpProvider {
      * Provides the application context needed for the disk cache directory.
      */
     fun init(context: Context) {
-        appContext = context.applicationContext
+        // `applicationContext` is null when called from Application.attachBaseContext — the
+        // Application is not registered with the framework yet. That is precisely where this has
+        // to run (Hilt builds Retrofit, and therefore this client, inside Application.onCreate's
+        // super call), so fall back to the context we were handed: it is the Application itself.
+        appContext = context.applicationContext ?: context
     }
 
     @Volatile
@@ -105,8 +106,6 @@ object OkHttpProvider {
 
     private val appConnectionPool = ConnectionPool(32, 5, TimeUnit.MINUTES)
     private val playbackConnectionPool = ConnectionPool(16, 5, TimeUnit.MINUTES)
-    private const val MAX_LENIENT_GZIP_BYTES = 16L * 1024L * 1024L
-    private const val MAX_GZIP_LAYERS = 3
 
     @Volatile
     private var appClient: OkHttpClient? = null
@@ -191,65 +190,23 @@ object OkHttpProvider {
         }
 
         val body = response.body ?: return@Interceptor response
-        val rawBytes = try {
-            body.readBytesWithLimit(MAX_LENIENT_GZIP_BYTES)
+        val decodedBody = try {
+            streamingJsonGzipBody(body)
         } catch (_: IOException) {
-            return@Interceptor gzipErrorResponse(response, "Compressed API response could not be read.")
+            return@Interceptor gzipErrorResponse(response, "Compressed API response could not be decoded.")
         }
-
-        val decodedBytes = decodeGzipLayers(rawBytes)
-            ?: return@Interceptor gzipErrorResponse(response, "Compressed API response could not be decoded.")
 
         response.newBuilder()
             .removeHeader("Content-Encoding")
             .removeHeader("Content-Length")
-            .body(decodedBytes.toResponseBody(body.contentType()))
+            .body(decodedBody)
             .build()
     }
 
     private fun shouldDecodeLenientJsonGzip(response: Response): Boolean {
         if (!response.header("Content-Encoding").equals("gzip", ignoreCase = true)) return false
-        val contentLength = response.body?.contentLength() ?: -1L
-        if (contentLength > MAX_LENIENT_GZIP_BYTES) return false
         val contentType = response.header("Content-Type").orEmpty().lowercase()
         return "json" in contentType
-    }
-
-    private fun ResponseBody.readBytesWithLimit(maxBytes: Long): ByteArray {
-        byteStream().use { input ->
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            var total = 0L
-            while (true) {
-                val read = input.read(buffer)
-                if (read == -1) break
-                total += read.toLong()
-                if (total > maxBytes) {
-                    throw IOException("Compressed API response exceeded $maxBytes bytes")
-                }
-                output.write(buffer, 0, read)
-            }
-            return output.toByteArray()
-        }
-    }
-
-    private fun decodeGzipLayers(rawBytes: ByteArray): ByteArray? {
-        var bytes = rawBytes
-        repeat(MAX_GZIP_LAYERS) {
-            if (!bytes.hasGzipMagic()) return bytes
-            bytes = try {
-                GZIPInputStream(ByteArrayInputStream(bytes)).use { it.readBytes() }
-            } catch (e: java.io.IOException) {
-                null
-            } ?: return null
-        }
-        return bytes.takeUnless { it.hasGzipMagic() }
-    }
-
-    private fun ByteArray.hasGzipMagic(): Boolean {
-        return size >= 2 &&
-            this[0].toInt() and 0xff == 0x1f &&
-            this[1].toInt() and 0xff == 0x8b
     }
 
     private fun gzipErrorResponse(response: Response, message: String): Response {
@@ -318,7 +275,14 @@ object OkHttpProvider {
 
         appContext?.let { ctx ->
             builder.cache(getOrCreateHttpCache(ctx))
-        }
+            // Never persist a failure. A transient 5xx or a rate-limit 429 carrying a cacheable
+            // header would otherwise be replayed from disk for its whole stated lifetime, long
+            // after the server recovered.
+            builder.addNetworkInterceptor(noCacheErrorsInterceptor)
+        } ?: Log.w(
+            TAG,
+            "API client built without app context — HTTP disk cache disabled for this process"
+        )
 
         return builder.build()
     }
@@ -361,6 +325,16 @@ object OkHttpProvider {
 
     private fun isSafeHeaderValue(value: String): Boolean {
         return value.all { ch -> ch == '\t' || ch.code in 32..126 }
+    }
+
+    /** Marks unsuccessful responses `no-store` so the disk cache never keeps a failure. */
+    private val noCacheErrorsInterceptor = Interceptor { chain ->
+        val response = chain.proceed(chain.request())
+        if (response.isSuccessful) {
+            response
+        } else {
+            response.newBuilder().header("Cache-Control", "no-store").build()
+        }
     }
 
     private fun getOrCreateHttpCache(context: Context): Cache {

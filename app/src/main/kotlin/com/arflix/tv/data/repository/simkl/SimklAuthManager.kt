@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
+class SimklPinExpiredException(message: String) : Exception(message)
+
 sealed class SimklPinAuthState {
     object Idle : SimklPinAuthState()
     data class CodeRequested(val userCode: String, val verificationUrl: String, val expiresIn: Int) : SimklPinAuthState()
@@ -43,9 +45,11 @@ class SimklAuthManager @Inject constructor(
         val response = simklApi.pollPinToken(userCode, effectiveClientId)
         if (response.result.equals("OK", ignoreCase = true) && !response.accessToken.isNullOrBlank()) {
             syncProviderStore.setSimklAccessToken(response.accessToken)
-            syncProviderStore.setMdbListApiKey(null)
             syncProviderStore.onProviderConnected(SyncProvider.SIMKL)
             return true
+        }
+        if (response.result.equals("KO", ignoreCase = true) || !response.deviceCode.isNullOrBlank()) {
+            throw SimklPinExpiredException("Simkl PIN expired or invalid")
         }
         return false
     }

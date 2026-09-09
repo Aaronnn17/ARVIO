@@ -179,11 +179,11 @@ function setScopedValue<T>(root: RawPayload, key: string, profileId: string, val
 // under `fieldUpdatedAt` ("g:accentColor", "p:<profileId>:autoPlayNext"). Only the fields this web
 // session actually changed get their timestamp bumped, so the web can't revert a phone's newer
 // change and its own changes are respected by the Android merge.
-function bumpFieldTs(root: RawPayload, key: string) {
+function bumpFieldTs(root: RawPayload, key: string, changedAt = Date.now()) {
   const map = (root.fieldUpdatedAt && typeof root.fieldUpdatedAt === "object"
     ? root.fieldUpdatedAt
     : {}) as Record<string, number>;
-  map[key] = Date.now();
+  map[key] = changedAt;
   root.fieldUpdatedAt = map;
 }
 
@@ -530,8 +530,8 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
   ]);
   return {
     iptvPlaylists: playlists,
-    favoriteChannelIds: stringArray(state.favoriteChannels).length ? stringArray(state.favoriteChannels) : stringArray(rootState.iptvFavoriteChannels),
-    favoriteGroupIds: stringArray(state.favoriteGroups).length ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
+    favoriteChannelIds: value !== undefined ? stringArray(state.favoriteChannels) : stringArray(rootState.iptvFavoriteChannels),
+    favoriteGroupIds: value !== undefined ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
     hiddenGroupIds: stringArray(state.hiddenGroups),
     groupOrder: stringArray(state.groupOrder),
     iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
@@ -625,10 +625,13 @@ function androidContinueWatchingItems(root: RawPayload, profileId?: string | nul
 // next read is fresh.
 let rawPayloadCache: { userId: string; at: number; payload: RawPayload } | null = null;
 let rawPayloadInFlight: { userId: string; promise: Promise<RawPayload> } | null = null;
+let rawPayloadGeneration = 0;
 const RAW_PAYLOAD_TTL_MS = 5_000;
 
 export function invalidateRawPayloadCache() {
   rawPayloadCache = null;
+  rawPayloadInFlight = null;
+  rawPayloadGeneration++;
 }
 
 async function fetchRawPayload(auth: AuthClient): Promise<RawPayload> {
@@ -653,35 +656,41 @@ export async function pullRawPayload(auth: AuthClient): Promise<RawPayload> {
   if (!auth.session) return {};
   const userId = auth.session.userId;
   if (rawPayloadCache && rawPayloadCache.userId === userId && Date.now() - rawPayloadCache.at < RAW_PAYLOAD_TTL_MS) {
-    return rawPayloadCache.payload;
+    return structuredClone(rawPayloadCache.payload);
   }
   if (rawPayloadInFlight && rawPayloadInFlight.userId === userId) {
-    return rawPayloadInFlight.promise;
+    return structuredClone(await rawPayloadInFlight.promise);
   }
+  const generation = rawPayloadGeneration;
   const promise = fetchRawPayload(auth)
     .then((payload) => {
-      rawPayloadCache = { userId, at: Date.now(), payload };
+      if (generation === rawPayloadGeneration && auth.session?.userId === userId) rawPayloadCache = { userId, at: Date.now(), payload };
       return payload;
     })
     .finally(() => {
       if (rawPayloadInFlight?.promise === promise) rawPayloadInFlight = null;
     });
   rawPayloadInFlight = { userId, promise };
-  return promise;
+  return structuredClone(await promise);
 }
 
 async function writeRawPayload(auth: AuthClient, payload: RawPayload) {
   if (!auth.session) return;
   payload.userId = auth.session.userId;
   payload.updatedAt = Date.now();
-  // The payload we just wrote is now authoritative — seed the read cache with it
-  // so an immediate follow-up read is served locally instead of round-tripping.
-  rawPayloadCache = { userId: auth.session.userId, at: Date.now(), payload };
+  const userId = auth.session.userId;
   if (canUseBackendSync(auth)) {
-    await backendRequest(auth, "account-sync-push", {
+    const result = await backendRequest<{ accepted?: boolean; reason?: string }>(auth, "account-sync-push", {
       method: "POST",
       body: JSON.stringify({ payload })
     });
+    if (result.accepted !== true) {
+      invalidateRawPayloadCache();
+      throw new Error("Cloud did not accept your changes. They remain queued on this device; retry sync.");
+    }
+    // The server merges concurrent device edits. Read its acknowledged result,
+    // not our submitted document (which may omit those edits).
+    if (auth.session?.userId === userId) invalidateRawPayloadCache();
     return;
   }
   await auth.supabase("/rest/v1/account_sync_state", {
@@ -693,6 +702,7 @@ async function writeRawPayload(auth: AuthClient, payload: RawPayload) {
       updated_at: new Date().toISOString()
     })
   });
+  invalidateRawPayloadCache();
 }
 
 /**
@@ -700,11 +710,24 @@ async function writeRawPayload(auth: AuthClient, payload: RawPayload) {
  * (e.g. Android's profiles / avatar images). Mirrors Android's
  * AuthRepository.mutateAccountSyncPayload.
  */
+const mutationQueues = new Map<string, Promise<void>>();
+
 export async function mutateCloudPayload(auth: AuthClient, mutator: (root: RawPayload) => void) {
   if (!auth.session) return;
-  const root = await pullRawPayload(auth);
-  mutator(root);
-  await writeRawPayload(auth, root);
+  const userId = auth.session.userId;
+  const task = (mutationQueues.get(userId) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    if (auth.session?.userId !== userId) throw new Error("Account changed before sync completed");
+    // A recent read cache can predate another device's change. Mutations must
+    // start from a fresh snapshot, not echo that stale cached account back.
+    invalidateRawPayloadCache();
+    const root = await pullRawPayload(auth);
+    if (auth.session?.userId !== userId) throw new Error("Account changed before sync completed");
+    mutator(root);
+    await writeRawPayload(auth, root);
+  });
+  mutationQueues.set(userId, task);
+  try { await task; }
+  finally { if (mutationQueues.get(userId) === task) mutationQueues.delete(userId); }
 }
 
 export async function pullCloudPayload(auth: AuthClient, profileId?: string | null): Promise<CloudPayload> {
@@ -791,6 +814,46 @@ export async function saveCloudAddons(
   });
 }
 
+function androidIptvSettings(settings: AppSettings): Record<string, unknown> {
+  return {
+    m3uUrl: settings.iptvPlaylists[0]?.m3uUrl ?? "",
+    epgUrl: settings.iptvPlaylists[0]?.epgUrl ?? "",
+    playlists: settings.iptvPlaylists,
+    stalkerPortalUrl: settings.iptvStalkerUrl,
+    stalkerMacAddress: settings.iptvStalkerMac,
+    favoriteChannels: settings.favoriteChannelIds,
+    favoriteGroups: settings.favoriteGroupIds,
+    hiddenGroups: settings.hiddenGroupIds,
+    groupOrder: settings.groupOrder,
+    sortOrder: settings.iptvSortOrder ?? "provider"
+  };
+}
+
+function mergeFavoriteEdits(remote: string[], local: string[], baseline: string[]): string[] {
+  const base = new Set(baseline);
+  const remoteSet = new Set(remote);
+  const localSet = new Set(local);
+  // Apply this device's additions/removals/order, retaining additions from
+  // other devices and not resurrecting favorites they have already removed.
+  return [...new Set([
+    ...local.filter((id) => !base.has(id) || remoteSet.has(id)),
+    ...remote.filter((id) => !base.has(id) && !localSet.has(id))
+  ])];
+}
+
+export function mergeIptvSettings(existing: Record<string, unknown>, settings: AppSettings, baseline?: AppSettings | null) {
+  const incoming = androidIptvSettings(settings);
+  const base = baseline ? androidIptvSettings(baseline) : null;
+  const merged = { ...existing };
+  for (const [field, value] of Object.entries(incoming)) {
+    if (base && sameFieldValue(value, base[field])) continue;
+    merged[field] = base && field in existing && (field === "favoriteChannels" || field === "favoriteGroups")
+      ? mergeFavoriteEdits(stringArray(existing[field]), stringArray(value), stringArray(base[field]))
+      : value;
+  }
+  return merged;
+}
+
 export async function saveCloudSettings(
   auth: AuthClient,
   settings: AppSettings,
@@ -800,7 +863,8 @@ export async function saveCloudSettings(
   // The web session's last-synced settings (same profile). Used to detect which fields THIS session
   // actually changed, so we only assert (and timestamp) those — never reverting a field a phone
   // changed. Null → treat every field as changed (bootstrap / after a profile switch).
-  baseline?: AppSettings | null
+  baseline?: AppSettings | null,
+  changedAt = Date.now()
 ) {
   await mutateCloudPayload(auth, (root) => {
     root.version = 2;
@@ -830,7 +894,7 @@ export async function saveCloudSettings(
     for (const [rootKey, newVal, baseVal] of globalFields) {
       if (!baseline || !sameFieldValue(newVal, baseVal)) {
         root[rootKey] = newVal;
-        bumpFieldTs(root, `g:${rootKey}`);
+        bumpFieldTs(root, `g:${rootKey}`, changedAt);
       }
     }
     root.focusBorderColor = settings.accentColor; // mirror of accentColor (not a merge key)
@@ -849,14 +913,16 @@ export async function saveCloudSettings(
     root.qualityFilters = settings.qualityFilters;
     root.catalogs = settings.catalogs;
     root.hiddenPreinstalledCatalogs = settings.hiddenCatalogIds;
-    root.iptvFavoriteChannels = settings.favoriteChannelIds;
-    root.iptvFavoriteGroups = settings.favoriteGroupIds;
-    root.iptvStalkerUrl = settings.iptvStalkerUrl;
-    root.iptvStalkerMac = settings.iptvStalkerMac;
-    if (settings.iptvPlaylists[0]) {
-      root.iptvM3uUrl = settings.iptvPlaylists[0].m3uUrl;
-      root.iptvEpgUrl = settings.iptvPlaylists[0].epgUrl ?? "";
-    }
+
+    const iptvExisting = objectRecord(scopedValue(root, "iptvByProfile", profileId));
+    const iptv = mergeIptvSettings(iptvExisting, settings, baseline);
+    root.iptvFavoriteChannels = iptv.favoriteChannels;
+    root.iptvFavoriteGroups = iptv.favoriteGroups;
+    root.iptvStalkerUrl = iptv.stalkerPortalUrl;
+    root.iptvStalkerMac = iptv.stalkerMacAddress;
+    root.iptvM3uUrl = iptv.m3uUrl;
+    root.iptvEpgUrl = iptv.epgUrl;
+    root.settings = { ...sanitizedSettings, ...iptvFromAndroid(iptv) };
 
     if (profiles.length) root.profiles = profiles;
     if (profileId) {
@@ -873,14 +939,14 @@ export async function saveCloudSettings(
         if (skip.has(field)) continue;
         if (!baseProfile || !sameFieldValue(newProfile[field], baseProfile[field])) {
           merged[field] = newProfile[field];
-          bumpFieldTs(root, `p:${profileId}:${field}`);
+          bumpFieldTs(root, `p:${profileId}:${field}`, changedAt);
         }
       }
       // defaultSubtitle uses Android's own subtitleSettingsUpdatedAt LWW — assert it only when the
       // web actually changed it, bumping that timestamp so Android adopts it.
       if (!baseline || !sameFieldValue(settings.defaultSubtitle, baseline.defaultSubtitle)) {
         merged.defaultSubtitle = settings.defaultSubtitle || "Off";
-        merged.subtitleSettingsUpdatedAt = Date.now();
+        merged.subtitleSettingsUpdatedAt = changedAt;
       }
       setScopedValue(root, "profileSettingsById", profileId, merged);
       // NOTE: settings saves must NOT touch add-ons. Android now reconciles add-ons to the cloud
@@ -889,18 +955,14 @@ export async function saveCloudSettings(
       setScopedValue(root, "catalogsByProfile", profileId, settings.catalogs);
       setScopedValue(root, "hiddenPreinstalledByProfile", profileId, settings.hiddenCatalogIds);
       setScopedValue(root, "hiddenHomeServerByProfile", profileId, settings.hiddenHomeServerCatalogIds);
-      setScopedValue(root, "iptvByProfile", profileId, {
-        m3uUrl: settings.iptvPlaylists[0]?.m3uUrl ?? "",
-        epgUrl: settings.iptvPlaylists[0]?.epgUrl ?? "",
-        playlists: settings.iptvPlaylists,
-        stalkerPortalUrl: settings.iptvStalkerUrl,
-        stalkerMacAddress: settings.iptvStalkerMac,
-        favoriteChannels: settings.favoriteChannelIds,
-        favoriteGroups: settings.favoriteGroupIds,
-        hiddenGroups: settings.hiddenGroupIds,
-        groupOrder: settings.groupOrder,
-        sortOrder: settings.iptvSortOrder ?? "provider"
-      });
+      const newIptv = androidIptvSettings(settings);
+      const baseIptv = baseline ? androidIptvSettings(baseline) : null;
+      for (const [field, value] of Object.entries(newIptv)) {
+        if (!baseIptv || !sameFieldValue(value, baseIptv[field])) {
+          bumpFieldTs(root, `i:${profileId}:${field}`, changedAt);
+        }
+      }
+      setScopedValue(root, "iptvByProfile", profileId, iptv);
     }
   });
 }
@@ -921,6 +983,7 @@ export async function pullCloudProfiles(auth: AuthClient): Promise<CloudProfiles
 }
 
 export type CloudTrackingProvider = "NONE" | "TRAKT" | "MDBLIST" | "SIMKL";
+export type CloudTrackingDomain = "routing" | "trakt" | "simkl" | "mdblist";
 
 export interface CloudTrackingSelection {
   provider: CloudTrackingProvider;
@@ -928,6 +991,7 @@ export interface CloudTrackingSelection {
   mdbListApiKey: string | null;
   simklToken: SimklToken | null;
   trackingPreferences?: TrackingPreferences;
+  changedDomains?: CloudTrackingDomain[];
 }
 
 export interface CloudTrackingSnapshot extends CloudTrackingSelection {
@@ -972,10 +1036,17 @@ function readCloudTraktToken(root: RawPayload, profileId: string): TraktToken | 
 
 function readCloudSimklToken(root: RawPayload, profileId: string): SimklToken | null {
   const directTokens = objectRecord<{ access_token?: string; accessToken?: string }>(root.simklTokens);
-  const selections = objectRecord<{ provider?: string; simklAccessToken?: string }>(root.mdbListSyncByProfile);
+  const selections = objectRecord<{
+    provider?: string;
+    simklAccessToken?: string;
+    simklCredentialUpdatedAt?: number;
+  }>(root.mdbListSyncByProfile);
   const direct = directTokens[profileId];
   const selection = selections[profileId];
-  const accessToken = direct?.access_token ?? direct?.accessToken ?? selection?.simklAccessToken;
+  const hasCanonicalCredentialState = Number(selection?.simklCredentialUpdatedAt ?? 0) > 0;
+  const accessToken = hasCanonicalCredentialState
+    ? selection?.simklAccessToken
+    : direct?.access_token ?? direct?.accessToken ?? selection?.simklAccessToken;
   return accessToken ? { access_token: accessToken } : null;
 }
 
@@ -1024,9 +1095,13 @@ export async function pullCloudTrackingSelection(
         ? "MDBLIST"
         : "NONE";
   const storedProviderCount = Number(Boolean(traktToken)) + Number(Boolean(simklToken)) + Number(Boolean(mdbListApiKey));
-  const defaultMode: TrackingReadMode = traktToken && simklToken
-      ? "both"
-      : traktToken
+  const defaultMode: TrackingReadMode = provider === "TRAKT"
+      ? "trakt"
+      : provider === "SIMKL"
+        ? "simkl"
+        : provider === "MDBLIST"
+          ? "mdblist"
+          : traktToken
         ? "trakt"
         : simklToken
           ? "simkl"
@@ -1065,18 +1140,38 @@ export async function saveCloudTrackingSelection(
 ) {
   if (!profileId) return;
   await mutateCloudPayload(auth, (root) => {
-    const traktTokens = objectRecord<unknown>(root.traktTokens);
-    const simklTokens = objectRecord<unknown>(root.simklTokens);
+    const traktTokens = objectRecord<Record<string, unknown>>(root.traktTokens);
+    const simklTokens = objectRecord<Record<string, unknown>>(root.simklTokens);
     const selections = objectRecord<Record<string, unknown>>(root.mdbListSyncByProfile);
-    const defaultMode: TrackingReadMode = selection.traktToken && selection.simklToken
-        ? "both"
-        : selection.traktToken
-          ? "trakt"
-          : selection.simklToken
-            ? "simkl"
-            : selection.mdbListApiKey
-              ? "mdblist"
-              : "auto";
+    const changedDomains = new Set<CloudTrackingDomain>(
+      selection.changedDomains ?? ["routing", "trakt", "simkl", "mdblist"]
+    );
+    const updatedAt = Date.now();
+    const previousSelection = selections[profileId] ?? {};
+    const previousTraktToken = traktTokens[profileId] ?? {};
+    const incomingTraktAccessToken = selection.traktToken?.access_token;
+    const previousTraktAccessToken = previousTraktToken.accessToken ?? previousTraktToken.access_token;
+    const writeTraktCredential = changedDomains.has("trakt") || Boolean(
+      incomingTraktAccessToken && incomingTraktAccessToken !== previousTraktAccessToken
+    );
+    const incomingSimklAccessToken = selection.simklToken?.access_token;
+    const previousSimklAccessToken = previousSelection.simklAccessToken;
+    const writeSimklCredential = changedDomains.has("simkl") || Boolean(
+      incomingSimklAccessToken && incomingSimklAccessToken !== previousSimklAccessToken
+    );
+    const defaultMode: TrackingReadMode = selection.provider === "TRAKT"
+        ? "trakt"
+        : selection.provider === "SIMKL"
+          ? "simkl"
+          : selection.provider === "MDBLIST"
+            ? "mdblist"
+            : selection.traktToken
+              ? "trakt"
+              : selection.simklToken
+                ? "simkl"
+                : selection.mdbListApiKey
+                  ? "mdblist"
+                  : "auto";
     const preferences = selection.trackingPreferences ?? {
       watchlistReadMode: defaultMode,
       continueWatchingReadMode: defaultMode,
@@ -1085,7 +1180,7 @@ export async function saveCloudTrackingSelection(
       writeToSimkl: Boolean(selection.simklToken)
     };
 
-    if (selection.traktToken) {
+    if (writeTraktCredential && selection.traktToken) {
       const token = selection.traktToken;
       traktTokens[profileId] = {
         accessToken: token.access_token,
@@ -1093,34 +1188,53 @@ export async function saveCloudTrackingSelection(
         expiresAt: token.expires_at,
         access_token: token.access_token,
         refresh_token: token.refresh_token,
-        expires_at: token.expires_at
+        expires_at: token.expires_at,
+        updatedAt
       };
-    } else {
-      delete traktTokens[profileId];
+    } else if (writeTraktCredential) {
+      traktTokens[profileId] = { updatedAt };
     }
-    if (selection.simklToken?.access_token) {
+    if (writeSimklCredential && selection.simklToken?.access_token) {
       const token = selection.simklToken;
       simklTokens[profileId] = {
         access_token: token.access_token,
-        accessToken: token.access_token
+        accessToken: token.access_token,
+        updatedAt
       };
-    } else {
-      delete simklTokens[profileId];
+    } else if (writeSimklCredential) {
+      simklTokens[profileId] = { updatedAt };
     }
 
-    selections[profileId] = {
-      provider: selection.provider,
-      ...(selection.mdbListApiKey?.trim() ? { mdbListApiKey: selection.mdbListApiKey.trim() } : {}),
-      ...(selection.simklToken?.access_token ? { simklAccessToken: selection.simklToken.access_token } : {}),
-      watchlistReadMode: preferences.watchlistReadMode.toUpperCase(),
-      continueWatchingReadMode: preferences.continueWatchingReadMode.toUpperCase(),
-      watchedReadMode: preferences.watchedReadMode.toUpperCase(),
-      writeToTrakt: preferences.writeToTrakt,
-      writeToSimkl: preferences.writeToSimkl
-    };
+    const nextSelection = { ...previousSelection };
+    if (changedDomains.has("routing")) {
+      Object.assign(nextSelection, {
+        provider: selection.provider,
+        watchlistReadMode: preferences.watchlistReadMode.toUpperCase(),
+        continueWatchingReadMode: preferences.continueWatchingReadMode.toUpperCase(),
+        watchedReadMode: preferences.watchedReadMode.toUpperCase(),
+        writeToTrakt: preferences.writeToTrakt,
+        writeToSimkl: preferences.writeToSimkl,
+        updatedAt
+      });
+    }
+    if (changedDomains.has("mdblist")) {
+      const key = selection.mdbListApiKey?.trim();
+      if (key) nextSelection.mdbListApiKey = key;
+      else delete nextSelection.mdbListApiKey;
+      nextSelection.mdbListCredentialUpdatedAt = updatedAt;
+    }
+    if (writeSimklCredential) {
+      const token = selection.simklToken?.access_token;
+      if (token) nextSelection.simklAccessToken = token;
+      else delete nextSelection.simklAccessToken;
+      nextSelection.simklCredentialUpdatedAt = updatedAt;
+    }
+    selections[profileId] = nextSelection;
 
     root.traktTokens = traktTokens;
-    root.traktLinked = Object.keys(traktTokens).length > 0;
+    root.traktLinked = Object.values(traktTokens).some((token) =>
+      Boolean(token?.accessToken ?? token?.access_token)
+    );
     root.simklTokens = simklTokens;
     root.mdbListSyncByProfile = selections;
   });
@@ -1228,6 +1342,10 @@ const liveAddonIdMarkers = [
   "sports"
 ];
 
+// Internal stream providers whose IDs contain "iptv" but serve on-demand
+// movies and episodes. Keep this exact so regular IPTV add-ons remain live.
+const explicitVodStreamAddonIds = new Set(["iptv_xtream_vod"]);
+
 const vodTypes = new Set(["movie", "film", "series", "show", "anime"]);
 const liveTypes = new Set(["tv", "channel", "channels", "live", "sport", "sports", "tvchannel", "live_tv", "livestream"]);
 
@@ -1241,6 +1359,7 @@ function addonTypes(addon: InstalledAddon): string[] {
 
 function isLiveAddonId(value?: string | null): boolean {
   const id = (value ?? "").trim().toLowerCase();
+  if (explicitVodStreamAddonIds.has(id)) return false;
   if (!id || id.includes("cinemeta") || id.includes("tmdb") || id.includes("torrentio")) return false;
   return liveAddonIdMarkers.some((marker) => id.includes(marker));
 }

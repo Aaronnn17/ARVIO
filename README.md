@@ -1,10 +1,73 @@
+
+<div align="center">
+
+  <img src="web/public/arvio-logo.svg" alt="ARVIO" width="150" />
+
+  <br />
+
+  <p>A modern, open-source media hub for Android TV, phones, tablets, and the web.</p>
+
+  <p>
+    Browse your own media sources with a unified experience across your devices.
+  </p>
+
+  <p>
+    <a href="https://github.com/ProdigyV21/ARVIO">GitHub</a>
+    ·
+    <a href="https://github.com/ProdigyV21/ARVIO/releases">Releases</a>
+    ·
+    <a href="https://web.arvio.tv">ARVIO Web</a>
+  </p>
+
+  <br />
+
+  <img src="https://img.shields.io/github/v/release/ProdigyV21/ARVIO?style=for-the-badge&logo=github" alt="Latest Version" />
+  <img src="https://img.shields.io/github/downloads/ProdigyV21/ARVIO/total?style=for-the-badge&logo=github" alt="Downloads" />
+  <img src="https://img.shields.io/github/stars/ProdigyV21/ARVIO?style=for-the-badge&logo=github" alt="Stars" />
+  <img src="https://img.shields.io/github/license/ProdigyV21/ARVIO?style=for-the-badge" alt="License" />
+
+  <br />
+
+  <img src="https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android" />
+  <img src="https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin" />
+  <img src="https://img.shields.io/badge/Jetpack%20Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose" />
+
+  <br />
+  <br />
+
+  <a href="https://web.arvio.tv">
+    <img src="https://img.shields.io/badge/ARVIO-Web%20App-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="ARVIO Web App" />
+  </a>
+
+  <br />
+  <br />
+
+ <a href="https://trendshift.io/repositories/28671?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-28671" target="_blank" rel="noopener noreferrer">
+    <img src="https://trendshift.io/api/badge/trendshift/repositories/28671/weekly?language=Kotlin" alt="ProdigyV21/ARVIO | Trendshift" width="250" height="55" />
+  </a>
+
+
+</div>
+
+
+
+---
+
 # ARVIO
 
 ARVIO is an Android media hub for TV, phone, and tablet form factors. This repository is maintained as a source-code and development mirror for the Android application.
 
 The app provides a media browser, player shell, profile support, optional cloud sync, IPTV playlist support, catalog configuration, home-server integrations, and integrations with user-configured sources. ARVIO does not host, store, sell, or distribute movies, series, live TV channels, playlists, streams, or other third-party media.
 
+## Self-Host ARVIO Web
+
+The webapp can run on your own computer or server **without an ARVIO Premium subscription**, using your own TMDB, Trakt, Simkl and other integration credentials. The paid hosted webapp is optional.
+
+Start with the [webapp setup guide](web/README.md): it includes Node.js and Docker Compose instructions, a self-hosted environment template, and a configuration checker. See [self-hosting details](web/docs/SELF-HOSTING.md) for security, updates and limitations. Local profiles are stored per browser; this setup does not provide cross-device ARVIO Cloud sync.
+
 ## Repository Purpose
+
+
 
 This GitHub repository is for:
 
@@ -38,6 +101,9 @@ It is not intended as an advertising page, download landing page, or content dis
 ARVIO is available on Google Play:
 
 [<img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" width="160">](https://play.google.com/store/apps/details?id=com.arvio.tv)
+
+
+
 
 ## Support ARVIO
 
@@ -77,11 +143,19 @@ The same ARVIO experience in the browser at [web.arvio.tv](https://web.arvio.tv)
 
 ARVIO is a media browser and player interface for user-configured sources. It works like a media player or browser: users provide their own services, playlists, addons, and URLs.
 
-This repository does not include hosted media content, bundled playlists, IPTV credentials, debrid accounts, third-party streaming catalogs, or links intended to enable unauthorized access to content. No movies, series, live TV channels, playlists, or other third-party media are hosted by this repository or by ARVIO.
+ARVIO does not supply a film, TV or live-channel subscription. Playback sources must be configured by the user. Catalog metadata and artwork do not grant viewing rights. Use only services and media you are authorized to access.
 
-Users are solely responsible for their usage and must comply with applicable local laws. If you believe content accessed through an external source violates copyright law, contact the actual file host, service provider, or source maintainer. The ARVIO repository and developers cannot remove content hosted by third parties.
+We review reports concerning material and links controlled by ARVIO. See [copyright reporting](COPYRIGHT.md) for how to contact us. Material hosted by an independent provider may also need to be reported to that provider; this does not prevent reporting an ARVIO-controlled link or asset to us.
 
-Contributors should not submit copyrighted media, credentials, private keys, access tokens, or links intended to enable unauthorized access to content.
+Contributors must not submit media without appropriate permission, credentials, private keys, access tokens, or links intended to enable unauthorized access to content. Public demonstration assets require documented permission, not just an API URL.
+
+### Metadata Credits
+
+<img src="app/src/main/assets/tmdb-logo.svg" alt="TMDB" width="100">
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.
+
+TMDB attribution does not establish rights to every image. Commercial uses of TMDB require the applicable agreement. Other services and trademarks belong to their respective owners; integration does not imply endorsement.
 
 ## Cloud Sync
 

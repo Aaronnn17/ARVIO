@@ -63,15 +63,19 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvNowNext
+import com.arflix.tv.data.model.IptvGuideHistory
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.ZoneId
@@ -108,11 +112,13 @@ internal fun FullscreenGuideOverlay(
 
     BackHandler(enabled = visible, onBack = onDismiss)
 
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val nowMillis = clockTickMillis
 
     val catchupSupported = remember(channel) { channel.supportsFullscreenCatchup() }
-    val pastWindowStart = nowMillis - 48L * 60L * 60_000L
-    val past = remember(guide, nowMillis, catchupSupported) {
+    val historyDays = IptvGuideHistory.days(channel.source).takeIf { it > 0 } ?: 3
+    val pastWindowStart = nowMillis - historyDays * IptvGuideHistory.DAY_MS
+    val past = remember(guide, nowMillis, catchupSupported, historyDays) {
         guide?.recent.orEmpty()
             .asSequence()
             .filter { it.endUtcMillis <= nowMillis && it.endUtcMillis >= pastWindowStart }
@@ -223,7 +229,11 @@ internal fun FullscreenGuideOverlay(
                         }
                     )
                     .onPreviewKeyEvent { ev ->
-                        if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionLeft) {
+                        // Panel sits on the end edge (right in LTR, left in RTL);
+                        // the "toward the video" key opens quick-zap either way.
+                        if (ev.type == KeyEventType.KeyDown &&
+                            ev.key.mirrorHorizontalForRtl(isRtl) == Key.DirectionLeft
+                        ) {
                             onLeftClick?.invoke()
                             true
                         } else {
@@ -320,7 +330,9 @@ private fun FullscreenGuideContent(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(if (isTouchDevice) 5.dp else 6.dp)) {
                     GuideChip(stringResource(R.string.live_label_ch, channel.number), LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
-                    GuideChip(channel.quality.label, LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
+                    if (channel.quality != Quality.UNKNOWN) {
+                        GuideChip(channel.quality.label, LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
+                    }
                     if (catchupSupported) {
                         GuideChip(stringResource(R.string.live_label_catchup), LiveColors.Bg, LiveColors.Accent)
                     }

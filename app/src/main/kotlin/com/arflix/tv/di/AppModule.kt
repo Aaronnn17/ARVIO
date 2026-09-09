@@ -45,8 +45,15 @@ object AppModule {
                 val lang = langPrefs.getString("locale_tag", "en-US") ?: "en-US"
 
                 // Only inject if it's not the default English. Map "iw" to "he".
+                //
+                // An explicit `language` from the call site wins. setQueryParameter used to
+                // overwrite it, which silently broke every deliberate request for a specific
+                // language: the English fallback in getTrailerKey re-sent the user's language and
+                // returned the same empty result (TMDB's /videos `language` filters the video
+                // records, so a Hebrew user saw no trailers at all), and fetchTitles' explicit
+                // language="en" came back localized.
                 val urlBuilder = originalHttpUrl.newBuilder()
-                if (lang != "en-US") {
+                if (lang != "en-US" && originalHttpUrl.queryParameter("language") == null) {
                     val tmdbLang = lang.replace("iw", "he").replace('_', '-')
                     urlBuilder.setQueryParameter("language", tmdbLang)
                 }
@@ -116,25 +123,35 @@ object AppModule {
 
                 val originalUrl = original.url
                 val urlBuilder = originalUrl.newBuilder()
-                if (originalUrl.queryParameter("client_id") == null) {
-                    urlBuilder.addQueryParameter("client_id", Constants.SIMKL_CLIENT_ID)
+                val rawVersion = com.arflix.tv.BuildConfig.VERSION_NAME
+                val cleanVersion = rawVersion.substringBefore("-")
+
+                if (Constants.SIMKL_CLIENT_ID.isNotBlank()) {
+                    urlBuilder.setQueryParameter("client_id", Constants.SIMKL_CLIENT_ID)
                 }
-                if (originalUrl.queryParameter("app-name") == null) {
-                    urlBuilder.addQueryParameter("app-name", "ARVIO")
-                }
-                if (originalUrl.queryParameter("app-version") == null) {
-                    urlBuilder.addQueryParameter("app-version", com.arflix.tv.BuildConfig.VERSION_NAME)
-                }
+                urlBuilder.setQueryParameter("app-name", "arvio")
+                urlBuilder.setQueryParameter("app-version", cleanVersion)
 
                 val requestBuilder = original.newBuilder()
                     .url(urlBuilder.build())
-                    .header("User-Agent", "ARVIO/${com.arflix.tv.BuildConfig.VERSION_NAME} (Android TV)")
+                    .header("User-Agent", "ARVIO/$cleanVersion (Android TV)")
 
-                if (original.header("simkl-api-key") == null) {
+                if (Constants.SIMKL_CLIENT_ID.isNotBlank()) {
                     requestBuilder.header("simkl-api-key", Constants.SIMKL_CLIENT_ID)
                 }
 
-                chain.proceed(requestBuilder.build())
+                if (original.method.equals("POST", ignoreCase = true) && original.header("Content-Type") == null) {
+                    requestBuilder.header("Content-Type", "application/json")
+                }
+
+                val response = chain.proceed(requestBuilder.build())
+                if (response.code == 429) {
+                    val retryAfter = response.header("Retry-After")?.toLongOrNull() ?: 5L
+                    com.arflix.tv.util.AppLogger.w("SimklApi", "HTTP 429 Too Many Requests received from Simkl. Retry-After: ${retryAfter}s")
+                } else if (response.code == 412) {
+                    com.arflix.tv.util.AppLogger.e("SimklApi", "HTTP 412 Precondition Failed / client_id_failed from Simkl. Check API key.")
+                }
+                response
             }
             .build()
 

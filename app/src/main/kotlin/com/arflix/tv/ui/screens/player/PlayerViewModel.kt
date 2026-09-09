@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.player
 
 import android.content.Context
 import android.util.Log
+import androidx.annotation.StringRes
 import com.arflix.tv.R
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -24,6 +25,10 @@ import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.SkipInterval
 import com.arflix.tv.data.repository.SkipIntroRepository
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.toStreamSource
+import com.arflix.tv.core.plugin.PluginManager
+import com.arflix.tv.ui.screens.details.minQualityThreshold
+import com.arflix.tv.ui.screens.details.qualityScoreForAutoPlay
 import com.arflix.tv.data.repository.isHubCloudPageUrl
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.data.repository.CloudSyncRepository
@@ -57,9 +62,20 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Clock
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleAiModel
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleSyncMatcher
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleTranslationManager
+import com.arflix.tv.ui.screens.player.subtitles.SubtitleTranslationService
+import com.arflix.tv.ui.screens.player.subtitles.TRANSLATION_ERROR_CONTENT_BLOCKED
+import com.arflix.tv.ui.screens.player.subtitles.GeminiLiveTranslationService
+import com.arflix.tv.ui.screens.player.subtitles.GeminiLiveState
+import com.arflix.tv.ui.screens.player.subtitles.AudioCaptureProcessor
+import com.arflix.tv.ui.screens.player.common.NextEpisodePromptGate
+import com.arflix.tv.ui.screens.player.common.PlaybackEpisodeKey
 import javax.inject.Inject
 
 private fun isSupplementalStream(stream: StreamSource): Boolean =
@@ -76,10 +92,38 @@ private const val PLAYBACK_DIAGNOSTICS = true
 // side-loaded at startup (each becomes a MediaItem SubtitleConfiguration read at prepare).
 private const val MAX_PRELOAD_SUBS = 15
 
+/**
+ * How long a manual subtitle pick waits for its local (correctly decoded) copy before falling back
+ * to the remote URL. Generous enough for a normal ~100 KB fetch, short enough that a stalled addon
+ * doesn't make the menu feel broken.
+ *
+ * This bound is only real because `SubtitleSyncMatcher.loadRaw` enqueues its call and cancels it on
+ * coroutine cancellation. A blocking `execute()` would ignore the timeout entirely and run on to
+ * OkHttp's own connect/read timeouts.
+ */
+private const val SUBTITLE_LOCALIZE_TIMEOUT_MS = 6_000L
+
 private fun playbackDiag(message: String) {
     if (PLAYBACK_DIAGNOSTICS) {
         System.err.println("[PlaybackDiag] $message")
     }
+}
+
+/**
+ * A user-facing player message, kept as a resource reference until a composable renders it.
+ * A ViewModel only has the application context, whose resources follow the SYSTEM language
+ * instead of the language selected in the app, so resolving here would show the wrong
+ * language whenever the two differ. Mirrors [com.arflix.tv.ui.screens.plugin.PluginMessage].
+ */
+sealed interface PlayerMessage {
+    /** A localizable message. [formatArgs] may itself contain [PlayerMessage] entries. */
+    data class Res(
+        @param:StringRes val resourceId: Int,
+        val formatArgs: List<Any> = emptyList()
+    ) : PlayerMessage
+
+    /** Text without a resource (e.g. a platform exception message); shown as it is. */
+    data class Raw(val text: String) : PlayerMessage
 }
 
 data class PlayerUiState(
@@ -121,12 +165,16 @@ data class PlayerUiState(
     val secondarySubtitleLang: String = "",
     val frameRateMatchingMode: String = "Off",
     val subtitleSize: String = "Medium",
+    val subtitleSizePct: Int = 100,
     val subtitleColor: String = "White",
     val subtitleStyle: String = "Bold",
     val subtitleFont: String = SubtitleFontOption.DefaultPreference,
     val subtitleStylized: Boolean = true,
     val subtitleOffset: String = "Bottom",
-    val error: String? = null,
+    val subtitleVerticalPct: Int = 2,
+    val filterSubtitlesByLanguage: Boolean = false,
+    val subtitleRemoveHearingImpaired: Boolean = false,
+    val error: PlayerMessage? = null,
     val isSetupError: Boolean = false, // true when error is due to missing addons (shows friendly guide instead of red error)
     // Auto-play next episode at end of current one. Mirrors the profile-scoped
     // "auto_play_next" DataStore setting so the player can respect the toggle
@@ -139,6 +187,7 @@ data class PlayerUiState(
     val showLoadingStats: Boolean = true,
     // Skip intro/recap
     val activeSkipInterval: SkipInterval? = null,
+    val skipIntervals: List<SkipInterval> = emptyList(),
     val skipIntervalDismissed: Boolean = false,
     // Source-loading progress surfaced to the loading UI. When streams are
     // being resolved progressively, this fills from 0f→1f as addons complete.
@@ -146,7 +195,7 @@ data class PlayerUiState(
     val streamProgress: Float? = null,
     // Human-readable phase label for the loading UI (e.g. "Searching 3/8
     // sources"). Null when progress isn't meaningful.
-    val streamLoadPhase: String? = null,
+    val streamLoadPhase: PlayerMessage? = null,
     // True while source discovery can still add playback alternatives. This
     // remains true after autoplay selects the first stream.
     val sourceSearchActive: Boolean = false,
@@ -157,23 +206,38 @@ data class PlayerUiState(
     // Language name being translated into (e.g. "Hebrew") when AI is available
     val aiTargetLanguageName: String = "",
     // Non-null while an AI translation API error toast should be visible
-    val aiErrorToast: String? = null,
+    val aiErrorToast: PlayerMessage? = null,
     // True while Gemini Live audio translation is active for this session
     val isLiveAudioTranslating: Boolean = false,
     // True while "Find best match" is scanning subtitles; message shown as a transient toast.
     val isFindingBestMatch: Boolean = false,
-    val matchToast: String? = null,
+    val matchToast: PlayerMessage? = null,
     // Persistent status shown on screen for the whole duration of a "Find best match" scan.
-    val matchStatusText: String = "",
+    // Null while no scan is running.
+    val matchStatus: PlayerMessage? = null,
     // Full name of the preferred subtitle language (e.g. "Hebrew") — drives the "Find Best Match"
     // menu entry. Independent of AI availability: the timing scan needs no AI/API key.
     val matchLanguageName: String = "",
+    // Active media metadata fields
+    val mediaType: MediaType = MediaType.MOVIE,
+    val seasonNumber: Int? = null,
+    val episodeNumber: Int? = null,
     // Episode title for TV shows (e.g. "The Devil's Verdict"), populated from TMDB season details
     val episodeTitle: String? = null,
     // Plot synopsis from TMDB, used in the pause overlay metadata block
     val overview: String? = null,
     // Release year extracted from TMDB releaseDate/firstAirDate (e.g. "2023")
-    val releaseYear: String? = null
+    val releaseYear: String? = null,
+    // All episodes for the active season (used in Mobile Episodes drawer)
+    val seasonEpisodes: List<com.arflix.tv.data.model.Episode> = emptyList(),
+    // Auto-skip intro preference
+    val autoSkipIntro: Boolean = false,
+    // Auto-skip outro preference
+    val autoSkipOutro: Boolean = false,
+    // Audio delay offset in milliseconds
+    val audioDelayMs: Long = 0L,
+    // Audio volume normalization preference
+    val audioNormalization: Boolean = false
 )
 
 
@@ -200,7 +264,8 @@ class PlayerViewModel @Inject constructor(
     private val animeMapper: AnimeMapper,
     private val tmdbApi: TmdbApi,
     private val skipIntroRepository: SkipIntroRepository,
-    private val playbackTelemetryRepository: PlaybackTelemetryRepository
+    private val playbackTelemetryRepository: PlaybackTelemetryRepository,
+    private val pluginManager: PluginManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlayerUiState())
@@ -237,6 +302,7 @@ class PlayerViewModel @Inject constructor(
     private var currentAddonOrderedIds: List<String> = emptyList()
     private var currentInstalledAddons: List<Addon> = emptyList()
     private var currentIsLiveStreamPlayback: Boolean = false
+    private var autoPlayMinimumQuality: Int = 0
     private var lastScrobbleTime: Long = 0
     private var lastWatchHistorySaveTime: Long = 0
     private var lastWatchHistorySavedPositionSeconds: Long = -1L
@@ -339,10 +405,13 @@ class PlayerViewModel @Inject constructor(
             } else if (!success && !aiErrorToastShown) {
                 aiErrorToastShown = true
                 val msg = when {
-                    errorMessage == "API key missing" -> context.getString(R.string.player_ai_no_key)
-                    errorMessage == "RATE_LIMITED"    -> context.getString(R.string.player_ai_rate_limited)
-                    errorMessage?.startsWith("HTTP 401") == true -> context.getString(R.string.player_ai_invalid_key)
-                    else -> context.getString(R.string.player_ai_translation_error, errorMessage.orEmpty())
+                    errorMessage == "API key missing" -> PlayerMessage.Res(R.string.player_ai_no_key)
+                    errorMessage == "RATE_LIMITED"    -> PlayerMessage.Res(R.string.player_ai_rate_limited)
+                    errorMessage?.startsWith("HTTP 401") == true -> PlayerMessage.Res(R.string.player_ai_invalid_key)
+                    else -> PlayerMessage.Res(
+                        R.string.player_ai_translation_error,
+                        listOf(errorMessage.orEmpty())
+                    )
                 }
                 _uiState.value = _uiState.value.copy(aiErrorToast = msg)
             }
@@ -433,6 +502,7 @@ class PlayerViewModel @Inject constructor(
     private fun subtitleUsageKey() = profileManager.profileStringKey("subtitle_usage_v1")
     private fun filterSubtitlesByLanguageKey() = profileManager.profileBooleanKey("filter_subtitles_by_lang")
     private fun secondarySubtitleKey() = profileManager.profileStringKey("secondary_subtitle")
+    private val subtitleMenuCandidates = linkedMapOf<String, Subtitle>()
     private fun frameRateMatchingModeKey() = profileManager.profileStringKey("frame_rate_matching_mode")
     private fun autoPlayNextKey() = profileManager.profileBooleanKey("auto_play_next")
     private fun showLoadingStatsKey() = profileManager.profileBooleanKey("show_loading_stats")
@@ -498,6 +568,7 @@ class PlayerViewModel @Inject constructor(
         preferredBingeGroup: String?,
         startPositionMs: Long?,
         isLiveStreamPlayback: Boolean = false,
+        forceRefresh: Boolean = false,
         airDate: String? = null
     ) {
         currentAirDate = airDate
@@ -513,6 +584,7 @@ class PlayerViewModel @Inject constructor(
         currentPreferredSourceName = preferredSourceName?.trim()?.takeIf { it.isNotBlank() }
         currentPreferredBingeGroup = preferredBingeGroup?.trim()?.takeIf { it.isNotBlank() }
         currentIsLiveStreamPlayback = isLiveStreamPlayback
+        autoPlayMinimumQuality = 0
         playbackSessionStartTime = System.currentTimeMillis()
         playbackDiag(
             "loadMedia type=$mediaType id=$mediaId season=$seasonNumber episode=$episodeNumber " +
@@ -527,6 +599,7 @@ class PlayerViewModel @Inject constructor(
         lastWatchHistorySavedPositionSeconds = -1L
         subtitleRefreshJob?.cancel()
         subtitleSelectionJob?.cancel()
+        cancelSubtitleLocalization()
         subtitlePreloadJob?.cancel()
         // Cancel any in-flight "Find best match" scan from the previous title — otherwise it can
         // finish on this new session and select/restore a stale subtitle or poison the match cache
@@ -557,8 +630,11 @@ class PlayerViewModel @Inject constructor(
             isAiAvailable = false,
             aiTargetLanguageName = "",
             logoUrl = cachedLogoUrl,
+            mediaType = mediaType,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
             streamProgress = null,
-            streamLoadPhase = null,
+            streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) null else PlayerMessage.Res(R.string.player_phase_preparing_stream),
             sourceSearchActive = false,
             error = null,
             isSetupError = false
@@ -567,20 +643,32 @@ class PlayerViewModel @Inject constructor(
         skipIntervalsJob?.cancel()
         currentImdbId = providedImdbId
         skipIntervals = emptyList()
+        subtitleMenuCandidates.clear()
         lastActiveSkipType = null
         activeSkipRequestKey = null
-        _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervalDismissed = false)
+        _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervals = emptyList(), skipIntervalDismissed = false)
         currentOriginalLanguage = cachedItem?.originalLanguage
         currentGenreIds = cachedItem?.genreIds ?: emptyList()
         currentItemTitle = cachedItem?.title ?: ""
 
-        viewModelScope.launch {
+        mediaLoadJob?.cancel()
+        mediaLoadJob = viewModelScope.launch {
             // Autoplay should always use the current highest-ranked source list.
             // Explicit source navigation still passes preferred fields or a URL below.
             val preferredAudioLanguage = resolvePreferredAudioLanguage()
             val frameRateMatchingMode = resolveFrameRateMatchingMode()
             val prefs = context.settingsDataStore.data.first()
+            // A manually selected URL is explicit consent to that source's quality.
+            autoPlayMinimumQuality = if (providedStreamUrl.isNullOrBlank()) {
+                minQualityThreshold(prefs[profileManager.profileStringKey("auto_play_min_quality")] ?: "Any")
+            } else 0
             val subSize = prefs[profileManager.profileStringKey("subtitle_size")] ?: "Medium"
+            val subSizePct = prefs[profileManager.profileIntKey("subtitle_size_pct")] ?: when (subSize.lowercase()) {
+                "small" -> 80
+                "large" -> 120
+                "extra large" -> 140
+                else -> 100
+            }
             val subColor = prefs[profileManager.profileStringKey("subtitle_color")] ?: "White"
             val subStyle = prefs[profileManager.profileStringKey("subtitle_style")] ?: "Bold"
             val subFont = SubtitleFontOption.fromPreference(
@@ -588,6 +676,12 @@ class PlayerViewModel @Inject constructor(
             ).preferenceValue
             val subStylized = prefs[profileManager.profileBooleanKey("subtitle_stylized")] ?: true
             val subOffset = prefs[profileManager.profileStringKey("subtitle_offset")] ?: "Bottom"
+            val subVertPct = prefs[profileManager.profileIntKey("subtitle_vertical_pct")] ?: when (subOffset) {
+                "Bottom" -> 2; "Low" -> 8; "Medium" -> 15; "High" -> 25; else -> 2
+            }
+            val filterSubLang = prefs[filterSubtitlesByLanguageKey()] ?: true
+            val removeHi = prefs[profileManager.profileBooleanKey("subtitle_remove_hearing_impaired")] ?: false
+            translationManager.removeSubtitleHearingImpaired = removeHi
             val autoPlayNext = prefs[autoPlayNextKey()] ?: true
             val showLoadingStats = prefs[showLoadingStatsKey()] ?: true
             val volumeBoostDb = prefs[profileManager.profileStringKey("volume_boost_db")]
@@ -620,10 +714,19 @@ class PlayerViewModel @Inject constructor(
             untranslatableSourceIds.clear()
             translationManager.reset()
 
+            val autoSkipIntro = prefs[profileManager.profileBooleanKey("auto_skip_intro")] ?: false
+            val autoSkipOutro = prefs[profileManager.profileBooleanKey("auto_skip_outro")] ?: false
+            val audioDelayMs = prefs[profileManager.profileLongKey("audio_delay_ms")] ?: 0L
+            val audioNormalization = prefs[profileManager.profileBooleanKey("audio_normalization")] ?: false
+
             _uiState.value = PlayerUiState(
+                mediaType = mediaType,
+                seasonNumber = seasonNumber,
+                episodeNumber = episodeNumber,
                 isLoading = true,
                 isLoadingStreams = true,
                 sourceSearchActive = true,
+                streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) null else PlayerMessage.Res(R.string.player_phase_preparing_stream),
                 title = cachedItem?.title ?: currentItemTitle,
                 backdropUrl = cachedItem?.backdrop?.takeIf { it.isNotBlank() }
                     ?: cachedItem?.image?.takeIf { it.isNotBlank() },
@@ -634,12 +737,20 @@ class PlayerViewModel @Inject constructor(
                 secondarySubtitleLang = secondarySub,
                 frameRateMatchingMode = frameRateMatchingMode,
                 subtitleSize = subSize,
+                subtitleSizePct = subSizePct,
                 subtitleColor = subColor,
                 subtitleStyle = subStyle,
                 subtitleFont = subFont,
                 subtitleStylized = subStylized,
                 subtitleOffset = subOffset,
+                subtitleVerticalPct = subVertPct,
+                filterSubtitlesByLanguage = filterSubLang,
+                subtitleRemoveHearingImpaired = removeHi,
                 autoPlayNext = autoPlayNext,
+                autoSkipIntro = autoSkipIntro,
+                autoSkipOutro = autoSkipOutro,
+                audioDelayMs = audioDelayMs,
+                audioNormalization = audioNormalization,
                 showLoadingStats = showLoadingStats,
                 volumeBoostDb = volumeBoostDb,
                 subtitlePreloadEnabled = subtitlePreloadEnabled,
@@ -664,7 +775,7 @@ class PlayerViewModel @Inject constructor(
             val providedIsHubPage = providedStreamCandidate?.url
                 ?.let(::isHubCloudPageUrl) == true
             val preResolvedHubStream = if (providedIsHubPage) {
-                _uiState.value = _uiState.value.copy(streamLoadPhase = "Preparing stream")
+                _uiState.value = _uiState.value.copy(streamLoadPhase = PlayerMessage.Res(R.string.player_phase_preparing_stream))
                 providedStreamCandidate?.let { stream ->
                     runCatching { streamRepository.resolveStreamForPlayback(stream) }.getOrNull()
                 }
@@ -700,7 +811,7 @@ class PlayerViewModel @Inject constructor(
                 // path sat 5-10s with no overlay text (selectedStreamUrl not set yet, so startupPhase
                 // is gated off), unlike the manual selectStream() path which already labels this step.
                 if (providedStream != null) {
-                    _uiState.value = _uiState.value.copy(streamLoadPhase = "Preparing stream")
+                    _uiState.value = _uiState.value.copy(streamLoadPhase = PlayerMessage.Res(R.string.player_phase_preparing_stream))
                 }
                 val resolvedProvidedStream = preResolvedHubStream ?: providedStream?.let { stream ->
                     runCatching { streamRepository.resolveStreamForPlayback(stream) }.getOrNull() ?: stream
@@ -726,9 +837,9 @@ class PlayerViewModel @Inject constructor(
                         isLoadingStreams = false,
                         sourceSearchActive = false,
                         error = if (isMagnet) {
-                            "Selected source is P2P (magnet) and not supported. Choose an HTTP/debrid source."
+                            PlayerMessage.Res(R.string.player_error_magnet_unsupported)
                         } else {
-                            "Failed to open selected source. Try another one."
+                            PlayerMessage.Res(R.string.player_error_open_source_failed)
                         }
                     )
                     return@launch
@@ -738,6 +849,7 @@ class PlayerViewModel @Inject constructor(
                     isLoading = false,
                     isLoadingStreams = false,
                     sourceSearchActive = true,
+                    streams = listOfNotNull(resolvedProvidedStream),
                     selectedStream = resolvedProvidedStream,
                     selectedStreamUrl = resolvedProvidedUrl,
                     savedPosition = resumeData.positionMs
@@ -919,7 +1031,7 @@ class PlayerViewModel @Inject constructor(
                             isLoading = false,
                             isLoadingStreams = false,
                             sourceSearchActive = false,
-                            error = context.getString(R.string.player_error_imdb_resolve)
+                            error = PlayerMessage.Res(R.string.player_error_imdb_resolve)
                         )
                         return@launch
                     }
@@ -971,7 +1083,14 @@ class PlayerViewModel @Inject constructor(
                     error = null,
                     isSetupError = false,
                     streamProgress = 0f,
-                    streamLoadPhase = if (streamingAddonCount > 0) "Searching 0/$streamingAddonCount sources" else "Preparing sources"
+                    streamLoadPhase = if (streamingAddonCount > 0) {
+                        PlayerMessage.Res(
+                            R.string.player_phase_searching_sources,
+                            listOf(0, streamingAddonCount)
+                        )
+                    } else {
+                        PlayerMessage.Res(R.string.player_phase_preparing_sources)
+                    }
                 )
 
                 val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { resolvePreferredAudioLanguage() }
@@ -979,7 +1098,8 @@ class PlayerViewModel @Inject constructor(
                     streamRepository.resolveMovieStreamsProgressive(
                         imdbId = effectiveStreamId,
                         title = currentItemTitle,
-                        year = null
+                        year = null,
+                        forceRefresh = forceRefresh
                     )
                 } else {
                     streamRepository.resolveEpisodeStreamsProgressive(
@@ -991,6 +1111,7 @@ class PlayerViewModel @Inject constructor(
                         genreIds = currentGenreIds,
                         originalLanguage = currentOriginalLanguage,
                         title = currentItemTitle,
+                        forceRefresh = forceRefresh,
                         animeQueryOverride = animeQueryOverride,
                         airDate = currentAirDate
                     )
@@ -1010,7 +1131,21 @@ class PlayerViewModel @Inject constructor(
                 var isFirstEmission = true
                 var sourceEmptyReported = false
 
-                progressiveFlow.collect { progressive ->
+                var pluginSearchStarted = false
+                val playerSources = mergePlayerSourceDiscovery(
+                    addons = progressiveFlow,
+                    pluginBatches = pluginManager.executeScrapersStreaming(
+                        tmdbId = mediaId.toString(),
+                        mediaType = if (mediaType == MediaType.MOVIE) "movie" else "tv",
+                        season = seasonNumber,
+                        episode = episodeNumber
+                    ).map { (_, results) ->
+                        pluginSearchStarted = true
+                        results.orEmpty().map { it.toStreamSource() }
+                    },
+                    onPluginFailure = { Log.w(TAG, "Player plugin source discovery failed", it) }
+                )
+                playerSources.collect { progressive ->
                     if (progressive.isFinal) {
                         primaryStreamResolutionFinal = true
                     }
@@ -1020,28 +1155,35 @@ class PlayerViewModel @Inject constructor(
                             u.isNotBlank() && !u.startsWith("magnet:", ignoreCase = true)
                         }
                     val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
+                    val activeStreamList = listOfNotNull(_uiState.value.selectedStream)
                     val mergedStreams = sortStreamsByQualityAndSize(
-                        (allStreams + existingVod)
+                        (allStreams + existingVod + activeStreamList)
                             .distinctBy(::providerScopedStreamIdentity),
                         preferredLanguage
                     )
                     lastMergedStreams = mergedStreams
+                    val autoplayStreams = eligiblePlayerAutoplayStreams(mergedStreams, autoPlayMinimumQuality)
 
                     val supplementalSourcesStillLoading =
                         homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
-                    val errorMessage = if (
-                        progressive.isFinal &&
-                        mergedStreams.isEmpty() &&
-                        !hasHomeServerConnections &&
-                        !supplementalSourcesStillLoading
-                    ) {
-                        if (streamingAddonCount == 0) {
-                            "No streaming addons configured.\n\nGo to Settings \u2192 Addons to add a streaming addon, then come back and try again."
-                        } else {
-                            "No streams found for this content. The addons may not have sources for this title."
+                    val availability = playerAutoplayAvailability(
+                        streams = mergedStreams,
+                        minimumQuality = autoPlayMinimumQuality,
+                        searchActive = !progressive.isFinal || supplementalSourcesStillLoading,
+                        hasSelection = !canStartAutoplay()
+                    )
+                    val errorMessage = when (availability) {
+                        PlayerAutoplayAvailability.SELECTED -> _uiState.value.error
+                        PlayerAutoplayAvailability.NO_MATCH -> PlayerMessage.Res(R.string.stream_no_sources_match)
+                        PlayerAutoplayAvailability.NO_SOURCES -> when {
+                            streamingAddonCount == 0 && !pluginSearchStarted && !hasHomeServerConnections ->
+                                PlayerMessage.Res(R.string.player_error_no_streaming_addons)
+                            hasHomeServerConnections -> PlayerMessage.Res(R.string.player_error_no_streams_media_servers)
+                            else -> PlayerMessage.Res(R.string.player_error_no_streams_from_addons)
                         }
-                    } else null
-                    if (errorMessage != null && !sourceEmptyReported) {
+                        else -> null
+                    }
+                    if (errorMessage != null && !sourceEmptyReported && mergedStreams.isEmpty()) {
                         sourceEmptyReported = true
                         AppLogger.recordException(
                             throwable = IllegalStateException("Playback source list empty"),
@@ -1068,22 +1210,26 @@ class PlayerViewModel @Inject constructor(
                     }
                     val phaseLabel = when {
                         progressive.isFinal -> null
-                        mergedStreams.isNotEmpty() -> "Found ${mergedStreams.size} sources ($completed/$total)"
-                        else -> "Searching $completed/$total sources"
+                        mergedStreams.isNotEmpty() -> PlayerMessage.Res(
+                            R.string.player_phase_found_sources,
+                            listOf(mergedStreams.size, completed, total)
+                        )
+                        else -> PlayerMessage.Res(
+                            R.string.player_phase_searching_sources,
+                            listOf(completed, total)
+                        )
                     }
                     val filteredSubtitles = filterSubsByPreferredLanguage(progressive.subtitles)
 
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        isLoadingStreams = mergedStreams.isEmpty() &&
-                            (!progressive.isFinal || hasHomeServerConnections || supplementalSourcesStillLoading),
+                        isLoadingStreams = availability == PlayerAutoplayAvailability.SEARCHING,
                         sourceSearchActive = !progressive.isFinal || supplementalSourcesStillLoading,
                         streams = mergedStreams,
                         subtitles = filteredSubtitles,
                         error = errorMessage,
-                        isSetupError = progressive.isFinal &&
-                            mergedStreams.isEmpty() &&
-                            streamingAddonCount == 0 &&
+                        isSetupError = availability == PlayerAutoplayAvailability.NO_SOURCES &&
+                            streamingAddonCount == 0 && !pluginSearchStarted &&
                             !hasHomeServerConnections &&
                             !supplementalSourcesStillLoading,
                         streamProgress = if (progressive.isFinal) null else progressFraction,
@@ -1104,7 +1250,7 @@ class PlayerViewModel @Inject constructor(
                             stream.behaviorHints.notWebReady != true &&
                             !stream.url.isNullOrBlank()
                     }
-                    if (!autoplaySelected && mergedStreams.isNotEmpty() && autoplayDeferredJob == null) {
+                    if (!autoplaySelected && autoplayStreams.isNotEmpty() && autoplayDeferredJob == null && canStartAutoplay()) {
                         autoplayDeferredJob = launch {
                             delay(AUTOPLAY_QUALITY_WINDOW_MS)
                             if (!autoplaySelected) {
@@ -1120,7 +1266,7 @@ class PlayerViewModel @Inject constructor(
                                         preferredLanguage
                                     )
                                 }
-                                if (snapshot.isNotEmpty()) {
+                                if (eligiblePlayerAutoplayStreams(snapshot, autoPlayMinimumQuality).isNotEmpty()) {
                                     autoplaySelected = true
                                     Log.i(
                                         TAG,
@@ -1135,9 +1281,9 @@ class PlayerViewModel @Inject constructor(
                             }
                         }
                     }
-                    val autoplayTopStream = pickAutoplayTopStream(mergedStreams, preferredLanguage)
-                    val hasRequestedPreferredStream = hasRequestedPreferredStream(mergedStreams)
-                    val shouldSelectNow = !autoplaySelected && mergedStreams.isNotEmpty() && homeServerReadyForAutoplay && (
+                    val autoplayTopStream = pickAutoplayTopStream(autoplayStreams, preferredLanguage)
+                    val hasRequestedPreferredStream = hasRequestedPreferredStream(autoplayStreams)
+                    val shouldSelectNow = !autoplaySelected && autoplayStreams.isNotEmpty() && canStartAutoplay() && homeServerReadyForAutoplay && (
                         cacheHit ||
                             progressive.isFinal ||
                             hasCachedReadyStream ||
@@ -1158,7 +1304,7 @@ class PlayerViewModel @Inject constructor(
                             "autoplayNow streams=${mergedStreams.size} completed=$completed/$total final=${progressive.isFinal} " +
                                 "cached=$hasCachedReadyStream preferred=$hasRequestedPreferredStream top=${autoplayTopStream?.let { streamDiag(it) } ?: "none"}"
                         )
-                        autoplayTopStream?.let { selectStream(it) } ?: autoplaySelectBest(mergedStreams, preferredLanguage)
+                        autoplaySelectBest(autoplayStreams, preferredLanguage)
                     }
                 }
 
@@ -1222,7 +1368,7 @@ class PlayerViewModel @Inject constructor(
                     sourceSearchActive = false,
                     streamProgress = null,
                     streamLoadPhase = null,
-                    error = e.message
+                    error = e.message?.let { PlayerMessage.Raw(it) }
                 )
             }
         }
@@ -1231,6 +1377,22 @@ class PlayerViewModel @Inject constructor(
     /**
      * Fetch media metadata in background (non-blocking)
      */
+    private suspend fun loadPlayerSeasonEpisodes(mediaId: Int, displaySeason: Int): List<com.arflix.tv.data.model.Episode> {
+        val structure = if (isCurrentAnime()) animeMapper.resolveAnimeSeasonStructure(mediaId) else null
+        val identities = structure?.seasons?.get(displaySeason)
+            ?: return mediaRepository.getSeasonEpisodes(mediaId, displaySeason)
+        val bySeason = identities.map { it.tmdbSeason }.distinct().associateWith { season ->
+            mediaRepository.getSeasonEpisodes(mediaId, season).associateBy { it.episodeNumber }
+        }
+        return identities.mapNotNull { identity ->
+            bySeason[identity.tmdbSeason]?.get(identity.tmdbEpisode)?.copy(
+                seasonNumber = identity.displaySeason,
+                episodeNumber = identity.displayEpisode,
+                identity = identity,
+            )
+        }
+    }
+
     private suspend fun fetchMediaMetadata(mediaType: MediaType, mediaId: Int) {
         try {
             val details = if (mediaType == MediaType.TV) {
@@ -1249,6 +1411,7 @@ class PlayerViewModel @Inject constructor(
             val posterUrl: String?
             var overview: String? = null
             var releaseYear: String? = null
+            var fetchedSeasonEpisodes = emptyList<com.arflix.tv.data.model.Episode>()
 
             if (mediaType == MediaType.TV) {
                 val tvDetails = details as com.arflix.tv.data.api.TmdbTvDetails
@@ -1269,6 +1432,13 @@ class PlayerViewModel @Inject constructor(
                     }.getOrNull()
                     currentEpisodeTitle = episodeDetails?.name?.takeIf { it.isNotBlank() }
                     overview = episodeDetails?.overview?.takeIf { it.isNotBlank() } ?: overview
+                    fetchedSeasonEpisodes = try {
+                        loadPlayerSeasonEpisodes(mediaId, season)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
                 }
             } else {
                 val movieDetails = details as com.arflix.tv.data.api.TmdbMovieDetails
@@ -1291,9 +1461,13 @@ class PlayerViewModel @Inject constructor(
                 backdropUrl = backdropUrl,
                 logoUrl = logoUrl ?: _uiState.value.logoUrl,
                 posterUrl = posterUrl,
+                mediaType = mediaType,
+                seasonNumber = currentSeason,
+                episodeNumber = currentEpisode,
                 episodeTitle = currentEpisodeTitle,
                 overview = overview,
                 releaseYear = releaseYear,
+                seasonEpisodes = if (mediaType == MediaType.TV && fetchedSeasonEpisodes.isNotEmpty()) fetchedSeasonEpisodes else _uiState.value.seasonEpisodes,
                 preferredAudioLanguage = resolvePreferredAudioLanguage()
             )
         } catch (e: Exception) {
@@ -1327,7 +1501,7 @@ class PlayerViewModel @Inject constructor(
             skipIntervals = intervals
             // Force a recompute on the next position tick.
             lastActiveSkipType = null
-            _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervalDismissed = false)
+            _uiState.value = _uiState.value.copy(activeSkipInterval = null, skipIntervals = intervals, skipIntervalDismissed = false)
         }
     }
 
@@ -1381,6 +1555,9 @@ class PlayerViewModel @Inject constructor(
     // Returns subs filtered to the preferred language(s) when the setting is enabled.
     // Tries primary language first; if nothing matches, tries secondary; falls back to full list.
     private suspend fun filterSubsByPreferredLanguage(subs: List<Subtitle>): List<Subtitle> {
+        subs.forEach { subtitle ->
+            subtitleMenuCandidates[subtitle.id.ifBlank { subtitle.url }] = subtitle
+        }
         val prefs = runCatching { context.settingsDataStore.data.first() }.getOrNull() ?: return subs
         val enabled = prefs[filterSubtitlesByLanguageKey()] ?: true
         if (!enabled) return subs
@@ -1982,7 +2159,11 @@ class PlayerViewModel @Inject constructor(
     }
 
     private fun autoplaySelectBest(streams: List<StreamSource>, preferredLanguage: String) {
-        val healthyStreams = sortStreamsByQualityAndSize(streams, preferredLanguage)
+        if (!canStartAutoplay()) return
+        val healthyStreams = sortStreamsByQualityAndSize(
+            eligiblePlayerAutoplayStreams(streams, autoPlayMinimumQuality), preferredLanguage
+        )
+        if (healthyStreams.isEmpty()) return
         val hasExplicitPreferred =
             !currentPreferredBingeGroup.isNullOrBlank() ||
                 !currentPreferredAddonId.isNullOrBlank() ||
@@ -2070,9 +2251,9 @@ class PlayerViewModel @Inject constructor(
     ): List<StreamSource> {
         return streams.sortedWith(
             compareBy<StreamSource> { streamRepository.getPlaybackHostHealthPenalty(it) }
-                .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
-                .thenByDescending { qualityScore(it.quality) }
+                .thenByDescending { qualityScoreForAutoPlay(it) }
                 .thenByDescending { parseSize(it.size) }
+                .thenBy { if (it.behaviorHints?.notWebReady == true) 1 else 0 }
                 .thenByDescending { playbackPriorityScore(it) }
                 .thenByDescending { if (it.behaviorHints?.cached == true) 1 else 0 }
                 .thenByDescending { streamLanguageScore(it, preferredLanguage) }
@@ -2351,6 +2532,7 @@ class PlayerViewModel @Inject constructor(
      * Select a stream for playback
      */
     fun selectStream(stream: StreamSource, resumePositionMs: Long? = null) {
+        subtitleMenuCandidates.entries.removeAll { it.value.isEmbedded }
         streamSelectionJob?.cancel()
         playbackErrorReportJob?.cancel()
         streamSelectionJob = viewModelScope.launch {
@@ -2363,7 +2545,7 @@ class PlayerViewModel @Inject constructor(
                 isLoading = true,
                 isLoadingStreams = false,
                 streamProgress = null,
-                streamLoadPhase = "Preparing stream",
+                streamLoadPhase = PlayerMessage.Res(R.string.player_phase_preparing_stream),
                 error = null,
                 isSetupError = false
             )
@@ -2393,7 +2575,7 @@ class PlayerViewModel @Inject constructor(
                     sourceSearchActive = false,
                     streamProgress = null,
                     streamLoadPhase = null,
-                    error = "Failed to resolve stream. Try another source."
+                    error = PlayerMessage.Res(R.string.player_error_resolve_stream_failed)
                 )
                 return@launch
             }
@@ -2419,9 +2601,9 @@ class PlayerViewModel @Inject constructor(
                     streamProgress = null,
                     streamLoadPhase = null,
                     error = if (isP2p) {
-                        "P2P stream requires TorrServer. Install TorrServer and set its URL in Settings > Addons."
+                        PlayerMessage.Res(R.string.player_error_p2p_needs_torrserver)
                     } else {
-                        "Failed to resolve stream. Try another source."
+                        PlayerMessage.Res(R.string.player_error_resolve_stream_failed)
                     }
                 )
                 return@launch
@@ -2471,6 +2653,7 @@ class PlayerViewModel @Inject constructor(
             // embedded tracks arriving later would be ignored because the selection "already
             // matches" (no nonce bump → the override is never applied to the new media item).
             cancelFindBestMatch()
+            cancelSubtitleLocalization()
             hasManualSubtitleSelection = false
             userPickedSubtitle = false
             autoMatchAttempted = false
@@ -2591,7 +2774,19 @@ class PlayerViewModel @Inject constructor(
         return DEBRID_CDN_DOMAINS.any { domain -> host == domain || host.endsWith(".$domain") }
     }
 
-    fun reportPlaybackError(message: String) {
+    /**
+     * Stable English identifier for telemetry. The displayed text is localized per user, so the
+     * message itself would make error reports unsortable across languages; the resource entry
+     * name ("player_fail_render_failed") never changes with the locale.
+     */
+    private fun telemetryKeyOf(message: PlayerMessage): String = when (message) {
+        is PlayerMessage.Raw -> message.text
+        is PlayerMessage.Res -> runCatching {
+            context.resources.getResourceEntryName(message.resourceId)
+        }.getOrDefault(message.resourceId.toString())
+    }
+
+    fun reportPlaybackError(message: PlayerMessage) {
         playbackErrorReportJob?.cancel()
         val errorSelectionNonce = _uiState.value.streamSelectionNonce
         val errorSelectedUrl = _uiState.value.selectedStreamUrl
@@ -2616,7 +2811,7 @@ class PlayerViewModel @Inject constructor(
                 throwable = IllegalStateException("Playback error displayed"),
                 context = playbackDiagnosticContext(
                     phase = "playback_error_displayed",
-                    extra = mapOf("playback_error_message" to message)
+                    extra = mapOf("playback_error_message" to telemetryKeyOf(message))
                 )
             )
         }
@@ -2728,6 +2923,7 @@ class PlayerViewModel @Inject constructor(
             }
             if (shouldReapply) {
                 subtitleSelectionJob?.cancel()
+                cancelSubtitleLocalization()
                 applyPreferredSubtitle(preferred, finalList, currentOriginalLanguage)
             }
         }
@@ -2741,14 +2937,83 @@ class PlayerViewModel @Inject constructor(
             updateMatchCacheForManualPick(subtitle)
         }
         subtitleSelectionJob?.cancel()
+        cancelSubtitleLocalization()
         translationManager.isEnabled = false
+
+        // Handing ExoPlayer the addon URL makes media3 decode the file as UTF-8, which turns a
+        // legacy code page (windows-1255 Hebrew is still common) into rows of U+FFFD. Only a
+        // locally decoded copy is safe — the same reason the matched/remembered paths localize.
+        // Preload covers the first MAX_PRELOAD_SUBS tracks; anything past that (or picked before
+        // preload finished) must be fetched here, or it renders as symbols.
+        // Recorded at pick time, not after the download: the user's choice of language counts
+        // even if the localization is later cancelled or falls back to the remote URL.
+        recordSubtitleUsage(subtitle)
+
+        val preloaded = preloadedCopyFor(subtitle)
+        if (preloaded != null || !needsLocalDecode(subtitle)) {
+            applySelectedSubtitle(preloaded ?: subtitle)
+            return
+        }
+        // Generation token: cancelling the job is not enough on its own, because the apply below is
+        // a plain state write with no suspension point — a job cancelled after its last suspension
+        // would still land, re-enabling subtitles that were turned off or applying the previous
+        // episode's pick. Every path that abandons the selection bumps this.
+        val generation = ++subtitleLocalizeGeneration
+        subtitleLocalizeJob = viewModelScope.launch {
+            // Bounded: a slow addon must not hold the pick hostage — falling back to the remote
+            // URL is exactly today's behaviour, so the worst case is unchanged. The bound is real
+            // because SubtitleSyncMatcher.loadRaw is cancellation-aware (enqueue + Call.cancel).
+            val localized = withTimeoutOrNull(SUBTITLE_LOCALIZE_TIMEOUT_MS) {
+                SubtitleSyncMatcher.loadRaw(subtitle.url, subtitle.lang)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { raw -> localizeSubtitle(subtitle, raw) }
+                    ?.takeIf { it.url.startsWith("file:") }
+            }
+            if (generation != subtitleLocalizeGeneration) {
+                Log.i("SubMatch", "stale subtitle localization dropped: ${subtitle.label}")
+                return@launch
+            }
+            if (localized == null) {
+                Log.w("SubMatch", "manual pick not localized (serving remote): ${subtitle.label}")
+            }
+            applySelectedSubtitle(localized ?: subtitle)
+        }
+    }
+
+    /**
+     * Abandons any in-flight manual-pick localization: cancels the download *and* invalidates its
+     * result, so a request already past its last suspension point cannot apply a subtitle the user
+     * has since replaced, turned off, or left behind with the previous media.
+     */
+    private fun cancelSubtitleLocalization() {
+        subtitleLocalizeGeneration++
+        subtitleLocalizeJob?.cancel()
+        subtitleLocalizeJob = null
+    }
+
+    /** True for external subtitles still pointing at a remote URL of unknown character encoding. */
+    private fun needsLocalDecode(subtitle: Subtitle): Boolean =
+        !subtitle.isEmbedded &&
+            subtitle.url.isNotBlank() &&
+            !subtitle.url.startsWith("file:")
+
+    /** An already-downloaded local copy of [subtitle] from the preload pass, if there is one. */
+    private fun preloadedCopyFor(subtitle: Subtitle): Subtitle? {
+        if (subtitle.isEmbedded) return null
+        val key = "${subtitle.provider}|${subtitle.id}"
+        return _uiState.value.preloadedSubtitles.firstOrNull {
+            it.url.startsWith("file:") && "${it.provider}|${it.id}" == key
+        }
+    }
+
+    /** Commits [served] as the playing subtitle (a local copy of the user's pick, or the pick). */
+    private fun applySelectedSubtitle(served: Subtitle) {
         // Keep isAiAvailable/aiTargetLanguageName so the AI entry stays in the menu for re-selection
         _uiState.value = _uiState.value.copy(
-            selectedSubtitle = subtitle,
+            selectedSubtitle = served,
             isAiTranslating = false,
             subtitleSelectionNonce = _uiState.value.subtitleSelectionNonce + 1
         )
-        recordSubtitleUsage(subtitle)
     }
 
     /** Cancel a running/queued "Find best match" scan and clear its transient state. */
@@ -2761,8 +3026,193 @@ class PlayerViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 isFindingBestMatch = false,
                 isLiveAudioTranslating = false,
-                matchStatusText = ""
+                matchStatus = null
             )
+        }
+    }
+
+    fun setAutoPlayNext(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(autoPlayNext = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[autoPlayNextKey()] = enabled
+            }
+        }
+    }
+
+    fun setAutoSkipIntro(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(autoSkipIntro = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("auto_skip_intro")] = enabled
+            }
+        }
+    }
+
+    fun setAutoSkipOutro(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(autoSkipOutro = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("auto_skip_outro")] = enabled
+            }
+        }
+    }
+
+    fun setAudioDelayMs(delayMs: Long) {
+        _uiState.value = _uiState.value.copy(audioDelayMs = delayMs)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileLongKey("audio_delay_ms")] = delayMs
+            }
+        }
+    }
+
+    fun setAudioNormalization(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(audioNormalization = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("audio_normalization")] = enabled
+            }
+        }
+    }
+
+    fun setSubtitleSizePref(size: String) {
+        val mappedPct = when (size.lowercase()) {
+            "small" -> 80
+            "large" -> 120
+            "extra large" -> 140
+            else -> 100
+        }
+        _uiState.value = _uiState.value.copy(subtitleSize = size, subtitleSizePct = mappedPct)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_size")] = size
+                prefs[profileManager.profileIntKey("subtitle_size_pct")] = mappedPct
+            }
+        }
+    }
+
+    fun setSubtitleSizePct(pct: Int) {
+        val clamped = pct.coerceIn(50, 250)
+        val name = when {
+            clamped <= 80 -> "Small"
+            clamped >= 130 -> "Extra Large"
+            clamped >= 115 -> "Large"
+            else -> "Medium"
+        }
+        _uiState.value = _uiState.value.copy(subtitleSizePct = clamped, subtitleSize = name)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileIntKey("subtitle_size_pct")] = clamped
+                prefs[profileManager.profileStringKey("subtitle_size")] = name
+            }
+        }
+    }
+
+    fun setSubtitleVerticalPct(pct: Int) {
+        val clamped = pct.coerceIn(1, 88)
+        val name = when {
+            clamped >= 60 -> "Top"
+            clamped >= 25 -> "High"
+            clamped >= 12 -> "Medium"
+            clamped >= 5 -> "Low"
+            else -> "Bottom"
+        }
+        _uiState.value = _uiState.value.copy(subtitleVerticalPct = clamped, subtitleOffset = name)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileIntKey("subtitle_vertical_pct")] = clamped
+                prefs[profileManager.profileStringKey("subtitle_offset")] = name
+            }
+        }
+    }
+
+    fun setSubtitlePreloadEnabled(enabled: Boolean) {
+        subtitlePreloadEnabled = enabled
+        _uiState.value = _uiState.value.copy(subtitlePreloadEnabled = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[subtitlePreloadKey] = enabled
+            }
+        }
+    }
+
+    fun setFilterSubtitlesByLanguage(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(filterSubtitlesByLanguage = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[filterSubtitlesByLanguageKey()] = enabled
+            }
+            val filtered = filterSubsByPreferredLanguage(subtitleMenuCandidates.values.toList())
+            val selected = _uiState.value.selectedSubtitle
+            _uiState.value = _uiState.value.copy(
+                subtitles = (filtered + listOfNotNull(selected)).distinctBy { it.id }
+            )
+        }
+    }
+
+    fun setSubtitleRemoveHearingImpaired(enabled: Boolean) {
+        translationManager.removeSubtitleHearingImpaired = enabled
+        _uiState.value = _uiState.value.copy(subtitleRemoveHearingImpaired = enabled)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("subtitle_remove_hearing_impaired")] = enabled
+            }
+        }
+    }
+
+    fun setSubtitleColorPref(color: String) {
+        _uiState.value = _uiState.value.copy(subtitleColor = color)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_color")] = color
+            }
+        }
+    }
+
+    fun setSubtitleOffsetPref(offset: String) {
+        _uiState.value = _uiState.value.copy(subtitleOffset = offset)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_offset")] = offset
+            }
+        }
+    }
+
+    fun setVolumeBoostDb(boostDb: Int) {
+        val clamped = boostDb.coerceIn(0, 15)
+        _uiState.value = _uiState.value.copy(volumeBoostDb = clamped)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("volume_boost_db")] = clamped.toString()
+            }
+        }
+    }
+
+    fun setSubtitleStylePref(style: String) {
+        _uiState.value = _uiState.value.copy(subtitleStyle = style)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_style")] = style
+            }
+        }
+    }
+
+    fun setSubtitleFontPref(font: String) {
+        _uiState.value = _uiState.value.copy(subtitleFont = font)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileStringKey("subtitle_font")] = font
+            }
+        }
+    }
+
+    fun setSubtitleStylizedPref(stylized: Boolean) {
+        _uiState.value = _uiState.value.copy(subtitleStylized = stylized)
+        viewModelScope.launch {
+            context.settingsDataStore.edit { prefs ->
+                prefs[profileManager.profileBooleanKey("subtitle_stylized")] = stylized
+            }
         }
     }
 
@@ -2813,9 +3263,14 @@ class PlayerViewModel @Inject constructor(
                     if (_uiState.value.isAiTranslating) {
                         activateAiTranslation()
                         showMatchToast(
-                            "No well-synced subtitle found" +
-                                (score?.let { " (best ${(it * 100).toInt()}%)" } ?: "") +
-                                " — keeping AI translation"
+                            if (score == null) {
+                                PlayerMessage.Res(R.string.player_match_none_keeping_ai)
+                            } else {
+                                PlayerMessage.Res(
+                                    R.string.player_match_none_score_keeping_ai,
+                                    listOf((score * 100).toInt())
+                                )
+                            }
                         )
                     }
                 },
@@ -2838,7 +3293,7 @@ class PlayerViewModel @Inject constructor(
         if (!aiSubtitleEnabled || aiApiKey.isBlank()) return false
         if (findAiSourceSubtitle(_uiState.value.subtitles) == null) return false
         activateAiTranslation()
-        showMatchToast("No well-synced subtitle found — using AI translation")
+        showMatchToast(PlayerMessage.Res(R.string.player_match_none_using_ai))
         return true
     }
 
@@ -2863,7 +3318,7 @@ class PlayerViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 isAiTranslating = false,
                 isAiAvailable = false,
-                aiErrorToast = context.getString(R.string.player_ai_no_text_source)
+                aiErrorToast = PlayerMessage.Res(R.string.player_ai_no_text_source)
             )
         }
     }
@@ -2924,6 +3379,7 @@ class PlayerViewModel @Inject constructor(
             // a subtitle on top of the live AI overlay, since it only checks this flag.
             hasManualSubtitleSelection = true
             subtitleSelectionJob?.cancel()
+            cancelSubtitleLocalization()
             translationManager.isEnabled = false
             subtitleBeforeLiveAudio = _uiState.value.selectedSubtitle
             targetSubtitleLangCode.takeIf { it.isNotBlank() }?.let { geminiLiveService.targetLanguageCode = it }
@@ -2953,15 +3409,24 @@ class PlayerViewModel @Inject constructor(
             // Include the best (rejected) score so a fast verdict is visibly a real scan result.
             val noMatch = onNoMatch ?: { score ->
                 showMatchToast(
-                    "No well-synced $targetLangName subtitle found" +
-                        (score?.let { " (best ${(it * 100).toInt()}%)" } ?: "")
+                    if (score == null) {
+                        PlayerMessage.Res(
+                            R.string.player_match_none_language,
+                            listOf(targetLangName)
+                        )
+                    } else {
+                        PlayerMessage.Res(
+                            R.string.player_match_none_language_score,
+                            listOf(targetLangName, (score * 100).toInt())
+                        )
+                    }
                 )
             }
             if (targetLang.isBlank() || isSubtitleDisabledPreference(targetLang)) {
                 noMatch(null)
                 return@launch
             }
-            beginMatch("Finding best subtitle…")
+            beginMatch(PlayerMessage.Res(R.string.player_match_finding))
 
             // Subtitle sources resolve asynchronously after playback starts: embedded tracks a beat
             // later, addon subtitles when their fetch completes. Wait for both a usable muxed
@@ -3022,7 +3487,12 @@ class PlayerViewModel @Inject constructor(
             if (embedded != null) {
                 endMatch()
                 selectSubtitle(embedded, isUserAction = false)
-                showMatchToast("Matched: embedded $targetLangName subtitle (in sync)")
+                showMatchToast(
+                    PlayerMessage.Res(
+                        R.string.player_match_embedded,
+                        listOf(targetLangName)
+                    )
+                )
                 return@launch
             }
 
@@ -3056,7 +3526,7 @@ class PlayerViewModel @Inject constructor(
                     // slow addon server (download bounded by the matcher's client timeouts).
                     // Re-bake the remembered rescue offset, if any.
                     val offsetMs = cached.offsetMs
-                    val raw = SubtitleSyncMatcher.loadRaw(remembered.url)
+                    val raw = SubtitleSyncMatcher.loadRaw(remembered.url, remembered.lang)
                     // A remembered OFFSET can only be honoured if we can download the text to bake
                     // the shift in. If that download fails, DON'T serve the un-shifted remote copy
                     // under an "auto-offset" label (the sub would be mistimed while the UI claims it
@@ -3067,8 +3537,19 @@ class PlayerViewModel @Inject constructor(
                         val local = raw?.let { localizeSubtitle(remembered, it, offsetMs) } ?: remembered
                         endMatch()
                         selectSubtitle(local, isUserAction = false)
-                        val offsetNote = if (offsetMs != 0L) " (auto-offset ${formatMatchOffset(offsetMs)})" else ""
-                        showMatchToast("Matched: ${remembered.label} (remembered)$offsetNote")
+                        showMatchToast(
+                            if (offsetMs != 0L) {
+                                PlayerMessage.Res(
+                                    R.string.player_match_remembered_offset,
+                                    listOf(remembered.label, formatMatchOffset(offsetMs))
+                                )
+                            } else {
+                                PlayerMessage.Res(
+                                    R.string.player_match_remembered,
+                                    listOf(remembered.label)
+                                )
+                            }
+                        )
                         return@launch
                     }
                 }
@@ -3085,13 +3566,18 @@ class PlayerViewModel @Inject constructor(
             if (exactNameMatch != null) {
                 // Serve from a local copy for the same reason the remembered path does: the
                 // MediaItem rebuild would otherwise stall on a slow addon server.
-                val exactRaw = SubtitleSyncMatcher.loadRaw(exactNameMatch.url)
+                val exactRaw = SubtitleSyncMatcher.loadRaw(exactNameMatch.url, exactNameMatch.lang)
                 val exactLocal = exactRaw?.let { localizeSubtitle(exactNameMatch, it) } ?: exactNameMatch
                 endMatch()
                 selectSubtitle(exactLocal, isUserAction = false)
                 writeCachedMatch(exactNameMatch)
                 Log.i("SubMatch", "exact release-name match — scan skipped: ${exactNameMatch.label}")
-                showMatchToast("Matched: ${exactNameMatch.label} (exact release name)")
+                showMatchToast(
+                    PlayerMessage.Res(
+                        R.string.player_match_exact_release_name,
+                        listOf(exactNameMatch.label)
+                    )
+                )
                 return@launch
             }
 
@@ -3104,19 +3590,29 @@ class PlayerViewModel @Inject constructor(
             val builtInReference = embeddedRefs.firstOrNull { normalizeLanguage(it.lang) == "en" }
                 ?: embeddedRefs.firstOrNull()
             val sourceLabel = if (builtInReference != null) "Built-in" else "Hearing"
+            val sourceLabelRes = if (builtInReference != null) {
+                R.string.player_match_source_builtin
+            } else {
+                R.string.player_match_source_hearing
+            }
             android.util.Log.i(
                 "SubMatch",
                 "reference source=$sourceLabel embeddedRefs=${embeddedRefs.size} " +
                     "ref=\"${builtInReference?.label ?: "-"}\" (lang=${builtInReference?.lang}) " +
                     "allEmbedded=${subs.count { it.isEmbedded }}"
             )
-            updateMatchStatus("Finding best subtitle ($sourceLabel)…")
+            updateMatchStatus(
+                PlayerMessage.Res(
+                    R.string.player_match_finding_source,
+                    listOf(PlayerMessage.Res(sourceLabelRes))
+                )
+            )
 
             // Keep the raw text alongside the parsed cues: the winning subtitle is later served to
             // ExoPlayer from a local cache file (already downloaded here) instead of re-fetching
             // a possibly slow addon server during the MediaItem rebuild.
             val loadedRaw = candidates.map { sub ->
-                async { sub to SubtitleSyncMatcher.loadRaw(sub.url) }
+                async { sub to SubtitleSyncMatcher.loadRaw(sub.url, sub.lang) }
             }.awaitAll()
             val rawBySubKey = loadedRaw.mapNotNull { (sub, raw) ->
                 raw?.let { "${sub.provider}|${sub.id}" to it }
@@ -3151,7 +3647,12 @@ class PlayerViewModel @Inject constructor(
                 if (current != null && normalizeLanguage(current.lang) == targetLang) return
                 candidates.firstOrNull()?.let {
                     selectServedLocally(it)
-                    showMatchToast("Selected ${it.label} (sync unverified)")
+                    showMatchToast(
+                        PlayerMessage.Res(
+                            R.string.player_match_sync_unverified,
+                            listOf(it.label)
+                        )
+                    )
                 }
             }
 
@@ -3165,7 +3666,7 @@ class PlayerViewModel @Inject constructor(
 
             val scored = when {
                 builtInReference != null ->
-                    scoreAgainstBuiltIn(loaded, builtInReference, sourceLabel, previousSubtitle)
+                    scoreAgainstBuiltIn(loaded, builtInReference, sourceLabelRes, previousSubtitle)
                 // AI translation is already on screen as the fallback — the hearing path is too
                 // unreliable to risk replacing it, so just stay on AI.
                 _uiState.value.isAiTranslating -> null
@@ -3173,7 +3674,7 @@ class PlayerViewModel @Inject constructor(
                 // feature on, a key, and the Gemini model (a Groq key can't open that connection).
                 !aiSubtitleEnabled || aiApiKey.isBlank() ||
                     aiModel != SubtitleAiModel.GEMINI_FLASH_25 -> null
-                else -> scoreAgainstHearing(loaded, sourceLabel)
+                else -> scoreAgainstHearing(loaded, sourceLabelRes)
             }
             endMatch()
 
@@ -3195,9 +3696,27 @@ class PlayerViewModel @Inject constructor(
                 // Cache the original (addon) identity + any rescue offset — the local file is
                 // per-session transient, but the offset must be re-applied on the next playback.
                 writeCachedMatch(best.sub, best.offsetMs)
-                val offsetNote = if (best.offsetMs != 0L) " (auto-offset ${formatMatchOffset(best.offsetMs)})" else ""
                 showMatchToast(
-                    "Matched: ${best.sub.label} · ${(best.score * 100).toInt()}% ($sourceLabel)$offsetNote"
+                    if (best.offsetMs != 0L) {
+                        PlayerMessage.Res(
+                            R.string.player_match_scored_offset,
+                            listOf(
+                                best.sub.label,
+                                (best.score * 100).toInt(),
+                                PlayerMessage.Res(sourceLabelRes),
+                                formatMatchOffset(best.offsetMs)
+                            )
+                        )
+                    } else {
+                        PlayerMessage.Res(
+                            R.string.player_match_scored,
+                            listOf(
+                                best.sub.label,
+                                (best.score * 100).toInt(),
+                                PlayerMessage.Res(sourceLabelRes)
+                            )
+                        )
+                    }
                 )
             } else {
                 // Nothing synced found (or too little dialogue) → let the caller fall back (AI translate).
@@ -3319,7 +3838,7 @@ class PlayerViewModel @Inject constructor(
     private suspend fun scoreAgainstBuiltIn(
         loaded: List<Pair<Subtitle, List<SubtitleSyncMatcher.TimedCue>>>,
         referenceSub: Subtitle,
-        sourceLabel: String,
+        @StringRes sourceLabelRes: Int,
         previousSubtitle: Subtitle?
     ): List<ScoredCandidate>? {
         synchronized(referenceIntervals) { referenceIntervals.clear() }
@@ -3486,8 +4005,17 @@ class PlayerViewModel @Inject constructor(
             }
             if (elapsed >= deadline) break
             updateMatchStatus(
-                if (refs.isEmpty()) "Searching for a match ($sourceLabel) — waiting for speech…"
-                else "Searching for a match ($sourceLabel) — (${refs.size})"
+                if (refs.isEmpty()) {
+                    PlayerMessage.Res(
+                        R.string.player_match_waiting_for_speech,
+                        listOf(PlayerMessage.Res(sourceLabelRes))
+                    )
+                } else {
+                    PlayerMessage.Res(
+                        R.string.player_match_collecting_reference,
+                        listOf(PlayerMessage.Res(sourceLabelRes), refs.size)
+                    )
+                }
             )
             delay(300)
         }
@@ -3537,7 +4065,7 @@ class PlayerViewModel @Inject constructor(
     /** Reference = AI hearing transcription (fallback when there's no built-in English track). */
     private suspend fun scoreAgainstHearing(
         loaded: List<Pair<Subtitle, List<SubtitleSyncMatcher.TimedCue>>>,
-        sourceLabel: String
+        @StringRes sourceLabelRes: Int
     ): List<ScoredCandidate>? {
         startMatchListening()
         val samples = mutableListOf<SubtitleSyncMatcher.SpokenSample>()
@@ -3576,8 +4104,17 @@ class PlayerViewModel @Inject constructor(
                 break
             }
             updateMatchStatus(
-                if (samples.isEmpty()) "Searching for a match ($sourceLabel) — waiting for speech…"
-                else "Searching for a match ($sourceLabel) — scanning subtitles… (${samples.size})"
+                if (samples.isEmpty()) {
+                    PlayerMessage.Res(
+                        R.string.player_match_waiting_for_speech,
+                        listOf(PlayerMessage.Res(sourceLabelRes))
+                    )
+                } else {
+                    PlayerMessage.Res(
+                        R.string.player_match_scanning_subtitles,
+                        listOf(PlayerMessage.Res(sourceLabelRes), samples.size)
+                    )
+                }
             )
             delay(300)
         }
@@ -3597,19 +4134,20 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun beginMatch(status: String) {
-        _uiState.value = _uiState.value.copy(isFindingBestMatch = true, matchStatusText = status)
+    private fun beginMatch(status: PlayerMessage) {
+        _uiState.value = _uiState.value.copy(isFindingBestMatch = true, matchStatus = status)
     }
 
-    private fun updateMatchStatus(status: String) {
-        if (_uiState.value.matchStatusText != status) {
-            _uiState.value = _uiState.value.copy(matchStatusText = status)
+    private fun updateMatchStatus(status: PlayerMessage) {
+        if (_uiState.value.matchStatus != status) {
+            _uiState.value = _uiState.value.copy(matchStatus = status)
         }
     }
 
     private fun startMatchListening() {
         hasManualSubtitleSelection = true
         subtitleSelectionJob?.cancel()
+        cancelSubtitleLocalization()
         translationManager.isEnabled = false
         targetSubtitleLangCode.takeIf { it.isNotBlank() }?.let { geminiLiveService.targetLanguageCode = it }
         geminiLiveService.connect()
@@ -3626,7 +4164,7 @@ class PlayerViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             isFindingBestMatch = false,
             isLiveAudioTranslating = false,
-            matchStatusText = ""
+            matchStatus = null
         )
     }
 
@@ -3785,7 +4323,7 @@ class PlayerViewModel @Inject constructor(
         subtitlePreloadJob = viewModelScope.launch {
             val localized = candidates.map { sub ->
                 async(Dispatchers.IO) {
-                    SubtitleSyncMatcher.loadRaw(sub.url)
+                    SubtitleSyncMatcher.loadRaw(sub.url, sub.lang)
                         ?.takeIf { it.isNotBlank() }
                         ?.let { raw -> localizeSubtitle(sub, raw) }
                         ?.takeIf { it.url.startsWith("file:") }
@@ -3803,7 +4341,7 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    private fun showMatchToast(message: String) {
+    private fun showMatchToast(message: PlayerMessage) {
         _uiState.value = _uiState.value.copy(matchToast = message)
     }
 
@@ -3819,6 +4357,7 @@ class PlayerViewModel @Inject constructor(
         userPickedSubtitle = true
         cancelFindBestMatch()
         subtitleSelectionJob?.cancel()
+        cancelSubtitleLocalization()
         translationManager.isEnabled = false
         aiSourceSubtitle = null
         _uiState.value = _uiState.value.copy(
@@ -3860,6 +4399,23 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun retry() {
+        retryPlayback()
+    }
+
+    fun reloadStreams() {
+        val resumeTarget = lastKnownPositionMs.takeIf { it > 0L } ?: currentStartPositionMs
+        mediaLoadJob?.cancel()
+        _uiState.value = _uiState.value.copy(
+            error = null,
+            isLoading = false,
+            isLoadingStreams = true,
+            sourceSearchActive = true,
+            streams = emptyList(),
+            selectedStream = null,
+            selectedStreamUrl = null,
+            streamProgress = 0f,
+            streamLoadPhase = null
+        )
         loadMedia(
             mediaType = currentMediaType,
             mediaId = currentMediaId,
@@ -3873,9 +4429,22 @@ class PlayerViewModel @Inject constructor(
             preferredAddonId = currentPreferredAddonId,
             preferredSourceName = currentPreferredSourceName,
             preferredBingeGroup = currentPreferredBingeGroup,
-            startPositionMs = currentStartPositionMs,
-            isLiveStreamPlayback = currentIsLiveStreamPlayback
+            startPositionMs = resumeTarget,
+            isLiveStreamPlayback = currentIsLiveStreamPlayback,
+            forceRefresh = true,
+            airDate = currentAirDate
         )
+    }
+
+    fun retryPlayback() {
+        val stream = _uiState.value.selectedStream
+        if (stream != null) {
+            _uiState.value = _uiState.value.copy(error = null)
+            val resumeTarget = lastKnownPositionMs.takeIf { it > 0L } ?: currentStartPositionMs
+            selectStream(stream, resumeTarget)
+        } else {
+            reloadStreams()
+        }
     }
 
     private data class ResumeData(
@@ -4081,18 +4650,29 @@ class PlayerViewModel @Inject constructor(
                 lastScrobbleTime = currentTime
             } else if (!isLiveStreamOrSports && !isPlaying && lastIsPlaying) {
                 try {
-                    remoteSyncManager.scrobblePause(
-                        mediaType = currentMediaType,
-                        tmdbId = currentMediaId,
-                        progress = progressPercent.toFloat(),
-                        season = currentSeason,
-                        episode = currentEpisode,
-                        isAnime = isCurrentAnime()
-                    )
+                    if (progressPercent >= 80 && !hasMarkedWatched) {
+                        remoteSyncManager.scrobbleStop(
+                            mediaType = currentMediaType,
+                            tmdbId = currentMediaId,
+                            progress = progressPercent.toFloat(),
+                            season = currentSeason,
+                            episode = currentEpisode,
+                            isAnime = isCurrentAnime()
+                        )
+                    } else {
+                        remoteSyncManager.scrobblePause(
+                            mediaType = currentMediaType,
+                            tmdbId = currentMediaId,
+                            progress = progressPercent.toFloat(),
+                            season = currentSeason,
+                            episode = currentEpisode,
+                            isAnime = isCurrentAnime()
+                        )
+                    }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
 
-                    // Scrobble pause immediate failed
+                    // Scrobble pause/stop immediate failed
                 }
                 lastScrobbleTime = currentTime
             } else if (!isLiveStreamOrSports && isPlaying && currentTime - lastScrobbleTime >= SCROBBLE_UPDATE_INTERVAL_MS) {
@@ -4328,16 +4908,24 @@ class PlayerViewModel @Inject constructor(
     }
 
     private var progressSaveJob: Job? = null
+    private var mediaLoadJob: Job? = null
     private var subtitleRefreshJob: Job? = null
     private var vodAppendJob: Job? = null
     private var homeServerAppendJob: Job? = null
     private var subtitleSelectionJob: Job? = null
+    /** Downloads+decodes a manually picked subtitle before it is served (see selectSubtitle). */
+    private var subtitleLocalizeJob: Job? = null
+    /** Bumped whenever an in-flight localization must not be applied any more. */
+    private var subtitleLocalizeGeneration = 0L
     private var streamPrewarmJob: Job? = null
     private var focusedStreamPrewarmJob: Job? = null
     private var streamSelectionJob: Job? = null
     private var playbackErrorReportJob: Job? = null
     private var primaryStreamResolutionFinal: Boolean = false
     private var lastTopPrewarmKey: String = ""
+
+    private fun canStartAutoplay(): Boolean = _uiState.value.selectedStream == null &&
+        _uiState.value.selectedStreamUrl.isNullOrBlank() && streamSelectionJob?.isActive != true
 
     private fun sourceLookupStillActive(currentJob: Job? = null): Boolean {
         val supplementalStillLoading =
@@ -4346,7 +4934,7 @@ class PlayerViewModel @Inject constructor(
         return !primaryStreamResolutionFinal || supplementalStillLoading
     }
 
-    private fun finishSupplementalSourceLookupIfReady(currentJob: Job?, errorMessage: String) {
+    private fun finishSupplementalSourceLookupIfReady(currentJob: Job?, errorMessage: PlayerMessage) {
         val state = _uiState.value
         val stillActive = sourceLookupStillActive(currentJob)
         if (state.streams.isNotEmpty() || !state.selectedStreamUrl.isNullOrBlank()) {
@@ -4355,7 +4943,10 @@ class PlayerViewModel @Inject constructor(
                 isLoadingStreams = false,
                 sourceSearchActive = stillActive,
                 streamProgress = null,
-                streamLoadPhase = null
+                streamLoadPhase = null,
+                error = if (!stillActive && canStartAutoplay() &&
+                    eligiblePlayerAutoplayStreams(state.streams, autoPlayMinimumQuality).isEmpty()
+                ) PlayerMessage.Res(R.string.stream_no_sources_match) else state.error
             )
             return
         }
@@ -4408,7 +4999,7 @@ class PlayerViewModel @Inject constructor(
         if (validSources.isEmpty()) {
             finishSupplementalSourceLookupIfReady(
                 currentJob = currentCoroutineContext()[Job],
-                errorMessage = "No streams found for this content. The configured media servers may not have this title."
+                errorMessage = PlayerMessage.Res(R.string.player_error_no_streams_media_servers)
             )
             return
         }
@@ -4424,14 +5015,15 @@ class PlayerViewModel @Inject constructor(
             streams = sortedStreams,
             isLoadingStreams = false,
             sourceSearchActive = sourceLookupStillActive(currentJob),
-            error = null,
+            error = _uiState.value.error.takeUnless { canStartAutoplay() },
             isSetupError = false,
             streamProgress = null,
             streamLoadPhase = null
         )
         prewarmTopStreams(sortedStreams, preferredLanguage)
         if (shouldAutoplayHomeServer) {
-            pickPreferredStream(sortedStreams, preferredLanguage)?.let { selectStream(it) }
+            autoplaySelectBest(sortedStreams, preferredLanguage)
+            finishSupplementalSourceLookupIfReady(currentJob, PlayerMessage.Res(R.string.player_error_no_streams_media_servers))
         }
     }
 
@@ -4470,7 +5062,7 @@ class PlayerViewModel @Inject constructor(
         if (validVodSources.isEmpty()) {
             finishSupplementalSourceLookupIfReady(
                 currentJob = currentCoroutineContext()[Job],
-                errorMessage = "No streams found for this content. Try another source or check your configured sources."
+                errorMessage = PlayerMessage.Res(R.string.player_error_no_streams_other_source)
             )
             return
         }
@@ -4486,14 +5078,15 @@ class PlayerViewModel @Inject constructor(
             streams = sortedStreams,
             isLoadingStreams = false,
             sourceSearchActive = sourceLookupStillActive(currentJob),
-            error = null,
+            error = _uiState.value.error.takeUnless { canStartAutoplay() },
             isSetupError = false,
             streamProgress = null,
             streamLoadPhase = null
         )
         prewarmTopStreams(sortedStreams, preferredLanguage)
         if (shouldAutoplayVod) {
-            pickPreferredStream(sortedStreams, preferredLanguage)?.let { selectStream(it) }
+            autoplaySelectBest(sortedStreams, preferredLanguage)
+            finishSupplementalSourceLookupIfReady(currentJob, PlayerMessage.Res(R.string.player_error_no_streams_other_source))
         }
     }
 
@@ -4557,7 +5150,11 @@ class PlayerViewModel @Inject constructor(
                 }
 
             val existingVod = _uiState.value.streams.filter(::isSupplementalStream)
-            val mergedStreams = (allStreams + existingVod)
+            val activeStreamList = listOfNotNull(
+                _uiState.value.selectedStream,
+                if (playbackUrl.isNotBlank()) StreamSource(source = "Direct", addonName = "Direct", quality = "Direct", size = "", url = playbackUrl) else null
+            )
+            val mergedStreams = (allStreams + existingVod + activeStreamList)
                 .distinctBy(::providerScopedStreamIdentity)
 
             val preferredLanguage = _uiState.value.preferredAudioLanguage.ifBlank { "en" }

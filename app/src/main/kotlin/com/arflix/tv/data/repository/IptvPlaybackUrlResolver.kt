@@ -4,8 +4,26 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.net.URI
 import java.util.Locale
+
+internal fun buildXtreamLiveStreamUrl(
+    baseUrl: String,
+    username: String,
+    password: String,
+    streamId: Int,
+    containerExtension: String?,
+): String {
+    val normalized = containerExtension?.trim()?.lowercase(Locale.ROOT)
+    val extension = when (normalized) {
+        "m3u8", "ts", "mp4", "mpd" -> normalized
+        else -> "ts"
+    }
+    return baseUrl.trimEnd('/').toHttpUrl().newBuilder()
+        .addPathSegment("live").addPathSegment(username).addPathSegment(password)
+        .addPathSegment("$streamId.$extension").build().toString()
+}
 
 internal data class IptvPlaybackTarget(
     val url: String,
@@ -33,13 +51,14 @@ internal class IptvPlaybackUrlResolver(
         rawUrl: String,
         headers: Map<String, String>,
         forceRefresh: Boolean = false,
+        probeKnownUrl: Boolean = false,
     ): IptvPlaybackTarget {
         val url = rawUrl.trim()
         val inferredTarget = IptvPlaybackTarget(
             url = url,
             isHls = looksLikeHlsPlaybackUrl(url),
         )
-        if (!shouldResolveIptvPlaybackRedirect(url)) return inferredTarget
+        if (!probeKnownUrl && !shouldResolveIptvPlaybackRedirect(url)) return inferredTarget
 
         val now = System.currentTimeMillis()
         if (!forceRefresh) {
@@ -55,10 +74,11 @@ internal class IptvPlaybackUrlResolver(
             if (headProbe?.isConclusive == true) {
                 headProbe.target
             } else {
-                executeProbe(url, headers, useHead = false)?.target ?: inferredTarget
+                executeProbe(url, headers, useHead = false)?.takeIf { it.isConclusive }?.target
             }
         }
 
+        if (resolved == null) return inferredTarget
         synchronized(cache) {
             cache[url] = CachedTarget(resolved, now)
             while (cache.size > maxCacheEntries) {
@@ -112,9 +132,8 @@ internal class IptvPlaybackUrlResolver(
                 )
                 ProbeResult(
                     target = target,
-                    isConclusive = finalUrl != url ||
-                        target.isHls ||
-                        contentType.isDirectMediaContentType(),
+                    isConclusive = response.isSuccessful && (target.isHls ||
+                        contentType.isDirectMediaContentType()),
                 )
             }
         } catch (e: kotlinx.coroutines.CancellationException) {

@@ -37,8 +37,8 @@ android {
         // Fire TV devices can be as low as Android 7.1 (API 25) or lower depending on model/OS.
         minSdk = 23
         targetSdk = 36
-        versionCode = 310
-        versionName = "1.9.995"
+        versionCode = 312
+        versionName = "1.9.996"
         buildConfigField("String", "GITHUB_OWNER", "\"ProdigyV21\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
@@ -55,12 +55,12 @@ android {
         buildConfigField(
             "String",
             "DISCORD_APPLICATION_ID",
-            "\"${escapeBuildConfigString(localSecretValue("DISCORD_CLIENT_ID").ifBlank { "1501197333826637835" })}\""
+            "\"${escapeBuildConfigString(localSecretValue("DISCORD_CLIENT_ID"))}\""
         )
         buildConfigField(
             "String",
             "NETLIFY_BACKEND_URL",
-            "\"${escapeBuildConfigString(localSecretValue("NETLIFY_BACKEND_URL").ifBlank { "https://auth.arvio.tv/.netlify/functions" })}\""
+            "\"${escapeBuildConfigString(localSecretValue("NETLIFY_BACKEND_URL"))}\""
         )
         buildConfigField(
             "String",
@@ -204,6 +204,7 @@ android {
             // Vendored media3 1.9.0 Matroska extractor with Dolby Vision P7 sample hooks
             // (see dvmkv/package-info.java for the re-vendoring procedure on media3 bumps).
             java.srcDir("src/main/dvmkv-java")
+            res.srcDir("src/main/res-player")
         }
     }
 
@@ -346,6 +347,15 @@ ksp {
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
     implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
+    implementation("androidx.media3:media3-effect:$media3Version") {
+        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-guava")
+    }
+    implementation("androidx.media3:media3-inspector:$media3Version") {
+        // Inspector's optional Kotlin Future adapter pulls Coroutines 1.9 into this app, while
+        // ARVIO's Ktor stack is intentionally pinned to 1.7.3. FrameExtractor is Java/Guava-based
+        // and does not need that adapter.
+        exclude(group = "org.jetbrains.kotlinx", module = "kotlinx-coroutines-guava")
+    }
     implementation("androidx.media3:media3-ui:$media3Version")
     implementation("androidx.media3:media3-session:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
@@ -361,6 +371,10 @@ ksp {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    // Cloudstream/NiceHttp require OkHttp 5; its Android initializer is flavor-specific.
+    add("sideloadImplementation", "com.squareup.okhttp3:okhttp:5.3.2")
+    add("sideloadImplementation", "com.squareup.okhttp3:logging-interceptor:5.3.2")
+    add("sideloadImplementation", "com.squareup.okhttp3:okhttp-dnsoverhttps:5.3.2")
     implementation("com.squareup.moshi:moshi:1.15.1")
     implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
 
@@ -480,6 +494,12 @@ fun localSecretValue(name: String): String {
     }
     providers.gradleProperty(name).orNull?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
     providers.environmentVariable(name).orNull?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+    val defaultsFile = rootProject.file("secrets.defaults.properties")
+    if (defaultsFile.exists()) {
+        val properties = Properties()
+        defaultsFile.readText(Charsets.UTF_8).removePrefix("\uFEFF").reader().use { properties.load(it) }
+        properties.getProperty(name)?.trim()?.takeIf { it.isNotBlank() }?.let { return it }
+    }
     return ""
 }
 

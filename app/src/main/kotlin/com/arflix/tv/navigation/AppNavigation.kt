@@ -1,5 +1,6 @@
 package com.arflix.tv.navigation
 
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -119,6 +120,14 @@ sealed class Screen(val route: String) {
     }
 }
 
+internal fun NavHostController.navigateToProfileSelection() {
+    navigate(Screen.ProfileSelection.route) {
+        // The start destination may already have been removed after profile selection.
+        popUpTo(graph.id) { inclusive = false }
+        launchSingleTop = true
+    }
+}
+
 /**
  * Main navigation graph
  */
@@ -145,14 +154,22 @@ fun AppNavigation(
     }
 
     val navigateHome: () -> Unit = {
-        // Navigate to Home clearing the entire back stack above it.
-        // Uses navigate() instead of popBackStack() because popBackStack can
-        // silently fail if Home is not found, and restoreState on other
-        // navigateTopLevel calls can bring back stale Details pages.
-        navController.navigate(Screen.Home.route) {
-            popUpTo(Screen.Home.route) { inclusive = true; saveState = false }
-            launchSingleTop = true
-            restoreState = false
+        // Pop back to the EXISTING Home entry rather than replacing it.
+        //
+        // navigateTopLevel uses popUpTo(Home) with inclusive = false, so Home is still on the back
+        // stack while the user is on Watchlist/TV/Search. Re-navigating with inclusive = true
+        // destroyed that entry, and with it the HomeViewModel that hiltViewModel() scopes to it —
+        // so every return to Home rebuilt the whole screen from scratch (~550 requests, ~5s).
+        //
+        // popBackStack also clears everything stacked above Home, which is what the previous
+        // comment here wanted (no stale Details pages); the fallback covers the case it worried
+        // about, Home not being on the stack at all.
+        if (!navController.popBackStack(Screen.Home.route, inclusive = false)) {
+            navController.navigate(Screen.Home.route) {
+                popUpTo(Screen.Home.route) { inclusive = true; saveState = false }
+                launchSingleTop = true
+                restoreState = false
+            }
         }
     }
 
@@ -219,9 +236,7 @@ fun AppNavigation(
                 },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    navController.navigateToProfileSelection()
                 },
                 onExitApp = onExitApp
             )
@@ -240,9 +255,7 @@ fun AppNavigation(
                 onNavigateToSettings = { navigateTopLevel(Screen.Settings.route) },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    navController.navigateToProfileSelection()
                 },
                 onBack = { navigateHome() }
             )
@@ -263,9 +276,7 @@ fun AppNavigation(
                 },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    navController.navigateToProfileSelection()
                 },
                 onBack = { navigateHome() }
             )
@@ -296,9 +307,7 @@ fun AppNavigation(
                 },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    navController.navigateToProfileSelection()
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -339,9 +348,7 @@ fun AppNavigation(
                 onNavigateToTelegramSettings = { navController.navigate(Screen.TelegramSettings.route) },
                 onSwitchProfile = {
                     onSwitchProfile()
-                    navController.navigate(Screen.ProfileSelection.route) {
-                        popUpTo(Screen.Home.route) { inclusive = true }
-                    }
+                    navController.navigateToProfileSelection()
                 },
                 onBack = { navController.popBackStack() }
             )
@@ -545,7 +552,9 @@ fun AppNavigation(
                     type = NavType.BoolType
                     defaultValue = false
                 }
-            )
+            ),
+            exitTransition = { ExitTransition.None },
+            popExitTransition = { ExitTransition.None }
         ) { backStackEntry ->
             val mediaTypeStr = backStackEntry.arguments?.getString("mediaType") ?: "movie"
             val mediaId = backStackEntry.arguments?.getInt("mediaId") ?: 0

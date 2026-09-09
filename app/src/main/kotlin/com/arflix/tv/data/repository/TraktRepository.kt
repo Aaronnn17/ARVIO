@@ -12,6 +12,7 @@ import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.NextEpisode
 import com.arflix.tv.data.model.SportsAddonCapabilities
+import com.arflix.tv.data.repository.sync.shouldApplyCloudCredential
 import com.arflix.tv.util.ContinueWatchingSelector
 import com.arflix.tv.util.EpisodePointer
 import com.arflix.tv.util.EpisodeProgressSnapshot
@@ -96,6 +97,7 @@ class TraktRepository @Inject constructor(
     private fun accessTokenKey() = profileManager.profileStringKey("trakt_access_token")
     private fun refreshTokenKey() = profileManager.profileStringKey("trakt_refresh_token")
     private fun expiresAtKey() = profileManager.profileLongKey("trakt_expires_at")
+    private fun tokenUpdatedAtKey() = profileManager.profileLongKey("trakt_token_updated_at_v3")
     private fun includeSpecialsKey() = profileManager.profileBooleanKey("trakt_include_specials")
     private fun dismissedContinueWatchingKey() = profileManager.profileStringKey("trakt_dismissed_continue_watching_v1")
     private fun continueWatchingCacheKey() = profileManager.profileStringKey("trakt_continue_watching_cache_v4")
@@ -105,9 +107,10 @@ class TraktRepository @Inject constructor(
     private fun localWatchedEpisodesKey() = profileManager.profileStringKey("local_watched_episodes_v1")
 
     data class CloudTraktToken(
-        val accessToken: String,
-        val refreshToken: String?,
-        val expiresAt: Long?
+        val accessToken: String? = null,
+        val refreshToken: String? = null,
+        val expiresAt: Long? = null,
+        val updatedAt: Long? = null
     )
 
     @Volatile private var activeCacheProfileId: String? = null
@@ -212,25 +215,6 @@ class TraktRepository @Inject constructor(
         return directFallback()
     }
 
-    private fun isPermanentTokenRefreshFailure(e: Throwable): Boolean {
-        val message = e.message?.lowercase().orEmpty()
-        return message.contains("invalid_grant") ||
-            message.contains("authorization grant is invalid") ||
-            message.contains("expired") ||
-            message.contains("revoked") ||
-            message.contains("issued to another client")
-    }
-
-    private suspend fun clearInvalidTraktToken() {
-        context.traktDataStore.edit { prefs ->
-            prefs.remove(accessTokenKey())
-            prefs.remove(refreshTokenKey())
-            prefs.remove(expiresAtKey())
-        }
-        tokenRefreshBackoffUntilMs = 0L
-        clearProfileScopedMemoryCaches(clearPreloaded = false)
-    }
-
     private suspend fun refreshTraktToken(refreshToken: String): TraktToken {
         return requestTraktToken(
             directFallback = {
@@ -284,32 +268,23 @@ class TraktRepository @Inject constructor(
                 newToken.accessToken
             } catch (e: HttpException) {
                 val code = e.code()
-                if (code == 429 || code >= 500) {
-                    val retryAfterMs = e.response()
-                        ?.headers()
-                        ?.get("Retry-After")
-                        ?.toLongOrNull()
-                        ?.times(1000L)
-                        ?.coerceAtLeast(30_000L)
-                        ?: TOKEN_REFRESH_RETRY_BACKOFF_MS
-                    tokenRefreshBackoffUntilMs = System.currentTimeMillis() + retryAfterMs
-                    System.err.println("TraktRepo: token refresh deferred after HTTP $code")
-                    usableExistingToken()
-                } else {
-                    System.err.println("TraktRepo: token refresh failed: HTTP $code")
-                    if (code == 400 || code == 401 || code == 403) {
-                        clearInvalidTraktToken()
-                    }
-                    null
-                }
+                val retryAfterMs = e.response()
+                    ?.headers()
+                    ?.get("Retry-After")
+                    ?.toLongOrNull()
+                    ?.times(1000L)
+                    ?.coerceAtLeast(30_000L)
+                    ?: TOKEN_REFRESH_RETRY_BACKOFF_MS
+                tokenRefreshBackoffUntilMs = System.currentTimeMillis() + retryAfterMs
+                // A refresh response can fail because of a temporary proxy, client,
+                // rate-limit or Trakt-side problem. Never turn that network response
+                // into a local logout; only an explicit user disconnect removes tokens.
+                System.err.println("TraktRepo: token refresh deferred after HTTP $code")
+                usableExistingToken()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
 
                 System.err.println("TraktRepo: token refresh failed: ${e.message}")
-                if (isPermanentTokenRefreshFailure(e)) {
-                    clearInvalidTraktToken()
-                    return@withLock null
-                }
                 tokenRefreshBackoffUntilMs = System.currentTimeMillis() + TOKEN_REFRESH_RETRY_BACKOFF_MS
                 usableExistingToken()
             }
@@ -322,6 +297,7 @@ class TraktRepository @Inject constructor(
             prefs[accessTokenKey()] = token.accessToken
             prefs[refreshTokenKey()] = token.refreshToken
             prefs[expiresAtKey()] = token.createdAt + token.expiresIn
+            prefs[tokenUpdatedAtKey()] = System.currentTimeMillis()
         }
     }
 
@@ -348,6 +324,7 @@ class TraktRepository @Inject constructor(
             prefs.remove(accessTokenKey())
             prefs.remove(refreshTokenKey())
             prefs.remove(expiresAtKey())
+            prefs[tokenUpdatedAtKey()] = System.currentTimeMillis()
         }
         clearProfileScopedMemoryCaches(clearPreloaded = false)
     }
@@ -358,11 +335,34 @@ class TraktRepository @Inject constructor(
     suspend fun exportTokensForProfiles(profileIds: List<String>): Map<String, CloudTraktToken> {
         val prefs = context.traktDataStore.data.first()
         val out = LinkedHashMap<String, CloudTraktToken>()
+        val migratedProfiles = mutableListOf<String>()
+        val migrationUpdatedAt = System.currentTimeMillis()
         profileIds.forEach { profileId ->
-            val access = prefs[profileManager.profileStringKeyFor(profileId, "trakt_access_token")] ?: return@forEach
+            val access = prefs[profileManager.profileStringKeyFor(profileId, "trakt_access_token")]
             val refresh = prefs[profileManager.profileStringKeyFor(profileId, "trakt_refresh_token")]
             val expiresAt = prefs[profileManager.profileLongKeyFor(profileId, "trakt_expires_at")]
-            out[profileId] = CloudTraktToken(accessToken = access, refreshToken = refresh, expiresAt = expiresAt)
+            val updatedAtKey = profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")
+            val storedUpdatedAt = prefs[updatedAtKey]?.takeIf { it > 0L }
+            val effectiveUpdatedAt = storedUpdatedAt ?: access?.let {
+                migratedProfiles += profileId
+                migrationUpdatedAt
+            }
+            if (access != null || effectiveUpdatedAt != null) {
+                out[profileId] = CloudTraktToken(
+                    accessToken = access,
+                    refreshToken = refresh,
+                    expiresAt = expiresAt,
+                    updatedAt = effectiveUpdatedAt
+                )
+            }
+        }
+        if (migratedProfiles.isNotEmpty()) {
+            context.traktDataStore.edit { current ->
+                migratedProfiles.forEach { profileId ->
+                    current[profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")] =
+                        migrationUpdatedAt
+                }
+            }
         }
         return out
     }
@@ -372,11 +372,35 @@ class TraktRepository @Inject constructor(
      */
     suspend fun importTokensForProfiles(tokens: Map<String, CloudTraktToken>) {
         if (tokens.isEmpty()) return
+        val local = context.traktDataStore.data.first()
+        val tokensToApply = tokens.filter { (profileId, token) ->
+            shouldApplyCloudCredential(
+                incomingUpdatedAt = token.updatedAt,
+                localUpdatedAt = local[profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")],
+                incomingHasCredential = !token.accessToken.isNullOrBlank(),
+                localHasCredential = !local[
+                    profileManager.profileStringKeyFor(profileId, "trakt_access_token")
+                ].isNullOrBlank()
+            )
+        }
+        if (tokensToApply.isEmpty()) return
         context.traktDataStore.edit { prefs ->
-            tokens.forEach { (profileId, token) ->
-                prefs[profileManager.profileStringKeyFor(profileId, "trakt_access_token")] = token.accessToken
-                token.refreshToken?.let { prefs[profileManager.profileStringKeyFor(profileId, "trakt_refresh_token")] = it }
-                token.expiresAt?.let { prefs[profileManager.profileLongKeyFor(profileId, "trakt_expires_at")] = it }
+            tokensToApply.forEach { (profileId, token) ->
+                val accessKey = profileManager.profileStringKeyFor(profileId, "trakt_access_token")
+                val refreshKey = profileManager.profileStringKeyFor(profileId, "trakt_refresh_token")
+                val expiresKey = profileManager.profileLongKeyFor(profileId, "trakt_expires_at")
+                val updatedAtKey = profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")
+                val accessToken = token.accessToken?.trim().orEmpty()
+                if (accessToken.isEmpty()) {
+                    prefs.remove(accessKey)
+                    prefs.remove(refreshKey)
+                    prefs.remove(expiresKey)
+                } else {
+                    prefs[accessKey] = accessToken
+                    token.refreshToken?.let { prefs[refreshKey] = it } ?: prefs.remove(refreshKey)
+                    token.expiresAt?.let { prefs[expiresKey] = it } ?: prefs.remove(expiresKey)
+                }
+                token.updatedAt?.takeIf { it > 0L }?.let { prefs[updatedAtKey] = it }
             }
         }
         clearProfileScopedMemoryCaches(clearPreloaded = false)
@@ -424,14 +448,18 @@ class TraktRepository @Inject constructor(
         return out
     }
 
-    suspend fun importLocalContinueWatchingForProfiles(values: Map<String, List<ContinueWatchingItem>>) {
+    suspend fun importLocalContinueWatchingForProfiles(values: Map<String, List<ContinueWatchingItem>?>) {
         context.traktDataStore.edit { prefs ->
             values.forEach { (profileId, items) ->
+                if (items == null) return@forEach
+                val validItems = sanitizeContinueWatchingItems(items)
+                // A corrupt non-empty snapshot must not erase this device's valid history.
+                if (items.isNotEmpty() && validItems.isEmpty()) return@forEach
                 val key = profileManager.profileStringKeyFor(profileId, "local_continue_watching_v1")
-                if (items.isEmpty()) {
+                if (validItems.isEmpty()) {
                     prefs.remove(key)
                 } else {
-                    prefs[key] = gson.toJson(items.take(Constants.MAX_CONTINUE_WATCHING))
+                    prefs[key] = gson.toJson(validItems.take(Constants.MAX_CONTINUE_WATCHING))
                 }
             }
         }
@@ -1395,6 +1423,7 @@ class TraktRepository @Inject constructor(
                 }
                 throw lastErr ?: IllegalStateException("$label failed")
             }
+            val snapshotIncomplete = java.util.concurrent.atomic.AtomicBoolean(false)
             val hiddenShowsDeferred = async {
                 try {
                     traktCallWithAuthRetry("hidden progress shows") { currentAuth ->
@@ -1404,6 +1433,7 @@ class TraktRepository @Inject constructor(
                     if (e is kotlinx.coroutines.CancellationException) throw e
 
                     System.err.println("TraktRepo:getCW: getHiddenShows failed: ${e.message}")
+                    snapshotIncomplete.set(true)
                     AppLogger.breadcrumb(
                         tag = "Trakt",
                         message = "cw_hidden_shows_failed error=${e::class.java.simpleName}",
@@ -1421,6 +1451,7 @@ class TraktRepository @Inject constructor(
                     if (e is kotlinx.coroutines.CancellationException) throw e
 
                     System.err.println("TraktRepo:getCW: getHiddenResetShows failed: ${e.message}")
+                    snapshotIncomplete.set(true)
                     AppLogger.breadcrumb(
                         tag = "Trakt",
                         message = "cw_hidden_reset_failed error=${e::class.java.simpleName}",
@@ -1430,25 +1461,33 @@ class TraktRepository @Inject constructor(
                 }
             }
             val playbackDeferred = async {
-                traktCallWithAuthRetry("playback progress") { currentAuth ->
-                    getAllPlaybackProgress(currentAuth)
+                traktSnapshotRead {
+                    traktCallWithAuthRetry("playback progress") { currentAuth ->
+                        getAllPlaybackProgress(currentAuth)
+                    }
                 }
             }
             val watchedShowsDeferred = async {
-                traktCallWithAuthRetry("watched shows") { currentAuth ->
-                    getAllWatchedShows(currentAuth)
+                traktSnapshotRead {
+                    traktCallWithAuthRetry("watched shows") { currentAuth ->
+                        getAllWatchedShows(currentAuth)
+                    }
                 }
             }
 
             val hiddenTraktIds = (hiddenShowsDeferred.await() + hiddenResetShowsDeferred.await())
                 .mapNotNull { it.show?.ids?.trakt }
                 .toSet()
+            // Use the same fresh history for playback filtering and Up Next selection.
+            val watchedSnapshot = watchedShowsDeferred.await()
+            val watchedEpisodeKeys = watchedSnapshot.getOrNull()?.let(::traktWatchedEpisodeKeys)
+                ?: watchedEpisodesCache.toSet()
             // Fetch actively paused playback items (sync/playback).
             val processedKeys = mutableSetOf<String>()
             var playbackFetched = false
             var watchedProgressFetched = false
             try {
-                val playbackItems = playbackDeferred.await()
+                val playbackItems = playbackDeferred.await().getOrThrow()
                 playbackFetched = true
                 for (item in playbackItems) {
                     if (item.progress < Constants.MIN_PROGRESS_THRESHOLD || item.progress >= Constants.WATCHED_THRESHOLD) continue
@@ -1491,7 +1530,7 @@ class TraktRepository @Inject constructor(
                     if (key in processedKeys) continue
                     // Check if this episode is already watched
                     val epWatchedKey = "show_tmdb:$tmdbId:$season:$number"
-                    if (watchedEpisodesCache.contains(epWatchedKey)) continue
+                    if (watchedEpisodeKeys.contains(epWatchedKey)) continue
                     candidates.add(
                         ContinueWatchingCandidate(
                             item = ContinueWatchingItem(
@@ -1527,7 +1566,7 @@ class TraktRepository @Inject constructor(
 
             try {
                 val includeSpecials = context.settingsDataStore.data.first()[includeSpecialsKey()] ?: false
-                val allWatchedShows = watchedShowsDeferred.await()
+                val allWatchedShows = watchedSnapshot.getOrThrow()
                     .asSequence()
                     .filter { watched ->
                         val show = watched.show
@@ -1567,6 +1606,7 @@ class TraktRepository @Inject constructor(
                                 if (e is kotlinx.coroutines.CancellationException) throw e
 
                                 System.err.println("TraktRepo:getCW: show progress failed for ${show.title}: ${e.message}")
+                                snapshotIncomplete.set(true)
                                 AppLogger.breadcrumb(
                                     tag = "Trakt",
                                     message = "cw_show_progress_failed error=${e::class.java.simpleName}",
@@ -1617,7 +1657,7 @@ class TraktRepository @Inject constructor(
                         processedKeys.add(showKey)
                     }
                 }
-                watchedProgressFetched = true
+                watchedProgressFetched = !snapshotIncomplete.get()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -1629,6 +1669,25 @@ class TraktRepository @Inject constructor(
                         "trakt_phase" to "cw_watched_progress"
                     )
                 )
+            }
+
+            // An incomplete response is not an authoritative replacement for the saved row.
+            // Leave its fetch time untouched so a subsequent refresh can retry.
+            if (!playbackFetched || !watchedProgressFetched || snapshotIncomplete.get()) {
+                if (currentProfileId() != requestProfileId) return@coroutineScope emptyList()
+                val saved = if (cachedContinueWatchingProfileId == requestProfileId && cachedContinueWatching.isNotEmpty()) {
+                    cachedContinueWatching
+                } else {
+                    loadContinueWatchingCache()
+                }
+                if (saved.isNotEmpty()) return@coroutineScope filterDismissedContinueWatchingItems(saved)
+                // On a first login there is no snapshot to preserve. Show successful reads
+                // without persisting the incomplete result or marking the refresh as fresh.
+                val partial = hydrateTopCandidates(
+                    candidates.sortedByDescending { it.lastActivityAt }.take(Constants.MAX_CONTINUE_WATCHING)
+                )
+                if (currentProfileId() != requestProfileId) return@coroutineScope emptyList()
+                return@coroutineScope filterDismissedContinueWatchingItems(partial)
             }
 
             // Filter out dismissed items
@@ -1956,18 +2015,8 @@ class TraktRepository @Inject constructor(
                         )
                     } else {
                         val details = tmdbApi.getTvDetails(item.id, Constants.TMDB_API_KEY)
-                        // Allow items where Trakt says there's a next episode even if
-                        // TMDB hasn't updated its season count yet. Trakt's progress
-                        // API is authoritative for "what to watch next" — TMDB often
-                        // lags by hours or days when a new season premieres. Only drop
-                        // items where the season is wildly beyond TMDB's count (likely
-                        // a Trakt data error, e.g., a specials season numbered 99).
-                        val validatedItem = if (item.season != null && item.season > details.numberOfSeasons + 1) {
-                            null
-                        } else {
-                            item
-                        }
-                        validatedItem?.copy(
+                        // TMDB supplies artwork only; its season numbering must not veto Trakt progress.
+                        item.copy(
                             backdropPath = details.backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
                             posterPath = details.posterPath?.let { "${Constants.IMAGE_BASE}$it" },
                             overview = details.overview ?: "",
@@ -2101,8 +2150,7 @@ class TraktRepository @Inject constructor(
             val cacheKey = stringPreferencesKey("profile_${profileId}_trakt_continue_watching_cache_v1")
             val json = prefs[cacheKey] ?: return
 
-            val type = TypeToken.getParameterized(MutableList::class.java, ContinueWatchingItem::class.java).type
-            val parsed: List<ContinueWatchingItem> = gson.fromJson(json, type)
+            val parsed = decodeContinueWatchingCache(json, gson)
             val filtered = filterDismissedContinueWatchingItems(parsed, profileId)
             preloadedProfileCache[profileId] = filtered
 
@@ -2388,14 +2436,7 @@ class TraktRepository @Inject constructor(
     }
 
     private fun decodeContinueWatchingList(json: String): List<ContinueWatchingItem> {
-        if (json.isBlank()) return emptyList()
-        return try {
-            val type = TypeToken.getParameterized(MutableList::class.java, ContinueWatchingItem::class.java).type
-            val items: List<ContinueWatchingItem> = gson.fromJson(json, type)
-            items.distinctBy { "${it.mediaType}:${it.id}" }
-        } catch (_: Exception) {
-            emptyList()
-        }
+        return decodeContinueWatchingCache(json, gson)
     }
 
     private fun decodeIntList(json: String): List<Int> {
@@ -2642,11 +2683,16 @@ class TraktRepository @Inject constructor(
         return loadLocalContinueWatching()
     }
 
+    /** Profile-scoped saved playback, without waiting for metadata or tracker requests. */
+    internal suspend fun getLocalContinueWatchingSnapshot(): List<ContinueWatchingItem> {
+        return loadLocalContinueWatchingRaw()
+    }
+
     /**
      * Check if current profile has Trakt authentication
      */
     suspend fun hasTrakt(): Boolean {
-        return refreshTokenIfNeeded() != null
+        return hasStoredTraktTokenForCurrentProfile()
     }
 
     private fun formatRuntime(runtime: Int): String {
@@ -2860,9 +2906,7 @@ class TraktRepository @Inject constructor(
         val prefs = context.traktDataStore.data.first()
         val json = prefs[continueWatchingCacheKey()] ?: return emptyList()
         return try {
-            val type = TypeToken.getParameterized(MutableList::class.java, ContinueWatchingItem::class.java).type
-            val parsed: List<ContinueWatchingItem> = gson.fromJson(json, type)
-            parsed
+            decodeContinueWatchingCache(json, gson)
         } catch (_: Exception) {
             emptyList()
         }

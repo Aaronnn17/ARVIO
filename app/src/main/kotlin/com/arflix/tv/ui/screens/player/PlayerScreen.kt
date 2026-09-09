@@ -2,15 +2,35 @@
 
 package com.arflix.tv.ui.screens.player
 
+import com.arflix.tv.ui.screens.player.mobile.ArvioMobilePlayer
+import com.arflix.tv.ui.screens.player.mobile.MobileIconButton
+import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.ui.platform.LocalLayoutDirection
+
 import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import com.arflix.tv.util.findActivity
+import android.graphics.Bitmap
+import android.graphics.Rect
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
+import android.view.SurfaceView
+import android.view.TextureView
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import com.arflix.tv.BuildConfig
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -79,6 +99,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -101,6 +122,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -154,6 +176,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.weightedSubtitleScore
+import com.arflix.tv.ui.screens.player.tv.TvSkipIntroButton as SkipIntroButton
+import com.arflix.tv.ui.screens.player.engine.exoplayer.FullViewportSubtitlePlayerView
+import com.arflix.tv.ui.screens.player.engine.exoplayer.requiresVideoFrameSubtitleViewport
+import com.arflix.tv.ui.screens.player.engine.exoplayer.AiSubtitleRenderersFactory
+import com.arflix.tv.ui.screens.player.engine.PlayerEngine
+import com.arflix.tv.ui.screens.player.engine.PlayerEngineFactory
+import com.arflix.tv.ui.screens.player.engine.PlayerEngineType
+import com.arflix.tv.ui.screens.player.common.NextEpisodePromptGate
+import com.arflix.tv.ui.screens.player.common.PlaybackEpisodeKey
 import com.arflix.tv.ui.skin.LocalAccentColorOverride
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.Pink
@@ -163,8 +194,10 @@ import com.arflix.tv.ui.theme.PurplePrimary
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Job
 import androidx.compose.runtime.rememberCoroutineScope
@@ -182,6 +215,11 @@ import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.draw.shadow
+import kotlin.math.abs
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.draw.clip
@@ -213,10 +251,43 @@ import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.content.ContextCompat
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
+import com.arflix.tv.ui.screens.player.preview.seekPreviewOverlay
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewSource
+import com.arflix.tv.ui.screens.player.preview.SeekInteraction
+import com.arflix.tv.ui.screens.player.preview.SeekSurface
+import com.arflix.tv.ui.screens.player.preview.SeekPhase
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewCapability
+import com.arflix.tv.ui.screens.player.preview.loadSeekPreviewFrame
+import com.arflix.tv.ui.screens.player.preview.nativePreviewCacheIdentity
+import com.arflix.tv.ui.screens.player.preview.acceleratedSeekPreviewStepMs
+
+enum class AspectRatioMode(val label: String, val resizeMode: Int) {
+    AUTO("Auto", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    FIT("Fit to Screen", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    STRETCH("Stretch", AspectRatioFrameLayout.RESIZE_MODE_FILL),
+    CROP("Crop", AspectRatioFrameLayout.RESIZE_MODE_ZOOM);
+
+    companion object {
+        fun fromLabel(label: String?): AspectRatioMode {
+            if (label.isNullOrBlank()) return AUTO
+            return when (label.trim().lowercase()) {
+                "auto" -> AUTO
+                "fit", "fit to screen" -> FIT
+                "fill", "stretch" -> STRETCH
+                "zoom", "crop" -> CROP
+                else -> entries.firstOrNull { it.label.equals(label, ignoreCase = true) || it.name.equals(label, ignoreCase = true) } ?: AUTO
+            }
+        }
+    }
+}
 
 private const val PIP_ACTION_REWIND = "com.arflix.tv.pip.REWIND"
 private const val PIP_ACTION_PLAY_PAUSE = "com.arflix.tv.pip.PLAY_PAUSE"
 private const val PIP_ACTION_FORWARD = "com.arflix.tv.pip.FORWARD"
+private const val QUICK_SEEK_DISMISS_DELAY_MS = 2_200L
+private const val SEEK_PREVIEW_DEBOUNCE_MS = 60L
 
 private fun isSafePlaybackHeader(name: String, value: String): Boolean {
     return name.isNotBlank() &&
@@ -233,6 +304,22 @@ private fun Map<String, String>.safePlaybackHeaders(): Map<String, String> {
     return filter { (name, value) -> isSafePlaybackHeader(name.trim(), value.trim()) }
         .mapKeys { (name, _) -> name.trim() }
         .mapValues { (_, value) -> value.trim() }
+}
+
+/**
+ * Resolves a [PlayerMessage] against the app language. Nested messages (e.g. the reference-source
+ * label inside a match status) are resolved first so they are localized too.
+ */
+@Composable
+internal fun PlayerMessage.localizedText(): String = when (this) {
+    is PlayerMessage.Raw -> text
+    is PlayerMessage.Res -> {
+        val args = mutableListOf<Any>()
+        formatArgs.forEach { arg ->
+            args += if (arg is PlayerMessage) arg.localizedText() else arg
+        }
+        stringResource(resourceId, *args.toTypedArray())
+    }
 }
 
 /**
@@ -317,39 +404,17 @@ fun PlayerScreen(
         !preferExtensionDecoder && !deviceType.isTouchDevice()
     }
 
+    // Remember the exact orientation state from before entering the player
+    val previousOrientation = remember(activity) {
+        activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+    }
+
     // Keep playback in landscape while the player is visible, regardless of the
     // device's auto-rotate lock. Restore the app's prior orientation afterward.
     DisposableEffect(activity) {
-        val previousOrientation = activity?.requestedOrientation
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         onDispose {
-            if (previousOrientation != null) {
-                activity.requestedOrientation = previousOrientation
-            }
-        }
-    }
-
-    // On mobile, enable immersive fullscreen for the player and restore system bars on exit.
-    // TV is always in fullscreen so no change is needed there.
-    DisposableEffect(Unit) {
-        val window = activity?.window
-        if (window != null && deviceType != com.arflix.tv.util.DeviceType.TV) {
-            val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
-            controller.systemBarsBehavior =
-                androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-        }
-        onDispose {
-            if (window != null && deviceType != com.arflix.tv.util.DeviceType.TV) {
-                @Suppress("DEPRECATION")
-                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
-                controller.systemBarsBehavior =
-                    androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
-                controller.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-                controller.isAppearanceLightStatusBars = false
-                controller.isAppearanceLightNavigationBars = false
-            }
+            activity?.requestedOrientation = previousOrientation
         }
     }
 
@@ -376,17 +441,16 @@ fun PlayerScreen(
     var duration by remember { mutableLongStateOf(0L) }
     var progress by remember { mutableFloatStateOf(0f) }
     var currentPlaybackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
+    var currentPlaybackSpeed by remember { mutableFloatStateOf(1.0f) }
     var nextEpisodeTransitionInProgress by remember { mutableStateOf(false) }
 
-    // Skip overlay state - shows +10/-10 without showing full controls
-    var skipAmount by remember { mutableIntStateOf(0) }
-    var showSkipOverlay by remember { mutableStateOf(false) }
-    var lastSkipTime by remember { mutableLongStateOf(0L) }
-    var skipStartPosition by remember { mutableLongStateOf(0L) }  // Position when skipping started
-    var skipPreviewPosition by remember { mutableLongStateOf(0L) }
-    var isControlScrubbing by remember { mutableStateOf(false) }
-    var scrubPreviewPosition by remember { mutableLongStateOf(0L) }
-    var controlsSeekJob by remember { mutableStateOf<Job?>(null) }
+    // Direct D-pad seek state, separate from the full controls overlay.
+    var seekInteraction by remember { mutableStateOf(SeekInteraction()) }
+    val showSkipOverlay = seekInteraction.quickVisible
+    val lastSkipTime = seekInteraction.lastInputMs
+    val skipPreviewPosition = seekInteraction.targetMs
+    val isControlScrubbing = seekInteraction.browsing && seekInteraction.surface != SeekSurface.Quick
+    val scrubPreviewPosition = seekInteraction.targetMs
 
     // Volume state
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: android.media.AudioManager::class.java.getDeclaredConstructor().newInstance() }
@@ -416,6 +480,10 @@ fun PlayerScreen(
     var focusedButton by remember { mutableIntStateOf(0) }
     var showSubtitleMenu by remember { mutableStateOf(false) }
     var showSourceMenu by remember { mutableStateOf(false) }
+
+    var seekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
+    var trackbarFocused by remember { mutableStateOf(false) }
+    var unavailablePreviewTarget by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     // Post-episode "Up Next" prompt (issue #86). Shown on STATE_ENDED for TV shows:
     // a 10-second countdown lets the user stop watching or immediately Continue. On timeout we
     // advance to the next episode. Gated on the existing autoPlayNext profile setting —
@@ -524,11 +592,8 @@ fun PlayerScreen(
             pendingNextBingeGroup
         )
     }
-    val cancelNextEpisodePrompt: () -> Unit = {
-        showNextEpisodePrompt = false
-        onBack()
-    }
-    var playerResizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
+    var currentAspectRatioMode by remember { mutableStateOf(AspectRatioMode.AUTO) }
+    val playerResizeMode = currentAspectRatioMode.resizeMode
     var subtitleMenuIndex by remember { mutableIntStateOf(0) }
     var subtitleMenuTab by remember { mutableIntStateOf(0) } // 0 = Subtitles, 1 = Audio
     var subtitleLangIndex by remember { mutableIntStateOf(0) }
@@ -538,13 +603,16 @@ fun PlayerScreen(
     var showSubtitleSettings by remember { mutableStateOf(false) }
     var subtitleSettingsRow by remember { mutableIntStateOf(0) }  // 0=Delay, 1=Size, 2=Vertical
     var subtitleSyncOffsetMs by remember { mutableLongStateOf(0L) }
-    var subtitleSizePct by remember { mutableIntStateOf(100) }
-    var subtitleVerticalPct by remember {
-        mutableIntStateOf(when (uiState.subtitleOffset) {
-            "Bottom" -> 2; "Low" -> 8; "Medium" -> 15; "High" -> 25; else -> 8
-        })
+    var subtitleSizePct by remember { mutableIntStateOf(uiState.subtitleSizePct) }
+    var subtitleVerticalPct by remember { mutableIntStateOf(uiState.subtitleVerticalPct) }
+    LaunchedEffect(uiState.subtitleSizePct) {
+        subtitleSizePct = uiState.subtitleSizePct
+    }
+    LaunchedEffect(uiState.subtitleVerticalPct) {
+        subtitleVerticalPct = uiState.subtitleVerticalPct
     }
     var useVideoFrameSubtitleViewport by remember { mutableStateOf(false) }
+    var hasActiveSubtitleCues by remember { mutableStateOf(false) }
     val subtitleGroups = remember(uiState.subtitles, uiState.preferredSubtitleLang, uiState.secondarySubtitleLang, uiState.selectedStream, uiState.isAiAvailable, uiState.aiTargetLanguageName) {
         val streamSource = uiState.selectedStream?.source ?: ""
         val primaryName = getFullLanguageName(uiState.preferredSubtitleLang)
@@ -612,7 +680,9 @@ fun PlayerScreen(
     // Post-selection status for the loading overlay ("Loading subtitles…" during the preload
     // gate, "Loading video stream…" while preparing). Overrides uiState.streamLoadPhase, which
     // only covers source discovery and goes blank once a source is picked.
-    var startupPhase by remember { mutableStateOf<String?>(null) }
+    // Holds a string resource id, not rendered text: the phase is compared below to decide
+    // whether to append the pending addon names, and a localized literal would break that check.
+    var startupPhase by remember { mutableStateOf<Int?>(null) }
     // Failover notice, displayed ON TOP of startupPhase for a fixed minimum time: a fast source
     // switch (resolve can take <100ms) would otherwise overwrite it as an unreadable blink.
     // Overlaying instead of delaying keeps the actual failover at full speed.
@@ -632,7 +702,7 @@ fun PlayerScreen(
     var startupSameSourceRefreshAttempted by remember { mutableStateOf(false) }
     var startupUrlLock by remember { mutableStateOf<String?>(null) }
     var pendingStartupFailover by remember { mutableStateOf(false) }
-    var pendingStartupFailoverMessage by remember { mutableStateOf<String?>(null) }
+    var pendingStartupFailoverMessage by remember { mutableStateOf<PlayerMessage?>(null) }
     var pendingStartupFailureRecorded by remember { mutableStateOf(false) }
     var dvStartupFallbackStage by remember { mutableIntStateOf(0) } // 0=none, 1=HEVC forced, 2=AVC forced
     var midPlaybackRecoveryAttempts by remember { mutableIntStateOf(0) }
@@ -649,6 +719,9 @@ fun PlayerScreen(
     // Guard against accessing a released ExoPlayer from long-running coroutines (can crash on some devices).
     // AtomicBoolean gives cross-thread visibility; Compose state drives recomposition.
     val playerReleasedAtomic = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    val lastRenderedVideoFrameUs = remember {
+        java.util.concurrent.atomic.AtomicLong(androidx.media3.common.C.TIME_UNSET)
+    }
     var playerReleased by remember { mutableStateOf(false) }
 
     // Picture-in-Picture state
@@ -794,7 +867,7 @@ fun PlayerScreen(
     fun tryAdvanceToNextStream(
         skipAddonId: String? = null,
         recordCurrentFailure: Boolean = true,
-        reason: String = "Source didn't start"
+        reason: String = context.getString(R.string.player_fail_source_didnt_start)
     ): Boolean {
         val streams = uiState.streams
         return if (streams.size <= 1) {
@@ -828,12 +901,11 @@ fun PlayerScreen(
                 currentStreamIndex = nextIndex
                 triedStreamIndexes = triedStreamIndexes + nextIndex
                 val next = streams[nextIndex]
-                switchNotice = buildString {
-                    append(reason)
-                    append(" — switching")
-                    val desc = listOf(next.quality, next.size).filter { it.isNotBlank() }.joinToString(" · ")
-                    if (desc.isNotBlank()) append(" to $desc")
-                    append("…")
+                val desc = listOf(next.quality, next.size).filter { it.isNotBlank() }.joinToString(" · ")
+                switchNotice = if (desc.isNotBlank()) {
+                    context.getString(R.string.player_switch_notice_to, reason, desc)
+                } else {
+                    context.getString(R.string.player_switch_notice, reason)
                 }
                 switchNoticeUntilMs = System.currentTimeMillis() + 3_500L
                 userSelectedSourceManually = false
@@ -872,12 +944,13 @@ fun PlayerScreen(
 
         val sourceSearchStillActive = uiState.sourceSearchActive ||
             uiState.streamProgress != null ||
-            !uiState.streamLoadPhase.isNullOrBlank()
+            uiState.streamLoadPhase != null
         if (!sourceSearchStillActive && !playbackIssueReported) {
             playbackIssueReported = true
             pendingStartupFailover = false
             viewModel.reportPlaybackError(
-                pendingStartupFailoverMessage ?: "Source failed during startup. Try another source."
+                pendingStartupFailoverMessage
+                    ?: PlayerMessage.Res(R.string.player_fail_startup_generic)
             )
         }
     }
@@ -914,6 +987,16 @@ fun PlayerScreen(
         OkHttpProvider.playbackClient.newBuilder()
             .cookieJar(playbackCookieJar)
             .build()
+    }
+    val seekPreviewProvider = remember(playbackHttpClient, playbackMemoryClassMb) {
+        SeekPreviewFrameProvider(
+            context = context,
+            playbackClient = playbackHttpClient,
+            memoryClassMb = playbackMemoryClassMb,
+        )
+    }
+    DisposableEffect(seekPreviewProvider) {
+        onDispose { seekPreviewProvider.close() }
     }
     val httpDataSourceFactory = remember(playbackHttpClient) {
         OkHttpDataSource.Factory(playbackHttpClient)
@@ -1007,7 +1090,7 @@ fun PlayerScreen(
     // Wire AudioCaptureProcessor → GeminiLiveTranslationService when live audio is active.
     LaunchedEffect(uiState.isLiveAudioTranslating) {
         aiRenderersFactory.audioCaptureProcessor?.onChunk = if (uiState.isLiveAudioTranslating) {
-            { bytes, captureMs -> viewModel.geminiLiveService.sendAudioChunk(bytes, captureMs) }
+            { bytes: ByteArray, captureMs: Long -> viewModel.geminiLiveService.sendAudioChunk(bytes, captureMs) }
         } else {
             null
         }
@@ -1100,11 +1183,17 @@ fun PlayerScreen(
             .build().apply {
                 // Ensure volume is at maximum
                 volume = 1.0f
+                setVideoFrameMetadataListener { presentationTimeUs, _, _, _ ->
+                    lastRenderedVideoFrameUs.set(presentationTimeUs)
+                }
 
                 // Add error listener to try next stream on codec errors
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         currentPlaybackState = playbackState
+                        if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
+                            hasActiveSubtitleCues = false
+                        }
                         val stateStr = when (playbackState) {
                             Player.STATE_IDLE -> "IDLE"
                             Player.STATE_BUFFERING -> "BUFFERING"
@@ -1119,6 +1208,7 @@ fun PlayerScreen(
                     // Feed the selected text track's rendered cues to "Find best match" so it can
                     // read a built-in subtitle's timing (embedded tracks have no URL to parse).
                     override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+                        hasActiveSubtitleCues = cueGroup.cues.any { !it.text.isNullOrBlank() }
                         val shouldUseVideoFrame = cueGroup.cues.requiresVideoFrameSubtitleViewport(
                             preserveAuthoredTextPositioning = latestUiState.subtitleStylized
                         )
@@ -1130,6 +1220,10 @@ fun PlayerScreen(
                             cueGroup.presentationTimeUs / 1000L,
                             cueGroup.cues.firstOrNull()?.text?.toString()
                         )
+                    }
+
+                    override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+                        currentPlaybackSpeed = playbackParameters.speed
                     }
 
                     override fun onIsPlayingChanged(playing: Boolean) {
@@ -1323,13 +1417,13 @@ fun PlayerScreen(
                             if (!hasPlaybackStarted &&
                                 allowStartupSourceFallback &&
                                 !userSelectedSourceManually &&
-                                tryAdvanceToNextStream(deadAddonId, reason = classifyPlaybackFailure(error))
+                                tryAdvanceToNextStream(deadAddonId, reason = classifyPlaybackFailure(context, error))
                             ) {
                                 return
                             }
                             val sourceSearchStillActive = latestUiState.sourceSearchActive ||
                                 latestUiState.streamProgress != null ||
-                                !latestUiState.streamLoadPhase.isNullOrBlank()
+                                latestUiState.streamLoadPhase != null
                             if (!hasPlaybackStarted &&
                                 allowStartupSourceFallback &&
                                 !userSelectedSourceManually &&
@@ -1477,6 +1571,92 @@ fun PlayerScreen(
             }
     }
 
+    val allowSecondarySeekPreviewDecoder = playbackMemoryClassMb >= 192
+    val previewStatus by seekPreviewProvider.status.collectAsState()
+    LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce) {
+        seekInteraction = SeekInteraction()
+        seekPreviewFrame = null
+    }
+    LaunchedEffect(
+        uiState.selectedStreamUrl, uiState.streamSelectionNonce, duration, isLiveStream,
+        uiState.selectedStream?.preview,
+    ) {
+        val url = uiState.selectedStreamUrl
+        val selected = uiState.selectedStream
+        val headers = selected?.behaviorHints?.proxyHeaders?.request.orEmpty().safePlaybackHeaders()
+        val lowerUrl = url?.lowercase().orEmpty()
+        seekPreviewProvider.configure(
+            url?.let {
+                SeekPreviewSource(
+                    url = it,
+                    headers = baseRequestHeaders + headers,
+                    cacheIdentity = buildSeekPreviewCacheIdentity(
+                        mediaType, mediaId, seasonNumber, episodeNumber, selected,
+                    ),
+                    durationMs = duration,
+                    isLive = isLiveStream,
+                    isAdaptive = isLikelyHlsPlaybackUrl(it, selected) ||
+                        lowerUrl.contains(".mpd") || lowerUrl.contains("/dash") ||
+                        lowerUrl.contains("format=dash"),
+                    allowExtraction = allowSecondarySeekPreviewDecoder,
+                    maxWidthPx = if (isConstrainedPlaybackDevice) 480 else 640,
+                    preview = selected?.preview,
+                )
+            }
+        )
+    }
+
+    val controlsPreviewPosition = if (isControlScrubbing || seekInteraction.phase == SeekPhase.Exiting) scrubPreviewPosition else currentPosition
+    val previewTarget = if (seekInteraction.phase != SeekPhase.Idle) seekInteraction.targetMs else currentPosition
+    val previewRequested = !isCasting && !isLiveStream && hasPlaybackStarted && duration > 0L &&
+        seekInteraction.browsing
+    val previewAvailable = previewStatus.capability != SeekPreviewCapability.UNAVAILABLE &&
+        unavailablePreviewTarget != (previewStatus.sourceGeneration to previewTarget)
+    val showQuickSeekPreview = seekInteraction.previewSession &&
+        seekInteraction.surface == SeekSurface.Quick && previewAvailable
+    val previewFrameForTarget = seekPreviewFrame?.takeIf {
+        seekPreviewProvider.matchesTarget(it, previewTarget)
+    }
+    LaunchedEffect(previewRequested, previewTarget, previewFrameForTarget) {
+        if (previewRequested && previewFrameForTarget != null) {
+            android.util.Log.i("SeekPreviewUi", "display target=$previewTarget actual=${previewFrameForTarget.positionMs} origin=${previewFrameForTarget.origin}")
+        }
+    }
+
+    // Keep the previous bitmap owned until its replacement is ready, but never display it
+    // under a different timestamp. A cancelled request cannot publish into the next target.
+    LaunchedEffect(
+        previewRequested, previewTarget, previewStatus.sourceGeneration, previewStatus.capability,
+        uiState.selectedStreamUrl, uiState.streamSelectionNonce,
+    ) {
+        if (!previewRequested || previewStatus.capability == SeekPreviewCapability.UNAVAILABLE) return@LaunchedEffect
+        unavailablePreviewTarget = null
+        seekPreviewProvider.memoryFrameAt(previewTarget)?.let { frame ->
+            if (seekPreviewProvider.matchesTarget(frame, previewTarget)) seekPreviewFrame = frame
+        }
+        if (seekPreviewProvider.matchesTarget(seekPreviewFrame, previewTarget)) return@LaunchedEffect
+        delay(SEEK_PREVIEW_DEBOUNCE_MS)
+        val frame = loadSeekPreviewFrame(seekPreviewProvider, previewTarget)
+        if (frame != null && seekPreviewProvider.matchesTarget(frame, previewTarget)) {
+            seekPreviewFrame = frame
+        } else {
+            unavailablePreviewTarget = previewStatus.sourceGeneration to previewTarget
+        }
+    }
+
+    // Warm only after playback is stable. Foreground requests preempt this bounded work.
+    LaunchedEffect(hasPlaybackStarted, isBuffering, isPlaying, seekInteraction.phase, previewStatus.sourceGeneration) {
+        if (!hasPlaybackStarted || isBuffering || !isPlaying || seekInteraction.browsing || isLiveStream) {
+            return@LaunchedEffect
+        }
+        if (uiState.selectedStream?.preview == null &&
+            (isConstrainedPlaybackDevice || isLikelyHeavyStream(uiState.selectedStream))) return@LaunchedEffect
+        delay(2_000L)
+        if (!playerReleased && exoPlayer.totalBufferedDuration >= 15_000L) {
+            seekPreviewProvider.warmAround(exoPlayer.currentPosition)
+        }
+    }
+
     DisposableEffect(lifecycleOwner, exoPlayer) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -1530,43 +1710,153 @@ fun PlayerScreen(
         onDispose { context.unregisterReceiver(receiver) }
     }
 
-    val queueControlsSeek: (Long) -> Unit = queueSeek@{ deltaMs ->
-        if (isCasting) {
-            if (deltaMs > 0) castManager.skipForward(deltaMs)
-            else castManager.skipBack(-deltaMs)
-            return@queueSeek
+    val playerEngine: PlayerEngine = remember(exoPlayer) {
+        PlayerEngineFactory.createEngine(
+            type = PlayerEngineType.EXOPLAYER,
+            context = context,
+            exoPlayer = exoPlayer,
+            scope = coroutineScope
+        )
+    }
+    DisposableEffect(playerEngine) {
+        onDispose { playerEngine.release() }
+    }
+
+    val exitTransition = rememberPlayerExitTransition(
+        animateExit = deviceType.isTouchDevice(),
+        pause = { if (!playerReleased) exoPlayer.pause() },
+        leave = {
+            activity?.requestedOrientation = previousOrientation
+            onBack()
         }
-        if (playerReleased) return@queueSeek
-        val basePosition = if (isControlScrubbing) {
-            scrubPreviewPosition
-        } else {
-            exoPlayer.currentPosition.coerceAtLeast(0L)
-        }
-        val unclamped = (basePosition + deltaMs).coerceAtLeast(0L)
-        val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
-        scrubPreviewPosition = targetPosition
-        isControlScrubbing = true
-        controlsSeekJob?.cancel()
-        controlsSeekJob = coroutineScope.launch {
-            delay(260)
-            if (!playerReleased) {
-                exoPlayer.seekTo(scrubPreviewPosition)
+    )
+    val onExitPlayer: () -> Unit = exitTransition::requestExit
+    val cancelNextEpisodePrompt: () -> Unit = {
+        showNextEpisodePrompt = false
+        onExitPlayer()
+    }
+    DisposableEffect(exoPlayer, exitTransition) {
+        val listener = object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (playWhenReady && exitTransition.isExiting && !playerReleased) exoPlayer.pause()
             }
-            isControlScrubbing = false
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
+    }
+
+    // Observe audio delay & route to video offset renderer
+    LaunchedEffect(uiState.audioDelayMs) {
+        aiRenderersFactory.audioDelayUs.set(uiState.audioDelayMs * 1000L)
+    }
+
+    LaunchedEffect(exoPlayer) {
+        currentPlaybackSpeed = exoPlayer.playbackParameters.speed
+    }
+
+    // Auto-skip intro & outro enforcement
+    LaunchedEffect(currentPosition, uiState.activeSkipInterval, uiState.autoSkipIntro, uiState.autoSkipOutro, uiState.skipIntervalDismissed) {
+        val skip = uiState.activeSkipInterval
+        if (skip != null && !uiState.skipIntervalDismissed && isPlaying && !seekInteraction.browsing) {
+            val isIntro = skip.type.lowercase() in listOf("intro", "op", "mixed-op", "recap")
+            val isOutro = skip.type.lowercase() in listOf("outro", "ed", "mixed-ed")
+            if (isIntro && uiState.autoSkipIntro && currentPosition in skip.startMs..skip.endMs) {
+                playerEngine.seekTo((skip.endMs + 500L).coerceAtLeast(0L))
+                viewModel.dismissSkipInterval()
+            } else if (isOutro && uiState.autoSkipOutro && currentPosition in skip.startMs..skip.endMs) {
+                playerEngine.seekTo((skip.endMs + 500L).coerceAtLeast(0L))
+                viewModel.dismissSkipInterval()
+            }
         }
     }
 
-    val commitControlsSeekNow: () -> Unit = commitSeek@{
-        if (isCasting) {
-            castManager.seekTo(scrubPreviewPosition)
-            isControlScrubbing = false
-            return@commitSeek
+    val finishSeek: (Boolean) -> Unit = finishSeek@{ commit ->
+        val interaction = seekInteraction
+        if (interaction.phase == SeekPhase.Idle || interaction.phase == SeekPhase.Exiting) return@finishSeek
+        seekPreviewProvider.cancelPending()
+        if (interaction.browsing) {
+            if (isCasting) {
+                if (commit) castManager.seekTo(interaction.targetMs)
+            } else if (!playerReleased) {
+                if (commit) {
+                    exoPlayer.seekTo(interaction.targetMs)
+                    currentPosition = interaction.targetMs
+                }
+                exoPlayer.playWhenReady = interaction.resumeAfterBrowse
+                android.util.Log.i("SeekPreviewUi", "finish commit=$commit target=${interaction.targetMs} resume=${interaction.resumeAfterBrowse}")
+            }
         }
-        if (playerReleased) return@commitSeek
-        if (isControlScrubbing) {
-            controlsSeekJob?.cancel()
-            exoPlayer.seekTo(scrubPreviewPosition)
-            isControlScrubbing = false
+        seekInteraction = interaction.finish()
+    }
+    val closeQuickSeekOverlay: (Boolean) -> Unit = { finishSeek(it) }
+    val stepSeek: (SeekSurface, Long) -> Unit = stepSeek@{ surface, deltaMs ->
+        if (isCasting) {
+            if (deltaMs > 0L) castManager.skipForward(deltaMs) else castManager.skipBack(-deltaMs)
+            return@stepSeek
+        }
+        if (playerReleased || duration <= 0L) return@stepSeek
+        val previous = seekInteraction
+        val next = previous.step(
+            surface, deltaMs, exoPlayer.currentPosition, duration, exoPlayer.playWhenReady,
+            android.os.SystemClock.elapsedRealtime(),
+        )
+        if (next.browsing && !previous.browsing) exoPlayer.pause()
+        if (next.phase == SeekPhase.QuickSkip) {
+            exoPlayer.seekTo(next.targetMs)
+            currentPosition = next.targetMs
+        }
+        seekInteraction = next
+        if (next.browsing && !previous.browsing && surface == SeekSurface.Quick) {
+            runCatching { containerFocusRequester.requestFocus() }
+        }
+        android.util.Log.i("SeekPreviewUi", "input phase=${next.phase} target=${next.targetMs} surface=$surface")
+        seekPreviewProvider.memoryFrameAt(next.targetMs)?.let { frame ->
+            if (seekPreviewProvider.matchesTarget(frame, next.targetMs)) seekPreviewFrame = frame
+        }
+    }
+    val queueQuickSeek: (Long) -> Unit = { stepSeek(SeekSurface.Quick, it) }
+    val queueControlsSeek: (Long) -> Unit = { stepSeek(SeekSurface.Controls, it) }
+    val skipWithoutPreview: (Long) -> Unit = { delta ->
+        if (seekInteraction.browsing) finishSeek(false)
+        if (isCasting) {
+            if (delta > 0L) castManager.skipForward(delta) else castManager.skipBack(-delta)
+        } else if (!playerReleased && duration > 0L) {
+            val target = (exoPlayer.currentPosition + delta).coerceIn(0L, duration)
+            exoPlayer.seekTo(target)
+            currentPosition = target
+        }
+    }
+    val commitControlsSeekNow: () -> Unit = { finishSeek(true) }
+    val dragSeek: (Long) -> Unit = { position ->
+        if (!playerReleased && duration > 0L) {
+            val previous = seekInteraction
+            seekInteraction = previous.dragTo(
+                position, if (isCasting) currentPosition else exoPlayer.currentPosition,
+                duration, exoPlayer.playWhenReady,
+            )
+            if (!isCasting && !previous.browsing) exoPlayer.pause()
+        }
+    }
+    val latestDragSeek by rememberUpdatedState(dragSeek)
+    val latestFinishSeek by rememberUpdatedState(finishSeek)
+    val latestQuickSeek by rememberUpdatedState(queueQuickSeek)
+
+    LaunchedEffect(seekInteraction.phase, seekInteraction.lastInputMs, seekInteraction.surface) {
+        val pending = seekInteraction
+        val remaining = pending.autoCommitDelayMs(android.os.SystemClock.elapsedRealtime())
+            ?: return@LaunchedEffect
+        delay(remaining)
+        if (seekInteraction === pending &&
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            finishSeek(true)
+        }
+    }
+
+    LaunchedEffect(seekInteraction.phase) {
+        val exiting = seekInteraction
+        if (exiting.phase == SeekPhase.Exiting) {
+            delay(150L)
+            if (seekInteraction === exiting) seekInteraction = exiting.afterExit()
         }
     }
 
@@ -1729,8 +2019,8 @@ fun PlayerScreen(
 
     // Update player when stream URL changes. Attach currently-known external subtitle tracks once,
     // then switch subtitle tracks via track overrides (no media source rebuild needed).
-    LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce) {
-        if (playerReleased) return@LaunchedEffect
+    LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce, exitTransition.isExiting) {
+        if (playerReleased || exitTransition.isExiting) return@LaunchedEffect
         val url = uiState.selectedStreamUrl
         if (BuildConfig.DEBUG) {
         }
@@ -1740,7 +2030,7 @@ fun PlayerScreen(
             val prepareStartMs = streamSelectedTime ?: System.currentTimeMillis()
             bufferingStartTime = null
             hasPlaybackStarted = false  // Reset for new stream
-            startupPhase = "Loading video stream…"
+            startupPhase = R.string.player_phase_loading_stream
             firstVideoFrameRendered = false
             readyPlayingSinceMs = null
             playbackIssueReported = false
@@ -1822,7 +2112,7 @@ fun PlayerScreen(
             var preloadedSubtitleConfigs = emptyList<MediaItem.SubtitleConfiguration>()
             if (latestUiState.subtitlePreloadEnabled) {
                 if (!latestUiState.subtitlePreloadComplete) {
-                    startupPhase = "Loading subtitles…"
+                    startupPhase = R.string.player_phase_loading_subtitles
                 }
                 val gateStartMs = System.currentTimeMillis()
                 val gateReady = withTimeoutOrNull(SUBTITLE_PRELOAD_GATE_TIMEOUT_MS) {
@@ -1900,7 +2190,7 @@ fun PlayerScreen(
             // No manual startup gate - trust the CDN/debrid while keeping enough safety margin.
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
-            startupPhase = "Starting playback…"
+            startupPhase = R.string.player_phase_starting_playback
             playbackStartupDiag(
                 "prepare issued setupMs=${System.currentTimeMillis() - prepareStartMs} source=${uiState.selectedStream?.addonId}/${uiState.selectedStream?.quality}/${uiState.selectedStream?.size} host=${runCatching { Uri.parse(url).host }.getOrNull().orEmpty()}"
             )
@@ -2158,8 +2448,8 @@ fun PlayerScreen(
     }
 
     // Auto-hide controls and return focus to container
-    LaunchedEffect(showControls, isPlaying, isCasting) {
-        if (showControls && isPlaying && !isCasting && !showSubtitleMenu && !showSourceMenu && !showSubtitleSettings) {
+    LaunchedEffect(showControls, isPlaying, isCasting, seekInteraction.phase) {
+        if (showControls && isPlaying && !isCasting && !seekInteraction.browsing && !showSubtitleMenu && !showSourceMenu && !showSubtitleSettings) {
             delay(5000)
             showControls = false
             // Return focus to container so it can receive key events
@@ -2195,13 +2485,10 @@ fun PlayerScreen(
     }
 
     // Auto-hide skip overlay and reset - use lastSkipTime as key to restart on each skip
-    LaunchedEffect(lastSkipTime) {
-        if (showSkipOverlay && lastSkipTime > 0) {
-            delay(1500)
-            showSkipOverlay = false
-            skipAmount = 0
-            skipStartPosition = 0L
-            skipPreviewPosition = 0L
+    LaunchedEffect(lastSkipTime, seekInteraction.phase) {
+        if (seekInteraction.phase == SeekPhase.QuickSkip && lastSkipTime > 0) {
+            delay(QUICK_SEEK_DISMISS_DELAY_MS)
+            closeQuickSeekOverlay(true)
         }
     }
 
@@ -2258,7 +2545,7 @@ fun PlayerScreen(
                 0f
             }
             isPlaying = exoPlayer.isPlaying
-            isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING
+            isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING && exoPlayer.playWhenReady
 
             // Update Discord RPC
             val titleVal = latestUiState.title
@@ -2292,7 +2579,7 @@ fun PlayerScreen(
             }
 
             // Buffering watchdog - detect long buffering but do not force a source error popup.
-            if (isBuffering && hasPlaybackStarted) {
+            if (isBuffering && hasPlaybackStarted && exoPlayer.playWhenReady && !seekInteraction.browsing) {
                 if (bufferingStartTime == null) {
                     bufferingStartTime = loopNowMs
                 } else {
@@ -2304,7 +2591,9 @@ fun PlayerScreen(
                         if (allowMidPlaybackSourceFallback &&
                             !userSelectedSourceManually &&
                             longRebufferCount >= 1 &&
-                            tryAdvanceToNextStream(reason = "Buffering too slow")
+                            tryAdvanceToNextStream(
+                                reason = context.getString(R.string.player_fail_buffering_slow)
+                            )
                         ) {
                             continue
                         }
@@ -2350,9 +2639,9 @@ fun PlayerScreen(
                     // to load (uncached/slow host); READY without a frame = the device couldn't
                     // decode the video (codec/resolution). The user sees which it is.
                     val startupReason = if (exoPlayer.playbackState == Player.STATE_READY) {
-                        "Video can't play on this device"
+                        context.getString(R.string.player_fail_device_cannot_play)
                     } else {
-                        "Source too slow to load"
+                        context.getString(R.string.player_fail_source_too_slow)
                     }
                     if (allowStartupSourceFallback &&
                         !userSelectedSourceManually &&
@@ -2371,9 +2660,9 @@ fun PlayerScreen(
                     viewModel.onSelectedStreamPlaybackFailure()
                     viewModel.reportPlaybackError(
                         if (autoAdvanceAttempts > 0 || startupSameSourceRetryCount > 0) {
-                            "Source did not start after retries. Try another source."
+                            PlayerMessage.Res(R.string.player_fail_no_start_after_retries)
                         } else {
-                            "Source did not start in time. Try another source."
+                            PlayerMessage.Res(R.string.player_fail_no_start_in_time)
                         }
                     )
                 }
@@ -2455,7 +2744,9 @@ fun PlayerScreen(
                         }
                         if (allowStartupSourceFallback &&
                             !userSelectedSourceManually &&
-                            tryAdvanceToNextStream(reason = "No video — device can't decode this format")
+                            tryAdvanceToNextStream(
+                                reason = context.getString(R.string.player_fail_no_video_decode)
+                            )
                         ) {
                             continue
                         }
@@ -2463,7 +2754,7 @@ fun PlayerScreen(
                         playbackIssueReported = true
                         viewModel.onSelectedStreamPlaybackFailure()
                         viewModel.reportPlaybackError(
-                            "Video could not render on this device. Try another source."
+                            PlayerMessage.Res(R.string.player_fail_render_failed)
                         )
                     }
                 }
@@ -2559,7 +2850,6 @@ fun PlayerScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            controlsSeekJob?.cancel()
             playerReleasedAtomic.set(true)
             playerReleased = true
             if (!nextEpisodeTransitionInProgress) {
@@ -2599,21 +2889,21 @@ fun PlayerScreen(
     // the user changes the boost in Settings (though in practice that requires reopening
     // the player since Settings changes don't propagate mid-session yet). 0 dB = no
     // effect created, no CPU cost. Issue #88.
-    DisposableEffect(uiState.volumeBoostDb, exoPlayer.audioSessionId) {
+    DisposableEffect(uiState.volumeBoostDb, uiState.audioNormalization, exoPlayer.audioSessionId) {
         val sessionId = exoPlayer.audioSessionId
-        val targetDb = uiState.volumeBoostDb
+        val targetGainMb = if (uiState.audioNormalization) {
+            maxOf(uiState.volumeBoostDb * 100, 500)
+        } else {
+            uiState.volumeBoostDb * 100
+        }
         val enhancer: android.media.audiofx.LoudnessEnhancer? =
-            if (targetDb > 0 && sessionId != C.AUDIO_SESSION_ID_UNSET) {
+            if (targetGainMb > 0 && sessionId != C.AUDIO_SESSION_ID_UNSET) {
                 try {
                     android.media.audiofx.LoudnessEnhancer(sessionId).apply {
-                        setTargetGain(targetDb * 100) // API takes millibels
+                        setTargetGain(targetGainMb)
                         enabled = true
                     }
                 } catch (e: Throwable) {
-                    // Some Android TV devices route audio through HDMI passthrough and
-                    // reject audio-session effects (particularly when passthrough is
-                    // enabled for DTS/AC3). Fail silently — user gets unboosted audio
-                    // but playback still works.
                     android.util.Log.w("PlayerScreen", "LoudnessEnhancer unavailable on this device: ${e.message}")
                     null
                 }
@@ -2628,11 +2918,17 @@ fun PlayerScreen(
         }
     }
 
-    // Close menus when an error occurs so the error overlay can receive input
+    // Close menus and pause playback when an error occurs so the error overlay is prominent and idle
     LaunchedEffect(uiState.error) {
         if (uiState.error != null) {
             showSourceMenu = false
             showSubtitleMenu = false
+            showSubtitleSettings = false
+            showNextEpisodePrompt = false
+            runCatching {
+                exoPlayer.pause()
+                playerEngine.pause()
+            }
         }
     }
 
@@ -2684,16 +2980,20 @@ fun PlayerScreen(
     }
 
     BackHandler(enabled = uiState.error != null) {
-        onBack()
+        onExitPlayer()
     }
 
     BackHandler(
         enabled = !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && !showSubtitleSettings && uiState.error == null
     ) {
-        if (showControls) {
+        if (showSkipOverlay) {
+            closeQuickSeekOverlay(false)
+        } else if (seekInteraction.browsing) {
+            finishSeek(false)
+        } else if (showControls && !deviceType.isTouchDevice()) {
             showControls = false
         } else {
-            onBack()
+            onExitPlayer()
         }
     }
 
@@ -2707,16 +3007,14 @@ fun PlayerScreen(
     val subtitleStylePref = uiState.subtitleStyle
     val subtitleFontPref = uiState.subtitleFont
     val subtitleStylizedPref = uiState.subtitleStylized
-    val aspectModeLabel = when (playerResizeMode) {
-        AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Zoom"
-        AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Fill"
-        else -> "Fit"
-    }
+    val subtitleOffsetPref = uiState.subtitleOffset
+    val aspectModeLabel = currentAspectRatioMode.label
     val cycleAspectRatio: () -> Unit = {
-        playerResizeMode = when (playerResizeMode) {
-            AspectRatioFrameLayout.RESIZE_MODE_FIT -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-            else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+        currentAspectRatioMode = when (currentAspectRatioMode) {
+            AspectRatioMode.AUTO -> AspectRatioMode.FIT
+            AspectRatioMode.FIT -> AspectRatioMode.STRETCH
+            AspectRatioMode.STRETCH -> AspectRatioMode.CROP
+            AspectRatioMode.CROP -> AspectRatioMode.AUTO
         }
         aspectIndicatorTrigger++
     }
@@ -2730,37 +3028,11 @@ fun PlayerScreen(
             .background(Color.Black)
             .focusRequester(containerFocusRequester)
             .focusable()
-            .then(
-                if (isTouchDevice) {
-                    // isCasting is a key so the handler restarts when casting changes,
-                    // picking up the updated queueControlsSeek lambda.
-                    Modifier.pointerInput(isCasting) {
-                        detectTapGestures(
-                            onTap = {
-                                if (uiState.error == null && !showSubtitleMenu && !showSourceMenu) {
-                                    showControls = !showControls
-                                }
-                            },
-                            onDoubleTap = { offset ->
-                                if (uiState.error == null && !showSubtitleMenu && !showSourceMenu) {
-                                    val halfWidth = size.width / 2
-                                    if (offset.x < halfWidth) {
-                                        // Double-tap left side: rewind 10 seconds
-                                        queueControlsSeek(-10_000L)
-                                    } else {
-                                        // Double-tap right side: forward 10 seconds
-                                        queueControlsSeek(10_000L)
-                                    }
-                                }
-                            }
-                        )
-                    }
-                } else {
-                    Modifier
-                }
-            )
+            .onPreviewKeyEvent { exitTransition.isExiting }
             .onKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown) {
+                    if (event.nativeKeyEvent.repeatCount > 0 &&
+                        event.key in listOf(Key.Enter, Key.DirectionCenter, Key.MediaPlayPause)) return@onKeyEvent true
                     // Fire TV / Bluetooth media remote keys. These must be handled at the
                     // top of the key handler so they work regardless of which overlay
                     // (error, menus, post-episode prompt) is currently visible. Previously
@@ -2769,33 +3041,35 @@ fun PlayerScreen(
                     // stick remote that has dedicated FF/RW/Play buttons. Issue #68 (part).
                     when (event.key) {
                         Key.MediaPlayPause -> {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            if (seekInteraction.browsing) finishSeek(true)
+                            else if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                             showControls = true
                             return@onKeyEvent true
                         }
                         Key.MediaPlay -> {
+                            if (seekInteraction.browsing) finishSeek(true)
                             exoPlayer.play()
                             showControls = true
                             return@onKeyEvent true
                         }
                         Key.MediaPause -> {
+                            if (seekInteraction.browsing) finishSeek(false)
                             exoPlayer.pause()
                             showControls = true
                             return@onKeyEvent true
                         }
                         Key.MediaStop -> {
-                            exoPlayer.pause()
-                            onBack()
+                            onExitPlayer()
                             return@onKeyEvent true
                         }
                         Key.MediaRewind -> {
-                            queueControlsSeek(-10_000L)
-                            showControls = true
+                            showControls = false
+                            queueQuickSeek(-10_000L)
                             return@onKeyEvent true
                         }
                         Key.MediaFastForward -> {
-                            queueControlsSeek(10_000L)
-                            showControls = true
+                            showControls = false
+                            queueQuickSeek(10_000L)
                             return@onKeyEvent true
                         }
                         Key.MediaNext -> {
@@ -2859,10 +3133,14 @@ fun PlayerScreen(
                     if ((event.key == Key.Back || event.key == Key.Escape) &&
                         !showSubtitleMenu && !showSourceMenu && !showNextEpisodePrompt && !showSubtitleSettings && uiState.error == null
                     ) {
-                        if (showControls) {
+                        if (showSkipOverlay) {
+                            closeQuickSeekOverlay(false)
+                        } else if (seekInteraction.browsing) {
+                            finishSeek(false)
+                        } else if (showControls && !deviceType.isTouchDevice()) {
                             showControls = false
                         } else {
-                            onBack()
+                            onExitPlayer()
                         }
                         return@onKeyEvent true
                     }
@@ -2881,14 +3159,14 @@ fun PlayerScreen(
                             }
                             Key.Enter, Key.DirectionCenter -> {
                                 if (uiState.isSetupError) {
-                                    onBack()
+                                    onExitPlayer()
                                 } else {
-                                    if (errorModalFocusIndex == 0) viewModel.retry() else onBack()
+                                    if (errorModalFocusIndex == 0) viewModel.retry() else onExitPlayer()
                                 }
                                 true
                             }
                             Key.Back, Key.Escape -> {
-                                onBack()
+                                onExitPlayer()
                                 true
                             }
                             else -> false
@@ -3080,27 +3358,14 @@ fun PlayerScreen(
 
                     when (event.key) {
                         Key.Back, Key.Escape -> {
-                            onBack()
+                            onExitPlayer()
                             true
                         }
                         Key.DirectionLeft -> {
                             if (!showControls) {
-                                // Accumulate skip amount - track from start position
-                                val now = System.currentTimeMillis()
-                                if (now - lastSkipTime < 1200 && showSkipOverlay) {
-                                    // Continue accumulating from current skip session
-                                    skipAmount = (skipAmount - 10).coerceIn(-10000, 10000)
-                                } else {
-                                    // Start new skip session
-                                    skipStartPosition = exoPlayer.currentPosition
-                                    skipAmount = -10
-                                }
-                                lastSkipTime = now
-                                val unclamped = (skipStartPosition + (skipAmount * 1000L)).coerceAtLeast(0L)
-                                val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
-                                skipPreviewPosition = targetPosition
-                                exoPlayer.seekTo(targetPosition)
-                                showSkipOverlay = true
+                                queueQuickSeek(
+                                    -acceleratedSeekPreviewStepMs(event.nativeKeyEvent.repeatCount)
+                                )
                                 true
                             } else {
                                 false
@@ -3108,22 +3373,9 @@ fun PlayerScreen(
                         }
                         Key.DirectionRight -> {
                             if (!showControls) {
-                                // Accumulate skip amount - track from start position
-                                val now = System.currentTimeMillis()
-                                if (now - lastSkipTime < 1200 && showSkipOverlay) {
-                                    // Continue accumulating from current skip session
-                                    skipAmount = (skipAmount + 10).coerceIn(-10000, 10000)
-                                } else {
-                                    // Start new skip session
-                                    skipStartPosition = exoPlayer.currentPosition
-                                    skipAmount = 10
-                                }
-                                lastSkipTime = now
-                                val unclamped = (skipStartPosition + (skipAmount * 1000L)).coerceAtLeast(0L)
-                                val targetPosition = if (duration > 0L) unclamped.coerceAtMost(duration) else unclamped
-                                skipPreviewPosition = targetPosition
-                                exoPlayer.seekTo(targetPosition)
-                                showSkipOverlay = true
+                                queueQuickSeek(
+                                    acceleratedSeekPreviewStepMs(event.nativeKeyEvent.repeatCount)
+                                )
                                 true
                             } else {
                                 false
@@ -3141,6 +3393,7 @@ fun PlayerScreen(
                             val skipVisible = uiState.activeSkipInterval != null && !uiState.skipIntervalDismissed
                             // When hidden, prefer focusing the skip button (if present) instead of showing controls.
                             if (!showControls) {
+                                if (showSkipOverlay) closeQuickSeekOverlay(false)
                                 if (skipVisible && event.key == Key.DirectionUp) {
                                     coroutineScope.launch {
                                         delay(40)
@@ -3156,6 +3409,10 @@ fun PlayerScreen(
                             }
                         }
                         Key.Enter, Key.DirectionCenter -> {
+                            if (!showControls && showSkipOverlay) {
+                                closeQuickSeekOverlay(true)
+                                return@onKeyEvent true
+                            }
                             // Always toggle play/pause on Enter/Select.
                             // Controls overlay buttons have their own onKeyEvent handlers
                             // that will intercept Enter before this point if they have focus.
@@ -3164,7 +3421,8 @@ fun PlayerScreen(
                             true
                         }
                         Key.Spacebar -> {
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            if (seekInteraction.browsing) finishSeek(true)
+                            else if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                             showControls = true
                             true
                         }
@@ -3245,55 +3503,20 @@ fun PlayerScreen(
             )
         }
 
-        // Loading screen overlay - keep visible until player is fully started.
-        if (uiState.isLoading || uiState.selectedStreamUrl == null || !hasPlaybackStarted) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                if (uiState.backdropUrl != null) {
-                    AsyncImage(
-                        model = uiState.backdropUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.7f))
-                    )
-                }
-
-                PulsingLogo(
-                    logoUrl = uiState.logoUrl,
-                    title = uiState.title,
-                    progress = if (uiState.showLoadingStats) uiState.streamProgress else null,
-                    // streamLoadPhase covers source discovery; startupPhase takes over from
-                    // stream selection ("Loading subtitles…"/"Loading video stream…") until the
-                    // first frame renders; switchNotice overlays both for 2.5s on failover.
-                    // Unlike the percentage ring, the phase text is not gated on
-                    // showLoadingStats — status feedback should always be visible.
-                    phaseLabel = switchNotice
-                        ?: (startupPhase.takeIf { uiState.selectedStreamUrl != null })
-                            ?.let { phase ->
-                                // Name the addons still being queried so a chronically slow one
-                                // identifies itself to the user ("Loading subtitles… (bla)").
-                                val pending = uiState.pendingSubtitleAddons
-                                if (phase.startsWith("Loading subtitles") && pending.isNotEmpty()) {
-                                    val shown = pending.take(2).joinToString(", ")
-                                    val more = pending.size - 2
-                                    "Loading subtitles… ($shown${if (more > 0) " +$more" else ""})"
-                                } else phase
-                            }
-                        ?: uiState.streamLoadPhase
-                )
-            }
-        }
+        PlayerLoadingOverlay(
+            uiState = uiState,
+            hasPlaybackStarted = hasPlaybackStarted,
+            isTouchDevice = isTouchDevice,
+            isInPipMode = isInPipMode,
+            showSourceMenu = showSourceMenu,
+            onExitPlayer = onExitPlayer,
+            startupPhase = startupPhase,
+            switchNotice = switchNotice
+        )
 
         // Buffering indicator - only show after playback has started (mid-stream buffering)
         // Initial buffering is handled by the main loading screen above
-        if (isBuffering && hasPlaybackStarted && uiState.selectedStreamUrl != null) {
+        if (isBuffering && hasPlaybackStarted && uiState.selectedStreamUrl != null && !isTouchDevice) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -3304,7 +3527,7 @@ fun PlayerScreen(
 
         // Skip intro/recap overlay — only after playback has started to avoid showing
         // on the loading screen (background art + pulsing logo).
-        if (hasPlaybackStarted) {
+        if (hasPlaybackStarted && !isTouchDevice && !seekInteraction.browsing) {
             val activeSkip = uiState.activeSkipInterval
             SkipIntroButton(
                 interval = activeSkip,
@@ -3382,7 +3605,8 @@ fun PlayerScreen(
                     color = androidx.compose.ui.graphics.Color(0xFF7EC8F0)
                 )
                 Text(
-                    text = uiState.matchStatusText.ifBlank { "Searching for a match…" },
+                    text = uiState.matchStatus?.localizedText()
+                        ?: stringResource(R.string.player_subtitle_searching_match),
                     style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
                     color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
                 )
@@ -3392,7 +3616,7 @@ fun PlayerScreen(
         // AI translation API error toast
         uiState.aiErrorToast?.let { msg ->
             Toast(
-                message = msg,
+                message = msg.localizedText(),
                 type = ToastType.ERROR,
                 isVisible = true,
                 durationMs = 5000,
@@ -3422,852 +3646,1235 @@ fun PlayerScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = msg,
+                    text = msg.localizedText(),
                     style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
                     color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.9f)
                 )
             }
         }
 
-        // Netflix-style Controls Overlay
-        AnimatedVisibility(
-            visible = hasPlaybackStarted && showControls && !showSubtitleMenu && !showSourceMenu && !isInPipMode,
-            enter = fadeIn(androidx.compose.animation.core.tween(150)),
-            exit = fadeOut(androidx.compose.animation.core.tween(200))
-        ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                // Top info
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth()
-                        .padding(
-                            start = if (isTouchDevice) 20.dp else 28.dp,
-                            top = if (isTouchDevice) 18.dp else 30.dp,
-                            end = if (isTouchDevice) 24.dp else 48.dp
-                        )
-                        .zIndex(4f),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Top
-                ) {
-                    val isPaused = hasPlaybackStarted && !isPlaying && !isBuffering
-
-                    PlayerMetadataChrome(
-                        uiState = uiState,
-                        mediaType = mediaType,
-                        seasonNumber = seasonNumber,
-                        episodeNumber = episodeNumber,
-                        isPaused = isPaused,
-                        accentColor = playerAccent,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-
-                    // Right side - Cast button (mobile) + Ends At + Clock
-                    Column(horizontalAlignment = Alignment.End) {
-                        val currentTime = remember { mutableStateOf("") }
-                        val endsAtTime = remember { mutableStateOf("") }
-                        LaunchedEffect(duration, currentPosition, clockFormat) {
-                            while (true) {
-                                val now = System.currentTimeMillis()
-                                currentTime.value = formatPlayerClockTime(now, clockFormat)
-                                if (duration > 0 && currentPosition >= 0) {
-                                    val remainingMs = (duration - currentPosition).coerceAtLeast(0L)
-                                    endsAtTime.value = formatPlayerClockTime(now + remainingMs, clockFormat)
-                                } else { endsAtTime.value = "" }
-                                kotlinx.coroutines.delay(1000)
-                            }
-                        }
-
-                        // Cast button — mobile/tablet only; hidden when stream requires custom headers
-                        if (isTouchDevice && castAvailable && !streamNeedsHeaders) {
-                            val castDeviceName = (castState as? CastManager.CastState.Casting)?.deviceName
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                modifier = Modifier.padding(bottom = if (endsAtTime.value.isNotBlank() || !isTouchDevice) 4.dp else 0.dp)
-                            ) {
-                                if (castDeviceName != null) {
-                                    androidx.tv.material3.Text(
-                                        text = castDeviceName,
-                                        style = ArflixTypography.caption.copy(fontSize = 11.sp),
-                                        color = Color.White.copy(alpha = 0.85f),
-                                        maxLines = 1
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (isCasting) Color.White.copy(alpha = 0.2f)
-                                            else Color.Transparent
-                                        )
-                                        .clickable {
-                                            if (isCasting) {
-                                                castManager.disconnect()
-                                            } else {
-                                                val dialog = MediaRouteChooserDialog(context)
-                                                dialog.routeSelector = castManager.getRouteSelector()
-                                                dialog.show()
-                                            }
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = if (isCasting) Icons.Default.CastConnected else Icons.Default.Cast,
-                                        contentDescription = if (isCasting) stringResource(R.string.player_cd_stop_casting) else stringResource(R.string.player_cd_cast_to_tv),
-                                        tint = if (isCasting) playerAccent else Color.White.copy(alpha = 0.85f),
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        if (!isTouchDevice) {
-                            Text(
-                                currentTime.value,
-                                style = ArflixTypography.sectionTitle.copy(
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Medium
-                                ),
-                                color = TextPrimary.copy(alpha = 0.92f),
-                                maxLines = 1
-                            )
-                        }
-                        if (endsAtTime.value.isNotBlank()) {
-                            Text(
-                                "${stringResource(R.string.ends_at)} ${endsAtTime.value}",
-                                style = ArflixTypography.caption.copy(fontSize = 12.sp),
-                                color = TextPrimary.copy(alpha = 0.72f),
-                                maxLines = 1,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                        }
-                    }
-                }
-
-                // Bottom controls - positioned at very bottom.
-                // Gradient made stronger on touch devices so the icon row stays readable
-                // against bright content. Issue #97.
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                colorStops = if (isTouchDevice) arrayOf(
-                                    0.0f to Color.Transparent,
-                                    0.2f to Color.Black.copy(alpha = 0.5f),
-                                    1.0f to Color.Black.copy(alpha = 0.85f)
-                                ) else arrayOf(
-                                    0.0f to Color.Transparent,
-                                    0.3f to Color.Black.copy(alpha = 0.2f),
-                                    1.0f to Color.Black.copy(alpha = 0.7f)
-                                )
-                            )
-                        )
-                        .padding(horizontal = if (isTouchDevice) 24.dp else 48.dp)
-                        .padding(top = if (isTouchDevice) 16.dp else 24.dp, bottom = if (isTouchDevice) 32.dp else 24.dp)
-                ) {
-                    // Icon buttons row. On tablet we center the row and use slightly
-                    // larger buttons than TV to match the shorter viewing distance and
-                    // the Material minimum touch-target of 48dp. Phone keeps the compact
-                    // left-aligned layout to fit vertical orientation. Issue #97.
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = if (isTablet) Arrangement.Center else Arrangement.Start,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Three-way sizing: phone (compact) < TV (medium) < tablet (largest).
-                        // The old logic made touch devices SMALLER than TV which was
-                        // backwards for tablet finger targets.
-                        val smallBtn = when {
-                            isTablet -> 36.dp
-                            isPhone -> 24.dp
-                            else -> 28.dp
-                        }
-                        val smallIcon = when {
-                            isTablet -> 22.dp
-                            isPhone -> 17.dp
-                            else -> 19.dp
-                        }
-                        val midBtn = when {
-                            isTablet -> 40.dp
-                            isPhone -> 28.dp
-                            else -> 30.dp
-                        }
-                        val midIcon = when {
-                            isTablet -> 24.dp
-                            isPhone -> 20.dp
-                            else -> 22.dp
-                        }
-                        val bigBtn = when {
-                            isTablet -> 48.dp
-                            isPhone -> 34.dp
-                            else -> 38.dp
-                        }
-                        val bigIcon = when {
-                            isTablet -> 30.dp
-                            isPhone -> 26.dp
-                            else -> 28.dp
-                        }
-                        val gap = when {
-                            isTablet -> 16.dp
-                            isPhone -> 10.dp
-                            else -> 14.dp
-                        }
-                        val wideGap = when {
-                            isTablet -> 20.dp
-                            isPhone -> 14.dp
-                            else -> 18.dp
-                        }
-
-                        // Subtitles
-                        PlayerIconButton(icon = Icons.Default.ClosedCaption, contentDescription = "${stringResource(R.string.subtitles)} / ${stringResource(R.string.audio)}",
-                            focusRequester = subtitleButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
-                            onFocusChanged = { if (it) focusedButton = 1 },
-                            onClick = {
-                                subtitleMenuIndex = 0
-                                subtitlePanelFocus = 0
-                                val selected = latestUiState.selectedSubtitle
-                                if (selected == null) {
-                                    subtitleLangIndex = 0
-                                    subtitleTrackIndex = 0
-                                } else if (latestUiState.isAiAvailable && latestUiState.aiTargetLanguageName.isNotBlank() &&
-                                    (latestUiState.isAiTranslating || latestUiState.selectedSubtitle?.let { sub ->
-                                        subtitleGroups.none { (_, items) -> items.any { (_, s) -> s.id == sub.id } }
-                                    } == true)) {
-                                    val aiLangName = latestUiState.aiTargetLanguageName
-                                    val idx = subtitleGroups.indexOfFirst { (name, _) -> name.equals(aiLangName, ignoreCase = true) }
-                                    subtitleLangIndex = if (idx >= 0) idx + 1 else 0
-                                    subtitleTrackIndex = 0
-                                } else {
-                                    val langName = getFullLanguageName(selected.lang)
-                                    val idx = subtitleGroups.indexOfFirst { (name, _) -> name.equals(langName, ignoreCase = true) }
-                                    subtitleLangIndex = if (idx >= 0) idx + 1 else 0
-                                    subtitleTrackIndex = subtitleGroups.getOrNull(subtitleLangIndex - 1)?.second
-                                        ?.indexOfFirst { (_, sub) -> isSameSubtitleTrack(selected, sub.id) }?.coerceAtLeast(0) ?: 0
-                                }
-                                showSubtitleMenu = true
-                                // Move focus to container so all D-pad keys go to the menu handler
-                                coroutineScope.launch {
-                                    delay(50)
-                                    try { containerFocusRequester.requestFocus() } catch (_: Exception) {}
-                                }
-                            },
-                            onLeftKey = { if (mediaType == MediaType.TV) nextEpisodeButtonFocusRequester.requestFocus() else aspectButtonFocusRequester.requestFocus() },
-                            onRightKey = { subtitleSettingsBtnFocusRequester.requestFocus() },
-                            onDownKey = { trackbarFocusRequester.requestFocus() })
-
-                        Spacer(modifier = Modifier.width(gap))
-
-                        // Subtitle settings (delay, size, vertical position)
-                        PlayerIconButton(icon = Icons.Default.Tune, contentDescription = stringResource(R.string.subtitle_settings_title),
-                            focusRequester = subtitleSettingsBtnFocusRequester, size = smallBtn, iconSize = smallIcon,
-                            onFocusChanged = {},
-                            onClick = {
-                                showSubtitleSettings = !showSubtitleSettings
-                                if (showSubtitleSettings) {
-                                    subtitleSettingsRow = 0
-                                    coroutineScope.launch {
-                                        delay(50)
-                                        runCatching { containerFocusRequester.requestFocus() }
-                                    }
-                                }
-                            },
-                            onLeftKey = { subtitleButtonFocusRequester.requestFocus() },
-                            onRightKey = { sourceButtonFocusRequester.requestFocus() },
-                            onDownKey = { trackbarFocusRequester.requestFocus() })
-
-                        Spacer(modifier = Modifier.width(gap))
-
-                        // Sources
-                        PlayerIconButton(icon = Icons.Default.Folder, contentDescription = stringResource(R.string.sources),
-                            focusRequester = sourceButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
-                            onFocusChanged = {},
-                            onClick = { showSourceMenu = true; showControls = true },
-                            onLeftKey = { subtitleSettingsBtnFocusRequester.requestFocus() },
-                            onRightKey = { if (isTouchDevice) playButtonFocusRequester.requestFocus() else rewindButtonFocusRequester.requestFocus() },
-                            onDownKey = { trackbarFocusRequester.requestFocus() })
-
-                        if (!isTouchDevice) {
-                            Spacer(modifier = Modifier.width(wideGap))
-
-                            // Rewind 10s
-                            PlayerIconButton(icon = Icons.Default.Replay10, contentDescription = stringResource(R.string.player_cd_rewind),
-                                focusRequester = rewindButtonFocusRequester, size = midBtn, iconSize = midIcon,
-                                onFocusChanged = {},
-                                onClick = { queueControlsSeek(-10_000L) },
-                                onLeftKey = { sourceButtonFocusRequester.requestFocus() },
-                                onRightKey = { playButtonFocusRequester.requestFocus() },
-                                onDownKey = { trackbarFocusRequester.requestFocus() })
-
-                            Spacer(modifier = Modifier.width(gap))
-                        } else {
-                            Spacer(modifier = Modifier.width(wideGap))
-                        }
-
-                        // Play/Pause - center, largest
-                        PlayerIconButton(icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) stringResource(R.string.player_cd_pause) else stringResource(R.string.play),
-                            focusRequester = playButtonFocusRequester, size = bigBtn, iconSize = bigIcon,
-                            onFocusChanged = { if (it) focusedButton = 0 },
-                            onClick = {
-                                if (isCasting) {
-                                    if (castManager.isRemotePlaying()) castManager.pause()
-                                    else castManager.play()
-                                } else {
-                                    if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                                }
-                            },
-                            onLeftKey = { if (isTouchDevice) sourceButtonFocusRequester.requestFocus() else rewindButtonFocusRequester.requestFocus() },
-                            onRightKey = { if (isTouchDevice) aspectButtonFocusRequester.requestFocus() else forwardButtonFocusRequester.requestFocus() },
-                            onDownKey = { trackbarFocusRequester.requestFocus() },
-                            onUpKey = { val sv = uiState.activeSkipInterval != null && !uiState.skipIntervalDismissed; if (sv) skipIntroFocusRequester.requestFocus() })
-
-                        if (!isTouchDevice) {
-                            Spacer(modifier = Modifier.width(gap))
-
-                            // Forward 10s - own focus requester
-                            PlayerIconButton(icon = Icons.Default.Forward10, contentDescription = stringResource(R.string.player_cd_forward),
-                                focusRequester = forwardButtonFocusRequester, size = midBtn, iconSize = midIcon,
-                                onFocusChanged = {},
-                                onClick = { queueControlsSeek(10_000L) },
-                                onLeftKey = { playButtonFocusRequester.requestFocus() },
-                                onRightKey = { aspectButtonFocusRequester.requestFocus() },
-                                onDownKey = { trackbarFocusRequester.requestFocus() })
-
-                            Spacer(modifier = Modifier.width(wideGap))
-                        } else {
-                            Spacer(modifier = Modifier.width(wideGap))
-                        }
-
-                        // Aspect Ratio
-                        PlayerIconButton(icon = Icons.Default.AspectRatio, contentDescription = stringResource(R.string.player_cd_aspect, aspectModeLabel),
-                            focusRequester = aspectButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
-                            onFocusChanged = {},
-                            onClick = cycleAspectRatio,
-                            onLeftKey = { if (isTouchDevice) playButtonFocusRequester.requestFocus() else forwardButtonFocusRequester.requestFocus() },
-                            onRightKey = {
-                                when {
-                                    mediaType == MediaType.TV -> nextEpisodeButtonFocusRequester.requestFocus()
-                                    isTouchDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> pipButtonFocusRequester.requestFocus()
-                                    else -> subtitleButtonFocusRequester.requestFocus()
-                                }
-                            },
-                            onDownKey = { trackbarFocusRequester.requestFocus() })
-
-                        if (mediaType == MediaType.TV) {
-                            Spacer(modifier = Modifier.width(gap))
-                            PlayerIconButton(icon = Icons.Default.SkipNext, contentDescription = stringResource(R.string.next_episode),
-                                focusRequester = nextEpisodeButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
-                                onFocusChanged = {},
-                                onClick = {
-                                    val next = nextEpisodeIdentity ?: return@PlayerIconButton
-                                    val selected = uiState.selectedStream
-                                    playNextEpisode(
-                                        next,
-                                        selected?.addonId?.takeIf { it.isNotBlank() },
-                                        selected?.source?.takeIf { it.isNotBlank() },
-                                        selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
-                                    )
-                                },
-                                onLeftKey = { aspectButtonFocusRequester.requestFocus() },
-                                onRightKey = { subtitleButtonFocusRequester.requestFocus() },
-                                onDownKey = { trackbarFocusRequester.requestFocus() })
-                        }
-
-                        // PiP button — touch devices only, just right of other buttons, Android 8+
-                        if (isTouchDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            Spacer(modifier = Modifier.width(gap))
-                            PlayerIconButton(
-                                icon = Icons.Default.PictureInPicture,
-                                contentDescription = stringResource(R.string.player_cd_pip),
-                                focusRequester = pipButtonFocusRequester,
-                                size = smallBtn, iconSize = smallIcon,
-                                onFocusChanged = {},
-                                onClick = { enterPipMode() },
-                                onLeftKey = { if (mediaType == MediaType.TV) nextEpisodeButtonFocusRequester.requestFocus() else aspectButtonFocusRequester.requestFocus() },
-                                onRightKey = { subtitleButtonFocusRequester.requestFocus() },
-                                onDownKey = { trackbarFocusRequester.requestFocus() }
-                            )
-                        }
-                    }
-
-
-                    Spacer(modifier = Modifier.height(if (isTouchDevice) 4.dp else 6.dp))
-
-                    // Trackbar at the very bottom with time labels
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = formatTime(if (isControlScrubbing) scrubPreviewPosition else currentPosition),
-                            style = ArflixTypography.label.copy(fontSize = if (isTouchDevice) 12.sp else 13.sp),
-                            color = Color.White.copy(alpha = 0.9f),
-                            maxLines = 1,
-                            modifier = Modifier.width(if (isTouchDevice) 48.dp else 55.dp)
-                        )
-
-                        // Trackbar
-                        var trackbarFocused by remember { mutableStateOf(false) }
-                        val trackbarHeight by animateFloatAsState(if (trackbarFocused) 8f else if (isTouchDevice) 6f else 4f, label = "trackbarHeight")
-                        var trackbarWidthPx by remember { mutableIntStateOf(0) }
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(if (isTouchDevice) 28.dp else 20.dp)
-                                .onSizeChanged { trackbarWidthPx = it.width }
-                                .focusRequester(trackbarFocusRequester)
-                                .onFocusChanged { state ->
-                                    trackbarFocused = state.isFocused
-                                    if (!state.isFocused && isControlScrubbing) commitControlsSeekNow()
-                                }
-                                .focusable()
-                                .pointerInput(duration, isCasting) {
-                                    detectHorizontalDragGestures(
-                                        onDragStart = { offset -> if (duration > 0L && trackbarWidthPx > 0) { scrubPreviewPosition = ((offset.x / trackbarWidthPx).coerceIn(0f, 1f) * duration).toLong(); isControlScrubbing = true } },
-                                        onDragEnd = { if (isControlScrubbing) { if (isCasting) castManager.seekTo(scrubPreviewPosition) else if (!playerReleased) exoPlayer.seekTo(scrubPreviewPosition); isControlScrubbing = false } },
-                                        onDragCancel = { if (isControlScrubbing) { if (isCasting) castManager.seekTo(scrubPreviewPosition) else if (!playerReleased) exoPlayer.seekTo(scrubPreviewPosition); isControlScrubbing = false } },
-                                        onHorizontalDrag = { _, dragAmount -> if (duration > 0L && trackbarWidthPx > 0) { val delta = (dragAmount / trackbarWidthPx * duration).toLong(); scrubPreviewPosition = (scrubPreviewPosition + delta).coerceIn(0L, duration); isControlScrubbing = true } }
-                                    )
-                                }
-                                .pointerInput(duration, isCasting) {
-                                    detectTapGestures { offset -> if (duration > 0L && trackbarWidthPx > 0) { val pos = ((offset.x / trackbarWidthPx).coerceIn(0f, 1f) * duration).toLong(); if (isCasting) castManager.seekTo(pos) else if (!playerReleased) exoPlayer.seekTo(pos) } }
-                                }
-                                .onKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown && trackbarFocused) {
-                                        when (event.key) {
-                                            Key.DirectionLeft -> { queueControlsSeek(-10_000L); true }
-                                            Key.DirectionRight -> { queueControlsSeek(10_000L); true }
-                                            Key.Enter, Key.DirectionCenter -> { commitControlsSeekNow(); true }
-                                            Key.DirectionUp -> { playButtonFocusRequester.requestFocus(); true }
-                                            Key.DirectionDown -> true
-                                            else -> false
-                                        }
-                                    } else false
-                                }
-                                .background(Color.Transparent),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            // Visible thin bar centered in the larger touch target
-                            val barHeight = if (trackbarFocused) 8.dp else if (isTouchDevice) 6.dp else 4.dp
-                            Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Color.White.copy(alpha = if (trackbarFocused) 0.25f else 0.15f), RoundedCornerShape(3.dp)))
-                            val frac = if (duration > 0) ((if (isControlScrubbing) scrubPreviewPosition else currentPosition).toFloat() / duration.toFloat()).coerceIn(0f, 1f) else progress
-                            Box(modifier = Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center), contentAlignment = Alignment.CenterStart) {
-                            Box(modifier = Modifier.fillMaxWidth(frac).fillMaxHeight().background(
-                                if (trackbarFocused) playerAccent else playerAccent.copy(alpha = 0.8f), RoundedCornerShape(3.dp)
-                            ))
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        Text(
-                            text = formatTime(duration),
-                            style = ArflixTypography.label.copy(fontSize = if (isTouchDevice) 12.sp else 13.sp),
-                            color = Color.White.copy(alpha = 0.5f),
-                            maxLines = 1,
-                            modifier = Modifier.width(if (isTouchDevice) 48.dp else 55.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // In-player subtitle settings panel (Delay, Size, Vertical Position)
-        AnimatedVisibility(
-            visible = showSubtitleSettings && hasPlaybackStarted,
-            enter = fadeIn(animTween(150)),
-            exit = fadeOut(animTween(150)),
-            modifier = Modifier.align(Alignment.Center).zIndex(8f)
-        ) {
-            PlayerSubtitleSettingsPanel(
-                selectedRow = subtitleSettingsRow,
-                syncOffsetMs = subtitleSyncOffsetMs,
-                sizePct = subtitleSizePct,
-                verticalPct = subtitleVerticalPct,
-                onRowSelect = { subtitleSettingsRow = it },
-                onOffsetDecrease = { subtitleSyncOffsetMs = (subtitleSyncOffsetMs - 100L).coerceAtLeast(-10000L) },
-                onOffsetIncrease = { subtitleSyncOffsetMs = (subtitleSyncOffsetMs + 100L).coerceAtMost(10000L) },
-                onSizeDecrease = { subtitleSizePct = (subtitleSizePct - 10).coerceAtLeast(50) },
-                onSizeIncrease = { subtitleSizePct = (subtitleSizePct + 10).coerceAtMost(300) },
-                onVerticalDecrease = { subtitleVerticalPct = (subtitleVerticalPct - 1).coerceAtLeast(0) },
-                onVerticalIncrease = { subtitleVerticalPct = (subtitleVerticalPct + 1).coerceAtMost(50) }
-            )
-        }
-
-        // Subtitle/Audio menu
-        AnimatedVisibility(
-            visible = showSubtitleMenu,
-            enter = fadeIn(androidx.compose.animation.core.tween(150)),
-            exit = fadeOut(androidx.compose.animation.core.tween(200))
-        ) {
-            SubtitleMenu(
-                subtitles = uiState.subtitles,
-                selectedSubtitle = uiState.selectedSubtitle,
-                isAiTranslating = uiState.isAiTranslating,
-                isAiAvailable = uiState.isAiAvailable,
-                aiTargetLanguageName = uiState.aiTargetLanguageName,
-                matchLanguageName = uiState.matchLanguageName,
+        // ARVIO Mobile Player Overlay (Phone & Tablet Touch Devices)
+        if (isTouchDevice && !isInPipMode) {
+            ArvioMobilePlayer(
+                uiState = uiState,
+                isPlaying = isPlaying,
+                isBuffering = isBuffering,
+                hasPlaybackStarted = hasPlaybackStarted,
+                currentPositionMs = currentPosition,
+                durationMs = duration,
+                bufferedPositionMs = exoPlayer.bufferedPosition,
                 audioTracks = audioTracks,
                 selectedAudioIndex = selectedAudioIndex,
-                activeTab = subtitleMenuTab,
-                focusedIndex = subtitleMenuIndex,
-                subtitleGroups = subtitleGroups,
-                streamSource = uiState.selectedStream?.source ?: "",
-                subtitleLangIndex = subtitleLangIndex,
-                subtitleTrackIndex = subtitleTrackIndex,
-                subtitlePanelFocus = subtitlePanelFocus,
-                onTabChanged = { tab ->
-                    subtitleMenuTab = tab
-                    subtitleMenuIndex = 0
+                currentPlaybackSpeed = currentPlaybackSpeed,
+                aspectModeLabel = aspectModeLabel,
+                isCasting = isCasting,
+                showCastButton = castAvailable && !streamNeedsHeaders,
+                showPipButton = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O,
+                seekPreviewFrame = previewFrameForTarget,
+                onScrubPreviewPosition = { position ->
+                    if (position != null) dragSeek(position) else finishSeek(false)
                 },
-                onSelectSubtitle = { index ->
-                    if (index == 0) {
-                        viewModel.disableSubtitles()
+                onTogglePlayPause = {
+                    if (isCasting) {
+                        if (castManager.isRemotePlaying()) castManager.pause() else castManager.play()
                     } else {
-                        uiState.subtitles.getOrNull(index - 1)?.let { viewModel.selectSubtitle(it) }
-                    }
-                    showSubtitleMenu = false
-                    showControls = true
-                    coroutineScope.launch {
-                        delay(150)
-                        try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                        playerEngine.togglePlayPause()
+                        isPlaying = exoPlayer.isPlaying
+                        isBuffering = exoPlayer.playbackState == Player.STATE_BUFFERING && exoPlayer.playWhenReady
                     }
                 },
-                onSelectAudio = { track ->
+                onSeekTo = { targetMs ->
+                    if (seekInteraction.browsing) {
+                        dragSeek(targetMs)
+                        finishSeek(true)
+                    } else if (isCasting) {
+                        castManager.seekTo(targetMs)
+                    } else if (!playerReleased) {
+                        playerEngine.seekTo(targetMs)
+                    }
+                },
+                onRewind10 = { skipWithoutPreview(-10_000L) },
+                onForward10 = { skipWithoutPreview(10_000L) },
+                onCycleAspectRatio = cycleAspectRatio,
+                onSelectAspectRatio = { mode ->
+                    currentAspectRatioMode = AspectRatioMode.fromLabel(mode)
+                },
+                onSelectEpisode = { ep ->
+                    val selected = uiState.selectedStream
+                    playNextEpisode(
+                        ep.identity,
+                        selected?.addonId?.takeIf { it.isNotBlank() },
+                        selected?.source?.takeIf { it.isNotBlank() },
+                        selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                    )
+                },
+                onSelectSource = { stream ->
+                    viewModel.selectStream(stream, exoPlayer.currentPosition)
+                },
+                onSelectAudioTrack = { track ->
                     userPickedAudioForStream = true
                     applyAudioTrackSelection(exoPlayer, track, audioTracks)?.let {
                         selectedAudioIndex = it
                     }
-                    showSubtitleMenu = false
-                    showControls = true
-                    coroutineScope.launch {
-                        delay(150)
-                        try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                },
+                onSelectSubtitleTrack = { sub ->
+                    if (sub == null) {
+                        viewModel.disableSubtitles()
+                    } else {
+                        viewModel.selectSubtitle(sub)
                     }
                 },
-                isLiveAudioTranslating = uiState.isLiveAudioTranslating,
-                isFindingBestMatch = uiState.isFindingBestMatch,
-                onToggleAi = { viewModel.activateAiTranslation() },
-                onToggleLiveAudio = { viewModel.toggleLiveAudioTranslation() },
-                onFindBestMatch = { viewModel.runFindBestMatch() },
-                onClose = {
-                    showSubtitleMenu = false
-                    showControls = true
-                    coroutineScope.launch {
-                        delay(150)
-                        try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                onSelectPlaybackSpeed = { speed ->
+                    currentPlaybackSpeed = speed
+                    exoPlayer.setPlaybackSpeed(speed)
+                    playerEngine.setPlaybackSpeed(speed)
+                },
+                onSkipIntro = {
+                    val end = uiState.activeSkipInterval?.endMs
+                    if (end != null) {
+                        playerEngine.seekTo((end + 500L).coerceAtLeast(0L))
+                        viewModel.dismissSkipInterval()
+                    } else {
+                        playerEngine.seekTo((currentPosition + 85_000L).coerceAtMost(duration))
                     }
-                }
+                },
+                onSkipOutro = {
+                    val end = uiState.activeSkipInterval?.endMs
+                    if (end != null) {
+                        playerEngine.seekTo((end + 500L).coerceAtLeast(0L))
+                        viewModel.dismissSkipInterval()
+                    } else {
+                        val next = nextEpisodeIdentity ?: return@ArvioMobilePlayer
+                        val selected = uiState.selectedStream
+                        playNextEpisode(
+                            next,
+                            selected?.addonId?.takeIf { it.isNotBlank() },
+                            selected?.source?.takeIf { it.isNotBlank() },
+                            selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                        )
+                    }
+                },
+                canPlayNextEpisode = nextEpisodeIdentity != null &&
+                    nextEpisodeAirDateResolution == NextEpisodeAirDateResolution.Allowed,
+                onDismissNextEpisode = {
+                    nextEpisodePromptGate.dismiss(nextEpisodeAirDateSource)
+                },
+                onPlayNextEpisode = {
+                    if (nextEpisodeAirDateResolution != NextEpisodeAirDateResolution.Allowed) return@ArvioMobilePlayer
+                    val next = nextEpisodeIdentity ?: return@ArvioMobilePlayer
+                    val selected = uiState.selectedStream
+                    playNextEpisode(
+                        next,
+                        selected?.addonId?.takeIf { it.isNotBlank() },
+                        selected?.source?.takeIf { it.isNotBlank() },
+                        selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                    )
+                },
+                onEnterPip = enterPipMode,
+                onOpenCastChooser = {
+                    if (isCasting) {
+                        castManager.disconnect()
+                    } else {
+                        val dialog = MediaRouteChooserDialog(context)
+                        dialog.routeSelector = castManager.getRouteSelector()
+                        dialog.show()
+                    }
+                },
+                onRetryPlayback = {
+                    viewModel.retryPlayback()
+                },
+                onReloadStreams = {
+                    viewModel.reloadStreams()
+                },
+                onUpdateAutoplay = { enabled ->
+                    viewModel.setAutoPlayNext(enabled)
+                },
+                onUpdateAutoSkipIntro = { enabled ->
+                    viewModel.setAutoSkipIntro(enabled)
+                },
+                onUpdateAutoSkipOutro = { enabled ->
+                    viewModel.setAutoSkipOutro(enabled)
+                },
+                onUpdateAudioDelay = { delayMs ->
+                    aiRenderersFactory.audioDelayUs.set(delayMs * 1000L)
+                    playerEngine.setAudioDelayMs(delayMs)
+                    viewModel.setAudioDelayMs(delayMs)
+                },
+                onUpdateVolumeNormalization = { enabled ->
+                    viewModel.setAudioNormalization(enabled)
+                },
+                onVolumeBoostChange = { db ->
+                    viewModel.setVolumeBoostDb(db)
+                },
+                onToggleLiveAudioTranslation = {
+                    viewModel.toggleLiveAudioTranslation()
+                },
+                onFindBestMatch = {
+                    viewModel.runFindBestMatch()
+                },
+                onActivateAiTranslation = {
+                    viewModel.activateAiTranslation()
+                },
+                subtitleDelayMs = subtitleSyncOffsetMs,
+                onUpdateSubtitleDelay = { delayMs ->
+                    subtitleSyncOffsetMs = delayMs
+                },
+                subtitleSizePct = subtitleSizePct,
+                onUpdateSubtitleSize = { sizePct ->
+                    val clamped = sizePct.coerceIn(50, 250)
+                    subtitleSizePct = clamped
+                    viewModel.setSubtitleSizePct(clamped)
+                },
+                subtitleVerticalPct = subtitleVerticalPct,
+                hasActiveSubtitleCues = hasActiveSubtitleCues,
+                onUpdateSubtitleVerticalPosition = { vertPct ->
+                    subtitleVerticalPct = vertPct
+                    viewModel.setSubtitleVerticalPct(vertPct)
+                },
+                onUpdateSubtitlePreload = { enabled ->
+                    viewModel.setSubtitlePreloadEnabled(enabled)
+                },
+                onUpdateFilterSubtitlesByLanguage = { enabled ->
+                    viewModel.setFilterSubtitlesByLanguage(enabled)
+                },
+                onUpdateSubtitleRemoveHearingImpaired = { enabled ->
+                    viewModel.setSubtitleRemoveHearingImpaired(enabled)
+                },
+                onUpdateSubtitleColor = { colorHex ->
+                    viewModel.setSubtitleColorPref(when (colorHex.lowercase()) {
+                        "#ffe066" -> "Yellow"
+                        "#66d9ff" -> "Cyan"
+                        "#ff6666" -> "Red"
+                        else -> "White"
+                    })
+                },
+                onUpdateSubtitlePosition = { pos ->
+                    viewModel.setSubtitleOffsetPref(if (pos == "top") "High" else "Bottom")
+                },
+                onUpdateSubtitleStyle = { style ->
+                    viewModel.setSubtitleStylePref(style)
+                },
+                onUpdateSubtitleFont = { font ->
+                    viewModel.setSubtitleFontPref(font)
+                },
+                onUpdateSubtitleStylized = { stylized ->
+                    viewModel.setSubtitleStylizedPref(stylized)
+                },
+                onBack = onExitPlayer
             )
         }
 
-        StreamSelector(
-            isVisible = showSourceMenu,
-            streams = uiState.streams,
-            selectedStream = uiState.selectedStream,
-            isLoading = uiState.isLoadingStreams,
-            hasStreamingAddons = !uiState.isSetupError,
-            addonOrderedIds = uiState.addonOrderedIds,
-            title = uiState.title,
-            subtitle = if (seasonNumber != null && episodeNumber != null) {
-                "S$seasonNumber E$episodeNumber"
-            } else {
-                ""
-            },
-            onFocusedStream = { stream ->
-                viewModel.prewarmStreamsAround(stream, uiState.streams)
-            },
-            onSelect = { stream: StreamSource ->
-                userSelectedSourceManually = true
-                playbackIssueReported = false
-                startupRecoverAttempted = false
-                startupHardFailureReported = false
-                startupSameSourceRetryCount = 0
-                startupSameSourceRefreshAttempted = false
-                startupUrlLock = null
-                rebufferRecoverAttempted = false
-                longRebufferCount = 0
-                viewModel.selectStream(stream, exoPlayer.currentPosition)
-                showSourceMenu = false
-                showControls = true
-                coroutineScope.launch {
-                    delay(150)
-                    runCatching { sourceButtonFocusRequester.requestFocus() }
-                }
-            },
-            onClose = {
-                showSourceMenu = false
-                showControls = true
-                coroutineScope.launch {
-                    delay(150)
-                    runCatching { sourceButtonFocusRequester.requestFocus() }
-                }
-            }
-        )
+        if (!isInPipMode) {
+            // Post-episode "Up Next" prompt (issue #86). Shown when a TV episode ends and
+            // autoPlayNext is enabled. 10-second countdown auto-advances, or the user can
+            // hit Enter to continue immediately or Back/Escape/Close to stop and return to
+            // the show overview. Placed after StreamSelector so it renders above the player
+            // but below any error/source overlays that might appear simultaneously.
+            NextEpisodeOverlay(
+                isVisible = showNextEpisodePrompt,
+                showTitle = uiState.title,
+                // We only know the current episode's title at this point; fetching the next
+                // episode's metadata would require an extra TMDB round-trip during playback.
+                // Fall back to a generic "Episode N" label — the show title, S/E number, and
+                // backdrop image still give users enough context to decide Continue/Cancel.
+                episodeTitle = stringResource(R.string.episode, pendingNextIdentity?.displayEpisode ?: 0),
+                seasonNumber = pendingNextIdentity?.displaySeason ?: 0,
+                episodeNumber = pendingNextIdentity?.displayEpisode ?: 0,
+                episodeImage = uiState.backdropUrl,
+                countdownSeconds = 10,
+                focusedButtonOverride = nextEpisodePromptButton,
+                onFocusedButtonChange = { nextEpisodePromptButton = it },
+                onPlayNext = playPendingNextEpisode,
+                onCancel = cancelNextEpisodePrompt
+            )
 
-        // Post-episode "Up Next" prompt (issue #86). Shown when a TV episode ends and
-        // autoPlayNext is enabled. 10-second countdown auto-advances, or the user can
-        // hit Enter to continue immediately or Back/Escape/Close to stop and return to
-        // the show overview. Placed after StreamSelector so it renders above the player
-        // but below any error/source overlays that might appear simultaneously.
-        NextEpisodeOverlay(
-            isVisible = showNextEpisodePrompt,
-            showTitle = uiState.title,
-            // We only know the current episode's title at this point; fetching the next
-            // episode's metadata would require an extra TMDB round-trip during playback.
-            // Fall back to a generic "Episode N" label — the show title, S/E number, and
-            // backdrop image still give users enough context to decide Continue/Cancel.
-            episodeTitle = "Episode ${pendingNextIdentity?.displayEpisode ?: 0}",
-            seasonNumber = pendingNextIdentity?.displaySeason ?: 0,
-            episodeNumber = pendingNextIdentity?.displayEpisode ?: 0,
-            episodeImage = uiState.backdropUrl,
-            countdownSeconds = 10,
-            focusedButtonOverride = nextEpisodePromptButton,
-            onFocusedButtonChange = { nextEpisodePromptButton = it },
-            onPlayNext = playPendingNextEpisode,
-            onCancel = cancelNextEpisodePrompt
-        )
+        }
 
-        // Volume indicator
-        AnimatedVisibility(
-            visible = showVolumeIndicator,
-            enter = fadeIn(androidx.compose.animation.core.tween(150)),
-            exit = fadeOut(androidx.compose.animation.core.tween(200)),
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 48.dp)
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
-                    .padding(16.dp)
+        if (!isTouchDevice && !isInPipMode) {
+            // Netflix-style Controls Overlay
+            AnimatedVisibility(
+                visible = hasPlaybackStarted && showControls && !showSubtitleMenu && !showSourceMenu && !isInPipMode,
+                enter = fadeIn(androidx.compose.animation.core.tween(150)),
+                exit = fadeOut(androidx.compose.animation.core.tween(200))
             ) {
-                Icon(
-                    imageVector = when {
-                        isMuted || currentVolume == 0 -> Icons.Default.VolumeMute
-                        currentVolume < maxVolume / 2 -> Icons.Default.VolumeDown
-                        else -> Icons.Default.VolumeUp
-                    },
-                    contentDescription = stringResource(R.string.player_cd_volume),
-                    tint = Color.White,
-                    modifier = Modifier.size(32.dp)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Box(
-                    modifier = Modifier
-                        .width(8.dp)
-                        .height(100.dp)
-                        .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
-                ) {
-                    Box(
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Top info
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .fillMaxWidth()
+                            .padding(
+                                start = if (isTouchDevice) 20.dp else 28.dp,
+                                top = if (isTouchDevice) 18.dp else 30.dp,
+                                end = if (isTouchDevice) 24.dp else 48.dp
+                            )
+                            .zIndex(4f),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        val isPaused = hasPlaybackStarted && !isPlaying && !isBuffering
+
+                        PlayerMetadataChrome(
+                            uiState = uiState,
+                            mediaType = mediaType,
+                            seasonNumber = seasonNumber,
+                            episodeNumber = episodeNumber,
+                            isPaused = isPaused,
+                            accentColor = playerAccent,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+
+                        // Right side - Cast button (mobile) + Ends At + Clock
+                        Column(horizontalAlignment = Alignment.End) {
+                            val currentTime = remember { mutableStateOf("") }
+                            val endsAtTime = remember { mutableStateOf("") }
+                            LaunchedEffect(duration, currentPosition, clockFormat) {
+                                while (true) {
+                                    val now = System.currentTimeMillis()
+                                    currentTime.value = formatPlayerClockTime(now, clockFormat)
+                                    if (duration > 0 && currentPosition >= 0) {
+                                        val remainingMs = (duration - currentPosition).coerceAtLeast(0L)
+                                        endsAtTime.value = formatPlayerClockTime(now + remainingMs, clockFormat)
+                                    } else { endsAtTime.value = "" }
+                                    kotlinx.coroutines.delay(1000)
+                                }
+                            }
+
+                            // Cast button — mobile/tablet only; hidden when stream requires custom headers
+                            if (isTouchDevice && castAvailable && !streamNeedsHeaders) {
+                                val castDeviceName = (castState as? CastManager.CastState.Casting)?.deviceName
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.padding(bottom = if (endsAtTime.value.isNotBlank() || !isTouchDevice) 4.dp else 0.dp)
+                                ) {
+                                    if (castDeviceName != null) {
+                                        androidx.tv.material3.Text(
+                                            text = castDeviceName,
+                                            style = ArflixTypography.caption.copy(fontSize = 11.sp),
+                                            color = Color.White.copy(alpha = 0.85f),
+                                            maxLines = 1
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (isCasting) Color.White.copy(alpha = 0.2f)
+                                                else Color.Transparent
+                                            )
+                                            .clickable {
+                                                if (isCasting) {
+                                                    castManager.disconnect()
+                                                } else {
+                                                    val dialog = MediaRouteChooserDialog(context)
+                                                    dialog.routeSelector = castManager.getRouteSelector()
+                                                    dialog.show()
+                                                }
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isCasting) Icons.Default.CastConnected else Icons.Default.Cast,
+                                            contentDescription = if (isCasting) stringResource(R.string.player_cd_stop_casting) else stringResource(R.string.player_cd_cast_to_tv),
+                                            tint = if (isCasting) playerAccent else Color.White.copy(alpha = 0.85f),
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (!isTouchDevice) {
+                                Text(
+                                    currentTime.value,
+                                    style = ArflixTypography.sectionTitle.copy(
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Medium
+                                    ),
+                                    color = TextPrimary.copy(alpha = 0.92f),
+                                    maxLines = 1
+                                )
+                            }
+                            if (endsAtTime.value.isNotBlank()) {
+                                Text(
+                                    "${stringResource(R.string.ends_at)} ${endsAtTime.value}",
+                                    style = ArflixTypography.caption.copy(fontSize = 12.sp),
+                                    color = TextPrimary.copy(alpha = 0.72f),
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Bottom controls - positioned at very bottom.
+                    // Gradient made stronger on touch devices so the icon row stays readable
+                    // against bright content. Issue #97.
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .fillMaxSize((currentVolume.toFloat() / maxVolume).coerceIn(0f, 1f))
-                            .background(playerAccent, RoundedCornerShape(4.dp))
                             .align(Alignment.BottomCenter)
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = if (isMuted) stringResource(R.string.player_muted) else "${currentVolume * 100 / maxVolume}%",
-                    style = ArflixTypography.caption,
-                    color = Color.White
-                )
-            }
-        }
-
-        // Aspect ratio indicator - brief center popup
-        AnimatedVisibility(
-            visible = showAspectIndicator,
-            enter = fadeIn(androidx.compose.animation.core.tween(150)),
-            exit = fadeOut(androidx.compose.animation.core.tween(200)),
-            modifier = Modifier.align(Alignment.Center)
-        ) {
-            Box(
-                modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
-                    .padding(horizontal = 24.dp, vertical = 14.dp)
-            ) {
-                Text(
-                    text = aspectModeLabel,
-                    style = ArflixTypography.body.copy(fontSize = 18.sp, fontWeight = FontWeight.Medium),
-                    color = Color.White
-                )
-            }
-        }
-
-        // Skip overlay — floats near the bottom while the user spams ±10s.
-        // Now sits ~48dp from the bottom (was 120dp, which wasted vertical
-        // space and felt too detached). Time labels flanking the progress
-        // bar show exactly how far along the user is.
-        AnimatedVisibility(
-            visible = showSkipOverlay,
-            enter = fadeIn(androidx.compose.animation.core.tween(150)),
-            exit = fadeOut(androidx.compose.animation.core.tween(200)),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 48.dp)
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .fillMaxWidth(0.72f)
-                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 20.dp, vertical = 14.dp)
-            ) {
-                Text(
-                    text = if (skipAmount >= 0) "+${skipAmount}s" else "${skipAmount}s",
-                    style = ArflixTypography.sectionTitle.copy(
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Bold,
-                        shadow = Shadow(
-                            color = Color.Black,
-                            offset = Offset(2f, 2f),
-                            blurRadius = 8f
-                        )
-                    ),
-                    color = Color.White
-                )
-
-                if (duration > 0L) {
-                    val previewPosition = skipPreviewPosition
-                        .takeIf { it > 0L }
-                        ?: currentPosition
-                    val previewProgress = (previewPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth(),
+                            .background(
+                                Brush.verticalGradient(
+                                    colorStops = if (isTouchDevice) arrayOf(
+                                        0.0f to Color.Transparent,
+                                        0.2f to Color.Black.copy(alpha = 0.5f),
+                                        1.0f to Color.Black.copy(alpha = 0.85f)
+                                    ) else arrayOf(
+                                        0.0f to Color.Transparent,
+                                        0.3f to Color.Black.copy(alpha = 0.2f),
+                                        1.0f to Color.Black.copy(alpha = 0.7f)
+                                    )
+                                )
+                            )
+                            .padding(horizontal = if (isTouchDevice) 24.dp else 48.dp)
+                            .padding(top = if (isTouchDevice) 16.dp else 24.dp, bottom = if (isTouchDevice) 32.dp else 24.dp)
                     ) {
-                        Text(
-                            text = formatTime(previewPosition),
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                            ),
-                            color = Color.White,
-                        )
+                        // Icon buttons row. On tablet we center the row and use slightly
+                        // larger buttons than TV to match the shorter viewing distance and
+                        // the Material minimum touch-target of 48dp. Phone keeps the compact
+                        // left-aligned layout to fit vertical orientation. Issue #97.
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = if (isTablet) Arrangement.Center else Arrangement.Start,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Three-way sizing: phone (compact) < TV (medium) < tablet (largest).
+                            // The old logic made touch devices SMALLER than TV which was
+                            // backwards for tablet finger targets.
+                            val smallBtn = when {
+                                isTablet -> 36.dp
+                                isPhone -> 24.dp
+                                else -> 28.dp
+                            }
+                            val smallIcon = when {
+                                isTablet -> 22.dp
+                                isPhone -> 17.dp
+                                else -> 19.dp
+                            }
+                            val midBtn = when {
+                                isTablet -> 40.dp
+                                isPhone -> 28.dp
+                                else -> 30.dp
+                            }
+                            val midIcon = when {
+                                isTablet -> 24.dp
+                                isPhone -> 20.dp
+                                else -> 22.dp
+                            }
+                            val bigBtn = when {
+                                isTablet -> 48.dp
+                                isPhone -> 34.dp
+                                else -> 38.dp
+                            }
+                            val bigIcon = when {
+                                isTablet -> 30.dp
+                                isPhone -> 26.dp
+                                else -> 28.dp
+                            }
+                            val gap = when {
+                                isTablet -> 16.dp
+                                isPhone -> 10.dp
+                                else -> 14.dp
+                            }
+                            val wideGap = when {
+                                isTablet -> 20.dp
+                                isPhone -> 14.dp
+                                else -> 18.dp
+                            }
+
+                            // Subtitles
+                            PlayerIconButton(icon = Icons.Default.ClosedCaption, contentDescription = "${stringResource(R.string.subtitles)} / ${stringResource(R.string.audio)}",
+                                focusRequester = subtitleButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
+                                onFocusChanged = { if (it) focusedButton = 1 },
+                                onClick = {
+                                    subtitleMenuIndex = 0
+                                    subtitlePanelFocus = 0
+                                    val selected = latestUiState.selectedSubtitle
+                                    if (selected == null) {
+                                        subtitleLangIndex = 0
+                                        subtitleTrackIndex = 0
+                                    } else if (latestUiState.isAiAvailable && latestUiState.aiTargetLanguageName.isNotBlank() &&
+                                        (latestUiState.isAiTranslating || latestUiState.selectedSubtitle?.let { sub ->
+                                            subtitleGroups.none { (_, items) -> items.any { (_, s) -> s.id == sub.id } }
+                                        } == true)) {
+                                        val aiLangName = latestUiState.aiTargetLanguageName
+                                        val idx = subtitleGroups.indexOfFirst { (name, _) -> name.equals(aiLangName, ignoreCase = true) }
+                                        subtitleLangIndex = if (idx >= 0) idx + 1 else 0
+                                        subtitleTrackIndex = 0
+                                    } else {
+                                        val langName = getFullLanguageName(selected.lang)
+                                        val idx = subtitleGroups.indexOfFirst { (name, _) -> name.equals(langName, ignoreCase = true) }
+                                        subtitleLangIndex = if (idx >= 0) idx + 1 else 0
+                                        subtitleTrackIndex = subtitleGroups.getOrNull(subtitleLangIndex - 1)?.second
+                                            ?.indexOfFirst { (_, sub) -> isSameSubtitleTrack(selected, sub.id) }?.coerceAtLeast(0) ?: 0
+                                    }
+                                    showSubtitleMenu = true
+                                    // Move focus to container so all D-pad keys go to the menu handler
+                                    coroutineScope.launch {
+                                        delay(50)
+                                        try { containerFocusRequester.requestFocus() } catch (_: Exception) {}
+                                    }
+                                },
+                                onLeftKey = { if (mediaType == MediaType.TV) nextEpisodeButtonFocusRequester.requestFocus() else aspectButtonFocusRequester.requestFocus() },
+                                onRightKey = { subtitleSettingsBtnFocusRequester.requestFocus() },
+                                onDownKey = { trackbarFocusRequester.requestFocus() })
+
+                            Spacer(modifier = Modifier.width(gap))
+
+                            // Subtitle settings (delay, size, vertical position)
+                            PlayerIconButton(icon = Icons.Default.Tune, contentDescription = stringResource(R.string.subtitle_settings_title),
+                                focusRequester = subtitleSettingsBtnFocusRequester, size = smallBtn, iconSize = smallIcon,
+                                onFocusChanged = {},
+                                onClick = {
+                                    showSubtitleSettings = !showSubtitleSettings
+                                    if (showSubtitleSettings) {
+                                        subtitleSettingsRow = 0
+                                        coroutineScope.launch {
+                                            delay(50)
+                                            runCatching { containerFocusRequester.requestFocus() }
+                                        }
+                                    }
+                                },
+                                onLeftKey = { subtitleButtonFocusRequester.requestFocus() },
+                                onRightKey = { sourceButtonFocusRequester.requestFocus() },
+                                onDownKey = { trackbarFocusRequester.requestFocus() })
+
+                            Spacer(modifier = Modifier.width(gap))
+
+                            // Sources
+                            PlayerIconButton(icon = Icons.Default.Folder, contentDescription = stringResource(R.string.sources),
+                                focusRequester = sourceButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
+                                onFocusChanged = {},
+                                onClick = { showSourceMenu = true; showControls = true },
+                                onLeftKey = { subtitleSettingsBtnFocusRequester.requestFocus() },
+                                onRightKey = { if (isTouchDevice) playButtonFocusRequester.requestFocus() else rewindButtonFocusRequester.requestFocus() },
+                                onDownKey = { trackbarFocusRequester.requestFocus() })
+
+                            if (!isTouchDevice) {
+                                Spacer(modifier = Modifier.width(wideGap))
+
+                                // Rewind 10s
+                                PlayerIconButton(icon = Icons.Default.Replay10, contentDescription = stringResource(R.string.player_cd_rewind),
+                                    focusRequester = rewindButtonFocusRequester, size = midBtn, iconSize = midIcon,
+                                    onFocusChanged = {},
+                                    onClick = { skipWithoutPreview(-10_000L) },
+                                    onLeftKey = { sourceButtonFocusRequester.requestFocus() },
+                                    onRightKey = { playButtonFocusRequester.requestFocus() },
+                                    onDownKey = { trackbarFocusRequester.requestFocus() })
+
+                                Spacer(modifier = Modifier.width(gap))
+                            } else {
+                                Spacer(modifier = Modifier.width(wideGap))
+                            }
+
+                            // Play/Pause - center, largest
+                            PlayerIconButton(icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = if (isPlaying) stringResource(R.string.player_cd_pause) else stringResource(R.string.play),
+                                focusRequester = playButtonFocusRequester, size = bigBtn, iconSize = bigIcon,
+                                onFocusChanged = { if (it) focusedButton = 0 },
+                                onClick = {
+                                    if (isCasting) {
+                                        if (castManager.isRemotePlaying()) castManager.pause()
+                                        else castManager.play()
+                                    } else {
+                                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                    }
+                                },
+                                onLeftKey = { if (isTouchDevice) sourceButtonFocusRequester.requestFocus() else rewindButtonFocusRequester.requestFocus() },
+                                onRightKey = { if (isTouchDevice) aspectButtonFocusRequester.requestFocus() else forwardButtonFocusRequester.requestFocus() },
+                                onDownKey = { trackbarFocusRequester.requestFocus() },
+                                onUpKey = { val sv = uiState.activeSkipInterval != null && !uiState.skipIntervalDismissed; if (sv) skipIntroFocusRequester.requestFocus() })
+
+                            if (!isTouchDevice) {
+                                Spacer(modifier = Modifier.width(gap))
+
+                                // Forward 10s - own focus requester
+                                PlayerIconButton(icon = Icons.Default.Forward10, contentDescription = stringResource(R.string.player_cd_forward),
+                                    focusRequester = forwardButtonFocusRequester, size = midBtn, iconSize = midIcon,
+                                    onFocusChanged = {},
+                                    onClick = { skipWithoutPreview(10_000L) },
+                                    onLeftKey = { playButtonFocusRequester.requestFocus() },
+                                    onRightKey = { aspectButtonFocusRequester.requestFocus() },
+                                    onDownKey = { trackbarFocusRequester.requestFocus() })
+
+                                Spacer(modifier = Modifier.width(wideGap))
+                            } else {
+                                Spacer(modifier = Modifier.width(wideGap))
+                            }
+
+                            // Aspect Ratio
+                            PlayerIconButton(icon = Icons.Default.AspectRatio, contentDescription = stringResource(R.string.player_cd_aspect, aspectModeLabel),
+                                focusRequester = aspectButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
+                                onFocusChanged = {},
+                                onClick = cycleAspectRatio,
+                                onLeftKey = { if (isTouchDevice) playButtonFocusRequester.requestFocus() else forwardButtonFocusRequester.requestFocus() },
+                                onRightKey = {
+                                    when {
+                                        mediaType == MediaType.TV -> nextEpisodeButtonFocusRequester.requestFocus()
+                                        isTouchDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> pipButtonFocusRequester.requestFocus()
+                                        else -> subtitleButtonFocusRequester.requestFocus()
+                                    }
+                                },
+                                onDownKey = { trackbarFocusRequester.requestFocus() })
+
+                            if (mediaType == MediaType.TV) {
+                                Spacer(modifier = Modifier.width(gap))
+                                PlayerIconButton(icon = Icons.Default.SkipNext, contentDescription = stringResource(R.string.next_episode),
+                                    focusRequester = nextEpisodeButtonFocusRequester, size = smallBtn, iconSize = smallIcon,
+                                    onFocusChanged = {},
+                                    onClick = {
+                                        val next = nextEpisodeIdentity ?: return@PlayerIconButton
+                                        val selected = uiState.selectedStream
+                                        playNextEpisode(
+                                            next,
+                                            selected?.addonId?.takeIf { it.isNotBlank() },
+                                            selected?.source?.takeIf { it.isNotBlank() },
+                                            selected?.behaviorHints?.bingeGroup?.takeIf { it.isNotBlank() }
+                                        )
+                                    },
+                                    onLeftKey = { aspectButtonFocusRequester.requestFocus() },
+                                    onRightKey = { subtitleButtonFocusRequester.requestFocus() },
+                                    onDownKey = { trackbarFocusRequester.requestFocus() })
+                            }
+
+                            // PiP button — touch devices only, just right of other buttons, Android 8+
+                            if (isTouchDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                Spacer(modifier = Modifier.width(gap))
+                                PlayerIconButton(
+                                    icon = Icons.Default.PictureInPicture,
+                                    contentDescription = stringResource(R.string.player_cd_pip),
+                                    focusRequester = pipButtonFocusRequester,
+                                    size = smallBtn, iconSize = smallIcon,
+                                    onFocusChanged = {},
+                                    onClick = { enterPipMode() },
+                                    onLeftKey = { if (mediaType == MediaType.TV) nextEpisodeButtonFocusRequester.requestFocus() else aspectButtonFocusRequester.requestFocus() },
+                                    onRightKey = { subtitleButtonFocusRequester.requestFocus() },
+                                    onDownKey = { trackbarFocusRequester.requestFocus() }
+                                )
+                            }
+                        }
+
+
+                        Spacer(modifier = Modifier.height(if (isTouchDevice) 4.dp else 6.dp))
+
+                        // Preview overlays the controls; entering/exiting seek must not move them.
+                        if (isControlScrubbing && duration > 0L && !isCasting && !isLiveStream) {
+                            val previewWidth = if (isTouchDevice) 168.dp else 224.dp
+                            val previewHeight = previewWidth * 9f / 16f
+                            BoxWithConstraints(
+                                modifier = Modifier.fillMaxWidth().seekPreviewOverlay().height(previewHeight + 2.dp)
+                                    .padding(start = if (isTouchDevice) 48.dp else 55.dp,
+                                        end = if (isTouchDevice) 56.dp else 63.dp),
+                            ) {
+                                val progress = (controlsPreviewPosition.toFloat() / duration).coerceIn(0f, 1f)
+                                val offset = (maxWidth * progress - previewWidth / 2f)
+                                    .coerceIn(0.dp, (maxWidth - previewWidth).coerceAtLeast(0.dp))
+                                com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
+                                    frame = previewFrameForTarget,
+                                    positionMs = controlsPreviewPosition,
+                                    sourceGeneration = previewStatus.sourceGeneration,
+                                    modifier = Modifier.offset(x = offset).size(previewWidth, previewHeight),
+                                )
+                            }
+                        }
+
+                        // Trackbar at the very bottom with time labels
+                        Row(
+                            modifier = Modifier.fillMaxWidth().testTag("player_controls_seekbar"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = formatTime(controlsPreviewPosition),
+                                style = ArflixTypography.label.copy(fontSize = if (isTouchDevice) 12.sp else 13.sp),
+                                color = Color.White.copy(alpha = 0.9f),
+                                maxLines = 1,
+                                modifier = Modifier.width(if (isTouchDevice) 48.dp else 55.dp)
+                            )
+
+                            // Trackbar
+                            var trackbarWidthPx by remember { mutableIntStateOf(0) }
+                            BoxWithConstraints(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(if (isTouchDevice) 28.dp else 20.dp)
+                                    .onSizeChanged { trackbarWidthPx = it.width }
+                                    .focusRequester(trackbarFocusRequester)
+                                    .onFocusChanged { state ->
+                                        trackbarFocused = state.isFocused
+                                        if (!state.isFocused && seekInteraction.browsing &&
+                                            seekInteraction.surface == SeekSurface.Controls) finishSeek(false)
+                                    }
+                                    .focusable()
+                                    .pointerInput(duration, isCasting) {
+                                        detectHorizontalDragGestures(
+                                            onDragStart = { offset ->
+                                                if (duration > 0L && trackbarWidthPx > 0) {
+                                                    trackbarFocusRequester.requestFocus()
+                                                    latestDragSeek(
+                                                        ((offset.x / trackbarWidthPx).coerceIn(0f, 1f) * duration).toLong()
+                                                    )
+                                                }
+                                            },
+                                            onDragEnd = { latestFinishSeek(true) },
+                                            onDragCancel = { latestFinishSeek(false) },
+                                            onHorizontalDrag = { change, dragAmount ->
+                                                if (duration > 0L && trackbarWidthPx > 0) {
+                                                    change.consume()
+                                                    val delta = (dragAmount / trackbarWidthPx * duration).toLong()
+                                                    latestDragSeek(seekInteraction.targetMs + delta)
+                                                }
+                                            }
+                                        )
+                                    }
+                                    .pointerInput(duration, isCasting) {
+                                        detectTapGestures { offset ->
+                                            if (duration > 0L && trackbarWidthPx > 0) {
+                                                val position = (
+                                                    (offset.x / trackbarWidthPx).coerceIn(0f, 1f) * duration
+                                                ).toLong()
+                                                if (isCasting) {
+                                                    castManager.seekTo(position)
+                                                } else if (!playerReleased) {
+                                                    exoPlayer.seekTo(position)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown && trackbarFocused) {
+                                            when (event.key) {
+                                                Key.DirectionLeft -> {
+                                                    val step = acceleratedSeekPreviewStepMs(
+                                                        event.nativeKeyEvent.repeatCount
+                                                    )
+                                                    queueControlsSeek(-step)
+                                                    true
+                                                }
+                                                Key.DirectionRight -> {
+                                                    val step = acceleratedSeekPreviewStepMs(
+                                                        event.nativeKeyEvent.repeatCount
+                                                    )
+                                                    queueControlsSeek(step)
+                                                    true
+                                                }
+                                                Key.Enter, Key.DirectionCenter -> { commitControlsSeekNow(); true }
+                                                Key.DirectionUp -> { finishSeek(false); playButtonFocusRequester.requestFocus(); true }
+                                                Key.DirectionDown -> true
+                                                else -> false
+                                            }
+                                        } else false
+                                    }
+                                    .background(Color.Transparent),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                // Visible thin bar centered in the larger touch target
+                                val barHeight = if (trackbarFocused) 8.dp else if (isTouchDevice) 6.dp else 4.dp
+                                Box(modifier = Modifier.fillMaxWidth().height(barHeight).background(Color.White.copy(alpha = if (trackbarFocused) 0.25f else 0.15f), RoundedCornerShape(3.dp)))
+                                val frac = if (duration > 0) (controlsPreviewPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else progress
+                                Box(modifier = Modifier.fillMaxWidth().height(barHeight).align(Alignment.Center), contentAlignment = Alignment.CenterStart) {
+                                Box(modifier = Modifier.fillMaxWidth(frac).fillMaxHeight().background(
+                                    if (trackbarFocused) playerAccent else playerAccent.copy(alpha = 0.8f), RoundedCornerShape(3.dp)
+                                ))
+                                }
+                                val knobSize = if (isTouchDevice) 12.dp else 14.dp
+                                Box(
+                                    modifier = Modifier.align(Alignment.CenterStart)
+                                        .offset(x = (maxWidth * frac - knobSize / 2f)
+                                            .coerceIn(0.dp, (maxWidth - knobSize).coerceAtLeast(0.dp)))
+                                        .size(knobSize)
+                                        .background(Color.White, CircleShape)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Text(
+                                text = formatTime(duration),
+                                style = ArflixTypography.label.copy(fontSize = if (isTouchDevice) 12.sp else 13.sp),
+                                color = Color.White.copy(alpha = 0.5f),
+                                maxLines = 1,
+                                modifier = Modifier.width(if (isTouchDevice) 48.dp else 55.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // In-player subtitle settings panel (Delay, Size, Vertical Position)
+            AnimatedVisibility(
+                visible = showSubtitleSettings && hasPlaybackStarted,
+                enter = fadeIn(animTween(150)),
+                exit = fadeOut(animTween(150)),
+                modifier = Modifier.align(Alignment.Center).zIndex(8f)
+            ) {
+                PlayerSubtitleSettingsPanel(
+                    selectedRow = subtitleSettingsRow,
+                    syncOffsetMs = subtitleSyncOffsetMs,
+                    sizePct = subtitleSizePct,
+                    verticalPct = subtitleVerticalPct,
+                    onRowSelect = { subtitleSettingsRow = it },
+                    onOffsetDecrease = { subtitleSyncOffsetMs = (subtitleSyncOffsetMs - 100L).coerceAtLeast(-10000L) },
+                    onOffsetIncrease = { subtitleSyncOffsetMs = (subtitleSyncOffsetMs + 100L).coerceAtMost(10000L) },
+                    onSizeDecrease = { subtitleSizePct = (subtitleSizePct - 10).coerceAtLeast(50) },
+                    onSizeIncrease = { subtitleSizePct = (subtitleSizePct + 10).coerceAtMost(300) },
+                    onVerticalDecrease = { subtitleVerticalPct = (subtitleVerticalPct - 1).coerceAtLeast(0) },
+                    onVerticalIncrease = { subtitleVerticalPct = (subtitleVerticalPct + 1).coerceAtMost(50) }
+                )
+            }
+
+            // Subtitle/Audio menu
+            AnimatedVisibility(
+                visible = showSubtitleMenu,
+                enter = fadeIn(androidx.compose.animation.core.tween(150)),
+                exit = fadeOut(androidx.compose.animation.core.tween(200))
+            ) {
+                SubtitleMenu(
+                    subtitles = uiState.subtitles,
+                    selectedSubtitle = uiState.selectedSubtitle,
+                    isAiTranslating = uiState.isAiTranslating,
+                    isAiAvailable = uiState.isAiAvailable,
+                    aiTargetLanguageName = uiState.aiTargetLanguageName,
+                    matchLanguageName = uiState.matchLanguageName,
+                    audioTracks = audioTracks,
+                    selectedAudioIndex = selectedAudioIndex,
+                    activeTab = subtitleMenuTab,
+                    focusedIndex = subtitleMenuIndex,
+                    subtitleGroups = subtitleGroups,
+                    streamSource = uiState.selectedStream?.source ?: "",
+                    subtitleLangIndex = subtitleLangIndex,
+                    subtitleTrackIndex = subtitleTrackIndex,
+                    subtitlePanelFocus = subtitlePanelFocus,
+                    onTabChanged = { tab ->
+                        subtitleMenuTab = tab
+                        subtitleMenuIndex = 0
+                    },
+                    onSelectSubtitle = { index ->
+                        if (index == 0) {
+                            viewModel.disableSubtitles()
+                        } else {
+                            uiState.subtitles.getOrNull(index - 1)?.let { viewModel.selectSubtitle(it) }
+                        }
+                        showSubtitleMenu = false
+                        showControls = true
+                        coroutineScope.launch {
+                            delay(150)
+                            try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                        }
+                    },
+                    onSelectAudio = { track ->
+                        userPickedAudioForStream = true
+                        applyAudioTrackSelection(exoPlayer, track, audioTracks)?.let {
+                            selectedAudioIndex = it
+                        }
+                        showSubtitleMenu = false
+                        showControls = true
+                        coroutineScope.launch {
+                            delay(150)
+                            try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                        }
+                    },
+                    isLiveAudioTranslating = uiState.isLiveAudioTranslating,
+                    isFindingBestMatch = uiState.isFindingBestMatch,
+                    onToggleAi = { viewModel.activateAiTranslation() },
+                    onToggleLiveAudio = { viewModel.toggleLiveAudioTranslation() },
+                    onFindBestMatch = { viewModel.runFindBestMatch() },
+                    onClose = {
+                        showSubtitleMenu = false
+                        showControls = true
+                        coroutineScope.launch {
+                            delay(150)
+                            try { subtitleButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                        }
+                    }
+                )
+            }
+
+            StreamSelector(
+                isVisible = showSourceMenu,
+                streams = uiState.streams,
+                selectedStream = uiState.selectedStream,
+                isLoading = uiState.isLoadingStreams,
+                hasStreamingAddons = !uiState.isSetupError,
+                addonOrderedIds = uiState.addonOrderedIds,
+                title = uiState.title,
+                subtitle = if (seasonNumber != null && episodeNumber != null) {
+                    "S$seasonNumber E$episodeNumber"
+                } else {
+                    ""
+                },
+                onFocusedStream = { stream ->
+                    viewModel.prewarmStreamsAround(stream, uiState.streams)
+                },
+                onSelect = { stream: StreamSource ->
+                    userSelectedSourceManually = true
+                    playbackIssueReported = false
+                    startupRecoverAttempted = false
+                    startupHardFailureReported = false
+                    startupSameSourceRetryCount = 0
+                    startupSameSourceRefreshAttempted = false
+                    startupUrlLock = null
+                    rebufferRecoverAttempted = false
+                    longRebufferCount = 0
+                    viewModel.selectStream(stream, exoPlayer.currentPosition)
+                    showSourceMenu = false
+                    showControls = true
+                    coroutineScope.launch {
+                        delay(150)
+                        runCatching { sourceButtonFocusRequester.requestFocus() }
+                    }
+                },
+                onClose = {
+                    showSourceMenu = false
+                    showControls = true
+                    coroutineScope.launch {
+                        delay(150)
+                        runCatching { sourceButtonFocusRequester.requestFocus() }
+                    }
+                }
+            )
+
+            // Volume indicator
+            AnimatedVisibility(
+                visible = showVolumeIndicator,
+                enter = fadeIn(androidx.compose.animation.core.tween(150)),
+                exit = fadeOut(androidx.compose.animation.core.tween(200)),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 48.dp)
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
+                        .padding(16.dp)
+                ) {
+                    Icon(
+                        imageVector = when {
+                            isMuted || currentVolume == 0 -> Icons.Default.VolumeMute
+                            currentVolume < maxVolume / 2 -> Icons.Default.VolumeDown
+                            else -> Icons.Default.VolumeUp
+                        },
+                        contentDescription = stringResource(R.string.player_cd_volume),
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(8.dp)
+                            .height(100.dp)
+                            .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
+                    ) {
                         Box(
                             modifier = Modifier
-                                .weight(1f)
-                                .height(5.dp)
-                                .background(Color.White.copy(alpha = 0.25f), RoundedCornerShape(3.dp))
+                                .fillMaxWidth()
+                                .fillMaxSize((currentVolume.toFloat() / maxVolume).coerceIn(0f, 1f))
+                                .background(playerAccent, RoundedCornerShape(4.dp))
+                                .align(Alignment.BottomCenter)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = if (isMuted) stringResource(R.string.player_muted) else "${currentVolume * 100 / maxVolume}%",
+                        style = ArflixTypography.caption,
+                        color = Color.White
+                    )
+                }
+            }
+
+            // Aspect ratio indicator - brief center popup
+            AnimatedVisibility(
+                visible = showAspectIndicator,
+                enter = fadeIn(androidx.compose.animation.core.tween(150)),
+                exit = fadeOut(androidx.compose.animation.core.tween(200)),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 24.dp, vertical = 14.dp)
+                ) {
+                    Text(
+                        text = aspectModeLabel,
+                        style = ArflixTypography.body.copy(fontSize = 18.sp, fontWeight = FontWeight.Medium),
+                        color = Color.White
+                    )
+                }
+            }
+
+            // Direct D-pad seek overlay. This is intentionally separate from the full player controls:
+            // left/right opens a focused thumbnail scrubber without covering the playing video.
+            AnimatedVisibility(
+                visible = showSkipOverlay && duration > 0L && !isLiveStream && !isCasting,
+                enter = fadeIn(androidx.compose.animation.core.tween(80)),
+                exit = fadeOut(androidx.compose.animation.core.tween(120)),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+            ) {
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = if (isTouchDevice) 24.dp else 72.dp,
+                            end = if (isTouchDevice) 24.dp else 72.dp,
+                            top = 28.dp,
+                            bottom = if (isTouchDevice) 22.dp else 34.dp,
+                        )
+                ) {
+                    val previewPosition = skipPreviewPosition.coerceIn(0L, duration)
+                    val previewProgress =
+                        (previewPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                    val previewWidth = if (isTouchDevice) 168.dp else 224.dp
+                    val previewHeight = previewWidth * 9f / 16f
+                    val previewOffset = (maxWidth * previewProgress - previewWidth / 2f)
+                        .coerceIn(0.dp, (maxWidth - previewWidth).coerceAtLeast(0.dp))
+                    val knobSize = if (isTouchDevice) 10.dp else 12.dp
+                    val knobOffset = (maxWidth * previewProgress - knobSize / 2f)
+                        .coerceIn(0.dp, (maxWidth - knobSize).coerceAtLeast(0.dp))
+
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        if (showQuickSeekPreview) {
+                          Box(
+                            modifier = Modifier.fillMaxWidth().seekPreviewOverlay().height(previewHeight + 2.dp),
+                          ) {
+                            com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
+                                frame = previewFrameForTarget,
+                                positionMs = previewPosition,
+                                sourceGeneration = previewStatus.sourceGeneration,
+                                modifier = Modifier.offset(x = previewOffset).size(previewWidth, previewHeight),
+                            )
+                          }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(14.dp),
+                            contentAlignment = Alignment.CenterStart,
                         ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(5.dp)
+                                    .background(Color.White.copy(alpha = 0.28f), RoundedCornerShape(3.dp))
+                            )
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth(previewProgress)
                                     .height(5.dp)
                                     .background(Color.White, RoundedCornerShape(3.dp))
                             )
+                            Box(
+                                modifier = Modifier
+                                    .offset(x = knobOffset)
+                                    .size(knobSize)
+                                    .background(Color.White, CircleShape)
+                            )
                         }
-                        Text(
-                            text = formatTime(duration),
-                            style = ArflixTypography.caption.copy(
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                            ),
-                            color = Color.White.copy(alpha = 0.75f),
-                        )
+                        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(formatTime(previewPosition), color = Color.White, style = ArflixTypography.label)
+                            Text(formatTime(duration), color = Color.White.copy(alpha = 0.65f), style = ArflixTypography.label)
+                        }
                     }
                 }
             }
-        }
 
-        // Error modal — friendly setup guide for no-addons, red error for actual playback failures
-        AnimatedVisibility(
-            visible = uiState.error != null,
-            enter = fadeIn(androidx.compose.animation.core.tween(150)),
-            exit = fadeOut(androidx.compose.animation.core.tween(200))
-        ) {
-            val isSetup = uiState.isSetupError
-            val accentColor = if (isSetup) Color(0xFF3B82F6) else Color(0xFFEF4444) // blue vs red
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.9f)),
-                contentAlignment = Alignment.Center
+            // Error modal — friendly setup guide for no-addons, red error for actual playback failures
+            AnimatedVisibility(
+                visible = uiState.error != null,
+                enter = fadeIn(androidx.compose.animation.core.tween(150)),
+                exit = fadeOut(androidx.compose.animation.core.tween(200))
             ) {
-                Column(
+                val isSetup = uiState.isSetupError
+                val accentColor = if (isSetup) Color(0xFF3B82F6) else Color(0xFFEF4444) // blue vs red
+                Box(
                     modifier = Modifier
-                        .width(480.dp)
-                        .background(Color(0xFF1A1A1A), RoundedCornerShape(16.dp))
-                        .border(1.dp, accentColor.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
-                        .padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.9f)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Box(
+                    Column(
                         modifier = Modifier
-                            .size(72.dp)
-                            .background(accentColor.copy(alpha = 0.15f), CircleShape),
-                        contentAlignment = Alignment.Center
+                            .width(480.dp)
+                            .background(Color(0xFF1A1A1A), RoundedCornerShape(16.dp))
+                            .border(1.dp, accentColor.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
+                            .padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(
-                            imageVector = if (isSetup) Icons.Default.Settings else Icons.Default.ErrorOutline,
-                            contentDescription = if (isSetup) stringResource(R.string.player_cd_setup) else stringResource(R.string.player_cd_error),
-                            tint = accentColor,
-                            modifier = Modifier.size(40.dp)
-                        )
-                    }
+                        Box(
+                            modifier = Modifier
+                                .size(72.dp)
+                                .background(accentColor.copy(alpha = 0.15f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isSetup) Icons.Default.Settings else Icons.Default.ErrorOutline,
+                                contentDescription = if (isSetup) stringResource(R.string.player_cd_setup) else stringResource(R.string.player_cd_error),
+                                tint = accentColor,
+                                modifier = Modifier.size(40.dp)
+                            )
+                        }
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                        Spacer(modifier = Modifier.height(24.dp))
 
-                    Text(
-                        text = if (isSetup) stringResource(R.string.player_addon_setup_required) else stringResource(R.string.player_playback_error),
-                        style = ArflixTypography.sectionTitle,
-                        color = TextPrimary
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Text(
-                        text = uiState.error ?: stringResource(R.string.player_error_generic),
-                        style = ArflixTypography.body,
-                        color = TextSecondary,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    if (isSetup) {
-                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = stringResource(R.string.no_results),
-                            style = ArflixTypography.caption,
-                            color = TextSecondary.copy(alpha = 0.7f),
+                            text = if (isSetup) stringResource(R.string.player_addon_setup_required) else stringResource(R.string.player_playback_error),
+                            style = ArflixTypography.sectionTitle,
+                            color = TextPrimary
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = uiState.error?.localizedText() ?: stringResource(R.string.player_error_generic),
+                            style = ArflixTypography.body,
+                            color = TextSecondary,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                             modifier = Modifier.fillMaxWidth()
                         )
-                    }
 
-                    Spacer(modifier = Modifier.height(32.dp))
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        if (!isSetup) {
-                            ErrorButton(
-                                text = stringResource(R.string.retry).uppercase(),
-                                icon = Icons.Default.Refresh,
-                                isFocused = errorModalFocusIndex == 0,
-                                isPrimary = true,
-                                onClick = { viewModel.retry() }
+                        if (isSetup) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = stringResource(R.string.no_results),
+                                style = ArflixTypography.caption,
+                                color = TextSecondary.copy(alpha = 0.7f),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
                             )
                         }
-                        ErrorButton(
-                            text = stringResource(R.string.back).uppercase(),
-                            isFocused = if (isSetup) errorModalFocusIndex == 0 else errorModalFocusIndex == 1,
-                            isPrimary = isSetup,
-                            onClick = onBack
-                        )
+
+                        Spacer(modifier = Modifier.height(32.dp))
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            if (!isSetup) {
+                                ErrorButton(
+                                    text = stringResource(R.string.retry).uppercase(),
+                                    icon = Icons.Default.Refresh,
+                                    isFocused = errorModalFocusIndex == 0,
+                                    isPrimary = true,
+                                    onClick = { viewModel.retry() }
+                                )
+                            }
+                            ErrorButton(
+                                text = stringResource(R.string.back).uppercase(),
+                                isFocused = if (isSetup) errorModalFocusIndex == 0 else errorModalFocusIndex == 1,
+                                isPrimary = isSetup,
+                                onClick = onExitPlayer
+                            )
+                        }
                     }
                 }
             }
         }
+
+        PlayerExitScrim(exitTransition)
     }
+    }
+}
+
+@Composable
+internal fun PlayerLoadingOverlay(
+    uiState: PlayerUiState,
+    hasPlaybackStarted: Boolean,
+    isTouchDevice: Boolean,
+    isInPipMode: Boolean,
+    showSourceMenu: Boolean,
+    onExitPlayer: () -> Unit,
+    startupPhase: Int? = null,
+    switchNotice: String? = null
+) {
+    if (!isInPipMode && !showSourceMenu && uiState.error == null &&
+        (uiState.isLoading || uiState.selectedStreamUrl == null || !hasPlaybackStarted)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("playerLoadingOverlay")
+                .zIndex(50f),
+            contentAlignment = Alignment.Center
+        ) {
+            if (uiState.backdropUrl != null) {
+                AsyncImage(
+                    model = uiState.backdropUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.7f))
+                )
+            }
+
+            if (isTouchDevice) {
+                val layoutDirection = LocalLayoutDirection.current
+                val systemBarsInsets = WindowInsets.systemBars.asPaddingValues()
+                val cutoutInsets = WindowInsets.displayCutout.asPaddingValues()
+
+                val startInset = maxOf(
+                    systemBarsInsets.calculateStartPadding(layoutDirection),
+                    cutoutInsets.calculateStartPadding(layoutDirection)
+                )
+                val endInset = maxOf(
+                    systemBarsInsets.calculateEndPadding(layoutDirection),
+                    cutoutInsets.calculateEndPadding(layoutDirection)
+                )
+                val maxHorizontalPadding = maxOf(startInset, endInset, 24.dp)
+                val topSafePadding = maxOf(
+                    systemBarsInsets.calculateTopPadding() + 8.dp,
+                    cutoutInsets.calculateTopPadding() + 12.dp,
+                    16.dp
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(
+                            top = topSafePadding,
+                            start = maxHorizontalPadding
+                        )
+                        .zIndex(52f)
+                ) {
+                    MobileIconButton(
+                        icon = Icons.Default.Close,
+                        contentDescription = stringResource(R.string.close),
+                        onClick = onExitPlayer
+                    )
+                }
+            }
+
+            PulsingLogo(
+                logoUrl = uiState.logoUrl,
+                title = uiState.title,
+                progress = if (uiState.showLoadingStats) uiState.streamProgress else null,
+                isTouchDevice = isTouchDevice,
+                // streamLoadPhase covers source discovery; startupPhase takes over from
+                // stream selection ("Loading subtitles…"/"Loading video stream…") until the
+                // first frame renders; switchNotice overlays both for 2.5s on failover.
+                // Unlike the percentage ring, the phase text is not gated on
+                // showLoadingStats — status feedback should always be visible.
+                phaseLabel = switchNotice
+                    ?: (startupPhase.takeIf { uiState.selectedStreamUrl != null })
+                        ?.let { phaseRes ->
+                            // Name the addons still being queried so a chronically slow one
+                            // identifies itself to the user ("Loading subtitles… (bla)").
+                            val pending = uiState.pendingSubtitleAddons
+                            if (phaseRes == R.string.player_phase_loading_subtitles && pending.isNotEmpty()) {
+                                val shown = pending.take(2).joinToString(", ")
+                                val more = pending.size - 2
+                                stringResource(
+                                    R.string.player_phase_loading_subtitles_detail,
+                                    "$shown${if (more > 0) " +$more" else ""}"
+                                )
+                            } else stringResource(phaseRes)
+                        }
+                    ?: uiState.streamLoadPhase?.localizedText()
+            )
+        }
     }
 }
 
@@ -4331,7 +4938,8 @@ private fun PulsingLogo(
     title: String,
     modifier: Modifier = Modifier,
     progress: Float? = null,
-    phaseLabel: String? = null
+    phaseLabel: String? = null,
+    isTouchDevice: Boolean = false
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "heartbeat")
     val scale by infiniteTransition.animateFloat(
@@ -4361,12 +4969,15 @@ private fun PulsingLogo(
         label = "progressFraction"
     )
 
+    val ringSize = if (isTouchDevice) 140.dp else 196.dp
+    val logoHeight = if (isTouchDevice) 100.dp else 152.dp
+
     Column(
         modifier = modifier.padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            modifier = Modifier.size(196.dp),
+            modifier = Modifier.size(ringSize),
             contentAlignment = Alignment.Center
         ) {
             if (progress != null) {
@@ -4409,18 +5020,18 @@ private fun PulsingLogo(
                 if (!logoUrl.isNullOrBlank()) {
                     AsyncImage(
                         model = logoUrl, contentDescription = title, contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxWidth(0.76f).height(152.dp)
+                        modifier = Modifier.fillMaxWidth(0.76f).height(logoHeight)
                     )
                 } else {
                     Box(
                         modifier = Modifier
-                            .size(74.dp)
+                            .size(if (isTouchDevice) 56.dp else 74.dp)
                             .border(3.dp, Color.White.copy(alpha = 0.9f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(18.dp)
+                                .size(if (isTouchDevice) 14.dp else 18.dp)
                                 .background(Color.White.copy(alpha = 0.95f), CircleShape)
                         )
                     }
@@ -4429,17 +5040,20 @@ private fun PulsingLogo(
         }
 
         if (progress != null) {
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
             Text(
                 text = "${(animatedProgress * 100f).toInt()}%",
-                style = ArflixTypography.sectionTitle.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold),
+                style = ArflixTypography.sectionTitle.copy(
+                    fontSize = if (isTouchDevice) 18.sp else 22.sp,
+                    fontWeight = FontWeight.SemiBold
+                ),
                 color = Color.White
             )
         }
         // Independent of the progress ring: post-selection phases ("Loading video stream…",
         // "Loading subtitles…") have no meaningful percentage but still need to show.
         if (!phaseLabel.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(if (progress != null) 6.dp else 16.dp))
+            Spacer(modifier = Modifier.height(if (progress != null) 8.dp else 16.dp))
             Text(
                 text = phaseLabel,
                 style = ArflixTypography.caption,
@@ -4655,53 +5269,110 @@ private fun isBitmapSubtitleMime(mimeType: String?): Boolean {
  * Language code to full name mapping
  */
 private fun getFullLanguageName(code: String?): String {
-    if (code == null) return "Unknown"
-    val normalizedCode = code.lowercase().trim()
-    return when {
-        normalizedCode == "en" || normalizedCode == "eng" || normalizedCode == "english" -> "English"
-        normalizedCode == "es" || normalizedCode == "spa" || normalizedCode == "spanish" -> "Spanish"
-        normalizedCode == "nl" || normalizedCode == "nld" || normalizedCode == "dut" || normalizedCode == "dutch" -> "Dutch"
-        normalizedCode == "de" || normalizedCode == "ger" || normalizedCode == "deu" || normalizedCode == "german" -> "German"
-        normalizedCode == "fr" || normalizedCode == "fra" || normalizedCode == "fre" || normalizedCode == "french" -> "French"
-        normalizedCode == "it" || normalizedCode == "ita" || normalizedCode == "italian" -> "Italian"
-        normalizedCode == "pt" || normalizedCode == "por" || normalizedCode == "portuguese" -> "Portuguese"
-        normalizedCode == "pt-br" || normalizedCode == "pob" -> "Portuguese (Brazil)"
-        normalizedCode == "ru" || normalizedCode == "rus" || normalizedCode == "russian" -> "Russian"
-        normalizedCode == "ja" || normalizedCode == "jpn" || normalizedCode == "japanese" -> "Japanese"
-        normalizedCode == "ko" || normalizedCode == "kor" || normalizedCode == "korean" -> "Korean"
-        normalizedCode == "zh" || normalizedCode == "chi" || normalizedCode == "zho" || normalizedCode == "chinese" -> "Chinese"
-        normalizedCode == "ar" || normalizedCode == "ara" || normalizedCode == "arabic" -> "Arabic"
-        normalizedCode == "hi" || normalizedCode == "hin" || normalizedCode == "hindi" -> "Hindi"
-        normalizedCode == "tr" || normalizedCode == "tur" || normalizedCode == "turkish" -> "Turkish"
-        normalizedCode == "pl" || normalizedCode == "pol" || normalizedCode == "polish" -> "Polish"
-        normalizedCode == "sv" || normalizedCode == "swe" || normalizedCode == "swedish" -> "Swedish"
-        normalizedCode == "no" || normalizedCode == "nor" || normalizedCode == "norwegian" -> "Norwegian"
-        normalizedCode == "da" || normalizedCode == "dan" || normalizedCode == "danish" -> "Danish"
-        normalizedCode == "fi" || normalizedCode == "fin" || normalizedCode == "finnish" -> "Finnish"
-        normalizedCode == "cs" || normalizedCode == "cze" || normalizedCode == "ces" || normalizedCode == "czech" -> "Czech"
-        normalizedCode == "hu" || normalizedCode == "hun" || normalizedCode == "hungarian" -> "Hungarian"
-        normalizedCode == "ro" || normalizedCode == "ron" || normalizedCode == "rum" || normalizedCode == "romanian" -> "Romanian"
-        normalizedCode == "el" || normalizedCode == "gre" || normalizedCode == "ell" || normalizedCode == "greek" -> "Greek"
-        normalizedCode == "he" || normalizedCode == "heb" || normalizedCode == "hebrew" -> "Hebrew"
-        normalizedCode == "th" || normalizedCode == "tha" || normalizedCode == "thai" -> "Thai"
-        normalizedCode == "vi" || normalizedCode == "vie" || normalizedCode == "vietnamese" -> "Vietnamese"
-        normalizedCode == "id" || normalizedCode == "ind" || normalizedCode == "indonesian" -> "Indonesian"
-        normalizedCode == "ms" || normalizedCode == "msa" || normalizedCode == "may" || normalizedCode == "malay" -> "Malay"
-        normalizedCode == "uk" || normalizedCode == "ukr" || normalizedCode == "ukrainian" -> "Ukrainian"
-        normalizedCode == "bg" || normalizedCode == "bul" || normalizedCode == "bulgarian" -> "Bulgarian"
-        normalizedCode == "hr" || normalizedCode == "hrv" || normalizedCode == "croatian" -> "Croatian"
-        normalizedCode == "sr" || normalizedCode == "srp" || normalizedCode == "serbian" -> "Serbian"
-        normalizedCode == "sk" || normalizedCode == "slo" || normalizedCode == "slk" || normalizedCode == "slovak" -> "Slovak"
-        normalizedCode == "sl" || normalizedCode == "slv" || normalizedCode == "slovenian" -> "Slovenian"
-        normalizedCode == "et" || normalizedCode == "est" || normalizedCode == "estonian" -> "Estonian"
-        normalizedCode == "lv" || normalizedCode == "lav" || normalizedCode == "latvian" -> "Latvian"
-        normalizedCode == "lt" || normalizedCode == "lit" || normalizedCode == "lithuanian" -> "Lithuanian"
-        normalizedCode == "fa" || normalizedCode == "per" || normalizedCode == "fas" || normalizedCode == "persian" -> "Persian"
-        normalizedCode == "kur" || normalizedCode == "ku" || normalizedCode == "kurdish" -> "Kurdish"
-        normalizedCode == "mon" || normalizedCode == "mn" || normalizedCode == "mongolian" -> "Mongolian"
-        normalizedCode == "und" || normalizedCode == "unknown" -> "Unknown"
-        else -> code.uppercase()
+    if (code.isNullOrBlank()) return "Unknown"
+    val raw = code.trim()
+    val normalizedCode = raw.lowercase().replace('_', '-')
+
+    val mapped = when {
+        normalizedCode in listOf("en", "eng", "english") -> "English"
+        normalizedCode in listOf("es", "spa", "spanish") -> "Spanish"
+        normalizedCode in listOf("es-419", "es-la") -> "Spanish (Latin America)"
+        normalizedCode in listOf("es-es") -> "Spanish (Spain)"
+        normalizedCode in listOf("nl", "nld", "dut", "dutch") -> "Dutch"
+        normalizedCode in listOf("de", "ger", "deu", "german") -> "German"
+        normalizedCode in listOf("fr", "fra", "fre", "french") -> "French"
+        normalizedCode in listOf("it", "ita", "italian") -> "Italian"
+        normalizedCode in listOf("pt", "por", "portuguese") -> "Portuguese"
+        normalizedCode in listOf("pt-br", "pob") -> "Portuguese (Brazil)"
+        normalizedCode in listOf("pt-pt") -> "Portuguese (Portugal)"
+        normalizedCode in listOf("ru", "rus", "russian") -> "Russian"
+        normalizedCode in listOf("ja", "jpn", "japanese") -> "Japanese"
+        normalizedCode in listOf("ko", "kor", "korean") -> "Korean"
+        normalizedCode in listOf("zh", "chi", "zho", "chinese") -> "Chinese"
+        normalizedCode in listOf("zh-cn", "zh-hans", "chs") -> "Chinese (Simplified)"
+        normalizedCode in listOf("zh-tw", "zh-hk", "zh-hant", "cht") -> "Chinese (Traditional)"
+        normalizedCode in listOf("ar", "ara", "arabic") -> "Arabic"
+        normalizedCode in listOf("hi", "hin", "hindi") -> "Hindi"
+        normalizedCode in listOf("te", "tel", "telugu") -> "Telugu"
+        normalizedCode in listOf("ta", "tam", "tamil") -> "Tamil"
+        normalizedCode in listOf("ml", "mal", "malayalam") -> "Malayalam"
+        normalizedCode in listOf("kn", "kan", "kannada") -> "Kannada"
+        normalizedCode in listOf("mr", "mar", "marathi") -> "Marathi"
+        normalizedCode in listOf("bn", "ben", "bengali") -> "Bengali"
+        normalizedCode in listOf("gu", "guj", "gujarati") -> "Gujarati"
+        normalizedCode in listOf("pa", "pan", "punjabi") -> "Punjabi"
+        normalizedCode in listOf("ur", "urd", "urdu") -> "Urdu"
+        normalizedCode in listOf("tr", "tur", "turkish") -> "Turkish"
+        normalizedCode in listOf("pl", "pol", "polish") -> "Polish"
+        normalizedCode in listOf("sv", "swe", "swedish") -> "Swedish"
+        normalizedCode in listOf("no", "nor", "nob", "norwegian") -> "Norwegian"
+        normalizedCode in listOf("da", "dan", "danish") -> "Danish"
+        normalizedCode in listOf("fi", "fin", "finnish") -> "Finnish"
+        normalizedCode in listOf("el", "gre", "ell", "greek") -> "Greek"
+        normalizedCode in listOf("he", "heb", "hebrew") -> "Hebrew"
+        normalizedCode in listOf("id", "ind", "indonesian") -> "Indonesian"
+        normalizedCode in listOf("vi", "vie", "vietnamese") -> "Vietnamese"
+        normalizedCode in listOf("th", "tha", "thai") -> "Thai"
+        normalizedCode in listOf("cs", "ces", "cze", "czech") -> "Czech"
+        normalizedCode in listOf("hu", "hun", "hungarian") -> "Hungarian"
+        normalizedCode in listOf("ro", "ron", "rum", "romanian") -> "Romanian"
+        normalizedCode in listOf("uk", "ukr", "ukrainian") -> "Ukrainian"
+        normalizedCode in listOf("ms", "msa", "may", "malay") -> "Malay"
+        normalizedCode in listOf("fa", "fas", "per", "persian") -> "Persian"
+        normalizedCode in listOf("tl", "tgl", "fil", "tagalog", "filipino") -> "Tagalog"
+        normalizedCode in listOf("bg", "bul", "bulgarian") -> "Bulgarian"
+        normalizedCode in listOf("sr", "srp", "serbian") -> "Serbian"
+        normalizedCode in listOf("hr", "hrv", "croatian") -> "Croatian"
+        normalizedCode in listOf("sk", "slk", "slo", "slovak") -> "Slovak"
+        normalizedCode in listOf("sl", "slv", "slovenian") -> "Slovenian"
+        normalizedCode in listOf("lt", "lit", "lithuanian") -> "Lithuanian"
+        normalizedCode in listOf("lv", "lav", "latvian") -> "Latvian"
+        normalizedCode in listOf("et", "est", "estonian") -> "Estonian"
+        normalizedCode in listOf("is", "isl", "ice", "icelandic") -> "Icelandic"
+        normalizedCode in listOf("ca", "cat", "catalan") -> "Catalan"
+        normalizedCode in listOf("eu", "eus", "baq", "basque") -> "Basque"
+        normalizedCode in listOf("gl", "glg", "galician") -> "Galician"
+        normalizedCode in listOf("hy", "hye", "arm", "armenian") -> "Armenian"
+        normalizedCode in listOf("ka", "kat", "geo", "georgian") -> "Georgian"
+        normalizedCode in listOf("az", "aze", "azerbaijani") -> "Azerbaijani"
+        normalizedCode in listOf("kk", "kaz", "kazakh") -> "Kazakh"
+        normalizedCode in listOf("uz", "uzb", "uzbek") -> "Uzbek"
+        normalizedCode in listOf("mn", "mon", "mongolian") -> "Mongolian"
+        normalizedCode in listOf("ne", "nep", "nepali") -> "Nepali"
+        normalizedCode in listOf("si", "sin", "sinhala") -> "Sinhala"
+        normalizedCode in listOf("my", "mya", "bur", "burmese") -> "Burmese"
+        normalizedCode in listOf("km", "khm", "khmer") -> "Khmer"
+        normalizedCode in listOf("lo", "lao") -> "Lao"
+        normalizedCode in listOf("am", "amh", "amharic") -> "Amharic"
+        normalizedCode in listOf("sw", "swa", "swahili") -> "Swahili"
+        normalizedCode in listOf("af", "afr", "afrikaans") -> "Afrikaans"
+        normalizedCode in listOf("sq", "sqi", "alb", "albanian") -> "Albanian"
+        normalizedCode in listOf("bs", "bos", "bosnian") -> "Bosnian"
+        normalizedCode in listOf("mk", "mkd", "mac", "macedonian") -> "Macedonian"
+        normalizedCode in listOf("cy", "cym", "wel", "welsh") -> "Welsh"
+        normalizedCode in listOf("ga", "gle", "irish") -> "Irish"
+        normalizedCode in listOf("gd", "gla", "scottish gaelic") -> "Scottish Gaelic"
+        normalizedCode in listOf("la", "lat", "latin") -> "Latin"
+        normalizedCode in listOf("eo", "epo", "esperanto") -> "Esperanto"
+        normalizedCode in listOf("und", "undetermined", "unknown") -> "Unknown"
+        else -> null
     }
+
+    if (mapped != null) return mapped
+
+    return runCatching {
+        val loc = if (normalizedCode.contains("-")) {
+            java.util.Locale.forLanguageTag(normalizedCode)
+        } else {
+            java.util.Locale.Builder().setLanguage(normalizedCode).build()
+        }
+        val display = loc.getDisplayLanguage(java.util.Locale.ENGLISH)
+        if (display.isNotBlank() && !display.equals(normalizedCode, ignoreCase = true)) {
+            display
+        } else {
+            null
+        }
+    }.getOrNull() ?: raw.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 }
 
 @Composable
@@ -4871,7 +5542,7 @@ private fun SubtitleMenu(
                             ) {
                                 item {
                                     LangPanelItem(
-                                        name = "Off",
+                                        name = stringResource(R.string.off),
                                         count = 0,
                                         isFocused = subtitlePanelFocus == 0 && subtitleLangIndex == 0,
                                         isActivePanel = subtitleLangIndex == 0,
@@ -4938,9 +5609,13 @@ private fun SubtitleMenu(
                                         // First: "Find Best Match" — timing scan, works without AI.
                                         item {
                                             TrackMenuItem(
-                                                label = if (isFindingBestMatch) "Scanning…" else "Find Best Match",
-                                                subtitle = "Auto",
-                                                subtitleDetail = "Auto-pick the best-synced subtitle",
+                                                label = if (isFindingBestMatch) {
+                                                    stringResource(R.string.player_subtitle_scanning)
+                                                } else {
+                                                    stringResource(R.string.player_subtitle_find_best_match)
+                                                },
+                                                subtitle = stringResource(R.string.auto),
+                                                subtitleDetail = stringResource(R.string.player_subtitle_best_match_hint),
                                                 isSelected = isFindingBestMatch,
                                                 isFocused = subtitlePanelFocus == 1 && subtitleTrackIndex == 0,
                                                 onClick = { /* D-pad only */ }
@@ -4975,12 +5650,15 @@ private fun SubtitleMenu(
                                             val trackLabel = subtitle.label.takeIf { it.isNotBlank() &&
                                                 !it.equals(langFullName, ignoreCase = true) }
                                             badge = listOfNotNull(
-                                                "Built-in", trackLabel, if (subtitle.isForced) "Forced" else null
+                                                stringResource(R.string.settings_source_builtin),
+                                                trackLabel,
+                                                if (subtitle.isForced) stringResource(R.string.settings_value_forced) else null
                                             ).joinToString(" · ")
                                             detail = null
                                         } else {
                                             badge = listOfNotNull(
-                                                subtitle.provider.ifBlank { null }, if (subtitle.isForced) "Forced" else null
+                                                subtitle.provider.ifBlank { null },
+                                                if (subtitle.isForced) stringResource(R.string.settings_value_forced) else null
                                             ).joinToString(" · ").ifBlank { null }
                                             detail = subtitle.id
                                                 .replace(PlayerScreenRegexes.BRACKET_REGEX, "").trim()
@@ -5095,7 +5773,11 @@ private fun SubtitleMenu(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = if (mobileTab == 0) "Subtitles" else "Audio",
+                        text = if (mobileTab == 0) {
+                            stringResource(R.string.subtitles)
+                        } else {
+                            stringResource(R.string.audio)
+                        },
                         style = ArflixTypography.body.copy(
                             fontSize = 16.sp,
                             fontWeight = FontWeight.SemiBold
@@ -5127,7 +5809,10 @@ private fun SubtitleMenu(
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf("Subtitles" to 0, "Audio" to 1).forEach { (label, tabIndex) ->
+                    listOf(
+                        stringResource(R.string.subtitles) to 0,
+                        stringResource(R.string.audio) to 1
+                    ).forEach { (label, tabIndex) ->
                         val selected = mobileTab == tabIndex
                         Box(
                             modifier = Modifier
@@ -5181,7 +5866,7 @@ private fun SubtitleMenu(
                         // "Off" option
                         item {
                             MobileTrackItem(
-                                name = "Off",
+                                name = stringResource(R.string.off),
                                 description = null,
                                 isSelected = selectedSubtitle == null && !isLiveAudioTranslating,
                                 onClick = { onSelectSubtitle(0) }
@@ -5218,7 +5903,7 @@ private fun SubtitleMenu(
                             if (isLiveAudioGroup) {
                                 item(key = "mobile_live_audio_item") {
                                     MobileTrackItem(
-                                        name = "Translate Audio",
+                                        name = stringResource(R.string.player_audio_translate),
                                         description = "AI",
                                         isSelected = isLiveAudioTranslating,
                                         onClick = { onToggleLiveAudio(); onClose() }
@@ -5235,8 +5920,12 @@ private fun SubtitleMenu(
                             if (isMatchGroup) {
                                 item(key = "mobile_find_best_match_item") {
                                     MobileTrackItem(
-                                        name = if (isFindingBestMatch) "Scanning…" else "Find Best Match",
-                                        description = "Auto",
+                                        name = if (isFindingBestMatch) {
+                                            stringResource(R.string.player_subtitle_scanning)
+                                        } else {
+                                            stringResource(R.string.player_subtitle_find_best_match)
+                                        },
+                                        description = stringResource(R.string.auto),
                                         isSelected = isFindingBestMatch,
                                         onClick = { onFindBestMatch(); onClose() }
                                     )
@@ -5279,11 +5968,14 @@ private fun SubtitleMenu(
                                             val trackLabel = sub.label.takeIf { it.isNotBlank() &&
                                                 !it.equals(langFullName, ignoreCase = true) }
                                             listOfNotNull(
-                                                "Built-in", trackLabel, if (sub.isForced) "Forced" else null
+                                                stringResource(R.string.settings_source_builtin),
+                                                trackLabel,
+                                                if (sub.isForced) stringResource(R.string.settings_value_forced) else null
                                             ).joinToString(" · ")
                                         }
                                         else -> listOfNotNull(
-                                            sub.provider.ifBlank { null }, if (sub.isForced) "Forced" else null
+                                            sub.provider.ifBlank { null },
+                                            if (sub.isForced) stringResource(R.string.settings_value_forced) else null
                                         ).joinToString(" · ").ifBlank { null }
                                     }
                                     MobileTrackItem(
@@ -5837,44 +6529,50 @@ private fun estimateInitialStartupTimeoutMs(
 private fun playbackErrorMessageFor(
     error: androidx.media3.common.PlaybackException,
     hasPlaybackStarted: Boolean
-): String {
-    val reason = when (error.errorCode) {
-        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
-        androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
-        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
-        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
-            "Codec not supported by this device"
+): PlayerMessage {
+    val reason = PlayerMessage.Res(
+        when (error.errorCode) {
+            androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+                R.string.player_err_codec_unsupported
 
-        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
-        androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
-        androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ->
-            "Network timeout while loading source"
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ->
+                R.string.player_err_network_timeout
 
-        androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
-            "Source server rejected playback request"
+            androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+                R.string.player_err_http_rejected
 
-        androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
-        androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
-            "Source format is invalid or unsupported"
+            androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+            androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
+                R.string.player_err_container_invalid
 
-        else -> "Source failed to play"
-    }
+            else -> R.string.player_err_failed_to_play
+        }
+    )
 
-    return if (hasPlaybackStarted) {
-        "$reason. Try another source."
-    } else {
-        "$reason during startup. Trying another source may work."
-    }
+    return PlayerMessage.Res(
+        if (hasPlaybackStarted) {
+            R.string.player_err_try_another
+        } else {
+            R.string.player_err_startup_try_another
+        },
+        listOf(reason)
+    )
 }
 
 /**
- * Short, user-facing reason for a playback failure — shown on the "switching source" notice and the
- * terminal error. it unwraps the cause chain for an HTTP
- * status (blocked/removed/expired/rate-limited/unavailable) and otherwise distinguishes
- * decode/unsupported vs invalid-content vs timeout/offline, so the user gets a real clue instead of
- * a generic "failed".
+ * User-facing reason for a playback failure — unwraps the cause chain for HTTP status
+ * (blocked/removed/expired/rate-limited/unavailable), decode/unsupported codecs,
+ * container corruption, and network timeouts.
  */
-private fun classifyPlaybackFailure(error: androidx.media3.common.PlaybackException): String {
+private fun classifyPlaybackFailure(
+    context: android.content.Context,
+    error: androidx.media3.common.PlaybackException
+): String {
     // Walk the cause chain looking for an HTTP status — the most actionable signal.
     var cause: Throwable? = error
     var httpStatus = -1
@@ -5886,12 +6584,12 @@ private fun classifyPlaybackFailure(error: androidx.media3.common.PlaybackExcept
     }
     if (httpStatus > 0) {
         return when (httpStatus) {
-            403 -> "Source blocked"
-            404 -> "Source removed"
-            410 -> "Source expired"
-            429 -> "Source rate-limited"
-            in 500..599 -> "Source unavailable"
-            else -> "Source error ($httpStatus)"
+            401, 403 -> context.getString(R.string.player_err_source_blocked)
+            404 -> context.getString(R.string.player_err_source_removed)
+            410 -> context.getString(R.string.player_err_source_expired)
+            429 -> context.getString(R.string.player_err_source_rate_limited)
+            in 500..599 -> context.getString(R.string.player_err_source_unavailable)
+            else -> context.getString(R.string.player_err_source_status, httpStatus)
         }
     }
 
@@ -5903,25 +6601,32 @@ private fun classifyPlaybackFailure(error: androidx.media3.common.PlaybackExcept
     val isDns = "unknownhost" in msg || "unable to resolve host" in msg ||
         "no address associated with hostname" in msg
 
-    return when {
-        isDns -> "Source offline"
-        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
-            "Video format not supported by this device"
-        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
-            "Unplayable content"
-        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ||
-            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
-            "timeout" in msg || "timed out" in msg || "sockettimeout" in msg ->
-            "Source too slow to load"
-        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
-            "Source rejected request"
-        else -> "Playback error"
-    }
+    return context.getString(
+        when {
+            isDns -> R.string.player_err_source_offline
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+                R.string.player_err_format_unsupported
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ->
+                R.string.player_err_format_unsupported
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
+                R.string.player_err_unplayable_content
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_TIMEOUT ||
+                error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+                "timeout" in msg || "timed out" in msg || "sockettimeout" in msg ->
+                R.string.player_fail_source_too_slow
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ->
+                R.string.player_err_source_rejected
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+                R.string.player_err_source_rejected
+            else -> R.string.player_err_playback
+        }
+    )
 }
 
 private fun parseSizeToBytes(sizeStr: String): Long {
@@ -6093,6 +6798,32 @@ private class PlaybackCookieJar : CookieJar {
     }
 }
 
+private fun buildSeekPreviewCacheIdentity(
+    mediaType: MediaType,
+    mediaId: Int,
+    seasonNumber: Int?,
+    episodeNumber: Int?,
+    stream: StreamSource?,
+): String = buildString {
+    // Bump when preview rendering changes so malformed frames from older builds are not reused.
+    append("v5|")
+    append(mediaType.name).append('|').append(mediaId)
+    append('|').append(seasonNumber ?: 0).append('|').append(episodeNumber ?: 0)
+    if (stream != null) {
+        append('|').append(stream.addonId)
+        append('|').append(stream.infoHash.orEmpty()).append('|').append(stream.fileIdx ?: -1)
+        append('|').append(stream.behaviorHints?.videoHash.orEmpty())
+        append('|').append(stream.behaviorHints?.filename.orEmpty())
+        append('|').append(stream.sizeBytes ?: stream.behaviorHints?.videoSize ?: 0L)
+        append('|').append(stream.source)
+        if (stream.infoHash.isNullOrBlank() && stream.behaviorHints?.videoHash.isNullOrBlank()) {
+            append('|').append(
+                stream.preview?.let(::nativePreviewCacheIdentity) ?: stream.url
+            )
+        }
+    }
+}
+
 @Composable
 private fun PlayerMetadataChrome(
     uiState: PlayerUiState,
@@ -6242,6 +6973,7 @@ private fun PlayerMetaSeparator() {
     )
 }
 
+@Composable
 private fun buildPlaybackBaseMetaLine(
     uiState: PlayerUiState,
     mediaType: MediaType,
@@ -6250,8 +6982,8 @@ private fun buildPlaybackBaseMetaLine(
 ): String {
     val parts = mutableListOf<String>()
     if (mediaType == MediaType.TV) {
-        seasonNumber?.let { parts.add("Season $it") }
-        episodeNumber?.let { parts.add("Episode $it") }
+        seasonNumber?.let { parts.add(stringResource(R.string.season, it)) }
+        episodeNumber?.let { parts.add(stringResource(R.string.episode, it)) }
     } else {
         uiState.releaseYear?.trim()?.takeIf { it.isNotBlank() }?.let { parts.add(it) }
     }
