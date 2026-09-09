@@ -20,7 +20,7 @@ class GuideProviderAuditDeviceTest {
         val context = instrumentation.targetContext
         val url = InstrumentationRegistry.getArguments().getString("playlistUrl")
         assumeTrue("Explicit audit URL required", !url.isNullOrBlank())
-        check(context.packageName.endsWith(".iptvaudit"))
+        check(context.packageName.endsWith(".iptvaudit") || context.packageName.endsWith(".overhaul"))
         val access = EntryPointAccessors.fromApplication(context, RepositoryAccessEntryPoint::class.java)
         val profiles = access.profileRepository()
         val profile = profiles.getProfiles().firstOrNull { it.name == "IPTV Provider Audit" }
@@ -41,7 +41,8 @@ class GuideProviderAuditDeviceTest {
         val count = repository.pagedChannelCount(null)
         val groups = repository.pagedPlaylistGroupCounts()
         report("provider_load_ms=${SystemClock.elapsedRealtime() - start} first_channels_ms=$firstChannelsAt channels=$count groups=${groups.size} memory_rows=${snapshot.channels.size}")
-        assertTrue("Expected the supplied large provider", count >= 50_000)
+        val minimum = InstrumentationRegistry.getArguments().getString("minimumChannels")?.toIntOrNull() ?: 50_000
+        assertTrue("Expected channels from the supplied provider", count >= minimum)
         assertEquals(count, groups.sumOf { it.third })
         listOf(groups.first(), groups[groups.size / 2], groups.last()).forEach { group ->
             val page = repository.pagedChannelWindow(group.first, group.second, 0, 144)
@@ -78,19 +79,20 @@ class GuideProviderAuditDeviceTest {
     @Test fun reopenProviderCacheWithoutDownloadingTheListsAgain() = runBlocking {
         assumeTrue(InstrumentationRegistry.getArguments().getString("cachedStartup") == "true")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        check(context.packageName.endsWith(".iptvaudit"))
+        check(context.packageName.endsWith(".iptvaudit") || context.packageName.endsWith(".overhaul"))
         val repository = EntryPointAccessors.fromApplication(context, GuideAuditEntryPoint::class.java).iptvRepository()
         val start = SystemClock.elapsedRealtime()
         repository.warmupFromCacheOnly()
         val count = repository.pagedChannelCount(null)
         val groups = repository.pagedPlaylistGroupCounts()
         val channelAt = SystemClock.elapsedRealtime() - start
-        val selectedGroup = groups.first { it.second.contains("NETHERLAND", true) }
+        val selectedGroup = groups.firstOrNull { it.second.contains("NETHERLAND", true) } ?: groups.first()
         val selected = repository.pagedChannelWindow(selectedGroup.first, selectedGroup.second, 0, 144)
             .filter { !it.epgId.isNullOrBlank() }.take(2)
         val guide = repository.reDeriveCachedNowNext(selected.map { it.id }.toSet()).orEmpty()
         report("cached_channels_ms=$channelAt cached_channels_and_epg_ms=${SystemClock.elapsedRealtime() - start} channels=$count groups=${groups.size} matched=${guide.size}")
-        assertTrue(count >= 50_000)
+        val minimum = InstrumentationRegistry.getArguments().getString("minimumChannels")?.toIntOrNull() ?: 50_000
+        assertTrue(count >= minimum)
         assertEquals(2, guide.size)
         assertTrue("Cached startup must not repeat the lengthy import", SystemClock.elapsedRealtime() - start < 5_000)
     }

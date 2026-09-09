@@ -5,6 +5,17 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.ChevronLeft
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -133,6 +144,7 @@ fun EpgGrid(
     onVisibleChannelRange: (Int, Int) -> Unit = { _, _ -> },
     channelColumnWidthOverride: Dp? = null,
     playbackQuality: LivePlaybackQuality? = null,
+    categoryTitle: String = "All channels",
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
@@ -201,9 +213,9 @@ fun EpgGrid(
     // A pending category briefly has no rows. Measuring the saved state against
     // an empty list would clamp its scroll position to zero before data arrives.
     val emptyChannelListState = remember { LazyListState() }
-    var didPositionInitialSelection by remember(scrollResetKey) { mutableStateOf(false) }
-    var activeChannelFocusId by remember(scrollResetKey) { mutableStateOf(selectedChannelId) }
-    var activeChannelFocusIndex by remember(scrollResetKey) { mutableIntStateOf(0) }
+    var didPositionInitialSelection by rememberSaveable(scrollResetKey) { mutableStateOf(false) }
+    var activeChannelFocusId by rememberSaveable(scrollResetKey) { mutableStateOf(selectedChannelId) }
+    var activeChannelFocusIndex by rememberSaveable(scrollResetKey) { mutableIntStateOf(0) }
     var pendingChannelFocusId by remember(scrollResetKey) { mutableStateOf<String?>(null) }
     var focusJob by remember { mutableStateOf<Job?>(null) }
 
@@ -275,7 +287,7 @@ fun EpgGrid(
                 if (requester != null && runCatching { requester.requestFocus() }.isSuccess) {
                     return@launch
                 }
-                delay(16L)
+                androidx.compose.runtime.withFrameNanos { }
             }
         }
         return true
@@ -298,7 +310,7 @@ fun EpgGrid(
         }
         focusJob = scope.launch {
             revealRow(rowIdx)
-            delay(16L)
+            androidx.compose.runtime.withFrameNanos { }
             repeat(4) { attempt ->
                 val requester = channelFocusRequesters[channel.id] ?: when {
                     rowIdx == 0 -> firstChannelFocusRequester
@@ -309,7 +321,7 @@ fun EpgGrid(
                     pendingChannelFocusId = null
                     return@launch
                 }
-                if (attempt < 3) delay(16L)
+                if (attempt < 3) androidx.compose.runtime.withFrameNanos { }
             }
             pendingChannelFocusId = null
         }
@@ -386,7 +398,7 @@ fun EpgGrid(
                 handledSelectedFocusSignal = focusSelectedChannelSignal
                 return@LaunchedEffect
             }
-            delay(16L)
+            androidx.compose.runtime.withFrameNanos { }
         }
     }
 
@@ -456,8 +468,29 @@ fun EpgGrid(
     }
 
     Column(
-        modifier = modifier.fillMaxSize().background(LiveColors.Bg),
+        modifier = modifier.fillMaxSize().background(LiveColors.Bg).padding(bottom = if (compact) 0.dp else 20.dp),
     ) {
+        if (!compact) Row(Modifier.fillMaxWidth().height(34.dp).padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Icon(Icons.Outlined.Menu, "Categories", tint = LiveColors.Fg,
+                modifier = Modifier.size(28.dp).clickable(onClick = onMoveLeftFromChannels).padding(4.dp))
+            Text(categoryTitle, color = LiveColors.Fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            Text("${java.text.NumberFormat.getIntegerInstance().format(safeTotalChannelCount)} channels", color = LiveColors.FgDim, fontSize = 10.sp)
+            Spacer(Modifier.weight(1f))
+            Icon(Icons.Outlined.ChevronLeft, "Earlier programmes", tint = LiveColors.Fg,
+                modifier = Modifier.size(28.dp).clickable { scope.launch { hScroll.animateScrollBy(-with(density) { halfHourWidth.toPx() * 2 }) } }.padding(5.dp))
+            Text(java.text.SimpleDateFormat("EEE, d MMM", java.util.Locale.getDefault()).format(java.util.Date(clockTickMillis)),
+                color = LiveColors.FgDim, fontSize = 11.sp)
+            Icon(Icons.Outlined.ChevronRight, "Later programmes", tint = LiveColors.Fg,
+                modifier = Modifier.size(28.dp).clickable { scope.launch { hScroll.animateScrollBy(with(density) { halfHourWidth.toPx() * 2 }) } }.padding(5.dp))
+            Row(Modifier.clickable { scope.launch {
+                hScroll.animateScrollTo(with(density) { (((clockTickMillis - windowStartMillis) / 60_000f * pxPerMin).dp.toPx() - halfHourWidth.toPx()).toInt().coerceAtLeast(0) })
+            } }.padding(4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Outlined.Restore, null, tint = LiveColors.Fg, modifier = Modifier.size(19.dp))
+                Text("Now", color = LiveColors.Fg, fontSize = 11.sp)
+            }
+        }
         // ─── Header row ─────────────────────────────────────────────
         Row(
             modifier = Modifier
@@ -475,7 +508,7 @@ fun EpgGrid(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (compact) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.live_label_channels), style = LiveType.SectionTag.copy(color = LiveColors.FgMute))
                     Text(safeTotalChannelCount.toString(),
                         style = LiveType.NumberMono.copy(color = LiveColors.FgDim))
@@ -483,7 +516,7 @@ fun EpgGrid(
                 val currentPlayingOrSelectedChannel = playingChannelId?.let { id ->
                     channelIndexById[id]?.let { index -> channels.getOrNull(index) }
                 } ?: selectedChannel
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (compact) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(stringResource(R.string.live_badge_ch), style = LiveType.SectionTag.copy(color = LiveColors.Accent))
                     Text(
                         currentPlayingOrSelectedChannel?.number?.toString() ?: "—",
@@ -554,7 +587,7 @@ fun EpgGrid(
                             .padding(horizontal = 8.dp, vertical = 3.dp),
                     ) {
                         Text(
-                            text = stringResource(R.string.live_label_now_time, formatClock(clockTickMillis)),
+                            text = formatClock(clockTickMillis),
                             style = LiveType.Badge.copy(color = LiveColors.Bg),
                         )
                     }
@@ -798,8 +831,7 @@ fun EpgGrid(
                         val inside = (nowMin * pxPerMin).dp.toPx() - hScroll.value
                         val x = (channelColumnWidth + 1.dp).toPx() + inside
                         if (inside >= 0f && x < size.width) {
-                            drawRect(LiveColors.Accent.copy(alpha = 0.22f), Offset(x - 3.dp.toPx(), 0f), Size(8.dp.toPx(), size.height))
-                            drawRect(LiveColors.Accent, Offset(x, 0f), Size(2.dp.toPx(), size.height))
+                            drawRect(LiveColors.Accent, Offset(x, 0f), Size(1.dp.toPx(), size.height))
                         }
                     }
                 }

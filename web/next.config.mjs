@@ -17,6 +17,7 @@ try {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  distDir: process.env.ARVIO_BUILD_DIR || ".next",
   reactStrictMode: true,
   poweredByHeader: false,
   outputFileTracingRoot: process.cwd(),

@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -54,6 +55,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 
 val AppTopBarHeight = 82.dp
+val LiveTvTopBarHeight = 48.dp
 val AppTopBarTopPadding = 0.dp
 val AppTopBarContentTopInset = 98.dp
 /** On mobile/tablet where the topbar is hidden, use a small status-bar-like inset instead. */
@@ -101,9 +103,7 @@ fun AppTopBar(
     hasUpdateBadge: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    // Always show the profile avatar when a profile exists — it's clickable
-    // and opens the profile switcher. The name text was removed per the mockup
-    // (avatar-only, no label).
+    val guideHeader = selectedItem == SidebarItem.TV
     val showProfile = profile != null
     val hasProfile = showProfile
     val currentTime = rememberTopBarTime(clockFormat)
@@ -116,7 +116,7 @@ fun AppTopBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(AppTopBarContentTopInset)
+            .height(if (guideHeader) LiveTvTopBarHeight else AppTopBarContentTopInset)
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
@@ -130,8 +130,8 @@ fun AppTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(AppTopBarHeight)
-                .padding(start = AppTopBarHorizontalPadding, end = AppTopBarHorizontalPadding, top = 12.dp),
+                .height(if (guideHeader) LiveTvTopBarHeight else AppTopBarHeight)
+                .padding(start = AppTopBarHorizontalPadding, end = AppTopBarHorizontalPadding, top = if (guideHeader) 0.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // ── LEFT: Profile avatar (only if multiple profiles) ──
@@ -140,6 +140,11 @@ fun AppTopBar(
                     profile = profile,
                     isFocused = isFocused && focusedIndex == 0
                 )
+                if (selectedItem == SidebarItem.TV && androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 800) {
+                    Text(profile.name, color = Color.White, fontSize = 12.sp, maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.width(94.dp).padding(start = 8.dp))
+                }
                 Spacer(modifier = Modifier.width(16.dp))
             }
 
@@ -158,7 +163,8 @@ fun AppTopBar(
                         TopBarNavChip(
                             item = item,
                             isFocused = isFocused && focusedIndex == itemFocusIndex,
-                            isSelected = selectedIndex == itemFocusIndex
+                            isSelected = selectedIndex == itemFocusIndex,
+                            underlined = guideHeader,
                         )
                     }
                 }
@@ -192,14 +198,15 @@ fun AppTopBar(
 private fun TopBarNavChip(
     item: SidebarItem,
     isFocused: Boolean,
-    isSelected: Boolean
+    isSelected: Boolean,
+    underlined: Boolean = false,
 ) {
-    val accent = resolveAccentColor(fallback = Color.White)
+    val accent = if (underlined) Color.White else resolveAccentColor(fallback = Color.White)
 
     val containerColor by animateColorAsState(
         targetValue = when {
             isFocused -> Color.White.copy(alpha = 0.2f)
-            isSelected -> Color.White.copy(alpha = 0.1f)
+            isSelected && !underlined -> Color.White.copy(alpha = 0.1f)
             else -> Color.Transparent
         },
         animationSpec = tween(AnimationConstants.DURATION_FAST),
@@ -236,6 +243,11 @@ private fun TopBarNavChip(
 
     Row(
         modifier = Modifier
+            .then(if (underlined && isSelected) Modifier.drawWithContent {
+                drawContent()
+                drawRect(Color.White, androidx.compose.ui.geometry.Offset(10.dp.toPx(), size.height - 2.dp.toPx()),
+                    androidx.compose.ui.geometry.Size(size.width - 20.dp.toPx(), 2.dp.toPx()))
+            } else Modifier)
             .clip(RoundedCornerShape(16.dp))
             .background(containerColor)
             .graphicsLayer {

@@ -110,7 +110,6 @@ fun ProgramCell(
     )
     val borderColor = when {
         focused -> LiveColors.FocusRing
-        isNow -> LiveColors.Accent.copy(alpha = 0.45f)
         else -> Color.Transparent
     }
     val borderWidth = if (focused) LiveDims.FocusBorder else 1.dp
@@ -127,7 +126,7 @@ fun ProgramCell(
             // overhead. On a 60dp min-width block that left only ~34dp for
             // text + badges, which the LIVE pill alone consumed — leaving
             // blocks visually empty. Total horizontal overhead is now 8dp.
-            .padding(horizontal = 1.dp, vertical = 3.dp)
+            .padding(horizontal = 1.dp, vertical = 1.dp)
             .then(if (isPast && !isCatchupSupported) Modifier.graphicsLayer {
                 alpha = contentAlpha.value
             } else Modifier)
@@ -202,21 +201,6 @@ fun ProgramCell(
             }
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
-        if (isNow) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .drawBehind {
-                        val radius = LiveDims.CellRadius.toPx()
-                        drawRoundRect(Brush.horizontalGradient(
-                            listOf(
-                                LiveColors.Accent.copy(alpha = 0.22f),
-                                Color.Transparent,
-                            )
-                        ), cornerRadius = CornerRadius(radius))
-                    }
-            )
-        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -235,17 +219,14 @@ fun ProgramCell(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val nowMs = clockTickMillis
-                if (isNow && width >= 150.dp) {
-                    Badge(stringResource(R.string.live_badge_live), Color.White, LiveColors.LiveRed)
-                    Spacer(Modifier.size(6.dp))
-                } else if (isPast && isCatchupSupported && width >= 150.dp) {
-                    Badge(stringResource(R.string.live_badge_archive), LiveColors.Bg, LiveColors.Accent)
+                if (isPast && isCatchupSupported && width >= 150.dp) {
+                    Badge(stringResource(R.string.live_badge_archive), LiveColors.FgDim, LiveColors.PanelRaised)
                     Spacer(Modifier.size(6.dp))
                 } else if (!isPast) {
                     val isNewTag = (nowMs - program.startUtcMillis) in 0..24L * 60 * 60 * 1000L &&
                         !program.isLive(nowMs)
                     if (isNewTag) {
-                        Badge(stringResource(R.string.live_badge_new), LiveColors.Bg, LiveColors.Accent)
+                        Badge(stringResource(R.string.live_badge_new), LiveColors.FgDim, LiveColors.PanelRaised)
                         Spacer(Modifier.size(6.dp))
                     }
                 }

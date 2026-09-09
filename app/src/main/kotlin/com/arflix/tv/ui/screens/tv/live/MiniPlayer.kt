@@ -28,6 +28,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.outlined.PlayCircleOutline
+import androidx.compose.material.icons.outlined.List
+import coil.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
@@ -43,10 +48,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -106,6 +113,7 @@ fun MiniPlayerRow(
     favoriteSet: Set<String>,
     onFavoriteToggle: (String) -> Unit,
     onFullscreenClick: (() -> Unit)? = null,
+    onProgrammeGuideClick: (() -> Unit)? = null,
     variantCount: Int = 1,
     onOpenVariants: (() -> Unit)? = null,
     compact: Boolean = false,
@@ -115,6 +123,8 @@ fun MiniPlayerRow(
     onVideoBoundsPositioned: ((Rect) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    val drawerTranslation = LocalLiveDrawerTranslation.current
+    val drawerDirection = if (LocalLayoutDirection.current == LayoutDirection.Rtl) 1f else -1f
     if (landscapeCompact) {
         val spec = landscapePhoneMiniPlayerSpec()
         Row(
@@ -179,28 +189,60 @@ fun MiniPlayerRow(
         Row(
             modifier = modifier
                 .fillMaxWidth()
-                .padding(start = 10.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
+                .padding(start = 18.dp, end = 14.dp, top = 1.dp, bottom = 3.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.Top,
         ) {
+            GuideProgrammeSummary(focusedProgramme?.first ?: channel,
+                focusedProgramme?.second ?: nowNext?.now, clockTickMillis, onFullscreenClick, onProgrammeGuideClick,
+                Modifier.weight(1f).height(LiveDims.MiniPlayerHeight))
             VideoCard(
                 exoPlayer = exoPlayer,
                 channel = channel,
                 playerActive = playerActive,
                 onFullscreenClick = onFullscreenClick,
                 onVideoBoundsPositioned = onVideoBoundsPositioned,
+                modifier = Modifier.graphicsLayer { translationX = drawerDirection * drawerTranslation() },
             )
-            InfoColumn(
-                focusedProgramme = focusedProgramme,
-                channel = channel,
-                clockTickMillis = clockTickMillis,
-                nowNext = nowNext,
-                isFavorite = channel?.id?.let { it in favoriteSet } == true,
-                onFavoriteToggle = onFavoriteToggle,
-                variantCount = variantCount,
-                onOpenVariants = onOpenVariants,
-                modifier = Modifier.weight(1f),
-            )
+        }
+    }
+}
+
+@OptIn(ExperimentalTvMaterial3Api::class)
+@Composable
+private fun GuideProgrammeSummary(
+    channel: EnrichedChannel?, programme: IptvProgram?, clockTickMillis: Long, onWatch: (() -> Unit)?,
+    onGuide: (() -> Unit)?, modifier: Modifier,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.height(25.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            if (!channel?.source?.logo.isNullOrBlank()) AsyncImage(channel?.source?.logo, null,
+                contentScale = ContentScale.Fit, modifier = Modifier.size(60.dp, 24.dp))
+            val onAir = programme?.isLive(clockTickMillis) == true
+            if (onAir) Box(Modifier.size(7.dp).background(LiveColors.LiveRed, CircleShape))
+            Text(listOfNotNull("ON AIR".takeIf { onAir }, channel?.name, channel?.quality?.takeIf { it != Quality.UNKNOWN }?.label).joinToString(" · "),
+                color = LiveColors.FgDim, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(programme?.title ?: channel?.name ?: stringResource(R.string.live_empty_no_programme),
+            color = LiveColors.Fg, fontSize = 22.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(listOfNotNull(programme?.let(::formatTimeWindow),
+            channel?.genre?.name?.let(::formatGenreName), remainingLabel(programme).takeIf(String::isNotBlank)).joinToString("  ·  "),
+            color = LiveColors.FgDim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(programme?.description.orEmpty(), color = LiveColors.Fg, fontSize = 12.sp, lineHeight = 16.sp,
+            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (onWatch != null) Row(Modifier.clickable(onClick = onWatch).padding(vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Outlined.PlayCircleOutline, null, tint = LiveColors.Fg, modifier = Modifier.size(23.dp))
+                Text("Watch live", color = LiveColors.Fg, fontSize = 11.sp)
+            }
+            if (onGuide != null) Row(Modifier.clickable(onClick = onGuide).padding(vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Outlined.List, null, tint = LiveColors.Fg, modifier = Modifier.size(23.dp))
+                Text("Programme guide", color = LiveColors.Fg, fontSize = 11.sp)
+            }
         }
     }
 }
@@ -271,7 +313,7 @@ private fun VideoCard(
                     .fillMaxSize()
                     .background(
                         Brush.radialGradient(
-                            colors = listOf(channel.brandBg, LiveColors.Bg),
+                            colors = listOf(LiveColors.Panel, LiveColors.Bg),
                         )
                     ),
             )
@@ -304,7 +346,7 @@ private fun VideoCard(
             )
             LiveBug(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
+                    .align(Alignment.TopStart)
                     .padding(10.dp)
                     .graphicsLayer {
                         alpha = playerAlpha

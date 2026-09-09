@@ -54,7 +54,7 @@ fun ChannelLogo(
         modifier = modifier
             .size(size)
             .clip(RoundedCornerShape((size.value / 5.5f).dp))
-            .background(if (logoUrl.isNullOrBlank()) channel.brandBg else LiveColors.Panel),
+            .background(if (logoUrl.isNullOrBlank()) LiveColors.PanelRaised else Color.Transparent),
         contentAlignment = Alignment.Center,
     ) {
         if (showFallback) {
@@ -62,7 +62,7 @@ fun ChannelLogo(
                 0 -> Text(
                     initials,
                     style = LiveType.ChannelName.copy(
-                        color = channel.brandFg,
+                        color = LiveColors.FgDim,
                         fontSize = (size.value * 0.34f).sp,
                         fontWeight = FontWeight.W700,
                         letterSpacing = 0.sp,
@@ -71,7 +71,7 @@ fun ChannelLogo(
                 1 -> Text(
                     initials,
                     style = LiveType.ChannelName.copy(
-                        color = channel.brandFg,
+                        color = LiveColors.FgDim,
                         fontSize = (size.value * 0.32f).sp,
                         fontWeight = FontWeight.W600,
                         letterSpacing = 0.sp,
@@ -80,20 +80,11 @@ fun ChannelLogo(
                 else -> Text(
                     initials,
                     style = LiveType.ChannelName.copy(
-                        color = channel.brandFg,
+                        color = LiveColors.FgDim,
                         fontSize = (size.value * 0.33f).sp,
                         fontWeight = FontWeight.W600,
                         letterSpacing = 0.sp,
                     ),
-                )
-            }
-            if (variant == 0) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .height((size.value / 22f).coerceAtLeast(2f).dp)
-                        .fillMaxWidth(0.6f)
-                        .background(LiveColors.Accent),
                 )
             }
         }

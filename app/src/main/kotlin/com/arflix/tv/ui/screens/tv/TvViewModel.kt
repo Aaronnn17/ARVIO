@@ -113,7 +113,10 @@ class TvViewModel @Inject constructor(
     val iptvRepository: IptvRepository,
     private val cloudSyncRepository: CloudSyncRepository,
     private val mediaRepository: com.arflix.tv.data.repository.MediaRepository,
+    private val sportsRepository: com.arflix.tv.data.repository.SportsRepository,
 ) : ViewModel() {
+
+    suspend fun loadSportsGuideArtwork() = sportsRepository.loadGuideArtwork()
 
     /**
      * Resolve an EPG title to a confident TMDB movie/series match.

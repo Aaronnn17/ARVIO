@@ -3119,6 +3119,9 @@ class IptvRepository @Inject constructor(
     fun pagedPlaylistGroupCounts(): List<Triple<String, String, Int>> =
         runCatching { channelStore.playlistGroupCounts(currentEpgIndexKey) }.getOrDefault(emptyList())
 
+    fun visitStoredChannelLabels(playlistId: String?, visitor: (String, String, String) -> Unit) =
+        channelStore.visitLabels(currentEpgIndexKey, playlistId, visitor)
+
     fun pagedChannelsByIds(ids: Collection<String>): List<IptvChannel> =
         runCatching { channelStore.getByIds(currentEpgIndexKey, ids) }.getOrDefault(emptyList())
 

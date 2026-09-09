@@ -80,7 +80,15 @@ class GuideRenderingDeviceTest {
             useUnmergedTree = false).fetchSemanticsNodes().size
         Log.i("GuideRenderCells", "composedProgrammeCells=$count")
         assertTrue("Visible guide has no programmes", count > 0)
-        assertTrue("Too many offscreen programme cells: $count", count < 90)
+        // Denser rows expose more channels; bound work by the viewport instead
+        // of the old 42dp layout's absolute cell count.
+        val programmeRows = compose.onAllNodes(hasText("Programme ", substring = true))
+            .fetchSemanticsNodes().mapNotNull { node ->
+                node.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text
+                    ?.takeIf { it.startsWith("Programme ") }?.substringBeforeLast(":")
+            }.groupingBy { it }.eachCount()
+        assertTrue("Too many composed channel rows: ${programmeRows.size}", programmeRows.size <= 12)
+        assertTrue("Programme composition must stay horizontally bounded: $programmeRows", programmeRows.values.all { it <= 11 })
         compose.onNodeWithText("Programme render:0:4").assertIsDisplayed()
         // Channel-mode rendering exposes one entry without a child Text layout.
         compose.onAllNodes(hasText("Programme render:0:4"), useUnmergedTree = true)

@@ -19,25 +19,23 @@ object LiveColors {
     // into the TV page. Each step lifts just a few lumens above the last —
     // enough for panels/cells to pop without creating a visible seam under
     // the top bar.
-    val Bg           = Color(0xFF070709)
-    val Panel        = Color(0xFF121319)
+    val Bg           = Color(0xFF070809)
+    val Panel        = Color(0xFF13171A)
     val PanelDeep    = Bg
     val PanelRaised  = Color(0xFF202022)
-    val RowStripe    = Color(0xFF0B0B0D)
+    val RowStripe    = Color(0xFF0E0E0E)
 
-    val Divider       = Color(0x992B2D36)
-    val DividerStrong = Color(0xE6333542)
+    val Divider       = Color(0x662C2C2C)
+    val DividerStrong = Color(0xFF383838)
 
     val Fg     = Color(0xFFF5F5F8)
     val FgDim  = Color(0xFFB5B6BE)
     val FgMute = Color(0xFF7D7E86)
 
-    // Modern dark-blue accent. Less saturated than the prior cyan — reads as
-    // a sophisticated "black-blue" for the TV grid. NOW pill, progress bars
-    // and active indicators use this. Pure white drives focus rings.
-    val Accent    = Color(0xFF4F7FB0)
-    val AccentDim = Color(0xFF355578)
-    val FocusBg   = Color(0x264F7FB0) // 15% alpha for softer row tint
+    // Time and playback use turquoise; selection stays neutral and focus white.
+    val Accent    = Color(0xFF56D8C5)
+    val AccentDim = Color(0xFF266B62)
+    val FocusBg   = Color(0xFF272727)
 
     // Focus ring color — always pure white on TV for maximum clarity.
     val FocusRing = Color(0xFFFFFFFF)
@@ -59,13 +57,12 @@ object LiveColors {
 val LiveMono: FontFamily = InterFontFamily
 
 object LiveType {
-    // v4 — minimum readable at 10ft. 7sp is the absolute floor for the
-    // tightest tags/badges; no higher than 11sp anywhere on the TV page.
-    val ChannelName  = TextStyle(fontFamily = InterFontFamily, fontSize = 11.sp, fontWeight = FontWeight.W600, letterSpacing = 0.sp, lineHeight = 14.sp)
+    // Fixed readable sizes; row geometry does not change with focus.
+    val ChannelName  = TextStyle(fontFamily = InterFontFamily, fontSize = 12.sp, fontWeight = FontWeight.W600, letterSpacing = 0.sp, lineHeight = 15.sp)
     val ProgramTitle = TextStyle(fontFamily = InterFontFamily, fontSize = 10.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 13.sp)
-    val CellTitle    = TextStyle(fontFamily = InterFontFamily, fontSize = 9.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 12.sp)
-    val BodySynopsis = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W400, letterSpacing = 0.sp, lineHeight = 11.sp)
-    val CatLabel     = TextStyle(fontFamily = InterFontFamily, fontSize = 9.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 12.sp)
+    val CellTitle    = TextStyle(fontFamily = InterFontFamily, fontSize = 11.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 14.sp)
+    val BodySynopsis = TextStyle(fontFamily = InterFontFamily, fontSize = 10.sp, fontWeight = FontWeight.W400, letterSpacing = 0.sp, lineHeight = 13.sp)
+    val CatLabel     = TextStyle(fontFamily = InterFontFamily, fontSize = 12.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 15.sp)
     val SectionTag   = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W600, letterSpacing = 0.sp, lineHeight = 11.sp)
     val Badge        = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W600, letterSpacing = 0.sp, lineHeight = 11.sp)
     val TimeMono     = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 11.sp)
@@ -73,27 +70,25 @@ object LiveType {
 }
 
 object LiveDims {
-    // v3 — another ~30 % shrink. ~17 channel rows + mini-player fit on 1080 p.
-    // 240 dp so the longest labels ("United Kingdom", "Czech Republic",
-    // "South Africa") render fully without ellipsis.
-    val SidebarExpanded  = 240.dp
+    // Fixed tracks keep focus and drawer transitions from changing row geometry.
+    val SidebarExpanded  = 193.dp
     val SidebarCollapsed = 52.dp
-    val SidebarRowHeight = 26.dp
+    val SidebarRowHeight = 34.dp
 
-    val MiniPlayerWidth  = 256.dp
-    val MiniPlayerHeight = 144.dp
+    val MiniPlayerWidth  = 304.dp
+    val MiniPlayerHeight = 147.dp
 
-    val EpgChannelColWidth = 220.dp
-    val EpgChannelWideColWidth = 256.dp
-    val EpgRowHeight       = 42.dp
-    val EpgHeaderHeight    = 26.dp
+    val EpgChannelColWidth = 145.dp
+    val EpgChannelWideColWidth = 170.dp
+    val EpgRowHeight       = 32.dp
+    val EpgHeaderHeight    = 22.dp
     val EpgPxPerMinute     = 4
     val EpgHalfHourWidth   = 120.dp
 
-    val PanelRadius     = 12.dp
-    val CardRadius      = 10.dp
-    val CellRadius      = 6.dp
-    val VideoRadius     = 8.dp
+    val PanelRadius     = 8.dp
+    val CardRadius      = 8.dp
+    val CellRadius      = 3.dp
+    val VideoRadius     = 4.dp
     val FocusBorder     = 2.dp
     val ActiveIndicator = 3.dp
 }

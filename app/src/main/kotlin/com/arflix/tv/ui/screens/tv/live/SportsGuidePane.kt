@@ -1,0 +1,256 @@
+package com.arflix.tv.ui.screens.tv.live
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.SportsSoccer
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import coil.compose.AsyncImage
+import com.arflix.tv.data.model.IptvChannel
+import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
+import androidx.compose.ui.unit.LayoutDirection
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Date
+
+internal const val SPORTS_GUIDE_CATEGORY = "sports-hub"
+
+internal fun LiveCategoryTree.withSportsDestination(): LiveCategoryTree = copy(
+    top = top.filterNot { it.id == SPORTS_GUIDE_CATEGORY }.flatMap { category ->
+        if (category.id == "all") listOf(category, LiveCategory(SPORTS_GUIDE_CATEGORY, "Sports", 0, CategoryIcon.Sport))
+        else listOf(category)
+    },
+)
+
+@Composable
+internal fun SportsGuidePane(
+    events: List<SportsGuideEvent>,
+    now: Long,
+    loading: Boolean,
+    focusSignal: Int,
+    onContentFocused: () -> Unit,
+    onOpenCategories: () -> Unit,
+    onPlay: (IptvChannel) -> Unit,
+    modifier: Modifier = Modifier,
+    failed: Boolean = false,
+    onRetry: () -> Unit = {},
+    providerNames: Map<String, String> = emptyMap(),
+    sidebarOpen: Boolean = false,
+) {
+    val rows = remember(events, now) { sportsGuideRows(events, now) }
+    var selected by remember { mutableStateOf<SportsGuideEvent?>(null) }
+    var returnFocus by remember { mutableStateOf<FocusRequester?>(null) }
+    val firstFocus = remember { FocusRequester() }
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val context = LocalContext.current
+    val timeFormat = remember(context) { android.text.format.DateFormat.getTimeFormat(context) }
+    val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
+    fun eventTime(event: SportsGuideEvent): String {
+        if (event.isOnAir(now)) return "ON AIR"
+        val date = Instant.ofEpochMilli(event.programme.startUtcMillis).atZone(ZoneId.systemDefault())
+        val day = when (date.toLocalDate()) {
+            today -> "Today"
+            today.plusDays(1) -> "Tomorrow"
+            else -> date.format(DateTimeFormatter.ofPattern("EEE d MMM"))
+        }
+        return "$day ${timeFormat.format(Date(event.programme.startUtcMillis))}"
+    }
+    LaunchedEffect(focusSignal, rows.isEmpty()) {
+        if (focusSignal > 0) runCatching { firstFocus.requestFocus() }
+    }
+    LaunchedEffect(selected) {
+        if (selected == null) returnFocus?.let { runCatching { it.requestFocus() } }
+    }
+    Column(modifier.fillMaxSize().background(LiveColors.Bg)) {
+        Row(Modifier.height(32.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (!sidebarOpen) Icon(Icons.Outlined.Menu, "Categories", tint = LiveColors.Fg,
+                modifier = Modifier.size(20.dp).clickable(onClick = onOpenCategories))
+            Text("Sports", color = LiveColors.Fg, fontSize = 21.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold)
+        }
+        if (rows.isEmpty()) {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                if (loading) CircularProgressIndicator(color = LiveColors.Accent, modifier = Modifier.size(24.dp))
+                else Icon(Icons.Default.SportsSoccer, null, tint = LiveColors.FgDim, modifier = Modifier.size(32.dp))
+                Text(if (loading) "Reading sports schedule" else if (failed) "Schedule unavailable" else "No sports events in the available guide",
+                    color = LiveColors.FgDim, modifier = Modifier.padding(14.dp))
+                if (failed) Text("Retry", color = LiveColors.Fg,
+                    modifier = Modifier.clickable(onClick = onRetry).padding(16.dp))
+                Text("Categories", color = LiveColors.Fg, modifier = Modifier.focusRequester(firstFocus)
+                    .clickable(onClick = onOpenCategories).padding(16.dp))
+            }
+        } else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(rows, key = { _, row -> row.id }) { rowIndex, row ->
+                Column {
+                    Text(row.title, color = LiveColors.Fg, fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 17.sp,
+                        modifier = Modifier.padding(start = 18.dp, bottom = 1.dp))
+                    LazyRow(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 1.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        itemsIndexed(row.events, key = { _, event -> event.id }) { index, event ->
+                            val requester = remember { FocusRequester() }
+                            var focused by remember { mutableStateOf(false) }
+                            Column(Modifier.width(222.dp)
+                                .then(if (index == 0 && rowIndex == 0) Modifier.focusRequester(firstFocus) else Modifier)
+                                .focusRequester(requester)
+                                .onFocusChanged { focused = it.isFocused; if (it.isFocused) onContentFocused() }
+                                .onPreviewKeyEvent { key ->
+                                    if (index == 0 && key.type == KeyEventType.KeyDown &&
+                                        key.key.mirrorHorizontalForRtl(isRtl) == Key.DirectionLeft) {
+                                        onOpenCategories(); true
+                                    } else false
+                                }
+                                .clickable { returnFocus = requester; selected = event }
+                                .padding(2.dp)) {
+                                Box(Modifier.fillMaxWidth().aspectRatio(if (row.id == "more") 2.85f else 2.25f).clip(RoundedCornerShape(4.dp))) {
+                                    EventArtwork(event, Modifier.fillMaxSize())
+                                    Text(eventTime(event), color = Color.White, fontSize = 10.sp, lineHeight = 12.sp,
+                                        modifier = Modifier.padding(6.dp).background(Color.Black.copy(alpha = .85f), RoundedCornerShape(3.dp))
+                                            .padding(horizontal = 5.dp, vertical = 2.dp))
+                                    Box(Modifier.matchParentSize().border(2.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(4.dp)))
+                                }
+                                Text(event.title, color = LiveColors.Fg, fontSize = 11.sp, lineHeight = 13.sp, fontWeight = FontWeight.Medium,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 3.dp))
+                                Row(Modifier.fillMaxWidth().height(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(event.sport.title, color = LiveColors.FgDim, fontSize = 10.sp, lineHeight = 13.sp, modifier = Modifier.weight(1f))
+                                    if (event.isOnAir(now)) {
+                                        Icon(Icons.Default.Tv, null, tint = LiveColors.FgDim, modifier = Modifier.size(13.dp))
+                                        Text("${event.channels.size} channels", color = LiveColors.FgDim, fontSize = 9.sp, lineHeight = 12.sp,
+                                            modifier = Modifier.padding(start = 6.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    val event = selected?.let { selection -> events.firstOrNull { it.id == selection.id } }
+    fun dismiss() { selected = null }
+    if (selected != null) Dialog(onDismissRequest = ::dismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        val onAir = event?.isOnAir(now) == true
+        val initialFocus = remember(event?.id) { FocusRequester() }
+        LaunchedEffect(event?.id) {
+            // The native dialog window must own focus before Compose assigns its row.
+            withFrameNanos { }
+            withFrameNanos { }
+            initialFocus.requestFocus()
+        }
+        Column(Modifier.widthIn(max = 586.dp).fillMaxWidth().fillMaxHeight(.82f)
+            .border(1.dp, LiveColors.DividerStrong, RoundedCornerShape(5.dp))
+            .clip(RoundedCornerShape(5.dp)).background(LiveColors.Panel).padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                EventArtwork(event ?: selected!!, Modifier.size(132.dp, 58.dp).clip(RoundedCornerShape(3.dp)))
+                Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                    Text(listOfNotNull(event?.let(::eventTime), event?.sport?.title).joinToString("  ·  "),
+                        color = LiveColors.FgDim, fontSize = 11.sp)
+                    Text(event?.title ?: selected!!.title, fontSize = 18.sp, lineHeight = 21.sp, maxLines = 2,
+                        overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = LiveColors.Fg,
+                        modifier = Modifier.padding(top = 7.dp))
+                }
+                Icon(Icons.Default.Close, "Close", tint = LiveColors.Fg,
+                    modifier = Modifier.size(44.dp)
+                        .then(if (!onAir || event?.channels.isNullOrEmpty()) Modifier.focusRequester(initialFocus) else Modifier)
+                        .clickable(onClick = ::dismiss).padding(10.dp))
+            }
+            Row(Modifier.fillMaxWidth().padding(top = 9.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (onAir) "Available channels" else "Scheduled channels", fontSize = 14.sp, color = LiveColors.Fg,
+                    fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                Text("${event?.channels?.size ?: 0} channels", fontSize = 11.sp, color = LiveColors.FgDim)
+            }
+            LazyColumn {
+                itemsIndexed(event?.channels.orEmpty(), key = { _, channel -> channel.id }) { index, channel ->
+                    var focused by remember { mutableStateOf(false) }
+                    Row(Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(4.dp))
+                        .then(if (index == 0 && onAir) Modifier.focusRequester(initialFocus) else Modifier)
+                        .border(1.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(4.dp))
+                        .background(if (focused) LiveColors.FocusBg else Color.Transparent)
+                        .onFocusChanged { focused = it.isFocused }
+                        .clickable(enabled = onAir) { dismiss(); onPlay(channel) }.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        if (channel.logo.isNullOrBlank()) Icon(Icons.Default.Tv, null, tint = LiveColors.FgDim, modifier = Modifier.size(88.dp, 30.dp))
+                        else AsyncImage(channel.logo, null, contentScale = ContentScale.Fit, modifier = Modifier.size(88.dp, 30.dp))
+                        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                            Text(channel.name, color = LiveColors.Fg, fontSize = 13.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            val provider = providerNames[channelPlaylistId(channel.id)]
+                            Text(provider ?: channel.group.orEmpty(), color = LiveColors.FgDim, fontSize = 10.sp, lineHeight = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        val enriched = remember(channel) { channel.enrich(0) }
+                        if (enriched.quality != Quality.UNKNOWN) PickerBadge(enriched.quality.label)
+                        PickerBadge(enriched.lang)
+                        Icon(if (focused) Icons.Default.PlayArrow else Icons.Outlined.ChevronRight, null,
+                            tint = LiveColors.Fg, modifier = Modifier.padding(start = 12.dp).size(18.dp))
+                    }
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(LiveColors.Divider))
+                }
+            }
+            if (event == null) Text("This event is no longer in the available guide.", color = LiveColors.FgDim)
+        }
+    }
+}
+
+@Composable
+private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier) {
+    var loaded by remember(event.artwork) { mutableStateOf(false) }
+    Box(modifier.background(LiveColors.Panel).testTag(if (loaded) "sports-artwork-loaded" else "sports-artwork-pending")) {
+        if (!loaded) {
+            // A legible event identity, not unrelated stock photography or invented team crests.
+            Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 22.dp),
+                verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(event.title, color = LiveColors.Fg, fontSize = 13.sp, lineHeight = 16.sp,
+                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+        }
+        event.artwork?.let { url ->
+            AsyncImage(url, null, contentScale = ContentScale.Crop,
+                onSuccess = { loaded = true }, onError = { loaded = false },
+                modifier = Modifier.fillMaxSize())
+        }
+    }
+}
+
+@Composable
+private fun PickerBadge(label: String) {
+    Text(label, color = LiveColors.Fg, fontSize = 10.sp, lineHeight = 12.sp, modifier = Modifier.padding(start = 8.dp)
+        .border(1.dp, LiveColors.DividerStrong, RoundedCornerShape(3.dp)).background(LiveColors.Bg)
+        .padding(horizontal = 7.dp, vertical = 3.dp))
+}

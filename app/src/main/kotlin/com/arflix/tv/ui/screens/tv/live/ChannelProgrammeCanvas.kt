@@ -45,7 +45,6 @@ internal fun ChannelProgrammeCanvas(
     val duration = stringResource(R.string.live_label_duration_min, minutes)
     val badge = when {
         width < 150.dp -> null
-        isNow -> stringResource(R.string.live_badge_live)
         isPast && isCatchupSupported -> stringResource(R.string.live_badge_archive)
         else -> null
     }
@@ -72,20 +71,19 @@ internal fun ChannelProgrammeCanvas(
                 overflow = TextOverflow.Ellipsis, maxLines = if (width < 120.dp) 2 else 1,
                 constraints = Constraints(maxWidth = (available - titleX).toInt().coerceAtLeast(1)))
             val footer = if (width >= 120.dp) measurer.measure(
-                if (minutes > 0) "$time  $duration" else time,
-                LiveType.TimeMono.copy(color = LiveColors.FgMute, fontSize = 8.sp, lineHeight = 10.sp),
+                "$time - ${formatClock(program.endUtcMillis)}",
+                LiveType.TimeMono.copy(color = LiveColors.FgDim, fontSize = 8.sp, lineHeight = 10.sp),
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 constraints = Constraints(maxWidth = available)) else null
             onDrawBehind {
-                val origin = Offset(1.dp.toPx(), 3.dp.toPx())
-                val cellSize = Size((size.width - 2.dp.toPx()).coerceAtLeast(0f), (size.height - 6.dp.toPx()).coerceAtLeast(0f))
+                val origin = Offset(1.dp.toPx(), 1.dp.toPx())
+                val cellSize = Size((size.width - 2.dp.toPx()).coerceAtLeast(0f), (size.height - 2.dp.toPx()).coerceAtLeast(0f))
                 val radius = CornerRadius(LiveDims.CellRadius.toPx())
                 drawRoundRect(if (isNow) LiveColors.FocusBg else LiveColors.Panel, origin, cellSize, radius)
-                if (isNow) drawRoundRect(LiveColors.Accent.copy(alpha = 0.45f), origin, cellSize, radius, style = Stroke(1.dp.toPx()))
                 if (badgeLayout != null) {
-                    drawRoundRect(if (isNow) LiveColors.LiveRed else LiveColors.Accent,
+                    drawRoundRect(LiveColors.PanelRaised,
                         Offset(x, 5.dp.toPx()), Size(badgeWidth, badgeLayout.size.height + 1.dp.toPx()), CornerRadius(3.dp.toPx()))
-                    drawText(badgeLayout, color = if (isNow) Color.White else LiveColors.Bg,
+                    drawText(badgeLayout, color = LiveColors.FgDim,
                         topLeft = Offset(x + 4.dp.toPx(), 5.5.dp.toPx()))
                 }
                 drawText(title, topLeft = Offset(x + titleX, 5.dp.toPx()))

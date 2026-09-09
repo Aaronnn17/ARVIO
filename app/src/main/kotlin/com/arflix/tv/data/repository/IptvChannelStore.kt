@@ -234,6 +234,18 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         return windowForPlaylistGroup(sourceKey, playlistId = null, groupTitle = groupTitle, offset = offset, limit = limit)
     }
 
+    /** Sequential metadata scan without decoding stream headers, DRM or channel objects. */
+    fun visitLabels(sourceKey: String, playlistId: String?, visitor: (String, String, String) -> Unit) {
+        if (sourceKey.isBlank()) return
+        val scoped = !playlistId.isNullOrBlank()
+        val sql = "SELECT id,name,group_title FROM channels WHERE source_key = ?" +
+            (if (scoped) " AND (id LIKE ? OR id LIKE ?)" else "") + " ORDER BY ord"
+        val args = if (scoped) arrayOf(sourceKey, "$playlistId:%", "stalker:$playlistId:%") else arrayOf(sourceKey)
+        readableDatabase.rawQuery(sql, args).use { cursor ->
+            while (cursor.moveToNext()) visitor(cursor.getString(0), cursor.getString(1), cursor.getString(2))
+        }
+    }
+
     fun windowForPlaylistGroup(
         sourceKey: String,
         playlistId: String?,

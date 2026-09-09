@@ -860,6 +860,7 @@ export function AppProvider({
           favoriteChannelIds: cloud.settings?.favoriteChannelIds ?? currentSettings.favoriteChannelIds,
           favoriteGroupIds: cloud.settings?.favoriteGroupIds ?? currentSettings.favoriteGroupIds,
           hiddenGroupIds: cloud.settings?.hiddenGroupIds ?? currentSettings.hiddenGroupIds,
+          lockedIptvGroupIds: cloud.settings?.lockedIptvGroupIds ?? currentSettings.lockedIptvGroupIds,
           groupOrder: cloud.settings?.groupOrder ?? currentSettings.groupOrder
         };
         if (!sameSettings(settingsRef.current, effectiveSettings)) setSettings(effectiveSettings);

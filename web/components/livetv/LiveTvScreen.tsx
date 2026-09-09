@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { externalLaunchMode, openExternalPlayer } from "@/lib/externalPlayers";
 import { accessibleChannels, groupKey, loadXtreamCatchup, type CatchupProgram } from "@/lib/iptv";
 import { VirtualList } from "@/components/ui/VirtualList";
+import { SportsGuidePane } from "@/components/livetv/SportsGuidePane";
 import { IPTV_SNAPSHOT_TTL_MS, iptvPlaylistSignature } from "@/lib/iptv";
 import { loadStored, saveStored } from "@/lib/storage";
 import { authClient, useApp } from "@/lib/store";
@@ -30,7 +31,7 @@ function groupLabel(group: string) {
 }
 
 export function LiveTvScreen() {
-  const { iptvSnapshot, settings, setSettings, playChannel, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth, activeProfile } = useApp();
+  const { iptvSnapshot, settings, setSettings, playChannel, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth, activeProfile, addons } = useApp();
   const lastChannelKey = `${LAST_CHANNEL_KEY}:${auth?.userId ?? "local"}:${activeProfile?.id ?? "local"}`;
   const listRef = useRef<HTMLElement>(null);
 
@@ -71,14 +72,14 @@ export function LiveTvScreen() {
     () => loadStored<string | null>(lastChannelKey, null)
   );
   const [managing, setManaging] = useState(false);
-  const [view, setView] = useState<"list" | "guide">("list");
+  const [view, setView] = useState<"list" | "guide">("guide");
   const [groupsOpen, setGroupsOpen] = useState(true);
   const [provider, setProvider] = useState("all");
   const [catchup, setCatchup] = useState<{ channelId: string; programs: CatchupProgram[]; loading: boolean } | null>(null);
 
   const allChannels = iptvSnapshot.allChannels ?? iptvSnapshot.channels;
   const providerChannels = useMemo(() => provider === "all" ? allChannels : allChannels.filter((ch) => ch.id.startsWith(`${provider}:`)), [allChannels, provider]);
-  const channels = useMemo(() => accessibleChannels(providerChannels, hiddenGroups), [providerChannels, hiddenGroups]);
+  const channels = useMemo(() => accessibleChannels(providerChannels, [...hiddenGroups, ...(settings.lockedIptvGroupIds ?? [])]), [providerChannels, hiddenGroups, settings.lockedIptvGroupIds]);
   const groups = useMemo(() => {
     const result: Record<string, IptvChannel[]> = {};
     for (const channel of channels) (result[groupKey(channel)] ??= []).push(channel);
@@ -135,6 +136,7 @@ export function LiveTvScreen() {
       });
     return [
       { id: "all", label: "All Channels", count: channels.length, favorite: false, hidden: false },
+      { id: "sports", label: "Sports", count: 0, favorite: false, hidden: false },
       { id: "favorites", label: "Favorites", count: favoriteChannels.length, favorite: true, hidden: false },
       ...groupRows
     ];
@@ -368,7 +370,7 @@ export function LiveTvScreen() {
       )}
 
       {channels.length > 0 && (
-        <div className={`livetv-columns ${groupsOpen ? "" : "groups-collapsed"}`}>
+        <div className={`livetv-columns tv-guide-workspace ${activeCategory === "sports" ? "sports-active" : ""} ${groupsOpen ? "" : "groups-collapsed"}`}>
           <nav className="livetv-cats" aria-label="Channel categories" inert={!groupsOpen}>
             <VirtualList items={categories} estimate={44} itemKey={rowKey} label="Categories" renderItem={(category) => (
               <button
@@ -385,12 +387,21 @@ export function LiveTvScreen() {
               >
                 {category.id === "favorites" && <Star size={13} fill="currentColor" />}
                 <span>{category.label}</span>
-                <em>{category.count.toLocaleString()}</em>
+                {category.id !== "sports" && <em>{category.count.toLocaleString()}</em>}
               </button>
             )} />
           </nav>
 
-          <main ref={listRef} className="livetv-list" aria-label={activeCategoryLabel}>
+          <main ref={listRef} className="livetv-list" aria-label={activeCategoryLabel} onKeyDown={(event) => {
+            if ((event.target as HTMLElement).closest("dialog")) return;
+            if (event.key === "Escape" || (event.key === "ArrowLeft" && !(event.target as HTMLElement).closest(".livetv-guide-block"))) {
+              if (!groupsOpen) { event.preventDefault(); setGroupsOpen(true); requestAnimationFrame(() => document.querySelector<HTMLElement>(".livetv-cats button.is-active")?.focus()); }
+            }
+          }}>
+            {activeCategory === "sports" ? <SportsGuidePane channels={channels} guide={iptvSnapshot.nowNext} addons={addons}
+              providerNames={Object.fromEntries(playlists.map((playlist) => [playlist.id, playlist.name]))}
+              onPlay={watchChannel} onEnter={() => setGroupsOpen(false)}
+              onOpenCategories={() => { setGroupsOpen(true); requestAnimationFrame(() => document.querySelector<HTMLElement>(".livetv-cats button.is-active")?.focus()); }} /> : <>
             <div className="livetv-list-head">
               <h3>{activeCategoryLabel}</h3>
               <span>{visibleChannels.length.toLocaleString()}</span>
@@ -441,26 +452,24 @@ export function LiveTvScreen() {
                 onCatchup={playCatchup}
               />
             )}
+            </>}
           </main>
 
-          <aside className="livetv-detail" aria-label="Channel details">
+          {activeCategory !== "sports" && <aside className="livetv-detail" aria-label="Channel details">
             {selectedChannel ? (
               <>
                 <div className="livetv-detail-art">
                   {selectedChannel.logo ? <img src={selectedChannel.logo} alt="" loading="lazy" /> : <Tv size={48} />}
                 </div>
                 <p className="livetv-detail-group">{selectedChannel.group || "Live TV"}</p>
-                <h2>{selectedChannel.name}</h2>
+                <p className="livetv-channel-identity">{selectedChannel.name}{selectedChannel.qualityLabel ? ` · ${selectedChannel.qualityLabel}` : ""}</p>
+                <h2>{selectedGuide?.now?.title || selectedChannel.name}</h2>
                 {selectedGuide?.now?.title ? (
                   <div className="livetv-program">
                     <div className="livetv-program-head">
                       <span>ON NOW</span>
                       <em>{fmtTime(selectedGuide.now.startUtcMillis)} – {fmtTime(selectedGuide.now.endUtcMillis)}</em>
                     </div>
-                    <strong>{selectedGuide.now.title}</strong>
-                    <span className="livetv-progress">
-                      <span style={{ width: `${Math.min(100, Math.max(0, ((Date.now() - selectedGuide.now.startUtcMillis) / (selectedGuide.now.endUtcMillis - selectedGuide.now.startUtcMillis)) * 100))}%` }} />
-                    </span>
                     {selectedGuide.now.description && <p>{selectedGuide.now.description}</p>}
                   </div>
                 ) : (
@@ -519,7 +528,7 @@ export function LiveTvScreen() {
                 <p>Select a channel to see the guide.</p>
               </div>
             )}
-          </aside>
+          </aside>}
         </div>
       )}
 
@@ -559,7 +568,7 @@ function GuideGrid({ channels, nowNext, selectedId, onFocus, onVisible, onPlay, 
   onPlay: (channel: IptvChannel) => void;
   onCatchup: (channel: IptvChannel, program: IptvProgram) => void;
 }) {
-  const [clock, setClock] = useState(Date.now);
+  const [clock, setClock] = useState(0);
   const [manualStart, setManualStart] = useState<number | null>(null);
   const currentStart = Math.floor(clock / 1_800_000) * 1_800_000;
   const windowStart = manualStart ?? currentStart;
@@ -567,10 +576,12 @@ function GuideGrid({ channels, nowNext, selectedId, onFocus, onVisible, onPlay, 
   const totalWidth = GUIDE_WINDOW_HOURS * 60 * GUIDE_PX_PER_MIN;
   const ticks = Array.from({ length: GUIDE_WINDOW_HOURS * 2 }, (_, index) => windowStart + index * 30 * 60 * 1000);
   useEffect(() => {
+    setClock(Date.now());
     const timer = window.setInterval(() => setClock(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
-  const nowOffset = ((Date.now() - windowStart) / 60000) * GUIDE_PX_PER_MIN;
+  const nowOffset = ((clock - windowStart) / 60000) * GUIDE_PX_PER_MIN;
+  if (!clock) return <div className="livetv-guide" aria-busy="true" aria-label="Programme guide" />;
 
   return (
     <div className="livetv-guide" role="grid" aria-label="Programme guide">

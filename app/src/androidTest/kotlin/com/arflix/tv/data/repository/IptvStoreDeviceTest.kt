@@ -34,6 +34,9 @@ class IptvStoreDeviceTest {
             val startupAt = SystemClock.elapsedRealtime()
             assertEquals(240, store.loadStartupChannels(key, 10_000, 240).size)
             assertEquals(50_000, store.count(key))
+            val labels = mutableListOf<String>()
+            store.visitLabels(key, "second") { id, _, _ -> labels.add(id) }
+            assertEquals(all.filter { it.id.startsWith("second:") }.map { it.id }, labels)
             Log.i("IptvStoreDeviceTest", "50k cold store startupMs=${SystemClock.elapsedRealtime() - startupAt}")
             val startedAt = SystemClock.elapsedRealtime()
             listOf("first", "second").forEach { provider -> (0 until 5).forEach { group ->

@@ -54,6 +54,7 @@ interface AndroidWatchlistItem {
 }
 
 interface AndroidIptvProfileState {
+  lockedGroups?: string[];
   m3uUrl?: string;
   epgUrl?: string;
   playlists?: IptvPlaylistEntry[];
@@ -533,6 +534,7 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
     favoriteChannelIds: value !== undefined ? stringArray(state.favoriteChannels) : stringArray(rootState.iptvFavoriteChannels),
     favoriteGroupIds: value !== undefined ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
     hiddenGroupIds: stringArray(state.hiddenGroups),
+    lockedIptvGroupIds: stringArray(state.lockedGroups),
     groupOrder: stringArray(state.groupOrder),
     iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
     iptvStalkerUrl: stringValue(state.stalkerPortalUrl ?? rootState.iptvStalkerUrl),

@@ -490,6 +490,8 @@ export interface AppSettings {
   favoriteChannelIds: string[];
   favoriteGroupIds: string[];
   hiddenGroupIds: string[];
+  /** Read from cloud; locked IPTV groups are not exposed without a PIN flow. */
+  lockedIptvGroupIds?: string[];
   groupOrder: string[];
   // Metadata & API Keys
   customTmdbApiKey: string;
