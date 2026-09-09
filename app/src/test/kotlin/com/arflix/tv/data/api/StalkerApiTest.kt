@@ -43,10 +43,11 @@ class StalkerApiTest {
         val ok = api.handshake()
 
         assertTrue(ok)
+        // The base-path probe is itself a handshake; repeating it would only throw
+        // away the token it just returned.
         assertEquals(
             listOf(
-                "$PORTAL/server/load.php?type=stb&action=handshake",
-                "$PORTAL/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+                "$PORTAL/server/load.php?type=stb&action=handshake"
             ),
             requests
         )
@@ -70,8 +71,7 @@ class StalkerApiTest {
         assertEquals(
             listOf(
                 "$PORTAL/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake"
             ),
             requests
         )
@@ -101,7 +101,6 @@ class StalkerApiTest {
                     "<!DOCTYPE html><html><body>404 Not Found</body></html>"
                 url == "$PORTAL/server/load.php?type=stb&action=handshake" ->
                     """{ "js": { "token": "ROOT" } }"""
-                url.contains("action=handshake&token=") -> """{ "js": { "token": "ROOT" } }"""
                 else -> null
             }
         }
@@ -112,8 +111,7 @@ class StalkerApiTest {
         assertEquals(
             listOf(
                 "$PORTAL/c/server/load.php?type=stb&action=handshake",
-                "$PORTAL/server/load.php?type=stb&action=handshake",
-                "$PORTAL/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+                "$PORTAL/server/load.php?type=stb&action=handshake"
             ),
             requests
         )
@@ -128,7 +126,6 @@ class StalkerApiTest {
                 url == "$PORTAL/server/load.php?type=stb&action=handshake" -> "<html>404</html>"
                 url == "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake" ->
                     """{ "js": { "token": "SP" } }"""
-                url.contains("action=handshake&token=") -> """{ "js": { "token": "SP" } }"""
                 else -> null
             }
         }
@@ -140,8 +137,7 @@ class StalkerApiTest {
             listOf(
                 "$PORTAL/c/server/load.php?type=stb&action=handshake",
                 "$PORTAL/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake"
             ),
             requests
         )
@@ -157,7 +153,6 @@ class StalkerApiTest {
                     "<!DOCTYPE html><html><body>404 Not Found</body></html>"
                 url == "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake" ->
                     """{ "js": { "token": "SPC" } }"""
-                url.contains("action=handshake&token=") -> """{ "js": { "token": "SPC" } }"""
                 else -> null
             }
         }
@@ -168,8 +163,7 @@ class StalkerApiTest {
         assertEquals(
             listOf(
                 "$PORTAL/stalker_portal/c/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake"
             ),
             requests
         )
@@ -184,7 +178,6 @@ class StalkerApiTest {
                     "<!DOCTYPE html><html><body>404 Not Found</body></html>"
                 url == "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake" ->
                     """{ "js": { "token": "LATE" } }"""
-                url.contains("action=handshake&token=") -> """{ "js": { "token": "LATE" } }"""
                 else -> null
             }
         }

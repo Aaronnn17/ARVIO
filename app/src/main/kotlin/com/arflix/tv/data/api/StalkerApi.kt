@@ -50,6 +50,9 @@ open class StalkerApi(
         return try {
             if (!apiBaseResolved) {
                 resolveApiBase()
+                // Probing the base path is itself a handshake and keeps the token it
+                // received, so a second one here would only throw that token away.
+                if (token.isNotBlank()) return true
             }
             val url = "$apiBase/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
             val response = doGet(url)
