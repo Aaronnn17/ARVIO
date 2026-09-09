@@ -24,18 +24,27 @@ class StalkerPlaybackPersistenceTest {
             IptvChannel("stalker:stalker1:$index", "Channel $index", "https://portal.test/live/$index",
                 "News", stalkerDirectStream = index % 2 == 0)
         }
-        IptvChannelStore(context).use { it.replaceAll("portal", channels, 123L) }
-        IptvChannelStore(context).use { store ->
+        val initial = IptvChannelStore(context)
+        try {
+            initial.replaceAll("portal", channels, 123L)
+        } finally {
+            initial.close()
+        }
+        val store = IptvChannelStore(context)
+        try {
             assertEquals(channels, store.loadAll("portal"))
             assertEquals(channels.takeLast(3), store.window("portal", 82, 3))
             assertEquals(123L, store.updatedAtMs("portal"))
+        } finally {
+            store.close()
         }
     }
 
     @Test fun olderJsonDefaultsToCreateLinkAndNewJsonPreservesDecision() {
         val gson = Gson()
-        val channel = gson.fromJson("""{"id":"stalker:stalker1:1","name":"News",
-            "streamUrl":"https://portal.test/live/one","group":"News"}""", IptvChannel::class.java)
+        val legacy = gson.toJsonTree(IptvChannel("stalker:stalker1:1", "News",
+            "https://portal.test/live/one", "News")).asJsonObject.apply { remove("stalkerDirectStream") }
+        val channel = gson.fromJson(legacy, IptvChannel::class.java)
         assertFalse(channel.stalkerDirectStream)
         val direct = channel.copy(stalkerDirectStream = true)
         assertEquals(direct, gson.fromJson(gson.toJson(direct), IptvChannel::class.java))
@@ -60,13 +69,16 @@ class StalkerPlaybackPersistenceTest {
             }
             override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
         }
-        legacy.use { helper ->
-            helper.writableDatabase.execSQL("""INSERT INTO channels
+        try {
+            legacy.writableDatabase.execSQL("""INSERT INTO channels
                 (source_key, ord, id, name, stream_url, group_title)
                 VALUES ('portal', 0, 'stalker:stalker1:1', 'News', 'https://portal.test/live/one', 'News')""")
-            helper.writableDatabase.execSQL("INSERT INTO channel_sources VALUES ('portal', 123, 1, NULL)")
+            legacy.writableDatabase.execSQL("INSERT INTO channel_sources VALUES ('portal', 123, 1, NULL)")
+        } finally {
+            legacy.close()
         }
-        IptvChannelStore(context).use { store ->
+        val store = IptvChannelStore(context)
+        try {
             val channel = store.loadAll("portal").single()
             assertEquals("stalker:stalker1:1", channel.id)
             assertFalse(channel.stalkerDirectStream)
@@ -75,6 +87,8 @@ class StalkerPlaybackPersistenceTest {
             val direct = channel.copy(stalkerDirectStream = true)
             store.replaceAll("portal", listOf(direct), 456L)
             assertEquals(direct, store.loadAll("portal").single())
+        } finally {
+            store.close()
         }
     }
 }
