@@ -31,6 +31,11 @@ Do not merge until the remaining gates below have been addressed.
 - Wider categories and channel columns, fixed-height two-line names and focused-only
   marquees for longer labels. The group heading is Categories. Redundant wide-guide
   Watch live/Programme guide actions and the extra ON AIR heading were removed.
+- The TV top bar uses the same height, spacing, profile avatar, selected capsule
+  and focus animation as other app pages. No TV-only underline, profile-name slot
+  or brightness overrides. Tab label metrics remain stable during focus changes.
+  Entering the TV top bar transfers actual focus out of the sidebar, preventing
+  a stale search/category focus ring from remaining visible underneath it.
 - Readable sidebar counts, corrected local Inter variable-font weights, balanced TV
   navigation, guide gutters, and separate timeline-label/current-time-marker tracks.
 - A dimmed event picker with first-playable-source focus and origin-card focus return.
@@ -146,6 +151,12 @@ No image or scanning change adds IPTV stream probes or broad provider requests.
 Web cold-start checks also caught a cancelled guide timer that blocked later batches
 on effect replay, and local last-channel restoration causing a hydration mismatch.
 Timer state is now reset on cleanup and local selection restored after mount.
+
+Top-bar follow-up: four emulator checks passed (two new shared-header regressions
+and the two existing overhaul UI tests). Bounds remain identical across all five
+destinations with/without a profile, and the focused profile/tab/settings pixels
+match across destinations. A real-app D-pad check also repeated the sidebar/top-bar
+handoff three times and continued into categories without retaining two focus rings.
 
 The automated five-state captures use controlled programme/channel fixtures and
 an inactive mini-player. Sports artwork comes from a captured public addon catalog;

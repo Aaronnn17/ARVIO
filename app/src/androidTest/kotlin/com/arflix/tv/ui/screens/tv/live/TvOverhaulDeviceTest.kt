@@ -14,7 +14,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.test.platform.app.InstrumentationRegistry
 import com.arflix.tv.data.model.*
 import com.arflix.tv.ui.components.AppTopBar
-import com.arflix.tv.ui.components.AppTopBarHeight
+import com.arflix.tv.ui.components.AppTopBarContentTopInset
 import com.arflix.tv.ui.components.SidebarItem
 import org.junit.Assert.*
 import org.junit.Rule
@@ -82,7 +82,7 @@ class TvOverhaulDeviceTest {
         try {
             compose.setContent {
                 Box(Modifier.fillMaxSize()) {
-                    Box(Modifier.fillMaxSize().padding(top = com.arflix.tv.ui.components.LiveTvTopBarHeight)) {
+                    Box(Modifier.fillMaxSize().padding(top = AppTopBarContentTopInset)) {
                         LiveDrawerWorkspace(expanded.value, contentKey = if (sports.value) "sports" else "guide",
                             sidebarWidth = LiveDims.SidebarExpanded, sidebar = {
                             CategorySidebar(tree = tree, selectedId = if (sports.value) SPORTS_GUIDE_CATEGORY else "all",

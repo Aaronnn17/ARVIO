@@ -114,7 +114,7 @@ import com.arflix.tv.ui.screens.profile.PinEntryDialog
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.KeepScreenOn
-import com.arflix.tv.ui.components.AppTopBarHeight
+import com.arflix.tv.ui.components.AppTopBarContentTopInset
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
@@ -529,7 +529,7 @@ fun LiveTvScreen(
     val compactTouchLayout = isTouchDevice && configuration.screenWidthDp < 900
     val landscapeCompactMiniPlayer = miniPlayerLayout == LiveTvMiniPlayerLayout.LANDSCAPE_COMPACT
     val showTopBar = !isTouchDevice
-    val contentTopPadding = if (showTopBar) com.arflix.tv.ui.components.LiveTvTopBarHeight else 0.dp
+    val contentTopPadding = if (showTopBar) AppTopBarContentTopInset else 0.dp
     val coroutineScope = rememberCoroutineScope()
     val guideClockMillis by produceState(initialValue = System.currentTimeMillis()) {
         while (true) {
@@ -878,6 +878,7 @@ fun LiveTvScreen(
     var topBarFocusIndex by rememberSaveable {
         mutableIntStateOf(topBarSelectedIndex(SidebarItem.TV, hasProfile).coerceIn(0, maxTopBarIndex))
     }
+    val topBarFocusRequester = remember { FocusRequester() }
     var lastGuideUserNavigationAt by remember { mutableLongStateOf(0L) }
     fun noteGuideUserNavigation() {
         lastGuideUserNavigationAt = System.currentTimeMillis()
@@ -3214,16 +3215,7 @@ fun LiveTvScreen(
                 }
             )
         } else {
-            // Content starts right under the pill row — 52 dp puts the first
-            // row/search field 4 dp below the pills. The remaining top-bar
-            // gradient tail is transparent enough to vanish over our near-
-            // black Bg so the two regions read as one surface.
-            // Content sits under the top bar (82dp tall with a dark-to-
-            // transparent gradient). Starting at 0dp lets the grid/sidebar
-            // background bleed up into the transparent tail of the gradient
-            // so the two regions read as one surface instead of a hovering
-            // chip row. The content itself gets an internal top padding so
-            // nothing important renders under the opaque chips.
+            // Both drawer and guide use the shared app header inset.
             if (useTouchRail) {
                 Column(
                     modifier = Modifier
@@ -3832,7 +3824,12 @@ fun LiveTvScreen(
                     focusedIndex = if (focusZone == LiveTvFocusZone.TOPBAR) topBarFocusIndex else -1,
                     profile = currentProfile,
                     profileCount = 1,
+                    modifier = Modifier.focusRequester(topBarFocusRequester)
+                        .focusable(enabled = focusZone == LiveTvFocusZone.TOPBAR),
                 )
+                LaunchedEffect(focusZone) {
+                    if (focusZone == LiveTvFocusZone.TOPBAR) topBarFocusRequester.requestFocus()
+                }
             }
         }
 

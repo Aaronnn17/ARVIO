@@ -29,11 +29,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,7 +55,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 
 val AppTopBarHeight = 82.dp
-val LiveTvTopBarHeight = 48.dp
 val AppTopBarTopPadding = 0.dp
 val AppTopBarContentTopInset = 98.dp
 /** On mobile/tablet where the topbar is hidden, use a small status-bar-like inset instead. */
@@ -103,8 +102,6 @@ fun AppTopBar(
     hasUpdateBadge: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val guideHeader = selectedItem == SidebarItem.TV
-    val wideGuideHeader = guideHeader && profile != null && androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 800
     val showProfile = profile != null
     val hasProfile = showProfile
     val currentTime = rememberTopBarTime(clockFormat)
@@ -116,8 +113,9 @@ fun AppTopBar(
 
     Box(
         modifier = modifier
+            .testTag("app-topbar")
             .fillMaxWidth()
-            .height(if (guideHeader) LiveTvTopBarHeight else AppTopBarContentTopInset)
+            .height(AppTopBarContentTopInset)
             .background(
                 Brush.verticalGradient(
                     colors = listOf(
@@ -131,8 +129,8 @@ fun AppTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (guideHeader) LiveTvTopBarHeight else AppTopBarHeight)
-                .padding(start = AppTopBarHorizontalPadding, end = AppTopBarHorizontalPadding, top = if (guideHeader) 0.dp else 12.dp),
+                .height(AppTopBarHeight)
+                .padding(start = AppTopBarHorizontalPadding, end = AppTopBarHorizontalPadding, top = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // ── LEFT: Profile avatar (only if multiple profiles) ──
@@ -141,11 +139,6 @@ fun AppTopBar(
                     profile = profile,
                     isFocused = isFocused && focusedIndex == 0
                 )
-                if (wideGuideHeader) {
-                    Text(profile.name, color = Color.White, fontSize = 12.sp, maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier.width(94.dp).padding(start = 8.dp))
-                }
                 Spacer(modifier = Modifier.width(16.dp))
             }
 
@@ -165,7 +158,6 @@ fun AppTopBar(
                             item = item,
                             isFocused = isFocused && focusedIndex == itemFocusIndex,
                             isSelected = selectedIndex == itemFocusIndex,
-                            underlined = guideHeader,
                         )
                     }
                 }
@@ -173,7 +165,6 @@ fun AppTopBar(
 
             // ── RIGHT: Settings gear + clock ──
             Row(
-                modifier = if (wideGuideHeader) Modifier.width(150.dp) else Modifier,
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End)
             ) {
@@ -188,7 +179,7 @@ fun AppTopBar(
                     text = currentTime,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Normal,
-                    color = Color.White.copy(alpha = if (guideHeader) 0.88f else 0.55f)
+                    color = Color.White.copy(alpha = 0.55f)
                 )
             }
         }
@@ -201,14 +192,13 @@ private fun TopBarNavChip(
     item: SidebarItem,
     isFocused: Boolean,
     isSelected: Boolean,
-    underlined: Boolean = false,
 ) {
-    val accent = if (underlined) Color.White else resolveAccentColor(fallback = Color.White)
+    val accent = resolveAccentColor(fallback = Color.White)
 
     val containerColor by animateColorAsState(
         targetValue = when {
             isFocused -> Color.White.copy(alpha = 0.2f)
-            isSelected && !underlined -> Color.White.copy(alpha = 0.1f)
+            isSelected -> Color.White.copy(alpha = 0.1f)
             else -> Color.Transparent
         },
         animationSpec = tween(AnimationConstants.DURATION_FAST),
@@ -218,7 +208,7 @@ private fun TopBarNavChip(
         targetValue = when {
             isFocused -> Color.White  // focused icon stays white (wins over selected)
             isSelected -> accent  // selected icon gets accent
-            else -> Color.White.copy(alpha = if (underlined) 0.86f else 0.62f)
+            else -> Color.White.copy(alpha = 0.62f)
         },
         animationSpec = tween(AnimationConstants.DURATION_FAST),
         label = "topbar_icon_color"
@@ -227,7 +217,7 @@ private fun TopBarNavChip(
         targetValue = when {
             isFocused -> Color.White  // focused text stays white (wins over selected)
             isSelected -> accent  // selected text gets accent
-            else -> Color.White.copy(alpha = if (underlined) 0.86f else 0.68f)
+            else -> Color.White.copy(alpha = 0.68f)
         },
         animationSpec = tween(AnimationConstants.DURATION_FAST),
         label = "topbar_text_color"
@@ -245,11 +235,7 @@ private fun TopBarNavChip(
 
     Row(
         modifier = Modifier
-            .then(if (underlined && isSelected) Modifier.drawWithContent {
-                drawContent()
-                drawRect(Color.White, androidx.compose.ui.geometry.Offset(10.dp.toPx(), size.height - 2.dp.toPx()),
-                    androidx.compose.ui.geometry.Size(size.width - 20.dp.toPx(), 2.dp.toPx()))
-            } else Modifier)
+            .testTag("topbar-item-${item.name}")
             .clip(RoundedCornerShape(16.dp))
             .background(containerColor)
             .graphicsLayer {
@@ -269,7 +255,8 @@ private fun TopBarNavChip(
         Text(
             text = label,
             fontSize = 14.sp,
-            fontWeight = if (isFocused || isSelected) FontWeight.SemiBold else FontWeight.Medium,
+            // Keep label metrics stable when selection/focus moves between pages.
+            fontWeight = FontWeight.SemiBold,
             color = textColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
@@ -315,6 +302,7 @@ private fun TopBarSettingsGear(
 
     Box(
         modifier = Modifier
+            .testTag("topbar-item-SETTINGS")
             .size(36.dp)
             .clip(CircleShape)
             .background(containerColor)
@@ -368,6 +356,7 @@ private fun TopBarProfileAvatar(
 
     Box(
         modifier = Modifier
+            .testTag("topbar-profile")
             .size(40.dp)
             .clip(CircleShape)
             .background(containerColor)
