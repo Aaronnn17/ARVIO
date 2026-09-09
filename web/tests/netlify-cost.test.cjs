@@ -237,6 +237,17 @@ test('GET and POST proxy routes propagate caller cancellation to the metadata fe
   }
 });
 
+test('GET and POST preserve provider Retry-After without caching the rejection', async () => {
+  for (const method of ['GET', 'POST']) {
+    const api = proxy(() => new Response('Slow down', { status: 429, headers: { 'retry-after': '1800' } }));
+    const response = await route('app/api/proxy/route.ts', api)[method](request(publicUrl, {},
+      { method, ...(method === 'POST' ? { body: '{}' } : {}) }));
+    assert.equal(response.status, 429);
+    assert.equal(response.headers.get('retry-after'), '1800');
+    assert.equal(response.headers.get('netlify-cdn-cache-control'), null);
+  }
+});
+
 test('subtitle conversion retains SRT/VTT and varies its CDN cache by complete subtitle URL', async () => {
   for (const input of ['1\n00:00:01,000 --> 00:00:02,000\nFixture', 'WEBVTT\n\n00:01.000 --> 00:02.000\nFixture']) {
     const api = proxy(() => new Response(input));

@@ -64,6 +64,8 @@ export async function GET(request: NextRequest) {
 
   const headers = new Headers();
   headers.set("content-type", contentType);
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) headers.set("retry-after", retryAfter);
   headers.set("x-content-type-options", "nosniff");
   const contentPolicy = response.headers.get("content-security-policy");
   if (contentPolicy) headers.set("content-security-policy", contentPolicy);
@@ -148,6 +150,8 @@ export async function POST(request: NextRequest) {
 
   const headers = new Headers();
   headers.set("content-type", response.headers.get("content-type") ?? "application/json");
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) headers.set("retry-after", retryAfter);
   headers.set("x-content-type-options", "nosniff");
   const contentPolicy = response.headers.get("content-security-policy");
   if (contentPolicy) headers.set("content-security-policy", contentPolicy);

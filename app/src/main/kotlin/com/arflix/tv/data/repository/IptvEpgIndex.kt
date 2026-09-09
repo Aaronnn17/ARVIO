@@ -37,6 +37,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                 end_ms INTEGER NOT NULL,
                 title TEXT NOT NULL,
                 description TEXT,
+                catchup_available INTEGER,
                 PRIMARY KEY(source_key, channel_id, start_ms, end_ms, title)
             )
             """.trimIndent()
@@ -70,6 +71,11 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion in 2..6 && newVersion >= 7) {
+            // Nullable preserves "unknown" for XMLTV and already indexed programmes.
+            db.execSQL("ALTER TABLE epg_programs ADD COLUMN catchup_available INTEGER")
+            if (oldVersion == 6) return
+        }
         if (oldVersion in 2..5 && newVersion >= 6) {
             db.execSQL("ALTER TABLE epg_sources ADD COLUMN full_updated_ms INTEGER NOT NULL DEFAULT 0")
             if (oldVersion == 5) return
@@ -371,7 +377,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             .forEach { chunk ->
                 val placeholders = chunk.joinToString(",") { "?" }
                 val sql = """
-                    SELECT channel_id, start_ms, end_ms, title, description
+                    SELECT channel_id, start_ms, end_ms, title, description, catchup_available
                     FROM epg_programs
                     WHERE source_key = ?
                       AND channel_id IN ($placeholders)
@@ -392,6 +398,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                     val endCol = cursor.getColumnIndexOrThrow("end_ms")
                     val titleCol = cursor.getColumnIndexOrThrow("title")
                     val descCol = cursor.getColumnIndexOrThrow("description")
+                    val catchupCol = cursor.getColumnIndexOrThrow("catchup_available")
                     while (cursor.moveToNext()) {
                         val channelId = cursor.getString(channelCol).orEmpty()
                         val startMs = cursor.getLong(startCol)
@@ -405,7 +412,8 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                                 title = title,
                                 description = description?.takeIf { it.isNotBlank() },
                                 startUtcMillis = startMs,
-                                endUtcMillis = endMs
+                                endUtcMillis = endMs,
+                                catchupAvailable = if (cursor.isNull(catchupCol)) null else cursor.getInt(catchupCol) != 0,
                             )
                         )
                     }
@@ -432,7 +440,8 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         val startMs: Long,
         val endMs: Long,
         val title: String,
-        val description: String?
+        val description: String?,
+        val catchupAvailable: Boolean?,
     )
 
     private fun SQLiteDatabase.insertNowNextRows(
@@ -448,11 +457,11 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             abortIfRequested(shouldAbort)
             val rowCount = pending.size
             val statement = statements.getOrPut(rowCount) {
-                val values = List(rowCount) { "(?, ?, ?, ?, ?, ?)" }.joinToString(",")
+                val values = List(rowCount) { "(?, ?, ?, ?, ?, ?, ?)" }.joinToString(",")
                 compileStatement(
                     """
                     INSERT OR IGNORE INTO epg_programs
-                    (source_key, channel_id, start_ms, end_ms, title, description)
+                    (source_key, channel_id, start_ms, end_ms, title, description, catchup_available)
                     VALUES $values
                     """.trimIndent()
                 )
@@ -469,6 +478,11 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                     statement.bindNull(bindIndex++)
                 } else {
                     statement.bindString(bindIndex++, row.description)
+                }
+                when (row.catchupAvailable) {
+                    true -> statement.bindLong(bindIndex++, 1L)
+                    false -> statement.bindLong(bindIndex++, 0L)
+                    null -> statement.bindNull(bindIndex++)
                 }
             }
             // execute() avoids retrieving a row id for a result that is never used.
@@ -499,7 +513,8 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                         startMs = program.startUtcMillis,
                         endMs = program.endUtcMillis,
                         title = titleTrimmed,
-                        description = description
+                        description = description,
+                        catchupAvailable = program.catchupAvailable,
                     )
                     if (pending.size == MAX_INSERT_ROWS) {
                         flushPending()
@@ -636,9 +651,10 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         // v3 persists coverage statistics so startup never scans the whole table.
         // v4 removes the duplicate programme-window index to speed up bulk imports.
         // v5 shares XMLTV schedules across variants; v6 distinguishes full and partial refreshes.
-        const val DATABASE_VERSION = 6
+        // v7 retains provider archive availability without deleting existing guide data.
+        const val DATABASE_VERSION = 7
         const val MAX_SQL_ARGS = 900
-        const val INSERT_BINDINGS_PER_ROW = 6
+        const val INSERT_BINDINGS_PER_ROW = 7
         const val MAX_INSERT_ROWS = MAX_SQL_ARGS / INSERT_BINDINGS_PER_ROW
         const val MAX_DESCRIPTION_CHARS = 200
         // ±48h of guide needs only ~24-48 programmes each way. Keeping 96+240 held far

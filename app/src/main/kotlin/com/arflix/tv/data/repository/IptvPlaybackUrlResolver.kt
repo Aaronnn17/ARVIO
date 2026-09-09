@@ -7,6 +7,7 @@ import okhttp3.Request
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.net.URI
 import java.util.Locale
+import com.arflix.tv.network.iptvProviderCooldownMs
 
 internal fun buildXtreamLiveStreamUrl(
     baseUrl: String,
@@ -38,6 +39,7 @@ internal class IptvPlaybackUrlResolver(
     private data class ProbeResult(
         val target: IptvPlaybackTarget,
         val isConclusive: Boolean,
+        val statusCode: Int,
     )
 
     private data class CachedTarget(
@@ -46,6 +48,7 @@ internal class IptvPlaybackUrlResolver(
     )
 
     private val cache = LinkedHashMap<String, CachedTarget>()
+    private val failedUntil = LinkedHashMap<String, Long>()
 
     suspend fun resolve(
         rawUrl: String,
@@ -58,9 +61,10 @@ internal class IptvPlaybackUrlResolver(
             url = url,
             isHls = looksLikeHlsPlaybackUrl(url),
         )
-        if (!probeKnownUrl && !shouldResolveIptvPlaybackRedirect(url)) return inferredTarget
-
         val now = System.currentTimeMillis()
+        synchronized(cache) {
+            if ((failedUntil[url] ?: 0L) > now) return inferredTarget
+        }
         if (!forceRefresh) {
             synchronized(cache) {
                 cache[url]
@@ -68,18 +72,30 @@ internal class IptvPlaybackUrlResolver(
                     ?.let { return it.target }
             }
         }
+        // A provider may serve HLS from a .ts URL. Keep a successfully probed
+        // format on subsequent selections instead of repeating the parse failure.
+        if (!probeKnownUrl && !shouldResolveIptvPlaybackRedirect(url)) return inferredTarget
 
         val resolved = withContext(Dispatchers.IO) {
             val headProbe = executeProbe(url, headers, useHead = true)
             if (headProbe?.isConclusive == true) {
                 headProbe.target
+            } else if (headProbe != null && iptvProviderCooldownMs(headProbe.statusCode, null, now) > 0L) {
+                null
             } else {
                 executeProbe(url, headers, useHead = false)?.takeIf { it.isConclusive }?.target
             }
         }
 
-        if (resolved == null) return inferredTarget
+        if (resolved == null) {
+            synchronized(cache) {
+                failedUntil[url] = now + 60_000L
+                while (failedUntil.size > maxCacheEntries) failedUntil.remove(failedUntil.keys.first())
+            }
+            return inferredTarget
+        }
         synchronized(cache) {
+            failedUntil.remove(url)
             cache[url] = CachedTarget(resolved, now)
             while (cache.size > maxCacheEntries) {
                 val firstKey = cache.keys.firstOrNull() ?: break
@@ -132,6 +148,7 @@ internal class IptvPlaybackUrlResolver(
                 )
                 ProbeResult(
                     target = target,
+                    statusCode = response.code,
                     isConclusive = response.isSuccessful && (target.isHls ||
                         contentType.isDirectMediaContentType()),
                 )

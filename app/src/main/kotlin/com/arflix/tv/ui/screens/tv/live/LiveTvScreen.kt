@@ -2,6 +2,10 @@
 
 package com.arflix.tv.ui.screens.tv.live
 
+import com.arflix.tv.network.iptvProviderCooldownMs
+import com.arflix.tv.network.IptvProviderRequestGuard
+import com.arflix.tv.network.isIptvProviderRequestPaused
+
 import android.app.Activity
 import android.app.ActivityManager
 import android.content.Context
@@ -95,6 +99,7 @@ import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
+import com.arflix.tv.data.model.IptvGuideHistory
 import com.arflix.tv.data.model.MediaItem as ArvioMediaItem
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.model.PlaylistGroupKey
@@ -355,34 +360,6 @@ private fun Map<String, String>.safePlaybackHeaders(): Map<String, String> {
     return filter { (name, value) -> isSafePlaybackHeader(name.trim(), value.trim()) }
         .mapKeys { (name, _) -> name.trim() }
         .mapValues { (_, value) -> value.trim() }
-}
-
-private fun mergeProgramLists(
-    first: List<IptvProgram>,
-    second: List<IptvProgram>,
-): List<IptvProgram> {
-    if (first.isEmpty()) return second
-    if (second.isEmpty()) return first
-    return (first + second)
-        .distinctBy { "${it.startUtcMillis}:${it.endUtcMillis}:${it.title}" }
-        .sortedBy { it.startUtcMillis }
-}
-
-private fun mergeGuideSlices(
-    primary: IptvNowNext?,
-    secondary: IptvNowNext?,
-): IptvNowNext? {
-    if (!primary.hasGuideData()) return secondary
-    if (!secondary.hasGuideData()) return primary
-    primary ?: return secondary
-    secondary ?: return primary
-    return IptvNowNext(
-        now = primary.now ?: secondary.now,
-        next = primary.next ?: secondary.next,
-        later = primary.later ?: secondary.later,
-        upcoming = mergeProgramLists(primary.upcoming, secondary.upcoming),
-        recent = mergeProgramLists(primary.recent, secondary.recent),
-    )
 }
 
 private fun EnrichedChannel.guideFallbackKeys(): List<String> {
@@ -1071,10 +1048,6 @@ fun LiveTvScreen(
             }
         }
     }
-    fun guideForChannel(channel: EnrichedChannel?): IptvNowNext? {
-        if (channel == null) return null
-        return state.snapshot.nowNext[channel.id]
-    }
     // Playing channel — default to the one we were navigated to, else the first
     // channel of the first non-empty category.
     val rememberedChannelByCategory = remember { mutableMapOf<String, String>() }
@@ -1325,12 +1298,13 @@ fun LiveTvScreen(
     }
     val indexedGuideLoadedIds = indexedGuideState.value.first
     val indexedGuideNowNext = indexedGuideState.value.second
-    val effectiveGuideNowNext = remember(state.snapshot.nowNext, indexedGuideNowNext, guideQueryIds) {
+    val effectiveGuideNowNext = remember(state.snapshot.nowNext, indexedGuideNowNext, guideQueryIds, guideClockMillis) {
         HashMap(indexedGuideNowNext).apply {
             guideQueryIds.forEach { id ->
                 mergeGuideSlices(
                     state.snapshot.nowNext[id],
-                    indexedGuideNowNext[id]
+                    indexedGuideNowNext[id],
+                    guideClockMillis,
                 )?.let { put(id, it) }
             }
         }
@@ -1709,6 +1683,15 @@ fun LiveTvScreen(
     var isHudVisible by remember { mutableStateOf(false) }
     var guideOpenedFromQuickZap by remember { mutableStateOf(false) }
     var guideChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
+    val fullscreenGuideChannelId = (guideChannel ?: playingChannel)?.id
+    val fullscreenGuide = remember(
+        fullscreenGuideChannelId,
+        fullscreenGuideChannelId?.let { state.snapshot.nowNext[it] },
+        fullscreenGuideChannelId?.let { effectiveGuideNowNext[it] },
+        guideClockMillis,
+    ) {
+        resolveFullscreenGuide(fullscreenGuideChannelId, state.snapshot.nowNext, effectiveGuideNowNext, guideClockMillis)
+    }
 
     fun getAvailableCategoryIds(tree: LiveCategoryTree): List<String> {
         val list = mutableListOf<String>()
@@ -1768,12 +1751,13 @@ fun LiveTvScreen(
         selectedCategoryId = ids.getOrNull(nextIndex) ?: "all"
     }
 
-    fun openFullscreenGuide() {
-        guideChannel = playingChannel
-        val localGuide = playingChannelId?.let(actionGuideNowNext::get)
-        if (localGuide == null || localGuide.recent.size < 6) {
-            viewModel.refreshCatchupHistoryForChannel(playingChannelId)
-        }
+    fun openFullscreenGuide(channel: EnrichedChannel? = playingChannel, fromQuickZap: Boolean = false) {
+        guideChannel = channel
+        guideOpenedFromQuickZap = fromQuickZap
+        quickZapOpen = false
+        // The view model reads the complete local archive first and owns coverage/backoff.
+        // A row count cannot tell whether the guide covers hours or days.
+        viewModel.refreshCatchupHistoryForChannel(channel?.id, channel?.source)
         fullscreenGuideOpen = true
         hudPokeSignal++
     }
@@ -2049,6 +2033,7 @@ fun LiveTvScreen(
     }
 
     fun playProgramInMini(channel: EnrichedChannel, program: IptvProgram?) {
+        if (program?.catchupAvailable == false) return
         noteGuideUserNavigation()
         val playbackChannel = if (program != null) {
             catchupPlaybackVariant(channel, visibleChannels)
@@ -2243,8 +2228,7 @@ fun LiveTvScreen(
             program.endUtcMillis <= guideClockMillis -> EpgTemporalState.Past
             else -> EpgTemporalState.Future
         }
-        // EpgGrid only forwards past programmes when catch-up is supported.
-        val catchupSupported = temporalState == EpgTemporalState.Past
+        val catchupSupported = IptvGuideHistory.canReplay(channel.source, program, guideClockMillis)
         when (
             epgProgramInteractionAction(
                 temporalState = temporalState,
@@ -2262,6 +2246,7 @@ fun LiveTvScreen(
         }
     }
     fun playProgramInFullscreen(program: IptvProgram?, targetChannel: EnrichedChannel? = null) {
+        if (program?.catchupAvailable == false) return
         val channel = targetChannel ?: playingChannel
         if (program != playingCatchupProgram) {
             catchupPlaybackOffsetMs = 0L
@@ -2338,6 +2323,8 @@ fun LiveTvScreen(
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
+            .addInterceptor(IptvProviderRequestGuard.shared.preflightInterceptor(playback = true))
+            .addNetworkInterceptor(IptvProviderRequestGuard.shared.playbackInterceptor())
             .dns(OkHttpProvider.dns)
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(300, TimeUnit.SECONDS)
@@ -2359,6 +2346,7 @@ fun LiveTvScreen(
     val mediaSourceFactory = remember(iptvDataSourceFactory) {
         DefaultMediaSourceFactory(context)
             .setDataSourceFactory(iptvDataSourceFactory)
+            .setLoadErrorHandlingPolicy(IptvLoadErrorHandlingPolicy())
     }
     val livePlaybackBufferProfile = remember(context) {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
@@ -2609,7 +2597,7 @@ fun LiveTvScreen(
                 hudPokeSignal++
                 return
             }
-            if (ch != null && currentNow != null && ch.supportsCatchupHistory()) {
+            if (ch != null && currentNow != null && IptvGuideHistory.canReplay(ch.source, currentNow, System.currentTimeMillis())) {
                 System.err.println("[IPTV-Catchup] auto-switch catchup program=${currentNow.title} targetMs=$boundedTarget")
                 playingCatchupProgram = currentNow
                 catchupPlaybackOffsetMs = boundedTarget
@@ -2660,6 +2648,12 @@ fun LiveTvScreen(
     }
     LaunchedEffect(currentStreamUrl, playingCatchupProgram, catchupUrlAnchorOffsetMs, playingChannel?.id) {
         val rawStream = currentStreamUrl ?: return@LaunchedEffect
+        // Probing a replacement stream must not run alongside the old stream on
+        // subscriptions that allow only one video connection.
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
+        lastPreparedStreamUrl = null
+        playerIsBuffering = true
         val sourceChannel = playingChannel?.source
         val streamProgram = playingCatchupProgram?.shiftedForCatchup(catchupUrlAnchorOffsetMs)
         val target = runCatching {
@@ -2669,6 +2663,8 @@ fun LiveTvScreen(
                 IptvPlaybackTarget(rawStream)
             }
         }.getOrElse { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            playerIsBuffering = false
             playbackDiagnostic = PlaybackDiagnostic(
                 title = if (playingCatchupProgram != null) context.getString(R.string.live_diag_catchup_unavailable) else context.getString(R.string.live_diag_playback_failed),
                 detail = error.message ?: context.getString(R.string.live_diag_no_playable_stream),
@@ -2774,7 +2770,9 @@ fun LiveTvScreen(
                 } else {
                     3
                 }
-                if (nextAttempt > maxRetryCount || httpResponseCode(error) in setOf(401, 403, 429, 513)) {
+                if (nextAttempt > maxRetryCount ||
+                    isIptvProviderRequestPaused(error) ||
+                    iptvProviderCooldownMs(httpResponseCode(error) ?: 0, null, 0L) > 0L) {
                     playbackDiagnostic = PlaybackDiagnostic(
                         title = context.getString(R.string.live_diag_playback_failed),
                         detail = "${error.errorCodeName}: ${classifyPlaybackError(error)}",
@@ -2793,7 +2791,11 @@ fun LiveTvScreen(
                 retryJob = coroutineScope.launch {
                     delay(1_000L * nextAttempt)
                     val retryTarget = runCatching {
-                        if (retryChannel != null) {
+                        if (retryProgram == null && preparedIsHls && !unsupportedContainer) {
+                            // A playlist reset must not discard the HLS type we
+                            // already detected from an extensionless or .ts URL.
+                            IptvPlaybackTarget(prepared, isHls = true)
+                        } else if (retryChannel != null) {
                             viewModel.resolvePlayableStreamUrl(
                                 channel = retryChannel,
                                 program = retryStreamProgram ?: retryProgram,
@@ -3603,7 +3605,7 @@ fun LiveTvScreen(
                 FullscreenGuideOverlay(
                     visible = isFullScreen && fullscreenGuideOpen,
                     channel = (guideChannel ?: playingChannel)?.let { it.copy(quality = it.displayQuality(playbackQuality)) },
-                    guide = guideForChannel(guideChannel ?: playingChannel),
+                    guide = fullscreenGuide,
                     selectedProgram = playingCatchupProgram,
                     clockTickMillis = guideClockMillis,
                     isTouchDevice = isTouchDevice,
@@ -3647,7 +3649,7 @@ fun LiveTvScreen(
                     visible = isFullScreen && quickZapOpen,
                     currentChannel = playingChannel,
                     channels = filteredChannels,
-                    nowNextMap = state.snapshot.nowNext,
+                    nowNextMap = actionGuideNowNext,
                     categoriesTree = visibleEnrichedState.value.tree,
                     selectedCategoryId = selectedCategoryId,
                     onCategorySelected = { selectedCategoryId = it },
@@ -3666,10 +3668,7 @@ fun LiveTvScreen(
                         hudPokeSignal++
                     },
                     onRightClick = { channel ->
-                        guideChannel = channel
-                        quickZapOpen = false
-                        guideOpenedFromQuickZap = true
-                        fullscreenGuideOpen = true
+                        openFullscreenGuide(channel, fromQuickZap = true)
                     }
                 )
             }
@@ -3993,6 +3992,7 @@ private fun compactIptvGroupKey(group: String?): String {
 }
 
 private fun classifyPlaybackError(error: PlaybackException): String {
+    if (isIptvProviderRequestPaused(error)) return "provider requests paused; please wait before retrying"
     httpResponseCode(error)?.let { return "provider returned HTTP $it" }
     val name = error.errorCodeName.lowercase()
     return when {

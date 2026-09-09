@@ -118,7 +118,7 @@ internal fun FullscreenGuideOverlay(
     val catchupSupported = remember(channel) { channel.supportsFullscreenCatchup() }
     val historyDays = IptvGuideHistory.days(channel.source).takeIf { it > 0 } ?: 3
     val pastWindowStart = nowMillis - historyDays * IptvGuideHistory.DAY_MS
-    val past = remember(guide, nowMillis, catchupSupported, historyDays) {
+    val past = remember(guide, nowMillis, channel.source, historyDays) {
         guide?.recent.orEmpty()
             .asSequence()
             .filter { it.endUtcMillis <= nowMillis && it.endUtcMillis >= pastWindowStart }
@@ -127,7 +127,9 @@ internal fun FullscreenGuideOverlay(
             .map {
                 GuideProgramItem(
                     it,
-                    if (catchupSupported) GuideProgramState.PastPlayable else GuideProgramState.PastUnavailable
+                    if (IptvGuideHistory.canReplay(channel.source, it, nowMillis)) {
+                        GuideProgramState.PastPlayable
+                    } else GuideProgramState.PastUnavailable
                 )
             }
             .toList()

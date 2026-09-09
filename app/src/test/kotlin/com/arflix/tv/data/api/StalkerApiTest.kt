@@ -44,11 +44,26 @@ class StalkerApiTest {
         assertTrue(ok)
         assertEquals(
             listOf(
-                "$PORTAL/server/load.php?type=stb&action=handshake",
-                "$PORTAL/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+                "$PORTAL/server/load.php?type=stb&action=handshake"
             ),
             requests
         )
+    }
+
+    @Test
+    fun `failed catalog page never returns a partial successful channel list`() = runTest {
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("action=get_genres") -> """{"js":[]}"""
+                url.contains("action=get_all_channels&p=1&") ->
+                    """{"js":{"total_items":2,"max_page_items":1,"data":[{"id":1,"name":"One","cmd":"http://provider.test/1"}]}}"""
+                else -> throw com.arflix.tv.network.IptvProviderRequestDeferredException()
+            }
+        }
+        var rejected = false
+        try { api.getChannels() } catch (_: com.arflix.tv.network.IptvProviderRequestDeferredException) { rejected = true }
+        assertTrue("An incomplete catalog must be reported as a failure", rejected)
     }
 
     @Test
@@ -69,8 +84,7 @@ class StalkerApiTest {
         assertEquals(
             listOf(
                 "$PORTAL/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake"
             ),
             requests
         )
@@ -111,8 +125,7 @@ class StalkerApiTest {
         assertEquals(
             listOf(
                 "$PORTAL/c/server/load.php?type=stb&action=handshake",
-                "$PORTAL/server/load.php?type=stb&action=handshake",
-                "$PORTAL/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+                "$PORTAL/server/load.php?type=stb&action=handshake"
             ),
             requests
         )
@@ -139,8 +152,7 @@ class StalkerApiTest {
             listOf(
                 "$PORTAL/c/server/load.php?type=stb&action=handshake",
                 "$PORTAL/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake"
             ),
             requests
         )
@@ -167,8 +179,7 @@ class StalkerApiTest {
         assertEquals(
             listOf(
                 "$PORTAL/stalker_portal/c/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake",
-                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
+                "$PORTAL/stalker_portal/server/load.php?type=stb&action=handshake"
             ),
             requests
         )

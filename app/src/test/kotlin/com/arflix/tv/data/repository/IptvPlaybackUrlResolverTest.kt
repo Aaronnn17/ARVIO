@@ -24,6 +24,12 @@ class IptvPlaybackUrlResolverTest {
         assertThat(calls.get()).isEqualTo(0)
         assertThat(resolver.resolve(url, emptyMap(), forceRefresh = true, probeKnownUrl = true).isHls).isTrue()
         assertThat(calls.get()).isEqualTo(1)
+        repeat(3) {
+            assertThat(resolver.resolve(url, emptyMap()).isHls).isTrue()
+        }
+        assertThat(calls.get()).isEqualTo(1)
+        assertThat(resolver.resolve(url, emptyMap(), forceRefresh = true, probeKnownUrl = true).isHls).isTrue()
+        assertThat(calls.get()).isEqualTo(2)
     }
 
     @Test fun `HTML error redirect is not cached as a media target`() = runBlocking {
@@ -36,7 +42,7 @@ class IptvPlaybackUrlResolverTest {
         }.build())
         val url = "https://provider.test/live/user/pass/channel-slug"
         repeat(2) { assertThat(resolver.resolve(url, emptyMap()).url).isEqualTo(url) }
-        assertThat(calls.get()).isEqualTo(4)
+        assertThat(calls.get()).isEqualTo(1)
     }
 
     @Test

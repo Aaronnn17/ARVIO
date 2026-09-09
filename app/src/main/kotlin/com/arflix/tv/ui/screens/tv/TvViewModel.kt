@@ -1,5 +1,7 @@
 package com.arflix.tv.ui.screens.tv
 
+import com.arflix.tv.network.withIptvProviderRequestGuard
+
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -54,6 +56,7 @@ private const val EpgLoadingStateLimit = 800
 private const val EpgAttemptedStateLimit = 2_400
 private const val LargeIptvListChannelCount = 10_000
 private const val StandardPriorityEpgLimit = 3_200
+private const val BackgroundShortEpgWarmupLimit = 24
 private const val LargeListPriorityCacheLimit = 360
 private const val LargeListFocusedNetworkEpgLimit = 24
 private const val LargeListFavoriteEpgPasses = 12
@@ -169,6 +172,7 @@ class TvViewModel @Inject constructor(
     private val iptvPlaybackUrlResolver by lazy {
         IptvPlaybackUrlResolver(
             OkHttpProvider.playbackClient.newBuilder()
+                .withIptvProviderRequestGuard()
                 .connectTimeout(3, TimeUnit.SECONDS)
                 .readTimeout(4, TimeUnit.SECONDS)
                 .writeTimeout(3, TimeUnit.SECONDS)
@@ -759,14 +763,7 @@ class TvViewModel @Inject constructor(
         existing: com.arflix.tv.data.model.IptvNowNext?,
         fresh: com.arflix.tv.data.model.IptvNowNext
     ): com.arflix.tv.data.model.IptvNowNext {
-        if (existing == null) return fresh
-        return com.arflix.tv.data.model.IptvNowNext(
-            now = fresh.now ?: existing.now,
-            next = fresh.next ?: existing.next,
-            later = fresh.later ?: existing.later,
-            upcoming = if (fresh.upcoming.isNotEmpty()) fresh.upcoming else existing.upcoming,
-            recent = if (fresh.recent.isNotEmpty()) fresh.recent else existing.recent,
-        )
+        return IptvGuideHistory.mergeSchedules(existing, fresh)
     }
 
     // Every TvUiState emission re-executes the (very large, interpreter-only)
@@ -957,7 +954,7 @@ class TvViewModel @Inject constructor(
         val state = _uiState.value
         val channels = state.snapshot.channels
         if (channels.isEmpty()) return
-        if (isLargeIptvList(channels.size)) {
+        if (isActiveLargeIptvList()) {
             val cacheWarmIds = buildPriorityEpgChannelIds(
                 state = state,
                 maxChannels = LargeListPriorityCacheLimit
@@ -1020,11 +1017,10 @@ class TvViewModel @Inject constructor(
             refreshGuideFromCache()
 
             val afterCache = _uiState.value
-            val missingWarmIds = afterCache.snapshot.channels
+            val missingWarmIds = warmChannelIds
                 .asSequence()
-                .map { it.id }
                 .filter { id -> !hasProgramData(afterCache.snapshot.nowNext[id]) }
-                .take(StandardPriorityEpgLimit)
+                .take(BackgroundShortEpgWarmupLimit)
                 .toCollection(LinkedHashSet())
             if (missingWarmIds.isEmpty()) return@launch
 
@@ -1621,15 +1617,15 @@ class TvViewModel @Inject constructor(
         }
     }
 
-    fun refreshCatchupHistoryForChannel(channelId: String?) {
+    fun refreshCatchupHistoryForChannel(channelId: String?, knownChannel: IptvChannel? = null) {
         val id = channelId?.trim().orEmpty()
         if (id.isBlank()) return
         viewModelScope.launch {
             val current = _uiState.value
-            val channel = current.channelLookup[id] ?: lookupChannelById(current, id)
-            if (!supportsCatchup(channel)) return@launch
+            val channel = knownChannel?.takeIf { it.id == id }
+                ?: current.channelLookup[id] ?: lookupChannelById(current, id)
             val now = System.currentTimeMillis()
-            if (hasRecentCatchupHistory(channel, _uiState.value.snapshot.nowNext[id], now)) return@launch
+            if (supportsCatchup(channel) && hasRecentCatchupHistory(channel, current.snapshot.nowNext[id], now)) return@launch
             val lastRefreshAt = catchupHistoryRefreshAt[id] ?: 0L
             if (now - lastRefreshAt < RichCatchupRefreshThrottleMs) return@launch
 
@@ -1649,9 +1645,7 @@ class TvViewModel @Inject constructor(
             }
             if (indexedHistory.isNotEmpty()) mergeNowNext(indexedHistory)
             val afterCache = _uiState.value
-            val afterCacheChannel = afterCache.channelLookup[id]
-                ?: lookupChannelById(afterCache, id)
-            if (hasRecentCatchupHistory(afterCacheChannel, afterCache.snapshot.nowNext[id])) {
+            if (!supportsCatchup(channel) || hasRecentCatchupHistory(channel, afterCache.snapshot.nowNext[id])) {
                 System.err.println(
                     "[EPG-Catchup] cache satisfied channel=$id " +
                         "recent=${recentCatchupCount(afterCache.snapshot.nowNext[id])}"

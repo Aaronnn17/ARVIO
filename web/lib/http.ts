@@ -25,9 +25,11 @@ function cleanErrorMessage(status: number, raw: string): string {
 
 export class HttpError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  retryAfter: string | null;
+  constructor(status: number, message: string, retryAfter: string | null = null) {
     super(message);
     this.status = status;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -52,7 +54,7 @@ export async function jsonRequest<T>(url: string, init: RequestInit = {}): Promi
   }, async (response) => {
   if (!response.ok) {
     const message = await response.text().catch(() => "");
-    throw new HttpError(response.status, cleanErrorMessage(response.status, message));
+    throw new HttpError(response.status, cleanErrorMessage(response.status, message), response.headers.get("retry-after"));
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
@@ -63,7 +65,7 @@ export async function textRequest(url: string, init: RequestInit = {}): Promise<
   return timedRequest(url, init, async (response) => {
   if (!response.ok) {
     const message = await response.text().catch(() => "");
-    throw new Error(cleanErrorMessage(response.status, message));
+    throw new HttpError(response.status, cleanErrorMessage(response.status, message), response.headers.get("retry-after"));
   }
   return response.text();
   });
