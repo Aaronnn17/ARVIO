@@ -28,6 +28,11 @@ internal fun buildXtreamLiveStreamUrl(
 internal data class IptvPlaybackTarget(
     val url: String,
     val isHls: Boolean = false,
+    /**
+     * Container MIME type the server stated in its `Content-Type`, when it is one the
+     * player cannot reliably infer from the URL. Null means "let the player sniff".
+     */
+    val mimeType: String? = null,
 )
 
 internal class IptvPlaybackUrlResolver(
@@ -129,6 +134,7 @@ internal class IptvPlaybackUrlResolver(
                     isHls = looksLikeHlsPlaybackUrl(finalUrl) ||
                         contentType.isHlsContentType() ||
                         bodyStartsWithM3u,
+                    mimeType = contentType.asTransportStreamMimeType(),
                 )
                 ProbeResult(
                     target = target,
@@ -161,11 +167,11 @@ internal fun shouldResolveIptvPlaybackRedirect(url: String): Boolean {
     val lastSegment = path.substringAfterLast('/')
     if (lastSegment.isBlank() || lastSegment.contains('.')) return false
 
-    val segments = path.trim('/').split('/').filter { it.isNotBlank() }
-    if (segments.size < 4 || !segments.first().equals("live", ignoreCase = true)) return false
-
-    // Standard Xtream numeric IDs are direct MPEG-TS streams. Slug-based providers
-    // commonly redirect to HLS, which Media3 cannot infer from the original URL.
+    // Standard Xtream numeric IDs are direct MPEG-TS streams, so there is nothing a
+    // probe could add. Every other extension-less address is opaque — slug providers
+    // that redirect to HLS as well as portals that hand out a single-segment token
+    // URL. For those the server's own `Content-Type` is the only reliable signal, and
+    // guessing where an answer is available is what broke playback on token portals.
     return lastSegment.toLongOrNull() == null
 }
 
@@ -181,6 +187,20 @@ internal fun looksLikeHlsPlaybackUrl(url: String): Boolean {
 private fun String?.isHlsContentType(): Boolean {
     val value = this.orEmpty().lowercase(Locale.US)
     return "mpegurl" in value || "vnd.apple.mpegurl" in value
+}
+
+/**
+ * MPEG-TS is the one container Media3 regularly fails to infer from an extension-less
+ * URL, and the one portals actually announce (`Content-Type: video/mp2t`). Other
+ * containers are left to the player's own sniffing rather than risking a wrong hint.
+ */
+private fun String?.asTransportStreamMimeType(): String? {
+    val value = this.orEmpty().lowercase(Locale.US).substringBefore(';').trim()
+    return when (value) {
+        "video/mp2t", "video/mpeg", "video/ts", "application/mp2t", "application/x-mpegts" ->
+            "video/mp2t"
+        else -> null
+    }
 }
 
 private fun String?.isDirectMediaContentType(): Boolean {

@@ -44,6 +44,8 @@ data class IptvChannel(
     val qualityLabel: String? = null,
     val variantKey: String? = null,
     val drmInfo: DrmInfo? = null,
+    // Only true when the portal explicitly confirmed that live playback needs no create_link.
+    val stalkerDirectStream: Boolean = false,
 )
 
 /**

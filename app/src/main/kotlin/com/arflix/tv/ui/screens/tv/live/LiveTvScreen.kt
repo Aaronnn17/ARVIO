@@ -2455,6 +2455,7 @@ fun LiveTvScreen(
 
     var lastPreparedStreamUrl by remember { mutableStateOf<String?>(null) }
     var lastPreparedIsHls by remember { mutableStateOf(false) }
+    var lastPreparedMimeType by remember { mutableStateOf<String?>(null) }
     var lastPreparedHeaders by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var lastPreparedCatchupOffsetMs by remember { mutableLongStateOf(-1L) }
     var playerRetryCount by remember { mutableIntStateOf(0) }
@@ -2468,6 +2469,7 @@ fun LiveTvScreen(
         initialPositionMs: Long = 0L,
         drmInfo: com.arflix.tv.data.model.DrmInfo? = null,
         forcePrepare: Boolean = false,
+        resolvedMimeType: String? = null,
     ) {
         val mergedHeaders = (baseRequestHeaders + headers).safePlaybackHeaders()
         iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
@@ -2491,6 +2493,9 @@ fun LiveTvScreen(
             .apply {
                 if (isHls) {
                     setMimeType(MimeTypes.APPLICATION_M3U8)
+                } else if (resolvedMimeType != null) {
+                    // What the server actually answered beats anything read off the URL.
+                    setMimeType(resolvedMimeType)
                 } else if (looksLikeMpegTsUrl(stream)) {
                     setMimeType(MimeTypes.VIDEO_MP2T)
                 }
@@ -2523,6 +2528,7 @@ fun LiveTvScreen(
         exoPlayer.play()
         lastPreparedStreamUrl = stream
         lastPreparedIsHls = isHls
+        lastPreparedMimeType = resolvedMimeType
         lastPreparedHeaders = headers
         lastPreparedCatchupOffsetMs = if (playingCatchupProgram != null) catchupUrlAnchorOffsetMs else -1L
         if (resetRetry) playerRetryCount = 0
@@ -2690,6 +2696,7 @@ fun LiveTvScreen(
             resetRetry = true,
             initialPositionMs = initialSeekMs,
             drmInfo = playingChannel?.source?.drmInfo,
+            resolvedMimeType = target.mimeType,
         )
         // Persist "recent" as soon as playback starts.
         playingChannelId?.let { id ->
@@ -2774,7 +2781,8 @@ fun LiveTvScreen(
                 } else {
                     3
                 }
-                if (nextAttempt > maxRetryCount || httpResponseCode(error) in setOf(401, 403, 429, 513)) {
+                val httpCode = httpResponseCode(error)
+                if (!shouldRetryLiveTvPlayback(httpCode, nextAttempt, maxRetryCount, retryProgram != null)) {
                     playbackDiagnostic = PlaybackDiagnostic(
                         title = context.getString(R.string.live_diag_playback_failed),
                         detail = "${error.errorCodeName}: ${classifyPlaybackError(error)}",
@@ -2799,7 +2807,7 @@ fun LiveTvScreen(
                                 program = retryStreamProgram ?: retryProgram,
                                 forceRefresh = true,
                                 catchupAttempt = if (retryProgram != null) nextAttempt else 0,
-                                probeKnownUrl = unsupportedContainer,
+                                probeKnownUrl = unsupportedContainer || isMissingPlaybackResource(httpCode),
                             )
                         } else {
                             IptvPlaybackTarget(prepared, preparedIsHls)
@@ -2834,6 +2842,7 @@ fun LiveTvScreen(
                         initialPositionMs = retryChannel?.catchupInSegmentSeekOffset(catchupPlaybackOffsetMs) ?: 0L,
                         drmInfo = retryChannel?.drmInfo,
                         forcePrepare = true,
+                        resolvedMimeType = retryTarget.mimeType,
                     )
                 }
             }
@@ -3583,6 +3592,7 @@ fun LiveTvScreen(
                                         resetRetry = true,
                                         drmInfo = playingChannel?.source?.drmInfo,
                                         forcePrepare = true,
+                                        resolvedMimeType = lastPreparedMimeType,
                                     )
                                 }
                                 hudPokeSignal++
