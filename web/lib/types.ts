@@ -42,6 +42,8 @@ export interface MediaItem {
   // Epoch ms of the last activity (Trakt paused_at / last_watched_at, or cloud
   // history updated_at). Continue Watching is ordered by this, newest first.
   activityAt?: number;
+  // Explicit tracker progress reset; show-level activity is not a rewatch.
+  progressResetAt?: number;
   trailerUrl?: string | null;
   cast?: PersonCredit[];
   seasons?: SeasonSummary[];

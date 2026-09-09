@@ -52,6 +52,8 @@ private object TvViewModelRegexes {
 }
 
 internal const val FAVORITES_GROUP_NAME = "My Favorites"
+/** How long a create_link address stays reusable before it is fetched again. */
+private const val StalkerStreamCacheTtlMs = 60_000L
 private const val EpgLoadingStateLimit = 800
 private const val EpgAttemptedStateLimit = 2_400
 private const val LargeIptvListChannelCount = 10_000
@@ -168,7 +170,13 @@ class TvViewModel @Inject constructor(
     private var deferredCompleteEpgBackfillJob: Job? = null
     private var preparedContentJob: Job? = null
     private var preparedContentRevision: Long = 0L
-    private val resolvedStalkerStreamCache = LinkedHashMap<String, String>()
+    // create_link hands out a *temporary* address (the portals that need it announce
+    // `use_http_tmp_link` and sign the link with `nginx_secure_link`). Caching one
+    // without an expiry meant returning to a channel replayed an address the portal had
+    // long since retired, which surfaced as a channel that had just worked refusing to
+    // start. Keep the cache — it still spares a round trip when a channel is re-entered
+    // right away — but only for as long as such a link can be expected to live.
+    private val resolvedStalkerStreamCache = LinkedHashMap<String, CachedStalkerStream>()
     private val iptvPlaybackUrlResolver by lazy {
         IptvPlaybackUrlResolver(
             OkHttpProvider.playbackClient.newBuilder()
@@ -183,6 +191,11 @@ class TvViewModel @Inject constructor(
     private val catchupHistoryRefreshAt = LinkedHashMap<String, Long>()
     private val currentChannelEpgRefreshAt = LinkedHashMap<String, Long>()
     private val epgRefreshRequests = EpgRefreshRequests()
+
+    private data class CachedStalkerStream(
+        val url: String,
+        val resolvedAtMs: Long,
+    )
 
     private data class VisibleEpgDrain(
         val ids: List<String>,
@@ -2042,8 +2055,8 @@ class TvViewModel @Inject constructor(
         }
         val resolvedUrl = resolveStalkerStreamIfNeeded(
             rawUrl = rawUrl,
-            channelId = channel.id,
-            isStalkerChannel = channel.id.startsWith("stalker:"),
+            channel = channel,
+            isCatchup = program != null,
             forceRefresh = forceRefresh,
         )
         return iptvPlaybackUrlResolver.resolve(
@@ -2056,34 +2069,48 @@ class TvViewModel @Inject constructor(
 
     private suspend fun resolveStalkerStreamIfNeeded(
         rawUrl: String,
-        channelId: String,
-        isStalkerChannel: Boolean,
+        channel: IptvChannel,
+        isCatchup: Boolean,
         forceRefresh: Boolean,
     ): String {
         val trimmed = rawUrl.trim()
-        if (!isStalkerChannel) return trimmed
+        val channelId = channel.id
+        if (!channelId.startsWith("stalker:")) return trimmed
+        if (StalkerPortalSupport.canPlayDirectLiveStream(channel, trimmed, isCatchup)) return trimmed
         val cacheKey = StalkerPortalSupport.streamCacheKey(channelId, trimmed)
 
+        val now = System.currentTimeMillis()
         if (!forceRefresh) {
             synchronized(resolvedStalkerStreamCache) {
-                resolvedStalkerStreamCache[cacheKey]?.let { return it }
+                resolvedStalkerStreamCache[cacheKey]
+                    ?.takeIf { now - it.resolvedAtMs <= StalkerStreamCacheTtlMs }
+                    ?.let { return it.url }
             }
         }
 
         val resolved = withContext(Dispatchers.IO) {
             iptvRepository.resolveStalkerStreamUrl(channelId, trimmed)
         }?.trim().orEmpty()
-        val playable = resolved.ifBlank { trimmed.removePrefix("ffmpeg").trim() }
-        if (playable.isNotBlank()) {
-            synchronized(resolvedStalkerStreamCache) {
-                resolvedStalkerStreamCache[cacheKey] = playable
-                while (resolvedStalkerStreamCache.size > 200) {
-                    val firstKey = resolvedStalkerStreamCache.keys.firstOrNull() ?: break
-                    resolvedStalkerStreamCache.remove(firstKey)
-                }
+        // Falling back to the raw `cmd` used to hand the player an unroutable
+        // placeholder ("http://localhost/ch/1234_") whenever create_link failed. The
+        // player then spent three attempts on an address that can never work before
+        // the error banner showed. Fail loudly instead; the caller turns the message
+        // into the diagnostic banner right away.
+        val rawAddress = StalkerPortalSupport.sanitizePlaybackCommand(trimmed)
+        val playable = resolved.ifBlank {
+            if (StalkerPortalSupport.isRoutableStreamAddress(rawAddress)) rawAddress else ""
+        }
+        if (playable.isBlank()) {
+            throw IllegalStateException("Stalker portal returned no playable link")
+        }
+        synchronized(resolvedStalkerStreamCache) {
+            resolvedStalkerStreamCache[cacheKey] = CachedStalkerStream(playable, now)
+            while (resolvedStalkerStreamCache.size > 200) {
+                val firstKey = resolvedStalkerStreamCache.keys.firstOrNull() ?: break
+                resolvedStalkerStreamCache.remove(firstKey)
             }
         }
-        return playable.ifBlank { trimmed }
+        return playable
     }
 
     private fun setUiState(nextState: TvUiState) {

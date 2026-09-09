@@ -2,6 +2,35 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load, storage } = require('./load.cjs');
 
+test('missing or invalid pause timestamps never fabricate a fresh rewatch', () => {
+  const { traktPlaybackToMedia } = load('lib/mappers.ts', { './config': { config: {} }, './tmdb': {}, './mediaImages': {} });
+  const { pruneCompletedResume } = load('lib/continueWatching.ts');
+  for (const paused_at of [undefined, 'invalid']) {
+    const item = traktPlaybackToMedia({ movie: { ids: { tmdb: 7 } }, progress: 40, paused_at });
+    assert.equal(item.activityAt, 0);
+    assert.equal(pruneCompletedResume([item], new Map([['movie:7', Date.parse('2026-09-01')]])).length, 0);
+  }
+});
+
+test('progress reset evidence survives the slim cache and Up Next mapping', async () => {
+  const saved = storage();
+  const { TraktClient } = load('lib/trakt.ts', { './config': { config: {} }, './storage': saved, './http': {} });
+  const client = new TraktClient();
+  client.token = { access_token: 'reset-account', refresh_token: 'refresh', expires_at: Date.now() + 86400000 };
+  let reads = 0;
+  const reset = '2026-09-09T12:00:00Z';
+  client.trakt = async () => { reads++; return { aired: 10, completed: 1, reset_at: reset,
+    next_episode: { season: 1, number: 2 }, seasons: [{ number: 1, episodes: Array(1000).fill({ number: 1 }) }] }; };
+  await client.showProgress(20, false, 'activity');
+  const cached = await client.showProgress(20, false, 'activity');
+  assert.equal(reads, 1);
+  assert.equal(cached.reset_at, reset);
+  assert.equal(cached.seasons, undefined);
+  const { traktUpNextToMedia } = load('lib/mappers.ts', { './config': { config: {} }, './tmdb': {}, './mediaImages': {} });
+  const next = traktUpNextToMedia({ show: { ids: { tmdb: 2, trakt: 20 } } }, cached);
+  assert.equal(next.progressResetAt, Date.parse(reset));
+});
+
 test('production build exposes canonical public Trakt ID, never its secret', () => {
   const config = load('next.config.mjs', {
     'node:fs': { writeFileSync() {}, mkdirSync() {} }

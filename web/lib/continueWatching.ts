@@ -30,13 +30,18 @@ export function completionTimes(movies: unknown[], shows: unknown[]): Map<string
   return times;
 }
 
-/** Fresh Up Next is authoritative; cached Up Next can be superseded by a later watch. */
+/** Exact episode completion wins unless the tracker explicitly reset progress later. */
 export function pruneCompletedResume(items: MediaItem[], completions: Map<string, number>): MediaItem[] {
   const next = items.filter((item) => {
     const key = item.mediaType === "tv"
       ? `tv:${item.id}:${item.seasonNumber}:${item.episodeNumber}` : `movie:${item.id}`;
     if (!completions.has(key)) return true;
     const completedAt = completions.get(key) ?? 0;
+    if (item.mediaType === "tv" && item.badge === "Up Next" && completedAt > 0) {
+      // activityAt is the show's latest watch (possibly a DIFFERENT episode).
+      // It must not make an already watched episode look like a new rewatch.
+      return (item.progressResetAt ?? 0) > completedAt;
+    }
     if (completedAt > 0) return (item.activityAt ?? 0) > completedAt;
     // Without a watch timestamp an old watched flag cannot disprove a reset Up Next.
     return item.badge === "Up Next";
@@ -49,10 +54,11 @@ export function traktProgressActivityKey(raw: unknown): string {
   return [row.last_watched_at ?? "", row.last_updated_at ?? "", row.reset_at ?? ""].join("|");
 }
 
-/** Up Next is authoritative even after a Trakt progress reset/rewatch. */
+/** Timestamped history distinguishes stale Up Next from a real reset/rewatch. */
 export function isUnwatchedContinueWatching(item: MediaItem, watchedKeys: Set<string>, completions?: Map<string, number>): boolean {
-  if (item.mediaType === "tv" && item.badge === "Up Next") return true;
   if (completions) return pruneCompletedResume([item], completions).length > 0;
+  // Untimestamped badge flags alone cannot disprove a tracker progress reset.
+  if (item.mediaType === "tv" && item.badge === "Up Next") return true;
   const key = item.mediaType === "tv"
     ? `tv:${item.id}:${item.seasonNumber}:${item.episodeNumber}`
     : `movie:${item.id}`;

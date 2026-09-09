@@ -3,10 +3,9 @@ import { HttpError, jsonRequest } from "./http";
 import { loadStored, removeStored, saveStored } from "./storage";
 
 const LEGACY_TRAKT_TOKEN_KEY = "arvio.web.trakt.token";
-// v2: v1 stored FULL progress payloads (every season/episode — ~740KB across a
-// library) and helped exhaust the localStorage quota; v2 entries are slimmed
-// to the four fields Continue Watching reads.
-const TRAKT_PROGRESS_CACHE_KEY = "arvio.web.trakt.progressCache.v2";
+// Keep the payload slim, but invalidate v2 entries: they discarded reset_at,
+// which is required to distinguish genuine rewatches from stale Up Next.
+const TRAKT_PROGRESS_CACHE_KEY = "arvio.web.trakt.progressCache.v3";
 const TRAKT_PROGRESS_TTL_MS = 15 * 60 * 1000;
 
 export interface TraktDeviceCode {
@@ -592,12 +591,14 @@ function slimProgress(value: unknown): unknown {
   const progress = value as {
     aired?: number;
     completed?: number;
+    reset_at?: string | null;
     last_watched_at?: string;
     next_episode?: { season?: number; number?: number; title?: string } | null;
   };
   return {
     aired: progress.aired,
     completed: progress.completed,
+    reset_at: progress.reset_at,
     last_watched_at: progress.last_watched_at,
     next_episode: progress.next_episode
       ? { season: progress.next_episode.season, number: progress.next_episode.number, title: progress.next_episode.title }

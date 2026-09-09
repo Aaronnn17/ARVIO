@@ -11,6 +11,28 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 class IptvPlaybackUrlResolverTest {
+    @Test fun `expired redirect can refresh once for both not found responses`() = runBlocking {
+        for (status in listOf(404, 410)) {
+            val calls = AtomicInteger()
+            val resolver = IptvPlaybackUrlResolver(OkHttpClient.Builder().addInterceptor { chain ->
+                val suffix = if (calls.incrementAndGet() == 1) "expired" else "fresh"
+                Response.Builder()
+                    .request(chain.request().newBuilder().url("https://cdn.test/$suffix.m3u8").build())
+                    .protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                    .header("Content-Type", "application/vnd.apple.mpegurl")
+                    .body("".toResponseBody()).build()
+            }.build())
+            val url = "https://provider.test/live/channel-slug"
+            assertThat(resolver.resolve(url, emptyMap()).url).isEqualTo("https://cdn.test/expired.m3u8")
+            assertThat(resolver.resolve(url, emptyMap()).url).isEqualTo("https://cdn.test/expired.m3u8")
+            assertThat(com.arflix.tv.ui.screens.tv.live.shouldRetryLiveTvPlayback(status, 1, 3, false)).isTrue()
+            val refreshed = resolver.resolve(url, emptyMap(), forceRefresh = true,
+                probeKnownUrl = com.arflix.tv.ui.screens.tv.live.isMissingPlaybackResource(status))
+            assertThat(refreshed.url).isEqualTo("https://cdn.test/fresh.m3u8")
+            assertThat(calls.get()).isEqualTo(2)
+        }
+    }
+
     @Test fun `failed numeric stream can explicitly recover an HLS content type`() = runBlocking {
         val calls = AtomicInteger()
         val resolver = IptvPlaybackUrlResolver(OkHttpClient.Builder().addInterceptor { chain ->
@@ -144,6 +166,59 @@ class IptvPlaybackUrlResolverTest {
 
         assertThat(target.isHls).isTrue()
         assertThat(calls.get()).isEqualTo(2)
+    }
+
+    @Test
+    fun `single segment token URL is probed and keeps the stated transport stream type`() = runBlocking {
+        val calls = AtomicInteger()
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                calls.incrementAndGet()
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .header("Content-Type", "video/mp2t")
+                    .body("".toResponseBody("video/mp2t".toMediaType()))
+                    .build()
+            }
+            .build()
+        val resolver = IptvPlaybackUrlResolver(client)
+
+        val target = resolver.resolve(
+            rawUrl = "http://provider.test/N2Q4ZjhiMGEyYzFlNGY2ZA",
+            headers = emptyMap(),
+        )
+
+        assertThat(target.isHls).isFalse()
+        assertThat(target.mimeType).isEqualTo("video/mp2t")
+        assertThat(calls.get()).isEqualTo(1)
+    }
+
+    @Test
+    fun `probed HLS target carries no transport stream mime type`() = runBlocking {
+        val client = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .header("Content-Type", "application/vnd.apple.mpegurl")
+                    .body("".toResponseBody("application/vnd.apple.mpegurl".toMediaType()))
+                    .build()
+            }
+            .build()
+        val resolver = IptvPlaybackUrlResolver(client)
+
+        val target = resolver.resolve(
+            rawUrl = "http://provider.test/live/user/pass/channel-slug",
+            headers = emptyMap(),
+        )
+
+        assertThat(target.isHls).isTrue()
+        assertThat(target.mimeType).isNull()
     }
 
     @Test
