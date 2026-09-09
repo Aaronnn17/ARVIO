@@ -376,7 +376,7 @@ fun liveCategoryLabel(raw: String): String = when (raw) {
 /** Display-localization for [LiveSection.label] section headers. Unknown headers pass through. */
 @Composable
 fun liveSectionLabel(raw: String): String = when (raw) {
-    "PLAYLIST" -> stringResource(R.string.live_section_playlist)
+    "PLAYLIST" -> stringResource(R.string.settings_section_categories)
     "ADULT" -> stringResource(R.string.live_section_adult)
     "HIDDEN" -> stringResource(R.string.live_section_hidden)
     else -> raw

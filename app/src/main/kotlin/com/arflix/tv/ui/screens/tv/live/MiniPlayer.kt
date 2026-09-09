@@ -194,7 +194,7 @@ fun MiniPlayerRow(
             verticalAlignment = Alignment.Top,
         ) {
             GuideProgrammeSummary(focusedProgramme?.first ?: channel,
-                focusedProgramme?.second ?: nowNext?.now, clockTickMillis, onFullscreenClick, onProgrammeGuideClick,
+                focusedProgramme?.second ?: nowNext?.now,
                 Modifier.weight(1f).height(LiveDims.MiniPlayerHeight))
             VideoCard(
                 exoPlayer = exoPlayer,
@@ -211,39 +211,25 @@ fun MiniPlayerRow(
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun GuideProgrammeSummary(
-    channel: EnrichedChannel?, programme: IptvProgram?, clockTickMillis: Long, onWatch: (() -> Unit)?,
-    onGuide: (() -> Unit)?, modifier: Modifier,
+    channel: EnrichedChannel?, programme: IptvProgram?, modifier: Modifier,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(Modifier.height(25.dp), verticalAlignment = Alignment.CenterVertically,
+        Row(Modifier.height(30.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             if (!channel?.source?.logo.isNullOrBlank()) AsyncImage(channel?.source?.logo, null,
                 contentScale = ContentScale.Fit, modifier = Modifier.size(60.dp, 24.dp))
-            val onAir = programme?.isLive(clockTickMillis) == true
-            if (onAir) Box(Modifier.size(7.dp).background(LiveColors.LiveRed, CircleShape))
-            Text(listOfNotNull("ON AIR".takeIf { onAir }, channel?.name, channel?.quality?.takeIf { it != Quality.UNKNOWN }?.label).joinToString(" · "),
-                color = LiveColors.FgDim, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(listOfNotNull(channel?.name, channel?.quality?.takeIf { it != Quality.UNKNOWN }?.label).joinToString(" · "),
+                color = LiveColors.FgDim, fontSize = 11.sp, lineHeight = 13.sp,
+                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         }
         Text(programme?.title ?: channel?.name ?: stringResource(R.string.live_empty_no_programme),
-            color = LiveColors.Fg, fontSize = 22.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
+            color = LiveColors.Fg, fontSize = 20.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(listOfNotNull(programme?.let(::formatTimeWindow),
             channel?.genre?.name?.let(::formatGenreName), remainingLabel(programme).takeIf(String::isNotBlank)).joinToString("  ·  "),
             color = LiveColors.FgDim, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(programme?.description.orEmpty(), color = LiveColors.Fg, fontSize = 12.sp, lineHeight = 16.sp,
-            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (onWatch != null) Row(Modifier.clickable(onClick = onWatch).padding(vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Icons.Outlined.PlayCircleOutline, null, tint = LiveColors.Fg, modifier = Modifier.size(23.dp))
-                Text("Watch live", color = LiveColors.Fg, fontSize = 11.sp)
-            }
-            if (onGuide != null) Row(Modifier.clickable(onClick = onGuide).padding(vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Icons.Outlined.List, null, tint = LiveColors.Fg, modifier = Modifier.size(23.dp))
-                Text("Programme guide", color = LiveColors.Fg, fontSize = 11.sp)
-            }
-        }
+            maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
     }
 }
 

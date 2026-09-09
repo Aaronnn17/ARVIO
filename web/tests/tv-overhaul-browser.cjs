@@ -10,6 +10,7 @@ const fs = require('node:fs');
   const errors = [];
   try {
     const page = await browser.newPage({ viewport: { width: 1672, height: 941 } });
+    let emptyArtwork = false;
     page.on('pageerror', (error) => errors.push(error.message));
     page.on('console', (message) => {
       if (message.type() === 'error' && /hydrat|React|Unhandled/i.test(message.text())) errors.push(message.text());
@@ -17,7 +18,7 @@ const fs = require('node:fs');
     await page.route('**/*', route => {
       const url = new URL(route.request().url());
       if (url.pathname === '/api/proxy' && url.searchParams.get('url')?.startsWith('https://example.invalid/sports/catalog/')) {
-        return route.fulfill({ json: require('../app/dev/stabilization/sports-artwork.json') });
+        return route.fulfill({ json: emptyArtwork ? { metas: [] } : require('../app/dev/stabilization/sports-artwork.json') });
       }
       return ['127.0.0.1', 'cdn.highfly.dev', 'interactive-examples.mdn.mozilla.net'].includes(url.hostname) ? route.continue() : route.abort();
     });
@@ -56,8 +57,8 @@ const fs = require('node:fs');
     await page.getByRole('button', { name: 'Toggle categories' }).click();
     await page.getByRole('button', { name: 'Sports', exact: true }).click();
     await page.locator('.tv-event-card').first().waitFor({ timeout: 30_000 });
-    await page.locator('.tv-event-art img').first().waitFor();
-    await page.locator('.tv-event-art img').first().evaluate(img => img.decode());
+    await page.locator('.tv-event-image > img').first().waitFor();
+    await page.locator('.tv-event-image > img').first().evaluate(img => img.decode());
     await page.getByRole('button', { name: 'Categories', exact: true }).click();
     await page.waitForTimeout(240);
     await page.screenshot({ path: path.join(output, 'web-03-sports-open.png'), animations: 'disabled' });
@@ -66,14 +67,12 @@ const fs = require('node:fs');
     await page.screenshot({ path: path.join(output, 'web-04-sports-closed.png'), animations: 'disabled' });
     const size = await page.locator('.tv-event-art').first().boundingBox();
     assert.ok(Math.abs(size.width / size.height - 2.25) < 0.03, 'Event artwork must keep its wide ratio');
-    assert.ok(await page.locator('.tv-event-art img').first().evaluate((img) => img.complete && img.naturalWidth > 0), 'Sports artwork must render');
-    assert.equal(await page.locator('.tv-event-art img').first().evaluate(img => getComputedStyle(img).objectFit), 'contain', 'Crests must not be cropped');
+    assert.ok(await page.locator('.tv-event-image > img').first().evaluate((img) => img.complete && img.naturalWidth > 0), 'Sports artwork must render');
+    assert.equal(await page.locator('.tv-event-image > img').first().evaluate(img => getComputedStyle(img).objectFit), 'contain', 'Crests must not be cropped');
     const cards = await page.locator('.tv-sports-row').first().locator('.tv-event-card').evaluateAll(items => items.slice(0, 4).map(item => { const r = item.getBoundingClientRect(); return { left: r.left, right: r.right }; }));
     assert.equal(cards.length, 4);
     assert.ok(cards.every(card => card.left >= 0 && card.right <= 1672), 'Four complete desktop cards must fit');
-    await page.getByRole('combobox', { name: 'Upcoming date' }).selectOption('tomorrow');
-    assert.ok((await page.getByRole('region', { name: 'Upcoming', exact: true }).locator('.tv-event-stamp').allTextContents()).every(stamp => stamp.startsWith('Tomorrow')));
-    await page.getByRole('combobox', { name: 'Upcoming date' }).selectOption('both');
+    assert.equal(await page.getByRole('combobox', { name: 'Upcoming date' }).count(), 0);
     await page.locator('.tv-event-card').first().focus();
     await page.keyboard.press('Enter');
     await page.locator('.tv-event-picker[open]').waitFor();
@@ -98,6 +97,20 @@ const fs = require('node:fs');
       await page.keyboard.press('Escape');
       assert.ok(await page.locator('.tv-event-card').first().evaluate(element => element === document.activeElement), 'Closing picker restores the originating card');
     }
+    emptyArtwork = true;
+    await page.setViewportSize({ width: 1672, height: 941 });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('[data-fixture-ready="true"]').waitFor();
+    await page.getByRole('button', { name: 'Sports', exact: true }).click();
+    await page.waitForTimeout(2000);
+    await page.screenshot({ path: path.join(output, 'web-fallback-cold.png'), animations: 'disabled' });
+    await page.locator('.tv-event-card').first().waitFor({ timeout: 30_000 });
+    await page.screenshot({ path: path.join(output, 'web-fallback-check.png'), animations: 'disabled' });
+    await page.locator('.tv-event-fallback img').first().waitFor();
+    await page.locator('.tv-event-fallback img').first().evaluate(img => img.decode());
+    assert.equal(await page.locator('.tv-event-image > img').count(), 0, 'No event banner is invented without metadata');
+    assert.ok(await page.locator('.tv-event-fallback img').first().evaluate(img => img.naturalWidth > 0), 'Local fallback photography decodes without an addon');
+    await page.screenshot({ path: path.join(output, 'web-sports-local-artwork.png'), animations: 'disabled' });
     assert.deepEqual(errors, [], 'No uncaught browser errors');
     console.log(JSON.stringify({ passed: true, viewports: [1672, 768, 390], screenshots: output }, null, 2));
   } finally { await browser.close(); }

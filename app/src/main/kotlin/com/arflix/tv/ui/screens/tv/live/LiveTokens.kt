@@ -83,15 +83,15 @@ object LiveType {
 
 object LiveDims {
     // Fixed tracks keep focus and drawer transitions from changing row geometry.
-    val SidebarExpanded  = 193.dp
+    val SidebarExpanded  = 232.dp
     val SidebarCollapsed = 52.dp
-    val SidebarRowHeight = 34.dp
+    val SidebarRowHeight = 40.dp
 
     val MiniPlayerWidth  = 304.dp
     val MiniPlayerHeight = 147.dp
 
-    val EpgChannelColWidth = 145.dp
-    val EpgChannelWideColWidth = 170.dp
+    val EpgChannelColWidth = 196.dp
+    val EpgChannelWideColWidth = 212.dp
     val EpgRowHeight       = 32.dp
     val EpgHeaderHeight    = 32.dp
     val EpgPxPerMinute     = 4

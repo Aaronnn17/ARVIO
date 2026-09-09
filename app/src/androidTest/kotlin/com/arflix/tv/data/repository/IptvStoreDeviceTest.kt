@@ -54,6 +54,28 @@ class IptvStoreDeviceTest {
         } finally { context.deleteDatabase(name) }
     }
 
+    @Test fun eligibleGuideAliasesRespectSourceAndExclusiveTimeWindow() {
+        val name = "guide-identities-${UUID.randomUUID()}.db"
+        val now = System.currentTimeMillis()
+        val live = IptvProgram("Event", startUtcMillis = now - 1_000, endUtcMillis = now + 60_000)
+        try {
+            IptvEpgIndex(context, name).use { store ->
+                store.replaceChannels("one", mapOf(
+                    "direct" to IptvNowNext(now = live),
+                    "@xml:live" to IptvNowNext(now = live),
+                    "@xml:ended" to IptvNowNext(now = live.copy(endUtcMillis = now)),
+                    "@xml:later" to IptvNowNext(next = live.copy(startUtcMillis = now + 60_000, endUtcMillis = now + 120_000))
+                ), now, aliases = mapOf("@xml:live" to listOf("hd", "uhd", "direct"),
+                    "@xml:ended" to listOf("ended"), "@xml:later" to listOf("later")))
+                store.replaceChannels("other", mapOf("@xml:live" to IptvNowNext(now = live)), now,
+                    aliases = mapOf("@xml:live" to listOf("other-channel")))
+                assertEquals(setOf("direct", "hd", "uhd"), store.channelIdsInWindow("one", now, now + 60_000))
+                assertEquals(setOf("other-channel"), store.channelIdsInWindow("other", now, now + 60_000))
+                assertEquals(emptySet<String>(), store.channelIdsInWindow("one", now, now))
+            }
+        } finally { context.deleteDatabase(name) }
+    }
+
     @Test
     fun fiftyThousandChannelsSurviveReloadAndEveryGroupPagesInProviderOrder() {
         val key = "device-regression-${UUID.randomUUID()}"

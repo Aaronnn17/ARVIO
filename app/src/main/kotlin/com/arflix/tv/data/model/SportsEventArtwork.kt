@@ -18,8 +18,7 @@ private val sportPrefix = Regex("^(football|soccer|basketball|baseball|tennis|ic
 private val versus = Regex("\\b(vs\\.?|versus|v\\.)\\s+")
 private val punctuation = Regex("[^\\p{L}\\p{N}]+")
 private val cosmeticTags = Regex("\\s*[\\[(](?:live|hd|fhd|uhd|4k)[\\])]\\s*", RegexOption.IGNORE_CASE)
-private val matchupSeparator = Regex("\\s(?:vs?\\.?|versus|at)\\s", RegexOption.IGNORE_CASE)
-private val shortSeparator = Regex("\\s+(?:v|at)\\s+")
+private val matchupSeparator = Regex("\\s+(?:vs?\\.?|versus|at|[-–—])\\s+", RegexOption.IGNORE_CASE)
 
 fun sportsArtworkKey(title: String): String = Normalizer.normalize(title, Normalizer.Form.NFD)
     .replace(marks, "").lowercase(Locale.ROOT)
@@ -30,8 +29,8 @@ fun sportsArtworkKey(title: String): String = Normalizer.normalize(title, Normal
 fun sportsEventIdentity(title: String): String {
     val plain = title.replace(cosmeticTags, " ")
     val matchup = plain.substringAfterLast(':').trim()
-    val normalized = sportsArtworkKey(if (matchupSeparator.containsMatchIn(matchup)) matchup else plain)
-        .replace(shortSeparator, " vs ")
+    val normalized = sportsArtworkKey((if (matchupSeparator.containsMatchIn(matchup)) matchup else plain)
+        .replace(matchupSeparator, " vs "))
     val sides = normalized.split(" vs ")
     return if (sides.size == 2 && sides.all { it.length >= 3 }) sides.sorted().joinToString(" vs ") else normalized
 }

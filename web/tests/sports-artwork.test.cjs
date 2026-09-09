@@ -27,6 +27,14 @@ test('different teams/sport cannot borrow a matching-looking banner', () => {
   for (const changed of [{...event, title: 'Barcelona vs Madrid'}, {...event, sportId: 'basketball'}]) assert.equal(attachSportsArtwork([changed], [toSportsEventArtwork(meta)])[0].artwork, undefined);
 });
 test('removing artwork clears the banner', () => assert.equal(attachSportsArtwork([{...event, artwork: meta.background}], [])[0].artwork, undefined));
+test('EPG dash separators match without mixing different teams or youth/womens fixtures', () => {
+  for (const title of ['Barcelona - Feyenoord', 'Football: Barcelona – Feyenoord', 'Feyenoord at Barcelona']) {
+    assert.equal(attachSportsArtwork([{...event, title}], [toSportsEventArtwork(meta)])[0].artwork, meta.background);
+  }
+  for (const title of ['Barcelona U21 - Feyenoord U21', 'Barcelona Women - Feyenoord Women', 'Barcelona - Madrid']) {
+    assert.equal(attachSportsArtwork([{...event, title}], [toSportsEventArtwork(meta)])[0].artwork, undefined);
+  }
+});
 test('catalog requests are bounded and concurrent callers share cached work', async () => {
   const addon = { id: 'sports', enabled: true, manifestUrl: 'https://example.com/manifest.json', resources: ['stream'], catalogs: Array.from({length:20}, (_,i) => ({id:`sports_${i}`, type:'sport', name:`Sports ${i}`})) };
   const addons = [addon, {...addon, id:'second', manifestUrl:'https://two.example/manifest.json'}, {...addon, id:'third'}];

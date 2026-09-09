@@ -68,9 +68,8 @@ export function LiveTvScreen() {
   // Re-open Live TV where the user left off (requested: "start at the last
   // channel you left"). Persisted per device; falls back to the first channel
   // when that channel is gone from the current playlists.
-  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(
-    () => loadStored<string | null>(lastChannelKey, null)
-  );
+  // Restore local state in the effect below, after server/client markup agrees.
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null>(null);
   const [managing, setManaging] = useState(false);
   const [view, setView] = useState<"list" | "guide">("guide");
   const [groupsOpen, setGroupsOpen] = useState(true);
@@ -223,6 +222,9 @@ export function LiveTvScreen() {
 
   useEffect(() => () => {
     if (guideTimerRef.current) window.clearTimeout(guideTimerRef.current);
+    // Effect replay/remount must not leave a cancelled timer blocking future batches.
+    guideTimerRef.current = null;
+    guideQueueRef.current.clear();
   }, []);
 
   useEffect(() => {
@@ -390,11 +392,11 @@ export function LiveTvScreen() {
               {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search"><X size={16} /></button>}
             </div>
             <div className="tv-sidebar-destinations">{categories.filter(category => !category.id.startsWith("group:")).map(category => <div key={category.id}>{renderCategory(category)}</div>)}</div>
-            <div className="tv-sidebar-group-heading"><span>Playlist groups</span>
+            <div className="tv-sidebar-group-heading"><span>Categories</span>
               <button type="button" title="Manage playlists" aria-label="Manage playlists" onClick={() => setManaging(value => !value)} aria-expanded={managing}><ListVideo size={18} /></button>
               <button type="button" title="Refresh channels" aria-label="Refresh channels" disabled={isLoadingTv} onClick={() => void refreshIptv()}><RefreshCw size={16} className={isLoadingTv ? "is-spinning" : ""} /></button>
             </div>
-            <VirtualList items={categories.filter(category => category.id.startsWith("group:"))} estimate={44} itemKey={rowKey} label="Categories" renderItem={renderCategory} />
+            <VirtualList items={categories.filter(category => category.id.startsWith("group:"))} estimate={56} itemKey={rowKey} label="Categories" renderItem={renderCategory} />
           </nav>
 
           <main ref={listRef} className="livetv-list" aria-label={activeCategoryLabel} onKeyDown={(event) => {
@@ -474,7 +476,6 @@ export function LiveTvScreen() {
                 {selectedGuide?.now?.title ? (
                   <div className="livetv-program">
                     <div className="livetv-program-head">
-                      <span>ON NOW</span>
                       <em>{fmtTime(selectedGuide.now.startUtcMillis)} – {fmtTime(selectedGuide.now.endUtcMillis)}</em>
                     </div>
                     {selectedGuide.now.description && <p>{selectedGuide.now.description}</p>}

@@ -208,13 +208,17 @@ internal class IptvEpgIndex(context: Context, databaseName: String = DATABASE_NA
     /** Channel identities with cached programmes, including XMLTV alias targets. No network. */
     fun channelIdsInWindow(sourceKey: String, startMs: Long, endMs: Long): Set<String> {
         if (sourceKey.isBlank() || startMs >= endMs) return emptySet()
+        // Resolve the eligible guide identities once. Correlated EXISTS caused an
+        // expensive repeated scan for every alias on large provider indexes.
         return readableDatabase.rawQuery("""
-            SELECT DISTINCT channel_id FROM epg_programs
-            WHERE source_key = ? AND end_ms > ? AND start_ms < ? AND channel_id NOT LIKE '@xml:%'
+            WITH eligible AS (
+                SELECT DISTINCT channel_id FROM epg_programs
+                WHERE source_key = ? AND end_ms > ? AND start_ms < ?
+            )
+            SELECT channel_id FROM eligible WHERE channel_id NOT LIKE '@xml:%'
             UNION SELECT a.channel_id FROM epg_channel_aliases a
-            WHERE a.source_key = ? AND EXISTS (SELECT 1 FROM epg_programs p
-                WHERE p.source_key = a.source_key AND p.channel_id = a.guide_id AND p.end_ms > ? AND p.start_ms < ?)
-        """, arrayOf(sourceKey, startMs.toString(), endMs.toString(), sourceKey, startMs.toString(), endMs.toString())).use { cursor ->
+                JOIN eligible p ON p.channel_id = a.guide_id WHERE a.source_key = ?
+        """, arrayOf(sourceKey, startMs.toString(), endMs.toString(), sourceKey)).use { cursor ->
             buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) }
         }
     }

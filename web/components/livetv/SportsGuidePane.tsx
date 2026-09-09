@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { X, Tv, PanelLeft, ChevronRight, Play, RefreshCw } from "lucide-react";
-import { guideSports, isOnAir, availableEventChannels, sportsGuideRows, type SportsGuideEvent, type SportsDay } from "@/lib/sportsGuide";
+import { guideSports, isOnAir, availableEventChannels, sportsGuideRows, type SportsGuideEvent } from "@/lib/sportsGuide";
 import type { InstalledAddon, IptvChannel, IptvNowNext } from "@/lib/types";
 import { attachSportsArtwork, loadSportsGuideArtwork, type SportsEventArtwork } from "@/lib/sportsArtwork";
 import { VirtualList } from "@/components/ui/VirtualList";
@@ -29,7 +29,6 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
   const [retry, setRetry] = useState(0);
   const [now, setNow] = useState(Date.now);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [day, setDay] = useState<SportsDay>("both");
   const dialog = useRef<HTMLDialogElement>(null);
   const origin = useRef<HTMLButtonElement | null>(null);
   const root = useRef<HTMLElement>(null);
@@ -55,7 +54,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
     schedules: event.schedules ? Object.fromEntries(Object.entries(event.schedules).filter(([id]) => accessibleIds.has(id))) : undefined }))
     .filter((event) => event.channels.length && Object.values(event.schedules ?? { fallback: event.programme }).some(p => p.endUtcMillis > now)), [events, accessibleIds, now]);
   const illustratedEvents = useMemo(() => attachSportsArtwork(visibleEvents, artwork), [visibleEvents, artwork]);
-  const rows = useMemo(() => sportsGuideRows(illustratedEvents, now, day), [illustratedEvents, now, day]);
+  const rows = useMemo(() => sportsGuideRows(illustratedEvents, now), [illustratedEvents, now]);
   useEffect(() => {
     if (!rows.length || entered.current) return;
     entered.current = true;
@@ -90,11 +89,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
       {failed && <button type="button" className="secondary" onClick={() => setRetry(value => value + 1)}><RefreshCw size={18} />Retry</button>}
       <button type="button" className="secondary" onClick={onOpenCategories}><PanelLeft size={18} />Categories</button></div>}
     {rows.map((row, rowIndex) => <section className={`tv-sports-section${row.id === "more" ? " is-compact" : ""}`} key={row.id} aria-label={row.title}>
-      <div className="tv-sports-row-heading"><h3>{row.title}</h3>{row.id === "upcoming" &&
-        <select aria-label="Upcoming date" value={day} onChange={event => setDay(event.target.value as SportsDay)}>
-          <option value="both">Today & tomorrow</option><option value="today">Today</option><option value="tomorrow">Tomorrow</option>
-        </select>}</div>
-      {!row.events.length && <p className="tv-sports-day-empty" role="status">No events scheduled for {day}.</p>}
+      <div className="tv-sports-row-heading"><h3>{row.title}</h3></div>
       <div className="tv-sports-row">{row.events.map((event, index) => {
         const sport = guideSports.find((s) => s.id === event.sportId)!;
         return <button type="button" className="tv-event-card" key={event.id} onFocus={onEnter}
@@ -136,8 +131,9 @@ const channelCount = (count: number) => `${count} ${count === 1 ? "channel" : "c
 function EventArtwork({ event }: { event: SportsGuideEvent }) {
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const loaded = Boolean(event.artwork) && loadedUrl === event.artwork;
+  const sport = guideSports.find(s => s.id === event.sportId)!;
   return <div className="tv-event-image">
-    {!loaded && <div className="tv-event-fallback">{event.title}</div>}
+    {!loaded && <div className="tv-event-fallback"><img src={`/images/sports/${sport.asset}.webp`} alt="" loading="lazy" decoding="async" /><span>{event.title}</span></div>}
     {event.artwork && <img src={event.artwork} alt="" loading="lazy" decoding="async" style={{ opacity: loaded ? 1 : 0 }} onLoad={() => setLoadedUrl(event.artwork!)} onError={() => setLoadedUrl(null)} />}
   </div>;
 }

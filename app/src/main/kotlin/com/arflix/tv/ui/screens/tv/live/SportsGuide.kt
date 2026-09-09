@@ -61,7 +61,7 @@ internal enum class GuideSport(val title: String, val asset: String, val terms: 
     }
 }
 
-private val nonEvent = Regex("\\b(highlights?|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned)\\b", RegexOption.IGNORE_CASE)
+private val nonEvent = Regex("\\b(highlights?|hoogtepunten|samenvatting|resumen|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned)\\b", RegexOption.IGNORE_CASE)
 private val space = Regex("\\s+")
 
 private val competitions = listOf("UEFA Champions League", "Premier League", "La Liga", "Eredivisie", "Bundesliga",
@@ -87,15 +87,29 @@ internal class SportsEventIndex {
     }
     private val groups = linkedMapOf<String, MutableList<Entry>>()
     fun add(event: SportsGuideEvent) {
-        val key = "${event.sport.name}|${event.identity}"
+        add(event.sport, event.identity, event.programme, event.channels, event.schedules, event.competition)
+    }
+    fun add(sport: GuideSport, identity: String, programme: IptvProgram, channel: IptvChannel, competition: String?) {
+        add(sport, identity, programme, listOf(channel), null, competition)
+    }
+    private fun add(sport: GuideSport, identity: String, programme: IptvProgram,
+        channels: List<IptvChannel>, schedules: Map<String, IptvProgram>?, competition: String?) {
+        val key = "${sport.name}|$identity"
         val group = groups.getOrPut(key) { mutableListOf() }
         val old = group.firstOrNull { old ->
-            val a = old.first.programme; val b = event.programme
+            val a = old.first.programme; val b = programme
             val overlap = minOf(a.endUtcMillis, b.endUtcMillis) - maxOf(a.startUtcMillis, b.startUtcMillis)
             kotlin.math.abs(a.startUtcMillis - b.startUtcMillis) <= 15 * 60_000L &&
                 overlap > 0 && overlap >= minOf(a.endUtcMillis - a.startUtcMillis, b.endUtcMillis - b.startUtcMillis) / 2
         }
-        (old ?: Entry(event).also(group::add)).add(event)
+        // Materialize an event once, not once per HD/UHD/localized channel alias.
+        val entry = old ?: Entry(SportsGuideEvent("$key|${programme.startUtcMillis}", programme.title,
+            sport, programme, emptyList(), competition = competition)).also(group::add)
+        channels.forEach { entry.channels.putIfAbsent(it.id, it) }
+        if (schedules != null) entry.schedules.putAll(schedules)
+        else channels.forEach { entry.schedules[it.id] = programme }
+        entry.artwork = entry.artwork ?: programme.artworkUrl
+        entry.competition = entry.competition ?: competition
     }
     fun events(): List<SportsGuideEvent> = groups.values.flatMap { group -> group.map { it.snapshot() } }
 }
@@ -134,26 +148,31 @@ internal fun buildSportsGuideEvents(
     zone: ZoneId = ZoneId.systemDefault(),
     resolver: SportsProgrammeResolver = SportsProgrammeResolver(),
 ): List<SportsGuideEvent> {
+    val events = SportsEventIndex()
+    accumulateSportsGuideEvents(channels, guide, now, events, zone, resolver)
+    return events.events().sortedWith(compareByDescending<SportsGuideEvent> { it.isOnAir(now) }
+        .thenBy { it.programme.startUtcMillis }.thenBy { it.title })
+}
+
+internal fun accumulateSportsGuideEvents(
+    channels: List<IptvChannel>, guide: Map<String, IptvNowNext>, now: Long,
+    events: SportsEventIndex, zone: ZoneId = ZoneId.systemDefault(),
+    resolver: SportsProgrammeResolver = SportsProgrammeResolver(),
+) {
     val end = Instant.ofEpochMilli(now).atZone(zone).toLocalDate().plusDays(2)
         .atStartOfDay(zone).toInstant().toEpochMilli()
-    val events = SportsEventIndex()
     for (channel in channels) {
         val slice = guide[channel.id] ?: continue
         val fallback = GuideSport.fromText("${channel.group} ${channel.name}")
         val programmes = (listOfNotNull(slice.now, slice.next, slice.later) + slice.upcoming)
-            .distinctBy(::sportsProgrammeKey)
+            .distinctBy { Triple(it.title, it.startUtcMillis, it.endUtcMillis) }
         for (programme in programmes) {
             if (programme.endUtcMillis <= now || programme.startUtcMillis >= end ||
                 programme.endUtcMillis <= programme.startUtcMillis || programme.title.isBlank()) continue
             val meta = resolver.resolve(programme, fallback) ?: continue
-            val id = "${meta.sport.name}|${meta.identity}|${programme.startUtcMillis}"
-            events.add(SportsGuideEvent(id, programme.title, meta.sport, programme, listOf(channel),
-                artwork = safeSportsImage(programme.artworkUrl),
-                competition = meta.competition))
+            events.add(meta.sport, meta.identity, programme, channel, meta.competition)
         }
     }
-    return events.events().sortedWith(compareByDescending<SportsGuideEvent> { it.isOnAir(now) }
-        .thenBy { it.programme.startUtcMillis }.thenBy { it.title })
 }
 
 internal data class SportsGuideRow(val id: String, val title: String, val events: List<SportsGuideEvent>)

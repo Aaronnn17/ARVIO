@@ -1,4 +1,5 @@
 package com.arflix.tv.ui.screens.tv.live
+import androidx.compose.foundation.basicMarquee
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.geometry.CornerRadius
@@ -216,7 +217,7 @@ fun ChannelRow(
         // ─ channel number ────────────────────────────────────
         Box(
             modifier = Modifier
-                .width(24.dp)
+                .width(32.dp)
                 .padding(start = 8.dp, end = 4.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
@@ -229,9 +230,9 @@ fun ChannelRow(
         }
 
         // ─ logo ──────────────────────────────────────────────
-        ChannelLogo(channel = channel, size = 28.dp)
+        ChannelLogo(channel = channel, size = 24.dp)
 
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(6.dp))
 
         // ─ name / program / progress / time ──────────────────
         Column(
@@ -245,10 +246,14 @@ fun ChannelRow(
                     text = channel.name,
                     style = LiveType.CellTitle.copy(
                         color = LiveColors.Fg,
+                        fontSize = 11.sp,
+                        lineHeight = 13.sp,
                     ),
-                    maxLines = 1,
+                    maxLines = if (visuallyFocused) 1 else 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier.weight(1f, fill = false).then(if (visuallyFocused) Modifier.basicMarquee(
+                        iterations = Int.MAX_VALUE, initialDelayMillis = 1000,
+                    ) else Modifier),
                 )
                 if (isFavorite) {
                     Spacer(Modifier.width(4.dp))

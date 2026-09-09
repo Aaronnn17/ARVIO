@@ -23,7 +23,7 @@ export interface SportsGuideEvent {
   schedules?: Record<string, IptvProgram>;
   competition?: string;
 }
-const nonEvent = /\b(highlights?|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned)\b/i;
+const nonEvent = /\b(highlights?|hoogtepunten|samenvatting|resumen|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned)\b/i;
 export const sportsProgrammeKey = (p: IptvProgram) => `${p.title.trim().toLowerCase().replace(/\s+/g, " ")}|${p.startUtcMillis}|${p.endUtcMillis}`;
 const programmeOnAir = (p: IptvProgram, now: number) => p.startUtcMillis <= now && now < p.endUtcMillis;
 export function safeSportsImage(value?: string): string | undefined {
@@ -37,7 +37,8 @@ export const sportsArtworkKey = (title: string) => title.normalize("NFD").replac
 export function sportsEventIdentity(title: string): string {
   const plain = title.replace(/\s*[\[(](?:live|hd|fhd|uhd|4k)[\])]\s*/gi, " ");
   const matchup = plain.split(":").at(-1)!.trim();
-  const normalized = sportsArtworkKey(/\s(?:vs?\.?|versus|at)\s/i.test(matchup) ? matchup : plain).replace(/\s+(?:v|at)\s+/g, " vs ");
+  const separator = /\s+(?:vs?\.?|versus|at|[-–—])\s+/gi;
+  const normalized = sportsArtworkKey((separator.test(matchup) ? matchup : plain).replace(separator, " vs "));
   const sides = normalized.split(" vs ");
   return sides.length === 2 && sides.every(s => s.length >= 3) ? sides.sort().join(" vs ") : normalized;
 }

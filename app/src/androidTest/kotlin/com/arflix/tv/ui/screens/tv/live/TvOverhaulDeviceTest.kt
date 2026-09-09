@@ -25,7 +25,7 @@ import java.io.File
 class TvOverhaulDeviceTest {
     @get:Rule val compose = createComposeRule()
     private val now = System.currentTimeMillis()
-    private val names = listOf("NPO 1", "NPO 2", "NPO 3", "RTL 4", "SBS 6", "ESPN", "Ziggo Sport", "Discovery")
+    private val names = listOf("Sky Sports Main Event UHD", "National Geographic Wild HD", "NPO 3", "RTL 4", "SBS 6", "ESPN", "Ziggo Sport", "Discovery")
     private val channels = (0 until 144).map { i -> IptvChannel("fixture:$i", names[i % names.size],
         "https://example.invalid/fixture", "Football", qualityLabel = "HD").enrichForFastStartup(i + 1) }
     private val metadata = com.google.gson.Gson().fromJson(
@@ -76,7 +76,7 @@ class TvOverhaulDeviceTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         lateinit var player: ExoPlayer
         compose.runOnUiThread { player = ExoPlayer.Builder(context).build() }
-        val tree = buildCategoryTree(channels, favoritesCount = 8, recentCount = 0)
+        val tree = buildCategoryTree(channels, favoritesCount = 8, recentCount = 21)
             .withSportsDestination()
         val events = attachSportsArtwork(buildSportsGuideEvents(channels.map { it.source }, guide, now), metadata.mapNotNull { it.toSportsEventArtwork() })
         try {
@@ -84,11 +84,11 @@ class TvOverhaulDeviceTest {
                 Box(Modifier.fillMaxSize()) {
                     Box(Modifier.fillMaxSize().padding(top = com.arflix.tv.ui.components.LiveTvTopBarHeight)) {
                         LiveDrawerWorkspace(expanded.value, contentKey = if (sports.value) "sports" else "guide",
-                            sidebarWidth = if (sports.value) 223.dp else LiveDims.SidebarExpanded, sidebar = {
+                            sidebarWidth = LiveDims.SidebarExpanded, sidebar = {
                             CategorySidebar(tree = tree, selectedId = if (sports.value) SPORTS_GUIDE_CATEGORY else "all",
                                 expanded = expanded.value, fixedViewport = true, listState = rememberLazyListState(),
                                 providers = listOf(TvProviderFilter("all", "All playlists", 55000)),
-                                sidebarWidth = if (sports.value) 223.dp else LiveDims.SidebarExpanded,
+                                sidebarWidth = LiveDims.SidebarExpanded,
                                 onSelect = { sports.value = it == SPORTS_GUIDE_CATEGORY }, onOpenSearch = {},
                                 onMoveRight = { expanded.value = false; signal.intValue++ })
                         }, content = {
@@ -110,6 +110,13 @@ class TvOverhaulDeviceTest {
                 }
             }
             screenshot("01-guide-open")
+            compose.onNodeWithText("Recently Watched").assertIsDisplayed()
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose.onNodeWithText("Recently Watched", useUnmergedTree = true)
+                .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            assertTrue("Recently Watched must fit without ellipsis", layouts.isNotEmpty() && layouts.none { it.hasVisualOverflow })
+            compose.onNodeWithText("Watch live").assertDoesNotExist()
+            compose.onNodeWithText("ON AIR").assertDoesNotExist()
             compose.runOnIdle { expanded.value = false }
             screenshot("02-guide-closed")
             compose.runOnIdle { sports.value = true; expanded.value = true }
@@ -131,14 +138,26 @@ class TvOverhaulDeviceTest {
             compose.onNodeWithText("Available channels").assertDoesNotExist()
             compose.onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
             compose.runOnIdle { assertTrue("Left at first card must reopen categories", expanded.value) }
-            compose.onNodeWithContentDescription("Filter upcoming events").performClick()
-            compose.onNodeWithText("Tomorrow").performClick()
-            compose.onNodeWithText("Tomorrow").assertIsDisplayed()
-            compose.onNodeWithContentDescription("Filter upcoming events").performClick()
-            compose.onNodeWithText("Today & tomorrow").performClick()
-            compose.onNodeWithText("Today & tomorrow").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Filter upcoming events").assertDoesNotExist()
+            compose.onNodeWithText("Today & tomorrow").assertDoesNotExist()
         } finally {
             compose.runOnUiThread { player.release() }
         }
+    }
+
+    @Test fun sportsWithoutProviderArtworkUseDecodedLocalPhotography() {
+        val events = GuideSport.entries.mapIndexed { index, sport ->
+            SportsGuideEvent("fallback:$index", "${sport.title} event", sport,
+                IptvProgram("${sport.title} event", startUtcMillis = now - 60_000, endUtcMillis = now + 60_000),
+                listOf(channels[index].source), artwork = if (index == 0) "https://example.invalid/missing.webp" else null)
+        }
+        compose.setContent {
+            SportsGuidePane(events, now, false, 0, {}, {}, {}, sidebarOpen = false)
+        }
+        compose.waitUntil(15_000) {
+            compose.onAllNodesWithTag("sports-artwork-fallback-loaded", useUnmergedTree = true).fetchSemanticsNodes().size >= 4
+        }
+        screenshot("06-sports-local-artwork")
+        compose.onAllNodesWithTag("sports-artwork-loaded", useUnmergedTree = true).assertCountEquals(0)
     }
 }

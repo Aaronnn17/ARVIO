@@ -35,6 +35,7 @@ class GuideProviderAuditDeviceTest {
         val now = System.currentTimeMillis()
         val start = SystemClock.elapsedRealtime()
         val ids = repository.cachedGuideChannelIds(now, now + 48 * 60 * 60_000L)
+        val lookupMs = SystemClock.elapsedRealtime() - start
         val events = SportsEventIndex()
         val resolver = SportsProgrammeResolver()
         var databaseMs = 0L
@@ -47,7 +48,7 @@ class GuideProviderAuditDeviceTest {
             databaseMs += SystemClock.elapsedRealtime() - dbStart
             loadedProgrammes += guide.values.sumOf { it.upcoming.size + if (it.now != null) 1 else 0 }
             val matchStart = SystemClock.elapsedRealtime()
-            buildSportsGuideEvents(channels, guide, now, resolver = resolver).forEach(events::add)
+            accumulateSportsGuideEvents(channels, guide, now, events, resolver = resolver)
             matchingMs += SystemClock.elapsedRealtime() - matchStart
         }
         val result = events.events()
@@ -57,7 +58,7 @@ class GuideProviderAuditDeviceTest {
         val sampledIds = (allowed.map { it.id } + ids.take(2)).toSet()
         val restricted = buildSportsGuideEvents(allowed, repository.indexedGuideWindow(sampledIds, now, now + 48 * 60 * 60_000), now)
         assertTrue(restricted.all { event -> event.channels.all { channel -> allowed.any { it.id == channel.id } } })
-        report("real_sports_scan_ms=${SystemClock.elapsedRealtime() - start} database_ms=$databaseMs matching_ms=$matchingMs cached_ids=${ids.size} read_programmes=$loadedProgrammes events=${result.size} on_air=${result.count { it.isOnAir(now) }} provider_artwork=${result.count { it.artwork != null }}")
+        report("real_sports_scan_ms=${SystemClock.elapsedRealtime() - start} lookup_ms=$lookupMs database_ms=$databaseMs matching_ms=$matchingMs cached_ids=${ids.size} read_programmes=$loadedProgrammes events=${result.size} on_air=${result.count { it.isOnAir(now) }} provider_artwork=${result.count { it.artwork != null }}")
         val artwork = EntryPointAccessors.fromApplication(context, GuideAuditEntryPoint::class.java).sportsRepository().loadGuideArtwork()
         val illustrated = attachSportsArtwork(result, artwork)
         report("installed_addon_artwork=${artwork.size} matched_event_artwork=${illustrated.count { it.artwork != null }}")

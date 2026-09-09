@@ -95,6 +95,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.R
 import com.arflix.tv.data.model.PlaylistGroupKey
+import androidx.compose.foundation.basicMarquee
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import kotlinx.coroutines.Job
@@ -1042,7 +1043,7 @@ private fun rememberCategoryRequester(
     return requester
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun SidebarRow(
     label: String,
@@ -1192,9 +1193,11 @@ private fun SidebarRow(
                         color = if (active) LiveColors.Fg else LiveColors.FgDim,
                         fontSize = labelSize,
                     ),
-                    maxLines = 1,
+                    maxLines = if (focused) 1 else 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).then(if (focused) Modifier.basicMarquee(
+                        iterations = Int.MAX_VALUE, initialDelayMillis = 1000,
+                    ) else Modifier),
                 )
                 if (count > 0) {
                     Text(

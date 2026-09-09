@@ -1578,6 +1578,9 @@ fun LiveTvScreen(
     var sportsLoading by remember { mutableStateOf(false) }
     var sportsError by remember { mutableStateOf(false) }
     var sportsRefresh by remember { mutableIntStateOf(0) }
+    var completedSportsScan by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) {
+        mutableStateOf<List<Any>?>(null)
+    }
     var sportsArtwork by remember(currentProfile?.id) { mutableStateOf(emptyList<com.arflix.tv.data.model.SportsEventArtwork>()) }
     LaunchedEffect(sportsSelected, currentProfile?.id, sportsRefresh, guideClockMillis / 600_000L) {
         if (sportsSelected) sportsArtwork = viewModel.loadSportsGuideArtwork()
@@ -1592,6 +1595,8 @@ fun LiveTvScreen(
     LaunchedEffect(sportsSelected, currentProfile?.id, selectedProviderId, hiddenGroupSet,
         restrictedGroupSet, state.snapshot.loadedAt, state.epgBackfillInProgress, sportsRefresh, guideClockMillis / 600_000L) {
         if (!sportsSelected) return@LaunchedEffect
+        val scanVersion = listOf(state.snapshot.loadedAt, state.epgBackfillInProgress, sportsRefresh, guideClockMillis / 600_000L)
+        if (completedSportsScan == scanVersion) return@LaunchedEffect
         sportsLoading = true
         sportsError = false
         try {
@@ -1626,9 +1631,7 @@ fun LiveTvScreen(
                     val indexed = viewModel.iptvRepository.indexedGuideWindow(batch.map { it.id }.toSet(),
                         guideClockMillis, guideClockMillis + 48 * 60 * 60_000L)
                     val guide = batch.associate { it.id to (indexed[it.id] ?: state.snapshot.nowNext[it.id] ?: IptvNowNext()) }
-                    buildSportsGuideEvents(batch, guide, guideClockMillis, resolver = programmeResolver).forEach { event ->
-                        events.add(event)
-                    }
+                    accumulateSportsGuideEvents(batch, guide, guideClockMillis, events, resolver = programmeResolver)
                     if (android.os.SystemClock.elapsedRealtime() - lastPublish >= 500) {
                         val partial = events.events()
                         withContext(Dispatchers.Main) { if (sportsEvents.isEmpty()) sportsEvents = partial }
@@ -1638,6 +1641,7 @@ fun LiveTvScreen(
                 events.events()
             }
             sportsEvents = retainSportsEventOrder(sportsEvents, result)
+            completedSportsScan = scanVersion
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -3332,7 +3336,7 @@ fun LiveTvScreen(
                     )
                 }
             } else LiveDrawerWorkspace(expanded = sidebarExpanded,
-                sidebarWidth = if (sportsSelected) 223.dp else LiveDims.SidebarExpanded,
+                sidebarWidth = LiveDims.SidebarExpanded,
                 contentKey = "${currentProfile?.id}:${if (sportsSelected) "sports" else "guide"}", sidebar = {
                 CategorySidebar(
                     tree = sportsSidebarTree,
@@ -3340,7 +3344,7 @@ fun LiveTvScreen(
                     playlistSections = playlistCategorySections,
                     expanded = sidebarExpanded,
                     fixedViewport = true,
-                    sidebarWidth = if (sportsSelected) 223.dp else LiveDims.SidebarExpanded,
+                    sidebarWidth = LiveDims.SidebarExpanded,
                     providers = providerFilters,
                     selectedProviderId = selectedProviderId,
                     onProviderSelect = { id ->

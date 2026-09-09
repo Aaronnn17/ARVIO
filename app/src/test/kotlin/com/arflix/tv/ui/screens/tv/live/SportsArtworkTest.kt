@@ -42,4 +42,13 @@ class SportsArtworkTest {
     @Test fun removingAddonArtworkClearsOldBanner() {
         assertNull(attachSportsArtwork(listOf(event.copy(artwork = meta.background)), emptyList()).single().artwork)
     }
+    @Test fun providerDashSeparatorsMatchButDifferentTeamsAndQualifiersDoNot() {
+        val banner = listOf(meta.toSportsEventArtwork()!!)
+        for (title in listOf("Barcelona - Feyenoord", "Football: Barcelona – Feyenoord", "Feyenoord at Barcelona")) {
+            assertEquals(title, meta.background, attachSportsArtwork(listOf(event.copy(title = title)), banner).single().artwork)
+        }
+        for (title in listOf("Barcelona U21 - Feyenoord U21", "Barcelona Women - Feyenoord Women", "Barcelona - Madrid")) {
+            assertNull(title, attachSportsArtwork(listOf(event.copy(title = title)), banner).single().artwork)
+        }
+    }
 }

@@ -16,9 +16,6 @@ import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Menu
-import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -45,8 +42,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
-import androidx.compose.runtime.saveable.rememberSaveable
 import coil.compose.AsyncImage
+import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import androidx.compose.ui.unit.LayoutDirection
@@ -79,9 +76,7 @@ internal fun SportsGuidePane(
     providerNames: Map<String, String> = emptyMap(),
     sidebarOpen: Boolean = false,
 ) {
-    var day by rememberSaveable { mutableStateOf(SportsDay.BOTH) }
-    var dayMenu by remember { mutableStateOf(false) }
-    val rows = remember(events, now, day) { sportsGuideRows(events, now, day) }
+    val rows = remember(events, now) { sportsGuideRows(events, now) }
     var selected by remember { mutableStateOf<SportsGuideEvent?>(null) }
     var returnFocus by remember { mutableStateOf<FocusRequester?>(null) }
     val firstFocus = remember { FocusRequester() }
@@ -140,23 +135,7 @@ internal fun SportsGuidePane(
                     Row(Modifier.fillMaxWidth().height(if (narrow) 44.dp else 20.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(row.title, color = LiveColors.Fg, fontWeight = FontWeight.Medium, fontSize = 15.sp, lineHeight = 18.sp,
                             modifier = Modifier.weight(1f))
-                        if (row.id == "upcoming") Box {
-                            var focused by remember { mutableStateOf(false) }
-                            Row(Modifier.border(1.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(3.dp))
-                                .onFocusChanged { focused = it.isFocused }.clickable { dayMenu = true }.padding(4.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                Text(day.label, color = LiveColors.Fg, fontSize = 11.sp)
-                                Icon(Icons.Outlined.ExpandMore, "Filter upcoming events", tint = LiveColors.Fg, modifier = Modifier.padding(start = 6.dp).size(14.dp))
-                            }
-                            DropdownMenu(dayMenu, onDismissRequest = { dayMenu = false }, modifier = Modifier.background(LiveColors.Panel)) {
-                                SportsDay.entries.forEach { option -> DropdownMenuItem(
-                                    text = { Text(option.label, color = LiveColors.Fg) },
-                                    onClick = { day = option; dayMenu = false }) }
-                            }
-                        }
                     }
-                    if (row.events.isEmpty()) Text("No events scheduled for ${day.label.lowercase()}.", color = LiveColors.FgDim,
-                        fontSize = 12.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 24.dp))
                     LazyRow(Modifier.padding(horizontal = 18.dp), contentPadding = PaddingValues(vertical = 1.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         itemsIndexed(row.events, key = { _, event -> event.id }) { index, event ->
@@ -285,14 +264,17 @@ private fun channelCount(count: Int) = "$count ${if (count == 1) "channel" else 
 @Composable
 private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier) {
     var loaded by remember(event.artwork) { mutableStateOf(false) }
+    var fallbackLoaded by remember(event.sport) { mutableStateOf(false) }
     Box(modifier.background(LiveColors.Panel).testTag(if (loaded) "sports-artwork-loaded" else "sports-artwork-pending")) {
         if (!loaded) {
-            // A legible event identity, not unrelated stock photography or invented team crests.
-            Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 22.dp),
-                verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(event.title, color = LiveColors.Fg, fontSize = 13.sp, lineHeight = 16.sp,
-                    fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            // Bundled sport photography is explicitly a fallback, never an invented event banner.
+            AsyncImage(event.sport.fallbackArtwork(), null, contentScale = ContentScale.Crop,
+                onSuccess = { fallbackLoaded = true },
+                modifier = Modifier.fillMaxSize().testTag(if (fallbackLoaded) "sports-artwork-fallback-loaded" else "sports-artwork-fallback"))
+            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color.Black.copy(alpha = .72f))
+                .padding(horizontal = 10.dp, vertical = 5.dp)) {
+                Text(event.title, color = LiveColors.Fg, fontSize = 11.sp, lineHeight = 13.sp,
+                    fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
         event.artwork?.let { url ->
@@ -301,6 +283,18 @@ private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier)
                 modifier = Modifier.fillMaxSize())
         }
     }
+}
+
+private fun GuideSport.fallbackArtwork(): Int = when (this) {
+    GuideSport.FOOTBALL -> R.drawable.sports_card_football
+    GuideSport.BASKETBALL -> R.drawable.sports_card_basketball
+    GuideSport.F1 -> R.drawable.sports_card_motor_sports
+    GuideSport.TENNIS -> R.drawable.sports_card_tennis
+    GuideSport.MMA, GuideSport.BOXING -> R.drawable.sports_card_fight
+    GuideSport.AMERICAN_FOOTBALL -> R.drawable.sports_card_american_football
+    GuideSport.CRICKET -> R.drawable.sports_card_cricket
+    GuideSport.BASEBALL -> R.drawable.sports_card_baseball
+    GuideSport.HOCKEY -> R.drawable.sports_card_hockey
 }
 
 @Composable
