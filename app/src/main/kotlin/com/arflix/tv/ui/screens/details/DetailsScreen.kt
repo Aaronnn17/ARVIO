@@ -1054,7 +1054,10 @@ fun DetailsScreen(
                     null
                 )
             },
-            onClose = { showStreamSelector = false }
+            onClose = {
+                showStreamSelector = false
+                runCatching { focusRequester.requestFocus() }
+            }
         )
 
         // Episode Context Menu

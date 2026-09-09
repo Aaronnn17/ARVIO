@@ -3359,6 +3359,19 @@ fun PlayerScreen(
                         }
                     }
 
+                    // Handle source menu
+                    if (showSourceMenu) {
+                        if (event.key == Key.Back || event.key == Key.Escape) {
+                            showSourceMenu = false
+                            showControls = true
+                            coroutineScope.launch {
+                                delay(150)
+                                runCatching { sourceButtonFocusRequester.requestFocus() }
+                            }
+                            return@onKeyEvent true
+                        }
+                    }
+
                     when (event.key) {
                         Key.Back, Key.Escape -> {
                             onExitPlayer()
