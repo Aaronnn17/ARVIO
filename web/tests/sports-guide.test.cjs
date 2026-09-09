@@ -8,12 +8,25 @@ const code = ts.transpileModule(fs.readFileSync(require.resolve('../lib/sportsGu
 }).outputText;
 const sandbox = { exports: {}, Date, Map, Set };
 vm.runInNewContext(code, sandbox);
-const { buildSportsGuideEvents, sportsGuideRows, guideSports, isOnAir } = sandbox.exports;
+const { buildSportsGuideEvents, sportsGuideRows, sportsDayIncludes, guideSports, isOnAir } = sandbox.exports;
 const now = Date.parse('2026-09-09T18:00:00Z');
 const a = { id: 'a:1', name: 'Sports', group: 'Football', streamUrl: 'https://example.invalid/a' };
 const b = { ...a, id: 'b:1' };
 const p = { title: 'Football: North vs South', startUtcMillis: now - 60_000, endUtcMillis: now + 60_000 };
 const slice = (p) => ({ now: p, next: p, upcoming: [p], recent: [] });
+
+test('date filtering keeps local calendar boundaries and an empty filter reachable', () => {
+  const clock = new Date(2026, 9, 25, 0, 30).getTime();
+  const lateToday = new Date(2026, 9, 25, 23, 30).getTime();
+  const tomorrow = new Date(2026, 9, 26, 0, 30).getTime();
+  assert.equal(sportsDayIncludes(lateToday, clock, 'today'), true);
+  assert.equal(sportsDayIncludes(tomorrow, clock, 'today'), false);
+  assert.equal(sportsDayIncludes(tomorrow, clock, 'tomorrow'), true);
+  const rows = sportsGuideRows([{ id: 'future', sportId: 'football', programme: { ...p, startUtcMillis: tomorrow, endUtcMillis: tomorrow + 60_000 }, channels: [a] }], clock, 'today');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, 'upcoming');
+  assert.equal(rows[0].events.length, 0);
+});
 test('providers remain separate sources and repeated now/next is deduplicated', () => {
   const events = buildSportsGuideEvents([a, b], { [a.id]: slice(p), [b.id]: slice(p) }, now);
   assert.equal(events.length, 1);

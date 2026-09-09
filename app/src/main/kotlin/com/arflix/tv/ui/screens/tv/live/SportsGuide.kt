@@ -92,13 +92,30 @@ internal fun buildSportsGuideEvents(
 
 internal data class SportsGuideRow(val id: String, val title: String, val events: List<SportsGuideEvent>)
 
-internal fun sportsGuideRows(events: List<SportsGuideEvent>, now: Long): List<SportsGuideRow> {
+internal enum class SportsDay(val label: String) {
+    BOTH("Today & tomorrow"), TODAY("Today"), TOMORROW("Tomorrow");
+
+    fun includes(start: Long, now: Long, zone: ZoneId): Boolean {
+        val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val date = Instant.ofEpochMilli(start).atZone(zone).toLocalDate()
+        return when (this) {
+            BOTH -> date == today || date == today.plusDays(1)
+            TODAY -> date == today
+            TOMORROW -> date == today.plusDays(1)
+        }
+    }
+}
+
+internal fun sportsGuideRows(events: List<SportsGuideEvent>, now: Long,
+    day: SportsDay = SportsDay.BOTH, zone: ZoneId = ZoneId.systemDefault()): List<SportsGuideRow> {
     val live = events.filter { it.isOnAir(now) }
     return buildList {
         // EPG has no viewer metrics. Never call this popularity or confirmed live sport.
         if (live.isNotEmpty()) add(SportsGuideRow("featured", "On air now", live.take(8)))
         val upcoming = events.filter { it.programme.startUtcMillis > now }
-        if (upcoming.isNotEmpty()) add(SportsGuideRow("upcoming", "Upcoming today & tomorrow", upcoming))
+        // Keep the filter reachable even when a selected day has no events.
+        if (upcoming.isNotEmpty()) add(SportsGuideRow("upcoming", "Upcoming",
+            upcoming.filter { day.includes(it.programme.startUtcMillis, now, zone) }))
         if (live.size > 8) add(SportsGuideRow("more", "More on air", live.drop(8)))
         GuideSport.entries.forEach { sport ->
             val items = live.filter { it.sport == sport }

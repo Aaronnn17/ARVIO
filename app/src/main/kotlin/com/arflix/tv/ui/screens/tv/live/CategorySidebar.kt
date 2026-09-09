@@ -635,7 +635,7 @@ fun CategorySidebar(
                                 active = selectedId == child.id,
                                 expanded = contentVisible,
                                 indent = 28.dp,
-                                labelSize = 10.5.sp,
+                                labelSize = 11.sp,
                                 hasChildren = child.children.isNotEmpty(),
                                 isOpenGroup = child.containsId(selectedId),
                                 focusRequester = childRequester,
@@ -664,7 +664,7 @@ fun CategorySidebar(
                                         active = selectedId == grandchild.id,
                                         expanded = contentVisible,
                                         indent = 48.dp,
-                                        labelSize = 9.5.sp,
+                                        labelSize = 10.5.sp,
                                         focusRequester = gcRequester,
                                         onFocused = {
                                             lastFocusedCategoryKey = gcKey
@@ -841,7 +841,7 @@ fun CategorySidebar(
                                     active = selectedId == child.id,
                                     expanded = contentVisible,
                                     indent = 40.dp,
-                                    labelSize = 10.5.sp,
+                                    labelSize = 11.sp,
                                     focusRequester = childRequester,
                                     onFocused = {
                                         lastFocusedCategoryKey = childKey
@@ -1059,7 +1059,7 @@ private fun SidebarRow(
     hasChildren: Boolean = false,
     isOpenGroup: Boolean = false,
     indent: androidx.compose.ui.unit.Dp = 0.dp,
-    labelSize: androidx.compose.ui.unit.TextUnit = 11.sp,
+    labelSize: androidx.compose.ui.unit.TextUnit = 12.sp,
     focusRequester: FocusRequester? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -1181,7 +1181,7 @@ private fun SidebarRow(
                     imageVector = icon,
                     contentDescription = null,
                     tint = if (active) LiveColors.Fg else LiveColors.FgDim,
-                    modifier = Modifier.size(14.dp),
+                    modifier = Modifier.size(17.dp),
                 )
                 else -> Spacer(Modifier.size(14.dp))
             }
@@ -1199,7 +1199,7 @@ private fun SidebarRow(
                 if (count > 0) {
                     Text(
                         text = java.text.NumberFormat.getIntegerInstance().format(count),
-                        style = LiveType.NumberMono.copy(color = LiveColors.FgMute, fontSize = 7.sp),
+                        style = LiveType.NumberMono.copy(color = LiveColors.FgDim, fontSize = 9.sp),
                     )
                 }
                 if (hasChildren) {

@@ -2,7 +2,7 @@
 
 Status: **draft, not a release candidate**. Base: `0c9f4caf1`.
 
-This implements the first guide/Sports workspace pass on Android and web. It does
+This implements the guide/Sports workspace and a second reference-comparison pass on Android and web. It does
 not claim that every acceptance gate in the larger overhaul plan is complete.
 Do not merge until the remaining gates below have been addressed.
 
@@ -19,9 +19,20 @@ Do not merge until the remaining gates below have been addressed.
   Football/American football and boxing/MMA remain distinct.
 - Local timezone and device clock formatting. Ended, invalid and explicitly
   labelled replay/highlight entries are excluded.
-- Fixed-size wide event banners from compatible installed sports addons. Match-specific
+- Responsive, whole-card desktop tracks with wide event banners from compatible installed sports addons. Match-specific
   backgrounds replace generic ball/glove photos; unavailable artwork retains a readable
   event identity instead of a broken image or unrelated picture.
+- Complete-image fitting instead of cropping club crests and embedded lettering. This
+  can leave side margins when a provider supplies 16:9 artwork for a wider card.
+- Today, Tomorrow and combined Upcoming filters using local calendar boundaries,
+  including daylight-saving changes. An empty selected day keeps its filter reachable.
+- Readable sidebar counts, corrected local Inter variable-font weights, balanced TV
+  navigation, guide gutters, and separate timeline-label/current-time-marker tracks.
+- A dimmed event picker with first-playable-source focus and origin-card focus return.
+  Unknown language is no longer presented as English. Known quality/language remain visible.
+- Web provider/search controls inside the sidebar, compact guide controls, channel
+  numbers/favorite indicators, and programme time captions. Existing management and refresh
+  controls remain available, without a second large Live TV heading above the workspace.
 - Event channel picker preserving provider-specific source choices and known
   quality. Upcoming channels are shown as scheduled, not playable live events.
 - Hidden/locked sources excluded; web reads Android's existing cloud lock fields
@@ -31,6 +42,34 @@ Do not merge until the remaining gates below have been addressed.
   and no new provider network request loop.
 - Existing guide paging, provider request limits, cache schema and playback resolver
   are retained. No provider credentials, full EPG or new large data enter cloud sync.
+
+## Critical comparison with the references
+
+The implementation is **not pixel-identical**, especially the artwork. The references
+use curated, composed match graphics with consistent league/club branding. Addons supply
+mixed aspect ratios, quality and art direction; CSS or Compose cannot turn these into
+the exact reference assets. The change preserves the whole supplied image rather than
+silently cutting off logos. Missing event artwork still uses a readable title fallback.
+
+| Reference gap | This pass |
+| --- | --- |
+| Uneven card widths, partial desktop cards | Container/viewport-based tracks; three open and four closed on wide layouts |
+| Cropped crests and text | Complete-image fitting on cards and picker |
+| Weak hierarchy and tiny sidebar counts | Local variable-font weights, larger counts, brighter and centered TV navigation |
+| Missing Upcoming date control | Today / Tomorrow / combined filter, local-day and DST tests |
+| Picker background/focus too weak | Explicit Android window dimming; browser focus waits for actual virtual rows |
+| Crowded guide time marker | Separate label track; date follows the displayed window |
+| Bulky web header unrelated to reference | Provider/search moved into sidebar; compact workspace commands |
+| Invalid screenshot evidence | Capture now rejects black windows; the previously blank guide-open image is replaced |
+
+Still missing from the reference: reliably complete artwork coverage, competition metadata,
+verified live/trending event data, broad cross-provider event identity matching, and an
+embedded web mini-player. No popularity, channel availability or official-artwork claims
+are invented to make the screenshots look fuller. Fixtures intentionally retain synthetic
+schedules, inactive video and missing channel-logo fallback states.
+
+Variable-font configuration follows the Android O+ API with an older-platform fallback:
+[Android font documentation](https://developer.android.com/develop/ui/compose/text/fonts?hl=en).
 
 ## What the Sports data means
 
@@ -59,11 +98,11 @@ TV was not used. These are not release-device performance measurements.
 | Check | Observed result |
 | --- | --- |
 | Android build | Sideload debug + instrumentation APK compile/package succeeded |
-| Focused Android JVM suite | 61 passed, 0 failed |
+| Focused Android JVM suite | 62 passed, 0 failed |
 | Android instrumentation | 11 passed, including six decoded remote event banners, five-state captures, drawer/picker focus, first-click favorites, sustained/rapid channel navigation, bounded cells and 50k storage regression |
-| Web sports/artwork rules | 12 passed, 0 failed, including cache/request bounds and wrong-match rejection |
+| Web sports/artwork rules | 13 passed, 0 failed, including local-day boundaries, cache/request bounds and wrong-match rejection |
 | Web TypeScript | No errors |
-| Browser checks | Desktop 1672px, tablet 768px, phone 390px passed; drawer/picker/focus return, artwork ratio/loading, playback callback, no page overflow or uncaught errors |
+| Browser checks | Desktop 1672px, tablet 768px, phone 390px passed; date filter, four complete desktop cards, uncropped artwork, first-source focus and origin focus return, playback callback, no page overflow or uncaught errors |
 | Supplied provider import | 54,502 channels, 833 groups, 240 in-memory startup rows |
 | Fresh import | First channels callback 16,036 ms; complete channel import 22,418 ms |
 | Provider short guide | 0 matches for 2 sampled channels |
@@ -107,8 +146,8 @@ The guide fixture has a 55k logical count and a bounded
 ## Remaining merge gates
 
 1. Complete installed-addon event metadata/stream adapters, explicit event status/freshness,
-   cancellation/postponement handling, event identity mapping and permitted
-   event identity mapping beyond exact artwork-title matching. Audit artwork
+   cancellation/postponement handling, and event identity mapping beyond exact
+   artwork-title matching. Audit artwork
    permissions separately from code; generic fallback photos are no longer used
    in event cards, but an addon without a matching background still has no event image.
 2. Match the reference spacing and all five states more closely. Web still uses

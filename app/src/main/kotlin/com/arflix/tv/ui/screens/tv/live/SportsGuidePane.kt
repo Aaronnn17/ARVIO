@@ -16,6 +16,10 @@ import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -30,6 +34,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +44,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.runtime.saveable.rememberSaveable
 import coil.compose.AsyncImage
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
@@ -71,12 +79,16 @@ internal fun SportsGuidePane(
     providerNames: Map<String, String> = emptyMap(),
     sidebarOpen: Boolean = false,
 ) {
-    val rows = remember(events, now) { sportsGuideRows(events, now) }
+    var day by rememberSaveable { mutableStateOf(SportsDay.BOTH) }
+    var dayMenu by remember { mutableStateOf(false) }
+    val rows = remember(events, now, day) { sportsGuideRows(events, now, day) }
     var selected by remember { mutableStateOf<SportsGuideEvent?>(null) }
     var returnFocus by remember { mutableStateOf<FocusRequester?>(null) }
     val firstFocus = remember { FocusRequester() }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val narrow = configuration.screenWidthDp < 600
     val timeFormat = remember(context) { android.text.format.DateFormat.getTimeFormat(context) }
     val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
     fun eventTime(event: SportsGuideEvent): String {
@@ -95,7 +107,14 @@ internal fun SportsGuidePane(
     LaunchedEffect(selected) {
         if (selected == null) returnFocus?.let { runCatching { it.requestFocus() } }
     }
-    Column(modifier.fillMaxSize().background(LiveColors.Bg)) {
+    CompositionLocalProvider(LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = LiveFontFamily)) {
+    BoxWithConstraints(modifier.fillMaxSize().background(LiveColors.Bg)) {
+    // Keep card geometry stable while the drawer moves; cached lazy rows must not
+    // retain the wider three-column measurement after a four-column expansion.
+    val viewport = configuration.screenWidthDp.dp
+    val columns = when { viewport >= 850.dp -> 4; viewport >= 620.dp -> 3; viewport >= 420.dp -> 2; else -> 1 }
+    val cardWidth = if (columns == 1) viewport - 54.dp else (viewport - 36.dp - 12.dp * (columns - 1)) / columns
+    Column(Modifier.fillMaxSize()) {
         Row(Modifier.height(32.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             if (!sidebarOpen) Icon(Icons.Outlined.Menu, "Categories", tint = LiveColors.Fg,
@@ -118,14 +137,32 @@ internal fun SportsGuidePane(
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(rows, key = { _, row -> row.id }) { rowIndex, row ->
                 Column {
-                    Text(row.title, color = LiveColors.Fg, fontWeight = FontWeight.Medium, fontSize = 14.sp, lineHeight = 17.sp,
-                        modifier = Modifier.padding(start = 18.dp, bottom = 1.dp))
-                    LazyRow(contentPadding = PaddingValues(horizontal = 18.dp, vertical = 1.dp),
+                    Row(Modifier.fillMaxWidth().height(if (narrow) 44.dp else 20.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(row.title, color = LiveColors.Fg, fontWeight = FontWeight.Medium, fontSize = 15.sp, lineHeight = 18.sp,
+                            modifier = Modifier.weight(1f))
+                        if (row.id == "upcoming") Box {
+                            var focused by remember { mutableStateOf(false) }
+                            Row(Modifier.border(1.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(3.dp))
+                                .onFocusChanged { focused = it.isFocused }.clickable { dayMenu = true }.padding(4.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Text(day.label, color = LiveColors.Fg, fontSize = 11.sp)
+                                Icon(Icons.Outlined.ExpandMore, "Filter upcoming events", tint = LiveColors.Fg, modifier = Modifier.padding(start = 6.dp).size(14.dp))
+                            }
+                            DropdownMenu(dayMenu, onDismissRequest = { dayMenu = false }, modifier = Modifier.background(LiveColors.Panel)) {
+                                SportsDay.entries.forEach { option -> DropdownMenuItem(
+                                    text = { Text(option.label, color = LiveColors.Fg) },
+                                    onClick = { day = option; dayMenu = false }) }
+                            }
+                        }
+                    }
+                    if (row.events.isEmpty()) Text("No events scheduled for ${day.label.lowercase()}.", color = LiveColors.FgDim,
+                        fontSize = 12.sp, modifier = Modifier.padding(horizontal = 18.dp, vertical = 24.dp))
+                    LazyRow(Modifier.padding(horizontal = 18.dp), contentPadding = PaddingValues(vertical = 1.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         itemsIndexed(row.events, key = { _, event -> event.id }) { index, event ->
                             val requester = remember { FocusRequester() }
                             var focused by remember { mutableStateOf(false) }
-                            Column(Modifier.width(222.dp)
+                            Column(Modifier.width(cardWidth).testTag("sports-event-card")
                                 .then(if (index == 0 && rowIndex == 0) Modifier.focusRequester(firstFocus) else Modifier)
                                 .focusRequester(requester)
                                 .onFocusChanged { focused = it.isFocused; if (it.isFocused) onContentFocused() }
@@ -139,19 +176,21 @@ internal fun SportsGuidePane(
                                 .padding(2.dp)) {
                                 Box(Modifier.fillMaxWidth().aspectRatio(if (row.id == "more") 2.85f else 2.25f).clip(RoundedCornerShape(4.dp))) {
                                     EventArtwork(event, Modifier.fillMaxSize())
-                                    Text(eventTime(event), color = Color.White, fontSize = 10.sp, lineHeight = 12.sp,
-                                        modifier = Modifier.padding(6.dp).background(Color.Black.copy(alpha = .85f), RoundedCornerShape(3.dp))
-                                            .padding(horizontal = 5.dp, vertical = 2.dp))
+                                    Row(Modifier.padding(6.dp).background(Color.Black.copy(alpha = .85f), RoundedCornerShape(3.dp))
+                                        .padding(horizontal = 5.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        if (event.isOnAir(now)) Box(Modifier.padding(end = 4.dp).size(7.dp).background(LiveColors.LiveRed, RoundedCornerShape(50)))
+                                        Text(eventTime(event), color = Color.White, fontSize = 10.sp, lineHeight = 12.sp)
+                                    }
                                     Box(Modifier.matchParentSize().border(2.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(4.dp)))
                                 }
-                                Text(event.title, color = LiveColors.Fg, fontSize = 11.sp, lineHeight = 13.sp, fontWeight = FontWeight.Medium,
+                                Text(event.title, color = LiveColors.Fg, fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Medium,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 3.dp))
+                                    modifier = Modifier.padding(top = 4.dp))
                                 Row(Modifier.fillMaxWidth().height(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(event.sport.title, color = LiveColors.FgDim, fontSize = 10.sp, lineHeight = 13.sp, modifier = Modifier.weight(1f))
                                     if (event.isOnAir(now)) {
                                         Icon(Icons.Default.Tv, null, tint = LiveColors.FgDim, modifier = Modifier.size(13.dp))
-                                        Text("${event.channels.size} channels", color = LiveColors.FgDim, fontSize = 9.sp, lineHeight = 12.sp,
+                                        Text(channelCount(event.channels.size), color = LiveColors.FgDim, fontSize = 9.sp, lineHeight = 12.sp,
                                             modifier = Modifier.padding(start = 6.dp))
                                     }
                                 }
@@ -162,10 +201,16 @@ internal fun SportsGuidePane(
             }
         }
     }
+    }
     val event = selected?.let { selection -> events.firstOrNull { it.id == selection.id } }
     fun dismiss() { selected = null }
     if (selected != null) Dialog(onDismissRequest = ::dismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect {
+            window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            window?.setDimAmount(.65f)
+        }
         val onAir = event?.isOnAir(now) == true
         val initialFocus = remember(event?.id) { FocusRequester() }
         LaunchedEffect(event?.id) {
@@ -174,11 +219,11 @@ internal fun SportsGuidePane(
             withFrameNanos { }
             initialFocus.requestFocus()
         }
-        Column(Modifier.widthIn(max = 586.dp).fillMaxWidth().fillMaxHeight(.82f)
+        Column(Modifier.widthIn(max = 586.dp).fillMaxWidth().heightIn(max = configuration.screenHeightDp.dp * .82f)
             .border(1.dp, LiveColors.DividerStrong, RoundedCornerShape(5.dp))
             .clip(RoundedCornerShape(5.dp)).background(LiveColors.Panel).padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                EventArtwork(event ?: selected!!, Modifier.size(132.dp, 58.dp).clip(RoundedCornerShape(3.dp)))
+                EventArtwork(event ?: selected!!, Modifier.size(if (narrow) 84.dp else 132.dp, 58.dp).clip(RoundedCornerShape(3.dp)))
                 Column(Modifier.weight(1f).padding(start = 14.dp)) {
                     Text(listOfNotNull(event?.let(::eventTime), event?.sport?.title).joinToString("  ·  "),
                         color = LiveColors.FgDim, fontSize = 11.sp)
@@ -194,20 +239,22 @@ internal fun SportsGuidePane(
             Row(Modifier.fillMaxWidth().padding(top = 9.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(if (onAir) "Available channels" else "Scheduled channels", fontSize = 14.sp, color = LiveColors.Fg,
                     fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                Text("${event?.channels?.size ?: 0} channels", fontSize = 11.sp, color = LiveColors.FgDim)
+                Text(channelCount(event?.channels?.size ?: 0), fontSize = 11.sp, color = LiveColors.FgDim)
             }
-            LazyColumn {
+            LazyColumn(Modifier.heightIn(max = (if (narrow) 49.dp else 41.dp) * (event?.channels?.size ?: 1).coerceIn(1, 20))) {
                 itemsIndexed(event?.channels.orEmpty(), key = { _, channel -> channel.id }) { index, channel ->
                     var focused by remember { mutableStateOf(false) }
-                    Row(Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(4.dp))
+                    Row(Modifier.fillMaxWidth().heightIn(min = if (narrow) 48.dp else 40.dp).clip(RoundedCornerShape(4.dp))
                         .then(if (index == 0 && onAir) Modifier.focusRequester(initialFocus) else Modifier)
                         .border(1.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(4.dp))
                         .background(if (focused) LiveColors.FocusBg else Color.Transparent)
                         .onFocusChanged { focused = it.isFocused }
                         .clickable(enabled = onAir) { dismiss(); onPlay(channel) }.padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        if (channel.logo.isNullOrBlank()) Icon(Icons.Default.Tv, null, tint = LiveColors.FgDim, modifier = Modifier.size(88.dp, 30.dp))
-                        else AsyncImage(channel.logo, null, contentScale = ContentScale.Fit, modifier = Modifier.size(88.dp, 30.dp))
+                        if (channel.logo.isNullOrBlank()) Box(Modifier.size(if (narrow) 40.dp else 88.dp, 30.dp), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Tv, null, tint = LiveColors.FgDim, modifier = Modifier.size(24.dp))
+                        }
+                        else AsyncImage(channel.logo, null, contentScale = ContentScale.Fit, modifier = Modifier.size(if (narrow) 40.dp else 88.dp, 30.dp))
                         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                             Text(channel.name, color = LiveColors.Fg, fontSize = 13.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             val provider = providerNames[channelPlaylistId(channel.id)]
@@ -215,7 +262,8 @@ internal fun SportsGuidePane(
                         }
                         val enriched = remember(channel) { channel.enrich(0) }
                         if (enriched.quality != Quality.UNKNOWN) PickerBadge(enriched.quality.label)
-                        PickerBadge(enriched.lang)
+                        // EN was a guessed fallback, not provider metadata.
+                        channel.language?.takeIf { it.isNotBlank() }?.let { PickerBadge(it.uppercase()) }
                         Icon(if (focused) Icons.Default.PlayArrow else Icons.Outlined.ChevronRight, null,
                             tint = LiveColors.Fg, modifier = Modifier.padding(start = 12.dp).size(18.dp))
                     }
@@ -225,7 +273,10 @@ internal fun SportsGuidePane(
             if (event == null) Text("This event is no longer in the available guide.", color = LiveColors.FgDim)
         }
     }
+    }
 }
+
+private fun channelCount(count: Int) = "$count ${if (count == 1) "channel" else "channels"}"
 
 @Composable
 private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier) {
@@ -241,7 +292,7 @@ private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier)
             }
         }
         event.artwork?.let { url ->
-            AsyncImage(url, null, contentScale = ContentScale.Crop,
+            AsyncImage(url, null, contentScale = ContentScale.Fit,
                 onSuccess = { loaded = true }, onError = { loaded = false },
                 modifier = Modifier.fillMaxSize())
         }

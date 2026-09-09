@@ -52,14 +52,23 @@ export function buildSportsGuideEvents(channels: IptvChannel[], guide: Record<st
   return [...events.values()].sort((a, b) => Number(isOnAir(b, now)) - Number(isOnAir(a, now)) || a.programme.startUtcMillis - b.programme.startUtcMillis || a.title.localeCompare(b.title));
 }
 
-export function sportsGuideRows(events: SportsGuideEvent[], now: number) {
+export type SportsDay = "both" | "today" | "tomorrow";
+export function sportsDayIncludes(start: number, now: number, day: SportsDay) {
+  const today = new Date(now), tomorrow = new Date(now), date = new Date(start).toDateString();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return (day !== "tomorrow" && date === today.toDateString()) ||
+    (day !== "today" && date === tomorrow.toDateString());
+}
+
+export function sportsGuideRows(events: SportsGuideEvent[], now: number, day: SportsDay = "both") {
   const live = events.filter((event) => isOnAir(event, now));
+  const upcoming = events.filter((event) => event.programme.startUtcMillis > now);
   return [
     { id: "featured", title: "On air now", events: live.slice(0, 8) },
-    { id: "upcoming", title: "Upcoming today & tomorrow", events: events.filter((event) => event.programme.startUtcMillis > now) },
+    { id: "upcoming", title: "Upcoming", events: upcoming.filter(event => sportsDayIncludes(event.programme.startUtcMillis, now, day)) },
     { id: "more", title: "More on air", events: live.slice(8) },
     ...["football", "basketball", "f1", "tennis", "mma", "boxing", "american-football", "cricket", "baseball", "hockey"]
       .map((id) => guideSports.find((sport) => sport.id === id)!)
       .map((sport) => ({ id: sport.id, title: sport.title, events: live.filter((event) => event.sportId === sport.id) })),
-  ].filter((row) => row.events.length > 0);
+  ].filter((row) => row.events.length > 0 || (row.id === "upcoming" && upcoming.length > 0));
 }

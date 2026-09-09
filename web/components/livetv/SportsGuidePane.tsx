@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { X, Tv, PanelLeft, ChevronRight } from "lucide-react";
-import { guideSports, isOnAir, sportsGuideRows, type SportsGuideEvent } from "@/lib/sportsGuide";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { X, Tv, PanelLeft, ChevronRight, Play } from "lucide-react";
+import { guideSports, isOnAir, sportsGuideRows, type SportsGuideEvent, type SportsDay } from "@/lib/sportsGuide";
 import type { InstalledAddon, IptvChannel, IptvNowNext } from "@/lib/types";
 import { attachSportsArtwork, loadSportsGuideArtwork, type SportsEventArtwork } from "@/lib/sportsArtwork";
 import { VirtualList } from "@/components/ui/VirtualList";
@@ -25,6 +25,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(Date.now);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [day, setDay] = useState<SportsDay>("both");
   const dialog = useRef<HTMLDialogElement>(null);
   const origin = useRef<HTMLButtonElement | null>(null);
   const root = useRef<HTMLElement>(null);
@@ -44,7 +45,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
   const visibleEvents = useMemo(() => events.map((event) => ({ ...event, channels: event.channels.filter((ch) => accessibleIds.has(ch.id)) }))
     .filter((event) => event.channels.length && event.programme.endUtcMillis > now), [events, accessibleIds, now]);
   const illustratedEvents = useMemo(() => attachSportsArtwork(visibleEvents, artwork), [visibleEvents, artwork]);
-  const rows = useMemo(() => sportsGuideRows(illustratedEvents, now), [illustratedEvents, now]);
+  const rows = useMemo(() => sportsGuideRows(illustratedEvents, now, day), [illustratedEvents, now, day]);
   useEffect(() => {
     if (!rows.length || entered.current) return;
     entered.current = true;
@@ -52,7 +53,19 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
   }, [rows.length]);
   const selected = illustratedEvents.find((event) => event.id === selectedId);
   const close = () => { dialog.current?.close(); setSelectedId(null); origin.current?.focus({ preventScroll: true }); };
-  useEffect(() => { if (selectedId && !dialog.current?.open) dialog.current?.showModal(); }, [selectedId]);
+  useEffect(() => {
+    if (!selectedId || dialog.current?.open) return;
+    dialog.current?.showModal();
+    // Virtual rows appear after ResizeObserver measures the opened dialog.
+    const observer = new MutationObserver(() => focusFirst());
+    const focusFirst = () => {
+      const first = dialog.current?.querySelector<HTMLButtonElement>(".tv-event-source:not(:disabled)");
+      if (first) { first.focus({ preventScroll: true }); observer.disconnect(); }
+      return Boolean(first);
+    };
+    if (!focusFirst() && dialog.current) observer.observe(dialog.current, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [selectedId]);
   const stamp = (event: SportsGuideEvent) => {
     if (isOnAir(event, now)) return "ON AIR";
     const date = new Date(event.programme.startUtcMillis);
@@ -65,7 +78,11 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
     {!rows.length && <div className="tv-sports-empty" role="status"><Tv size={32} /><p>{loading ? "Reading sports schedule" : "No sports events in the available guide"}</p>
       <button type="button" className="secondary" onClick={onOpenCategories}><PanelLeft size={18} />Categories</button></div>}
     {rows.map((row, rowIndex) => <section className={`tv-sports-section${row.id === "more" ? " is-compact" : ""}`} key={row.id} aria-label={row.title}>
-      <h3>{row.title}</h3>
+      <div className="tv-sports-row-heading"><h3>{row.title}</h3>{row.id === "upcoming" &&
+        <select aria-label="Upcoming date" value={day} onChange={event => setDay(event.target.value as SportsDay)}>
+          <option value="both">Today & tomorrow</option><option value="today">Today</option><option value="tomorrow">Tomorrow</option>
+        </select>}</div>
+      {!row.events.length && <p className="tv-sports-day-empty" role="status">No events scheduled for {day}.</p>}
       <div className="tv-sports-row">{row.events.map((event, index) => {
         const sport = guideSports.find((s) => s.id === event.sportId)!;
         return <button type="button" className="tv-event-card" key={event.id} onFocus={onEnter}
@@ -85,19 +102,22 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
             next?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
           }}
           onClick={(click) => { origin.current = click.currentTarget; setSelectedId(event.id); }}>
-          <div className="tv-event-art"><EventArtwork event={event} /><span className="tv-event-stamp">{stamp(event)}</span></div>
-          <strong>{event.title}</strong><small className="tv-event-meta">{sport.title}{isOnAir(event, now) && <span><Tv size={16} />{event.channels.length} channels</span>}</small>
+          <div className="tv-event-art"><EventArtwork event={event} /><span className={`tv-event-stamp${isOnAir(event, now) ? " is-on-air" : ""}`}>{stamp(event)}</span></div>
+          <strong>{event.title}</strong><small className="tv-event-meta">{sport.title}{isOnAir(event, now) && <span><Tv size={16} />{channelCount(event.channels.length)}</span>}</small>
         </button>;
       })}</div>
     </section>)}
-    <dialog ref={dialog} className="tv-event-picker" onCancel={(event) => { event.preventDefault(); close(); }} onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
+    <dialog ref={dialog} className="tv-event-picker" style={{ "--source-count": Math.max(1, selected?.channels.length ?? 0) } as CSSProperties}
+      onCancel={(event) => { event.preventDefault(); close(); }} onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
       <header>{selected && <div className="tv-event-picker-art"><EventArtwork event={selected} /></div>}<div><p>{selected ? `${stamp(selected)} · ${guideSports.find(s => s.id === selected.sportId)!.title}` : "This event is no longer in the available guide."}</p><h2>{selected?.title ?? "Schedule changed"}</h2></div><button type="button" onClick={close} aria-label="Close"><X /></button></header>
-      <h3>{selected && isOnAir(selected, now) ? "Available channels" : "Scheduled channels"}<span>{selected?.channels.length ?? 0} channels</span></h3>
+      <h3>{selected && isOnAir(selected, now) ? "Available channels" : "Scheduled channels"}<span>{channelCount(selected?.channels.length ?? 0)}</span></h3>
       <VirtualList items={selected?.channels ?? []} estimate={72} itemKey={(ch) => ch.id} label="Available channels" renderItem={(ch) =>
-        <button type="button" className="tv-event-source" disabled={!selected || !isOnAir(selected, now)} onClick={() => { close(); onPlay(ch); }}>{ch.logo ? <img src={ch.logo} alt="" /> : <Tv className="tv-source-logo-fallback" />}<span><strong>{ch.name}</strong><small>{providerNames[ch.id.split(":")[0]] || ch.group}</small></span>{ch.qualityLabel && <em>{ch.qualityLabel}</em>}<ChevronRight size={22} /></button>} />
+        <button type="button" className="tv-event-source" disabled={!selected || !isOnAir(selected, now)} onClick={() => { close(); onPlay(ch); }}>{ch.logo ? <img src={ch.logo} alt="" /> : <span className="tv-source-logo-fallback"><Tv size={28} /></span>}<span><strong>{ch.name}</strong><small>{providerNames[ch.id.split(":")[0]] || ch.group}</small></span>{ch.qualityLabel && <em>{ch.qualityLabel}</em>}{ch.language && <em>{ch.language.toUpperCase()}</em>}<ChevronRight className="tv-source-arrow" size={22} /><Play className="tv-source-play" size={22} /></button>} />
     </dialog>
   </section>;
 }
+
+const channelCount = (count: number) => `${count} ${count === 1 ? "channel" : "channels"}`;
 
 function EventArtwork({ event }: { event: SportsGuideEvent }) {
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);

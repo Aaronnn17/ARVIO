@@ -468,19 +468,29 @@ fun EpgGrid(
     }
 
     Column(
-        modifier = modifier.fillMaxSize().background(LiveColors.Bg).padding(bottom = if (compact) 0.dp else 20.dp),
+        modifier = modifier.fillMaxSize().background(LiveColors.Bg)
+            .padding(horizontal = if (compact) 0.dp else 12.dp).padding(bottom = if (compact) 0.dp else 20.dp),
     ) {
         if (!compact) Row(Modifier.fillMaxWidth().height(34.dp).padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(Icons.Outlined.Menu, "Categories", tint = LiveColors.Fg,
                 modifier = Modifier.size(28.dp).clickable(onClick = onMoveLeftFromChannels).padding(4.dp))
-            Text(categoryTitle, color = LiveColors.Fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-            Text("${java.text.NumberFormat.getIntegerInstance().format(safeTotalChannelCount)} channels", color = LiveColors.FgDim, fontSize = 10.sp)
-            Spacer(Modifier.weight(1f))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(categoryTitle, color = LiveColors.Fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Text("${java.text.NumberFormat.getIntegerInstance().format(safeTotalChannelCount)} channels", color = LiveColors.FgDim, fontSize = 10.sp)
+            }
             Icon(Icons.Outlined.ChevronLeft, "Earlier programmes", tint = LiveColors.Fg,
                 modifier = Modifier.size(28.dp).clickable { scope.launch { hScroll.animateScrollBy(-with(density) { halfHourWidth.toPx() * 2 }) } }.padding(5.dp))
-            Text(java.text.SimpleDateFormat("EEE, d MMM", java.util.Locale.getDefault()).format(java.util.Date(clockTickMillis)),
+            val visibleHour by remember(hScroll, windowStartMillis, density, pxPerMin) { derivedStateOf {
+                val offsetMinutes = hScroll.value / with(density) { pxPerMin.dp.toPx() }
+                windowStartMillis + (offsetMinutes / 60).toLong() * 3_600_000
+            } }
+            val visibleDate = remember(visibleHour) {
+                java.text.SimpleDateFormat("EEE, d MMM", java.util.Locale.getDefault())
+                    .format(java.util.Date(visibleHour))
+            }
+            Text(visibleDate,
                 color = LiveColors.FgDim, fontSize = 11.sp)
             Icon(Icons.Outlined.ChevronRight, "Later programmes", tint = LiveColors.Fg,
                 modifier = Modifier.size(28.dp).clickable { scope.launch { hScroll.animateScrollBy(with(density) { halfHourWidth.toPx() * 2 }) } }.padding(5.dp))
@@ -555,11 +565,11 @@ fun EpgGrid(
                                 .fillMaxHeight()
                                 .padding(start = 12.dp)
                                 .testTag("iptv-time-slot:$index"),
-                            contentAlignment = Alignment.CenterStart,
+                            contentAlignment = if (compact) Alignment.CenterStart else Alignment.BottomStart,
                         ) {
                             Text(
                                 text = slot.label,
-                                style = LiveType.TimeMono.copy(color = LiveColors.FgDim),
+                                style = LiveType.TimeMono.copy(color = LiveColors.FgDim, fontSize = 9.sp),
                             )
                         }
                     }
@@ -577,7 +587,7 @@ fun EpgGrid(
                                     if (nowX in 0f..rulerWidthPx) {
                                         label.placeRelative(
                                             (nowX - label.width / 2f).coerceIn(0f, (rulerWidthPx - label.width).coerceAtLeast(0f)).toInt(),
-                                            4.dp.roundToPx(),
+                                            0,
                                         )
                                     }
                                 }

@@ -9,6 +9,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SportsGuideTest {
+    @Test fun upcomingFilterUsesCalendarDaysAcrossDstAndKeepsEmptyFilterReachable() {
+        val zone = ZoneId.of("Europe/Amsterdam")
+        val clock = Instant.parse("2026-10-24T22:30:00Z").toEpochMilli()
+        val lateToday = Instant.parse("2026-10-25T22:30:00Z").toEpochMilli()
+        val tomorrow = Instant.parse("2026-10-25T23:30:00Z").toEpochMilli()
+        assertTrue(SportsDay.TODAY.includes(lateToday, clock, zone))
+        assertFalse(SportsDay.TODAY.includes(tomorrow, clock, zone))
+        assertTrue(SportsDay.TOMORROW.includes(tomorrow, clock, zone))
+        val event = SportsGuideEvent("future", "Football", GuideSport.FOOTBALL,
+            IptvProgram("Football", startUtcMillis = tomorrow, endUtcMillis = tomorrow + 60_000), emptyList())
+        val rows = sportsGuideRows(listOf(event), clock, SportsDay.TODAY, zone)
+        assertEquals("upcoming", rows.single().id)
+        assertTrue(rows.single().events.isEmpty())
+    }
     private val now = Instant.parse("2026-09-09T18:00:00Z").toEpochMilli()
     private val a = IptvChannel("one:1", "Football 1", "Football", "https://example.invalid/a")
     private val b = a.copy(id = "two:1", streamUrl = "https://example.invalid/b")

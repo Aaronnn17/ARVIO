@@ -5,6 +5,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontVariation
+import com.arflix.tv.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.arflix.tv.ui.theme.InterFontFamily
@@ -56,13 +59,22 @@ object LiveColors {
 
 val LiveMono: FontFamily = InterFontFamily
 
+// Set the variable font's axis, not just the weight used to select a font entry.
+@OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+internal val LiveFontFamily: FontFamily = if (android.os.Build.VERSION.SDK_INT >= 26) FontFamily(
+    listOf(FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold, FontWeight.Bold).map { weight ->
+        Font(R.font.inter_variablefont_opsz_wght, weight = weight,
+            variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)))
+    }
+) else InterFontFamily
+
 object LiveType {
     // Fixed readable sizes; row geometry does not change with focus.
     val ChannelName  = TextStyle(fontFamily = InterFontFamily, fontSize = 12.sp, fontWeight = FontWeight.W600, letterSpacing = 0.sp, lineHeight = 15.sp)
     val ProgramTitle = TextStyle(fontFamily = InterFontFamily, fontSize = 10.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 13.sp)
     val CellTitle    = TextStyle(fontFamily = InterFontFamily, fontSize = 11.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 14.sp)
     val BodySynopsis = TextStyle(fontFamily = InterFontFamily, fontSize = 10.sp, fontWeight = FontWeight.W400, letterSpacing = 0.sp, lineHeight = 13.sp)
-    val CatLabel     = TextStyle(fontFamily = InterFontFamily, fontSize = 12.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 15.sp)
+    val CatLabel     = TextStyle(fontFamily = LiveFontFamily, fontSize = 12.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 15.sp)
     val SectionTag   = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W600, letterSpacing = 0.sp, lineHeight = 11.sp)
     val Badge        = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W600, letterSpacing = 0.sp, lineHeight = 11.sp)
     val TimeMono     = TextStyle(fontFamily = InterFontFamily, fontSize = 8.sp, fontWeight = FontWeight.W500, letterSpacing = 0.sp, lineHeight = 11.sp)
@@ -81,7 +93,7 @@ object LiveDims {
     val EpgChannelColWidth = 145.dp
     val EpgChannelWideColWidth = 170.dp
     val EpgRowHeight       = 32.dp
-    val EpgHeaderHeight    = 22.dp
+    val EpgHeaderHeight    = 32.dp
     val EpgPxPerMinute     = 4
     val EpgHalfHourWidth   = 120.dp
 

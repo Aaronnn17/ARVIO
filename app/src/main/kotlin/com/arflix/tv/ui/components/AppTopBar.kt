@@ -104,6 +104,7 @@ fun AppTopBar(
     modifier: Modifier = Modifier
 ) {
     val guideHeader = selectedItem == SidebarItem.TV
+    val wideGuideHeader = guideHeader && profile != null && androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 800
     val showProfile = profile != null
     val hasProfile = showProfile
     val currentTime = rememberTopBarTime(clockFormat)
@@ -140,7 +141,7 @@ fun AppTopBar(
                     profile = profile,
                     isFocused = isFocused && focusedIndex == 0
                 )
-                if (selectedItem == SidebarItem.TV && androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 800) {
+                if (wideGuideHeader) {
                     Text(profile.name, color = Color.White, fontSize = 12.sp, maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         modifier = Modifier.width(94.dp).padding(start = 8.dp))
@@ -172,8 +173,9 @@ fun AppTopBar(
 
             // ── RIGHT: Settings gear + clock ──
             Row(
+                modifier = if (wideGuideHeader) Modifier.width(150.dp) else Modifier,
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.End)
             ) {
                 // Settings gear icon (no text label)
                 TopBarSettingsGear(
@@ -186,7 +188,7 @@ fun AppTopBar(
                     text = currentTime,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Normal,
-                    color = Color.White.copy(alpha = 0.55f)
+                    color = Color.White.copy(alpha = if (guideHeader) 0.88f else 0.55f)
                 )
             }
         }
@@ -216,7 +218,7 @@ private fun TopBarNavChip(
         targetValue = when {
             isFocused -> Color.White  // focused icon stays white (wins over selected)
             isSelected -> accent  // selected icon gets accent
-            else -> Color.White.copy(alpha = 0.62f)
+            else -> Color.White.copy(alpha = if (underlined) 0.86f else 0.62f)
         },
         animationSpec = tween(AnimationConstants.DURATION_FAST),
         label = "topbar_icon_color"
@@ -225,7 +227,7 @@ private fun TopBarNavChip(
         targetValue = when {
             isFocused -> Color.White  // focused text stays white (wins over selected)
             isSelected -> accent  // selected text gets accent
-            else -> Color.White.copy(alpha = 0.68f)
+            else -> Color.White.copy(alpha = if (underlined) 0.86f else 0.68f)
         },
         animationSpec = tween(AnimationConstants.DURATION_FAST),
         label = "topbar_text_color"
