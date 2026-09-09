@@ -469,8 +469,16 @@ open class StalkerApi(
             val encodedTerm = java.net.URLEncoder.encode(term, "UTF-8")
             var page = 1
             while (page <= maxPages) {
+                // `category=0` means "every category" here. The category list
+                // spells the same idea as `id: "*"`, but get_ordered_list does
+                // not accept it: a portal that reads `*` as a literal category
+                // name finds nothing, or drops `search` altogether and answers
+                // with the head of its catalogue.
+                // `sortby=name` keeps the matches for one term together. Sorted
+                // by date added instead, a catalogue of six figures pushes them
+                // past [maxPages] purely by age.
                 val url = "$apiBase/server/load.php?type=vod&action=get_ordered_list" +
-                    "&category=*&sortby=added&search=$encodedTerm&p=$page&JsHttpRequest=1-xml"
+                    "&category=0&sortby=name&search=$encodedTerm&p=$page&JsHttpRequest=1-xml"
                 val response = doGet(url)
                 val parsed = gson.fromJson(response, StalkerVodResponse::class.java)
                 val data = parsed?.js?.data ?: break

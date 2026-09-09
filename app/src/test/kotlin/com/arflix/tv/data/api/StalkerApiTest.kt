@@ -735,9 +735,61 @@ class StalkerApiTest {
         assertEquals(1, requests.size)
         assertTrue(requests.single().contains("type=vod&action=get_ordered_list"))
         assertTrue(requests.single().contains("search=Dune"))
-        assertTrue(requests.single().contains("category=*"))
+        assertTrue(requests.single().contains("category=0"))
         // Matching must never cost a link: create_link happens at playback only.
         assertTrue(requests.none { it.contains("action=create_link") })
+    }
+
+    @Test
+    fun `searchVod asks every category and lets the portal sort by name`() = runTest {
+        // Measured against a working portal: a full client asks
+        // category=0&sortby=name and gets its matches. category=* is the
+        // category list's word for "all" and get_ordered_list does not take it;
+        // sortby=added buries a match behind everything added since.
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            when {
+                url.contains("action=get_ordered_list") -> """
+                    {"js":{"total_items":1,"max_page_items":14,"data":[
+                      {"id":"42","name":"Dune (2021)","cmd":"/media/dune.mpg"}
+                    ]}}
+                """.trimIndent()
+                else -> null
+            }
+        }
+
+        api.searchVod("Dune")
+
+        val url = requests.single()
+        assertTrue(url.contains("&category=0&"))
+        assertTrue(url.contains("&sortby=name&"))
+        assertFalse(url.contains("category=*"))
+        assertFalse(url.contains("sortby=added"))
+    }
+
+    @Test
+    fun `searchVod never asks for more pages than its cap allows`() = runTest {
+        // A portal that reports a total far beyond what we page for must not
+        // pull the whole catalogue down: the cap is what keeps a search a
+        // search. Sorted by name, the matches for one term stay inside it.
+        val requests = mutableListOf<String>()
+        val api = stubApi(requests = requests) { url ->
+            val page = Regex("&p=(\\d+)").find(url)?.groupValues?.get(1) ?: "1"
+            when {
+                url.contains("action=get_ordered_list") -> """
+                    {"js":{"total_items":104021,"max_page_items":14,"data":[
+                      {"id":"$page","name":"Hulk $page","cmd":"/media/hulk$page.mpg"}
+                    ]}}
+                """.trimIndent()
+                else -> null
+            }
+        }
+
+        api.searchVod("Hulk")
+
+        assertEquals(StalkerApi.DEFAULT_VOD_SEARCH_PAGES, requests.size)
+        assertTrue(requests.any { it.contains("&p=1&") })
+        assertTrue(requests.none { it.contains("&p=${StalkerApi.DEFAULT_VOD_SEARCH_PAGES + 1}&") })
     }
 
     @Test
