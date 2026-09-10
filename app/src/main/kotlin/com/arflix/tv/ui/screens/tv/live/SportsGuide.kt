@@ -20,6 +20,8 @@ internal data class SportsGuideEvent(
     val artwork: String? = null,
     val schedules: Map<String, IptvProgram> = channels.associate { it.id to programme },
     val competition: String? = null,
+    val teamArtwork: SportsEventArtwork? = null,
+    val artworkSource: String? = null,
 ) {
     val identity: String = sportsEventIdentity(title)
     fun isOnAir(now: Long) = if (schedules.isEmpty()) programme.isLive(now) else schedules.values.any { it.isLive(now) }
@@ -31,10 +33,14 @@ internal fun attachSportsArtwork(events: List<SportsGuideEvent>, artwork: List<S
     return events.map { event ->
         val candidates = byTitle[event.identity].orEmpty().filter {
             val sport = GuideSport.fromText(it.genres.joinToString(" "))
-            (sport == null || sport == event.sport) &&
-                (it.startsAt == null || kotlin.math.abs(it.startsAt - event.programme.startUtcMillis) <= 6 * 60 * 60_000L)
+            (sport == event.sport || (sport == null && it.source != "TheSportsDB")) &&
+                (it.startsAt == null || kotlin.math.abs(it.startsAt - event.programme.startUtcMillis) <=
+                    (if (it.source == "TheSportsDB") 2 else 6) * 60 * 60_000L)
         }
-        event.copy(artwork = safeSportsImage(event.programme.artworkUrl) ?: candidates.firstOrNull()?.background)
+        val match = candidates.firstOrNull { it.homeBadge != null && it.awayBadge != null }
+        val banner = candidates.firstOrNull { safeSportsImage(it.background) != null }
+        event.copy(artwork = safeSportsImage(event.programme.artworkUrl) ?: candidates.firstNotNullOfOrNull { safeSportsImage(it.background) },
+            teamArtwork = match, artworkSource = banner?.source ?: match?.source)
     }
 }
 

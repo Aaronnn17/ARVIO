@@ -22,6 +22,7 @@ export interface SportsGuideEvent {
   artwork?: string;
   schedules?: Record<string, IptvProgram>;
   competition?: string;
+  teamArtwork?: { homeBadge: string; awayBadge: string; homeTeam?: string; awayTeam?: string };
 }
 const nonEvent = /\b(highlights?|hoogtepunten|samenvatting|resumen|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned)\b/i;
 export const sportsProgrammeKey = (p: IptvProgram) => `${p.title.trim().toLowerCase().replace(/\s+/g, " ")}|${p.startUtcMillis}|${p.endUtcMillis}`;

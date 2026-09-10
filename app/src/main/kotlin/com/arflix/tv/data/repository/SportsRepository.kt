@@ -41,7 +41,8 @@ import javax.inject.Singleton
 @Singleton
 class SportsRepository @Inject constructor(
     private val streamRepository: StreamRepository,
-    private val streamApi: StreamApi
+    private val streamApi: StreamApi,
+    private val sportsMetadataRepository: SportsMetadataRepository
 ) {
     companion object {
         private const val MAX_EVENT_ITEMS = 24
@@ -78,7 +79,13 @@ class SportsRepository @Inject constructor(
     private var guideArtworkUntil = 0L
     private var guideArtworkCache = emptyList<SportsEventArtwork>()
 
-    suspend fun loadGuideArtwork(): List<SportsEventArtwork> = withContext(Dispatchers.IO) {
+    suspend fun loadGuideArtwork(): List<SportsEventArtwork> = coroutineScope {
+        val metadata = async { sportsMetadataRepository.load() }
+        val addons = async { loadAddonGuideArtwork() }
+        addons.await() + metadata.await()
+    }
+
+    private suspend fun loadAddonGuideArtwork(): List<SportsEventArtwork> = withContext(Dispatchers.IO) {
         val addons = streamRepository.installedAddons.first().filter {
             it.isInstalled && it.isEnabled && !it.url.isNullOrBlank() && SportsAddonCapabilities.isSportsLiveTvAddon(it)
         }.prioritizedSportsAddons().take(2)

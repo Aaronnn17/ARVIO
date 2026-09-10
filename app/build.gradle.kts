@@ -42,6 +42,8 @@ android {
         buildConfigField("String", "GITHUB_OWNER", "\"ProdigyV21\"")
         buildConfigField("String", "GITHUB_REPO", "\"ARVIO\"")
         buildConfigField("Boolean", "FEATURE_PLUGINS_ENABLED", "false")
+        // Public endpoint override for isolated preview testing; never a provider API key.
+        buildConfigField("String", "SPORTS_METADATA_URL", "\"${escapeBuildConfigString(localSecretValue("SPORTS_METADATA_URL"))}\"")
         // Emergency Supabase cost guard. Keep high-volume public metadata and
         // idle realtime polling off Supabase unless explicitly re-enabled.
         buildConfigField("Boolean", "ENABLE_TMDB_EDGE_PROXY", "false")

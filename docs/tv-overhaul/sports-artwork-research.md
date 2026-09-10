@@ -1,7 +1,9 @@
 # Sports event artwork: implementation decision
 
-Research checked on 2026-09-10. This is a proposal, not a claim that a new provider
-is enabled. No third-party code, API keys or artwork was copied into this PR.
+Research checked on 2026-09-10. The Premium adapter is now implemented on the
+overhaul branch, with isolated deployment testing. It is not yet enabled in the
+production application. No third-party code, API keys or downloaded artwork is
+committed to this PR.
 
 ## Why the current cards repeat
 
@@ -69,4 +71,61 @@ blanket rights grant for every sports trademark or third-party image.
 for Single Developer (100 requests/minute) and $20/month for Small Business
 (120 requests/minute). Confirm the appropriate plan and artwork permissions for
 ARVIO's distributed APK and paid web service before enabling production access.
-No subscription was purchased and no shared development key was shipped.
+The owner has now supplied a Premium subscription. Its private key is configured
+only in the backend function environment, never in the APK, web bundle or Git.
+
+## Implemented adapter
+
+- `sports-metadata.mjs` serves a fixed, sanitized fixture/artwork feed; it cannot
+  proxy arbitrary API queries, disclose a key, or accept playlist credentials.
+- Four V1 `eventsday.php` requests cover UTC yesterday through the day after
+  tomorrow. Shared refresh is every 30 minutes, with a five-minute failure backoff
+  and up to 24 hours of stale artwork. Reaching the provider's 1500/day limit marks
+  the response partial rather than silently claiming complete coverage.
+- A strongly consistent Netlify Blobs compare-and-set lease prevents concurrent
+  clients/functions from stampeding the API. Cache failure does NOT bypass the
+  limiter. The modern Functions API is required: the legacy `connectLambda`
+  bridge loses the uncached endpoint needed for strong consistency in this SDK.
+  See [Netlify's consistency documentation](https://docs.netlify.com/build/data-and-storage/netlify-blobs/#consistency).
+- Android and web each cache the public feed for ten minutes. Addon artwork is
+  still supported; metadata is available without a sports addon. This only
+  enriches cards already backed by the user's guide, and provides no streams.
+- Exact normalized title/participants, sport and a two-hour start tolerance are
+  required for SportsDB matches. Generic league titles and differing youth/women's
+  fixtures cannot borrow a plausible-looking image. No unverified team aliases.
+- Event thumbnail/fanart is preferred. When both verified team crests exist,
+  clients can compose an uncropped matchup card over subdued sport photography.
+  If an image fails, the existing local artwork remains visible. EPG timing,
+  source availability, timezone formatting and device clock preferences remain
+  unchanged. SportsDB artwork attribution is visible in Sports.
+
+## Deployment and verification
+
+Deploy the backend alongside the approved PR before distributing clients. Normal
+clients resolve `/sports-metadata` under the configured auth backend. For isolated
+tests, Android `SPORTS_METADATA_URL` and web `NEXT_PUBLIC_SPORTS_METADATA_URL` accept
+a **public endpoint URL**, never an upstream key. Self-hosted web installations
+can supply their own endpoint; otherwise their existing addon art still works.
+
+- Backend: `node --test tests/sports-metadata.test.js` (from `netlify-auth-site`).
+- Web: `node --test tests/sports-artwork.test.cjs tests/sports-guide.test.cjs` and
+  `npx tsc --noEmit --incremental false`.
+- Android: `SportsMetadataTest`, `SportsGuideTest`, `SportsArtworkTest`;
+  `TvOverhaulDeviceTest` covers guide/drawer/picker and image failures.
+- Opt-in live art rendering: `SportsMetadataDeviceTest`, with instrumentation
+  argument `sportsMetadataUrl`; `web/tests/sportsdb-browser.cjs` with environment
+  variable `SPORTS_METADATA_URL`. These use real event art with **fixture channels**,
+  not evidence that a provider broadcasts those matches.
+- Real cached EPG matching: `netlify-auth-site/scripts/audit-sports-artwork.cjs`,
+  with `SPORTS_METADATA_URL` and local `EPG_AUDIT_DB`. Read-only: no playback probes,
+  user credentials or source URLs are read/output.
+
+2026-09-10 final preview audit: the four-day feed returned 2393 usable events, 884
+banners and 2369 badge pairs. Only four of 941 cached EPG sports candidates matched
+(three distinct matchups). This is not
+full-guide coverage: generic titles remain fallbacks, and the cache's date window
+also limits this snapshot. Do not use the rendering fixtures as proof that all
+provider events are enriched. Backend tests pass, 20 Android sports unit tests
+pass, two existing emulator guide/picker tests and the opt-in live metadata emulator
+test pass, and both artwork modes render
+at 1672/768/390px on web without horizontal page overflow.

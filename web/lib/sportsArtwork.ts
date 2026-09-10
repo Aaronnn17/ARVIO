@@ -1,9 +1,43 @@
 import { jsonRequest, proxiedUrl } from "./http";
+import { config } from "./config";
 import { guideSports, sportsArtworkKey, sportsEventIdentity, safeSportsImage, type SportsGuideEvent } from "./sportsGuide";
 export { sportsArtworkKey } from "./sportsGuide";
 import type { InstalledAddon } from "./types";
 
-export interface SportsEventArtwork { title: string; key: string; background: string; genres: string[]; startsAt?: number }
+export interface SportsEventArtwork { title: string; key: string; background: string; genres: string[]; startsAt?: number;
+  homeBadge?: string; awayBadge?: string; homeTeam?: string; awayTeam?: string; source?: string }
+
+export function parseSportsMetadata(payload: unknown): SportsEventArtwork[] {
+  const data = payload as { version?: number; events?: Record<string, unknown>[] } | null;
+  if (data?.version !== 1 || !Array.isArray(data.events)) return [];
+  return data.events.slice(0, 6000).flatMap(item => {
+    if (!item || typeof item.title !== "string" || !item.title.trim() || typeof item.sport !== "string" || !item.sport.trim()
+      || typeof item.startsAt !== "number" || !Number.isFinite(item.startsAt) || item.startsAt <= 0) return [];
+    const picture = (key: string) => typeof item[key] === "string" ? safeSportsImage(item[key] as string) : undefined;
+    const background = picture("background"), homeBadge = picture("homeBadge"), awayBadge = picture("awayBadge");
+    if (!background && !(homeBadge && awayBadge)) return [];
+    return [{ title: item.title, key: sportsArtworkKey(item.title), background: background ?? "", genres: [item.sport], startsAt: item.startsAt,
+      homeBadge: awayBadge ? homeBadge : undefined, awayBadge: homeBadge ? awayBadge : undefined,
+      homeTeam: typeof item.homeTeam === "string" ? item.homeTeam : undefined, awayTeam: typeof item.awayTeam === "string" ? item.awayTeam : undefined, source: "TheSportsDB" }];
+  });
+}
+
+let metadataCache: { until: number; request: Promise<SportsEventArtwork[]> } | undefined;
+let lastMetadata: SportsEventArtwork[] = [];
+let lastMetadataAt = 0;
+export function loadSportsMetadata(): Promise<SportsEventArtwork[]> {
+  const endpoint = config.sportsMetadataUrl || (config.netlifyBackendUrl ? `${config.netlifyBackendUrl.replace(/\/$/, "")}/sports-metadata` : "");
+  if (!endpoint) return Promise.resolve([]);
+  if (metadataCache && metadataCache.until > Date.now()) return metadataCache.request;
+  const entry = { until: Date.now() + 10 * 60_000, request: Promise.resolve([] as SportsEventArtwork[]) };
+  entry.request = jsonRequest<unknown>(endpoint, { signal: AbortSignal.timeout(8_000) }).then(payload => {
+    lastMetadata = parseSportsMetadata(payload); lastMetadataAt = Date.now();
+    if (!lastMetadata.length) entry.until = Date.now() + 60_000;
+    return lastMetadata;
+  }).catch(() => { entry.until = Date.now() + 60_000; return Date.now() - lastMetadataAt < 86_400_000 ? lastMetadata : []; });
+  metadataCache = entry;
+  return entry.request;
+}
 
 export function toSportsEventArtwork(meta: Record<string, unknown>): SportsEventArtwork | null {
   if (!meta || typeof meta !== "object") return null;
@@ -19,10 +53,16 @@ export function toSportsEventArtwork(meta: Record<string, unknown>): SportsEvent
 export function attachSportsArtwork(events: SportsGuideEvent[], artwork: SportsEventArtwork[]): SportsGuideEvent[] {
   const byTitle = new Map<string, SportsEventArtwork[]>();
   for (const item of artwork) { const key = sportsEventIdentity(item.title); byTitle.set(key, [...(byTitle.get(key) ?? []), item]); }
-  return events.map(event => ({ ...event, artwork: safeSportsImage(event.programme.artworkUrl) ?? byTitle.get(sportsEventIdentity(event.title))?.find(item => {
+  return events.map(event => {
+    const matches = byTitle.get(sportsEventIdentity(event.title))?.filter(item => {
     const sport = guideSports.find(s => s.pattern.test(item.genres.join(" ")));
-    return (!sport || sport.id === event.sportId) && (item.startsAt === undefined || Math.abs(item.startsAt - event.programme.startUtcMillis) <= 6 * 60 * 60_000);
-  })?.background }));
+    return (sport?.id === event.sportId || (!sport && item.source !== "TheSportsDB"))
+      && (item.startsAt === undefined || Math.abs(item.startsAt - event.programme.startUtcMillis) <= (item.source === "TheSportsDB" ? 2 : 6) * 60 * 60_000);
+    }) ?? [];
+    const match = matches.find(item => item.homeBadge && item.awayBadge);
+    return { ...event, artwork: safeSportsImage(event.programme.artworkUrl) ?? matches.map(item => safeSportsImage(item.background)).find(Boolean),
+      teamArtwork: match ? { homeBadge: match.homeBadge!, awayBadge: match.awayBadge!, homeTeam: match.homeTeam, awayTeam: match.awayTeam } : undefined };
+  });
 }
 
 const cache = new Map<string, { until: number; request: Promise<SportsEventArtwork[]> }>();

@@ -28,6 +28,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -115,6 +116,10 @@ internal fun SportsGuidePane(
             if (!sidebarOpen) Icon(Icons.Outlined.Menu, "Categories", tint = LiveColors.Fg,
                 modifier = Modifier.size(20.dp).clickable(onClick = onOpenCategories))
             Text("Sports", color = LiveColors.Fg, fontSize = 21.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold)
+            if (events.any { it.artworkSource == "TheSportsDB" }) {
+                Spacer(Modifier.weight(1f))
+                Text("Artwork: TheSportsDB", color = LiveColors.FgDim, fontSize = 10.sp)
+            }
         }
         if (rows.isEmpty()) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center,
@@ -264,6 +269,9 @@ private fun channelCount(count: Int) = "$count ${if (count == 1) "channel" else 
 @Composable
 private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier) {
     var loaded by remember(event.artwork) { mutableStateOf(false) }
+    val pair = event.teamArtwork
+    var homeLoaded by remember(pair?.homeBadge) { mutableStateOf(false) }
+    var awayLoaded by remember(pair?.awayBadge) { mutableStateOf(false) }
     var fallbackLoaded by remember(event.sport) { mutableStateOf(false) }
     Box(modifier.background(LiveColors.Panel).testTag(if (loaded) "sports-artwork-loaded" else "sports-artwork-pending")) {
         if (!loaded) {
@@ -271,7 +279,7 @@ private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier)
             AsyncImage(event.sport.fallbackArtwork(), null, contentScale = ContentScale.Crop,
                 onSuccess = { fallbackLoaded = true },
                 modifier = Modifier.fillMaxSize().testTag(if (fallbackLoaded) "sports-artwork-fallback-loaded" else "sports-artwork-fallback"))
-            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color.Black.copy(alpha = .72f))
+            if (!(homeLoaded && awayLoaded)) Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color.Black.copy(alpha = .72f))
                 .padding(horizontal = 10.dp, vertical = 5.dp)) {
                 Text(event.title, color = LiveColors.Fg, fontSize = 11.sp, lineHeight = 13.sp,
                     fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -281,6 +289,20 @@ private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier)
             AsyncImage(url, null, contentScale = ContentScale.Fit,
                 onSuccess = { loaded = true }, onError = { loaded = false },
                 modifier = Modifier.fillMaxSize())
+        }
+        if (!loaded && pair != null) {
+            Row(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (homeLoaded && awayLoaded) .6f else 0f))
+                .padding(horizontal = 22.dp, vertical = 24.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                AsyncImage(pair.homeBadge, pair.homeTeam, contentScale = ContentScale.Fit,
+                    onSuccess = { homeLoaded = true }, onError = { homeLoaded = false },
+                    modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (homeLoaded && awayLoaded) 1f else 0f })
+                Text("VS", color = if (homeLoaded && awayLoaded) LiveColors.Fg else Color.Transparent,
+                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                AsyncImage(pair.awayBadge, pair.awayTeam, contentScale = ContentScale.Fit,
+                    onSuccess = { awayLoaded = true }, onError = { awayLoaded = false },
+                    modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (homeLoaded && awayLoaded) 1f else 0f })
+            }
         }
     }
 }

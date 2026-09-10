@@ -8,7 +8,10 @@ import java.time.Instant
 
 /** Artwork only. Addon status/times never overwrite the user's channel schedule. */
 data class SportsEventArtwork(val title: String, val background: String, val genres: List<String>,
-    val startsAt: Long? = null) {
+    val startsAt: Long? = null,
+    val homeBadge: String? = null, val awayBadge: String? = null,
+    val homeTeam: String? = null, val awayTeam: String? = null,
+    val source: String? = null) {
     val key: String = sportsArtworkKey(title)
 }
 

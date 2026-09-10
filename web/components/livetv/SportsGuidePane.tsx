@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { X, Tv, PanelLeft, ChevronRight, Play, RefreshCw } from "lucide-react";
 import { guideSports, isOnAir, availableEventChannels, sportsGuideRows, type SportsGuideEvent } from "@/lib/sportsGuide";
 import type { InstalledAddon, IptvChannel, IptvNowNext } from "@/lib/types";
-import { attachSportsArtwork, loadSportsGuideArtwork, type SportsEventArtwork } from "@/lib/sportsArtwork";
+import { attachSportsArtwork, loadSportsGuideArtwork, loadSportsMetadata, type SportsEventArtwork } from "@/lib/sportsArtwork";
 import { VirtualList } from "@/components/ui/VirtualList";
 
 const NO_ADDONS: InstalledAddon[] = [];
@@ -18,7 +18,12 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
   useEffect(() => {
     let active = true;
     setArtwork([]);
-    const load = () => void loadSportsGuideArtwork(addons).then(items => { if (active) setArtwork(items); });
+    let addonArt: SportsEventArtwork[] = [], metadataArt: SportsEventArtwork[] = [];
+    const publish = () => { if (active) setArtwork([...addonArt, ...metadataArt]); };
+    const load = () => {
+      void loadSportsGuideArtwork(addons).then(items => { addonArt = items; publish(); });
+      void loadSportsMetadata().then(items => { metadataArt = items; publish(); });
+    };
     load();
     const refresh = setInterval(load, 600_000);
     return () => { active = false; clearInterval(refresh); };
@@ -84,7 +89,9 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
     return `${day} ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).format(date)}`;
   };
   return <section ref={root} className="tv-sports" aria-label="Sports">
-    <h2><button className="tv-sports-drawer" type="button" aria-label="Categories" onClick={onOpenCategories}><PanelLeft size={22} /></button>Sports</h2>
+    <h2><button className="tv-sports-drawer" type="button" aria-label="Categories" onClick={onOpenCategories}><PanelLeft size={22} /></button>Sports
+      {artwork.some(item => item.source === "TheSportsDB") && <a className="tv-sports-credit" href="https://www.thesportsdb.com" target="_blank" rel="noreferrer">Artwork: TheSportsDB</a>}
+    </h2>
     {!rows.length && <div className="tv-sports-empty" role="status"><Tv size={32} /><p>{loading ? "Reading sports schedule" : failed ? "Schedule unavailable" : "No sports events in the available guide"}</p>
       {failed && <button type="button" className="secondary" onClick={() => setRetry(value => value + 1)}><RefreshCw size={18} />Retry</button>}
       <button type="button" className="secondary" onClick={onOpenCategories}><PanelLeft size={18} />Categories</button></div>}
@@ -130,10 +137,18 @@ const channelCount = (count: number) => `${count} ${count === 1 ? "channel" : "c
 
 function EventArtwork({ event }: { event: SportsGuideEvent }) {
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const [badges, setBadges] = useState<string[]>([]);
   const loaded = Boolean(event.artwork) && loadedUrl === event.artwork;
+  const pair = event.teamArtwork;
+  const pairLoaded = pair && badges.includes(pair.homeBadge) && badges.includes(pair.awayBadge);
   const sport = guideSports.find(s => s.id === event.sportId)!;
   return <div className="tv-event-image">
-    {!loaded && <div className="tv-event-fallback"><img src={`/images/sports/${sport.asset}.webp`} alt="" loading="lazy" decoding="async" /><span>{event.title}</span></div>}
+    {!loaded && <div className="tv-event-fallback"><img src={`/images/sports/${sport.asset}.webp`} alt="" loading="lazy" decoding="async" />{!pairLoaded && <span>{event.title}</span>}</div>}
+    {!loaded && pair && <div className="tv-event-teams" style={{ opacity: pairLoaded ? 1 : 0 }}>
+      <img src={pair.homeBadge} alt={pair.homeTeam ?? ""} loading="lazy" decoding="async" onLoad={() => setBadges(current => [...current, pair.homeBadge])} />
+      <strong>VS</strong>
+      <img src={pair.awayBadge} alt={pair.awayTeam ?? ""} loading="lazy" decoding="async" onLoad={() => setBadges(current => [...current, pair.awayBadge])} />
+    </div>}
     {event.artwork && <img src={event.artwork} alt="" loading="lazy" decoding="async" style={{ opacity: loaded ? 1 : 0 }} onLoad={() => setLoadedUrl(event.artwork!)} onError={() => setLoadedUrl(null)} />}
   </div>;
 }
