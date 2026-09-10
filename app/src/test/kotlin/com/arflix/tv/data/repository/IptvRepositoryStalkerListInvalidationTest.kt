@@ -16,9 +16,10 @@ import org.junit.Test
  * source change runs through it.
  *
  * So this test checks the caller, not the loader: a change that leaves the
- * configured portals alone must not cost a second download. What may discard
- * the list is the loader key (portal id + URL + MAC), and only that — see
- * [StalkerChannelListLoaderTest].
+ * configured portals alone must not cost a second download. What discards a
+ * list is a portal disappearing from the configuration, and only that — see
+ * [IptvRepositoryStalkerPortalStateTest] for that side and
+ * [StalkerChannelListLoaderTest] for the loader itself.
  */
 class IptvRepositoryStalkerListInvalidationTest {
 
@@ -30,17 +31,18 @@ class IptvRepositoryStalkerListInvalidationTest {
         return IptvRepository(context, okHttpClient, profileManager, invalidationBus)
     }
 
-    private val channels = listOf(
-        IptvChannel(
-            id = "stalker:portal1:1",
-            name = "Channel 1",
-            streamUrl = "http://portal.invalid/play/live.php",
-            group = "News"
+    private fun downloaded() = IptvRepository.StalkerPortalChannels(
+        portalId = "portal1",
+        api = io.mockk.mockk<StalkerApi>(relaxed = true),
+        channels = listOf(
+            IptvChannel(
+                id = "stalker:portal1:1",
+                name = "Channel 1",
+                streamUrl = "http://portal.invalid/play/live.php",
+                group = "News"
+            )
         )
     )
-
-    private fun downloaded(): Pair<Map<String, StalkerApi>, List<IptvChannel>> =
-        emptyMap<String, StalkerApi>() to channels
 
     @Test
     fun `invalidateCache keeps the shared Stalker channel list`() = runBlocking {

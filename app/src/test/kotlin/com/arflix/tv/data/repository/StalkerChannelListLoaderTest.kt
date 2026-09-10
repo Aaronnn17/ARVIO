@@ -106,7 +106,9 @@ class StalkerChannelListLoaderTest {
     }
 
     @Test
-    fun anotherPortalSetNeverReusesTheStoredList() = runTest {
+    fun everyPortalKeepsItsOwnList() = runTest {
+        // One entry per portal: a second portal neither reuses nor replaces the
+        // first one's list, and asking the first one again costs nothing.
         val scope = downloadScope()
         val loader = loader(scope)
         val downloaded = mutableListOf<String>()
@@ -117,7 +119,34 @@ class StalkerChannelListLoaderTest {
         assertThat(loader.load("portal-b", fetch = fetchB)).isEqualTo("channels-b")
         assertThat(loader.load("portal-a", fetch = fetchA)).isEqualTo("channels-a")
 
-        assertThat(downloaded).containsExactly("a", "b", "a").inOrder()
+        assertThat(downloaded).containsExactly("a", "b").inOrder()
+        scope.cancel()
+    }
+
+    @Test
+    fun aPortalThatFailedIsRetriedWhileTheOthersKeepTheirLists() = runTest {
+        // ⭐ Prodigy's review of #677: with two portals configured, one that is
+        // down must not hide behind one that answered. Its empty answer is not
+        // remembered, so the next load asks it again — and the healthy portal
+        // is not downloaded a second time for it.
+        val scope = downloadScope()
+        val loader = loader(scope, isReusable = { it.isNotEmpty() })
+        val downloaded = mutableListOf<String>()
+        var portalBIsUp = false
+        val fetchA: suspend () -> String = { downloaded += "a"; "channels-a" }
+        val fetchB: suspend () -> String = {
+            downloaded += "b"
+            if (portalBIsUp) "channels-b" else ""
+        }
+
+        loader.load("portal-a", fetch = fetchA)
+        assertThat(loader.load("portal-b", fetch = fetchB)).isEmpty()
+
+        portalBIsUp = true
+        loader.load("portal-a", fetch = fetchA)
+        assertThat(loader.load("portal-b", fetch = fetchB)).isEqualTo("channels-b")
+
+        assertThat(downloaded).containsExactly("a", "b", "b").inOrder()
         scope.cancel()
     }
 
@@ -184,47 +213,55 @@ class StalkerChannelListLoaderTest {
     }
 
     @Test
-    fun aChangedPortalSetMakesTheNextCallerDownloadAgain() = runTest {
-        // A changed key is the only thing that discards a stored list — nothing
-        // else may, because everything else the app calls "invalidate" for
-        // (a playlist, an EPG URL, a profile) leaves the portals alone.
+    fun anEditedPortalIsDownloadedAgainUnderItsNewKey() = runTest {
+        // The key carries the portal's URL and MAC, so editing either of them
+        // makes a different portal as far as this loader is concerned. Nothing
+        // else discards a list: everything the app calls "invalidate" for (a
+        // playlist, an EPG URL, a profile) leaves the portals alone.
         val scope = downloadScope()
         val loader = loader(scope)
         var downloads = 0
         val fetch: suspend () -> String = { downloads++; "channels" }
 
-        loader.load("portal-a", fetch = fetch)
-        loader.load("portal-a-and-b", fetch = fetch)
-        loader.load("portal-a", fetch = fetch)
+        loader.load("portal-a-old-mac", fetch = fetch)
+        loader.load("portal-a-new-mac", fetch = fetch)
 
-        assertThat(downloads).isEqualTo(3)
-        scope.cancel()
-    }
-
-    @Test
-    fun retainOnlyReleasesTheListOfAPortalThatIsGone() = runTest {
-        // Removing the last portal means nobody calls load() again, so the
-        // stored list would be held for the rest of the app run.
-        val scope = downloadScope()
-        val loader = loader(scope)
-        var downloads = 0
-        val fetch: suspend () -> String = { downloads++; "channels" }
-
-        loader.load("portal-a", fetch = fetch)
-        loader.retainOnly("portal-a")
-        loader.load("portal-a", fetch = fetch)
-        assertThat(downloads).isEqualTo(1)
-
-        loader.retainOnly("")
-        loader.load("portal-a", fetch = fetch)
         assertThat(downloads).isEqualTo(2)
         scope.cancel()
     }
 
     @Test
+    fun retainOnlyReleasesTheListsOfPortalsThatAreGone() = runTest {
+        // Removing a portal means nobody calls load() for it again, so its list
+        // and session would be held for the rest of the app run. Portals that
+        // are still configured must not pay for that.
+        val scope = downloadScope()
+        val loader = loader(scope)
+        val downloaded = mutableListOf<String>()
+        val fetchA: suspend () -> String = { downloaded += "a"; "channels-a" }
+        val fetchB: suspend () -> String = { downloaded += "b"; "channels-b" }
+
+        loader.load("portal-a", fetch = fetchA)
+        loader.load("portal-b", fetch = fetchB)
+
+        // Portal B removed, A still configured: only B is dropped.
+        loader.retainOnly(setOf("portal-a"))
+        loader.load("portal-a", fetch = fetchA)
+        loader.load("portal-b", fetch = fetchB)
+        assertThat(downloaded).containsExactly("a", "b", "b").inOrder()
+
+        // The last portal removed: everything goes.
+        loader.retainOnly(emptySet())
+        loader.load("portal-a", fetch = fetchA)
+        assertThat(downloaded).containsExactly("a", "b", "b", "a").inOrder()
+        scope.cancel()
+    }
+
+    @Test
     fun aDetachedDownloadCannotOverwriteTheOneThatReplacedIt() = runTest {
-        // The portal set changes while a download is still running. The
-        // detached download finishes last here — its result must not land.
+        // The portal is removed and re-added while a download is still running
+        // — a portal edited back to its old URL and MAC does exactly this. The
+        // detached download finishes last here; its result must not land.
         val scope = downloadScope()
         val loader = loader(scope)
         var downloads = 0
@@ -237,12 +274,13 @@ class StalkerChannelListLoaderTest {
 
         val detached = async { loader.load("portal-a", fetch = fetch) }
         advanceTimeBy(500)
-        val replacement = async { loader.load("portal-b", fetch = fetch) }
+        loader.retainOnly(emptySet())
+        val replacement = async { loader.load("portal-a", fetch = fetch) }
         advanceUntilIdle()
 
         assertThat(detached.await()).isEqualTo("channels-1")
         assertThat(replacement.await()).isEqualTo("channels-2")
-        assertThat(loader.load("portal-b", fetch = fetch)).isEqualTo("channels-2")
+        assertThat(loader.load("portal-a", fetch = fetch)).isEqualTo("channels-2")
         assertThat(downloads).isEqualTo(2)
         scope.cancel()
     }

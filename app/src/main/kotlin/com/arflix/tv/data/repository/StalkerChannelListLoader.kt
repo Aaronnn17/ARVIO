@@ -26,6 +26,13 @@ internal const val STALKER_CHANNEL_LIST_FRESHNESS_MS = 5 * 60_000L
  *  - a caller arriving within [freshnessWindowMs] of a usable download reuses
  *    its result instead of starting another one.
  *
+ * **One entry per key, and a key is one portal.** Every portal is downloaded,
+ * remembered and retried on its own, so the outcome of one portal can never
+ * decide anything about another. A portal that failed leaves no entry behind
+ * and is asked again by the very next load, while the portals that did answer
+ * keep their lists — which is the whole point of this class for anybody running
+ * more than one portal.
+ *
  * A caller that wants genuinely fresh data passes `freshSinceMs` — the moment
  * it decided it needed fresh data. A remembered list downloaded after that
  * moment already answers the request; an older one does not and is skipped.
@@ -36,9 +43,9 @@ internal const val STALKER_CHANNEL_LIST_FRESHNESS_MS = 5 * 60_000L
  * is never older than the remembered result (a new one only starts when none
  * is in flight), so joining it is what "fresh" means here.
  *
- * Nothing discards a running download except a changed [load] key: the key
- * carries the configured portals, and a configuration change that leaves them
- * alone has nothing to do with the Stalker channel list.
+ * Nothing discards a running download except [retainOnly], which drops the
+ * portals that are no longer configured. A configuration change that leaves a
+ * portal alone has nothing to do with that portal's channel list.
  *
  * The download runs in [scope] rather than in the calling coroutine, so a
  * caller that gives up (its own timeout, a screen the user left) does not
@@ -48,9 +55,9 @@ internal const val STALKER_CHANNEL_LIST_FRESHNESS_MS = 5 * 60_000L
  * channel list carry a `play_token`, so a list restored from disk would hand
  * out expired tokens. A fresh app start always downloads once.
  *
- * @param isReusable decides whether a result may be remembered. A failed
- *   handshake yields an empty list, and remembering that would keep the portal
- *   dark for the whole window.
+ * @param isReusable decides whether a result may be remembered. A portal whose
+ *   handshake failed yields an empty list, and remembering that would keep the
+ *   portal dark for the whole window.
  */
 internal class StalkerChannelListLoader<T : Any>(
     private val freshnessWindowMs: Long = STALKER_CHANNEL_LIST_FRESHNESS_MS,
@@ -61,24 +68,19 @@ internal class StalkerChannelListLoader<T : Any>(
 
     private val lock = Any()
 
-    private var cacheKey: String? = null
-    private var inFlight: Deferred<T>? = null
-    private var remembered: T? = null
-    private var rememberedAtMs: Long = 0L
+    /** One entry per key; see [retainOnly] for the only thing that removes one. */
+    private val entries = HashMap<String, Entry<T>>()
 
-    /**
-     * Counts the downloads that were started. A download only stores its result
-     * while it is still the current one, so a download detached by a changed
-     * [load] key cannot overwrite the result of the download that replaced it —
-     * whichever of the two finishes last.
-     */
-    private var generation: Long = 0L
+    private class Entry<T : Any> {
+        var inFlight: Deferred<T>? = null
+        var remembered: T? = null
+        var rememberedAtMs: Long = 0L
+    }
 
     /**
      * Returns the channel list for [key], running [fetch] at most once per
-     * freshness window. [key] identifies the configured portals — a different
-     * portal set never reuses another one's list, and switching to one detaches
-     * the download the previous set had started.
+     * freshness window. [key] identifies a single configured portal (id + URL +
+     * MAC), so portals never share an entry and never mask each other.
      *
      * @param freshSinceMs the moment the caller decided it needed fresh data.
      *   A remembered list downloaded before that moment is skipped; one
@@ -90,55 +92,54 @@ internal class StalkerChannelListLoader<T : Any>(
      */
     suspend fun load(key: String, freshSinceMs: Long = 0L, fetch: suspend () -> T): T {
         val pending = synchronized(lock) {
-            if (key != cacheKey) {
-                forgetLocked()
-                cacheKey = key
-            }
-            val previous = remembered
+            val entry = entries.getOrPut(key) { Entry() }
+            val previous = entry.remembered
             if (previous != null) {
-                val insideWindow = nowMs() - rememberedAtMs < freshnessWindowMs
-                if (insideWindow && rememberedAtMs >= freshSinceMs) return previous
-                remembered = null
-                rememberedAtMs = 0L
+                val insideWindow = nowMs() - entry.rememberedAtMs < freshnessWindowMs
+                if (insideWindow && entry.rememberedAtMs >= freshSinceMs) return previous
+                entry.remembered = null
+                entry.rememberedAtMs = 0L
             }
-            inFlight?.takeIf { !it.isCompleted } ?: startLocked(fetch)
+            entry.inFlight?.takeIf { !it.isCompleted } ?: startLocked(key, entry, fetch)
         }
         return pending.await()
     }
 
     /**
-     * Drops whatever is stored unless it belongs to [key]. [load] does this on
-     * its own, so this exists for the one case that never calls it: the last
-     * portal was removed, so nothing asks for a channel list any more and the
-     * one from the removed portal would otherwise be held until the app dies.
+     * Drops everything held for portals outside [keys] — their channel list and,
+     * with it, the portal session that came with it.
+     *
+     * This is the only thing that discards an entry, and it exists for the case
+     * that never calls [load]: a portal was disabled or removed, so nothing asks
+     * for its channel list any more and it would otherwise be held until the app
+     * dies. Passing an empty set releases everything, which is what removing the
+     * *last* portal means.
+     *
+     * Portals that are still configured keep their entries, so an unrelated
+     * playlist change costs nothing.
      */
-    fun retainOnly(key: String) {
+    fun retainOnly(keys: Set<String>) {
         synchronized(lock) {
-            if (cacheKey != null && cacheKey != key) forgetLocked()
+            entries.keys.retainAll(keys)
         }
     }
 
-    private fun startLocked(fetch: suspend () -> T): Deferred<T> {
-        val startedAs = ++generation
+    private fun startLocked(key: String, entry: Entry<T>, fetch: suspend () -> T): Deferred<T> {
         val deferred = scope.async {
             val value = fetch()
             synchronized(lock) {
-                if (generation == startedAs && isReusable(value)) {
-                    remembered = value
-                    rememberedAtMs = nowMs()
+                // Only store while this download is still the current one for
+                // its key. A download detached by [retainOnly] finds a removed
+                // (or freshly recreated) entry and drops its result instead of
+                // overwriting the one that replaced it.
+                if (entries[key] === entry && isReusable(value)) {
+                    entry.remembered = value
+                    entry.rememberedAtMs = nowMs()
                 }
             }
             value
         }
-        inFlight = deferred
+        entry.inFlight = deferred
         return deferred
-    }
-
-    private fun forgetLocked() {
-        generation++
-        cacheKey = null
-        inFlight = null
-        remembered = null
-        rememberedAtMs = 0L
     }
 }
