@@ -3690,32 +3690,33 @@ fun LiveTvScreen(
                 )
                 val overlayVariants = remember(playingChannel, enrichedState.value.all) {
                     playingChannel?.let { current ->
+                        // 1. Rescatamos todo lo posible: tvg-id (epgId) y tvg-name
                         val currentEpg = current.source.epgId?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                        val currentTvg = current.source.tvgName?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                        
+                        // 2. Limpieza de nombres por si falla lo anterior
+                        val qualityRegex = Regex("(?i)\\b(?:4k|uhd|fhd|hd|sd|1080p|720p|60fps|raw|es|en|lat|pt)\\b")
+                        val symbolRegex = Regex("[^a-z0-9]")
+                        val currentCleanName = current.name
+                            .replace(qualityRegex, "")
+                            .lowercase()
+                            .replace(symbolRegex, "")
 
-                        if (currentEpg != null) {
-                            // 1. MODO TVG-ID: Fusión exacta y estricta por el ID de la guía
-                            enrichedState.value.all.filter { ch ->
-                                ch.source.epgId?.trim()?.lowercase() == currentEpg
-                            }.distinctBy { it.id }
-                        } else {
-                            // 2. MODO RESPALDO: Limpieza de nombre si no hay tvg-id asignado
-                            val qualityRegex = Regex("(?i)\\b(?:4k|uhd|fhd|hd|sd|1080p|720p|60fps|raw|es|en|lat|pt)\\b")
-                            val symbolRegex = Regex("[^a-z0-9]")
-                            
-                            val currentCleanName = current.name
+                        // 3. Fusión masiva: Si coincide EL ID, EL TVG-NAME, O EL NOMBRE LIMPIO, se agrupan.
+                        enrichedState.value.all.filter { ch ->
+                            val targetEpg = ch.source.epgId?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                            val targetTvg = ch.source.tvgName?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                            val targetCleanName = ch.name
                                 .replace(qualityRegex, "")
                                 .lowercase()
                                 .replace(symbolRegex, "")
 
-                            enrichedState.value.all.filter { ch ->
-                                val targetCleanName = ch.name
-                                    .replace(qualityRegex, "")
-                                    .lowercase()
-                                    .replace(symbolRegex, "")
+                            val matchEpg = currentEpg != null && targetEpg == currentEpg
+                            val matchTvg = currentTvg != null && targetTvg == currentTvg
+                            val matchName = currentCleanName.isNotBlank() && targetCleanName == currentCleanName
 
-                                currentCleanName.isNotBlank() && targetCleanName == currentCleanName
-                            }.distinctBy { it.id }
-                        }
+                            matchEpg || matchTvg || matchName
+                        }.distinctBy { it.id }
                     }.orEmpty()
                 }
 
