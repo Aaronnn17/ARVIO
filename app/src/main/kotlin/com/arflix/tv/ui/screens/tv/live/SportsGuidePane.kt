@@ -271,10 +271,8 @@ internal fun SportsGuidePane(
                             if (event?.isOnAir(System.currentTimeMillis()) == true && (event.availableChannels(System.currentTimeMillis()).any { it.id == channel.id } || channel.id in possibleIds)) { dismiss(); onPlay(channel) }
                         }.padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        if (channel.logo.isNullOrBlank()) Box(Modifier.size(if (narrow) 40.dp else 88.dp, 30.dp), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.Tv, null, tint = LiveColors.FgDim, modifier = Modifier.size(24.dp))
-                        }
-                        else AsyncImage(channel.logo, null, contentScale = ContentScale.Fit, modifier = Modifier.size(if (narrow) 40.dp else 88.dp, 30.dp))
+                        val logoChannel = remember(channel) { channel.enrichForFastStartup(0) }
+                        ChannelLogo(logoChannel, 30.dp, Modifier.size(if (narrow) 40.dp else 88.dp, 30.dp))
                         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                             Text(channel.name, color = LiveColors.Fg, fontSize = 13.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             val provider = providerNames[channelPlaylistId(channel.id)]

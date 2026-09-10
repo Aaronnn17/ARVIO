@@ -6,6 +6,7 @@ import { externalLaunchMode, openExternalPlayer } from "@/lib/externalPlayers";
 import { accessibleChannels, groupKey, loadXtreamCatchup, type CatchupProgram } from "@/lib/iptv";
 import { VirtualList } from "@/components/ui/VirtualList";
 import { SportsGuidePane } from "@/components/livetv/SportsGuidePane";
+import { ChannelLogo } from "@/components/livetv/ChannelLogo";
 import { IPTV_SNAPSHOT_TTL_MS, iptvPlaylistSignature } from "@/lib/iptv";
 import { loadStored, saveStored } from "@/lib/storage";
 import { authClient, useApp } from "@/lib/store";
@@ -468,7 +469,7 @@ export function LiveTvScreen() {
             {selectedChannel ? (
               <>
                 <div id="live-tv-player-dock" className="livetv-detail-art" aria-label="Live player">
-                  {selectedChannel.logo ? <img src={selectedChannel.logo} alt="" loading="lazy" /> : <Tv size={48} />}
+                  <ChannelLogo channel={selectedChannel} size={48} />
                 </div>
                 <p className="livetv-detail-group">{selectedChannel.group || "Live TV"}</p>
                 <p className="livetv-channel-identity">{selectedChannel.name}{selectedChannel.qualityLabel ? ` · ${selectedChannel.qualityLabel}` : ""}</p>
@@ -679,7 +680,7 @@ function GuideRow({ channel, favorite, guide, selected, windowStart, windowEnd, 
     <div ref={rowRef} className={`livetv-guide-row ${selected ? "is-selected" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} role="row">
       <button type="button" className="livetv-guide-channel" onClick={onPlay} title={channel.name}>
         <small className="tv-guide-channel-number">{channel.number}</small>
-        <span className="livetv-row-logo">{channel.logo ? <img src={channel.logo} alt="" loading="lazy" /> : <Tv size={16} />}</span>
+        <span className="livetv-row-logo"><ChannelLogo channel={channel} size={16} /></span>
         <strong>{channel.name}</strong>
         {favorite && <Star size={15} fill="currentColor" aria-label="Favorite" />}
       </button>
@@ -742,7 +743,7 @@ function ChannelRow({ channel, guide, favorite, selected, onFocus, onVisible, on
   return (
     <article ref={rowRef} className={`livetv-row ${selected ? "is-selected" : ""}`} onMouseEnter={onFocus} onFocus={onFocus}>
       <button type="button" className="livetv-row-main" onClick={onPlay}>
-        <span className="livetv-row-logo">{channel.logo ? <img src={channel.logo} alt="" loading="lazy" /> : <Tv size={20} />}</span>
+        <span className="livetv-row-logo"><ChannelLogo channel={channel} size={20} /></span>
         <span className="livetv-row-copy">
           <span className="livetv-row-title">
             <strong>{channel.name}</strong>

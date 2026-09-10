@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +33,8 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import java.nio.charset.StandardCharsets
+import com.arflix.tv.data.repository.ChannelLogoDirectory
+import kotlinx.coroutines.CancellationException
 
 /**
  * Typographic channel logo placeholder. Variant chosen by first char-code % 3.
@@ -48,8 +52,24 @@ fun ChannelLogo(
     val variant = (channel.name.firstOrNull()?.code ?: 0) % 3
     val context = LocalContext.current
     val density = LocalDensity.current
-    val logoUrl = remember(channel.logo) { safeChannelLogoUrl(channel.logo) }
-    var showFallback by remember(logoUrl) { mutableStateOf(logoUrl.isNullOrBlank()) }
+    val providerUrl = remember(channel.logo) { safeChannelLogoUrl(channel.logo) }
+    var failed by remember(channel.id, providerUrl) { mutableStateOf(emptySet<String>()) }
+    var alternatives by remember(channel.id, providerUrl) { mutableStateOf(emptyList<String>()) }
+    val needsDirectory = providerUrl == null || providerUrl in failed || FailedChannelLogos.contains(providerUrl)
+    LaunchedEffect(channel.id, channel.source.epgId, channel.name, needsDirectory) {
+        if (needsDirectory) {
+            alternatives = try {
+                ChannelLogoDirectory.candidates(context, channel.source.epgId, channel.name)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
+    val logoUrl = (listOfNotNull(providerUrl) + alternatives).distinct()
+        .firstOrNull { it !in failed && !FailedChannelLogos.contains(it) }
+    var showFallback by remember(channel.id, logoUrl) { mutableStateOf(true) }
     Box(
         modifier = modifier
             .size(size)
@@ -89,10 +109,15 @@ fun ChannelLogo(
             }
         }
         if (!logoUrl.isNullOrBlank()) {
-            val logoRequest = remember(logoUrl, size, density) {
+            val logoRequest = remember(logoUrl, providerUrl, size, density) {
                 val px = with(density) { size.roundToPx() }.coerceAtLeast(1)
                 ImageRequest.Builder(context)
                     .data(logoUrl)
+                    .apply {
+                        // Wikimedia rejects the generic okhttp agent. Identify fallback requests,
+                        // while leaving provider-specific image requests unchanged.
+                        if (logoUrl != providerUrl) setHeader("User-Agent", "ARVIO/${com.arflix.tv.BuildConfig.VERSION_NAME} (https://arvio.tv)")
+                    }
                     .size(px, px)
                     .precision(Precision.INEXACT)
                     .allowHardware(true)
@@ -101,17 +126,36 @@ fun ChannelLogo(
                     .placeholderMemoryCacheKey("$logoUrl|${px}x$px")
                     .build()
             }
-            AsyncImage(
+            key(channel.id, logoUrl) { AsyncImage(
                 model = logoRequest,
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
                 onSuccess = { showFallback = false },
-                onError = { showFallback = true },
+                onError = {
+                    FailedChannelLogos.add(logoUrl)
+                    failed = failed + logoUrl
+                    showFallback = true
+                },
                 modifier = Modifier
                     .fillMaxSize()
                     .padding((size.value / 7f).coerceIn(4f, 8f).dp),
-            )
+            ) }
         }
+    }
+}
+
+/** Bound failed-image retries when virtualized rows leave and re-enter the screen. */
+private object FailedChannelLogos {
+    private val failures = LinkedHashMap<String, Long>()
+    @Synchronized fun contains(url: String): Boolean {
+        val at = failures[url] ?: return false
+        if (android.os.SystemClock.elapsedRealtime() - at < 600_000L) return true
+        failures.remove(url)
+        return false
+    }
+    @Synchronized fun add(url: String) {
+        failures[url] = android.os.SystemClock.elapsedRealtime()
+        while (failures.size > 1024) failures.remove(failures.keys.first())
     }
 }
 

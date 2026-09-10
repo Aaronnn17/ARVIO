@@ -820,6 +820,20 @@ fun LiveTvScreen(
         }
     }
 
+    var quickGuideRows by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) {
+        mutableStateOf(mapOf("fav" to emptyList<EnrichedChannel>(), "recent" to emptyList<EnrichedChannel>()))
+    }
+    LaunchedEffect(currentProfile?.id, enrichedState.value.all, favoriteOrderIds, recents.value, hiddenGroupSet,
+        restrictedGroupSet, selectedProviderId, state.config, lastKnownPagedTotal, state.snapshot.loadedAt) {
+        val candidates = if (lastKnownPagedTotal > 10_000) withContext(Dispatchers.IO) {
+            viewModel.iptvRepository.pagedChannelsByIds((favoriteOrderIds + recents.value).distinct())
+                .mapIndexed { index, channel -> channel.enrichForFastStartup(index + 1) }
+        } else enrichedState.value.all
+        quickGuideRows = withContext(Dispatchers.Default) {
+            quickGuideChannels(candidates.filter(providerMatcher(selectedProviderId, state.config)),
+                favoriteOrderIds, recents.value, hiddenGroupSet, restrictedGroupSet, lastKnownPagedTotal <= 8_000)
+        }
+    }
     val visibleEnrichedState = remember { mutableStateOf(EnrichedChannels.Empty) }
     LaunchedEffect(
         enrichedState.value,
@@ -900,6 +914,7 @@ fun LiveTvScreen(
         // re-ran and "move up/down" left the rail visually unchanged.
         favoriteOrderIds,
         recentsFilterKey,
+        quickGuideRows,
         pagedLoadedLimit,
         state.snapshot.sortOrder,
         hiddenGroupSet,
@@ -909,6 +924,12 @@ fun LiveTvScreen(
     ) {
         val tree = visibleEnrichedState.value.tree
         val categoryCount = tree.countForCategory(selectedCategoryId) ?: 0
+        if (selectedCategoryId == "fav" || selectedCategoryId == "recent") {
+            filteredChannelsCategoryKey = selectedCategoryId
+            filteredChannelsScopeKey = categoryScope
+            filteredChannelsState.value = quickGuideRows[selectedCategoryId].orEmpty()
+            return@LaunchedEffect
+        }
         var result = withContext(Dispatchers.Default) {
             visibleEnrichedState.value.index.channelsFor(
                 categoryId = selectedCategoryId,
@@ -1019,7 +1040,7 @@ fun LiveTvScreen(
         val categoryKey = filteredChannelsCategoryKey
         val source = filteredChannelsState.value
         // No variant groups (large list) → reuse the source list as-is, no extra copy.
-        val collapsed = if (variantGroups.isEmpty()) {
+        val collapsed = if (variantGroups.isEmpty() || categoryKey == "fav" || categoryKey == "recent") {
             source
         } else {
             withContext(Dispatchers.Default) { collapseChannelVariants(source, variantGroups) }
@@ -1616,8 +1637,11 @@ fun LiveTvScreen(
     val sportsProviderNames = remember(state.config.playlists, state.config.stalkerPortals) {
         state.config.playlists.associate { it.id to it.name } + state.config.stalkerPortals.associate { it.id to it.name }
     }
-    val sportsSidebarTree = remember(visibleEnrichedState.value.tree) {
-        visibleEnrichedState.value.tree.withSportsDestination()
+    val sportsSidebarTree = remember(visibleEnrichedState.value.tree, quickGuideRows) {
+        val tree = visibleEnrichedState.value.tree.withSportsDestination()
+        tree.copy(top = tree.top.map { category ->
+            quickGuideRows[category.id]?.let { category.copy(count = it.size) } ?: category
+        })
     }
     LaunchedEffect(sportsSelected, currentProfile?.id, selectedProviderId, hiddenGroupSet,
         restrictedGroupSet, state.snapshot.loadedAt, state.epgBackfillInProgress, sportsRefresh, guideClockMillis / 600_000L) {

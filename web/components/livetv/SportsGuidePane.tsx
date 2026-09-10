@@ -7,6 +7,7 @@ import { sportsChannelKey, sportsBroadcasterKeys } from "@/lib/sportsCatalogue";
 import type { InstalledAddon, IptvChannel, IptvNowNext } from "@/lib/types";
 import { cachedSportsMetadata, loadSportsGuideArtwork, loadSportsMetadata, type SportsEventArtwork } from "@/lib/sportsArtwork";
 import { VirtualList } from "@/components/ui/VirtualList";
+import { ChannelLogo } from "@/components/livetv/ChannelLogo";
 
 const NO_ADDONS: InstalledAddon[] = [];
 export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCategories, providerNames = {}, addons = NO_ADDONS, clockFormat }: {
@@ -155,7 +156,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
       <VirtualList items={sourceChannels} estimate={72} itemKey={(ch) => ch.id} label="Available channels" renderItem={(ch) =>
         <button type="button" className="tv-event-source" disabled={!selected || !isOnAir(selected, now)} onClick={() => {
           if (selected && accessibleIds.has(ch.id) && isOnAir(selected, Date.now()) && (availableEventChannels(selected, Date.now()).some(channel => channel.id === ch.id) || possibleChannels.some(channel => channel.id === ch.id))) { close(); onPlay(ch); }
-        }}>{ch.logo ? <img src={ch.logo} alt="" /> : <span className="tv-source-logo-fallback"><Tv size={28} /></span>}<span><strong>{ch.name}</strong><small>{providerNames[ch.id.split(":")[0]] || ch.group}{possibleChannels.some(candidate => candidate.id === ch.id) ? " · Possible broadcast" : " · Guide match"}</small></span>{ch.qualityLabel && <em>{ch.qualityLabel}</em>}{ch.language && <em>{ch.language.toUpperCase()}</em>}<ChevronRight className="tv-source-arrow" size={22} /><Play className="tv-source-play" size={22} /></button>} />
+        }}><span className="tv-source-logo-fallback"><ChannelLogo channel={ch} size={28} /></span><span><strong>{ch.name}</strong><small>{providerNames[ch.id.split(":")[0]] || ch.group}{possibleChannels.some(candidate => candidate.id === ch.id) ? " · Possible broadcast" : " · Guide match"}</small></span>{ch.qualityLabel && <em>{ch.qualityLabel}</em>}{ch.language && <em>{ch.language.toUpperCase()}</em>}<ChevronRight className="tv-source-arrow" size={22} /><Play className="tv-source-play" size={22} /></button>} />
     </dialog>
   </section>;
 }
