@@ -10,6 +10,49 @@ const EPG_TTL_MS = 3 * 60 * 60 * 1000;
 const LARGE_IPTV_LIST_CHANNEL_COUNT = 10_000;
 const DEFAULT_IPTV_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20";
 
+type ProviderBudget = { starts: number[]; active: number; nextStart: number; blockedUntil: number };
+const providerBudgets = new Map<string, ProviderBudget>();
+const apiInFlight = new Map<string, Promise<unknown>>();
+const guideApiCache = new Map<string, { data: unknown; expires: number }>();
+
+// Shared by every visible row and fallback. Media segments do not use this path.
+async function providerTextRequest(providerUrl: string, requestUrl: string): Promise<string> {
+  const url = new URL(providerUrl);
+  const key = url.hostname + (url.port && !["80", "443"].includes(url.port) ? `:${url.port}` : "");
+  let budget = providerBudgets.get(key);
+  if (!budget) {
+    budget = { starts: [], active: 0, nextStart: 0, blockedUntil: 0 };
+    providerBudgets.set(key, budget);
+  }
+  const queuedAt = Date.now();
+  while (true) {
+    const now = Date.now();
+    budget.starts = budget.starts.filter((at) => now - at < 60_000);
+    if (now < budget.blockedUntil || budget.starts.length >= 30 || now - queuedAt >= 5_000) {
+      throw new Error("IPTV provider requests are temporarily paused. Please wait before refreshing.");
+    }
+    if (budget.active < 2 && now >= budget.nextStart) break;
+    await new Promise((resolve) => setTimeout(resolve, budget!.active >= 2 ? 50
+      : Math.max(1, Math.min(100, budget!.nextStart - now))));
+  }
+  budget.starts.push(Date.now());
+  budget.nextStart = Date.now() + 500;
+  budget.active++;
+  try { return await textRequest(requestUrl, { cache: "no-store" }); }
+  catch (error) {
+    const status = Number((error as { status?: number })?.status);
+    const cooldown = [401, 403, 451].includes(status) ? 900_000
+      : [429, 503, 513].includes(status) ? 300_000 : status >= 500 && status <= 599 ? 60_000 : 0;
+    if (cooldown) {
+      const header = (error as { retryAfter?: string | null })?.retryAfter;
+      const requested = header ? (/^\d+$/.test(header) ? Number(header) * 1000 : Date.parse(header) - Date.now()) : 0;
+      budget.blockedUntil = Math.max(budget.blockedUntil, Date.now() + Math.max(cooldown,
+        Number.isFinite(requested) ? Math.min(86_400_000, requested) : 0));
+    }
+    throw error;
+  } finally { budget.active--; }
+}
+
 type IptvLoadOptions = {
   userAgent?: string;
 };
@@ -74,7 +117,8 @@ export async function loadIptvSnapshot(
         // Xtream playlists load API-first: the JSON API is faster than a huge
         // M3U text, provides category names + EPG channel ids, and yields HLS
         // (.m3u8) stream URLs the browser can actually play.
-        if (xtreamInfoFromPlaylist(playlist.m3uUrl)) {
+        const isXtream = Boolean(xtreamInfoFromPlaylist(playlist.m3uUrl));
+        if (isXtream) {
           const xtreamChannels = await fetchXtreamChannels(playlist, options).catch(() => []);
           if (xtreamChannels.length) return xtreamChannels;
         }
@@ -83,12 +127,12 @@ export async function loadIptvSnapshot(
           const channels = parseM3u(text, playlist.id);
           if (channels.length) return channels;
         } catch (m3uError) {
-          const xtreamChannels = await fetchXtreamChannels(playlist, options).catch(() => []);
+          const xtreamChannels = isXtream ? [] : await fetchXtreamChannels(playlist, options).catch(() => []);
           if (xtreamChannels.length) return xtreamChannels;
           throw m3uError;
         }
 
-        const xtreamChannels = await fetchXtreamChannels(playlist, options).catch(() => []);
+        const xtreamChannels = isXtream ? [] : await fetchXtreamChannels(playlist, options).catch(() => []);
         if (xtreamChannels.length) return xtreamChannels;
         throw new Error("Playlist response did not contain any channels.");
       } catch (error) {
@@ -307,9 +351,9 @@ async function fetchPlaylistText(url: string, options: IptvLoadOptions = {}) {
     async () => {
       const headers = playlistProxyHeaders(options.userAgent);
       const candidates: Array<{ label: string; load: () => Promise<string> }> = [
-        { label: "direct", load: () => textRequest(url, { cache: "no-store" }) },
-        { label: "proxy", load: () => textRequest(playlistTextUrl(url), { cache: "no-store" }) },
-        { label: "proxy with media headers", load: () => textRequest(playlistTextUrl(url, headers), { cache: "no-store" }) }
+        { label: "direct", load: () => providerTextRequest(url, url) },
+        { label: "proxy", load: () => providerTextRequest(url, playlistTextUrl(url)) },
+        { label: "proxy with media headers", load: () => providerTextRequest(url, playlistTextUrl(url, headers)) }
       ];
       const errors: string[] = [];
 
@@ -553,11 +597,36 @@ function buildXtreamStreamUrl(info: XtreamInfo, streamId: string) {
 }
 
 async function fetchXtreamJson<T>(url: string, headers: Record<string, string>) {
-  try {
-    return await jsonFromText<T>(await textRequest(url, { cache: "no-store" }));
-  } catch {
-    return jsonFromText<T>(await textRequest(playlistTextUrl(url, headers), { cache: "no-store" }));
-  }
+  const key = `${url}|${JSON.stringify(headers)}`;
+  const cached = guideApiCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.data as T;
+  const existing = apiInFlight.get(key);
+  if (existing) return existing as Promise<T>;
+  const task = (async () => {
+    const load = async () => {
+      try {
+        const text = await providerTextRequest(url, url);
+        jsonFromText(text);
+        return text;
+      } catch {
+        const text = await providerTextRequest(url, playlistTextUrl(url, headers));
+        jsonFromText(text);
+        return text;
+      }
+    };
+    const action = new URL(url).searchParams.get("action");
+    const guide = action === "get_short_epg" || action === "get_simple_data_table";
+    const text = guide ? await load() : await cachedRemoteText(`api:${key}`, PLAYLIST_TTL_MS, load);
+    const data = jsonFromText<T>(text);
+    if (guide) {
+      const empty = !(data as { epg_listings?: unknown[] })?.epg_listings?.length;
+      guideApiCache.set(key, { data, expires: Date.now() + (empty ? 600_000 : 120_000) });
+      while (guideApiCache.size > 128) guideApiCache.delete(guideApiCache.keys().next().value!);
+    }
+    return data;
+  })();
+  apiInFlight.set(key, task);
+  try { return await task; } finally { if (apiInFlight.get(key) === task) apiInFlight.delete(key); }
 }
 
 function jsonFromText<T>(text: string) {
@@ -846,9 +915,9 @@ async function fetchEpgText(url: string) {
     EPG_TTL_MS,
     async () => {
       try {
-        return await textRequest(url, { cache: "no-store" });
+        return await providerTextRequest(url, url);
       } catch {
-        return textRequest(proxiedUrl(url), { cache: "no-store" });
+        return providerTextRequest(url, proxiedUrl(url));
       }
     },
     isXmltvText

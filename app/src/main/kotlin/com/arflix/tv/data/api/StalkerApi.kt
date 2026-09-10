@@ -1,6 +1,8 @@
 package com.arflix.tv.data.api
 
 import com.arflix.tv.data.model.IptvChannel
+import com.arflix.tv.network.withIptvProviderRequestGuard
+import com.arflix.tv.data.repository.StalkerPortalSupport
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import com.google.gson.stream.JsonReader
@@ -24,6 +26,7 @@ open class StalkerApi(
     private var apiBaseResolved = false
 
     private val client = OkHttpClient.Builder()
+        .withIptvProviderRequestGuard()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
@@ -49,6 +52,9 @@ open class StalkerApi(
         return try {
             if (!apiBaseResolved) {
                 resolveApiBase()
+                // Probing the base path is itself a handshake and keeps the token it
+                // received, so a second one here would only throw that token away.
+                if (token.isNotBlank()) return true
             }
             val url = "$apiBase/server/load.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml"
             val response = doGet(url)
@@ -95,6 +101,7 @@ open class StalkerApi(
                     return
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 // continue to next candidate
             }
         }
@@ -139,13 +146,23 @@ open class StalkerApi(
                     newChannelIdCount++
                     val streamCmd = ch.cmd ?: continue
                     val groupName = ch.tvGenreId?.let { genreMap[it] } ?: "Uncategorized"
+                    // Portals that announce no temporary link publish the finished
+                    // address here. Preserve that decision separately: even bare URLs
+                    // can require create_link when the portal says so or omits the flags.
+                    val directUrl = StalkerPortalSupport.directLiveStreamUrl(
+                        cmd = streamCmd,
+                        useHttpTmpLink = ch.useHttpTmpLink,
+                        wowzaTmpLink = ch.wowzaTmpLink,
+                        flussonicTmpLink = ch.flussonicTmpLink,
+                    )
                     channels.add(
                         IptvChannel(
                             id = channelId,
                             name = ch.name ?: "Unknown",
                             logo = ch.logo,
                             group = groupName,
-                            streamUrl = streamCmd // Will be resolved via create_link before playback
+                            streamUrl = directUrl ?: streamCmd,
+                            stalkerDirectStream = directUrl != null,
                         )
                     )
                 }
@@ -165,6 +182,8 @@ open class StalkerApi(
             if (e is kotlinx.coroutines.CancellationException) throw e
 
             System.err.println("[Stalker] Get channels failed: ${e.message}")
+            // Never publish a partial page set as the complete provider catalog.
+            throw e
         }
         return channels
     }
@@ -428,7 +447,7 @@ open class StalkerApi(
             val url = "$apiBase/server/load.php?type=itv&action=create_link&cmd=$encodedCmd&forced_storage=undefined&disable_ad=0&JsHttpRequest=1-xml"
             val response = doGet(url)
             val parsed = gson.fromJson(response, StalkerLinkResponse::class.java)
-            parsed?.js?.cmd?.replace("ffmpeg ", "")?.trim()
+            StalkerPortalSupport.sanitizePlaybackCommand(parsed?.js?.cmd).takeIf { it.isNotBlank() }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
 
@@ -484,7 +503,13 @@ open class StalkerApi(
         val name: String?,
         val logo: String?,
         val cmd: String?,
-        @SerializedName("tv_genre_id") val tvGenreId: String?
+        @SerializedName("tv_genre_id") val tvGenreId: String?,
+        // Read as text on purpose: portals send these as 0/1, as "0"/"1", and
+        // occasionally as an empty string, which a numeric field would reject —
+        // taking the whole channel page down with it.
+        @SerializedName("use_http_tmp_link") val useHttpTmpLink: String? = null,
+        @SerializedName("wowza_tmp_link") val wowzaTmpLink: String? = null,
+        @SerializedName("flussonic_tmp_link") val flussonicTmpLink: String? = null
     )
 
     data class StalkerLinkResponse(val js: StalkerLink?)

@@ -5,6 +5,11 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 
+// Provider image previews and already captured frames remain available. A second
+// video connection may violate the IPTV subscription's single-connection limit.
+internal fun allowSecondarySeekPreviewExtraction(memoryClassMb: Int, addonId: String?): Boolean =
+    memoryClassMb >= 192 && addonId != "iptv_xtream_vod"
+
 /** A cancelled decoder request is a missing frame, not a cancelled UI loading effect. */
 internal suspend fun loadSeekPreviewFrame(provider: SeekPreviewFrameProvider, targetMs: Long): SeekPreviewFrame? =
     try {

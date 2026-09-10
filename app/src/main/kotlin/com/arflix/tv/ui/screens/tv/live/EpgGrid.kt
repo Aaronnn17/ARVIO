@@ -1075,22 +1075,11 @@ internal fun epgProgramActionTarget(
 }
 
 private fun ProgramPlacement.isCatchupSupported(channel: EnrichedChannel, nowMillis: Long): Boolean {
-    if (program.catchupAvailable == true) return true
-    val days = effectiveCatchupDays(channel)
-    return days > 0 &&
-        !isPlaceholder &&
-        program.startUtcMillis >= nowMillis - days * 24L * 60L * 60_000L
+    return !isPlaceholder && com.arflix.tv.data.model.IptvGuideHistory.canReplay(channel.source, program, nowMillis)
 }
 
 private fun effectiveCatchupDays(channel: EnrichedChannel): Int {
-    val explicitDays = channel.catchupDays.coerceIn(0, 7)
-    if (explicitDays > 0) return explicitDays
-    val source = channel.source
-    val hasCatchupMetadata = !source.catchupType.isNullOrBlank() || !source.catchupSource.isNullOrBlank()
-    if (hasCatchupMetadata) return 7
-    if (source.streamUrl.contains("/timeshift/", ignoreCase = true)) return 7
-    if (source.xtreamStreamId != null || source.streamUrl.contains("/live/", ignoreCase = true)) return 2
-    return 0
+    return com.arflix.tv.data.model.IptvGuideHistory.days(channel.source)
 }
 
 private fun ProgramPlacement.canFocus(channel: EnrichedChannel, nowMillis: Long): Boolean =
@@ -1102,10 +1091,8 @@ private fun hasFocusablePrograms(
     nowMillis: Long,
 ): Boolean {
     if (programs.isEmpty()) return false
-    val days = effectiveCatchupDays(channel)
-    val catchupCutoff = nowMillis - days * 24L * 60L * 60_000L
     return programs.any { p ->
-        p.endUtcMillis > nowMillis || (days > 0 && p.startUtcMillis >= catchupCutoff) || p.catchupAvailable == true
+        p.endUtcMillis > nowMillis || com.arflix.tv.data.model.IptvGuideHistory.canReplay(channel.source, p, nowMillis)
     }
 }
 

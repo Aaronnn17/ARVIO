@@ -1,5 +1,7 @@
 package com.arflix.tv.ui.screens.tv
 
+import com.arflix.tv.network.withIptvProviderRequestGuard
+
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -50,10 +52,13 @@ private object TvViewModelRegexes {
 }
 
 internal const val FAVORITES_GROUP_NAME = "My Favorites"
+/** How long a create_link address stays reusable before it is fetched again. */
+private const val StalkerStreamCacheTtlMs = 60_000L
 private const val EpgLoadingStateLimit = 800
 private const val EpgAttemptedStateLimit = 2_400
 private const val LargeIptvListChannelCount = 10_000
 private const val StandardPriorityEpgLimit = 3_200
+private const val BackgroundShortEpgWarmupLimit = 24
 private const val LargeListPriorityCacheLimit = 360
 private const val LargeListFocusedNetworkEpgLimit = 24
 private const val LargeListFavoriteEpgPasses = 12
@@ -165,10 +170,17 @@ class TvViewModel @Inject constructor(
     private var deferredCompleteEpgBackfillJob: Job? = null
     private var preparedContentJob: Job? = null
     private var preparedContentRevision: Long = 0L
-    private val resolvedStalkerStreamCache = LinkedHashMap<String, String>()
+    // create_link hands out a *temporary* address (the portals that need it announce
+    // `use_http_tmp_link` and sign the link with `nginx_secure_link`). Caching one
+    // without an expiry meant returning to a channel replayed an address the portal had
+    // long since retired, which surfaced as a channel that had just worked refusing to
+    // start. Keep the cache — it still spares a round trip when a channel is re-entered
+    // right away — but only for as long as such a link can be expected to live.
+    private val resolvedStalkerStreamCache = LinkedHashMap<String, CachedStalkerStream>()
     private val iptvPlaybackUrlResolver by lazy {
         IptvPlaybackUrlResolver(
             OkHttpProvider.playbackClient.newBuilder()
+                .withIptvProviderRequestGuard()
                 .connectTimeout(3, TimeUnit.SECONDS)
                 .readTimeout(4, TimeUnit.SECONDS)
                 .writeTimeout(3, TimeUnit.SECONDS)
@@ -179,6 +191,11 @@ class TvViewModel @Inject constructor(
     private val catchupHistoryRefreshAt = LinkedHashMap<String, Long>()
     private val currentChannelEpgRefreshAt = LinkedHashMap<String, Long>()
     private val epgRefreshRequests = EpgRefreshRequests()
+
+    private data class CachedStalkerStream(
+        val url: String,
+        val resolvedAtMs: Long,
+    )
 
     private data class VisibleEpgDrain(
         val ids: List<String>,
@@ -759,14 +776,7 @@ class TvViewModel @Inject constructor(
         existing: com.arflix.tv.data.model.IptvNowNext?,
         fresh: com.arflix.tv.data.model.IptvNowNext
     ): com.arflix.tv.data.model.IptvNowNext {
-        if (existing == null) return fresh
-        return com.arflix.tv.data.model.IptvNowNext(
-            now = fresh.now ?: existing.now,
-            next = fresh.next ?: existing.next,
-            later = fresh.later ?: existing.later,
-            upcoming = if (fresh.upcoming.isNotEmpty()) fresh.upcoming else existing.upcoming,
-            recent = if (fresh.recent.isNotEmpty()) fresh.recent else existing.recent,
-        )
+        return IptvGuideHistory.mergeSchedules(existing, fresh)
     }
 
     // Every TvUiState emission re-executes the (very large, interpreter-only)
@@ -957,7 +967,7 @@ class TvViewModel @Inject constructor(
         val state = _uiState.value
         val channels = state.snapshot.channels
         if (channels.isEmpty()) return
-        if (isLargeIptvList(channels.size)) {
+        if (isActiveLargeIptvList()) {
             val cacheWarmIds = buildPriorityEpgChannelIds(
                 state = state,
                 maxChannels = LargeListPriorityCacheLimit
@@ -1020,11 +1030,10 @@ class TvViewModel @Inject constructor(
             refreshGuideFromCache()
 
             val afterCache = _uiState.value
-            val missingWarmIds = afterCache.snapshot.channels
+            val missingWarmIds = warmChannelIds
                 .asSequence()
-                .map { it.id }
                 .filter { id -> !hasProgramData(afterCache.snapshot.nowNext[id]) }
-                .take(StandardPriorityEpgLimit)
+                .take(BackgroundShortEpgWarmupLimit)
                 .toCollection(LinkedHashSet())
             if (missingWarmIds.isEmpty()) return@launch
 
@@ -1621,15 +1630,15 @@ class TvViewModel @Inject constructor(
         }
     }
 
-    fun refreshCatchupHistoryForChannel(channelId: String?) {
+    fun refreshCatchupHistoryForChannel(channelId: String?, knownChannel: IptvChannel? = null) {
         val id = channelId?.trim().orEmpty()
         if (id.isBlank()) return
         viewModelScope.launch {
             val current = _uiState.value
-            val channel = current.channelLookup[id] ?: lookupChannelById(current, id)
-            if (!supportsCatchup(channel)) return@launch
+            val channel = knownChannel?.takeIf { it.id == id }
+                ?: current.channelLookup[id] ?: lookupChannelById(current, id)
             val now = System.currentTimeMillis()
-            if (hasRecentCatchupHistory(channel, _uiState.value.snapshot.nowNext[id], now)) return@launch
+            if (supportsCatchup(channel) && hasRecentCatchupHistory(channel, current.snapshot.nowNext[id], now)) return@launch
             val lastRefreshAt = catchupHistoryRefreshAt[id] ?: 0L
             if (now - lastRefreshAt < RichCatchupRefreshThrottleMs) return@launch
 
@@ -1649,9 +1658,7 @@ class TvViewModel @Inject constructor(
             }
             if (indexedHistory.isNotEmpty()) mergeNowNext(indexedHistory)
             val afterCache = _uiState.value
-            val afterCacheChannel = afterCache.channelLookup[id]
-                ?: lookupChannelById(afterCache, id)
-            if (hasRecentCatchupHistory(afterCacheChannel, afterCache.snapshot.nowNext[id])) {
+            if (!supportsCatchup(channel) || hasRecentCatchupHistory(channel, afterCache.snapshot.nowNext[id])) {
                 System.err.println(
                     "[EPG-Catchup] cache satisfied channel=$id " +
                         "recent=${recentCatchupCount(afterCache.snapshot.nowNext[id])}"
@@ -2048,8 +2055,8 @@ class TvViewModel @Inject constructor(
         }
         val resolvedUrl = resolveStalkerStreamIfNeeded(
             rawUrl = rawUrl,
-            channelId = channel.id,
-            isStalkerChannel = channel.id.startsWith("stalker:"),
+            channel = channel,
+            isCatchup = program != null,
             forceRefresh = forceRefresh,
         )
         return iptvPlaybackUrlResolver.resolve(
@@ -2062,34 +2069,48 @@ class TvViewModel @Inject constructor(
 
     private suspend fun resolveStalkerStreamIfNeeded(
         rawUrl: String,
-        channelId: String,
-        isStalkerChannel: Boolean,
+        channel: IptvChannel,
+        isCatchup: Boolean,
         forceRefresh: Boolean,
     ): String {
         val trimmed = rawUrl.trim()
-        if (!isStalkerChannel) return trimmed
+        val channelId = channel.id
+        if (!channelId.startsWith("stalker:")) return trimmed
+        if (StalkerPortalSupport.canPlayDirectLiveStream(channel, trimmed, isCatchup)) return trimmed
         val cacheKey = StalkerPortalSupport.streamCacheKey(channelId, trimmed)
 
+        val now = System.currentTimeMillis()
         if (!forceRefresh) {
             synchronized(resolvedStalkerStreamCache) {
-                resolvedStalkerStreamCache[cacheKey]?.let { return it }
+                resolvedStalkerStreamCache[cacheKey]
+                    ?.takeIf { now - it.resolvedAtMs <= StalkerStreamCacheTtlMs }
+                    ?.let { return it.url }
             }
         }
 
         val resolved = withContext(Dispatchers.IO) {
             iptvRepository.resolveStalkerStreamUrl(channelId, trimmed)
         }?.trim().orEmpty()
-        val playable = resolved.ifBlank { trimmed.removePrefix("ffmpeg").trim() }
-        if (playable.isNotBlank()) {
-            synchronized(resolvedStalkerStreamCache) {
-                resolvedStalkerStreamCache[cacheKey] = playable
-                while (resolvedStalkerStreamCache.size > 200) {
-                    val firstKey = resolvedStalkerStreamCache.keys.firstOrNull() ?: break
-                    resolvedStalkerStreamCache.remove(firstKey)
-                }
+        // Falling back to the raw `cmd` used to hand the player an unroutable
+        // placeholder ("http://localhost/ch/1234_") whenever create_link failed. The
+        // player then spent three attempts on an address that can never work before
+        // the error banner showed. Fail loudly instead; the caller turns the message
+        // into the diagnostic banner right away.
+        val rawAddress = StalkerPortalSupport.sanitizePlaybackCommand(trimmed)
+        val playable = resolved.ifBlank {
+            if (StalkerPortalSupport.isRoutableStreamAddress(rawAddress)) rawAddress else ""
+        }
+        if (playable.isBlank()) {
+            throw IllegalStateException("Stalker portal returned no playable link")
+        }
+        synchronized(resolvedStalkerStreamCache) {
+            resolvedStalkerStreamCache[cacheKey] = CachedStalkerStream(playable, now)
+            while (resolvedStalkerStreamCache.size > 200) {
+                val firstKey = resolvedStalkerStreamCache.keys.firstOrNull() ?: break
+                resolvedStalkerStreamCache.remove(firstKey)
             }
         }
-        return playable.ifBlank { trimmed }
+        return playable
     }
 
     private fun setUiState(nextState: TvUiState) {

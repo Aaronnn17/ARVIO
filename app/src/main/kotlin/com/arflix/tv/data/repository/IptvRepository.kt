@@ -14,6 +14,8 @@ import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvSnapshot
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.R
+import com.arflix.tv.network.withIptvProviderRequestGuard
+import com.arflix.tv.network.iptvProviderCooldownMs
 import com.arflix.tv.util.IPTV_VOD_SEARCH_ENABLED_KEY
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
@@ -616,7 +618,7 @@ class IptvRepository @Inject constructor(
     private val completeEpgCoverageTarget = 0.98f
     private val xtreamShortEpgLimit = 24
     private val xtreamVisibleShortEpgLimit = 96
-    private val startupShortEpgChannelLimit = 1200
+    private val startupShortEpgChannelLimit = 24
     private val fullCatchupHistoryChannelLimit = 4
     private val xtreamShortEpgBatchSize = 1024
     private val xtreamShortEpgConcurrency = 2
@@ -629,19 +631,20 @@ class IptvRepository @Inject constructor(
     // thousands of channels and would hammer the portal with that many
     // individual requests, so it's skipped above this cap and that batch
     // simply gets no EPG until it's requested via the on-demand path instead.
-    private val stalkerShortEpgFallbackMaxChannels = 100
-    private val stalkerShortEpgFallbackConcurrency = 8
+    private val stalkerShortEpgFallbackMaxChannels = 24
+    private val stalkerShortEpgFallbackConcurrency = 2
     private val cacheUpcomingProgramLimit = 48
     private val cacheRecentProgramLimit = 1
     private val cacheCatchupRecentProgramLimit = 96
     private val catchupRecentProgramLimit = IptvGuideHistory.MAX_PROGRAMS
-    private val catchupProbeCandidateLimit = 40
+    private val catchupProbeCandidateLimit = 3
     private val xtreamVodCacheMs = 6 * 60 * 60_000L
     private val iptvHttpClient: OkHttpClient by lazy {
         // Used for full playlist/EPG loading – generous timeouts for large
         // Xtream EPG feeds. TX-4K serves a ~100 MB XMLTV dump so the read
         // and call timeouts need to be minutes, not seconds.
         okHttpClient.newBuilder()
+            .withIptvProviderRequestGuard()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(180, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
@@ -651,6 +654,7 @@ class IptvRepository @Inject constructor(
     private val xtreamLookupHttpClient: OkHttpClient by lazy {
         // Fast-fail client for VOD/source lookups - must be quick for instant playback
         okHttpClient.newBuilder()
+            .withIptvProviderRequestGuard()
             .connectTimeout(6, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .writeTimeout(6, TimeUnit.SECONDS)
@@ -659,6 +663,7 @@ class IptvRepository @Inject constructor(
     }
     private val xtreamGuideHttpClient: OkHttpClient by lazy {
         okHttpClient.newBuilder()
+            .withIptvProviderRequestGuard()
             .connectTimeout(3, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
             .writeTimeout(3, TimeUnit.SECONDS)
@@ -670,6 +675,7 @@ class IptvRepository @Inject constructor(
         // short now/next EPG. Keep short EPG snappy, but give catchup history
         // enough time on slower TV boxes and large providers.
         okHttpClient.newBuilder()
+            .withIptvProviderRequestGuard()
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(8, TimeUnit.SECONDS)
@@ -680,6 +686,7 @@ class IptvRepository @Inject constructor(
         // Live catalog payloads can be very large (50k+ streams), so keep them
         // below XMLTV timeouts but long enough to finish on TV WiFi.
         okHttpClient.newBuilder()
+            .withIptvProviderRequestGuard()
             .connectTimeout(12, TimeUnit.SECONDS)
             .readTimeout(90, TimeUnit.SECONDS)
             .writeTimeout(12, TimeUnit.SECONDS)
@@ -1363,12 +1370,16 @@ class IptvRepository @Inject constructor(
         program: IptvProgram,
         startAttempt: Int = 0
     ): String {
+        if (program.catchupAvailable == false) {
+            throw IOException(context.getString(R.string.iptv_no_catchup))
+        }
         val candidates = getCatchupUrlCandidates(channel, program)
-        if (candidates.isEmpty()) return channel.streamUrl
+        if (candidates.isEmpty()) throw IOException(context.getString(R.string.iptv_no_catchup))
         val safeAttempt = startAttempt.coerceAtLeast(0)
-        val ordered = candidates.drop(safeAttempt) + candidates.take(safeAttempt)
+        // Each playback retry gets a fresh, bounded batch, never a rotated full scan.
+        val ordered = candidates.drop(safeAttempt.coerceAtMost(candidates.size) * catchupProbeCandidateLimit)
         return withContext(Dispatchers.IO) {
-            ordered.take(catchupProbeCandidateLimit).forEach { candidate ->
+            for (candidate in ordered.take(catchupProbeCandidateLimit)) {
                 val probe = probePlaybackUrl(candidate, channel.requestHeaders)
                 if (probe != null && probe.isPlayable) {
                     System.err.println(
@@ -1383,13 +1394,18 @@ class IptvRepository @Inject constructor(
                         "[IPTV-Catchup] rejected status=${probe.statusCode} reason=${probe.reason} " +
                             "url=${redactIptvUrl(candidate)}"
                     )
+                    if (iptvProviderCooldownMs(probe.statusCode, null, System.currentTimeMillis()) > 0L) {
+                        throw IOException("Catch-up stopped: provider returned HTTP ${probe.statusCode}. Please wait before retrying.")
+                    }
                 }
+                if (probe == null) break
             }
             throw IOException(context.getString(R.string.iptv_no_catchup))
         }
     }
 
     fun getCatchupUrlCandidates(channel: IptvChannel, program: IptvProgram): List<String> {
+        if (program.catchupAvailable == false) return emptyList()
         val startUnix = program.startUtcMillis / 1000L
         val endUnix = program.endUtcMillis / 1000L
         val nowUnix = System.currentTimeMillis() / 1000L
@@ -1443,7 +1459,6 @@ class IptvRepository @Inject constructor(
                         add(applyCatchupSourceTemplate(channel, it, program, serverStartMs, startUnix, endUnix, nowUnix, durationMin, streamId))
                     }
                     addAll(xtreamCandidates)
-                    if (isEmpty()) add(channel.streamUrl)
                 }
             }
             else -> {
@@ -1453,7 +1468,6 @@ class IptvRepository @Inject constructor(
                         add(applyCatchupSourceTemplate(channel, it, program, serverStartMs, startUnix, endUnix, nowUnix, durationMin, streamId))
                     }
                     addAll(xtreamCandidates)
-                    if (isEmpty()) add(channel.streamUrl)
                 }
             }
         }
@@ -1679,7 +1693,7 @@ class IptvRepository @Inject constructor(
     private fun probePlaybackUrl(url: String, headers: Map<String, String>): PlaybackProbeResult? {
         val ranged = executePlaybackProbe(url, headers, useRange = true)
         if (ranged == null || ranged.isPlayable) return ranged
-        if (ranged.statusCode in setOf(403, 405, 416, 500, 502, 503, 513)) {
+        if (ranged.statusCode in setOf(405, 416)) {
             val normal = executePlaybackProbe(url, headers, useRange = false)
             if (normal?.isPlayable == true) return normal.copy(reason = "ok-no-range")
             return normal ?: ranged
@@ -2331,7 +2345,8 @@ class IptvRepository @Inject constructor(
             // Check if this is an Xtream provider (can use fast short EPG API)
             val xtreamProviderGroups = groupXtreamChannelsByCredentials(config, channels)
             val hasXtreamChannels = xtreamProviderGroups.isNotEmpty()
-            val shouldFetchBroadShortEpg = allowBroadShortEpg || epgCandidates.isEmpty() || !largePersistedPlaylist
+            val shouldFetchBroadShortEpg = channels.size <= startupShortEpgChannelLimit &&
+                (allowBroadShortEpg || epgCandidates.isEmpty())
             System.err.println("[EPG] loadSnapshot: forceEpgReload=$forceEpgReload shouldUseCachedEpg=$shouldUseCachedEpg cachedHasPrograms=$cachedHasPrograms xtreamProviders=${xtreamProviderGroups.size} hasXtreamChannels=$hasXtreamChannels epgCandidates=${epgCandidates.size} broadShort=$shouldFetchBroadShortEpg")
             val cachedFallbackNowNext = if (channels.size > LargeIptvListChannelCount) {
                 emptyMap()
@@ -2445,9 +2460,7 @@ class IptvRepository @Inject constructor(
                             if (parsedHasPrograms) {
                                 completedXmlUrls.add(epgUrl)
                                 // Auto-discovered Xtream URLs are alternatives to the same feed.
-                                if (largePersistedPlaylist) {
-                                    indexedXmlPlaylists.add(candidate.playlistId)
-                                }
+                                indexedXmlPlaylists.add(candidate.playlistId)
                                 xmltvChanged = true
                                 parsed.forEach { (channelId, nowNext) ->
                                     val current = mergedXmlNowNext[channelId]
@@ -2566,7 +2579,8 @@ class IptvRepository @Inject constructor(
                     }
                 }
 
-                if (!resolved && !shouldFetchBroadShortEpg && hasXtreamChannels && !largePersistedPlaylist) {
+                if (!resolved && !shouldFetchBroadShortEpg && hasXtreamChannels &&
+                    channels.size <= startupShortEpgChannelLimit) {
                     System.err.println("[EPG] XMLTV did not resolve; falling back to full Xtream guide API")
                     val fullEpgAttempt = runCatching {
                         fetchXtreamFullEpgForActiveProviders(config, channels, onProgress)
@@ -3290,7 +3304,7 @@ class IptvRepository @Inject constructor(
                         } else {
                             xtreamShortEpgLimit
                         },
-                        allowUnboundedFallback = providerChannels.size > 256 || preferFullCatchupHistory
+                        allowUnboundedFallback = preferFullCatchupHistory
                     ) { _, hadError ->
                         if (hadError) errors++
                     }
@@ -7299,11 +7313,8 @@ class IptvRepository @Inject constructor(
         val rest = xtreamChannels.filter { it.id !in alreadyPrioritized }
         val prioritized = favChannels + favGroupChannels + rest
 
-        // Fetch up to 25000 channels — well beyond what the provider tends
-        // to serve per playlist, so effectively "all available". Combined
-        // with the widened concurrency in fetchXtreamEpgListingsAsync this
-        // completes within the 60s budget for most providers.
-        val toFetch = prioritized
+        // Full guides come from XMLTV, not thousands of per-stream API calls.
+        val toFetch = prioritized.take(startupShortEpgChannelLimit)
         val includeStreamsWithoutGuideKey = toFetch.size <= xtreamShortEpgBatchSize
         System.err.println(
             "[EPG] Xtream short EPG: preparing stream sweep for ${toFetch.size} channels " +
@@ -7453,7 +7464,7 @@ class IptvRepository @Inject constructor(
         channels: List<IptvChannel>,
         includeStreamsWithoutGuideKey: Boolean
     ): XtreamEpgRepresentativeStreams {
-        val withGuideKey = LinkedHashSet<Int>()
+        val withGuideKey = LinkedHashMap<String, Int>()
         val withoutGuideKey = LinkedHashSet<Int>()
         var skippedWithoutGuideKey = 0
 
@@ -7467,12 +7478,12 @@ class IptvRepository @Inject constructor(
                     skippedWithoutGuideKey++
                 }
             } else {
-                withGuideKey += streamId
+                withGuideKey.putIfAbsent(guideKey, streamId)
             }
         }
 
         val streamIds = buildList {
-            addAll(withGuideKey)
+            addAll(withGuideKey.values)
             addAll(withoutGuideKey)
         }.distinct()
         return XtreamEpgRepresentativeStreams(streamIds, skippedWithoutGuideKey)
@@ -7513,7 +7524,7 @@ class IptvRepository @Inject constructor(
         streamIds: List<Int>,
         timeoutMillis: Long = 180_000L,
         listingLimit: Int = xtreamShortEpgLimit,
-        allowUnboundedFallback: Boolean = true,
+        allowUnboundedFallback: Boolean = false,
         onStreamProcessed: (Int, Boolean) -> Unit = { _, _ -> }
     ): List<XtreamEpgListing> {
         // The repository-wide budget also covers overlapping viewport and catch-up requests.
@@ -7550,6 +7561,9 @@ class IptvRepository @Inject constructor(
                                         )
                                         listings = resp?.epgListings
                                     }
+                                    // A deferred/failed request is not proof that this provider
+                                    // has no guide. Do not give it the ten-minute empty-feed TTL.
+                                    if (resp == null) hadError = true
                                     if (resp != null && listings.isNullOrEmpty() && allowUnboundedFallback) {
                                         val simpleUrl = "${creds.baseUrl}/player_api.php?username=${creds.username}" +
                                             "&password=${creds.password}&action=get_simple_data_table&stream_id=$sid"
@@ -8623,32 +8637,7 @@ class IptvRepository @Inject constructor(
     }
 
     private fun mergeCachedGuideSlice(existing: IptvNowNext?, fresh: IptvNowNext): IptvNowNext {
-        if (existing == null) return fresh
-        return IptvNowNext(
-            now = fresh.now ?: existing.now,
-            next = fresh.next ?: existing.next,
-            later = fresh.later ?: existing.later,
-            upcoming = mergeCachedPrograms(existing.upcoming, fresh.upcoming)
-                .asSequence()
-                .filter { it.startUtcMillis > 0L }
-                .take(epgUpcomingProgramLimit)
-                .toList(),
-            recent = mergeCachedPrograms(existing.recent, fresh.recent)
-                .takeLast(catchupRecentProgramLimit)
-        )
-    }
-
-    private fun mergeCachedPrograms(
-        existing: List<IptvProgram>,
-        fresh: List<IptvProgram>
-    ): List<IptvProgram> {
-        if (existing.isEmpty()) return fresh
-        if (fresh.isEmpty()) return existing
-        return (existing.asSequence() + fresh.asSequence())
-            .filter { it.title.isNotBlank() && it.endUtcMillis > it.startUtcMillis }
-            .distinctBy { programKey(it) }
-            .sortedBy { it.startUtcMillis }
-            .toList()
+        return IptvGuideHistory.mergeSchedules(existing, fresh, epgUpcomingProgramLimit)
     }
 
     private fun programKey(program: IptvProgram): String {

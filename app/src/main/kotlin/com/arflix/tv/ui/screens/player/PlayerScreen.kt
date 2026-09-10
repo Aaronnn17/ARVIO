@@ -255,6 +255,7 @@ import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
 import com.arflix.tv.ui.screens.player.preview.seekPreviewOverlay
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewSource
+import com.arflix.tv.ui.screens.player.preview.allowSecondarySeekPreviewExtraction
 import com.arflix.tv.ui.screens.player.preview.SeekInteraction
 import com.arflix.tv.ui.screens.player.preview.SeekSurface
 import com.arflix.tv.ui.screens.player.preview.SeekPhase
@@ -1571,7 +1572,9 @@ fun PlayerScreen(
             }
     }
 
-    val allowSecondarySeekPreviewDecoder = playbackMemoryClassMb >= 192
+    val allowSecondarySeekPreviewDecoder = allowSecondarySeekPreviewExtraction(
+        playbackMemoryClassMb, uiState.selectedStream?.addonId
+    )
     val previewStatus by seekPreviewProvider.status.collectAsState()
     LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce) {
         seekInteraction = SeekInteraction()
@@ -1579,7 +1582,7 @@ fun PlayerScreen(
     }
     LaunchedEffect(
         uiState.selectedStreamUrl, uiState.streamSelectionNonce, duration, isLiveStream,
-        uiState.selectedStream?.preview,
+        uiState.selectedStream?.preview, allowSecondarySeekPreviewDecoder,
     ) {
         val url = uiState.selectedStreamUrl
         val selected = uiState.selectedStream

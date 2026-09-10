@@ -6,6 +6,45 @@ internal object IptvGuideHistory {
     const val MAX_WINDOW_MS = 7L * DAY_MS
     const val MAX_PROGRAMS = 1_000
 
+    /** Short refreshes patch schedules; they must not truncate a previously loaded archive. */
+    fun mergeSchedules(existing: IptvNowNext?, fresh: IptvNowNext, upcomingLimit: Int = 96): IptvNowNext {
+        if (existing == null) return fresh
+        return IptvNowNext(
+            now = mergeProgram(existing.now, fresh.now),
+            next = mergeProgram(existing.next, fresh.next),
+            later = mergeProgram(existing.later, fresh.later),
+            recent = mergePrograms(existing.recent, fresh.recent).takeLast(MAX_PROGRAMS),
+            upcoming = mergePrograms(existing.upcoming, fresh.upcoming).take(upcomingLimit),
+        )
+    }
+
+    private fun mergeProgram(existing: IptvProgram?, fresh: IptvProgram?): IptvProgram? {
+        if (fresh == null) return existing
+        if (existing == null || programKey(existing) != programKey(fresh)) return fresh
+        return if (fresh.catchupAvailable == null && existing.catchupAvailable != null) {
+            fresh.copy(catchupAvailable = existing.catchupAvailable)
+        } else fresh
+    }
+
+    fun mergePrograms(existing: List<IptvProgram>, fresh: List<IptvProgram>): List<IptvProgram> {
+        val merged = LinkedHashMap<String, IptvProgram>(existing.size + fresh.size)
+        for (program in existing.asSequence() + fresh.asSequence()) {
+            if (program.title.isBlank() || program.endUtcMillis <= program.startUtcMillis) continue
+            val key = programKey(program)
+            merged[key] = mergeProgram(merged[key], program)!!
+        }
+        return merged.values.sortedBy { it.startUtcMillis }
+    }
+
+    private fun programKey(program: IptvProgram) = "${program.startUtcMillis}|${program.endUtcMillis}|${program.title}"
+
+    fun canReplay(channel: IptvChannel?, program: IptvProgram, nowMs: Long): Boolean {
+        if (program.catchupAvailable == false || program.startUtcMillis >= nowMs) return false
+        if (program.catchupAvailable == true) return true
+        val windowMs = days(channel) * DAY_MS
+        return windowMs > 0 && program.startUtcMillis >= nowMs - windowMs
+    }
+
     fun days(channel: IptvChannel?, force: Boolean = false): Int {
         if (channel == null) return 0
         val explicit = channel.catchupDays.coerceIn(0, 7)

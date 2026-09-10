@@ -14,6 +14,7 @@ internal class IptvGuideRequestBudget(private val clock: () -> Long = System::cu
         val lock = Mutex()
         var nextStart = 0L
         @Volatile var blockedUntil = 0L
+        val attempts = LinkedHashMap<String, Long>()
     }
 
     private val providers = HashMap<String, Provider>()
@@ -29,7 +30,11 @@ internal class IptvGuideRequestBudget(private val clock: () -> Long = System::cu
                 if (clock() < provider.blockedUntil) return@withLock false
                 delay((provider.nextStart - clock()).coerceAtLeast(0))
                 if (clock() < provider.blockedUntil) return@withLock false
+                val now = clock()
+                if (provider.attempts[url]?.let { now - it < 120_000L } == true) return@withLock false
                 provider.nextStart = clock() + 250L
+                provider.attempts[url] = now
+                while (provider.attempts.size > 2_000) provider.attempts.remove(provider.attempts.keys.first())
                 true
             }
             if (allowed) block() else null

@@ -1,6 +1,32 @@
 package com.arflix.tv.ui.screens.tv.live
 
 import com.arflix.tv.data.model.IptvNowNext
+import com.arflix.tv.data.model.IptvGuideHistory
+
+/** Fullscreen and quick-zap must see the same indexed schedules as the grid. */
+internal fun resolveFullscreenGuide(
+    channelId: String?,
+    snapshot: Map<String, IptvNowNext>,
+    indexed: Map<String, IptvNowNext>,
+    nowMs: Long,
+): IptvNowNext? {
+    if (channelId == null) return null
+    val fresh = snapshot[channelId]
+    val local = indexed[channelId]
+    return mergeGuideSlices(fresh, local, nowMs)
+}
+
+internal fun mergeGuideSlices(primary: IptvNowNext?, secondary: IptvNowNext?, nowMs: Long): IptvNowNext? {
+    if (primary == null) return secondary?.atTime(nowMs)
+    if (secondary == null) return primary.atTime(nowMs)
+    // Merge before rebasing: an old snapshot's "now" must not hide the index's
+    // newer live programme just because both occupy the same field.
+    val programs = IptvGuideHistory.mergePrograms(
+        secondary.recent + listOfNotNull(secondary.now, secondary.next, secondary.later) + secondary.upcoming,
+        primary.recent + listOfNotNull(primary.now, primary.next, primary.later) + primary.upcoming,
+    )
+    return IptvNowNext(recent = programs).atTime(nowMs)
+}
 
 /** Rebase cached schedules on the clock, without fetching or discarding archive data. */
 internal fun IptvNowNext.atTime(nowMs: Long): IptvNowNext {

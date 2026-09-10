@@ -9,6 +9,24 @@ import org.junit.Test
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class IptvGuideRequestBudgetTest {
+    @Test fun repeatedAndCancelledViewportRequestsKeepTheirCooldown() = runTest {
+        val budget = IptvGuideRequestBudget { testScheduler.currentTime }
+        var calls = 0
+        repeat(50) { budget.request("https://provider.test/epg?stream_id=7") { calls++; null } }
+        assertEquals(1, calls)
+        try {
+            budget.request("https://provider.test/epg?stream_id=8") {
+                calls++
+                throw kotlinx.coroutines.CancellationException()
+            }
+        } catch (_: kotlinx.coroutines.CancellationException) { }
+        assertNull(budget.request("https://provider.test/epg?stream_id=8") { calls++; 1 })
+        assertEquals(2, calls)
+        testScheduler.advanceTimeBy(120_001L)
+        budget.request("https://provider.test/epg?stream_id=7") { calls++; 1 }
+        assertEquals(3, calls)
+    }
+
     @Test fun overlappingBatchesShareTwoConnectionsAndStartSpacing() = runTest {
         val budget = IptvGuideRequestBudget { testScheduler.currentTime }
         var active = 0

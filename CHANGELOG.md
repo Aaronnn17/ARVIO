@@ -7,6 +7,14 @@ All notable changes to this project are documented in this file.
 ### Added
 - (Nothing yet)
 
+## [1.9.997] - 2026-09-09
+
+- Improved IPTV and Stalker playback, guide imports, provider request limits, and Live TV focus and rendering. Contributors: @ReichiMD, @Himanth-reddy.
+- Improved seek previews, Library sorting and scroll restoration, Search navigation, Home catalog order, season rails, and startup stability. Contributor: @Himanth-reddy.
+- Improved Trakt and SIMKL tracking, Telegram configuration and device sessions, localization, and official trailer handling. Contributors: @Himanth-reddy, @ReichiMD.
+- Fixed web Home hover layout shifts and stale watched episodes; improved browser playback, self-hosting, synchronization, and premium recovery. Contributor: @Himanth-reddy.
+- Signed APK and Play AAB version 1.9.997, version code 313. Full details and individual credits: [release notes](releases/v1.9.997/RELEASE_NOTES.md), [merged contributions](releases/v1.9.997/MERGED_CONTRIBUTIONS.md), and [commit changelog](releases/v1.9.997/COMMIT_CHANGELOG.md).
+
 ## [1.9.996] - 2026-09-06
 
 - Redesigned mobile playback, seek previews, Home loading, and navigation. Contributors: @Himanth-reddy, @silentbil, @Saelon600, @ProdigyV21.
