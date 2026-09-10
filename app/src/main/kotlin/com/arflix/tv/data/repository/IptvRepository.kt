@@ -3125,6 +3125,10 @@ class IptvRepository @Inject constructor(
     fun cachedGuideChannelIds(startMs: Long, endMs: Long): Set<String> =
         epgIndex.channelIdsInWindow(currentEpgIndexKey, startMs, endMs)
 
+    fun visitCachedGuideWindow(channelIds: Set<String>, startMs: Long, endMs: Long,
+        visitor: (String, IptvProgram) -> Unit) =
+        epgIndex.visitWindow(currentEpgIndexKey, channelIds, startMs, endMs, visitor)
+
     fun pagedChannelsByIds(ids: Collection<String>): List<IptvChannel> =
         runCatching { channelStore.getByIds(currentEpgIndexKey, ids) }.getOrDefault(emptyList())
 

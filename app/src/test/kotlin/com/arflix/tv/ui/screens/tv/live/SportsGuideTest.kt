@@ -16,7 +16,7 @@ class SportsGuideTest {
                 description = "A family talks about football and cricket"), GuideSport.FOOTBALL))
         }
     }
-    @Test fun upcomingFilterUsesCalendarDaysAcrossDstAndKeepsEmptyFilterReachable() {
+    @Test fun upcomingFilterUsesCalendarDaysAcrossDstWithoutEmptyRows() {
         val zone = ZoneId.of("Europe/Amsterdam")
         val clock = Instant.parse("2026-10-24T22:30:00Z").toEpochMilli()
         val lateToday = Instant.parse("2026-10-25T22:30:00Z").toEpochMilli()
@@ -27,8 +27,7 @@ class SportsGuideTest {
         val event = SportsGuideEvent("future", "Football", GuideSport.FOOTBALL,
             IptvProgram("Football", startUtcMillis = tomorrow, endUtcMillis = tomorrow + 60_000), emptyList())
         val rows = sportsGuideRows(listOf(event), clock, SportsDay.TODAY, zone)
-        assertEquals("upcoming", rows.single().id)
-        assertTrue(rows.single().events.isEmpty())
+        assertTrue(rows.isEmpty())
     }
     private val now = Instant.parse("2026-09-09T18:00:00Z").toEpochMilli()
     private val a = IptvChannel("one:1", "Football 1", streamUrl = "https://example.invalid/a", group = "Football")
@@ -101,13 +100,14 @@ class SportsGuideTest {
         assertEquals(1, la.size)
         assertFalse(la.single().isOnAir(now))
     }
-    @Test fun topLiveRowsDoNotRepeatTheSameEvents() {
+    @Test fun featuredIsCappedAndSportRowKeepsAllEvents() {
         val programmes = (0..11).map { programme("Football: Team $it vs Other") }
         val events = buildSportsGuideEvents(listOf(a), mapOf(a.id to IptvNowNext(upcoming = programmes)), now)
         val rows = sportsGuideRows(events, now)
         val featured = rows.single { it.id == "featured" }.events.map { it.id }.toSet()
         assertEquals(8, featured.size)
-        assertTrue(rows.single { it.id == "more" }.events.none { it.id in featured })
+        assertEquals(12, rows.single { it.id == "FOOTBALL" }.events.size)
+        assertFalse(rows.any { it.id == "more" })
         assertFalse(rows.any { it.id == "upcoming" })
     }
 }

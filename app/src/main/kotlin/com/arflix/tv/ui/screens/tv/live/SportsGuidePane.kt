@@ -79,7 +79,8 @@ internal fun SportsGuidePane(
 ) {
     var focusedRow by remember { mutableStateOf<String?>(null) }
     var focusedOrder by remember { mutableStateOf(emptyList<String>()) }
-    var failedArtwork by remember(events) { mutableStateOf(emptySet<String>()) }
+    var artworkRetry by remember { mutableIntStateOf(0) }
+    var failedArtwork by remember(events, artworkRetry) { mutableStateOf(emptySet<String>()) }
     val rows = remember(events, now, focusedRow, focusedOrder, failedArtwork) {
         sportsGuideRows(events.filter { it.hasChannels(now) && it.hasEventArtwork && it.id !in failedArtwork }, now).map { row ->
             if (row.id == focusedRow) {
@@ -141,10 +142,12 @@ internal fun SportsGuidePane(
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 if (loading) CircularProgressIndicator(color = LiveColors.Accent, modifier = Modifier.size(24.dp))
                 else Icon(Icons.Default.SportsSoccer, null, tint = LiveColors.FgDim, modifier = Modifier.size(32.dp))
-                Text(if (loading) "Reading sports schedule" else if (failed) "Schedule unavailable" else "No sports events matched to your channels",
+                Text(if (loading) "Reading sports schedule" else if (failed) "Schedule unavailable"
+                    else if (events.any { it.hasChannels(now) && (it.isOnAir(now) || it.programme.startUtcMillis > now) }) "Event artwork unavailable"
+                    else "No sports events matched to your channels",
                     color = LiveColors.FgDim, modifier = Modifier.padding(14.dp))
-                if (failed) Text("Retry", color = LiveColors.Fg,
-                    modifier = Modifier.clickable(onClick = onRetry).padding(16.dp))
+                if (!loading) Text("Retry", color = LiveColors.Fg,
+                    modifier = Modifier.clickable { artworkRetry++; onRetry() }.padding(16.dp))
                 Text("Categories", color = LiveColors.Fg, modifier = Modifier.focusRequester(firstFocus)
                     .clickable(onClick = onOpenCategories).padding(16.dp))
             }

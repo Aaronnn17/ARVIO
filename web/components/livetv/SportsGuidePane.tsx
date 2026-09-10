@@ -18,23 +18,27 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
   clockFormat?: "12h" | "24h";
 }) {
   const [artwork, setArtwork] = useState<SportsEventArtwork[]>([]);
+  const [metadataLoading, setMetadataLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
     let active = true;
     let addonArt: SportsEventArtwork[] = [], metadataArt: SportsEventArtwork[] = cachedSportsMetadata();
     setArtwork(metadataArt);
     const publish = () => { if (active) setArtwork([...addonArt, ...metadataArt]); };
     const load = () => {
-      void loadSportsGuideArtwork(addons).then(items => { addonArt = items; publish(); });
-      void loadSportsMetadata().then(items => { metadataArt = items; publish(); });
+      setMetadataLoading(true);
+      void Promise.allSettled([
+        loadSportsGuideArtwork(addons).then(items => { addonArt = items; publish(); }),
+        loadSportsMetadata().then(items => { metadataArt = items; publish(); }),
+      ]).then(() => { if (active) setMetadataLoading(false); });
     };
     load();
     const refresh = setInterval(() => { if (!document.hidden) load(); }, 120_000);
     return () => { active = false; clearInterval(refresh); };
-  }, [addons]);
+  }, [addons, retry]);
   const [events, setEvents] = useState<SportsGuideEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
-  const [retry, setRetry] = useState(0);
   const [now, setNow] = useState(Date.now);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showScore, setShowScore] = useState(false);
@@ -67,7 +71,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
     schedules: event.schedules ? Object.fromEntries(Object.entries(event.schedules).filter(([id]) => accessibleIds.has(id))) : undefined }))
     .filter((event) => event.fixture || event.channels.length && Object.values(event.schedules ?? { fallback: event.programme }).some(p => p.endUtcMillis > now)), [events, accessibleIds, now]);
   const [failedArtwork, setFailedArtwork] = useState<Set<string>>(() => new Set());
-  useEffect(() => { setFailedArtwork(new Set()); }, [artwork]);
+  useEffect(() => { setFailedArtwork(new Set()); }, [artwork, retry]);
   const illustratedEvents = visibleEvents.filter(e => !failedArtwork.has(e.id) && (e.artwork || (e.teamArtwork?.homeBadge && e.teamArtwork.awayBadge)));
   const rows = useMemo(() => sportsGuideRows(illustratedEvents.filter(e => hasSportsChannels(e, now)), now).map(row => {
     if (row.id !== focusedOrder?.row) return row;
@@ -108,8 +112,8 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
   return <section ref={root} className="tv-sports" aria-label="Sports">
     <h2><button className="tv-sports-drawer" type="button" aria-label="Categories" onClick={onOpenCategories}><PanelLeft size={22} /></button>Sports
     </h2>
-    {!rows.length && <div className="tv-sports-empty" role="status"><Tv size={32} /><p>{loading ? "Reading sports schedule" : failed ? "Schedule unavailable" : "No sports events matched to your channels"}</p>
-      {failed && <button type="button" className="secondary" onClick={() => setRetry(value => value + 1)}><RefreshCw size={18} />Retry</button>}
+    {!rows.length && <div className="tv-sports-empty" role="status"><Tv size={32} /><p>{loading || metadataLoading ? "Reading sports schedule" : failed ? "Schedule unavailable" : visibleEvents.some(e => hasSportsChannels(e, now) && (isOnAir(e, now) || e.programme.startUtcMillis > now)) ? "Event artwork unavailable" : "No sports events matched to your channels"}</p>
+      {!loading && !metadataLoading && <button type="button" className="secondary" onClick={() => setRetry(value => value + 1)}><RefreshCw size={18} />Retry</button>}
       <button type="button" className="secondary" onClick={onOpenCategories}><PanelLeft size={18} />Categories</button></div>}
     {rows.map((row, rowIndex) => <section className={`tv-sports-section${row.id === "more" ? " is-compact" : ""}`} key={row.id} aria-label={row.title}>
       <div className="tv-sports-row-heading"><h3 title={row.id === "featured" ? "Ranked by competition priority and broadcast reach, not measured viewers" : undefined}>{row.title}</h3></div>

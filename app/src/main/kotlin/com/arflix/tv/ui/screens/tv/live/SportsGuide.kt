@@ -218,14 +218,12 @@ internal fun sportsGuideRows(events: List<SportsGuideEvent>, now: Long,
     return buildList {
         // EPG has no viewer metrics. Never call this popularity or confirmed live sport.
         if (live.isNotEmpty()) add(SportsGuideRow("featured", "Featured live", live.take(8)))
-        val upcoming = events.filter { it.programme.startUtcMillis > now && !it.isOnAir(now) }
-            .sortedWith(compareBy<SportsGuideEvent> { it.programme.startUtcMillis }.thenByDescending { it.prominence }.thenBy { it.id })
-        // Keep the filter reachable even when a selected day has no events.
-        if (upcoming.isNotEmpty()) add(SportsGuideRow("upcoming", "Upcoming",
-            upcoming.filter { day.includes(it.programme.startUtcMillis, now, zone) }))
-        if (live.size > 8) add(SportsGuideRow("more", "More on air", live.drop(8)))
+        val upcoming = events.filter { it.programme.startUtcMillis > now && !it.isOnAir(now) &&
+            day.includes(it.programme.startUtcMillis, now, zone) }
+            .sortedWith(compareByDescending<SportsGuideEvent> { it.prominence }.thenBy { it.programme.startUtcMillis }.thenBy { it.id })
+        if (upcoming.isNotEmpty()) add(SportsGuideRow("upcoming", "Upcoming highlights", upcoming.take(8)))
         GuideSport.entries.forEach { sport ->
-            val items = live.filter { it.sport == sport }
+            val items = live.filter { it.sport == sport } + upcoming.filter { it.sport == sport }.sortedBy { it.programme.startUtcMillis }
             if (items.isNotEmpty()) add(SportsGuideRow(sport.name, sport.title, items))
         }
     }

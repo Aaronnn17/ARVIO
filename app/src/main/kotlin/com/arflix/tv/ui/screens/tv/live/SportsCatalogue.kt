@@ -25,8 +25,13 @@ internal fun sportsBroadcasterKeys(name: String, country: String): List<String> 
     val regions = mapOf("united kingdom" to listOf("uk", "gb"), "united states" to listOf("us", "usa"), "netherlands" to listOf("nl"),
         "germany" to listOf("de"), "france" to listOf("fr"), "spain" to listOf("es"), "italy" to listOf("it"), "portugal" to listOf("pt"),
         "brazil" to listOf("br"), "australia" to listOf("au"), "canada" to listOf("ca"))
-    return listOf(sportsChannelKey(name)) + regions[country.lowercase(java.util.Locale.ROOT)].orEmpty()
-        .flatMap { listOf(sportsChannelKey("$it $name"), sportsChannelKey("$name $it")) }
+    val codes = regions[country.lowercase(java.util.Locale.ROOT)].orEmpty()
+    val key = sportsChannelKey(name)
+    // TV listings often include the country in the name, e.g. ESPN 3 Netherlands.
+    // Strip only the explicitly supplied country, never another region or channel number.
+    val countrySuffix = " ${sportsArtworkKey(country)}"
+    val localName = if (country.isNotBlank() && key.endsWith(countrySuffix)) key.removeSuffix(countrySuffix) else key
+    return (listOf(key, localName) + codes.flatMap { listOf("$it $localName", "$localName $it") }).distinct()
 }
 private fun leagueKey(name: String): String {
     val key = sportsArtworkKey(name)

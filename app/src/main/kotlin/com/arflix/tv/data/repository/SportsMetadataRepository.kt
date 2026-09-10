@@ -30,7 +30,7 @@ class SportsMetadataRepository @Inject constructor(client: OkHttpClient, @Applic
         mutex.withLock {
             if (cached.isNotEmpty()) cached else runCatching {
                 if (disk.exists() && System.currentTimeMillis() - disk.lastModified() < 86_400_000 && disk.length() <= 6_000_000)
-                    parseSportsMetadata(disk.readText()).also { cached = it } else emptyList()
+                    parseSportsMetadata(disk.readText()).also { cached = it; lastSuccess = disk.lastModified() } else emptyList()
             }.getOrDefault(emptyList())
         }
     }
@@ -53,8 +53,8 @@ class SportsMetadataRepository @Inject constructor(client: OkHttpClient, @Applic
                     parsed
                 }
             }.getOrNull()
-            if (result != null) { cached = result; lastSuccess = now }
-            else if (now - lastSuccess > 86_400_000) cached = emptyList()
+            if (result != null) { cached = result; lastSuccess = System.currentTimeMillis() }
+            else if (System.currentTimeMillis() - lastSuccess > 86_400_000) cached = emptyList()
             retryAfter = now + if (result.isNullOrEmpty()) 60_000 else 120_000
             cached
         }

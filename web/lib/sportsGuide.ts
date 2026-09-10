@@ -108,13 +108,12 @@ export function sportsDayIncludes(start: number, now: number, day: SportsDay) {
 
 export function sportsGuideRows(events: SportsGuideEvent[], now: number, day: SportsDay = "both") {
   const live = events.filter((event) => isOnAir(event, now)).sort((a, b) => (b.prominence ?? 0) - (a.prominence ?? 0) || a.programme.startUtcMillis - b.programme.startUtcMillis || a.id.localeCompare(b.id));
-  const upcoming = events.filter((event) => event.programme.startUtcMillis > now && !isOnAir(event, now)).sort((a, b) => a.programme.startUtcMillis - b.programme.startUtcMillis || (b.prominence ?? 0) - (a.prominence ?? 0) || a.id.localeCompare(b.id));
+  const upcoming = events.filter((event) => event.programme.startUtcMillis > now && !isOnAir(event, now) && sportsDayIncludes(event.programme.startUtcMillis, now, day)).sort((a, b) => (b.prominence ?? 0) - (a.prominence ?? 0) || a.programme.startUtcMillis - b.programme.startUtcMillis || a.id.localeCompare(b.id));
   return [
     { id: "featured", title: "Featured live", events: live.slice(0, 8) },
-    { id: "upcoming", title: "Upcoming", events: upcoming.filter(event => sportsDayIncludes(event.programme.startUtcMillis, now, day)) },
-    { id: "more", title: "More on air", events: live.slice(8) },
+    { id: "upcoming", title: "Upcoming highlights", events: upcoming.slice(0, 8) },
     ...["football", "basketball", "f1", "tennis", "mma", "boxing", "american-football", "cricket", "baseball", "hockey"]
       .map((id) => guideSports.find((sport) => sport.id === id)!)
-      .map((sport) => ({ id: sport.id, title: sport.title, events: live.filter((event) => event.sportId === sport.id) })),
-  ].filter((row) => row.events.length > 0 || (row.id === "upcoming" && upcoming.length > 0));
+      .map((sport) => ({ id: sport.id, title: sport.title, events: [...live.filter((event) => event.sportId === sport.id), ...upcoming.filter(event => event.sportId === sport.id).sort((a, b) => a.programme.startUtcMillis - b.programme.startUtcMillis)] })),
+  ].filter((row) => row.events.length > 0);
 }

@@ -11,6 +11,13 @@ class SportsCatalogueTest {
         assertNotEquals(sportsChannelKey("DE TNT Sports 2"), sportsChannelKey("UK-NOWTV| TNT SPORT 2 FHD"))
         assertNotEquals(sportsChannelKey("UK TNT Sports 1"), sportsChannelKey("UK-NOWTV| TNT SPORT 2 FHD"))
     }
+    @Test fun broadcasterCountrySuffixMatchesOnlyThatRegionAndChannel() {
+        val keys = sportsBroadcasterKeys("ESPN 3 Netherlands", "Netherlands")
+        assertTrue(sportsChannelKey("NL | ESPN 3 UHD 8K") in keys)
+        assertFalse(sportsChannelKey("US | ESPN 3 HD") in keys)
+        assertFalse(sportsChannelKey("NL | ESPN 2 HD") in keys)
+        assertFalse(sportsChannelKey("NL | ESPN 3 HD") in sportsBroadcasterKeys("ESPN 3 France", "Netherlands"))
+    }
     @Test fun decoratedMatchTitlesUseRealCrestsWithoutStockArtwork() {
         val item = art.copy(homeTeam = "North", awayTeam = "South", homeBadge = "https://example.com/north.png", awayBadge = "https://example.com/south.png", startsAt = now)
         val decorated = epg.copy(title = "Football: North - South, Premier League 2026/2027")
@@ -34,7 +41,7 @@ class SportsCatalogueTest {
         assertEquals("sportsdb:42", event.id)
         assertTrue(event.channels.isEmpty())
         assertFalse(event.isOnAir(now + 7200000))
-        assertEquals("upcoming", sportsGuideRows(listOf(event), now).single().id)
+        assertEquals(listOf("upcoming", "FOOTBALL"), sportsGuideRows(listOf(event), now).map { it.id })
     }
     @Test fun possibleBroadcastsAreSeparateAndHiddenSourcesDoNotLeak() {
         val wrong = channel.copy(id = "wrong", name = "DE | Sky Sports Main Event HD")
@@ -61,12 +68,15 @@ class SportsCatalogueTest {
         assertFalse(event.isOnAir(now + 300001))
         assertTrue(buildSportsCatalogue(listOf(epg), listOf(art.copy(startsAt = now, fixture = fixture.copy(status = "finished"))), emptyList(), now).isEmpty())
     }
-    @Test fun prominentLiveFirstButUpcomingStaysChronological() {
+    @Test fun featuredHighlightsRankByProminenceAndSportRowsKeepUpcomingChronological() {
         val event = buildSportsCatalogue(emptyList(), listOf(art.copy(startsAt = now, fixture = fixture.copy(status = "live"))), emptyList(), now).single()
         val minor = event.copy(id = "minor", prominence = 0)
         assertEquals(event.id, sportsGuideRows(listOf(minor, event), now).first().events.first().id)
         val later = event.copy(id = "later", fixture = fixture, programme = p.copy(startUtcMillis = now + 7200000), schedules = emptyMap())
         val earlier = later.copy(id = "earlier", programme = p.copy(startUtcMillis = now + 3600000), prominence = 0)
-        assertEquals("earlier", sportsGuideRows(listOf(later, earlier), now).first().events.first().id)
+        val rows = sportsGuideRows(listOf(later, earlier), now)
+        assertEquals("later", rows.first().events.first().id)
+        assertEquals("earlier", rows.last().events.first().id)
+        assertFalse(rows.any { it.id == "more" })
     }
 }

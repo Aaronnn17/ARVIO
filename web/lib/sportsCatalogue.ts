@@ -17,7 +17,9 @@ export function sportsChannelKey(name: string): string {
 }
 export function sportsBroadcasterKeys(name: string, country: string): string[] {
   const regions: Record<string, string[]> = { "united kingdom": ["uk", "gb"], "united states": ["us", "usa"], netherlands: ["nl"], germany: ["de"], france: ["fr"], spain: ["es"], italy: ["it"], portugal: ["pt"], brazil: ["br"], australia: ["au"], canada: ["ca"] };
-  return [sportsChannelKey(name), ...(regions[country.toLowerCase()] ?? []).flatMap(code => [sportsChannelKey(`${code} ${name}`), sportsChannelKey(`${name} ${code}`)])];
+  const key = sportsChannelKey(name), suffix = ` ${sportsArtworkKey(country)}`;
+  const localName = country && key.endsWith(suffix) ? key.slice(0, -suffix.length) : key;
+  return [...new Set([key, localName, ...(regions[country.toLowerCase()] ?? []).flatMap(code => [`${code} ${localName}`, `${localName} ${code}`])])];
 }
 const leagueKey = (name: string) => sportsArtworkKey(name).replace(/^(english premier league|spanish la liga|italian serie a|german bundesliga|french ligue 1)$/, value => value.split(" ").slice(1).join(" "));
 

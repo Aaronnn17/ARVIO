@@ -1598,6 +1598,9 @@ fun LiveTvScreen(
         mutableStateOf<List<SportsGuideEvent>>(emptyList())
     }
     var sportsLoading by remember { mutableStateOf(false) }
+    var sportsMetadataLoading by remember { mutableStateOf(false) }
+    var sportsBroadcastLoading by remember { mutableStateOf(false) }
+    var sportsCatalogueLoading by remember { mutableStateOf(false) }
     var sportsError by remember { mutableStateOf(false) }
     var sportsRefresh by remember { mutableIntStateOf(0) }
     var completedSportsScan by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) {
@@ -1606,6 +1609,8 @@ fun LiveTvScreen(
     var sportsArtwork by remember(currentProfile?.id) { mutableStateOf(emptyList<com.arflix.tv.data.model.SportsEventArtwork>()) }
     LaunchedEffect(sportsSelected, currentProfile?.id, sportsRefresh, guideClockMillis / 120_000L) {
         if (sportsSelected) {
+            sportsMetadataLoading = true
+            try {
             var metadata = viewModel.cachedSportsMetadata()
             var addonArtwork = sportsArtwork.filter { it.source != "TheSportsDB" }
             sportsArtwork = metadata + addonArtwork
@@ -1613,26 +1618,31 @@ fun LiveTvScreen(
                 launch { metadata = viewModel.loadSportsMetadata(); sportsArtwork = metadata + addonArtwork }
                 launch { addonArtwork = viewModel.loadSportsAddonArtwork(); sportsArtwork = metadata + addonArtwork }
             }
+            } finally { sportsMetadataLoading = false }
         }
     }
     var broadcastCandidates by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) { mutableStateOf(emptyList<IptvChannel>()) }
     val broadcasterKeys = remember(sportsArtwork) { sportsArtwork.flatMap { it.fixture?.broadcasters.orEmpty() }.flatMap { sportsBroadcasterKeys(it.name, it.country) }.toSet() }
     LaunchedEffect(sportsSelected, broadcasterKeys, currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet, state.snapshot.loadedAt) {
         if (!sportsSelected || broadcasterKeys.isEmpty()) { broadcastCandidates = emptyList(); return@LaunchedEffect }
-        broadcastCandidates = withContext(Dispatchers.IO) {
+        sportsBroadcastLoading = true
+        try { broadcastCandidates = withContext(Dispatchers.IO) {
             val ids = linkedSetOf<String>()
             val excluded = hiddenGroupSet + restrictedGroupSet
             viewModel.iptvRepository.visitStoredChannelLabels(selectedProviderId.takeUnless { it == "all" }) { id, name, group ->
                 if (PlaylistGroupKey.build(channelPlaylistId(id), group.trim()) !in excluded && group !in excluded && sportsChannelKey(name) in broadcasterKeys) ids.add(id)
             }
             ids.take(5000).chunked(128).flatMap { viewModel.iptvRepository.pagedChannelsByIds(it) }.filter { !it.enrichForFastStartup(0).isAdult }
-        }
+        } } finally { sportsBroadcastLoading = false }
     }
     var illustratedSportsEvents by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) { mutableStateOf(emptyList<SportsGuideEvent>()) }
     LaunchedEffect(sportsEvents, sportsArtwork, broadcastCandidates) {
-        illustratedSportsEvents = withContext(Dispatchers.Default) {
+        sportsCatalogueLoading = true
+        try { illustratedSportsEvents = withContext(Dispatchers.Default) {
             buildSportsCatalogue(sportsEvents, sportsArtwork, broadcastCandidates, guideClockMillis)
         }
+        System.err.println("[Sports-Catalogue] guide=${sportsEvents.size} metadata=${sportsArtwork.size} broadcasters=${broadcastCandidates.size} available=${illustratedSportsEvents.count { it.hasChannels(guideClockMillis) }} illustrated=${illustratedSportsEvents.count { it.hasChannels(guideClockMillis) && it.hasEventArtwork }}")
+        } finally { sportsCatalogueLoading = false }
     }
     val sportsProviderNames = remember(state.config.playlists, state.config.stalkerPortals) {
         state.config.playlists.associate { it.id to it.name } + state.config.stalkerPortals.associate { it.id to it.name }
@@ -1676,13 +1686,25 @@ fun LiveTvScreen(
                 val events = SportsEventIndex()
                 val programmeResolver = SportsProgrammeResolver()
                 var lastPublish = android.os.SystemClock.elapsedRealtime()
-                for (ids in candidateIds.toList().chunked(128)) {
+                val startedAt = android.os.SystemClock.elapsedRealtime()
+                for (ids in candidateIds.toList().chunked(1024)) {
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     val batch = viewModel.iptvRepository.pagedChannelsByIds(ids).filter { !it.enrichForFastStartup(0).isAdult }
-                    val indexed = viewModel.iptvRepository.indexedGuideWindow(batch.map { it.id }.toSet(),
-                        guideClockMillis, guideClockMillis + 48 * 60 * 60_000L)
-                    val guide = batch.associate { it.id to (indexed[it.id] ?: state.snapshot.nowNext[it.id] ?: IptvNowNext()) }
-                    accumulateSportsGuideEvents(batch, guide, guideClockMillis, events, resolver = programmeResolver)
+                    val byId = batch.associateBy { it.id }
+                    val fallback = batch.associate { it.id to GuideSport.fromText("${it.group} ${it.name}") }
+                    val indexedIdsInBatch = hashSetOf<String>()
+                    // Resolve shared XMLTV aliases together, then discard non-events while
+                    // streaming. Do not allocate/sort full 48-hour schedules for every variant.
+                    viewModel.iptvRepository.visitCachedGuideWindow(byId.keys,
+                        guideClockMillis, guideClockMillis + 48 * 60 * 60_000L) { id, programme ->
+                        context.ensureActive()
+                        indexedIdsInBatch.add(id)
+                        val channel = byId[id]
+                        val meta = programmeResolver.resolve(programme, fallback[id])
+                        if (channel != null && meta != null) events.add(meta.sport, meta.identity, programme, channel, meta.competition)
+                    }
+                    val uncached = batch.filter { it.id !in indexedIdsInBatch }
+                    accumulateSportsGuideEvents(uncached, state.snapshot.nowNext, guideClockMillis, events, resolver = programmeResolver)
                     if (android.os.SystemClock.elapsedRealtime() - lastPublish >= 2000) {
                         val partial = events.events()
                         // Publish newly discovered illustrated matches without waiting for the full large-guide scan.
@@ -1690,6 +1712,7 @@ fun LiveTvScreen(
                         lastPublish = android.os.SystemClock.elapsedRealtime()
                     }
                 }
+                System.err.println("[Sports-Scan] candidates=${candidateIds.size} events=${events.events().size} elapsed=${android.os.SystemClock.elapsedRealtime() - startedAt}ms")
                 events.events()
             }
             sportsEvents = retainSportsEventOrder(sportsEvents, result)
@@ -3328,7 +3351,7 @@ fun LiveTvScreen(
                     )
                     }
                     if (sportsSelected) SportsGuidePane(
-                        events = illustratedSportsEvents, now = guideClockMillis, loading = sportsLoading, clockFormat = sportsClockFormat,
+                        events = illustratedSportsEvents, now = guideClockMillis, loading = sportsLoading || sportsMetadataLoading || sportsBroadcastLoading || sportsCatalogueLoading, clockFormat = sportsClockFormat,
                         failed = sportsError, onRetry = { sportsRefresh++ }, providerNames = sportsProviderNames,
                         focusSignal = sportsFocusSignal,
                         onContentFocused = { focusZone = LiveTvFocusZone.SPORTS },
@@ -3481,7 +3504,7 @@ fun LiveTvScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (sportsSelected) SportsGuidePane(
-                        events = illustratedSportsEvents, now = guideClockMillis, loading = sportsLoading, clockFormat = sportsClockFormat,
+                        events = illustratedSportsEvents, now = guideClockMillis, loading = sportsLoading || sportsMetadataLoading || sportsBroadcastLoading || sportsCatalogueLoading, clockFormat = sportsClockFormat,
                         failed = sportsError, onRetry = { sportsRefresh++ }, providerNames = sportsProviderNames,
                         focusSignal = sportsFocusSignal,
                         onContentFocused = { focusZone = LiveTvFocusZone.SPORTS; categoryDrawerOpen = false },

@@ -96,13 +96,25 @@ test('live scores expire independently; finished status suppresses stale guide',
   assert.equal(isOnAir(event, now + 300001), false);
   assert.equal(buildSportsCatalogue([epg], art({ startsAt: now, status: 'finished' }), [], now).length, 0);
 });
-test('featured live ranks prominent competitions first; upcoming remains chronological', () => {
+test('featured highlights rank prominent competitions; sport rows keep upcoming chronological', () => {
   const prominent = buildSportsCatalogue([], art({ startsAt: now - 60000, status: 'live' }), [], now)[0];
   const minor = { ...prominent, id: 'minor', prominence: sportsProminence('Minor League') };
   assert.equal(sportsGuideRows([minor, prominent], now)[0].events[0].id, prominent.id);
   const later = { ...prominent, id: 'later', fixture: { ...prominent.fixture, status: 'scheduled' }, programme: { ...prominent.programme, startUtcMillis: now + 7200000 } };
   const earlier = { ...later, id: 'earlier', prominence: 0, programme: { ...later.programme, startUtcMillis: now + 3600000 } };
-  assert.equal(sportsGuideRows([later, earlier], now)[0].events[0].id, 'earlier');
+  const rows = sportsGuideRows([later, earlier], now);
+  assert.equal(rows[0].events[0].id, 'later');
+  assert.equal(rows.at(-1).events[0].id, 'earlier');
+  assert.equal(rows.some(row => row.id === 'more'), false);
+});
+
+test('country suffix in broadcaster name preserves the exact channel and region', () => {
+  const { sportsChannelKey, sportsBroadcasterKeys } = load('./sportsCatalogue');
+  const keys = sportsBroadcasterKeys('ESPN 3 Netherlands', 'Netherlands');
+  assert.ok(keys.includes(sportsChannelKey('NL | ESPN 3 UHD 8K')));
+  assert.ok(!keys.includes(sportsChannelKey('US | ESPN 3 HD')));
+  assert.ok(!keys.includes(sportsChannelKey('NL | ESPN 2 HD')));
+  assert.ok(!sportsBroadcasterKeys('ESPN 3 France', 'Netherlands').includes(sportsChannelKey('NL ESPN 3')));
 });
 test('backend kill switch retains legacy artwork mode', () => {
   const items = parseSportsMetadata({ version: 1, catalogueEnabled: false, events: [raw] });

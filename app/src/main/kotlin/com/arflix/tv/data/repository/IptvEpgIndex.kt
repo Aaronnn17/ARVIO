@@ -330,6 +330,13 @@ internal class IptvEpgIndex(context: Context, databaseName: String = DATABASE_NA
         }
     }
 
+    /** Streaming consumers can discard non-sports programmes without materializing a full guide. */
+    fun visitWindow(sourceKey: String, channelIds: Set<String>, startMs: Long, endMs: Long,
+        visitor: (String, IptvProgram) -> Unit) {
+        if (sourceKey.isBlank() || channelIds.isEmpty() || startMs >= endMs) return
+        readableDatabase.useQueryChunks(sourceKey, channelIds, startMs, endMs, visitor)
+    }
+
     fun fullRefreshAtMs(sourceKey: String): Long = readableDatabase.rawQuery(
         "SELECT full_updated_ms FROM epg_sources WHERE source_key = ?", arrayOf(sourceKey),
     ).use { if (it.moveToFirst()) it.getLong(0) else 0L }
