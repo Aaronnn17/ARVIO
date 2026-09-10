@@ -125,10 +125,9 @@ internal fun SportsGuidePane(
     }
     CompositionLocalProvider(LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = LiveFontFamily)) {
     BoxWithConstraints(modifier.fillMaxSize().background(LiveColors.Bg)) {
-    // Keep card geometry stable while the drawer moves; cached lazy rows must not
-    // retain the wider three-column measurement after a four-column expansion.
+    // Use full-screen dimensions so opening the drawer never resizes loaded artwork.
     val viewport = configuration.screenWidthDp.dp
-    val columns = when { viewport >= 850.dp -> 4; viewport >= 620.dp -> 3; viewport >= 420.dp -> 2; else -> 1 }
+    val columns = when { viewport >= 850.dp -> 5; viewport >= 620.dp -> 3; viewport >= 420.dp -> 2; else -> 1 }
     val cardWidth = if (columns == 1) viewport - 54.dp else (viewport - 36.dp - 12.dp * (columns - 1)) / columns
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.height(32.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically,
@@ -180,7 +179,7 @@ internal fun SportsGuidePane(
                                 }
                                 .clickable { returnFocus = requester; showScore = false; selected = event }
                                 .padding(2.dp)) {
-                                Box(Modifier.fillMaxWidth().aspectRatio(if (row.id == "more") 2.85f else 2.25f).clip(RoundedCornerShape(4.dp))) {
+                                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).testTag("sports-event-art").clip(RoundedCornerShape(4.dp))) {
                                     EventArtwork(event, Modifier.fillMaxSize()) { failedArtwork = failedArtwork + event.id }
                                     Row(Modifier.padding(6.dp).background(Color.Black.copy(alpha = .85f), RoundedCornerShape(3.dp))
                                         .padding(horizontal = 5.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -190,7 +189,7 @@ internal fun SportsGuidePane(
                                     Box(Modifier.matchParentSize().border(2.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(4.dp)))
                                 }
                                 Text(event.title, color = LiveColors.Fg, fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Medium,
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(top = 4.dp))
                                 Row(Modifier.fillMaxWidth().height(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(listOfNotNull(event.sport.title, event.competition).joinToString(" · "), color = LiveColors.FgDim, fontSize = 10.sp, lineHeight = 13.sp,
@@ -233,7 +232,7 @@ internal fun SportsGuidePane(
             .border(1.dp, LiveColors.DividerStrong, RoundedCornerShape(5.dp))
             .clip(RoundedCornerShape(5.dp)).background(LiveColors.Panel).padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                EventArtwork(event ?: selected!!, Modifier.size(if (narrow) 84.dp else 132.dp, 58.dp).clip(RoundedCornerShape(3.dp)))
+                EventArtwork(event ?: selected!!, Modifier.width(if (narrow) 84.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(3.dp)))
                 Column(Modifier.weight(1f).padding(start = 14.dp)) {
                     Text(listOfNotNull(event?.let(::eventTime), event?.sport?.title).joinToString("  ·  "),
                         color = LiveColors.FgDim, fontSize = 11.sp)
@@ -318,13 +317,13 @@ private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier,
         }
         if (!loaded && pair != null) {
             Row(Modifier.fillMaxSize().background(if (homeLoaded && awayLoaded) Color(0xFF20262C) else Color.Transparent)
-                .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                .padding(8.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 AsyncImage(pair.homeBadge, pair.homeTeam, contentScale = ContentScale.Fit,
                     onSuccess = { homeLoaded = true }, onError = { homeLoaded = false; pairFailed = true },
                     modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (homeLoaded && awayLoaded) 1f else 0f })
                 Text("VS", color = if (homeLoaded && awayLoaded) LiveColors.Fg else Color.Transparent,
-                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 AsyncImage(pair.awayBadge, pair.awayTeam, contentScale = ContentScale.Fit,
                     onSuccess = { awayLoaded = true }, onError = { awayLoaded = false; pairFailed = true },
                     modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (homeLoaded && awayLoaded) 1f else 0f })

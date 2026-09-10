@@ -127,6 +127,8 @@ class TvOverhaulDeviceTest {
             screenshot("04-sports-closed")
             val cards = compose.onAllNodesWithTag("sports-event-card", useUnmergedTree = true).fetchSemanticsNodes().take(4)
             assertEquals(4, cards.size)
+            val art = compose.onAllNodesWithTag("sports-event-art", useUnmergedTree = true).fetchSemanticsNodes().first().boundsInRoot
+            assertTrue("Match artwork must use 16:9 without a panoramic frame", kotlin.math.abs(art.width / art.height - 16f / 9f) < .02f)
             assertTrue("Four complete cards must fit without clipping the last one: ${cards.map { it.boundsInRoot }}",
                 cards.all { kotlin.math.abs(it.boundsInRoot.width - cards.first().boundsInRoot.width) < 2f })
             compose.onAllNodesWithText(firstEvent.title).onFirst().assertIsDisplayed().assertIsFocused()

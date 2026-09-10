@@ -31,6 +31,8 @@ const path = require('node:path');
         await page.waitForTimeout(250);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `No overflow ${width}`);
         const container = await page.locator('.tv-event-art').first().boundingBox();
+        assert.ok(Math.abs(container.width / container.height - 16 / 9) < .02, `16:9 match artwork ${width}`);
+        if (width === 1672) assert.ok(container.width < 350, 'Desktop match cards stay compact');
         const images = await page.locator(`${selector} img`).first().count();
         if (badgesOnly && images) {
           const rect = await page.locator(`${selector} img`).first().boundingBox();
@@ -39,9 +41,15 @@ const path = require('node:path');
         await page.screenshot({path: path.join(out, `${badgesOnly ? 'crests' : 'banners'}-${width}.png`)});
         await page.locator('.tv-event-card').first().click();
         await page.locator('dialog[open]').waitFor();
+        await page.waitForFunction(() => {
+          const images = [...document.querySelectorAll('.tv-event-picker-art img')];
+          return images.length > 0 && images.every(img => img.complete && img.naturalWidth > 0);
+        });
+        const pickerArt = await page.locator('.tv-event-picker-art').boundingBox();
+        assert.ok(Math.abs(pickerArt.width / pickerArt.height - 16 / 9) < .02, 'Picker preserves match artwork proportions');
         await page.locator('.tv-event-source').first().waitFor();
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Picker fits ${width}`);
-        await page.screenshot({path: path.join(out, `${badgesOnly ? 'crests' : 'banners'}-picker-${width}.png`)});
+        await page.screenshot({path: path.join(out, `${badgesOnly ? 'crests' : 'banners'}-picker-${width}.png`), animations: 'disabled'});
         await page.getByRole('button', {name: 'Close', exact: true}).click();
         assert.equal(await page.locator('dialog[open]').count(), 0);
       }
