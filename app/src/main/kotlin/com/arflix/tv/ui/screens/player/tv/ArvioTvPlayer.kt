@@ -322,6 +322,22 @@ fun ArvioTvPlayer(
                         }
                     }
 
+                    // TV Sources Menu D-pad / Back handling
+                    showSourceMenu -> {
+                        when (event.key) {
+                            Key.Back, Key.Escape -> {
+                                showSourceMenu = false
+                                showControls = true
+                                coroutineScope.launch {
+                                    delay(150)
+                                    runCatching { sourceButtonFocusRequester.requestFocus() }
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+
                     // Global Controls Key Events
                     else -> when (event.key) {
                         Key.MediaPlayPause -> { onTogglePlayPause(); showControls = true; true }

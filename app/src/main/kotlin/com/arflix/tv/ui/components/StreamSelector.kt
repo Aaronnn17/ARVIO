@@ -2,6 +2,7 @@ package com.arflix.tv.ui.components
 
 import com.arflix.tv.ui.motion.*
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.mutableFloatStateOf
@@ -228,8 +229,14 @@ fun StreamSelector(
     onSelect: (StreamSource) -> Unit = {},
     onClose: () -> Unit = {}
 ) {
+    val isMobile = LocalDeviceType.current.isTouchDevice()
     val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
-    val backMotion = rememberArvioPredictiveBack(enabled = isVisible, onCommit = onClose)
+    val backMotion = rememberArvioPredictiveBack(enabled = isVisible && isMobile, onCommit = onClose)
+    if (!isMobile) {
+        BackHandler(enabled = isVisible) {
+            onClose()
+        }
+    }
 
     var focusedIndex by remember { mutableIntStateOf(0) }
     var focusedTabIndex by remember { mutableIntStateOf(0) }
@@ -240,7 +247,6 @@ fun StreamSelector(
     val listState = rememberTvLazyListState()
     val addonListState = rememberTvLazyListState()
     val focusRequester = remember { FocusRequester() }
-    val isMobile = LocalDeviceType.current.isTouchDevice()
     val pluginPrefix = stringResource(R.string.plugin_prefix)
 
     var elapsedSeconds by remember { mutableIntStateOf(0) }
@@ -257,13 +263,18 @@ fun StreamSelector(
     // Request focus when visible
     LaunchedEffect(isVisible) {
         if (isVisible) {
-            runCatching { focusRequester.requestFocus() }
             focusedIndex = 0
             focusedTabIndex = 0
             selectedTabIndex = 0
             focusedFilterIndex = 0
             selectedFilterIndex = 0
             focusZone = "streams"
+            if (!isMobile) {
+                kotlinx.coroutines.delay(50)
+                runCatching { focusRequester.requestFocus() }
+            } else {
+                runCatching { focusRequester.requestFocus() }
+            }
         }
     }
 
@@ -424,7 +435,7 @@ fun StreamSelector(
                         } else actualKey
 
                         when (logicalKey) {
-                            Key.Escape -> {
+                            Key.Back, Key.Escape -> {
                                 onClose()
                                 true
                             }
