@@ -399,6 +399,42 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    fun findChannelVariants(sourceKey: String, epgId: String?, tvgName: String?, namePrefix: String, limit: Int = 200): List<IptvChannel> {
+        if (sourceKey.isBlank()) return emptyList()
+
+        val conditions = mutableListOf<String>()
+        val args = mutableListOf<String>(sourceKey)
+
+        // 1. Buscamos por tvg-id exacto (ignorando mayúsculas y espacios)
+        if (!epgId.isNullOrBlank()) {
+            conditions.add("LOWER(TRIM(epg_id)) = ?")
+            args.add(epgId.trim().lowercase())
+        }
+        // 2. Buscamos por tvg-name exacto
+        if (!tvgName.isNullOrBlank()) {
+            conditions.add("LOWER(TRIM(tvg_name)) = ?")
+            args.add(tvgName.trim().lowercase())
+        }
+        // 3. Como plan C, buscamos por la primera palabra del nombre (ej: "dazn")
+        if (namePrefix.isNotBlank()) {
+            conditions.add("LOWER(name) LIKE ?")
+            args.add("${namePrefix.trim().lowercase()}%")
+        }
+
+        if (conditions.isEmpty()) return emptyList()
+
+        val whereClause = conditions.joinToString(" OR ")
+        val sql = "SELECT * FROM channels WHERE source_key = ? AND ($whereClause) ORDER BY ord LIMIT ?"
+        args.add(limit.toString())
+
+        return readableDatabase.rawQuery(sql, args.toTypedArray()).use { cursor ->
+            val out = ArrayList<IptvChannel>()
+            val cols = ColumnIndices(cursor)
+            while (cursor.moveToNext()) out.add(readChannel(cursor, cols))
+            out
+        }
+    }
+
     /** (group_title, count) for the category sidebar — computed in SQL, no object materialisation. */
     fun groupCounts(sourceKey: String): List<Pair<String, Int>> {
         if (sourceKey.isBlank()) return emptyList()
