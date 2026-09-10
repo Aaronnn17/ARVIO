@@ -147,13 +147,14 @@ fun CategorySidebar(
         label = "sidebar-width",
     )
     val contentAlpha by animateFloatAsState(
-        targetValue = if (expanded) 1f else 0f,
+        targetValue = if (expanded || fixedViewport) 1f else 0f,
         animationSpec = tween(durationMillis = 180),
         label = "sidebar-content-alpha",
     )
     // Keep the content mounted until the width animation finishes. Removing it
     // immediately made the drawer pop out and left a visible focus jump.
-    val contentVisible = expanded || contentAlpha > 0f
+    // The workspace owns the slide. Do not fade/rebuild the category rows during it.
+    val contentVisible = if (fixedViewport) LocalLiveDrawerVisible.current else expanded || contentAlpha > 0f
     var expandedCountry by rememberSaveable { mutableStateOf<String?>(null) }
     var expandedAll by rememberSaveable { mutableStateOf(false) }
     var expandedPlaylistIds by rememberSaveable {

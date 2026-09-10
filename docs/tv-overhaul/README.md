@@ -218,6 +218,25 @@ That local demo uses fallback photos because no addon banner safely matched its 
    same-package TV preview update was installed in the previous pass; this feedback
    iteration was installed/tested only on the emulator.
 
+## Drawer motion follow-up (2026-09-10)
+
+- Sidebar and guide translate on render layers, rather than relocating the whole
+  workspace on each animation frame. The video stays anchored at the viewport edge.
+- A shared 260 ms eased slide owns category visibility. Fixed-width sidebar rows
+  no longer independently fade/disappear during that slide. Channel/EPG column
+  width remains 212 dp in both drawer states to avoid the previous 16 dp jump.
+- Six emulator instrumentation checks passed: drawer geometry/measurement and
+  interrupted reversal in LTR/RTL, both shared-top-bar checks, and both existing
+  sports/drawer/picker checks. Tests account for subpixel coordinate rounding.
+- The saved real 54,502-channel playlist was exercised using D-pad navigation:
+  open/close, return to the same channel, move farther down, and repeat. A 22-second
+  local recording is `ARVIO-drawer-motion-2026-09-10.mp4` in the tester's Downloads.
+  This is an emulator smoke test with playback, not a physical-device frame-time
+  benchmark or a claim of zero jank. The physical TV was not changed.
+- [Sports artwork research and proposed adapter](sports-artwork-research.md):
+  verified event art and team-crest composition are the next step; a new production
+  metadata provider is not enabled by this patch. Existing fallback photos remain.
+
 ## Reproducing local checks
 
 - Android JVM: `:app:testSideloadDebugUnitTest` filtered to `*SportsGuideTest`,

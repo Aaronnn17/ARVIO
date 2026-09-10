@@ -101,7 +101,7 @@ class TvOverhaulDeviceTest {
                                 EpgGrid(channels, clockTickMillis = now, nowNext = guide, selectedChannelId = channels[0].id,
                                     focusSelectedChannelSignal = 0,
                                     totalChannelCount = 55_000, favorites = emptySet(), onChannelSelect = {},
-                                    channelColumnWidthOverride = if (expanded.value) LiveDims.EpgChannelColWidth else LiveDims.EpgChannelWideColWidth,
+                                    channelColumnWidthOverride = LiveDims.EpgChannelWideColWidth,
                                     onMoveLeftFromChannels = { expanded.value = true }, modifier = Modifier.weight(1f))
                             }
                         })
