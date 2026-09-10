@@ -13,14 +13,27 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 
 @Singleton
-class SportsMetadataRepository @Inject constructor(client: OkHttpClient) {
+class SportsMetadataRepository @Inject constructor(client: OkHttpClient, @ApplicationContext context: Context) {
     private val http = client.newBuilder().callTimeout(8, TimeUnit.SECONDS).retryOnConnectionFailure(false).build()
     private val mutex = Mutex()
     private var cached = emptyList<SportsEventArtwork>()
     private var retryAfter = 0L
     private var lastSuccess = 0L
+    private val disk = File(context.cacheDir, "sports-fixtures.json")
+
+    suspend fun peek(): List<SportsEventArtwork> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (cached.isNotEmpty()) cached else runCatching {
+                if (disk.exists() && System.currentTimeMillis() - disk.lastModified() < 86_400_000 && disk.length() <= 6_000_000)
+                    parseSportsMetadata(disk.readText()).also { cached = it } else emptyList()
+            }.getOrDefault(emptyList())
+        }
+    }
 
     suspend fun load(): List<SportsEventArtwork> = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -34,12 +47,15 @@ class SportsMetadataRepository @Inject constructor(client: OkHttpClient) {
                     check(response.isSuccessful)
                     val body = response.body ?: error("Empty sports metadata")
                     check(body.contentLength() <= 6_000_000)
-                    parseSportsMetadata(body.string())
+                    val json = body.string()
+                    val parsed = parseSportsMetadata(json)
+                    if (parsed.isNotEmpty()) runCatching { disk.writeText(json) }
+                    parsed
                 }
             }.getOrNull()
             if (result != null) { cached = result; lastSuccess = now }
             else if (now - lastSuccess > 86_400_000) cached = emptyList()
-            retryAfter = now + if (result.isNullOrEmpty()) 60_000 else 10 * 60_000
+            retryAfter = now + if (result.isNullOrEmpty()) 60_000 else 120_000
             cached
         }
     }

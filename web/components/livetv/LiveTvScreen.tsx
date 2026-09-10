@@ -405,7 +405,7 @@ export function LiveTvScreen() {
               if (!groupsOpen) { event.preventDefault(); setGroupsOpen(true); requestAnimationFrame(() => document.querySelector<HTMLElement>(".livetv-cats button.is-active")?.focus()); }
             }
           }}>
-            {activeCategory === "sports" ? <SportsGuidePane channels={channels} guide={iptvSnapshot.nowNext} addons={addons}
+            {activeCategory === "sports" ? <SportsGuidePane key={activeProfile?.id ?? "local"} clockFormat={settings.clockFormat} channels={channels} guide={iptvSnapshot.nowNext} addons={addons}
               providerNames={Object.fromEntries(playlists.map((playlist) => [playlist.id, playlist.name]))}
               onPlay={watchChannel} onEnter={() => setGroupsOpen(false)}
               onOpenCategories={() => { setGroupsOpen(true); requestAnimationFrame(() => document.querySelector<HTMLElement>(".livetv-cats button.is-active")?.focus()); }} /> : <>

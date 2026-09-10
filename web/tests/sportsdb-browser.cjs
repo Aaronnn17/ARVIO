@@ -22,7 +22,10 @@ const path = require('node:path');
       });
       await page.goto('http://127.0.0.1:3109/dev/sportsdb', {waitUntil: 'domcontentloaded', timeout: 120000});
       const selector = badgesOnly ? '.tv-event-teams' : '.tv-event-image > img';
-      await page.waitForFunction(selector => [...document.querySelectorAll(selector)].filter(el => getComputedStyle(el).opacity === '1').length >= 3, selector, {timeout: 45000});
+      await page.waitForFunction(() => [...document.querySelectorAll('.tv-event-image > img, .tv-event-teams')].filter(el => getComputedStyle(el).opacity === '1').length >= 3, null, {timeout: 45000});
+      assert.equal(await page.getByText('Available on my channels', {exact: true}).count(), 0);
+      assert.equal(await page.locator('.tv-sports a').count(), 0);
+      assert.equal(await page.locator('.tv-event-card').getByText('0 channels', {exact: true}).count(), 0);
       for (const width of [1672, 768, 390]) {
         await page.setViewportSize({width, height: width === 390 ? 844 : 941});
         await page.waitForTimeout(250);
@@ -34,7 +37,17 @@ const path = require('node:path');
           assert.ok(rect.width > 25 && rect.x >= container.x && rect.x + rect.width <= container.x + container.width, 'Crest fits the card');
         }
         await page.screenshot({path: path.join(out, `${badgesOnly ? 'crests' : 'banners'}-${width}.png`)});
+        await page.locator('.tv-event-card').first().click();
+        await page.locator('dialog[open]').waitFor();
+        await page.locator('.tv-event-source').first().waitFor();
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `Picker fits ${width}`);
+        await page.screenshot({path: path.join(out, `${badgesOnly ? 'crests' : 'banners'}-picker-${width}.png`)});
+        await page.getByRole('button', {name: 'Close', exact: true}).click();
+        assert.equal(await page.locator('dialog[open]').count(), 0);
       }
+      await page.goto('http://127.0.0.1:3109/dev/sportsdb?guide=empty');
+      await page.getByText('No sports events matched to your channels', {exact: true}).waitFor();
+      assert.equal(await page.locator('.tv-event-card').count(), 0);
       assert.deepEqual(errors, []);
       await page.close();
     }

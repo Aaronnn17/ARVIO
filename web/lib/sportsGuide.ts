@@ -1,4 +1,5 @@
 import type { IptvChannel, IptvNowNext, IptvProgram } from "./types";
+import type { SportsFixture } from "./sportsArtwork";
 
 export const guideSports = [
   { id: "american-football", title: "American football", asset: "american_football", pattern: /\b(american football|nfl|ncaa football)\b/i },
@@ -23,6 +24,9 @@ export interface SportsGuideEvent {
   schedules?: Record<string, IptvProgram>;
   competition?: string;
   teamArtwork?: { homeBadge: string; awayBadge: string; homeTeam?: string; awayTeam?: string };
+  fixture?: SportsFixture;
+  possibleChannels?: IptvChannel[];
+  prominence?: number;
 }
 const nonEvent = /\b(highlights?|hoogtepunten|samenvatting|resumen|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned)\b/i;
 export const sportsProgrammeKey = (p: IptvProgram) => `${p.title.trim().toLowerCase().replace(/\s+/g, " ")}|${p.startUtcMillis}|${p.endUtcMillis}`;
@@ -30,8 +34,10 @@ const programmeOnAir = (p: IptvProgram, now: number) => p.startUtcMillis <= now 
 export function safeSportsImage(value?: string): string | undefined {
   try { return value && value.length <= 2048 && !/_UTC/i.test(value) && ["http:", "https:"].includes(new URL(value).protocol) ? value : undefined; } catch { return undefined; }
 }
-export const isOnAir = (event: SportsGuideEvent, now: number) => Object.values(event.schedules ?? { fallback: event.programme }).some(p => programmeOnAir(p, now));
+export const isConfirmedLive = (event: SportsGuideEvent, now: number) => event.fixture?.status === "live" && now >= event.fixture.observedAt && now - event.fixture.observedAt < 300_000;
+export const isOnAir = (event: SportsGuideEvent, now: number) => !["finished", "postponed"].includes(event.fixture?.status ?? "") && (isConfirmedLive(event, now) || Object.values(event.schedules ?? { fallback: event.programme }).some(p => programmeOnAir(p, now)));
 export const availableEventChannels = (event: SportsGuideEvent, now: number) => event.channels.filter(ch => programmeOnAir(event.schedules?.[ch.id] ?? event.programme, now));
+export const hasSportsChannels = (event: SportsGuideEvent, now: number) => (isOnAir(event, now) ? availableEventChannels(event, now) : event.channels).length > 0 || (event.possibleChannels?.length ?? 0) > 0;
 export const sportsArtworkKey = (title: string) => title.normalize("NFD").replace(/\p{M}+/gu, "").toLowerCase()
   .replace(/^(live\s*[:|-]\s*|live\s+)/, "").replace(/^(football|soccer|basketball|baseball|tennis|ice hockey|american football|boxing|mma|cricket)\s*:\s*/, "")
   .replace(/\b(vs\.?|versus|v\.)\s+/g, "vs ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -95,10 +101,10 @@ export function sportsDayIncludes(start: number, now: number, day: SportsDay) {
 }
 
 export function sportsGuideRows(events: SportsGuideEvent[], now: number, day: SportsDay = "both") {
-  const live = events.filter((event) => isOnAir(event, now));
-  const upcoming = events.filter((event) => event.programme.startUtcMillis > now);
+  const live = events.filter((event) => isOnAir(event, now)).sort((a, b) => (b.prominence ?? 0) - (a.prominence ?? 0) || a.programme.startUtcMillis - b.programme.startUtcMillis || a.id.localeCompare(b.id));
+  const upcoming = events.filter((event) => event.programme.startUtcMillis > now && !isOnAir(event, now)).sort((a, b) => a.programme.startUtcMillis - b.programme.startUtcMillis || (b.prominence ?? 0) - (a.prominence ?? 0) || a.id.localeCompare(b.id));
   return [
-    { id: "featured", title: "On air now", events: live.slice(0, 8) },
+    { id: "featured", title: "Featured live", events: live.slice(0, 8) },
     { id: "upcoming", title: "Upcoming", events: upcoming.filter(event => sportsDayIncludes(event.programme.startUtcMillis, now, day)) },
     { id: "more", title: "More on air", events: live.slice(8) },
     ...["football", "basketball", "f1", "tennis", "mma", "boxing", "american-football", "cricket", "baseball", "hockey"]

@@ -4,34 +4,57 @@ import { guideSports, sportsArtworkKey, sportsEventIdentity, safeSportsImage, ty
 export { sportsArtworkKey } from "./sportsGuide";
 import type { InstalledAddon } from "./types";
 
+export interface SportsFixture { id: string; league?: string; qualifier?: string; venue?: string; round?: string;
+  status: string; observedAt: number; homeScore?: number; awayScore?: number;
+  broadcasters: { name: string; country: string; startsAt: number }[] }
 export interface SportsEventArtwork { title: string; key: string; background: string; genres: string[]; startsAt?: number;
-  homeBadge?: string; awayBadge?: string; homeTeam?: string; awayTeam?: string; source?: string }
+  homeBadge?: string; awayBadge?: string; homeTeam?: string; awayTeam?: string; source?: string; fixture?: SportsFixture }
 
 export function parseSportsMetadata(payload: unknown): SportsEventArtwork[] {
-  const data = payload as { version?: number; events?: Record<string, unknown>[] } | null;
+  const data = payload as { version?: number; catalogueEnabled?: boolean; events?: Record<string, unknown>[] } | null;
   if (data?.version !== 1 || !Array.isArray(data.events)) return [];
   return data.events.slice(0, 6000).flatMap(item => {
     if (!item || typeof item.title !== "string" || !item.title.trim() || typeof item.sport !== "string" || !item.sport.trim()
       || typeof item.startsAt !== "number" || !Number.isFinite(item.startsAt) || item.startsAt <= 0) return [];
     const picture = (key: string) => typeof item[key] === "string" ? safeSportsImage(item[key] as string) : undefined;
     const background = picture("background"), homeBadge = picture("homeBadge"), awayBadge = picture("awayBadge");
-    if (!background && !(homeBadge && awayBadge)) return [];
+    const text = (key: string) => typeof item[key] === "string" ? item[key] as string : undefined;
+    const fixture: SportsFixture | undefined = data.catalogueEnabled && /^\d+$/.test(text("id") ?? "") ? {
+      id: text("id")!, league: text("league"), qualifier: text("qualifier"), venue: text("venue"), round: text("round"),
+      status: text("status") ?? "scheduled", observedAt: typeof item.observedAt === "number" ? item.observedAt : 0,
+      homeScore: typeof item.homeScore === "number" ? item.homeScore : undefined, awayScore: typeof item.awayScore === "number" ? item.awayScore : undefined,
+      broadcasters: Array.isArray(item.broadcasters) ? item.broadcasters.slice(0, 100).filter(b => b && typeof b.name === "string" && typeof b.country === "string" && Number.isFinite(b.startsAt)) : [],
+    } : undefined;
+    if (!fixture && !background && !(homeBadge && awayBadge)) return [];
     return [{ title: item.title, key: sportsArtworkKey(item.title), background: background ?? "", genres: [item.sport], startsAt: item.startsAt,
       homeBadge: awayBadge ? homeBadge : undefined, awayBadge: homeBadge ? awayBadge : undefined,
-      homeTeam: typeof item.homeTeam === "string" ? item.homeTeam : undefined, awayTeam: typeof item.awayTeam === "string" ? item.awayTeam : undefined, source: "TheSportsDB" }];
+      homeTeam: typeof item.homeTeam === "string" ? item.homeTeam : undefined, awayTeam: typeof item.awayTeam === "string" ? item.awayTeam : undefined, source: "TheSportsDB", fixture }];
   });
 }
 
 let metadataCache: { until: number; request: Promise<SportsEventArtwork[]> } | undefined;
 let lastMetadata: SportsEventArtwork[] = [];
 let lastMetadataAt = 0;
+const metadataEndpoint = () => config.sportsMetadataUrl || (config.netlifyBackendUrl ? `${config.netlifyBackendUrl.replace(/\/$/, "")}/sports-metadata` : "");
+export function cachedSportsMetadata(): SportsEventArtwork[] {
+  if (lastMetadata.length && Date.now() - lastMetadataAt < 86_400_000) return lastMetadata;
+  try {
+    const stored = JSON.parse(localStorage.getItem("arvio:sports-fixtures:v1") ?? "null");
+    if (stored?.endpoint === metadataEndpoint() && Date.now() >= stored.at && Date.now() - stored.at < 86_400_000) {
+      lastMetadata = parseSportsMetadata(stored.payload); lastMetadataAt = stored.at;
+      return lastMetadata;
+    }
+  } catch { /* Storage can be disabled or full; online metadata still works. */ }
+  return [];
+}
 export function loadSportsMetadata(): Promise<SportsEventArtwork[]> {
-  const endpoint = config.sportsMetadataUrl || (config.netlifyBackendUrl ? `${config.netlifyBackendUrl.replace(/\/$/, "")}/sports-metadata` : "");
+  const endpoint = metadataEndpoint();
   if (!endpoint) return Promise.resolve([]);
   if (metadataCache && metadataCache.until > Date.now()) return metadataCache.request;
-  const entry = { until: Date.now() + 10 * 60_000, request: Promise.resolve([] as SportsEventArtwork[]) };
+  const entry = { until: Date.now() + 120_000, request: Promise.resolve([] as SportsEventArtwork[]) };
   entry.request = jsonRequest<unknown>(endpoint, { signal: AbortSignal.timeout(8_000) }).then(payload => {
     lastMetadata = parseSportsMetadata(payload); lastMetadataAt = Date.now();
+    try { localStorage.setItem("arvio:sports-fixtures:v1", JSON.stringify({ endpoint, at: lastMetadataAt, payload })); } catch { /* Optional cache. */ }
     if (!lastMetadata.length) entry.until = Date.now() + 60_000;
     return lastMetadata;
   }).catch(() => { entry.until = Date.now() + 60_000; return Date.now() - lastMetadataAt < 86_400_000 ? lastMetadata : []; });

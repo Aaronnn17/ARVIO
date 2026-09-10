@@ -11,7 +11,7 @@ data class SportsEventArtwork(val title: String, val background: String, val gen
     val startsAt: Long? = null,
     val homeBadge: String? = null, val awayBadge: String? = null,
     val homeTeam: String? = null, val awayTeam: String? = null,
-    val source: String? = null) {
+    val source: String? = null, val fixture: SportsFixture? = null) {
     val key: String = sportsArtworkKey(title)
 }
 

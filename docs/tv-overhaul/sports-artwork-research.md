@@ -87,17 +87,33 @@ only in the backend function environment, never in the APK, web bundle or Git.
   limiter. The modern Functions API is required: the legacy `connectLambda`
   bridge loses the uncached endpoint needed for strong consistency in this SDK.
   See [Netlify's consistency documentation](https://docs.netlify.com/build/data-and-storage/netlify-blobs/#consistency).
-- Android and web each cache the public feed for ten minutes. Addon artwork is
-  still supported; metadata is available without a sports addon. This only
-  enriches cards already backed by the user's guide, and provides no streams.
+- Four bounded V2 TV-day requests add broadcaster hints. A separate strongly
+  cached V2 livescore request refreshes every two minutes. A complete cold refresh
+  costs at most nine upstream calls, not nine calls per user. TV-day truncation is
+  reported separately as `broadcastsPartial`; no stream is opened for matching.
+- Android and web cache the public feed for two minutes and persist public
+  metadata for a maximum 24-hour stale fallback. Addon artwork remains supported.
+  Fixtures can exist without artwork, but the Sports UI only displays events
+  matched to the user's accessible channels. There is no availability toggle.
 - Exact normalized title/participants, sport and a two-hour start tolerance are
   required for SportsDB matches. Generic league titles and differing youth/women's
   fixtures cannot borrow a plausible-looking image. No unverified team aliases.
 - Event thumbnail/fanart is preferred. When both verified team crests exist,
-  clients can compose an uncropped matchup card over subdued sport photography.
-  If an image fails, the existing local artwork remains visible. EPG timing,
-  source availability, timezone formatting and device clock preferences remain
-  unchanged. SportsDB artwork attribution is visible in Sports.
+  clients compose an uncropped matchup card on a neutral background. If an image
+  fails, bundled sport artwork remains visible. Times use the device timezone
+  and the profile's 12/24-hour preference. Attribution lives in About & Credits,
+  not in the Sports corner.
+- Fixture IDs remain stable across refreshes. Finished/cancelled fixtures suppress
+  stale EPG matches, and provider live status/scores expire after five minutes.
+  No arbitrary event duration is invented. Broadcaster-name matches are separate
+  possible sources, labelled "Possible broadcast" rather than "Guide match".
+- "Featured live" ranks major competitions and broadcast-country reach. It is
+  not measured viewership: SportsDB does not document a viewer/trending metric.
+  Upcoming stays chronological. More on air and ten per-sport rows follow.
+  Scores are opt-in within the picker; team/competition follows are excluded.
+- Catalogue matching runs off the UI thread (Android Default dispatcher, web
+  worker). Native lists are lazy; web rows render an initial bounded slice and
+  expand during navigation. Focused-row ordering survives background refreshes.
 
 ## Deployment and verification
 
@@ -108,9 +124,9 @@ a **public endpoint URL**, never an upstream key. Self-hosted web installations
 can supply their own endpoint; otherwise their existing addon art still works.
 
 - Backend: `node --test tests/sports-metadata.test.js` (from `netlify-auth-site`).
-- Web: `node --test tests/sports-artwork.test.cjs tests/sports-guide.test.cjs` and
+- Web: `node --test tests/sports-artwork.test.cjs tests/sports-guide.test.cjs tests/sports-catalogue.test.cjs` and
   `npx tsc --noEmit --incremental false`.
-- Android: `SportsMetadataTest`, `SportsGuideTest`, `SportsArtworkTest`;
+- Android: `SportsMetadataTest`, `SportsGuideTest`, `SportsArtworkTest`, `SportsCatalogueTest`;
   `TvOverhaulDeviceTest` covers guide/drawer/picker and image failures.
 - Opt-in live art rendering: `SportsMetadataDeviceTest`, with instrumentation
   argument `sportsMetadataUrl`; `web/tests/sportsdb-browser.cjs` with environment
@@ -120,12 +136,12 @@ can supply their own endpoint; otherwise their existing addon art still works.
   with `SPORTS_METADATA_URL` and local `EPG_AUDIT_DB`. Read-only: no playback probes,
   user credentials or source URLs are read/output.
 
-2026-09-10 final preview audit: the four-day feed returned 2393 usable events, 884
-banners and 2369 badge pairs. Only four of 941 cached EPG sports candidates matched
+2026-09-10 catalogue preview audit: the four-day feed returned 2488 events, 883
+banners and 2380 badge pairs. Only four of 791 cached EPG sports candidates matched
 (three distinct matchups). This is not
 full-guide coverage: generic titles remain fallbacks, and the cache's date window
 also limits this snapshot. Do not use the rendering fixtures as proof that all
-provider events are enriched. Backend tests pass, 20 Android sports unit tests
-pass, two existing emulator guide/picker tests and the opt-in live metadata emulator
-test pass, and both artwork modes render
-at 1672/768/390px on web without horizontal page overflow.
+provider events are enriched. Browser checks cover both artwork modes, picker
+opening/closing at 1672/768/390px, and hiding unmatched events. The host-JS index
+benchmark covers 50k channels and 2k fixtures; it is not an Android frame benchmark.
+Production is not enabled by this PR's isolated preview deployment.

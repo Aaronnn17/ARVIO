@@ -79,6 +79,7 @@ class TvOverhaulDeviceTest {
         val tree = buildCategoryTree(channels, favoritesCount = 8, recentCount = 21)
             .withSportsDestination()
         val events = attachSportsArtwork(buildSportsGuideEvents(channels.map { it.source }, guide, now), metadata.mapNotNull { it.toSportsEventArtwork() })
+        val firstEvent = sportsGuideRows(events, now).first().events.first()
         try {
             compose.setContent {
                 Box(Modifier.fillMaxSize()) {
@@ -128,14 +129,14 @@ class TvOverhaulDeviceTest {
             assertEquals(4, cards.size)
             assertTrue("Four complete cards must fit without clipping the last one: ${cards.map { it.boundsInRoot }}",
                 cards.all { kotlin.math.abs(it.boundsInRoot.width - cards.first().boundsInRoot.width) < 2f })
-            compose.onAllNodesWithText(events.first().title).onFirst().assertIsDisplayed().assertIsFocused()
+            compose.onAllNodesWithText(firstEvent.title).onFirst().assertIsDisplayed().assertIsFocused()
             compose.onRoot().performKeyInput { pressKey(Key.DirectionCenter) }
-            compose.onNodeWithText("Available channels").assertIsDisplayed()
-            compose.onAllNodesWithText(events.first().channels.first().name).onFirst().assertIsFocused()
+            compose.onNodeWithText("Channels", substring = false).assertIsDisplayed()
+            compose.onAllNodesWithText(firstEvent.channels.first().name).onFirst().assertIsFocused()
             screenshot("05-event-picker")
-            compose.onAllNodesWithText(events.first().channels.first().name).onFirst().performClick()
+            compose.onAllNodesWithText(firstEvent.channels.first().name).onFirst().performClick()
             compose.runOnIdle { assertNotNull("First source click must invoke playback", played) }
-            compose.onNodeWithText("Available channels").assertDoesNotExist()
+            compose.onNodeWithText("Channels", substring = false).assertDoesNotExist()
             compose.onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
             compose.runOnIdle { assertTrue("Left at first card must reopen categories", expanded.value) }
             compose.onNodeWithContentDescription("Filter upcoming events").assertDoesNotExist()

@@ -1573,6 +1573,7 @@ fun LiveTvScreen(
     var categoryDrawerOpen by rememberSaveable { mutableStateOf(true) }
     var sportsSelected by rememberSaveable(currentProfile?.id) { mutableStateOf(false) }
     var sportsFocusSignal by remember { mutableIntStateOf(0) }
+    val sportsClockFormat by remember(currentProfile?.id) { viewModel.sportsClockFormat(currentProfile?.id) }.collectAsStateWithLifecycle(initialValue = "24h")
     var sportsEvents by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) {
         mutableStateOf<List<SportsGuideEvent>>(emptyList())
     }
@@ -1583,10 +1584,36 @@ fun LiveTvScreen(
         mutableStateOf<List<Any>?>(null)
     }
     var sportsArtwork by remember(currentProfile?.id) { mutableStateOf(emptyList<com.arflix.tv.data.model.SportsEventArtwork>()) }
-    LaunchedEffect(sportsSelected, currentProfile?.id, sportsRefresh, guideClockMillis / 600_000L) {
-        if (sportsSelected) sportsArtwork = viewModel.loadSportsGuideArtwork()
+    LaunchedEffect(sportsSelected, currentProfile?.id, sportsRefresh, guideClockMillis / 120_000L) {
+        if (sportsSelected) {
+            var metadata = viewModel.cachedSportsMetadata()
+            var addonArtwork = sportsArtwork.filter { it.source != "TheSportsDB" }
+            sportsArtwork = metadata + addonArtwork
+            kotlinx.coroutines.coroutineScope {
+                launch { metadata = viewModel.loadSportsMetadata(); sportsArtwork = metadata + addonArtwork }
+                launch { addonArtwork = viewModel.loadSportsAddonArtwork(); sportsArtwork = metadata + addonArtwork }
+            }
+        }
     }
-    val illustratedSportsEvents = remember(sportsEvents, sportsArtwork) { attachSportsArtwork(sportsEvents, sportsArtwork) }
+    var broadcastCandidates by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) { mutableStateOf(emptyList<IptvChannel>()) }
+    val broadcasterKeys = remember(sportsArtwork) { sportsArtwork.flatMap { it.fixture?.broadcasters.orEmpty() }.flatMap { sportsBroadcasterKeys(it.name, it.country) }.toSet() }
+    LaunchedEffect(sportsSelected, broadcasterKeys, currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet, state.snapshot.loadedAt) {
+        if (!sportsSelected || broadcasterKeys.isEmpty()) { broadcastCandidates = emptyList(); return@LaunchedEffect }
+        broadcastCandidates = withContext(Dispatchers.IO) {
+            val ids = linkedSetOf<String>()
+            val excluded = hiddenGroupSet + restrictedGroupSet
+            viewModel.iptvRepository.visitStoredChannelLabels(selectedProviderId.takeUnless { it == "all" }) { id, name, group ->
+                if (PlaylistGroupKey.build(channelPlaylistId(id), group.trim()) !in excluded && group !in excluded && sportsChannelKey(name) in broadcasterKeys) ids.add(id)
+            }
+            ids.take(5000).chunked(128).flatMap { viewModel.iptvRepository.pagedChannelsByIds(it) }.filter { !it.enrichForFastStartup(0).isAdult }
+        }
+    }
+    var illustratedSportsEvents by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) { mutableStateOf(emptyList<SportsGuideEvent>()) }
+    LaunchedEffect(sportsEvents, sportsArtwork, broadcastCandidates) {
+        illustratedSportsEvents = withContext(Dispatchers.Default) {
+            buildSportsCatalogue(sportsEvents, sportsArtwork, broadcastCandidates, guideClockMillis)
+        }
+    }
     val sportsProviderNames = remember(state.config.playlists, state.config.stalkerPortals) {
         state.config.playlists.associate { it.id to it.name } + state.config.stalkerPortals.associate { it.id to it.name }
     }
@@ -3277,7 +3304,7 @@ fun LiveTvScreen(
                     )
                     }
                     if (sportsSelected) SportsGuidePane(
-                        events = illustratedSportsEvents, now = guideClockMillis, loading = sportsLoading,
+                        events = illustratedSportsEvents, now = guideClockMillis, loading = sportsLoading, clockFormat = sportsClockFormat,
                         failed = sportsError, onRetry = { sportsRefresh++ }, providerNames = sportsProviderNames,
                         focusSignal = sportsFocusSignal,
                         onContentFocused = { focusZone = LiveTvFocusZone.SPORTS },
@@ -3430,7 +3457,7 @@ fun LiveTvScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (sportsSelected) SportsGuidePane(
-                        events = illustratedSportsEvents, now = guideClockMillis, loading = sportsLoading,
+                        events = illustratedSportsEvents, now = guideClockMillis, loading = sportsLoading, clockFormat = sportsClockFormat,
                         failed = sportsError, onRetry = { sportsRefresh++ }, providerNames = sportsProviderNames,
                         focusSignal = sportsFocusSignal,
                         onContentFocused = { focusZone = LiveTvFocusZone.SPORTS; categoryDrawerOpen = false },

@@ -76,18 +76,33 @@ internal fun SportsGuidePane(
     onRetry: () -> Unit = {},
     providerNames: Map<String, String> = emptyMap(),
     sidebarOpen: Boolean = false,
+    clockFormat: String? = null,
 ) {
-    val rows = remember(events, now) { sportsGuideRows(events, now) }
+    var focusedRow by remember { mutableStateOf<String?>(null) }
+    var focusedOrder by remember { mutableStateOf(emptyList<String>()) }
+    val rows = remember(events, now, focusedRow, focusedOrder) {
+        sportsGuideRows(events.filter { it.hasChannels(now) }, now).map { row ->
+            if (row.id == focusedRow) {
+                val rank = focusedOrder.withIndex().associate { it.value to it.index }
+                row.copy(events = row.events.sortedBy { rank[it.id] ?: Int.MAX_VALUE })
+            } else row
+        }
+    }
     var selected by remember { mutableStateOf<SportsGuideEvent?>(null) }
     var returnFocus by remember { mutableStateOf<FocusRequester?>(null) }
+    var showScore by remember { mutableStateOf(false) }
     val firstFocus = remember { FocusRequester() }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val narrow = configuration.screenWidthDp < 600
-    val timeFormat = remember(context) { android.text.format.DateFormat.getTimeFormat(context) }
+    val timeFormat = remember(context, clockFormat) {
+        if (clockFormat == null) android.text.format.DateFormat.getTimeFormat(context)
+        else java.text.SimpleDateFormat(if (clockFormat == "12h") "h:mm a" else "HH:mm", java.util.Locale.getDefault())
+    }
     val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
     fun eventTime(event: SportsGuideEvent): String {
+        if (event.isConfirmedLive(now)) return "LIVE"
         if (event.isOnAir(now)) return "ON AIR"
         val date = Instant.ofEpochMilli(event.programme.startUtcMillis).atZone(ZoneId.systemDefault())
         val day = when (date.toLocalDate()) {
@@ -116,17 +131,13 @@ internal fun SportsGuidePane(
             if (!sidebarOpen) Icon(Icons.Outlined.Menu, "Categories", tint = LiveColors.Fg,
                 modifier = Modifier.size(20.dp).clickable(onClick = onOpenCategories))
             Text("Sports", color = LiveColors.Fg, fontSize = 21.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold)
-            if (events.any { it.artworkSource == "TheSportsDB" }) {
-                Spacer(Modifier.weight(1f))
-                Text("Artwork: TheSportsDB", color = LiveColors.FgDim, fontSize = 10.sp)
-            }
         }
         if (rows.isEmpty()) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally) {
                 if (loading) CircularProgressIndicator(color = LiveColors.Accent, modifier = Modifier.size(24.dp))
                 else Icon(Icons.Default.SportsSoccer, null, tint = LiveColors.FgDim, modifier = Modifier.size(32.dp))
-                Text(if (loading) "Reading sports schedule" else if (failed) "Schedule unavailable" else "No sports events in the available guide",
+                Text(if (loading) "Reading sports schedule" else if (failed) "Schedule unavailable" else "No sports events matched to your channels",
                     color = LiveColors.FgDim, modifier = Modifier.padding(14.dp))
                 if (failed) Text("Retry", color = LiveColors.Fg,
                     modifier = Modifier.clickable(onClick = onRetry).padding(16.dp))
@@ -149,14 +160,20 @@ internal fun SportsGuidePane(
                             Column(Modifier.width(cardWidth).testTag("sports-event-card")
                                 .then(if (index == 0 && rowIndex == 0) Modifier.focusRequester(firstFocus) else Modifier)
                                 .focusRequester(requester)
-                                .onFocusChanged { focused = it.isFocused; if (it.isFocused) onContentFocused() }
+                                .onFocusChanged {
+                                    focused = it.isFocused
+                                    if (it.isFocused) {
+                                        onContentFocused()
+                                        if (focusedRow != row.id) { focusedRow = row.id; focusedOrder = row.events.map { it.id } }
+                                    }
+                                }
                                 .onPreviewKeyEvent { key ->
                                     if (index == 0 && key.type == KeyEventType.KeyDown &&
                                         key.key.mirrorHorizontalForRtl(isRtl) == Key.DirectionLeft) {
                                         onOpenCategories(); true
                                     } else false
                                 }
-                                .clickable { returnFocus = requester; selected = event }
+                                .clickable { returnFocus = requester; showScore = false; selected = event }
                                 .padding(2.dp)) {
                                 Box(Modifier.fillMaxWidth().aspectRatio(if (row.id == "more") 2.85f else 2.25f).clip(RoundedCornerShape(4.dp))) {
                                     EventArtwork(event, Modifier.fillMaxSize())
@@ -175,7 +192,7 @@ internal fun SportsGuidePane(
                                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                     if (event.isOnAir(now)) {
                                         Icon(Icons.Default.Tv, null, tint = LiveColors.FgDim, modifier = Modifier.size(13.dp))
-                                        Text(channelCount(event.availableChannels(now).size), color = LiveColors.FgDim, fontSize = 9.sp, lineHeight = 12.sp,
+                                        Text(channelCount(event.availableChannels(now).size + event.possibleChannels.size), color = LiveColors.FgDim, fontSize = 9.sp, lineHeight = 12.sp,
                                             modifier = Modifier.padding(start = 6.dp))
                                     }
                                 }
@@ -197,7 +214,9 @@ internal fun SportsGuidePane(
             window?.setDimAmount(.65f)
         }
         val onAir = event?.isOnAir(now) == true
-        val sourceChannels = if (onAir) event?.availableChannels(now).orEmpty() else event?.channels.orEmpty()
+        val confirmedChannels = if (onAir) event?.availableChannels(now).orEmpty() else event?.channels.orEmpty()
+        val possibleIds = event?.possibleChannels.orEmpty().mapTo(hashSetOf()) { it.id }
+        val sourceChannels = confirmedChannels + event?.possibleChannels.orEmpty()
         val initialFocus = remember(event?.id) { FocusRequester() }
         LaunchedEffect(event?.id) {
             // The native dialog window must own focus before Compose assigns its row.
@@ -222,8 +241,17 @@ internal fun SportsGuidePane(
                         .then(if (!onAir || sourceChannels.isEmpty()) Modifier.focusRequester(initialFocus) else Modifier)
                         .clickable(onClick = ::dismiss).padding(10.dp))
             }
+            event?.fixture?.let { fixture ->
+                Text(listOfNotNull(event.competition, fixture.venue, fixture.round?.let { "Round $it" }).joinToString(" · "),
+                    color = LiveColors.FgDim, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 10.dp))
+                if (fixture.homeScore != null && fixture.awayScore != null && now - fixture.observedAt < 300_000) {
+                    Text(if (showScore) "${fixture.homeScore} : ${fixture.awayScore}" else "Show score", color = LiveColors.Fg,
+                        fontSize = 12.sp, modifier = Modifier.clickable { showScore = !showScore }.padding(vertical = 10.dp))
+                }
+            }
             Row(Modifier.fillMaxWidth().padding(top = 9.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(if (onAir) "Available channels" else "Scheduled channels", fontSize = 14.sp, color = LiveColors.Fg,
+                Text(if (onAir) "Channels" else "Scheduled channels", fontSize = 14.sp, color = LiveColors.Fg,
                     fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                 Text(channelCount(sourceChannels.size), fontSize = 11.sp, color = LiveColors.FgDim)
             }
@@ -236,7 +264,7 @@ internal fun SportsGuidePane(
                         .background(if (focused) LiveColors.FocusBg else Color.Transparent)
                         .onFocusChanged { focused = it.isFocused }
                         .clickable(enabled = onAir) {
-                            if (event?.availableChannels(System.currentTimeMillis())?.any { it.id == channel.id } == true) { dismiss(); onPlay(channel) }
+                            if (event?.isOnAir(System.currentTimeMillis()) == true && (event.availableChannels(System.currentTimeMillis()).any { it.id == channel.id } || channel.id in possibleIds)) { dismiss(); onPlay(channel) }
                         }.padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically) {
                         if (channel.logo.isNullOrBlank()) Box(Modifier.size(if (narrow) 40.dp else 88.dp, 30.dp), contentAlignment = Alignment.Center) {
@@ -246,7 +274,7 @@ internal fun SportsGuidePane(
                         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                             Text(channel.name, color = LiveColors.Fg, fontSize = 13.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             val provider = providerNames[channelPlaylistId(channel.id)]
-                            Text(provider ?: channel.group.orEmpty(), color = LiveColors.FgDim, fontSize = 10.sp, lineHeight = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${provider ?: channel.group.orEmpty()} · ${if (channel.id in possibleIds) "Possible broadcast" else "Guide match"}", color = LiveColors.FgDim, fontSize = 10.sp, lineHeight = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         val enriched = remember(channel) { channel.enrich(0) }
                         if (enriched.quality != Quality.UNKNOWN) PickerBadge(enriched.quality.label)
@@ -258,6 +286,8 @@ internal fun SportsGuidePane(
                     Box(Modifier.fillMaxWidth().height(1.dp).background(LiveColors.Divider))
                 }
             }
+            if (sourceChannels.isEmpty()) Text("No matching channels in your playlists.", color = LiveColors.FgDim,
+                fontSize = 12.sp, modifier = Modifier.padding(vertical = 20.dp))
             if (event == null) Text("This event is no longer in the available guide.", color = LiveColors.FgDim)
         }
     }
@@ -291,8 +321,8 @@ private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier)
                 modifier = Modifier.fillMaxSize())
         }
         if (!loaded && pair != null) {
-            Row(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (homeLoaded && awayLoaded) .6f else 0f))
-                .padding(horizontal = 22.dp, vertical = 24.dp), verticalAlignment = Alignment.CenterVertically,
+            Row(Modifier.fillMaxSize().background(if (homeLoaded && awayLoaded) Color(0xFF20262C) else Color.Transparent)
+                .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 AsyncImage(pair.homeBadge, pair.homeTeam, contentScale = ContentScale.Fit,
                     onSuccess = { homeLoaded = true }, onError = { homeLoaded = false },

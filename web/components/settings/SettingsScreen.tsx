@@ -581,6 +581,7 @@ function SectionBody({ section }: { section: SectionId }) {
             <img src="/tmdb-logo.svg" alt="TMDB" width={100} height={16} />
           </a>
           <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+          <p>Sports data and artwork provided by <a href="https://www.thesportsdb.com" target="_blank" rel="noopener noreferrer">TheSportsDB</a>.</p>
           <p>ARVIO is a media hub for sources you configure. Catalog entries do not grant viewing rights.
             Connect only services and media you are authorized to use.</p>
           <a className="secondary text-button" href="https://arvio.tv/credits/" target="_blank" rel="noopener noreferrer">

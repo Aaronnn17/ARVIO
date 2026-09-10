@@ -85,7 +85,9 @@ class SportsRepository @Inject constructor(
         addons.await() + metadata.await()
     }
 
-    private suspend fun loadAddonGuideArtwork(): List<SportsEventArtwork> = withContext(Dispatchers.IO) {
+    suspend fun cachedMetadata() = sportsMetadataRepository.peek()
+    suspend fun loadMetadata() = sportsMetadataRepository.load()
+    suspend fun loadAddonGuideArtwork(): List<SportsEventArtwork> = withContext(Dispatchers.IO) {
         val addons = streamRepository.installedAddons.first().filter {
             it.isInstalled && it.isEnabled && !it.url.isNullOrBlank() && SportsAddonCapabilities.isSportsLiveTvAddon(it)
         }.prioritizedSportsAddons().take(2)

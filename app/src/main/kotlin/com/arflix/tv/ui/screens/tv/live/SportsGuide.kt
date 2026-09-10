@@ -4,6 +4,7 @@ import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.SportsEventArtwork
+import com.arflix.tv.data.model.SportsFixture
 import com.arflix.tv.data.model.sportsEventIdentity
 import com.arflix.tv.data.model.safeSportsImage
 import java.time.Instant
@@ -22,10 +23,16 @@ internal data class SportsGuideEvent(
     val competition: String? = null,
     val teamArtwork: SportsEventArtwork? = null,
     val artworkSource: String? = null,
+    val fixture: SportsFixture? = null,
+    val possibleChannels: List<IptvChannel> = emptyList(),
+    val prominence: Int = 0,
 ) {
     val identity: String = sportsEventIdentity(title)
-    fun isOnAir(now: Long) = if (schedules.isEmpty()) programme.isLive(now) else schedules.values.any { it.isLive(now) }
+    fun isConfirmedLive(now: Long) = fixture?.status == "live" && now >= fixture.observedAt && now - fixture.observedAt < 300_000
+    fun isOnAir(now: Long) = fixture?.status !in setOf("finished", "postponed") &&
+        (isConfirmedLive(now) || if (schedules.isEmpty()) programme.isLive(now) else schedules.values.any { it.isLive(now) })
     fun availableChannels(now: Long) = channels.filter { (schedules[it.id] ?: programme).isLive(now) }
+    fun hasChannels(now: Long) = (if (isOnAir(now)) availableChannels(now) else channels).isNotEmpty() || possibleChannels.isNotEmpty()
 }
 
 internal fun attachSportsArtwork(events: List<SportsGuideEvent>, artwork: List<SportsEventArtwork>): List<SportsGuideEvent> {
@@ -199,11 +206,13 @@ internal enum class SportsDay(val label: String) {
 
 internal fun sportsGuideRows(events: List<SportsGuideEvent>, now: Long,
     day: SportsDay = SportsDay.BOTH, zone: ZoneId = ZoneId.systemDefault()): List<SportsGuideRow> {
-    val live = events.filter { it.isOnAir(now) }
+    val live = events.filter { it.isOnAir(now) }.sortedWith(compareByDescending<SportsGuideEvent> { it.prominence }
+        .thenBy { it.programme.startUtcMillis }.thenBy { it.id })
     return buildList {
         // EPG has no viewer metrics. Never call this popularity or confirmed live sport.
-        if (live.isNotEmpty()) add(SportsGuideRow("featured", "On air now", live.take(8)))
-        val upcoming = events.filter { it.programme.startUtcMillis > now }
+        if (live.isNotEmpty()) add(SportsGuideRow("featured", "Featured live", live.take(8)))
+        val upcoming = events.filter { it.programme.startUtcMillis > now && !it.isOnAir(now) }
+            .sortedWith(compareBy<SportsGuideEvent> { it.programme.startUtcMillis }.thenByDescending { it.prominence }.thenBy { it.id })
         // Keep the filter reachable even when a selected day has no events.
         if (upcoming.isNotEmpty()) add(SportsGuideRow("upcoming", "Upcoming",
             upcoming.filter { day.includes(it.programme.startUtcMillis, now, zone) }))

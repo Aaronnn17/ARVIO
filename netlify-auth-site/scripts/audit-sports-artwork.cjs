@@ -18,6 +18,7 @@ function load(file, requireFn) {
   const payload = await response.json();
   const guide = load('web/lib/sportsGuide.ts');
   const artwork = load('web/lib/sportsArtwork.ts', name => name === './sportsGuide' ? guide : {});
+  const catalogue = load('web/lib/sportsCatalogue.ts', name => name === './sportsGuide' ? guide : artwork);
   const metadata = artwork.parseSportsMetadata(payload);
   const db = new DatabaseSync(process.env.EPG_AUDIT_DB, {readOnly: true});
   const now = Date.now();
@@ -30,6 +31,10 @@ function load(file, requireFn) {
   });
   const decorated = artwork.attachSportsArtwork(events, metadata);
   const matches = decorated.filter(event => event.artwork || event.teamArtwork);
+  const merged = catalogue.buildSportsCatalogue(events, metadata, [], now);
+  const catalogueRows = guide.sportsGuideRows(merged, now);
   console.log(JSON.stringify({feedEvents: metadata.length, banners: metadata.filter(x => x.background).length, badgePairs: metadata.filter(x => x.homeBadge && x.awayBadge).length,
+    catalogueEvents: merged.filter(e => e.fixture).length, guideEntriesIdentified: events.length - merged.filter(e => !e.fixture).length,
+    catalogueRows: catalogueRows.map(row => ({title: row.title, events: row.events.length})),
     epgSportsCandidates: events.length, matched: matches.length, examples: matches.slice(0, 8).map(x => ({title: x.title, startsAt: new Date(x.programme.startUtcMillis).toISOString(), banner: !!x.artwork, badges: !!x.teamArtwork}))}, null, 2));
 })().catch(error => { console.error(error.message); process.exitCode = 1; });
