@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.search
 
+import com.arflix.tv.ui.components.LocalBottomBarInset
 import androidx.activity.compose.BackHandler
 import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
@@ -1027,7 +1028,7 @@ private fun RowsLayer(
             state = listState,
             contentPadding = PaddingValues(
                 top = if (isTouchDevice) 4.dp else focusBleedPadding / 2,
-                bottom = if (isTouchDevice) 24.dp else maxHeight * 0.6f
+                bottom = if (isTouchDevice) 24.dp + LocalBottomBarInset.current else maxHeight * 0.6f
             ),
             modifier = Modifier.fillMaxSize().arvioDpadFocusGroup(),
             verticalArrangement = Arrangement.spacedBy(if (isTouchDevice) 20.dp else 0.dp)
@@ -1181,7 +1182,7 @@ private fun ContentGrid(items: List<MediaItem>, usePosterCards: Boolean, isLoadi
     LazyVerticalGrid(
         state = gridState,
         columns = GridCells.Adaptive(minSize = itemWidth + (if (isTouchDevice) 8.dp else focusBleedPadding)),
-        contentPadding = PaddingValues(horizontal = focusBleedPadding, vertical = focusBleedPadding),
+        contentPadding = PaddingValues(start = focusBleedPadding, end = focusBleedPadding, top = focusBleedPadding, bottom = focusBleedPadding + LocalBottomBarInset.current),
         horizontalArrangement = Arrangement.spacedBy(if (isTouchDevice) 14.dp else 18.dp),
         verticalArrangement = Arrangement.spacedBy(if (isTouchDevice) 18.dp else 26.dp),
         modifier = Modifier.fillMaxSize().arvioDpadFocusGroup()
