@@ -3688,40 +3688,57 @@ fun LiveTvScreen(
                         openFullscreenGuide(channel, fromQuickZap = true)
                     }
                 )
-                val overlayVariants = remember(playingChannel, enrichedState.value.all) {
-                    playingChannel?.let { current ->
-                        // 1. Rescatamos todo lo posible: tvg-id (epgId) y tvg-name
-                        val currentEpg = current.source.epgId?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-                        val currentTvg = current.source.tvgName?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-                        
-                        // 2. Limpieza de nombres por si falla lo anterior
+                // Búsqueda directa y ultra-optimizada a la Base de Datos SQLite
+                LaunchedEffect(sourcesOpen, playingChannel) {
+                    if (!sourcesOpen || playingChannel == null) return@LaunchedEffect
+                    sourcesLoading = true
+                    
+                    val variants = withContext(Dispatchers.IO) {
+                        val current = playingChannel
                         val qualityRegex = Regex("(?i)\\b(?:4k|uhd|fhd|hd|sd|1080p|720p|60fps|raw|es|en|lat|pt)\\b")
                         val symbolRegex = Regex("[^a-z0-9]")
-                        val currentCleanName = current.name
-                            .replace(qualityRegex, "")
-                            .lowercase()
-                            .replace(symbolRegex, "")
-
-                        // 3. Fusión masiva: Si coincide EL ID, EL TVG-NAME, O EL NOMBRE LIMPIO, se agrupan.
-                        enrichedState.value.all.filter { ch ->
-                            val targetEpg = ch.source.epgId?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-                            val targetTvg = ch.source.tvgName?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-                            val targetCleanName = ch.name
-                                .replace(qualityRegex, "")
-                                .lowercase()
-                                .replace(symbolRegex, "")
-
+                        
+                        val currentEpg = current.source.epgId?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                        val currentTvg = current.source.tvgName?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                        val currentCleanName = current.name.replace(qualityRegex, "").lowercase().replace(symbolRegex, "")
+                        
+                        // Extraemos la primera palabra limpia para el "Plan C" de SQL (ej: "dazn")
+                        val prefixQuery = current.name.replace(qualityRegex, "").replace(Regex("[^a-zA-Z0-9 ]"), " ").trim().split("\\s+".toRegex()).firstOrNull() ?: ""
+                        
+                        // 1. Disparamos la consulta SQL nativa. Nos devolverá solo los candidatos relevantes.
+                        val dbCandidates = viewModel.iptvRepository.pagedChannelVariants(
+                            epgId = currentEpg,
+                            tvgName = currentTvg,
+                            namePrefix = prefixQuery
+                        )
+                        
+                        // 2. Filtramos estrictamente los resultados de la BD (para descartar falsas coincidencias del LIKE)
+                        val filtered = dbCandidates.filter { ch ->
+                            val targetEpg = ch.epgId?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                            val targetTvg = ch.tvgName?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                            val targetCleanName = ch.name.replace(qualityRegex, "").lowercase().replace(symbolRegex, "")
+                            
                             val matchEpg = currentEpg != null && targetEpg == currentEpg
                             val matchTvg = currentTvg != null && targetTvg == currentTvg
                             val matchName = currentCleanName.isNotBlank() && targetCleanName == currentCleanName
-
+                            
                             matchEpg || matchTvg || matchName
                         }.distinctBy { it.id }
-                    }.orEmpty()
+                        
+                        // 3. Transformamos a EnrichedChannel para que la interfaz pueda dibujarlos
+                        val enriched = filtered.mapIndexed { index, ch -> ch.enrichForFastStartup(index + 1) }
+                        
+                        // Aseguramos que el canal que estamos viendo siempre esté en la lista
+                        if (enriched.any { it.id == current.id }) enriched else listOf(current) + enriched
+                    }
+                    
+                    overlayVariants = variants
+                    sourcesLoading = false
                 }
 
                 FullscreenSourcesOverlay(
                     visible = isFullScreen && sourcesOpen,
+                    isLoading = sourcesLoading,
                     currentChannel = playingChannel,
                     variants = overlayVariants,
                     onPick = { channel ->
@@ -3734,16 +3751,6 @@ fun LiveTvScreen(
                     }
                 )
             }
-        }
-
-            LaunchedEffect(isFullScreen, fullscreenGuideOpen, quickZapOpen, playingCatchupProgram) {
-                if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
-                    delay(50L)
-                    runCatching { fsFocus.requestFocus() }
-                }
-            }
-        }
-
         // Top bar only shows when NOT in full-screen playback.
         // Fade with the fullscreen progress so it doesn't pop in/out — looks
         // natural next to the grow animation below.
