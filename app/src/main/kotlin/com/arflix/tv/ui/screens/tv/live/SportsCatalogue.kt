@@ -65,7 +65,9 @@ internal fun buildSportsCatalogue(guide: List<SportsGuideEvent>, artwork: List<S
     if (fixtures.isEmpty()) return attachSportsArtwork(guide, artwork)
     val byIdentity = guide.groupBy { "${it.sport}|${it.identity}" }
     val guideTitles = guide.associate { it.id to " ${sportsArtworkKey(it.title)} " }
+    val bySport = guide.groupBy { it.sport }
     val byChannel = channels.groupBy { sportsChannelKey(it.name) }
+    val broadcasterMatches = hashMapOf<Pair<String, String>, List<IptvChannel>>()
     val used = hashSetOf<String>()
     val seen = hashSetOf<String>()
     val until = Instant.ofEpochMilli(now).atZone(zone).toLocalDate().plusDays(2).atStartOfDay(zone).toInstant().toEpochMilli()
@@ -77,7 +79,7 @@ internal fun buildSportsCatalogue(guide: List<SportsGuideEvent>, artwork: List<S
         val away = participantKeys(item.awayTeam, sport)
         // Both complete participant names must be present; a league or one team is not enough.
         val candidates = if (home.isNotEmpty() && away.isNotEmpty() && home.none { it in away })
-            guide.filter { event -> event.sport == sport && home.any { guideTitles.getValue(event.id).contains(" $it ") } && away.any { guideTitles.getValue(event.id).contains(" $it ") } }
+            bySport[sport].orEmpty().filter { event -> home.any { guideTitles.getValue(event.id).contains(" $it ") } && away.any { guideTitles.getValue(event.id).contains(" $it ") } }
             else emptyList()
         val matches = (byIdentity["$sport|${sportsEventIdentity(item.title)}"].orEmpty() + candidates).distinctBy { it.id }.filter { event ->
             event.id !in used && kotlin.math.abs(event.programme.startUtcMillis - start) <= 2 * 3600_000L &&
@@ -89,7 +91,10 @@ internal fun buildSportsCatalogue(guide: List<SportsGuideEvent>, artwork: List<S
         val mapped = matches.flatMap { it.channels }.distinctBy { it.id }
         val mappedIds = mapped.mapTo(hashSetOf()) { it.id }
         val possible = fixture.broadcasters.filter { kotlin.math.abs(it.startsAt - start) < 2 * 3600_000L }
-            .flatMap { b -> sportsBroadcasterKeys(b.name, b.country).flatMap { byChannel[it].orEmpty() } }.filter { it.id !in mappedIds }.distinctBy { it.id }
+            .distinctBy { it.name to it.country }
+            .flatMap { b -> broadcasterMatches.getOrPut(b.name to b.country) {
+                sportsBroadcasterKeys(b.name, b.country).flatMap { byChannel[it].orEmpty() }
+            } }.filter { it.id !in mappedIds }.distinctBy { it.id }
         // Finished metadata suppresses a stale EPG entry; it must not reappear as a fallback.
         if (fixture.status in setOf("finished", "postponed")) return@mapNotNull null
         SportsGuideEvent(id = "sportsdb:${fixture.id}", title = item.title, sport = sport,

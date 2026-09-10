@@ -119,6 +119,7 @@ class TvViewModel @Inject constructor(
 
     suspend fun loadSportsGuideArtwork() = sportsRepository.loadGuideArtwork()
     suspend fun cachedSportsMetadata() = sportsRepository.cachedMetadata()
+    internal var cachedSportsSchedule: com.arflix.tv.ui.screens.tv.live.SportsScheduleSnapshot? = null
     suspend fun loadSportsMetadata() = sportsRepository.loadMetadata()
     suspend fun loadSportsAddonArtwork() = sportsRepository.loadAddonGuideArtwork()
     fun sportsClockFormat(profileId: String?) = context.settingsDataStore.data.map { prefs ->
@@ -2050,6 +2051,10 @@ class TvViewModel @Inject constructor(
                 scheduleIptvCloudSync()
             }
         }
+    }
+
+    internal fun rememberPlaybackHls(rawUrl: String, headers: Map<String, String>, playbackUrl: String) {
+        iptvPlaybackUrlResolver.rememberHls(rawUrl, headers, playbackUrl)
     }
 
     internal suspend fun resolvePlayableStreamUrl(

@@ -6,6 +6,17 @@ import org.junit.Test
 import java.time.Instant
 
 class SportsCatalogueTest {
+    @Test fun largeBroadcastFeedKeepsEveryFixtureAndProviderVariant() {
+        val variants = (1..40).map { channel.copy(id = "provider:$it") }
+        val repeated = List(200) { fixture.broadcasters.single() }
+        val feed = (1..500).map { art.copy(title = "Fixture $it", fixture = fixture.copy(id = "$it", broadcasters = repeated)) }
+        val started = System.nanoTime()
+        val catalogue = buildSportsCatalogue(emptyList(), feed, variants, now)
+        println("Sports catalogue: 500 fixtures, 100000 broadcast listings, 40 channel variants: ${(System.nanoTime() - started) / 1_000_000}ms")
+        assertEquals(500, catalogue.size)
+        assertTrue(catalogue.all { it.possibleChannels.size == 40 })
+        assertEquals(500, sportsGuideRows(catalogue, now).single { it.id == "FOOTBALL" }.events.size)
+    }
     @Test fun expandedRegionsAndQualityVariantsPreserveStationIdentity() {
         val keys = sportsBroadcasterKeys("beIN Sports 2", "Turkey")
         for (name in listOf("TR| beINSPORTS2 FHD", "TR| beIN Sport 2 1080p 50FPS BACKUP")) assertTrue(name, sportsChannelKey(name) in keys)

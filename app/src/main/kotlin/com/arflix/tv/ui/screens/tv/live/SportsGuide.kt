@@ -12,6 +12,10 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
 
+internal data class SportsScheduleKey(val profileId: String?, val providerId: String,
+    val sourceVersion: Long, val excludedGroups: Set<String>, val epgBackfill: Boolean, val window: Long)
+internal data class SportsScheduleSnapshot(val key: SportsScheduleKey, val events: List<SportsGuideEvent>)
+
 /** Schedule facts, not stream probes. Channel identities remain provider-specific. */
 internal data class SportsGuideEvent(
     val id: String,
@@ -145,12 +149,12 @@ internal class SportsEventIndex {
 /** XMLTV variants share programme text. Classify it once per scan, with bounded memory. */
 internal class SportsProgrammeResolver {
     data class Metadata(val sport: GuideSport, val identity: String, val competition: String?)
-    private data class Key(val title: String, val category: String?, val description: String?, val fallback: GuideSport?)
+    private data class Key(val title: String, val category: String?, val fallback: GuideSport?)
     private val cache = object : LinkedHashMap<Key, Metadata?>(512, .75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, Metadata?>?) = size > 4096
     }
     fun resolve(programme: IptvProgram, fallback: GuideSport?): Metadata? {
-        val key = Key(programme.title, programme.category, programme.description, fallback)
+        val key = Key(programme.title, programme.category, fallback)
         if (cache.containsKey(key)) return cache[key]
         val metadata = if (nonEvent.containsMatchIn(programme.title)) null else {
             val text = "${programme.category.orEmpty()} ${programme.title}"

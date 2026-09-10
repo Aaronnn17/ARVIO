@@ -121,8 +121,11 @@ fun MiniPlayerRow(
     focusedProgramme: Pair<EnrichedChannel, IptvProgram>? = null,
     onVideoBoundsPositioned: ((Rect) -> Unit)? = null,
     modifier: Modifier = Modifier,
+    focusedProgrammeProvider: (() -> Pair<EnrichedChannel, IptvProgram>?)? = null,
 ) {
     val drawerTranslation = LocalLiveDrawerTranslation.current
+    // Read rapidly changing programme focus here, not in the surrounding guide.
+    val displayedProgramme = focusedProgrammeProvider?.invoke() ?: focusedProgramme
     val drawerDirection = if (LocalLayoutDirection.current == LayoutDirection.Rtl) 1f else -1f
     if (landscapeCompact) {
         val spec = landscapePhoneMiniPlayerSpec()
@@ -142,7 +145,7 @@ fun MiniPlayerRow(
                 onVideoBoundsPositioned = onVideoBoundsPositioned,
             )
             InfoColumn(
-                focusedProgramme = focusedProgramme,
+                focusedProgramme = displayedProgramme,
                 channel = channel,
                 clockTickMillis = clockTickMillis,
                 nowNext = nowNext,
@@ -173,7 +176,7 @@ fun MiniPlayerRow(
                 modifier = Modifier.fillMaxWidth(),
             )
             InfoColumn(
-                focusedProgramme = focusedProgramme,
+                focusedProgramme = displayedProgramme,
                 channel = channel,
                 clockTickMillis = clockTickMillis,
                 nowNext = nowNext,
@@ -192,8 +195,8 @@ fun MiniPlayerRow(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.Top,
         ) {
-            GuideProgrammeSummary(focusedProgramme?.first ?: channel,
-                focusedProgramme?.second ?: nowNext?.now,
+            GuideProgrammeSummary(displayedProgramme?.first ?: channel,
+                displayedProgramme?.second ?: nowNext?.now,
                 Modifier.weight(1f).height(LiveDims.MiniPlayerHeight))
             VideoCard(
                 exoPlayer = exoPlayer,

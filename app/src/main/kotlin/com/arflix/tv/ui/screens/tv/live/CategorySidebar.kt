@@ -1097,11 +1097,7 @@ private fun SidebarRow(
                     if (it.isFocused) onFocused?.invoke()
                 }
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                .border(
-                    width = if (focused) LiveDims.FocusBorder else 0.dp,
-                    color = if (focused) LiveColors.FocusRing else Color.Transparent,
-                    shape = RoundedCornerShape(8.dp),
-                )
+                .liveFocusOutline(focused, 8.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .drawBehind { drawRect(surface.value) }
                 .onPreviewKeyEvent { ev ->
@@ -1194,7 +1190,7 @@ private fun SidebarRow(
                         color = if (active) LiveColors.Fg else LiveColors.FgDim,
                         fontSize = labelSize,
                     ),
-                    maxLines = if (focused) 1 else 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).then(if (focused) Modifier.basicMarquee(
                         iterations = Int.MAX_VALUE, initialDelayMillis = 1000,

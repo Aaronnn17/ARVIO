@@ -21,13 +21,14 @@ import java.io.File
 class SportsMetadataRepository @Inject constructor(client: OkHttpClient, @ApplicationContext context: Context) {
     private val http = client.newBuilder().callTimeout(8, TimeUnit.SECONDS).retryOnConnectionFailure(false).build()
     private val mutex = Mutex()
-    private var cached = emptyList<SportsEventArtwork>()
+    private val diskMutex = Mutex()
+    @Volatile private var cached = emptyList<SportsEventArtwork>()
     private var retryAfter = 0L
-    private var lastSuccess = 0L
+    @Volatile private var lastSuccess = 0L
     private val disk = File(context.cacheDir, "sports-fixtures.json")
 
     suspend fun peek(): List<SportsEventArtwork> = withContext(Dispatchers.IO) {
-        mutex.withLock {
+        diskMutex.withLock {
             if (cached.isNotEmpty()) cached else runCatching {
                 if (disk.exists() && System.currentTimeMillis() - disk.lastModified() < 86_400_000 && disk.length() <= 6_000_000)
                     parseSportsMetadata(disk.readText()).also { cached = it; lastSuccess = disk.lastModified() } else emptyList()
@@ -47,9 +48,11 @@ class SportsMetadataRepository @Inject constructor(client: OkHttpClient, @Applic
                     check(response.isSuccessful)
                     val body = response.body ?: error("Empty sports metadata")
                     check(body.contentLength() <= 6_000_000)
-                    val json = body.string()
+                    // Chunked responses have an unknown length. Bound the actual read too.
+                    check(!body.source().request(6_000_001L))
+                    val json = body.source().readUtf8()
                     val parsed = parseSportsMetadata(json)
-                    if (parsed.isNotEmpty()) runCatching { disk.writeText(json) }
+                    if (parsed.isNotEmpty()) diskMutex.withLock { runCatching { disk.writeText(json) } }
                     parsed
                 }
             }.getOrNull()

@@ -278,7 +278,7 @@ fun EpgGrid(
             return true
         }
         focusJob = scope.launch {
-            revealRow(rowIdx)
+            launch { revealRow(rowIdx) }
             // Retry a few times: Compose may need a frame to mount the row and
             // its programme; falling back to spatial focus can jump to the rail.
             repeat(8) {
@@ -309,9 +309,10 @@ fun EpgGrid(
             return true
         }
         focusJob = scope.launch {
-            revealRow(rowIdx)
+            // Request focus as soon as the target mounts, not after scrolling ends.
+            launch { revealRow(rowIdx) }
             androidx.compose.runtime.withFrameNanos { }
-            repeat(4) { attempt ->
+            repeat(8) { attempt ->
                 val requester = channelFocusRequesters[channel.id] ?: when {
                     rowIdx == 0 -> firstChannelFocusRequester
                     channel.id == selectedChannelId -> selectedChannelFocusRequester
@@ -321,7 +322,7 @@ fun EpgGrid(
                     pendingChannelFocusId = null
                     return@launch
                 }
-                if (attempt < 3) androidx.compose.runtime.withFrameNanos { }
+                if (attempt < 7) androidx.compose.runtime.withFrameNanos { }
             }
             pendingChannelFocusId = null
         }
@@ -971,6 +972,7 @@ private fun ProgramsRow(
                         isPast = placementIsPast,
                         isFocusTarget = placementIsNow,
                         focusable = isFocusable && epgMode,
+                        renderContent = renderWindow.intersects(placement.startMin, placement.endMin),
                         isCatchupSupported = isCatchupSupported,
                         contentStartOffsetPx = {
                             (hScrollOffsetPx() - cellOffsetPx).coerceIn(0f, maxShiftPx).toInt()
@@ -1097,10 +1099,12 @@ private data class ProgramPlacement(
     fun isPast(nowMs: Long): Boolean = endMillis <= nowMs
 }
 
-private data class ProgramFocusTarget(val startMin: Int, val endMin: Int, val isNow: Boolean = false) {
+internal data class ProgramFocusTarget(val startMin: Int, val endMin: Int, val isNow: Boolean = false) {
     fun distanceTo(anchorStartMin: Int): Int = when {
         anchorStartMin < startMin -> startMin - anchorStartMin
-        anchorStartMin > endMin -> anchorStartMin - endMin
+        // Programme intervals are half-open: at 19:30 the 19:00-19:30
+        // programme must not tie with the one that actually starts at 19:30.
+        anchorStartMin >= endMin -> anchorStartMin - endMin + 1
         else -> 0
     }
 }

@@ -80,9 +80,15 @@ internal fun SportsGuidePane(
     var focusedRow by remember { mutableStateOf<String?>(null) }
     var focusedOrder by remember { mutableStateOf(emptyList<String>()) }
     var artworkRetry by remember { mutableIntStateOf(0) }
-    var failedArtwork by remember(events, artworkRetry) { mutableStateOf(emptySet<String>()) }
-    val rows = remember(events, now, focusedRow, focusedOrder, failedArtwork) {
-        sportsPresentationRows(events, now, failedArtwork).map { row ->
+    var failedArtwork by remember(artworkRetry) { mutableStateOf(emptySet<String>()) }
+    var presentationRows by remember { mutableStateOf(emptyList<SportsGuideRow>()) }
+    LaunchedEffect(events, now) {
+        presentationRows = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            sportsPresentationRows(events, now, emptySet())
+        }
+    }
+    val rows = remember(presentationRows, focusedRow, focusedOrder) {
+        presentationRows.map { row ->
             if (row.id == focusedRow) {
                 val rank = focusedOrder.withIndex().associate { it.value to it.index }
                 row.copy(events = row.events.sortedBy { rank[it.id] ?: Int.MAX_VALUE })
@@ -188,7 +194,15 @@ internal fun SportsGuidePane(
                                     .padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(eventTime(event), color = LiveColors.Fg, fontSize = 11.sp)
                                 } else Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).testTag("sports-event-art").clip(RoundedCornerShape(4.dp))) {
-                                    EventArtwork(event, Modifier.fillMaxSize()) { failedArtwork = failedArtwork + event.id }
+                                    if (event.id !in failedArtwork) {
+                                        EventArtwork(event, Modifier.fillMaxSize()) { failedArtwork = failedArtwork + event.id }
+                                    } else {
+                                        // Keep the focused card in place when an image fails.
+                                        Box(Modifier.fillMaxSize().background(LiveColors.Panel), contentAlignment = Alignment.Center) {
+                                            Text(event.title, color = LiveColors.FgDim, maxLines = 3,
+                                                overflow = TextOverflow.Ellipsis, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
+                                        }
+                                    }
                                     Row(Modifier.padding(6.dp).background(Color.Black.copy(alpha = .85f), RoundedCornerShape(3.dp))
                                         .padding(horizontal = 5.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                                         if (event.isOnAir(now)) Box(Modifier.padding(end = 4.dp).size(7.dp).background(LiveColors.LiveRed, RoundedCornerShape(50)))
@@ -216,9 +230,10 @@ internal fun SportsGuidePane(
         }
     }
     }
-    val event = selected?.let { selection -> events.firstOrNull { it.id == selection.id } }
+    val selection = selected
+    val event = selection?.let { snapshot -> events.firstOrNull { it.id == snapshot.id } }
     fun dismiss() { selected = null }
-    if (selected != null) Dialog(onDismissRequest = ::dismiss,
+    if (selection != null) Dialog(onDismissRequest = ::dismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)) {
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
         SideEffect {
@@ -228,24 +243,24 @@ internal fun SportsGuidePane(
         val onAir = event?.isOnAir(now) == true
         val confirmedChannels = if (onAir) event?.availableChannels(now).orEmpty() else event?.channels.orEmpty()
         val possibleIds = event?.possibleChannels.orEmpty().mapTo(hashSetOf()) { it.id }
-        val sourceChannels = confirmedChannels + event?.possibleChannels.orEmpty()
+        val sourceChannels = (confirmedChannels + event?.possibleChannels.orEmpty()).distinctBy { it.id }
         val initialFocus = remember(event?.id) { FocusRequester() }
-        LaunchedEffect(event?.id) {
+        LaunchedEffect(event?.id, onAir, sourceChannels.isEmpty()) {
             // The native dialog window must own focus before Compose assigns its row.
             withFrameNanos { }
             withFrameNanos { }
-            initialFocus.requestFocus()
+            runCatching { initialFocus.requestFocus() }
         }
         Column(Modifier.widthIn(max = 586.dp).fillMaxWidth().heightIn(max = configuration.screenHeightDp.dp * .82f)
             .border(1.dp, LiveColors.DividerStrong, RoundedCornerShape(5.dp))
             .clip(RoundedCornerShape(5.dp)).background(LiveColors.Panel).padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if ((event ?: selected!!).hasEventArtwork && (event ?: selected!!).id !in failedArtwork)
-                    EventArtwork(event ?: selected!!, Modifier.width(if (narrow) 84.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(3.dp)))
+                if ((event ?: selection).hasEventArtwork && (event ?: selection).id !in failedArtwork)
+                    EventArtwork(event ?: selection, Modifier.width(if (narrow) 84.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(3.dp)))
                 Column(Modifier.weight(1f).padding(start = 14.dp)) {
                     Text(listOfNotNull(event?.let(::eventTime), event?.sport?.title).joinToString("  ·  "),
                         color = LiveColors.FgDim, fontSize = 11.sp)
-                    Text(event?.title ?: selected!!.title, fontSize = 18.sp, lineHeight = 21.sp, maxLines = 2,
+                    Text(event?.title ?: selection.title, fontSize = 18.sp, lineHeight = 21.sp, maxLines = 2,
                         overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = LiveColors.Fg,
                         modifier = Modifier.padding(top = 7.dp))
                 }

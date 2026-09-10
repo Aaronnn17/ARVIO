@@ -1592,10 +1592,12 @@ fun LiveTvScreen(
 
     var categoryDrawerOpen by rememberSaveable { mutableStateOf(true) }
     var sportsSelected by rememberSaveable(currentProfile?.id) { mutableStateOf(false) }
+    val sportsScheduleKey = SportsScheduleKey(currentProfile?.id, selectedProviderId, state.snapshot.loadedAt.toEpochMilli(),
+        hiddenGroupSet + restrictedGroupSet, state.epgBackfillInProgress, guideClockMillis / 600_000L)
     var sportsFocusSignal by remember { mutableIntStateOf(0) }
     val sportsClockFormat by remember(currentProfile?.id) { viewModel.sportsClockFormat(currentProfile?.id) }.collectAsStateWithLifecycle(initialValue = "24h")
     var sportsEvents by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) {
-        mutableStateOf<List<SportsGuideEvent>>(emptyList())
+        mutableStateOf(viewModel.cachedSportsSchedule?.takeIf { it.key == sportsScheduleKey }?.events.orEmpty())
     }
     var sportsLoading by remember { mutableStateOf(false) }
     var sportsMetadataLoading by remember { mutableStateOf(false) }
@@ -1607,8 +1609,8 @@ fun LiveTvScreen(
         mutableStateOf<List<Any>?>(null)
     }
     var sportsArtwork by remember(currentProfile?.id) { mutableStateOf(emptyList<com.arflix.tv.data.model.SportsEventArtwork>()) }
-    LaunchedEffect(sportsSelected, currentProfile?.id, sportsRefresh, guideClockMillis / 120_000L) {
-        if (sportsSelected) {
+    LaunchedEffect(currentProfile?.id, state.snapshot.loadedAt, sportsRefresh, guideClockMillis / 120_000L) {
+        if (state.snapshot.loadedAt.toEpochMilli() > 0L) {
             sportsMetadataLoading = true
             try {
             var metadata = viewModel.cachedSportsMetadata()
@@ -1618,22 +1620,36 @@ fun LiveTvScreen(
                 launch { metadata = viewModel.loadSportsMetadata(); sportsArtwork = metadata + addonArtwork }
                 launch { addonArtwork = viewModel.loadSportsAddonArtwork(); sportsArtwork = metadata + addonArtwork }
             }
-            } finally { sportsMetadataLoading = false }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { sportsError = true }
+            finally { sportsMetadataLoading = false }
         }
     }
     var broadcastCandidates by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) { mutableStateOf(emptyList<IptvChannel>()) }
-    val broadcasterKeys = remember(sportsArtwork) { sportsArtwork.flatMap { it.fixture?.broadcasters.orEmpty() }.flatMap { sportsBroadcasterKeys(it.name, it.country) }.toSet() }
-    LaunchedEffect(sportsSelected, broadcasterKeys, currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet, state.snapshot.loadedAt) {
-        if (!sportsSelected || broadcasterKeys.isEmpty()) { broadcastCandidates = emptyList(); return@LaunchedEffect }
+    var broadcasterKeys by remember { mutableStateOf(emptySet<String>()) }
+    LaunchedEffect(sportsArtwork) {
+        broadcasterKeys = withContext(Dispatchers.Default) {
+            sportsArtwork.asSequence().flatMap { it.fixture?.broadcasters.orEmpty().asSequence() }
+                .distinctBy { it.name to it.country }.flatMap { sportsBroadcasterKeys(it.name, it.country).asSequence() }.toSet()
+        }
+    }
+    LaunchedEffect(broadcasterKeys, currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet, state.snapshot.loadedAt) {
+        if (broadcasterKeys.isEmpty()) { broadcastCandidates = emptyList(); return@LaunchedEffect }
         sportsBroadcastLoading = true
         try { broadcastCandidates = withContext(Dispatchers.IO) {
             val ids = linkedSetOf<String>()
             val excluded = hiddenGroupSet + restrictedGroupSet
+            val scope = kotlinx.coroutines.currentCoroutineContext()
+            val names = hashMapOf<String, Boolean>()
             viewModel.iptvRepository.visitStoredChannelLabels(selectedProviderId.takeUnless { it == "all" }) { id, name, group ->
-                if (PlaylistGroupKey.build(channelPlaylistId(id), group.trim()) !in excluded && group !in excluded && sportsChannelKey(name) in broadcasterKeys) ids.add(id)
+                scope.ensureActive()
+                if (PlaylistGroupKey.build(channelPlaylistId(id), group.trim()) !in excluded && group !in excluded &&
+                    names.getOrPut(name) { sportsChannelKey(name) in broadcasterKeys }) ids.add(id)
             }
             ids.chunked(128).flatMap { viewModel.iptvRepository.pagedChannelsByIds(it) }.filter { !it.enrichForFastStartup(0).isAdult }
-        } } finally { sportsBroadcastLoading = false }
+        } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { sportsError = true }
+        finally { sportsBroadcastLoading = false }
     }
     var illustratedSportsEvents by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) { mutableStateOf(emptyList<SportsGuideEvent>()) }
     LaunchedEffect(sportsEvents, sportsArtwork, broadcastCandidates) {
@@ -1642,7 +1658,9 @@ fun LiveTvScreen(
             buildSportsCatalogue(sportsEvents, sportsArtwork, broadcastCandidates, guideClockMillis)
         }
         System.err.println("[Sports-Catalogue] guide=${sportsEvents.size} metadata=${sportsArtwork.size} broadcasters=${broadcastCandidates.size} available=${illustratedSportsEvents.count { it.hasChannels(guideClockMillis) }} illustrated=${illustratedSportsEvents.count { it.hasChannels(guideClockMillis) && it.hasEventArtwork }}")
-        } finally { sportsCatalogueLoading = false }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { sportsError = true }
+        finally { sportsCatalogueLoading = false }
     }
     val sportsProviderNames = remember(state.config.playlists, state.config.stalkerPortals) {
         state.config.playlists.associate { it.id to it.name } + state.config.stalkerPortals.associate { it.id to it.name }
@@ -1653,11 +1671,16 @@ fun LiveTvScreen(
             quickGuideRows[category.id]?.let { category.copy(count = it.size) } ?: category
         })
     }
-    LaunchedEffect(sportsSelected, currentProfile?.id, selectedProviderId, hiddenGroupSet,
+    LaunchedEffect(currentProfile?.id, selectedProviderId, hiddenGroupSet,
         restrictedGroupSet, state.snapshot.loadedAt, state.epgBackfillInProgress, sportsRefresh, guideClockMillis / 600_000L) {
-        if (!sportsSelected) return@LaunchedEffect
+        if (state.snapshot.loadedAt.toEpochMilli() <= 0L) return@LaunchedEffect
         val scanVersion = listOf(state.snapshot.loadedAt, state.epgBackfillInProgress, sportsRefresh, guideClockMillis / 600_000L)
         if (completedSportsScan == scanVersion) return@LaunchedEffect
+        viewModel.cachedSportsSchedule?.takeIf { it.key == sportsScheduleKey && sportsRefresh == 0 }?.let {
+            sportsEvents = it.events
+            completedSportsScan = scanVersion
+            return@LaunchedEffect
+        }
         sportsLoading = true
         sportsError = false
         try {
@@ -1666,16 +1689,18 @@ fun LiveTvScreen(
                 val candidateIds = linkedSetOf<String>()
                 val generalIds = linkedSetOf<String>()
                 val indexedIds = viewModel.iptvRepository.cachedGuideChannelIds(guideClockMillis, guideClockMillis + 48 * 60 * 60_000L)
-                val groupSports = hashMapOf<String, Boolean>()
+                val groupSports = hashMapOf<String, GuideSport?>()
+                val fallbacks = hashMapOf<String, GuideSport?>()
                 val excluded = hiddenGroupSet + restrictedGroupSet
                 val genericSports = Regex("\\b(sports?|espn|eurosport)\\b", RegexOption.IGNORE_CASE)
                 viewModel.iptvRepository.visitStoredChannelLabels(selectedProviderId.takeUnless { it == "all" }) { id, name, group ->
                     context.ensureActive()
                     val key = PlaylistGroupKey.build(channelPlaylistId(id), group.trim())
-                    if (key !in excluded && group !in excluded) {
-                        val sportsGroup = groupSports.getOrPut(group) { GuideSport.fromText(group) != null || genericSports.containsMatchIn(group) }
-                        if ((sportsGroup || GuideSport.fromText(name) != null || genericSports.containsMatchIn(name)) &&
-                            (id in indexedIds || state.snapshot.nowNext.containsKey(id))) candidateIds.add(id)
+                    if (key !in excluded && group !in excluded && (id in indexedIds || id in state.snapshot.nowNext)) {
+                        if (!groupSports.containsKey(group)) groupSports[group] = GuideSport.fromText(group)
+                        val sport = groupSports[group] ?: GuideSport.fromText(name)
+                        fallbacks[id] = sport
+                        if (sport != null || genericSports.containsMatchIn(group) || genericSports.containsMatchIn(name)) candidateIds.add(id)
                         else if (id in indexedIds) generalIds.add(id)
                     }
                 }
@@ -1685,37 +1710,33 @@ fun LiveTvScreen(
                 candidateIds.addAll(generalIds)
                 val events = SportsEventIndex()
                 val programmeResolver = SportsProgrammeResolver()
-                var lastPublish = android.os.SystemClock.elapsedRealtime()
                 val startedAt = android.os.SystemClock.elapsedRealtime()
                 for (ids in candidateIds.toList().chunked(1024)) {
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    val batch = viewModel.iptvRepository.pagedChannelsByIds(ids).filter { !it.enrichForFastStartup(0).isAdult }
-                    val byId = batch.associateBy { it.id }
-                    val fallback = batch.associate { it.id to GuideSport.fromText("${it.group} ${it.name}") }
                     val indexedIdsInBatch = hashSetOf<String>()
-                    // Resolve shared XMLTV aliases together, then discard non-events while
-                    // streaming. Do not allocate/sort full 48-hour schedules for every variant.
-                    viewModel.iptvRepository.visitCachedGuideWindow(byId.keys,
+                    val matches = hashMapOf<String, MutableList<Pair<IptvProgram, SportsProgrammeResolver.Metadata>>>()
+                    // Classify first; deserialize full channel records only for actual events.
+                    viewModel.iptvRepository.visitCachedGuideWindow(ids.toSet(),
                         guideClockMillis, guideClockMillis + 48 * 60 * 60_000L) { id, programme ->
                         context.ensureActive()
                         indexedIdsInBatch.add(id)
-                        val channel = byId[id]
-                        val meta = programmeResolver.resolve(programme, fallback[id])
-                        if (channel != null && meta != null) events.add(meta.sport, meta.identity, programme, channel, meta.competition)
+                        val meta = programmeResolver.resolve(programme, fallbacks[id])
+                        if (meta != null) matches.getOrPut(id) { arrayListOf() }.add(programme to meta)
                     }
+                    val uncachedIds = ids.filter { it !in indexedIdsInBatch && it in state.snapshot.nowNext }
+                    val batch = viewModel.iptvRepository.pagedChannelsByIds(matches.keys + uncachedIds)
+                        .filter { !it.enrichForFastStartup(0).isAdult }
+                    batch.forEach { channel -> matches[channel.id].orEmpty().forEach { (programme, meta) ->
+                        events.add(meta.sport, meta.identity, programme, channel, meta.competition)
+                    } }
                     val uncached = batch.filter { it.id !in indexedIdsInBatch }
                     accumulateSportsGuideEvents(uncached, state.snapshot.nowNext, guideClockMillis, events, resolver = programmeResolver)
-                    if (android.os.SystemClock.elapsedRealtime() - lastPublish >= 2000) {
-                        val partial = events.events()
-                        // Publish newly discovered illustrated matches without waiting for the full large-guide scan.
-                        withContext(Dispatchers.Main) { sportsEvents = retainSportsEventOrder(sportsEvents, partial) }
-                        lastPublish = android.os.SystemClock.elapsedRealtime()
-                    }
                 }
                 System.err.println("[Sports-Scan] candidates=${candidateIds.size} events=${events.events().size} elapsed=${android.os.SystemClock.elapsedRealtime() - startedAt}ms")
                 events.events()
             }
             sportsEvents = retainSportsEventOrder(sportsEvents, result)
+            viewModel.cachedSportsSchedule = SportsScheduleSnapshot(sportsScheduleKey, sportsEvents)
             completedSportsScan = scanVersion
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
@@ -2491,8 +2512,10 @@ fun LiveTvScreen(
             .addInterceptor(IptvProviderRequestGuard.shared.preflightInterceptor(playback = true))
             .addNetworkInterceptor(IptvProviderRequestGuard.shared.playbackInterceptor())
             .dns(OkHttpProvider.dns)
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(300, TimeUnit.SECONDS)
+            .connectTimeout(8, TimeUnit.SECONDS)
+            // An idle live socket should fail, not freeze startup for five minutes.
+            // No total call timeout: healthy continuous streams may run indefinitely.
+            .readTimeout(15, TimeUnit.SECONDS)
             .build()
     }
     val baseRequestHeaders = remember {
@@ -2636,7 +2659,6 @@ fun LiveTvScreen(
         resolvedMimeType: String? = null,
     ) {
         val mergedHeaders = (baseRequestHeaders + headers).safePlaybackHeaders()
-        iptvDataSourceFactory.setDefaultRequestProperties(mergedHeaders)
 
         if (!forcePrepare &&
             stream == lastPreparedStreamUrl &&
@@ -2682,11 +2704,17 @@ fun LiveTvScreen(
                 }
             }
             .build()
-        if (initialPositionMs > 0L) {
-            exoPlayer.setMediaItem(mediaItem, initialPositionMs)
-        } else {
-            exoPlayer.setMediaItem(mediaItem)
+        // Per-source factories keep an old load from inheriting the next channel's headers.
+        val sourceHttpFactory = OkHttpDataSource.Factory(iptvHttpClient)
+            .setDefaultRequestProperties(mergedHeaders)
+        val sourceDataFactory = androidx.media3.datasource.DataSource.Factory {
+            val upstream = sourceHttpFactory.createDataSource()
+            if (isHls) upstream else IptvHlsDetectingDataSource(upstream, stream)
         }
+        val source = DefaultMediaSourceFactory(context).setDataSourceFactory(sourceDataFactory)
+            .setLoadErrorHandlingPolicy(IptvLoadErrorHandlingPolicy()).createMediaSource(mediaItem)
+        if (initialPositionMs > 0L) exoPlayer.setMediaSource(source, initialPositionMs)
+        else exoPlayer.setMediaSource(source)
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
         exoPlayer.play()
@@ -2916,6 +2944,16 @@ fun LiveTvScreen(
             override fun onPlayerError(error: PlaybackException) {
                 playerIsBuffering = false
                 val prepared = lastPreparedStreamUrl ?: return
+                val detectedHls = error.iptvHlsFormatDetected()
+                if (detectedHls?.sourceUrl == prepared && !lastPreparedIsHls &&
+                    exoPlayer.currentMediaItem?.mediaId == playingChannelId.orEmpty()) {
+                    retryJob?.cancel()
+                    viewModel.rememberPlaybackHls(currentStreamUrl ?: prepared, lastPreparedHeaders, prepared)
+                    prepareStream(prepared, isHls = true, headers = lastPreparedHeaders, resetRetry = false,
+                        initialPositionMs = playingChannel?.source?.catchupInSegmentSeekOffset(catchupPlaybackOffsetMs) ?: 0L,
+                        drmInfo = playingChannel?.source?.drmInfo, forcePrepare = true)
+                    return
+                }
                 if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW &&
                     liveWindowRecovery.claim(isCatchup = playingCatchupProgram != null)
                 ) {
@@ -2991,6 +3029,7 @@ fun LiveTvScreen(
                             IptvPlaybackTarget(prepared, preparedIsHls)
                         }
                     }.getOrElse { resolveError ->
+                        if (resolveError is kotlinx.coroutines.CancellationException) throw resolveError
                         playbackDiagnostic = PlaybackDiagnostic(
                             title = if (retryProgram != null) context.getString(R.string.live_diag_catchup_unavailable) else context.getString(R.string.live_diag_playback_failed),
                             detail = resolveError.message ?: classifyPlaybackError(error),
@@ -3313,7 +3352,7 @@ fun LiveTvScreen(
                         )
                     }
                     if (!sportsSelected) MiniPlayerRow(
-                        focusedProgramme = focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG },
+                        focusedProgrammeProvider = { focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG } },
                         exoPlayer = exoPlayer,
                         channel = playingDisplayChannel,
                         clockTickMillis = guideClockMillis,
@@ -3488,7 +3527,7 @@ fun LiveTvScreen(
                         .padding(top = contentTopPadding),
                 ) {
                     if (!sportsSelected) MiniPlayerRow(
-                        focusedProgramme = focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG },
+                        focusedProgrammeProvider = { focusedProgramme.takeIf { focusZone == LiveTvFocusZone.EPG } },
                         exoPlayer = exoPlayer,
                         channel = playingDisplayChannel,
                         clockTickMillis = guideClockMillis,

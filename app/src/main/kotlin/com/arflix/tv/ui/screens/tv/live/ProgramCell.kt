@@ -76,6 +76,7 @@ fun ProgramCell(
     isPast: Boolean,
     isFocusTarget: Boolean,
     focusable: Boolean = true,
+    renderContent: Boolean = true,
     isCatchupSupported: Boolean = false,
     onClick: () -> Unit,
     onFocused: () -> Unit = {},
@@ -108,11 +109,6 @@ fun ProgramCell(
         if (focused) LiveColors.PanelRaised else baseBg,
         tween(120), label = "programme-surface",
     )
-    val borderColor = when {
-        focused -> LiveColors.FocusRing
-        else -> Color.Transparent
-    }
-    val borderWidth = if (focused) LiveDims.FocusBorder else 1.dp
     val contentAlpha = animateFloatAsState(
         targetValue = if (isPast && !focused && !isCatchupSupported) 0.55f else 1f,
         animationSpec = tween(durationMillis = 90),
@@ -147,11 +143,7 @@ fun ProgramCell(
                     Modifier
                 }
             )
-            .border(
-                width = borderWidth,
-                color = borderColor,
-                shape = RoundedCornerShape(LiveDims.CellRadius),
-            )
+            .liveFocusOutline(focused, LiveDims.CellRadius)
             .drawBehind {
                 val radius = LiveDims.CellRadius.toPx()
                 drawRoundRect(bg.value, cornerRadius = CornerRadius(radius))
@@ -201,7 +193,8 @@ fun ProgramCell(
             }
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
-        Column(
+        // Retain off-screen bounds/focus targets without laying out invisible text.
+        if (renderContent) Column(
             modifier = Modifier
                 .fillMaxSize()
                 // Read scroll position in measurement, not row composition.

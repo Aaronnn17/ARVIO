@@ -140,7 +140,7 @@ fun ChannelRow(
                 // Read animation state in drawing, not composition: channel
                 // text and logo layout should not rebuild for each border frame.
                 val stroke = animatedBorderWidth.value.toPx()
-                if (visuallyFocused && stroke > 0f) {
+                if (stroke > 0f) {
                     drawRoundRect(
                         color = LiveColors.FocusRing,
                         topLeft = Offset(inset + stroke / 2f, inset + stroke / 2f),
@@ -249,7 +249,7 @@ fun ChannelRow(
                         fontSize = 11.sp,
                         lineHeight = 13.sp,
                     ),
-                    maxLines = if (visuallyFocused) 1 else 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false).then(if (visuallyFocused) Modifier.basicMarquee(
                         iterations = Int.MAX_VALUE, initialDelayMillis = 1000,

@@ -144,6 +144,17 @@ class GuideRenderingDeviceTest {
         compose.runOnIdle { assertTrue(focusedTitle.startsWith("Programme render:0:")) }
     }
 
+    @Test fun offscreenProgrammeCanBeRevealedAndNavigatedBackWithoutLosingFocus() {
+        showGuide()
+        compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+        repeat(16) { compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) } }
+        compose.onNodeWithText("Programme render:0:20").assertIsFocused().assertIsDisplayed()
+        repeat(14) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
+        compose.onNodeWithText("Programme render:14:20").assertIsFocused().assertIsDisplayed()
+        repeat(16) { compose.onRoot().performKeyInput { pressKey(Key.DirectionLeft) } }
+        compose.onNodeWithText("Programme render:14:4").assertIsFocused().assertIsDisplayed()
+    }
+
     @Test fun sustainedChannelScrollKeepsItsPosition() {
         showGuide()
         repeat(60) { compose.onRoot().performKeyInput { pressKey(Key.DirectionDown) } }
