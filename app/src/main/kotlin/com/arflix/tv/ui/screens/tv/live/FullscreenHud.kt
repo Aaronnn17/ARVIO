@@ -97,6 +97,7 @@ fun FullscreenHud(
     onNextCatchupClick: (() -> Unit)? = null,
     onReplayClick: (() -> Unit)? = null,
     onGoLiveClick: (() -> Unit)? = null,
+    onOpenVariants: (() -> Unit)? = null,
     onSeekToPosition: ((Long) -> Unit)? = null,
     onOpenQuickZap: (() -> Unit)? = null,
     onVisibilityChanged: ((Boolean) -> Unit)? = null,
@@ -498,6 +499,14 @@ fun FullscreenHud(
                             HudActionButton(
                                 label = stringResource(R.string.live_badge_live),
                                 onClick = { onGoLiveClick?.invoke() },
+                            )
+                        }
+
+                        // Other Sources Button
+                        if (onOpenVariants != null) {
+                            HudActionButton(
+                                label = "Sources",
+                                onClick = { onOpenVariants.invoke() },
                             )
                         }
 
