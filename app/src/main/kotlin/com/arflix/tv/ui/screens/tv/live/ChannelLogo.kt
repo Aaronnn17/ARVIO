@@ -57,9 +57,7 @@ fun ChannelLogo(
     val providerUrl = remember(channel.logo) { safeChannelLogoUrl(channel.logo) }
     var failed by remember(channel.id, providerUrl) { mutableStateOf(emptySet<String>()) }
     var alternatives by remember(channel.id, providerUrl) { mutableStateOf(emptyList<String>()) }
-    val needsDirectory = providerUrl == null || providerUrl in failed || FailedChannelLogos.contains(providerUrl)
-    LaunchedEffect(channel.id, channel.source.epgId, channel.name, needsDirectory) {
-        if (needsDirectory) {
+    LaunchedEffect(channel.id, channel.source.epgId, channel.name, providerUrl) {
             alternatives = try {
                 ChannelLogoDirectory.candidates(context, channel.source.epgId, channel.name)
             } catch (cancelled: CancellationException) {
@@ -67,9 +65,9 @@ fun ChannelLogo(
             } catch (_: Exception) {
                 emptyList()
             }
-        }
     }
-    val logoUrl = (listOfNotNull(providerUrl) + alternatives).distinct()
+    // A valid HTTP response can still be a provider's blank/text tile.
+    val logoUrl = (alternatives + listOfNotNull(providerUrl)).distinct()
         .firstOrNull { it !in failed && !FailedChannelLogos.contains(it) }
     var showFallback by remember(channel.id, logoUrl) { mutableStateOf(true) }
     Box(

@@ -27,7 +27,7 @@ test('UTC fixtures, verified pairs, and only public artwork fields', () => {
   assert.equal(normalizeEvent({ ...fixture, strTimestamp: '', dateEvent: '2026-09-10' }), null);
   assert.equal(normalizeEvent({ ...fixture, strThumb: 'https://r2.thesportsdb.com/images/media/event/thumb/a.jpg' }).background.endsWith('a.jpg'), true);
 });
-const fetchPayload = url => url.includes('/livescore/') ? { livescore: [] } : url.includes('/filter/') ? { filter: [] } : { events: [fixture] };
+const fetchPayload = url => url.includes('/livescore/') ? { livescore: [] } : url.includes('eventstv.php') ? { tvevents: [] } : url.includes('/filter/') ? { filter: [] } : { events: [fixture] };
 test('100 concurrent clients consume NINE bounded upstream requests, then reuse shared cache', async () => {
   let calls = 0;
   const shared = store();
@@ -79,11 +79,40 @@ test('truncated daily broadcasts get bounded shared regional coverage', async ()
   const result = await fetchFixtures({ apiKey: 'test', now, fetcher: async url => {
     calls++;
     const payload = url.includes('/country/') ? { filter: [{ idEvent: '123', strChannel: 'TNT Sports 2', strCountry: 'United Kingdom', strTimeStamp: '2026-09-10T14:00:00Z' }] }
-      : url.includes('/filter/') ? { filter: Array.from({length: 100}, () => ({idEvent: 'not-in-window'})) } : { events: [fixture] };
+      : url.includes('eventstv.php') ? { tvevents: Array.from({length: 1500}, () => ({idEvent: 'not-in-window'})) } : { events: [fixture] };
     return { ok: true, json: async () => payload };
   } });
   assert.equal(calls, 16, 'four fixture days, four TV days, eight regional supplements');
   assert.equal(result.events[0].broadcasters.length, 1, 'deduplicate across feeds');
   assert.equal(result.events[0].broadcasters[0].name, 'TNT Sports 2');
   assert.equal(result.broadcastsPartial, true, 'supplementing cannot promise complete worldwide coverage');
+});
+
+test('premium daily schedule keeps broadcasts after the old 100-row cutoff', async () => {
+  const { fetchFixtures } = require('../netlify/functions/_sports-metadata');
+  const calls = [];
+  const result = await fetchFixtures({ apiKey: 'test', now, fetcher: async url => {
+    calls.push(url);
+    return { ok: true, json: async () => url.includes('eventstv.php') ? { tvevents: Array.from({ length: 350 }, (_, i) => ({
+      idEvent: '123', strChannel: `Sports ${i}`, strCountry: 'Netherlands', strTimestamp: fixture.strTimestamp,
+    })) } : { events: [fixture] } };
+  } });
+  assert.equal(result.events[0].broadcasters.length, 350);
+  assert.equal(result.broadcastsPartial, false);
+  assert.equal(calls.length, 8, 'no per-event or per-user requests');
+});
+
+test('one unavailable TV day does not discard the remaining days', async () => {
+  const { fetchFixtures } = require('../netlify/functions/_sports-metadata');
+  let days = 0;
+  const result = await fetchFixtures({ apiKey: 'test', now, fetcher: async url => {
+    if (url.includes('eventstv.php')) {
+      if (++days === 1) throw new Error('Unavailable');
+      return { ok: true, json: async () => ({ tvevents: [{ idEvent: '123', strChannel: 'Sports', strCountry: 'NL', strTimeStamp: fixture.strTimestamp }] }) };
+    }
+    return { ok: true, json: async () => url.includes('/country/') ? { filter: [] } : { events: [fixture] } };
+  } });
+  assert.equal(days, 4);
+  assert.equal(result.events[0].broadcasters.length, 1);
+  assert.equal(result.broadcastsPartial, true);
 });

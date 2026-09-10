@@ -1632,7 +1632,7 @@ fun LiveTvScreen(
             viewModel.iptvRepository.visitStoredChannelLabels(selectedProviderId.takeUnless { it == "all" }) { id, name, group ->
                 if (PlaylistGroupKey.build(channelPlaylistId(id), group.trim()) !in excluded && group !in excluded && sportsChannelKey(name) in broadcasterKeys) ids.add(id)
             }
-            ids.take(5000).chunked(128).flatMap { viewModel.iptvRepository.pagedChannelsByIds(it) }.filter { !it.enrichForFastStartup(0).isAdult }
+            ids.chunked(128).flatMap { viewModel.iptvRepository.pagedChannelsByIds(it) }.filter { !it.enrichForFastStartup(0).isAdult }
         } } finally { sportsBroadcastLoading = false }
     }
     var illustratedSportsEvents by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) { mutableStateOf(emptyList<SportsGuideEvent>()) }

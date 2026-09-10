@@ -16,9 +16,10 @@ class ChannelLogoIndex(entries: List<ChannelLogoEntry>) {
 
     fun candidates(epgId: String?, name: String): List<String> {
         byId[epgId?.trim()?.lowercase(Locale.ROOT)]?.let { return it.urls }
-        val prefix = countryPrefix.find(name.trim())
+        val cleaned = name.trim().replace(Regex("^(?:4K|8K|UHD|FHD|HD)\\s*[|:]\\s*", RegexOption.IGNORE_CASE), "")
+        val prefix = countryPrefix.find(cleaned)
         val country = prefix?.groupValues?.get(1)?.uppercase(Locale.ROOT)?.let { countries[it] }
-        val title = if (country != null) name.trim().substring(prefix!!.range.last + 1) else name
+        val title = if (country != null) cleaned.substring(prefix!!.range.last + 1) else cleaned
         val matches = byName[nameKey(title)].orEmpty().filter {
             country == null || (countries[it.country.uppercase(Locale.ROOT)] ?: it.country.uppercase(Locale.ROOT)) == country
         }
@@ -32,7 +33,7 @@ class ChannelLogoIndex(entries: List<ChannelLogoEntry>) {
             "BR" to "BR", "BE" to "BE", "CH" to "CH", "AT" to "AT", "IE" to "IE",
             "DK" to "DK", "DNK" to "DK", "SE" to "SE", "NO" to "NO", "FI" to "FI",
             "PL" to "PL", "RO" to "RO", "TR" to "TR", "IN" to "IN", "AR" to "AR")
-        private val countryPrefix = Regex("^([A-Za-z]{2,3})\\s*[|:]\\s*")
+        private val countryPrefix = Regex("^([A-Za-z]{2,3})(?:-[A-Za-z0-9]+)?\\s*[|:]\\s*")
         private val quality = Regex("(?:[\\s|_-]+(?:SD|HD|FHD|UHD|4K|8K|HEVC|H265|H264|RAW|BACKUP|1080P|720P|2160P))+$", RegexOption.IGNORE_CASE)
         private val marks = Regex("\\p{M}+")
         private val punctuation = Regex("[^\\p{L}\\p{N}+]")

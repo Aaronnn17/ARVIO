@@ -6,6 +6,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SportsMetadataTest {
+    @Test fun premiumBroadcasterCoverageIsNotTruncatedAtOneHundred() {
+        val broadcasters = (1..350).joinToString(",") { """{"name":"Sports $it","country":"Netherlands","startsAt":1789048800000}""" }
+        val json = """{"version":1,"catalogueEnabled":true,"events":[{"id":"42","title":"North vs South","sport":"Soccer","startsAt":1789048800000,"broadcasters":[$broadcasters]}]}"""
+        assertEquals(350, parseSportsMetadata(json).single().fixture!!.broadcasters.size)
+    }
     private val start = 1_789_048_800_000L
     private val payload = """{"version":1,"events":[{"title":"Barcelona vs Feyenoord","sport":"Soccer","startsAt":$start,
         "homeBadge":"https://example.com/home.png","awayBadge":"https://example.com/away.png",

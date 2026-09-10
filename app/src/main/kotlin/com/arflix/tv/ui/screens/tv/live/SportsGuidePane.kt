@@ -82,7 +82,7 @@ internal fun SportsGuidePane(
     var artworkRetry by remember { mutableIntStateOf(0) }
     var failedArtwork by remember(events, artworkRetry) { mutableStateOf(emptySet<String>()) }
     val rows = remember(events, now, focusedRow, focusedOrder, failedArtwork) {
-        sportsGuideRows(events.filter { it.hasChannels(now) && it.hasEventArtwork && it.id !in failedArtwork }, now).map { row ->
+        sportsPresentationRows(events, now, failedArtwork).map { row ->
             if (row.id == focusedRow) {
                 val rank = focusedOrder.withIndex().associate { it.value to it.index }
                 row.copy(events = row.events.sortedBy { rank[it.id] ?: Int.MAX_VALUE })
@@ -162,6 +162,7 @@ internal fun SportsGuidePane(
                     LazyRow(Modifier.padding(horizontal = 18.dp), contentPadding = PaddingValues(vertical = 1.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         itemsIndexed(row.events, key = { _, event -> event.id }) { index, event ->
+                            val scheduleOnly = row.id.endsWith("-schedule")
                             val itemRequester = remember { FocusRequester() }
                             val requester = if (index == 0 && rowIndex == 0) firstFocus else itemRequester
                             var focused by remember { mutableStateOf(false) }
@@ -182,7 +183,11 @@ internal fun SportsGuidePane(
                                 }
                                 .clickable { returnFocus = requester; showScore = false; selected = event }
                                 .padding(2.dp)) {
-                                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).testTag("sports-event-art").clip(RoundedCornerShape(4.dp))) {
+                                if (scheduleOnly) Row(Modifier.fillMaxWidth().height(36.dp)
+                                    .border(2.dp, if (focused) Color.White else LiveColors.DividerStrong, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(eventTime(event), color = LiveColors.Fg, fontSize = 11.sp)
+                                } else Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).testTag("sports-event-art").clip(RoundedCornerShape(4.dp))) {
                                     EventArtwork(event, Modifier.fillMaxSize()) { failedArtwork = failedArtwork + event.id }
                                     Row(Modifier.padding(6.dp).background(Color.Black.copy(alpha = .85f), RoundedCornerShape(3.dp))
                                         .padding(horizontal = 5.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -235,7 +240,8 @@ internal fun SportsGuidePane(
             .border(1.dp, LiveColors.DividerStrong, RoundedCornerShape(5.dp))
             .clip(RoundedCornerShape(5.dp)).background(LiveColors.Panel).padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                EventArtwork(event ?: selected!!, Modifier.width(if (narrow) 84.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(3.dp)))
+                if ((event ?: selected!!).hasEventArtwork && (event ?: selected!!).id !in failedArtwork)
+                    EventArtwork(event ?: selected!!, Modifier.width(if (narrow) 84.dp else 132.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(3.dp)))
                 Column(Modifier.weight(1f).padding(start = 14.dp)) {
                     Text(listOfNotNull(event?.let(::eventTime), event?.sport?.title).joinToString("  ·  "),
                         color = LiveColors.FgDim, fontSize = 11.sp)

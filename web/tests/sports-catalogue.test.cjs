@@ -120,3 +120,44 @@ test('backend kill switch retains legacy artwork mode', () => {
   const items = parseSportsMetadata({ version: 1, catalogueEnabled: false, events: [raw] });
   assert.equal(items.length, 0);
 });
+
+test('all quality versions match across more regions without crossing channels or countries', () => {
+  const { sportsBroadcasterKeys, sportsChannelKey } = load('./sportsCatalogue');
+  const keys = sportsBroadcasterKeys('beIN Sports 2', 'Turkey');
+  for (const name of ['TR| beINSPORTS2 FHD', 'TR| beIN Sport 2 1080p 50FPS BACKUP']) assert.ok(keys.includes(sportsChannelKey(name)), name);
+  for (const name of ['FR| beIN Sports 2', 'TR| beIN Sports 3', 'TR| beIN Sports 2 +1']) assert.ok(!keys.includes(sportsChannelKey(name)), name);
+  assert.ok(sportsBroadcasterKeys('SuperSport 1', 'South Africa').includes(sportsChannelKey('ZA | SuperSport 1 UHD')));
+});
+
+test('short and explicitly known participant aliases match all provider variants', () => {
+  const metadata = art({ title: 'Manchester United vs PSV', homeTeam: 'Manchester United', awayTeam: 'PSV', startsAt: now });
+  const other = { ...channel, id: 'other:2' };
+  const guide = [{ ...epg, title: 'Football: Man Utd - PSV, Premier League' }, { ...epg, id: 'second', title: 'Football: PSV - Manchester United', channels: [other], schedules: { [other.id]: epg.programme } }];
+  const event = buildSportsCatalogue(guide, metadata, [], now).find(e => e.fixture);
+  assert.equal(event.channels.length, 2);
+  assert.equal(buildSportsCatalogue([{ ...epg, title: 'Man City - PSV' }], metadata, [], now).find(e => e.fixture).channels.length, 0);
+});
+
+test('new sport families are classified, F1 and Australian football stay distinct', () => {
+  for (const [sport, id] of [['Rugby', 'rugby'], ['Golf', 'golf'], ['Motorsport', 'motorsport'], ['Formula 1', 'f1'], ['Australian Football', 'australian-football'], ['Snooker', 'snooker'], ['Cycling', 'cycling'], ['Volleyball', 'volleyball']]) {
+    const event = buildSportsCatalogue([], art({ sport }), [channel], now)[0];
+    assert.equal(event.sportId, id);
+    assert.ok(sportsGuideRows([event], now).some(row => row.id === id));
+  }
+});
+
+test('missing or failed artwork never hides matched events, but hidden sources stay excluded', () => {
+  const { sportsPresentationRows } = load('./sportsGuide');
+  const event = buildSportsCatalogue([], art(), [channel], now)[0];
+  const rows = sportsPresentationRows([event], now, new Set());
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, 'football-schedule');
+  const pictured = { ...event, artwork: 'https://example.com/event.jpg' };
+  assert.equal(sportsPresentationRows([pictured], now, new Set([event.id]))[0].id, 'football-schedule');
+  assert.equal(sportsPresentationRows([{ ...event, possibleChannels: [] }], now, new Set()).length, 0);
+});
+
+test('premium broadcaster coverage is not truncated at one hundred', () => {
+  const item = art({ broadcasters: Array.from({length:350}, (_, i) => ({name:`Sports ${i}`, country:'Netherlands', startsAt:now})) })[0];
+  assert.equal(item.fixture.broadcasters.length, 350);
+});

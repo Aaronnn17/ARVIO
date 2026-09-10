@@ -17,15 +17,25 @@ internal fun sportsProminence(league: String?, countries: Int = 0): Int {
     return (if (name in major) 200 else if (name in featured) 100 else 0) + countries.coerceIn(0, 50) * 2
 }
 
-private val channelQuality = Regex("\\b(uhd|fhd|hd|sd|4k|8k|hevc|h265|h264)\\b", RegexOption.IGNORE_CASE)
+private val channelQuality = Regex("\\b(uhd|fhd|hd|sd|4k|8k|hevc|h[.]?265|h[.]?264|1080p|720p|2160p|(?:25|30|50|60)fps|raw|backup)\\b", RegexOption.IGNORE_CASE)
+private val channelPackage = Regex("^([a-z]{2,3})\\s+nowtv\\s+")
+private val tntStation = Regex("\\btnt sport\\b")
+private val beinStation = Regex("\\bbein\\s*sports?\\s*(\\d*)")
+private val stationNumber = Regex("\\b(sports|espn)(\\d+)\\b")
+private val channelSpaces = Regex("\\s+")
 internal fun sportsChannelKey(name: String) = sportsArtworkKey(name.replace(channelQuality, ""))
-    .replace(Regex("^(uk|gb|us|usa|nl|de|fr|es|it|pt|br|au|ca)\\s+(?:nowtv|raw|backup)\\s+"), "$1 ")
-    .replace(Regex("\\btnt sport\\b"), "tnt sports").replace(Regex("\\s+"), " ").trim()
+    .replace(channelPackage, "$1 ")
+    .replace(tntStation, "tnt sports").replace(beinStation, "bein sports $1")
+    .replace(stationNumber, "$1 $2").replace(channelSpaces, " ").trim()
+private val broadcasterRegions = mapOf("united kingdom" to listOf("uk", "gb"), "united states" to listOf("us", "usa"), "netherlands" to listOf("nl", "nld"),
+        "germany" to listOf("de", "ger"), "france" to listOf("fr"), "spain" to listOf("es"), "italy" to listOf("it"), "portugal" to listOf("pt"),
+        "brazil" to listOf("br"), "australia" to listOf("au"), "canada" to listOf("ca"), "belgium" to listOf("be"), "switzerland" to listOf("ch"),
+        "austria" to listOf("at"), "ireland" to listOf("ie"), "denmark" to listOf("dk", "dnk"), "sweden" to listOf("se"), "norway" to listOf("no"),
+        "finland" to listOf("fi"), "poland" to listOf("pl"), "romania" to listOf("ro"), "turkey" to listOf("tr"), "india" to listOf("in"),
+        "argentina" to listOf("ar"), "mexico" to listOf("mx"), "south africa" to listOf("za"), "new zealand" to listOf("nz"),
+        "saudi arabia" to listOf("sa"), "united arab emirates" to listOf("ae", "uae"))
 internal fun sportsBroadcasterKeys(name: String, country: String): List<String> {
-    val regions = mapOf("united kingdom" to listOf("uk", "gb"), "united states" to listOf("us", "usa"), "netherlands" to listOf("nl"),
-        "germany" to listOf("de"), "france" to listOf("fr"), "spain" to listOf("es"), "italy" to listOf("it"), "portugal" to listOf("pt"),
-        "brazil" to listOf("br"), "australia" to listOf("au"), "canada" to listOf("ca"))
-    val codes = regions[country.lowercase(java.util.Locale.ROOT)].orEmpty()
+    val codes = broadcasterRegions[country.trim().lowercase(java.util.Locale.ROOT)].orEmpty()
     val key = sportsChannelKey(name)
     // TV listings often include the country in the name, e.g. ESPN 3 Netherlands.
     // Strip only the explicitly supplied country, never another region or channel number.
@@ -36,6 +46,17 @@ internal fun sportsBroadcasterKeys(name: String, country: String): List<String> 
 private fun leagueKey(name: String): String {
     val key = sportsArtworkKey(name)
     return if (key in setOf("english premier league", "spanish la liga", "italian serie a", "german bundesliga", "french ligue 1")) key.substringAfter(' ') else key
+}
+
+private val footballAliases = listOf(
+    listOf("manchester united", "man utd"), listOf("manchester city", "man city"),
+    listOf("paris saint germain", "paris sg", "psg"), listOf("bayern munich", "bayern munchen"),
+    listOf("internazionale", "inter milan"), listOf("atletico madrid", "atl madrid"),
+)
+private fun participantKeys(name: String?, sport: GuideSport): List<String> {
+    val key = sportsArtworkKey(name.orEmpty())
+    if (key.length < 3) return emptyList()
+    return if (sport == GuideSport.FOOTBALL) footballAliases.firstOrNull { key in it } ?: listOf(key) else listOf(key)
 }
 
 internal fun buildSportsCatalogue(guide: List<SportsGuideEvent>, artwork: List<SportsEventArtwork>, channels: List<IptvChannel>, now: Long,
@@ -52,11 +73,11 @@ internal fun buildSportsCatalogue(guide: List<SportsGuideEvent>, artwork: List<S
         val fixture = item.fixture!!; val start = item.startsAt!!
         val sport = GuideSport.fromText(item.genres.joinToString(" ")) ?: return@mapNotNull null
         if (!seen.add(fixture.id) || start >= until || start < now - 86_400_000) return@mapNotNull null
-        val home = item.homeTeam?.let(::sportsArtworkKey)
-        val away = item.awayTeam?.let(::sportsArtworkKey)
+        val home = participantKeys(item.homeTeam, sport)
+        val away = participantKeys(item.awayTeam, sport)
         // Both complete participant names must be present; a league or one team is not enough.
-        val candidates = if (home != null && away != null && home != away && home.length >= 4 && away.length >= 4)
-            guide.filter { it.sport == sport && guideTitles.getValue(it.id).contains(" $home ") && guideTitles.getValue(it.id).contains(" $away ") }
+        val candidates = if (home.isNotEmpty() && away.isNotEmpty() && home.none { it in away })
+            guide.filter { event -> event.sport == sport && home.any { guideTitles.getValue(event.id).contains(" $it ") } && away.any { guideTitles.getValue(event.id).contains(" $it ") } }
             else emptyList()
         val matches = (byIdentity["$sport|${sportsEventIdentity(item.title)}"].orEmpty() + candidates).distinctBy { it.id }.filter { event ->
             event.id !in used && kotlin.math.abs(event.programme.startUtcMillis - start) <= 2 * 3600_000L &&

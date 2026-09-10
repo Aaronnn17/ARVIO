@@ -65,11 +65,21 @@ internal enum class GuideSport(val title: String, val asset: String, val terms: 
     AMERICAN_FOOTBALL("American football", "american_football", Regex("\\b(american football|nfl|ncaa football)\\b")),
     CRICKET("Cricket", "cricket", Regex("\\b(cricket|t20|ipl)\\b")),
     BASEBALL("Baseball", "baseball", Regex("\\b(baseball|mlb)\\b")),
-    HOCKEY("Ice hockey", "hockey", Regex("\\b(ice hockey|hockey|nhl)\\b"));
+    HOCKEY("Ice hockey", "hockey", Regex("\\b(ice hockey|hockey|nhl)\\b")),
+    MOTORSPORT("Motorsport", "motor_sports", Regex("\\b(motorsport|motor sports|motogp|nascar|indycar|superbike|formula e|rally)\\b")),
+    RUGBY("Rugby", "rugby", Regex("\\b(rugby|six nations)\\b")),
+    GOLF("Golf", "golf", Regex("\\b(golf|pga|lpga|ryder cup|solheim cup)\\b")),
+    SNOOKER("Snooker", "billiards", Regex("\\b(snooker|billiards)\\b")),
+    DARTS("Darts", "darts", Regex("\\b(darts|pdc)\\b")),
+    AUSTRALIAN_FOOTBALL("Australian football", "afl", Regex("\\b(australian football|aussie rules|afl)\\b")),
+    CYCLING("Cycling", "other", Regex("\\b(cycling|tour de france|vuelta|giro d italia)\\b")),
+    ATHLETICS("Athletics", "other", Regex("\\b(athletics|track and field|diamond league)\\b")),
+    VOLLEYBALL("Volleyball", "other", Regex("\\b(volleyball)\\b")),
+    HANDBALL("Handball", "other", Regex("\\b(handball)\\b"));
 
     companion object {
-        private val priority = listOf(AMERICAN_FOOTBALL, BASKETBALL, F1, TENNIS, MMA, BOXING,
-            CRICKET, BASEBALL, HOCKEY, FOOTBALL)
+        private val priority = listOf(AMERICAN_FOOTBALL, AUSTRALIAN_FOOTBALL, BASKETBALL, F1, MOTORSPORT, TENNIS, MMA, BOXING,
+            CRICKET, BASEBALL, HOCKEY, RUGBY, GOLF, SNOOKER, DARTS, CYCLING, ATHLETICS, VOLLEYBALL, HANDBALL, FOOTBALL)
         fun fromText(text: String): GuideSport? {
             val value = text.lowercase(Locale.ROOT)
             // Specific football codes must win over the generic word football.
@@ -196,6 +206,13 @@ internal fun accumulateSportsGuideEvents(
 }
 
 internal data class SportsGuideRow(val id: String, val title: String, val events: List<SportsGuideEvent>)
+
+internal fun sportsPresentationRows(events: List<SportsGuideEvent>, now: Long, failedArtwork: Set<String>): List<SportsGuideRow> {
+    val (illustrated, schedule) = events.filter { it.hasChannels(now) }.partition { it.hasEventArtwork && it.id !in failedArtwork }
+    return sportsGuideRows(illustrated, now) + sportsGuideRows(schedule, now)
+        .filter { it.id !in setOf("featured", "upcoming", "more") }
+        .map { it.copy(id = "${it.id}-schedule", title = "${it.title} schedule") }
+}
 
 internal enum class SportsDay(val label: String) {
     BOTH("Today & tomorrow"), TODAY("Today"), TOMORROW("Tomorrow");

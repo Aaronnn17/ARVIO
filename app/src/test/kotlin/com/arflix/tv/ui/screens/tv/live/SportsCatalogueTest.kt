@@ -6,6 +6,28 @@ import org.junit.Test
 import java.time.Instant
 
 class SportsCatalogueTest {
+    @Test fun expandedRegionsAndQualityVariantsPreserveStationIdentity() {
+        val keys = sportsBroadcasterKeys("beIN Sports 2", "Turkey")
+        for (name in listOf("TR| beINSPORTS2 FHD", "TR| beIN Sport 2 1080p 50FPS BACKUP")) assertTrue(name, sportsChannelKey(name) in keys)
+        for (name in listOf("FR| beIN Sports 2", "TR| beIN Sports 3", "TR| beIN Sports 2 +1")) assertFalse(name, sportsChannelKey(name) in keys)
+    }
+    @Test fun shortAndKnownTeamAliasesMatchWithoutGuessingOtherTeams() {
+        val item = art.copy(title = "Manchester United vs PSV", homeTeam = "Manchester United", awayTeam = "PSV", startsAt = now)
+        val result = buildSportsCatalogue(listOf(epg.copy(title = "Football: Man Utd - PSV, Premier League")), listOf(item), emptyList(), now)
+        assertEquals(listOf(channel), result.single().channels)
+        assertTrue(buildSportsCatalogue(listOf(epg.copy(title = "Man City - PSV")), listOf(item), emptyList(), now).single { it.fixture != null }.channels.isEmpty())
+    }
+    @Test fun previouslyExcludedSportsAreClassified() {
+        for ((name, sport) in mapOf("Rugby" to GuideSport.RUGBY, "Golf" to GuideSport.GOLF, "Motorsport" to GuideSport.MOTORSPORT,
+            "Formula 1" to GuideSport.F1, "Australian Football" to GuideSport.AUSTRALIAN_FOOTBALL, "Snooker" to GuideSport.SNOOKER))
+            assertEquals(sport, GuideSport.fromText(name))
+    }
+    @Test fun missingArtworkDoesNotRemoveMatchedEvents() {
+        val event = buildSportsCatalogue(emptyList(), listOf(art), listOf(channel), now).single()
+        assertEquals("FOOTBALL-schedule", sportsPresentationRows(listOf(event), now, emptySet()).single().id)
+        assertEquals("FOOTBALL-schedule", sportsPresentationRows(listOf(event.copy(artwork = "https://example.com/event.jpg")), now, setOf(event.id)).single().id)
+        assertTrue(sportsPresentationRows(listOf(event.copy(possibleChannels = emptyList())), now, emptySet()).isEmpty())
+    }
     @Test fun broadcasterDecorationsPreserveCountryAndChannelNumber() {
         assertEquals(sportsChannelKey("UK TNT Sports 2"), sportsChannelKey("UK-NOWTV| TNT SPORT 2 FHD"))
         assertNotEquals(sportsChannelKey("DE TNT Sports 2"), sportsChannelKey("UK-NOWTV| TNT SPORT 2 FHD"))

@@ -15,6 +15,10 @@ class ChannelLogoIndexTest {
     @Test fun exactEpgIdWinsOverProviderName() {
         assertEquals(listOf("https://example.invalid/ESPN.us.png"), index.candidates(" ESPN.US ", "Sports feed"))
     }
+    @Test fun providerQualityAndPackagePrefixesDoNotHideKnownLogos() {
+        assertEquals(index.candidates(null, "UK | BBC One"), index.candidates(null, "4K| UK-NOWTV| BBC One FHD"))
+        assertTrue(index.candidates(null, "FR-NOWTV| BBC One HD").isEmpty())
+    }
     @Test fun namesNeedUniqueIdentityAndCountryCanDisambiguate() {
         assertTrue(index.candidates(null, "ESPN").isEmpty())
         assertEquals(listOf("https://example.invalid/ESPN.nl.png"), index.candidates(null, "NL | ESPN FHD"))

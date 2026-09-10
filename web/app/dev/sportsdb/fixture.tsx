@@ -17,6 +17,9 @@ export function SportsMetadataFixture({ emptyGuide = false }: { emptyGuide?: boo
       const programme = {title: item.title, category: item.genres.join(" "), startUtcMillis: item.startsAt!, endUtcMillis: item.startsAt! + 7_200_000};
       guide[channels[index].id] = {now: programme, next: programme, upcoming: [programme], recent: []};
     });
+    const missingArtChannel: IptvChannel = { id: 'fixture:missing-art', name: 'Schedule test channel', group: 'Rugby', streamUrl: 'https://example.invalid/not-played' };
+    channels.push(missingArtChannel);
+    guide[missingArtChannel.id] = { now: { title: 'North Test Team vs South Test Team', category: 'Rugby', startUtcMillis: Date.now() - 60_000, endUtcMillis: Date.now() + 3_600_000 }, next: undefined, upcoming: [], recent: [] };
     return {channels, guide};
   }, [items, emptyGuide]);
   return <main className="tv-guide-workspace sports-active groups-collapsed" style={{height: "100dvh", padding: "16px", background: "#050607", display: "block", overflow: "auto"}}><SportsGuidePane channels={channels} guide={guide} onPlay={() => {}} onEnter={() => {}} onOpenCategories={() => {}} /></main>;

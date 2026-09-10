@@ -5,12 +5,22 @@ export const guideSports = [
   { id: "american-football", title: "American football", asset: "american_football", pattern: /\b(american football|nfl|ncaa football)\b/i },
   { id: "basketball", title: "Basketball", asset: "basketball", pattern: /\b(basketball|nba|wnba|euroleague)\b/i },
   { id: "f1", title: "Formula 1", asset: "motor_sports", pattern: /\b(f1|formula 1|formula one)\b/i },
+  { id: "motorsport", title: "Motorsport", asset: "motor_sports", pattern: /\b(motorsport|motor sports|motogp|nascar|indycar|superbike|formula e|rally)\b/i },
   { id: "tennis", title: "Tennis", asset: "tennis", pattern: /\b(tennis|atp|wta|wimbledon)\b/i },
   { id: "mma", title: "MMA", asset: "fight", pattern: /\b(mma|ufc|bellator|pfl)\b/i },
   { id: "boxing", title: "Boxing", asset: "fight", pattern: /\b(boxing|boxen)\b/i },
   { id: "cricket", title: "Cricket", asset: "cricket", pattern: /\b(cricket|t20|ipl)\b/i },
   { id: "baseball", title: "Baseball", asset: "baseball", pattern: /\b(baseball|mlb)\b/i },
   { id: "hockey", title: "Ice hockey", asset: "hockey", pattern: /\b(ice hockey|hockey|nhl)\b/i },
+  { id: "rugby", title: "Rugby", asset: "rugby", pattern: /\b(rugby|six nations)\b/i },
+  { id: "golf", title: "Golf", asset: "golf", pattern: /\b(golf|pga|lpga|ryder cup|solheim cup)\b/i },
+  { id: "snooker", title: "Snooker", asset: "billiards", pattern: /\b(snooker|billiards)\b/i },
+  { id: "darts", title: "Darts", asset: "darts", pattern: /\b(darts|pdc)\b/i },
+  { id: "australian-football", title: "Australian football", asset: "afl", pattern: /\b(australian football|aussie rules|afl)\b/i },
+  { id: "cycling", title: "Cycling", asset: "other", pattern: /\b(cycling|tour de france|vuelta|giro d italia)\b/i },
+  { id: "athletics", title: "Athletics", asset: "other", pattern: /\b(athletics|track and field|diamond league)\b/i },
+  { id: "volleyball", title: "Volleyball", asset: "other", pattern: /\b(volleyball)\b/i },
+  { id: "handball", title: "Handball", asset: "other", pattern: /\b(handball)\b/i },
   { id: "football", title: "Football", asset: "football", pattern: /\b(football|soccer|premier league|champions league|la liga|eredivisie|bundesliga)\b/i },
 ] as const;
 export type GuideSport = typeof guideSports[number];
@@ -38,6 +48,14 @@ export const isConfirmedLive = (event: SportsGuideEvent, now: number) => event.f
 export const isOnAir = (event: SportsGuideEvent, now: number) => !["finished", "postponed"].includes(event.fixture?.status ?? "") && (isConfirmedLive(event, now) || Object.values(event.schedules ?? { fallback: event.programme }).some(p => programmeOnAir(p, now)));
 export const availableEventChannels = (event: SportsGuideEvent, now: number) => event.channels.filter(ch => programmeOnAir(event.schedules?.[ch.id] ?? event.programme, now));
 export const hasSportsChannels = (event: SportsGuideEvent, now: number) => (isOnAir(event, now) ? availableEventChannels(event, now) : event.channels).length > 0 || (event.possibleChannels?.length ?? 0) > 0;
+export function sportsPresentationRows(events: SportsGuideEvent[], now: number, failedArtwork: ReadonlySet<string>) {
+  const available = events.filter(e => hasSportsChannels(e, now));
+  const illustrated = (e: SportsGuideEvent) => !failedArtwork.has(e.id) && Boolean(e.artwork || (e.teamArtwork?.homeBadge && e.teamArtwork.awayBadge));
+  return [...sportsGuideRows(available.filter(illustrated), now),
+    ...sportsGuideRows(available.filter(e => !illustrated(e)), now)
+      .filter(row => row.id !== "featured" && row.id !== "upcoming" && row.id !== "more")
+      .map(row => ({ ...row, id: `${row.id}-schedule`, title: `${row.title} schedule` }))];
+}
 export function sportsChannelSummary(event: SportsGuideEvent, now: number): string {
   const matched = new Set((isOnAir(event, now) ? availableEventChannels(event, now) : event.channels).map(ch => ch.id));
   const possible = new Set((event.possibleChannels ?? []).filter(ch => !matched.has(ch.id)).map(ch => ch.id));
@@ -118,7 +136,7 @@ export function sportsGuideRows(events: SportsGuideEvent[], now: number, day: Sp
   return [
     { id: "featured", title: "Featured live", events: live.slice(0, 8) },
     { id: "upcoming", title: "Upcoming highlights", events: upcoming.slice(0, 8) },
-    ...["football", "basketball", "f1", "tennis", "mma", "boxing", "american-football", "cricket", "baseball", "hockey"]
+    ...[...new Set(["football", "basketball", "f1", "tennis", "mma", "boxing", "american-football", "cricket", "baseball", "hockey", ...guideSports.map(sport => sport.id)])]
       .map((id) => guideSports.find((sport) => sport.id === id)!)
       .map((sport) => ({ id: sport.id, title: sport.title, events: [...live.filter((event) => event.sportId === sport.id), ...upcoming.filter(event => event.sportId === sport.id).sort((a, b) => a.programme.startUtcMillis - b.programme.startUtcMillis)] })),
   ].filter((row) => row.events.length > 0);

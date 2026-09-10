@@ -23,7 +23,7 @@ export function parseSportsMetadata(payload: unknown): SportsEventArtwork[] {
       id: text("id")!, league: text("league"), qualifier: text("qualifier"), venue: text("venue"), round: text("round"),
       status: text("status") ?? "scheduled", observedAt: typeof item.observedAt === "number" ? item.observedAt : 0,
       homeScore: typeof item.homeScore === "number" ? item.homeScore : undefined, awayScore: typeof item.awayScore === "number" ? item.awayScore : undefined,
-      broadcasters: Array.isArray(item.broadcasters) ? item.broadcasters.slice(0, 100).filter(b => b && typeof b.name === "string" && typeof b.country === "string" && Number.isFinite(b.startsAt)) : [],
+      broadcasters: Array.isArray(item.broadcasters) ? item.broadcasters.slice(0, 1500).filter(b => b && typeof b.name === "string" && typeof b.country === "string" && Number.isFinite(b.startsAt)) : [],
     } : undefined;
     if (!fixture && !background && !(homeBadge && awayBadge)) return [];
     return [{ title: item.title, key: sportsArtworkKey(item.title), background: background ?? "", genres: [item.sport], startsAt: item.startsAt,

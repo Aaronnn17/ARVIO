@@ -29,7 +29,7 @@ fun parseSportsMetadata(body: String): List<SportsEventArtwork> {
                 id = text("id")!!, league = text("league"), qualifier = text("qualifier"), venue = text("venue"), round = text("round"),
                 status = text("status") ?: "scheduled", observedAt = item.get("observedAt")?.asLong ?: 0L,
                 homeScore = text("homeScore")?.toIntOrNull(), awayScore = text("awayScore")?.toIntOrNull(),
-                broadcasters = item.getAsJsonArray("broadcasters")?.take(100)?.mapNotNull { raw -> runCatching {
+                broadcasters = item.getAsJsonArray("broadcasters")?.take(1500)?.mapNotNull { raw -> runCatching {
                     val b = raw.asJsonObject
                     SportsBroadcaster(b.get("name").asString, b.get("country").asString, b.get("startsAt").asLong)
                 }.getOrNull() }.orEmpty(),

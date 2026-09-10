@@ -11,17 +11,29 @@ export function sportsProminence(league = "", countries = 0): number {
 }
 
 export function sportsChannelKey(name: string): string {
-  return sportsArtworkKey(name.replace(/\b(uhd|fhd|hd|sd|4k|8k|hevc|h265|h264)\b/gi, ""))
-    .replace(/^(uk|gb|us|usa|nl|de|fr|es|it|pt|br|au|ca)\s+(?:nowtv|raw|backup)\s+/, "$1 ")
-    .replace(/\btnt sport\b/g, "tnt sports").replace(/\s+/g, " ").trim();
+  return sportsArtworkKey(name.replace(/\b(uhd|fhd|hd|sd|4k|8k|hevc|h[.]?265|h[.]?264|1080p|720p|2160p|(?:25|30|50|60)fps|raw|backup)\b/gi, ""))
+    .replace(/^([a-z]{2,3})\s+nowtv\s+/, "$1 ")
+    .replace(/\btnt sport\b/g, "tnt sports").replace(/\bbein\s*sports?\s*(\d*)/g, "bein sports $1")
+    .replace(/\b(sports|espn)(\d+)\b/g, "$1 $2").replace(/\s+/g, " ").trim();
 }
 export function sportsBroadcasterKeys(name: string, country: string): string[] {
-  const regions: Record<string, string[]> = { "united kingdom": ["uk", "gb"], "united states": ["us", "usa"], netherlands: ["nl"], germany: ["de"], france: ["fr"], spain: ["es"], italy: ["it"], portugal: ["pt"], brazil: ["br"], australia: ["au"], canada: ["ca"] };
+  const regions: Record<string, string[]> = { "united kingdom": ["uk", "gb"], "united states": ["us", "usa"], netherlands: ["nl", "nld"], germany: ["de", "ger"], france: ["fr"], spain: ["es"], italy: ["it"], portugal: ["pt"], brazil: ["br"], australia: ["au"], canada: ["ca"], belgium: ["be"], switzerland: ["ch"], austria: ["at"], ireland: ["ie"], denmark: ["dk", "dnk"], sweden: ["se"], norway: ["no"], finland: ["fi"], poland: ["pl"], romania: ["ro"], turkey: ["tr"], india: ["in"], argentina: ["ar"], mexico: ["mx"], "south africa": ["za"], "new zealand": ["nz"], "saudi arabia": ["sa"], "united arab emirates": ["ae", "uae"] };
   const key = sportsChannelKey(name), suffix = ` ${sportsArtworkKey(country)}`;
   const localName = country && key.endsWith(suffix) ? key.slice(0, -suffix.length) : key;
   return [...new Set([key, localName, ...(regions[country.toLowerCase()] ?? []).flatMap(code => [`${code} ${localName}`, `${localName} ${code}`])])];
 }
 const leagueKey = (name: string) => sportsArtworkKey(name).replace(/^(english premier league|spanish la liga|italian serie a|german bundesliga|french ligue 1)$/, value => value.split(" ").slice(1).join(" "));
+
+const footballAliases = [
+  ["manchester united", "man utd"], ["manchester city", "man city"],
+  ["paris saint germain", "paris sg", "psg"], ["bayern munich", "bayern munchen"],
+  ["internazionale", "inter milan"], ["atletico madrid", "atl madrid"],
+];
+function participantKeys(name: string | undefined, sport: string): string[] {
+  const key = name ? sportsArtworkKey(name) : "";
+  if (key.length < 3) return [];
+  return sport === "football" ? footballAliases.find(group => group.includes(key)) ?? [key] : [key];
+}
 
 export function buildSportsCatalogue(guide: SportsGuideEvent[], artwork: SportsEventArtwork[], channels: IptvChannel[], now: number): SportsGuideEvent[] {
   const fixtures = artwork.filter(item => item.fixture && item.startsAt);
@@ -47,9 +59,9 @@ export function buildSportsCatalogue(guide: SportsGuideEvent[], artwork: SportsE
     if (!sport || seen.has(fixture.id) || start >= until.getTime() || start < now - 24 * 3600_000) continue;
     seen.add(fixture.id);
     // Match both complete participant names inside decorated EPG titles, not one team or a league alone.
-    const home = item.homeTeam && sportsArtworkKey(item.homeTeam), away = item.awayTeam && sportsArtworkKey(item.awayTeam);
-    const candidates = home && away && home !== away && home.length >= 4 && away.length >= 4
-      ? guide.filter(event => event.sportId === sport.id && guideTitles.get(event.id)!.includes(` ${home} `) && guideTitles.get(event.id)!.includes(` ${away} `)) : [];
+    const home = participantKeys(item.homeTeam, sport.id), away = participantKeys(item.awayTeam, sport.id);
+    const candidates = home.length && away.length && !home.some(key => away.includes(key))
+      ? guide.filter(event => event.sportId === sport.id && home.some(key => guideTitles.get(event.id)!.includes(` ${key} `)) && away.some(key => guideTitles.get(event.id)!.includes(` ${key} `))) : [];
     const matches = [...new Set([...(byIdentity.get(`${sport.id}|${sportsEventIdentity(item.title)}`) ?? []), ...candidates])].filter(event =>
       Math.abs(event.programme.startUtcMillis - start) <= 2 * 3600_000 &&
       sportsQualifierKey(`${event.title} ${event.competition ?? ""}`) === sportsQualifierKey(`${item.title} ${fixture.league ?? ""}`) &&

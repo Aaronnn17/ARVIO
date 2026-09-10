@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { X, Tv, PanelLeft, ChevronRight, Play, RefreshCw } from "lucide-react";
-import { guideSports, isOnAir, isConfirmedLive, hasSportsChannels, availableEventChannels, sportsGuideRows, sportsChannelSummary, type SportsGuideEvent } from "@/lib/sportsGuide";
+import { guideSports, isOnAir, isConfirmedLive, hasSportsChannels, availableEventChannels, sportsPresentationRows, sportsChannelSummary, type SportsGuideEvent } from "@/lib/sportsGuide";
 import { sportsChannelKey, sportsBroadcasterKeys } from "@/lib/sportsCatalogue";
 import type { InstalledAddon, IptvChannel, IptvNowNext } from "@/lib/types";
 import { cachedSportsMetadata, loadSportsGuideArtwork, loadSportsMetadata, type SportsEventArtwork } from "@/lib/sportsArtwork";
@@ -72,18 +72,17 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
     .filter((event) => event.fixture || event.channels.length && Object.values(event.schedules ?? { fallback: event.programme }).some(p => p.endUtcMillis > now)), [events, accessibleIds, now]);
   const [failedArtwork, setFailedArtwork] = useState<Set<string>>(() => new Set());
   useEffect(() => { setFailedArtwork(new Set()); }, [artwork, retry]);
-  const illustratedEvents = visibleEvents.filter(e => !failedArtwork.has(e.id) && (e.artwork || (e.teamArtwork?.homeBadge && e.teamArtwork.awayBadge)));
-  const rows = useMemo(() => sportsGuideRows(illustratedEvents.filter(e => hasSportsChannels(e, now)), now).map(row => {
+  const rows = useMemo(() => sportsPresentationRows(visibleEvents, now, failedArtwork).map(row => {
     if (row.id !== focusedOrder?.row) return row;
     const rank = new Map(focusedOrder.ids.map((id, index) => [id, index]));
     return { ...row, events: [...row.events].sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity)) };
-  }), [illustratedEvents, now, focusedOrder]);
+  }), [visibleEvents, failedArtwork, now, focusedOrder]);
   useEffect(() => {
     if (!rows.length || entered.current) return;
     entered.current = true;
     root.current?.querySelector<HTMLButtonElement>(".tv-event-card")?.focus({ preventScroll: true });
   }, [rows.length]);
-  const selected = illustratedEvents.find((event) => event.id === selectedId);
+  const selected = visibleEvents.find((event) => event.id === selectedId);
   const confirmedChannels = selected ? (isOnAir(selected, now) ? availableEventChannels(selected, now) : selected.channels) : [];
   const possibleChannels = (selected?.possibleChannels ?? []).filter((ch, i, rows) => !confirmedChannels.some(match => match.id === ch.id) && rows.findIndex(other => other.id === ch.id) === i);
   const sourceChannels = [...confirmedChannels, ...possibleChannels];
@@ -123,7 +122,8 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
           setRowLimits(current => ({ ...current, [row.id]: Math.min(row.events.length, (current[row.id] ?? 16) + 12) }));
       }}>{row.events.slice(0, rowLimits[row.id] ?? 16).map((event, index) => {
         const sport = guideSports.find((s) => s.id === event.sportId)!;
-        return <button type="button" className="tv-event-card" key={event.id} onFocus={() => {
+        const scheduleOnly = row.id.endsWith("-schedule");
+        return <button type="button" className={`tv-event-card${scheduleOnly ? " is-schedule" : ""}`} key={event.id} onFocus={() => {
           onEnter();
           if (focusedOrder?.row !== row.id) setFocusedOrder({ row: row.id, ids: row.events.map(e => e.id) });
           if (index >= (rowLimits[row.id] ?? 16) - 3 && (rowLimits[row.id] ?? 16) < row.events.length)
@@ -145,14 +145,14 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
             next?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
           }}
           onClick={(click) => { origin.current = click.currentTarget; setShowScore(false); setSelectedId(event.id); }}>
-          <div className="tv-event-art"><EventArtwork event={event} onUnavailable={() => setFailedArtwork(current => new Set([...current, event.id]))} /><span className={`tv-event-stamp${isOnAir(event, now) ? " is-on-air" : ""}`}>{stamp(event)}</span></div>
+          {scheduleOnly ? <span className="tv-event-schedule-time">{stamp(event)}</span> : <div className="tv-event-art"><EventArtwork event={event} onUnavailable={() => setFailedArtwork(current => new Set([...current, event.id]))} /><span className={`tv-event-stamp${isOnAir(event, now) ? " is-on-air" : ""}`}>{stamp(event)}</span></div>}
           <strong>{event.title}</strong><small className="tv-event-meta"><span className="tv-event-competition">{[sport.title, event.competition].filter(Boolean).join(" · ")}</span>{isOnAir(event, now) && <span><Tv size={16} />{sportsChannelSummary(event, now)}</span>}</small>
         </button>;
       })}</div>
     </section>)}
     <dialog ref={dialog} className="tv-event-picker" style={{ "--source-count": Math.max(1, sourceChannels.length) } as CSSProperties}
       onCancel={(event) => { event.preventDefault(); close(); }} onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <header>{selected && <div className="tv-event-picker-art"><EventArtwork event={selected} /></div>}<div><p>{selected ? `${stamp(selected)} · ${guideSports.find(s => s.id === selected.sportId)!.title}` : "This event is no longer in the available guide."}</p><h2>{selected?.title ?? "Schedule changed"}</h2></div><button type="button" onClick={close} aria-label="Close"><X /></button></header>
+      <header>{selected && !failedArtwork.has(selected.id) && (selected.artwork || selected.teamArtwork) && <div className="tv-event-picker-art"><EventArtwork event={selected} /></div>}<div><p>{selected ? `${stamp(selected)} · ${guideSports.find(s => s.id === selected.sportId)!.title}` : "This event is no longer in the available guide."}</p><h2>{selected?.title ?? "Schedule changed"}</h2></div><button type="button" onClick={close} aria-label="Close"><X /></button></header>
       {selected?.fixture && <div className="tv-event-details"><span>{[selected.competition, selected.fixture.venue, selected.fixture.round ? `Round ${selected.fixture.round}` : undefined].filter(Boolean).join(" · ")}</span>
         {selected.fixture.homeScore !== undefined && selected.fixture.awayScore !== undefined && now - selected.fixture.observedAt < 300_000 && <button type="button" className="secondary" onClick={() => setShowScore(value => !value)}>{showScore ? `${selected.fixture.homeScore} : ${selected.fixture.awayScore}` : "Show score"}</button>}</div>}
       <h3>{selected && isOnAir(selected, now) ? "Channels" : "Scheduled channels"}<span>{selected ? sportsChannelSummary(selected, now) : "No channels"}</span></h3>

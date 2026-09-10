@@ -1,5 +1,5 @@
 const DAY = 86_400_000;
-const CACHE_KEY = 'fixtures-v4';
+const CACHE_KEY = 'fixtures-v5';
 const REFRESH_MS = 30 * 60_000;
 const RETRY_MS = 5 * 60_000;
 const MAX_AGE = 24 * 60 * 60_000;
@@ -84,9 +84,9 @@ async function fetchFixtures({ fetcher, apiKey, now }) {
   // Keep fixtures usable even if the optional TV listing service is unavailable.
   let broadcastsPartial = false;
   const mergeBroadcasts = rows => {
-    for (const row of rows.slice(0, 100)) {
+    for (const row of rows.slice(0, 1500)) {
       const event = events.get(String(row.idEvent));
-      const start = utcTimestamp(row.strTimeStamp);
+      const start = utcTimestamp(row.strTimeStamp || row.strTimestamp);
       if (!event || typeof row.strChannel !== 'string' || !row.strChannel.trim() || !Number.isFinite(start)) continue;
       const broadcaster = { name: row.strChannel.trim().slice(0, 120), country: String(row.strCountry || '').slice(0, 80), startsAt: start };
       if (!event.broadcasters.some(b => b.name === broadcaster.name && b.country === broadcaster.country && b.startsAt === start)) event.broadcasters.push(broadcaster);
@@ -95,17 +95,17 @@ async function fetchFixtures({ fetcher, apiKey, now }) {
   for (const offset of [-1, 0, 1, 2]) {
     try {
       const day = new Date(now + offset * DAY).toISOString().slice(0, 10);
-      const response = await fetcher(`https://www.thesportsdb.com/api/v2/json/filter/tv/day/${day}`, {
-        signal: AbortSignal.timeout(4_000), redirect: 'error', headers: { Accept: 'application/json', 'X-API-KEY': apiKey },
+      // Premium V1 returns up to 1500 listings; the V2 day filter stops at 100.
+      const response = await fetcher(`https://www.thesportsdb.com/api/v1/json/${encodeURIComponent(apiKey)}/eventstv.php?d=${day}`, {
+        signal: AbortSignal.timeout(4_000), redirect: 'error', headers: { Accept: 'application/json' },
       });
       if (!response.ok) throw new Error('Unavailable');
       const payload = await response.json();
-      if (!Array.isArray(payload.filter)) throw new Error('Unavailable');
-      broadcastsPartial ||= payload.filter.length >= 100;
-      mergeBroadcasts(payload.filter);
-    } catch { broadcastsPartial = true; break; }
+      if (!Object.prototype.hasOwnProperty.call(payload, 'tvevents') || (payload.tvevents !== null && !Array.isArray(payload.tvevents))) throw new Error('Unavailable');
+      broadcastsPartial ||= (payload.tvevents?.length ?? 0) >= 1500;
+      mergeBroadcasts(payload.tvevents || []);
+    } catch { broadcastsPartial = true; }
   }
-  // The day endpoint stops at 100 broadcasts, often before European evening fixtures.
   // Supplement only truncated/failed feeds. These are shared requests, never per viewer.
   if (broadcastsPartial) {
     const countries = ['united_kingdom', 'netherlands', 'united_states', 'germany', 'france', 'spain', 'italy', 'brazil'];

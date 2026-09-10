@@ -216,3 +216,8 @@
   .tv-guide-workspace, .tv-guide-workspace .livetv-cats { transition: none; }
   .tv-event-picker[open] { animation: none; }
 }
+
+.tv-event-card.is-schedule { padding: 12px; border: 1px solid #343638; border-radius: 4px; background: #101214; min-height: 126px; }
+.tv-event-card.is-schedule:focus-visible { outline: 2px solid white; outline-offset: 1px; }
+.tv-event-schedule-time { color: #c8cccf; font-size: 14px; line-height: 20px; display: block; margin-bottom: 8px; }
+.tv-event-picker header:not(:has(.tv-event-picker-art)) p { grid-column: 1 / 3; }
