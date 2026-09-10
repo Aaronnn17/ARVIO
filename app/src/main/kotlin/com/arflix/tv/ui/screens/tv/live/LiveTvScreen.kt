@@ -114,7 +114,6 @@ import com.arflix.tv.ui.screens.profile.PinEntryDialog
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.KeepScreenOn
-import com.arflix.tv.ui.components.AppTopBarContentTopInset
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
@@ -529,7 +528,7 @@ fun LiveTvScreen(
     val compactTouchLayout = isTouchDevice && configuration.screenWidthDp < 900
     val landscapeCompactMiniPlayer = miniPlayerLayout == LiveTvMiniPlayerLayout.LANDSCAPE_COMPACT
     val showTopBar = !isTouchDevice
-    val contentTopPadding = if (showTopBar) AppTopBarContentTopInset else 0.dp
+    val contentTopPadding = if (showTopBar) LiveDims.ContentTopInset else 0.dp
     val coroutineScope = rememberCoroutineScope()
     val guideClockMillis by produceState(initialValue = System.currentTimeMillis()) {
         while (true) {
@@ -3244,7 +3243,7 @@ fun LiveTvScreen(
                 }
             )
         } else {
-            // Both drawer and guide use the shared app header inset.
+            // Keep drawer and guide aligned below the unchanged app navigation.
             if (useTouchRail) {
                 Column(
                     modifier = Modifier

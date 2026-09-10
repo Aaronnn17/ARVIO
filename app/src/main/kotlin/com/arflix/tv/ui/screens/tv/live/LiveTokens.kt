@@ -82,6 +82,8 @@ object LiveType {
 }
 
 object LiveDims {
+    // Clear the visible topbar controls without reserving its decorative fade area.
+    val ContentTopInset = 74.dp
     // Fixed tracks keep focus and drawer transitions from changing row geometry.
     val SidebarExpanded  = 232.dp
     val SidebarCollapsed = 52.dp
