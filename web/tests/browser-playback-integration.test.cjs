@@ -63,6 +63,39 @@ function extracted(relative, selector, globals) {
   return module.exports;
 }
 
+test('each live playback fallback receives a fresh frame deadline', () => {
+  let now = 0;
+  let failures = 0;
+  const timers = new Map();
+  const video = { readyState: 1 };
+  const arm = extracted('components/player/PlayerOverlay.tsx', node =>
+    ts.isVariableDeclaration(node) && node.name.getText() === 'armStallTimer'
+      ? node.initializer : undefined, {
+    stallTimer: undefined, playableWatchdog: undefined, cancelled: false, hasPlayed: false,
+    liveTv: true, video, stream: {}, parseDebridStream: () => null,
+    handlePlaybackError: () => failures++,
+    window: {
+      setTimeout: (fn, delay) => { timers.set(fn, now + delay); return fn; },
+      clearTimeout: fn => timers.delete(fn)
+    }
+  });
+  const advance = time => {
+    now = time;
+    for (const [fn, deadline] of [...timers]) if (deadline <= now) { timers.delete(fn); fn(); }
+  };
+  arm();
+  advance(10000);
+  arm();
+  advance(15000);
+  assert.equal(failures, 0, 'the original frame watchdog must not interrupt the relay');
+  advance(25000);
+  assert.equal(failures, 1, 'a relay that never delivers a frame still times out');
+  arm();
+  video.readyState = 4;
+  advance(40000);
+  assert.equal(failures, 1, 'playable media is not failed by the startup deadline');
+});
+
 function conversionRecoveryHarness(overrides = {}) {
   const state = { errors: [], details: [], selections: [], hops: 0, destroyed: 0, resolutions: 0 };
   const video = Object.assign(new EventTarget(), { readyState: 4, currentTime: 420, duration: 3600, paused: false, ended: false, seeking: false,

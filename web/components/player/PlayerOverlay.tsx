@@ -922,8 +922,10 @@ function VideoPlayer({
     // timeout: if the element hasn't reached at least metadata within the window,
     // treat it as a failure and escalate down the ladder (next URL, then remux).
     let stallTimer: number | undefined;
+    let playableWatchdog: number | undefined;
     const armStallTimer = () => {
       window.clearTimeout(stallTimer);
+      window.clearTimeout(playableWatchdog);
       // Live channels that hang (provider accepts the connection but never sends
       // data) need a shorter leash than VOD so the ladder keeps moving.
       stallTimer = window.setTimeout(() => {
@@ -933,18 +935,13 @@ function VideoPlayer({
         // before the first byte arrives, which regularly exceeds the VOD
         // budget — condemning sources that were about to work.
       }, liveTv ? 10000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 25000 : 13000));
+      // Metadata can arrive without a playable frame. Give each fallback its
+      // own frame deadline; the original attempt must not cancel a new relay.
+      playableWatchdog = window.setTimeout(() => {
+        if (cancelled || hasPlayed || video.readyState >= 2) return;
+        handlePlaybackError();
+      }, liveTv ? 15000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 38000 : 20000));
     };
-    // Backstop for MSE sources (hls.js / remux): those attach a blob: src and
-    // can fire loadedmetadata — which clears the stall timer — while never
-    // delivering a frame, leaving the spinner up forever with zero network
-    // traffic. This watchdog is independent of those events and only cares
-    // whether playback ever became possible.
-    const playableWatchdog = window.setTimeout(() => {
-      if (cancelled) return;
-      if (video.readyState >= 2) return;
-      handlePlaybackError();
-      // Same reasoning as the stall timer: debrid needs a longer leash.
-    }, liveTv ? 15000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 38000 : 20000));
     const requestPlayback = () => {
       if (cancelled || !video.paused) return;
       setError(false);
@@ -1079,9 +1076,6 @@ function VideoPlayer({
     const startTimer = window.setTimeout(requestPlayback, 0);
     video.addEventListener("loadedmetadata", onReadyToStart, { once: true });
     video.addEventListener("canplay", onReadyToStart, { once: true });
-    const slowTimer = window.setTimeout(() => {
-      if (liveTv && video.readyState === 0 && video.paused) setBuffering(false);
-    }, 6500);
     const onErr = () => handlePlaybackError();
     video.addEventListener("error", onErr);
     // The moment real frames arrive this source has proven it plays here, so
@@ -1102,7 +1096,6 @@ function VideoPlayer({
     return () => {
       cancelled = true;
       window.clearTimeout(startTimer);
-      window.clearTimeout(slowTimer);
       window.clearTimeout(stallTimer);
       window.clearTimeout(playableWatchdog);
       video.removeEventListener("playing", onFirstPlaying);
