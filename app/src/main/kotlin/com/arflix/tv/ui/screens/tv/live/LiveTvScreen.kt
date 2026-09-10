@@ -1617,6 +1617,7 @@ fun LiveTvScreen(
         mutableStateOf(initialChannelId != null || initialStreamUrl != null)
     }
     var fullscreenGuideOpen by remember { mutableStateOf(false) }
+    var sourcesOpen by remember { mutableStateOf(false) }
     var quickZapOpen by remember { mutableStateOf(false) }
     var variantPickerChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
     // Channel long-press menu (favourite, reorder favourites, quality variants).
@@ -3536,7 +3537,10 @@ fun LiveTvScreen(
                             null
                         },
                         onGuideClick = { openFullscreenGuide() },
-                        onOpenVariants = { playingChannel?.let { openVariantPicker(it) } },
+                        onOpenVariants = { 
+                            sourcesOpen = true
+                            hudPokeSignal++ 
+                        },
                         onPlayPauseClick = {
                             if (playingCatchupProgram != null) {
                                 toggleCatchupPlayback()
@@ -3680,6 +3684,19 @@ fun LiveTvScreen(
                     },
                     onRightClick = { channel ->
                         openFullscreenGuide(channel, fromQuickZap = true)
+                    }
+                )
+                FullscreenSourcesOverlay(
+                    visible = isFullScreen && sourcesOpen,
+                    currentChannel = playingChannel,
+                    variants = playingChannel?.let { channel -> variantGroups[variantGroupKey(channel)] }.orEmpty(),
+                    onPick = { channel ->
+                        sourcesOpen = false
+                        playVariant(channel)
+                    },
+                    onDismiss = {
+                        sourcesOpen = false
+                        hudPokeSignal++
                     }
                 )
             }
@@ -4094,3 +4111,92 @@ internal data class ProgramActionData(
     val channel: EnrichedChannel,
     val program: IptvProgram,
 )
+
+@OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
+@Composable
+fun FullscreenSourcesOverlay(
+    visible: Boolean,
+    currentChannel: EnrichedChannel?,
+    variants: List<EnrichedChannel>,
+    onPick: (EnrichedChannel) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn() + androidx.compose.animation.slideInHorizontally { it / 2 },
+        exit = fadeOut() + androidx.compose.animation.slideOutHorizontally { it / 2 },
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.6f))
+                .focusable()
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.CenterEnd
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(360.dp)
+                    .background(Color(0xFF1A1A1A))
+                    .padding(24.dp)
+                    .clickable(enabled = false) {} // Avoid closing the window if you click inside the panel
+            ) {
+                androidx.tv.material3.Text(
+                    text = "Available Sources",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                if (variants.isEmpty() || variants.size == 1) {
+                    androidx.tv.material3.Text(
+                        text = "There are no other quality options for this channel.",
+                        color = Color.Gray,
+                        fontSize = 14.sp
+                    )
+                } else {
+                    androidx.compose.foundation.lazy.LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(variants.size) { index ->
+                            val variant = variants[index]
+                            val isSelected = variant.id == currentChannel?.id
+                            var isFocused by remember { mutableStateOf(false) }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        when {
+                                            isFocused -> Color.White
+                                            isSelected -> LiveColors.Accent.copy(alpha = 0.3f)
+                                            else -> Color.Transparent
+                                        }
+                                    )
+                                    .onFocusChanged { isFocused = it.isFocused }
+                                    .clickable { onPick(variant) }
+                                    .padding(16.dp)
+                            ) {
+                                androidx.tv.material3.Text(
+                                    text = variant.name,
+                                    color = if (isFocused) Color.Black else Color.White,
+                                    fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // If the user presses “Back” on the remote while the list is open, we simply close it
+    BackHandler(enabled = visible) {
+        onDismiss()
+    }
+}
