@@ -181,6 +181,121 @@ class IptvRepositoryStalkerVodTest {
         assertEquals(listOf("It: Chapter Two"), repository.stalkerVodSearchQueries("It: Chapter Two"))
     }
 
+    // ── Query planning: the original title (10.09.2026) ───────────────────
+    //
+    // A portal matches `search` literally against its own catalogue name, and
+    // that name is not the name TMDB shows the user. Measured against a real
+    // portal: TMDB writes "Der Astronaut – Project Hail Mary" with an en dash,
+    // the catalogue lists "DE - Der Astronaut: Project Hail Mary (2026)" with a
+    // colon, and the search therefore answered with nothing at all.
+
+    @Test
+    fun `the original title leads the term list and dash separators are understood`() {
+        val repository = newRepository()
+
+        assertEquals(
+            listOf(
+                "Project Hail Mary",
+                "Der Astronaut – Project Hail Mary",
+                "Der Astronaut"
+            ),
+            repository.stalkerVodSearchQueries(
+                title = "Der Astronaut – Project Hail Mary",
+                originalTitle = "Project Hail Mary"
+            )
+        )
+    }
+
+    @Test
+    fun `an em dash subtitle is split like a colon`() {
+        val repository = newRepository()
+
+        assertEquals(
+            listOf("Wolfsblut — Ruf der Wildnis", "Wolfsblut"),
+            repository.stalkerVodSearchQueries("Wolfsblut — Ruf der Wildnis")
+        )
+    }
+
+    @Test
+    fun `a purely localized title keeps both names as terms`() {
+        val repository = newRepository()
+
+        // Neither term can be dropped: the original never appears inside the
+        // German name, and a catalogue may carry either one alone.
+        assertEquals(
+            listOf("The Shawshank Redemption", "Die Verurteilten"),
+            repository.stalkerVodSearchQueries(
+                title = "Die Verurteilten",
+                originalTitle = "The Shawshank Redemption"
+            )
+        )
+    }
+
+    @Test
+    fun `a title that is its own original still costs a single query`() {
+        val repository = newRepository()
+
+        // The common case must not become more expensive than before.
+        assertEquals(
+            listOf("Heat"),
+            repository.stalkerVodSearchQueries(title = "Heat", originalTitle = "Heat")
+        )
+        // Spelling alone must not buy a second, identical portal request -
+        // a portal search is case-insensitive too.
+        assertEquals(
+            listOf("HEAT"),
+            repository.stalkerVodSearchQueries(title = "heat", originalTitle = "HEAT")
+        )
+    }
+
+    @Test
+    fun `an original title alone is still worth asking for`() {
+        val repository = newRepository()
+
+        assertEquals(
+            listOf("Heat"),
+            repository.stalkerVodSearchQueries(title = "   ", originalTitle = "Heat")
+        )
+        assertTrue(
+            repository.stalkerVodSearchQueries(title = "   ", originalTitle = "  ").isEmpty()
+        )
+    }
+
+    // ── Matching an entry found through the original title ────────────────
+
+    @Test
+    fun `an entry listed only under its original name is matched`() {
+        val repository = newRepository()
+        val items = listOf(item("1", "EN - The Shawshank Redemption (1994)", year = "1994"))
+
+        val matches = repository.matchStalkerVodItems(
+            items = items,
+            normalizedTitle = "die verurteilten",
+            normalizedTmdb = null,
+            inputYear = 1994,
+            normalizedOriginalTitle = "the shawshank redemption"
+        )
+
+        assertEquals(listOf("1"), matches.map { it.id })
+    }
+
+    @Test
+    fun `without the original name that same entry stays unmatched`() {
+        val repository = newRepository()
+        val items = listOf(item("1", "EN - The Shawshank Redemption (1994)", year = "1994"))
+
+        // The counter-proof to the test above: searching for the original
+        // title only helps if the match is allowed to use it as well.
+        assertTrue(
+            repository.matchStalkerVodItems(
+                items = items,
+                normalizedTitle = "die verurteilten",
+                normalizedTmdb = null,
+                inputYear = 1994
+            ).isEmpty()
+        )
+    }
+
     // ── Portal isolation (C1) ─────────────────────────────────────────────
 
     @Test

@@ -2454,7 +2454,8 @@ class StreamRepository @Inject constructor(
         title: String = "",
         year: Int? = null,
         tmdbId: Int? = null,
-        timeoutMs: Long = 15_000L
+        timeoutMs: Long = 15_000L,
+        originalTitle: String? = null
     ): List<StreamSource> = withContext(Dispatchers.IO) {
         withTimeoutOrNull(timeoutMs.coerceIn(500L, 90_000L)) {
             runCatching {
@@ -2463,7 +2464,8 @@ class StreamRepository @Inject constructor(
                     year = year,
                     imdbId = imdbId,
                     tmdbId = tmdbId,
-                    allowNetwork = true
+                    allowNetwork = true,
+                    originalTitle = originalTitle
                 )
             }.onFailure { e ->
                 System.err.println("[VOD] resolveMovieVodSources failed: ${e.message}")

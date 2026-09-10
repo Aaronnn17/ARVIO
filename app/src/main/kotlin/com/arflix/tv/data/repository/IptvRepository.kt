@@ -450,6 +450,13 @@ class IptvRepository @Inject constructor(
     private val maxStalkerVodSearchCacheEntries = 64
 
     /**
+     * Shortest head-of-title that is still worth asking a portal for. Below
+     * this a subtitle split stops naming a film - "It: Chapter Two" would ask
+     * for "It" and get a slice of the catalog back.
+     */
+    private val minStalkerVodQueryHeadLength = 3
+
+    /**
      * Public accessor kept for compatibility with code that previously read the
      * single cached Stalker API instance. Returns the first cached portal API.
      */
@@ -5355,7 +5362,8 @@ class IptvRepository @Inject constructor(
         year: Int?,
         imdbId: String? = null,
         tmdbId: Int? = null,
-        allowNetwork: Boolean = true
+        allowNetwork: Boolean = true,
+        originalTitle: String? = null
     ): List<StreamSource> {
         return withContext(Dispatchers.IO) {
             if (!isVodSearchEnabled()) return@withContext emptyList()
@@ -5384,7 +5392,8 @@ class IptvRepository @Inject constructor(
                             year = year,
                             tmdbId = tmdbId,
                             imdbId = imdbId,
-                            allowNetwork = allowNetwork
+                            allowNetwork = allowNetwork,
+                            originalTitle = originalTitle
                         )
                     }.getOrDefault(emptyList())
                 }
@@ -5503,7 +5512,8 @@ class IptvRepository @Inject constructor(
         year: Int?,
         tmdbId: Int?,
         imdbId: String?,
-        allowNetwork: Boolean
+        allowNetwork: Boolean,
+        originalTitle: String? = null
     ): List<StreamSource> {
         if (portal.portalUrl.isBlank() || portal.macAddress.isBlank()) return emptyList()
         val fingerprint = stalkerPortalFingerprint(portal)
@@ -5529,6 +5539,8 @@ class IptvRepository @Inject constructor(
         val api = getOrCreateStalkerApi(portal) ?: return emptyList()
 
         val normalizedTmdb = normalizeTmdbId(tmdbId)
+        val normalizedOriginalTitle = normalizeLookupText(originalTitle.orEmpty())
+            .takeIf { it.isNotBlank() && it != normalizedTitle }
         val inputYear = year ?: parseYear(title)
 
         var matches: List<com.arflix.tv.data.api.StalkerApi.StalkerVodItem> = emptyList()
@@ -5537,11 +5549,17 @@ class IptvRepository @Inject constructor(
         // count next to zero matches names the portal as the cause, whereas both
         // at zero points at the request or the portal's catalogue.
         var offered = 0
-        for (query in stalkerVodSearchQueries(title)) {
+        for (query in stalkerVodSearchQueries(title, originalTitle)) {
             val items = stalkerVodSearch(portal, fingerprint, api, query)
             offered += items.size
             if (items.isEmpty()) continue
-            matches = matchStalkerVodItems(items, normalizedTitle, normalizedTmdb, inputYear)
+            matches = matchStalkerVodItems(
+                items = items,
+                normalizedTitle = normalizedTitle,
+                normalizedTmdb = normalizedTmdb,
+                inputYear = inputYear,
+                normalizedOriginalTitle = normalizedOriginalTitle
+            )
             if (matches.isNotEmpty()) break
         }
         System.err.println(
@@ -5561,26 +5579,79 @@ class IptvRepository @Inject constructor(
         return sources
     }
 
-    /**
-     * At most two portal queries per lookup: the plain title first and, only
-     * when the title carries a subtitle, the part in front of it - panels
-     * frequently list "Dune" where TMDB says "Dune: Part Two". The second query
-     * is skipped as soon as the first one produced a match.
-     */
     /** Empty answers expire quickly, real hits keep the long TTL. */
     private fun cacheTtlFor(items: List<*>): Long =
         if (items.isEmpty()) stalkerVodSearchEmptyCacheTtlMs else stalkerVodSearchCacheTtlMs
 
-    internal fun stalkerVodSearchQueries(title: String): List<String> {
-        val primary = title.trim()
-        if (primary.isBlank()) return emptyList()
-        val head = primary.substringBefore(':').substringBefore(" - ").trim()
-        return if (head.length >= 3 && !head.equals(primary, ignoreCase = true)) {
-            listOf(primary, head)
-        } else {
-            listOf(primary)
+    /**
+     * The terms one portal lookup may spend, most likely first. The caller
+     * stops at the first term that produced a match, so the later ones only
+     * cost a request when the earlier ones found nothing.
+     *
+     * A portal matches `search` literally against its own catalog name, and
+     * that name is not the name TMDB shows the user. Measured against a real
+     * portal: TMDB says "Der Astronaut - Project Hail Mary" with an en dash,
+     * the catalog lists "DE - Der Astronaut: Project Hail Mary (2026)" with a
+     * colon, and the literal search therefore answers with nothing at all -
+     * while the same film sits in that catalog eleven times under its original
+     * title. Hence three terms, none of which is enough on its own:
+     *
+     *  1. [originalTitle] - most catalog entries are listed under the original
+     *     name, so this is the term that hits first most of the time.
+     *  2. [title] as displayed - the only term that finds an entry a panel
+     *     carries purely localized: "Die Verurteilten" does not contain
+     *     "The Shawshank Redemption" anywhere.
+     *  3. The part in front of a subtitle separator - the rescue anchor for
+     *     the punctuation mismatch above, and for panels that list "Dune"
+     *     where TMDB says "Dune: Part Two".
+     *
+     * Costs nothing in the common case: when a user browses in the original
+     * language, terms 1 and 2 are the same string and only one request goes
+     * out, exactly as before.
+     */
+    internal fun stalkerVodSearchQueries(
+        title: String,
+        originalTitle: String? = null
+    ): List<String> {
+        val queries = mutableListOf<String>()
+        fun add(candidate: String) {
+            val term = candidate.trim()
+            if (term.isBlank()) return
+            // Case-insensitive: a portal search is case-insensitive too, so a
+            // second spelling of the same term would only buy a second
+            // identical answer.
+            if (queries.any { it.equals(term, ignoreCase = true) }) return
+            queries += term
         }
+
+        add(originalTitle.orEmpty())
+        val primary = title.trim()
+        add(primary)
+
+        // Derived, not given: only used when it still names the film. Two
+        // characters ("It: Chapter Two" -> "It") would ask the portal for a
+        // slice of its whole catalog instead.
+        val head = primary.subtitleHead()
+        if (head.length >= minStalkerVodQueryHeadLength) add(head)
+
+        return queries
     }
+
+    /**
+     * Everything in front of the first subtitle separator.
+     *
+     * The dashes are spaced on purpose: an unspaced hyphen belongs to names
+     * like "Spider-Man", and an unspaced en dash to year ranges. The en and em
+     * dash are in the list because TMDB writes German subtitles with them
+     * while portals write a colon - the exact mismatch this whole helper is
+     * about.
+     */
+    private fun String.subtitleHead(): String =
+        substringBefore(':')
+            .substringBefore(" - ")
+            .substringBefore(" – ")
+            .substringBefore(" — ")
+            .trim()
 
     private suspend fun stalkerVodSearch(
         portal: StalkerPortalEntry,
@@ -5608,33 +5679,76 @@ class IptvRepository @Inject constructor(
         return items
     }
 
-    /**
-     * Same two stages as the Xtream path: a portal-supplied `tmdb_id` wins
-     * outright, otherwise entries are scored on their title with the existing
-     * [scoreNameMatch] plus the year bonus/penalty and score window
-     * [findMovieCandidatesIndexed] applies.
-     */
+    /** Movie entries of a portal search, scored by [matchStalkerCatalogEntries]. */
     internal fun matchStalkerVodItems(
         items: List<com.arflix.tv.data.api.StalkerApi.StalkerVodItem>,
         normalizedTitle: String,
         normalizedTmdb: String?,
-        inputYear: Int?
-    ): List<com.arflix.tv.data.api.StalkerApi.StalkerVodItem> {
+        inputYear: Int?,
+        normalizedOriginalTitle: String? = null
+    ): List<com.arflix.tv.data.api.StalkerApi.StalkerVodItem> = matchStalkerCatalogEntries(
+        items = items,
+        normalizedTitle = normalizedTitle,
+        normalizedTmdb = normalizedTmdb,
+        inputYear = inputYear,
+        normalizedOriginalTitle = normalizedOriginalTitle
+    ) { StalkerCatalogFields(it.name, it.cmd, it.year, it.tmdbId) }
+
+    /** The fields a Stalker catalog entry is scored on. */
+    private data class StalkerCatalogFields(
+        val name: String?,
+        val cmd: String?,
+        val year: String?,
+        val tmdbId: String?
+    )
+
+    /**
+     * Scores portal entries against a wanted title. Written over the entry's
+     * fields rather than over one item type: `get_ordered_list` answers with
+     * the same four fields for every catalog it serves.
+     *
+     * Two stages, as on the Xtream path: a portal-supplied `tmdb_id` wins
+     * outright, otherwise entries are scored on their title with the existing
+     * [scoreNameMatch] plus the year bonus/penalty and score window
+     * [findMovieCandidatesIndexed] applies. Entries without a `cmd` are dropped
+     * either way - there would be nothing to play.
+     *
+     * [normalizedOriginalTitle] is scored as an equal alternative, not as a
+     * fallback: [stalkerVodSearchQueries] asks the portal for the original
+     * title as well, and a catalog listing the film only under that name -
+     * "EN - Project Hail Mary (2026)" for a user browsing in German - would
+     * otherwise be found and then thrown away. Both names denote the same
+     * film, so the better of the two scores is the entry's score. Portals that
+     * supply a `tmdb_id` never reach this stage.
+     */
+    private fun <T> matchStalkerCatalogEntries(
+        items: List<T>,
+        normalizedTitle: String,
+        normalizedTmdb: String?,
+        inputYear: Int?,
+        normalizedOriginalTitle: String? = null,
+        fields: (T) -> StalkerCatalogFields
+    ): List<T> {
         if (items.isEmpty()) return emptyList()
         if (!normalizedTmdb.isNullOrBlank()) {
-            val idMatches = items.filter { normalizeTmdbId(it.tmdbId) == normalizedTmdb }
+            val idMatches = items.filter { normalizeTmdbId(fields(it).tmdbId) == normalizedTmdb }
             if (idMatches.isNotEmpty()) return idMatches
         }
-        if (normalizedTitle.isBlank()) return emptyList()
+        val wantedNames = listOfNotNull(
+            normalizedTitle.takeIf { it.isNotBlank() },
+            normalizedOriginalTitle?.takeIf { it.isNotBlank() }
+        ).distinct()
+        if (wantedNames.isEmpty()) return emptyList()
 
         val scored = items
             .mapNotNull { item ->
-                val name = item.name?.trim().orEmpty()
-                if (name.isBlank()) return@mapNotNull null
-                if (item.cmd.isNullOrBlank()) return@mapNotNull null
-                val score = scoreNameMatch(name, normalizedTitle)
+                val entry = fields(item)
+                val itemName = entry.name?.trim().orEmpty()
+                if (itemName.isBlank()) return@mapNotNull null
+                if (entry.cmd.isNullOrBlank()) return@mapNotNull null
+                val score = wantedNames.maxOf { scoreNameMatch(itemName, it) }
                 if (score <= 0) return@mapNotNull null
-                val providerYear = parseYear(item.year?.trim().orEmpty().ifBlank { name })
+                val providerYear = parseYear(entry.year?.trim().orEmpty().ifBlank { itemName })
                 val yearDelta = if (inputYear != null && providerYear != null) {
                     kotlin.math.abs(providerYear - inputYear)
                 } else null

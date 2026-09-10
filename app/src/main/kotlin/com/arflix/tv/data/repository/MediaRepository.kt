@@ -3974,6 +3974,8 @@ private fun TmdbMediaItem.toMediaItem(defaultType: MediaType): MediaItem {
         backdrop = backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
         genreIds = genreIds,
         originalLanguage = originalLanguage,
+        originalTitle = originalTitle?.takeIf { it.isNotBlank() }
+            ?: originalName?.takeIf { it.isNotBlank() },
         character = character ?: "",
         popularity = popularity
     )
@@ -4004,6 +4006,7 @@ private fun TmdbMovieDetails.toMediaItem(): MediaItem {
             ?: "",
         backdrop = backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
         originalLanguage = originalLanguage,
+        originalTitle = originalTitle?.takeIf { it.isNotBlank() },
         budget = budget,
         genreIds = genres.map { it.id }
     )
@@ -4040,6 +4043,7 @@ private fun TmdbTvDetails.toMediaItem(): MediaItem {
             ?: "",
         backdrop = backdropPath?.let { "${Constants.BACKDROP_BASE_LARGE}$it" },
         originalLanguage = originalLanguage,
+        originalTitle = originalName?.takeIf { it.isNotBlank() },
         isOngoing = status == "Returning Series",
         totalEpisodes = actualSeasonCount,
         status = status,

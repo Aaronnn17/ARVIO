@@ -5039,6 +5039,9 @@ class PlayerViewModel @Inject constructor(
         val lookupTitle = currentItemTitle
             .ifBlank { currentTitle }
             .ifBlank { mediaRepository.getCachedItem(mediaType, currentMediaId)?.title.orEmpty() }
+        // Passed alongside the displayed title: a provider catalogue may list
+        // the title only under its original name.
+        val lookupOriginalTitle = mediaRepository.getCachedItem(mediaType, currentMediaId)?.originalTitle
 
         val vodSources = if (mediaType == MediaType.MOVIE) {
             streamRepository.resolveMovieVodSources(
@@ -5046,7 +5049,8 @@ class PlayerViewModel @Inject constructor(
                 title = lookupTitle,
                 year = null,
                 tmdbId = currentMediaId,
-                timeoutMs = timeoutMs
+                timeoutMs = timeoutMs,
+                originalTitle = lookupOriginalTitle
             )
         } else {
             streamRepository.resolveEpisodeVodSources(
