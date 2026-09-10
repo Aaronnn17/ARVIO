@@ -30,7 +30,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material.icons.outlined.List
-import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.Icon
@@ -216,8 +215,13 @@ private fun GuideProgrammeSummary(
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(Modifier.height(30.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            if (!channel?.source?.logo.isNullOrBlank()) AsyncImage(channel?.source?.logo, null,
-                contentScale = ContentScale.Fit, modifier = Modifier.size(60.dp, 24.dp))
+            if (channel != null) ChannelLogo(
+                channel = channel,
+                size = 60.dp,
+                modifier = Modifier.size(60.dp, 24.dp),
+                contentPadding = 0.dp,
+                showPlaceholder = false,
+            )
             Text(listOfNotNull(channel?.name, channel?.quality?.takeIf { it != Quality.UNKNOWN }?.label).joinToString(" · "),
                 color = LiveColors.FgDim, fontSize = 11.sp, lineHeight = 13.sp,
                 maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))

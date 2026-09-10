@@ -47,6 +47,8 @@ fun ChannelLogo(
     channel: EnrichedChannel,
     size: Dp,
     modifier: Modifier = Modifier,
+    contentPadding: Dp = (size.value / 7f).coerceIn(4f, 8f).dp,
+    showPlaceholder: Boolean = true,
 ) {
     val initials = remember(channel.name) { initialsFor(channel.name) }
     val variant = (channel.name.firstOrNull()?.code ?: 0) % 3
@@ -74,10 +76,10 @@ fun ChannelLogo(
         modifier = modifier
             .size(size)
             .clip(RoundedCornerShape((size.value / 5.5f).dp))
-            .background(if (logoUrl.isNullOrBlank()) LiveColors.PanelRaised else Color.Transparent),
+            .background(if (showPlaceholder && logoUrl.isNullOrBlank()) LiveColors.PanelRaised else Color.Transparent),
         contentAlignment = Alignment.Center,
     ) {
-        if (showFallback) {
+        if (showPlaceholder && showFallback) {
             when (variant) {
                 0 -> Text(
                     initials,
@@ -138,7 +140,7 @@ fun ChannelLogo(
                 },
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding((size.value / 7f).coerceIn(4f, 8f).dp),
+                    .padding(contentPadding),
             ) }
         }
     }
