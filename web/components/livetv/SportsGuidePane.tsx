@@ -65,7 +65,9 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
     possibleChannels: event.possibleChannels?.filter(ch => accessibleIds.has(ch.id)),
     schedules: event.schedules ? Object.fromEntries(Object.entries(event.schedules).filter(([id]) => accessibleIds.has(id))) : undefined }))
     .filter((event) => event.fixture || event.channels.length && Object.values(event.schedules ?? { fallback: event.programme }).some(p => p.endUtcMillis > now)), [events, accessibleIds, now]);
-  const illustratedEvents = visibleEvents;
+  const [failedArtwork, setFailedArtwork] = useState<Set<string>>(() => new Set());
+  useEffect(() => { setFailedArtwork(new Set()); }, [artwork]);
+  const illustratedEvents = visibleEvents.filter(e => !failedArtwork.has(e.id) && (e.artwork || (e.teamArtwork?.homeBadge && e.teamArtwork.awayBadge)));
   const rows = useMemo(() => sportsGuideRows(illustratedEvents.filter(e => hasSportsChannels(e, now)), now).map(row => {
     if (row.id !== focusedOrder?.row) return row;
     const rank = new Map(focusedOrder.ids.map((id, index) => [id, index]));
@@ -138,7 +140,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
             next?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
           }}
           onClick={(click) => { origin.current = click.currentTarget; setShowScore(false); setSelectedId(event.id); }}>
-          <div className="tv-event-art"><EventArtwork event={event} /><span className={`tv-event-stamp${isOnAir(event, now) ? " is-on-air" : ""}`}>{stamp(event)}</span></div>
+          <div className="tv-event-art"><EventArtwork event={event} onUnavailable={() => setFailedArtwork(current => new Set([...current, event.id]))} /><span className={`tv-event-stamp${isOnAir(event, now) ? " is-on-air" : ""}`}>{stamp(event)}</span></div>
           <strong>{event.title}</strong><small className="tv-event-meta"><span className="tv-event-competition">{[sport.title, event.competition].filter(Boolean).join(" · ")}</span>{isOnAir(event, now) && <span><Tv size={16} />{channelCount(availableEventChannels(event, now).length + (event.possibleChannels?.length ?? 0))}</span>}</small>
         </button>;
       })}</div>
@@ -160,20 +162,22 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
 
 const channelCount = (count: number) => `${count} ${count === 1 ? "channel" : "channels"}`;
 
-function EventArtwork({ event }: { event: SportsGuideEvent }) {
+function EventArtwork({ event, onUnavailable }: { event: SportsGuideEvent; onUnavailable?: () => void }) {
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const [badges, setBadges] = useState<string[]>([]);
   const loaded = Boolean(event.artwork) && loadedUrl === event.artwork;
   const pair = event.teamArtwork;
+  const [bannerFailed, setBannerFailed] = useState(false);
+  const [pairFailed, setPairFailed] = useState(false);
+  useEffect(() => { setBannerFailed(false); setPairFailed(false); }, [event.artwork, pair?.homeBadge, pair?.awayBadge]);
+  useEffect(() => { if ((!event.artwork || bannerFailed) && (!pair || pairFailed)) onUnavailable?.(); }, [event.artwork, bannerFailed, pair, pairFailed, onUnavailable]);
   const pairLoaded = pair && badges.includes(pair.homeBadge) && badges.includes(pair.awayBadge);
-  const sport = guideSports.find(s => s.id === event.sportId)!;
   return <div className="tv-event-image">
-    {!loaded && <div className="tv-event-fallback"><img src={`/images/sports/${sport.asset}.webp`} alt="" loading="lazy" decoding="async" />{!pairLoaded && <span>{event.title}</span>}</div>}
     {!loaded && pair && <div className="tv-event-teams" style={{ opacity: pairLoaded ? 1 : 0 }}>
-      <img src={pair.homeBadge} alt={pair.homeTeam ?? ""} loading="lazy" decoding="async" onLoad={() => setBadges(current => [...current, pair.homeBadge])} />
+      <img src={pair.homeBadge} alt={pair.homeTeam ?? ""} loading="lazy" decoding="async" onLoad={() => setBadges(current => [...current, pair.homeBadge])} onError={() => setPairFailed(true)} />
       <strong>VS</strong>
-      <img src={pair.awayBadge} alt={pair.awayTeam ?? ""} loading="lazy" decoding="async" onLoad={() => setBadges(current => [...current, pair.awayBadge])} />
+      <img src={pair.awayBadge} alt={pair.awayTeam ?? ""} loading="lazy" decoding="async" onLoad={() => setBadges(current => [...current, pair.awayBadge])} onError={() => setPairFailed(true)} />
     </div>}
-    {event.artwork && <img src={event.artwork} alt="" loading="lazy" decoding="async" style={{ opacity: loaded ? 1 : 0 }} onLoad={() => setLoadedUrl(event.artwork!)} onError={() => setLoadedUrl(null)} />}
+    {event.artwork && <img src={event.artwork} alt="" loading="lazy" decoding="async" style={{ opacity: loaded ? 1 : 0 }} onLoad={() => setLoadedUrl(event.artwork!)} onError={() => { setLoadedUrl(null); setBannerFailed(true); }} />}
   </div>;
 }

@@ -1,5 +1,5 @@
 import { attachSportsArtwork, type SportsEventArtwork } from "./sportsArtwork";
-import { guideSports, sportsEventIdentity, sportsArtworkKey, type SportsGuideEvent } from "./sportsGuide";
+import { guideSports, sportsEventIdentity, sportsArtworkKey, sportsQualifierKey, type SportsGuideEvent } from "./sportsGuide";
 import type { IptvChannel } from "./types";
 
 // Broadcast reach and editorial competition priority are NOT measured viewership.
@@ -11,7 +11,9 @@ export function sportsProminence(league = "", countries = 0): number {
 }
 
 export function sportsChannelKey(name: string): string {
-  return sportsArtworkKey(name.replace(/\b(uhd|fhd|hd|sd|4k|8k|hevc|h265|h264)\b/gi, ""));
+  return sportsArtworkKey(name.replace(/\b(uhd|fhd|hd|sd|4k|8k|hevc|h265|h264)\b/gi, ""))
+    .replace(/^(uk|gb|us|usa|nl|de|fr|es|it|pt|br|au|ca)\s+(?:nowtv|raw|backup)\s+/, "$1 ")
+    .replace(/\btnt sport\b/g, "tnt sports").replace(/\s+/g, " ").trim();
 }
 export function sportsBroadcasterKeys(name: string, country: string): string[] {
   const regions: Record<string, string[]> = { "united kingdom": ["uk", "gb"], "united states": ["us", "usa"], netherlands: ["nl"], germany: ["de"], france: ["fr"], spain: ["es"], italy: ["it"], portugal: ["pt"], brazil: ["br"], australia: ["au"], canada: ["ca"] };
@@ -33,6 +35,7 @@ export function buildSportsCatalogue(guide: SportsGuideEvent[], artwork: SportsE
     const group = byChannel.get(key) ?? []; group.push(channel); byChannel.set(key, group);
   }
   const used = new Set<string>();
+  const guideTitles = new Map(guide.map(event => [event.id, ` ${sportsArtworkKey(event.title)} `]));
   const until = new Date(now); until.setDate(until.getDate() + 2); until.setHours(0, 0, 0, 0);
   const output: SportsGuideEvent[] = [];
   const seen = new Set<string>();
@@ -41,8 +44,13 @@ export function buildSportsCatalogue(guide: SportsGuideEvent[], artwork: SportsE
     const sport = guideSports.find(s => s.pattern.test(item.genres.join(" ")));
     if (!sport || seen.has(fixture.id) || start >= until.getTime() || start < now - 24 * 3600_000) continue;
     seen.add(fixture.id);
-    const matches = (byIdentity.get(`${sport.id}|${sportsEventIdentity(item.title)}`) ?? []).filter(event =>
+    // Match both complete participant names inside decorated EPG titles, not one team or a league alone.
+    const home = item.homeTeam && sportsArtworkKey(item.homeTeam), away = item.awayTeam && sportsArtworkKey(item.awayTeam);
+    const candidates = home && away && home !== away && home.length >= 4 && away.length >= 4
+      ? guide.filter(event => event.sportId === sport.id && guideTitles.get(event.id)!.includes(` ${home} `) && guideTitles.get(event.id)!.includes(` ${away} `)) : [];
+    const matches = [...new Set([...(byIdentity.get(`${sport.id}|${sportsEventIdentity(item.title)}`) ?? []), ...candidates])].filter(event =>
       Math.abs(event.programme.startUtcMillis - start) <= 2 * 3600_000 &&
+      sportsQualifierKey(`${event.title} ${event.competition ?? ""}`) === sportsQualifierKey(`${item.title} ${fixture.league ?? ""}`) &&
       (!fixture.qualifier || `${event.title} ${event.competition ?? ""}`.toLowerCase().includes(fixture.qualifier)) &&
       (!event.competition || !fixture.league || leagueKey(event.competition) === leagueKey(fixture.league)));
     // Ambiguous same-team events cannot claim the same broadcast twice.

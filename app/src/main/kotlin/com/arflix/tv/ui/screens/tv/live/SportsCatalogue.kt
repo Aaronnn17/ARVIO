@@ -5,6 +5,7 @@ import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.SportsEventArtwork
 import com.arflix.tv.data.model.sportsEventIdentity
 import com.arflix.tv.data.model.sportsArtworkKey
+import com.arflix.tv.data.model.sportsQualifierKey
 import java.time.Instant
 import java.time.ZoneId
 
@@ -18,6 +19,8 @@ internal fun sportsProminence(league: String?, countries: Int = 0): Int {
 
 private val channelQuality = Regex("\\b(uhd|fhd|hd|sd|4k|8k|hevc|h265|h264)\\b", RegexOption.IGNORE_CASE)
 internal fun sportsChannelKey(name: String) = sportsArtworkKey(name.replace(channelQuality, ""))
+    .replace(Regex("^(uk|gb|us|usa|nl|de|fr|es|it|pt|br|au|ca)\\s+(?:nowtv|raw|backup)\\s+"), "$1 ")
+    .replace(Regex("\\btnt sport\\b"), "tnt sports").replace(Regex("\\s+"), " ").trim()
 internal fun sportsBroadcasterKeys(name: String, country: String): List<String> {
     val regions = mapOf("united kingdom" to listOf("uk", "gb"), "united states" to listOf("us", "usa"), "netherlands" to listOf("nl"),
         "germany" to listOf("de"), "france" to listOf("fr"), "spain" to listOf("es"), "italy" to listOf("it"), "portugal" to listOf("pt"),
@@ -35,6 +38,7 @@ internal fun buildSportsCatalogue(guide: List<SportsGuideEvent>, artwork: List<S
     val fixtures = artwork.filter { it.fixture != null && it.startsAt != null }
     if (fixtures.isEmpty()) return attachSportsArtwork(guide, artwork)
     val byIdentity = guide.groupBy { "${it.sport}|${it.identity}" }
+    val guideTitles = guide.associate { it.id to " ${sportsArtworkKey(it.title)} " }
     val byChannel = channels.groupBy { sportsChannelKey(it.name) }
     val used = hashSetOf<String>()
     val seen = hashSetOf<String>()
@@ -43,8 +47,15 @@ internal fun buildSportsCatalogue(guide: List<SportsGuideEvent>, artwork: List<S
         val fixture = item.fixture!!; val start = item.startsAt!!
         val sport = GuideSport.fromText(item.genres.joinToString(" ")) ?: return@mapNotNull null
         if (!seen.add(fixture.id) || start >= until || start < now - 86_400_000) return@mapNotNull null
-        val matches = byIdentity["$sport|${sportsEventIdentity(item.title)}"].orEmpty().filter { event ->
+        val home = item.homeTeam?.let(::sportsArtworkKey)
+        val away = item.awayTeam?.let(::sportsArtworkKey)
+        // Both complete participant names must be present; a league or one team is not enough.
+        val candidates = if (home != null && away != null && home != away && home.length >= 4 && away.length >= 4)
+            guide.filter { it.sport == sport && guideTitles.getValue(it.id).contains(" $home ") && guideTitles.getValue(it.id).contains(" $away ") }
+            else emptyList()
+        val matches = (byIdentity["$sport|${sportsEventIdentity(item.title)}"].orEmpty() + candidates).distinctBy { it.id }.filter { event ->
             event.id !in used && kotlin.math.abs(event.programme.startUtcMillis - start) <= 2 * 3600_000L &&
+                sportsQualifierKey("${event.title} ${event.competition.orEmpty()}") == sportsQualifierKey("${item.title} ${fixture.league.orEmpty()}") &&
                 (fixture.qualifier == null || "${event.title} ${event.competition.orEmpty()}".contains(fixture.qualifier, true)) &&
                 (event.competition == null || fixture.league == null || leagueKey(event.competition) == leagueKey(fixture.league))
         }

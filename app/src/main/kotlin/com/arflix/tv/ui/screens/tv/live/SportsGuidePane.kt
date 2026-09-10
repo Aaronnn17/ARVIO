@@ -44,7 +44,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import coil.compose.AsyncImage
-import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import androidx.compose.ui.unit.LayoutDirection
@@ -80,8 +79,9 @@ internal fun SportsGuidePane(
 ) {
     var focusedRow by remember { mutableStateOf<String?>(null) }
     var focusedOrder by remember { mutableStateOf(emptyList<String>()) }
-    val rows = remember(events, now, focusedRow, focusedOrder) {
-        sportsGuideRows(events.filter { it.hasChannels(now) }, now).map { row ->
+    var failedArtwork by remember(events) { mutableStateOf(emptySet<String>()) }
+    val rows = remember(events, now, focusedRow, focusedOrder, failedArtwork) {
+        sportsGuideRows(events.filter { it.hasChannels(now) && it.hasEventArtwork && it.id !in failedArtwork }, now).map { row ->
             if (row.id == focusedRow) {
                 val rank = focusedOrder.withIndex().associate { it.value to it.index }
                 row.copy(events = row.events.sortedBy { rank[it.id] ?: Int.MAX_VALUE })
@@ -112,8 +112,13 @@ internal fun SportsGuidePane(
         }
         return "$day ${timeFormat.format(Date(event.programme.startUtcMillis))}"
     }
-    LaunchedEffect(focusSignal, rows.isEmpty()) {
-        if (focusSignal > 0) runCatching { firstFocus.requestFocus() }
+    LaunchedEffect(focusSignal, rows.isEmpty(), sidebarOpen) {
+        if (focusSignal > 0 && rows.isNotEmpty() && !sidebarOpen) {
+            // Lazy cards are attached after the drawer starts its layout transition.
+            withFrameNanos { }
+            withFrameNanos { }
+            runCatching { firstFocus.requestFocus() }
+        }
     }
     LaunchedEffect(selected) {
         if (selected == null) returnFocus?.let { runCatching { it.requestFocus() } }
@@ -155,10 +160,10 @@ internal fun SportsGuidePane(
                     LazyRow(Modifier.padding(horizontal = 18.dp), contentPadding = PaddingValues(vertical = 1.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         itemsIndexed(row.events, key = { _, event -> event.id }) { index, event ->
-                            val requester = remember { FocusRequester() }
+                            val itemRequester = remember { FocusRequester() }
+                            val requester = if (index == 0 && rowIndex == 0) firstFocus else itemRequester
                             var focused by remember { mutableStateOf(false) }
                             Column(Modifier.width(cardWidth).testTag("sports-event-card")
-                                .then(if (index == 0 && rowIndex == 0) Modifier.focusRequester(firstFocus) else Modifier)
                                 .focusRequester(requester)
                                 .onFocusChanged {
                                     focused = it.isFocused
@@ -176,7 +181,7 @@ internal fun SportsGuidePane(
                                 .clickable { returnFocus = requester; showScore = false; selected = event }
                                 .padding(2.dp)) {
                                 Box(Modifier.fillMaxWidth().aspectRatio(if (row.id == "more") 2.85f else 2.25f).clip(RoundedCornerShape(4.dp))) {
-                                    EventArtwork(event, Modifier.fillMaxSize())
+                                    EventArtwork(event, Modifier.fillMaxSize()) { failedArtwork = failedArtwork + event.id }
                                     Row(Modifier.padding(6.dp).background(Color.Black.copy(alpha = .85f), RoundedCornerShape(3.dp))
                                         .padding(horizontal = 5.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                                         if (event.isOnAir(now)) Box(Modifier.padding(end = 4.dp).size(7.dp).background(LiveColors.LiveRed, RoundedCornerShape(50)))
@@ -297,27 +302,18 @@ internal fun SportsGuidePane(
 private fun channelCount(count: Int) = "$count ${if (count == 1) "channel" else "channels"}"
 
 @Composable
-private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier) {
+private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier, onUnavailable: () -> Unit = {}) {
     var loaded by remember(event.artwork) { mutableStateOf(false) }
+    var bannerFailed by remember(event.artwork) { mutableStateOf(event.artwork.isNullOrBlank()) }
     val pair = event.teamArtwork
+    var pairFailed by remember(pair) { mutableStateOf(pair == null) }
     var homeLoaded by remember(pair?.homeBadge) { mutableStateOf(false) }
     var awayLoaded by remember(pair?.awayBadge) { mutableStateOf(false) }
-    var fallbackLoaded by remember(event.sport) { mutableStateOf(false) }
+    LaunchedEffect(bannerFailed, pairFailed) { if (bannerFailed && pairFailed) onUnavailable() }
     Box(modifier.background(LiveColors.Panel).testTag(if (loaded) "sports-artwork-loaded" else "sports-artwork-pending")) {
-        if (!loaded) {
-            // Bundled sport photography is explicitly a fallback, never an invented event banner.
-            AsyncImage(event.sport.fallbackArtwork(), null, contentScale = ContentScale.Crop,
-                onSuccess = { fallbackLoaded = true },
-                modifier = Modifier.fillMaxSize().testTag(if (fallbackLoaded) "sports-artwork-fallback-loaded" else "sports-artwork-fallback"))
-            if (!(homeLoaded && awayLoaded)) Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Color.Black.copy(alpha = .72f))
-                .padding(horizontal = 10.dp, vertical = 5.dp)) {
-                Text(event.title, color = LiveColors.Fg, fontSize = 11.sp, lineHeight = 13.sp,
-                    fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-        }
         event.artwork?.let { url ->
             AsyncImage(url, null, contentScale = ContentScale.Fit,
-                onSuccess = { loaded = true }, onError = { loaded = false },
+                onSuccess = { loaded = true }, onError = { loaded = false; bannerFailed = true },
                 modifier = Modifier.fillMaxSize())
         }
         if (!loaded && pair != null) {
@@ -325,28 +321,16 @@ private fun EventArtwork(event: SportsGuideEvent, modifier: Modifier = Modifier)
                 .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 AsyncImage(pair.homeBadge, pair.homeTeam, contentScale = ContentScale.Fit,
-                    onSuccess = { homeLoaded = true }, onError = { homeLoaded = false },
+                    onSuccess = { homeLoaded = true }, onError = { homeLoaded = false; pairFailed = true },
                     modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (homeLoaded && awayLoaded) 1f else 0f })
                 Text("VS", color = if (homeLoaded && awayLoaded) LiveColors.Fg else Color.Transparent,
                     fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 AsyncImage(pair.awayBadge, pair.awayTeam, contentScale = ContentScale.Fit,
-                    onSuccess = { awayLoaded = true }, onError = { awayLoaded = false },
+                    onSuccess = { awayLoaded = true }, onError = { awayLoaded = false; pairFailed = true },
                     modifier = Modifier.weight(1f).fillMaxHeight().graphicsLayer { alpha = if (homeLoaded && awayLoaded) 1f else 0f })
             }
         }
     }
-}
-
-private fun GuideSport.fallbackArtwork(): Int = when (this) {
-    GuideSport.FOOTBALL -> R.drawable.sports_card_football
-    GuideSport.BASKETBALL -> R.drawable.sports_card_basketball
-    GuideSport.F1 -> R.drawable.sports_card_motor_sports
-    GuideSport.TENNIS -> R.drawable.sports_card_tennis
-    GuideSport.MMA, GuideSport.BOXING -> R.drawable.sports_card_fight
-    GuideSport.AMERICAN_FOOTBALL -> R.drawable.sports_card_american_football
-    GuideSport.CRICKET -> R.drawable.sports_card_cricket
-    GuideSport.BASEBALL -> R.drawable.sports_card_baseball
-    GuideSport.HOCKEY -> R.drawable.sports_card_hockey
 }
 
 @Composable

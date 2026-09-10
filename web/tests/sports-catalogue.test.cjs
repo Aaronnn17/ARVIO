@@ -24,6 +24,34 @@ const raw = { id: '42', title: 'North vs South', sport: 'Soccer', startsAt: now 
 const art = (changes = {}) => parseSportsMetadata({ version: 1, catalogueEnabled: true, events: [{ ...raw, ...changes }] });
 const epg = { id: 'guide', title: raw.title, sportId: 'football', competition: 'Premier League', programme: { title: raw.title, startUtcMillis: now - 60000, endUtcMillis: now + 3600000 }, channels: [channel], schedules: { [channel.id]: { title: raw.title, startUtcMillis: now - 60000, endUtcMillis: now + 3600000 } } };
 
+test('real provider decorations match broadcasters without mixing countries or channel numbers', () => {
+  const { sportsChannelKey } = load('./sportsCatalogue');
+  assert.equal(sportsChannelKey('UK-NOWTV| TNT SPORT 2 FHD'), sportsChannelKey('UK TNT Sports 2'));
+  assert.notEqual(sportsChannelKey('UK-NOWTV| TNT SPORT 2 FHD'), sportsChannelKey('DE TNT Sports 2'));
+  assert.notEqual(sportsChannelKey('UK-NOWTV| TNT SPORT 2 FHD'), sportsChannelKey('UK TNT Sports 1'));
+});
+test('decorated guide titles match both participants but not womens fixtures', () => {
+  const decorated = { ...epg, title: 'Football: North - South, Premier League 2026/2027' };
+  const metadata = art({ startsAt: now, homeTeam: 'North', awayTeam: 'South', homeBadge: 'https://example.com/n.png', awayBadge: 'https://example.com/s.png' });
+  const events = buildSportsCatalogue([decorated], metadata, [], now);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].channels.length, 1);
+  assert.ok(events[0].teamArtwork);
+  const women = buildSportsCatalogue([{ ...decorated, title: 'Football: North - South, Women' }], metadata, [], now);
+  assert.equal(women.find(e => e.fixture).channels.length, 0);
+});
+test('sports channel genre and descriptive mentions do not turn drama or downtime into events', () => {
+  const { buildSportsGuideEvents } = load('./sportsGuide');
+  for (const title of ['Sendepause', 'Die Aquarium-Profis', 'Murder Under the Friday Night Lights', "Familien Green i storby'n", 'Best of NBA Action']) {
+    const p = { ...epg.programme, title, description: 'A family talks about football and cricket' };
+    assert.equal(buildSportsGuideEvents([{ ...channel, group: 'Football' }], { [channel.id]: { now: p, upcoming: [] } }, now).length, 0, title);
+  }
+});
+test('event UI has no bundled generic sport fallback', () => {
+  const pane = fs.readFileSync(`${__dirname}/../components/livetv/SportsGuidePane.tsx`, 'utf8');
+  assert.ok(!pane.includes('/images/sports/'));
+  assert.ok(pane.includes('failedArtwork'));
+});
 test('fixtures without pictures or guide remain browsable, no invented duration or live flag', () => {
   const event = buildSportsCatalogue([], art(), [], now)[0];
   assert.equal(event.id, 'sportsdb:42');

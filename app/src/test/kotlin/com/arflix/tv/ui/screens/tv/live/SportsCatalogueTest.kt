@@ -6,6 +6,21 @@ import org.junit.Test
 import java.time.Instant
 
 class SportsCatalogueTest {
+    @Test fun broadcasterDecorationsPreserveCountryAndChannelNumber() {
+        assertEquals(sportsChannelKey("UK TNT Sports 2"), sportsChannelKey("UK-NOWTV| TNT SPORT 2 FHD"))
+        assertNotEquals(sportsChannelKey("DE TNT Sports 2"), sportsChannelKey("UK-NOWTV| TNT SPORT 2 FHD"))
+        assertNotEquals(sportsChannelKey("UK TNT Sports 1"), sportsChannelKey("UK-NOWTV| TNT SPORT 2 FHD"))
+    }
+    @Test fun decoratedMatchTitlesUseRealCrestsWithoutStockArtwork() {
+        val item = art.copy(homeTeam = "North", awayTeam = "South", homeBadge = "https://example.com/north.png", awayBadge = "https://example.com/south.png", startsAt = now)
+        val decorated = epg.copy(title = "Football: North - South, Premier League 2026/2027")
+        val result = buildSportsCatalogue(listOf(decorated), listOf(item), emptyList(), now).single()
+        assertEquals(listOf(channel), result.channels)
+        assertTrue(result.hasEventArtwork)
+        assertFalse(epg.hasEventArtwork)
+        val women = decorated.copy(title = "Football: North - South, Women")
+        assertTrue(buildSportsCatalogue(listOf(women), listOf(item), emptyList(), now).single { it.fixture != null }.channels.isEmpty())
+    }
     private val now = Instant.parse("2026-09-10T12:00:00Z").toEpochMilli()
     private val channel = IptvChannel("p:1", "UK | Sky Sports Main Event FHD", streamUrl = "https://example.invalid/live", group = "Sports")
     private val fixture = SportsFixture("42", "English Premier League", null, null, null, "scheduled", now, null, null,

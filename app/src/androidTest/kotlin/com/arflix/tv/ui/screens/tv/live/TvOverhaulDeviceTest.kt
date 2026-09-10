@@ -146,7 +146,7 @@ class TvOverhaulDeviceTest {
         }
     }
 
-    @Test fun sportsWithoutProviderArtworkUseDecodedLocalPhotography() {
+    @Test fun sportsWithoutEventArtworkNeverUseGenericPhotography() {
         val events = GuideSport.entries.mapIndexed { index, sport ->
             SportsGuideEvent("fallback:$index", "${sport.title} event", sport,
                 IptvProgram("${sport.title} event", startUtcMillis = now - 60_000, endUtcMillis = now + 60_000),
@@ -156,9 +156,27 @@ class TvOverhaulDeviceTest {
             SportsGuidePane(events, now, false, 0, {}, {}, {}, sidebarOpen = false)
         }
         compose.waitUntil(15_000) {
-            compose.onAllNodesWithTag("sports-artwork-fallback-loaded", useUnmergedTree = true).fetchSemanticsNodes().size >= 4
+            compose.onAllNodesWithTag("sports-event-card", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
         }
-        screenshot("06-sports-local-artwork")
+        compose.onNodeWithText("No sports events matched to your channels").assertIsDisplayed()
+        compose.onAllNodesWithTag("sports-artwork-fallback-loaded", useUnmergedTree = true).assertCountEquals(0)
         compose.onAllNodesWithTag("sports-artwork-loaded", useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test fun upcomingOnlyRowReceivesFocusAfterSidebarCloses() {
+        val open = mutableStateOf(true)
+        val signal = mutableIntStateOf(0)
+        val art = metadata.firstNotNullOf { it.toSportsEventArtwork() }
+        val event = SportsGuideEvent("upcoming", art.title, GuideSport.FOOTBALL,
+            IptvProgram(art.title, startUtcMillis = now + 3_600_000, endUtcMillis = now + 7_200_000),
+            listOf(channels.first().source), artwork = art.background)
+        compose.setContent { SportsGuidePane(listOf(event), now, false, signal.intValue, {}, {}, {}, sidebarOpen = open.value) }
+        compose.waitForIdle()
+        compose.runOnIdle { open.value = false; signal.intValue++ }
+        compose.waitUntil(5_000) {
+            compose.onAllNodes(hasTestTag("sports-event-card") and isFocused(), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onAllNodesWithTag("sports-event-card", useUnmergedTree = true)[0].performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.onNodeWithText("Channels").assertIsDisplayed()
     }
 }

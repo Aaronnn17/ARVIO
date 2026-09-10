@@ -9,6 +9,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SportsGuideTest {
+    @Test fun sportsChannelDoesNotTurnDowntimeOrDramaIntoEvents() {
+        val resolver = SportsProgrammeResolver()
+        for (title in listOf("Sendepause", "Die Aquarium-Profis", "Murder Under the Friday Night Lights", "Familien Green i storby'n", "Best of NBA Action")) {
+            assertNull(title, resolver.resolve(IptvProgram(title, startUtcMillis = 1, endUtcMillis = 2,
+                description = "A family talks about football and cricket"), GuideSport.FOOTBALL))
+        }
+    }
     @Test fun upcomingFilterUsesCalendarDaysAcrossDstAndKeepsEmptyFilterReachable() {
         val zone = ZoneId.of("Europe/Amsterdam")
         val clock = Instant.parse("2026-10-24T22:30:00Z").toEpochMilli()

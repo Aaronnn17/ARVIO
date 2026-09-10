@@ -1660,9 +1660,10 @@ fun LiveTvScreen(
                         guideClockMillis, guideClockMillis + 48 * 60 * 60_000L)
                     val guide = batch.associate { it.id to (indexed[it.id] ?: state.snapshot.nowNext[it.id] ?: IptvNowNext()) }
                     accumulateSportsGuideEvents(batch, guide, guideClockMillis, events, resolver = programmeResolver)
-                    if (android.os.SystemClock.elapsedRealtime() - lastPublish >= 500) {
+                    if (android.os.SystemClock.elapsedRealtime() - lastPublish >= 2000) {
                         val partial = events.events()
-                        withContext(Dispatchers.Main) { if (sportsEvents.isEmpty()) sportsEvents = partial }
+                        // Publish newly discovered illustrated matches without waiting for the full large-guide scan.
+                        withContext(Dispatchers.Main) { sportsEvents = retainSportsEventOrder(sportsEvents, partial) }
                         lastPublish = android.os.SystemClock.elapsedRealtime()
                     }
                 }

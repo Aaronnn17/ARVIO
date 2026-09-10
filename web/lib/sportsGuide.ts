@@ -28,7 +28,7 @@ export interface SportsGuideEvent {
   possibleChannels?: IptvChannel[];
   prominence?: number;
 }
-const nonEvent = /\b(highlights?|hoogtepunten|samenvatting|resumen|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned)\b/i;
+const nonEvent = /\b(highlights?|hoogtepunten|samenvatting|resumen|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned|sendepause|off air|no signal|best of|teleshopping|infomercial|documentary)\b/i;
 export const sportsProgrammeKey = (p: IptvProgram) => `${p.title.trim().toLowerCase().replace(/\s+/g, " ")}|${p.startUtcMillis}|${p.endUtcMillis}`;
 const programmeOnAir = (p: IptvProgram, now: number) => p.startUtcMillis <= now && now < p.endUtcMillis;
 export function safeSportsImage(value?: string): string | undefined {
@@ -41,9 +41,13 @@ export const hasSportsChannels = (event: SportsGuideEvent, now: number) => (isOn
 export const sportsArtworkKey = (title: string) => title.normalize("NFD").replace(/\p{M}+/gu, "").toLowerCase()
   .replace(/^(live\s*[:|-]\s*|live\s+)/, "").replace(/^(football|soccer|basketball|baseball|tennis|ice hockey|american football|boxing|mma|cricket)\s*:\s*/, "")
   .replace(/\b(vs\.?|versus|v\.)\s+/g, "vs ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+export function sportsQualifierKey(text: string): string {
+  return [...new Set((text.toLowerCase().match(/\b(women(?:s|'s)?|youth|u\d{2}|under[ -]?\d{2})\b/g) ?? [])
+    .map(value => value.replace(/^women.*/, "women").replace("under", "u").replace(/[ -]/g, "")))].sort().join("|");
+}
 export function sportsEventIdentity(title: string): string {
   const plain = title.replace(/\s*[\[(](?:live|hd|fhd|uhd|4k)[\])]\s*/gi, " ");
-  const matchup = plain.split(":").at(-1)!.trim();
+  const matchup = plain.split(":").at(-1)!.split(",")[0].trim();
   const separator = /\s+(?:vs?\.?|versus|at|[-–—])\s+/gi;
   const normalized = sportsArtworkKey((separator.test(matchup) ? matchup : plain).replace(separator, " vs "));
   const sides = normalized.split(" vs ");
@@ -67,8 +71,10 @@ export function buildSportsGuideEvents(channels: IptvChannel[], guide: Record<st
       if (!Number.isFinite(programme.startUtcMillis) || !Number.isFinite(programme.endUtcMillis) ||
           programme.endUtcMillis <= now || programme.startUtcMillis >= until || programme.endUtcMillis <= programme.startUtcMillis ||
           !programme.title.trim() || nonEvent.test(programme.title)) continue;
-      const sport = guideSports.find((s) => s.pattern.test(`${programme.category ?? ""} ${programme.title} ${programme.description ?? ""}`))
-        ?? guideSports.find((s) => s.pattern.test(`${channel.group} ${channel.name}`));
+      const explicit = guideSports.find((s) => s.pattern.test(`${programme.category ?? ""} ${programme.title}`));
+      // A sports channel also broadcasts advertising, documentaries and downtime.
+      const matchup = /\s+(?:vs?\.?|versus|at|[-–—])\s+/i.test(programme.title);
+      const sport = explicit ?? (matchup ? guideSports.find((s) => s.pattern.test(`${channel.group} ${channel.name}`)) : undefined);
       if (!sport) continue;
       const key = `${sport.id}|${sportsEventIdentity(programme.title)}`;
       const group = events.get(key) ?? [];

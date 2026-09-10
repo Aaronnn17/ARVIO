@@ -89,18 +89,25 @@ only in the backend function environment, never in the APK, web bundle or Git.
   See [Netlify's consistency documentation](https://docs.netlify.com/build/data-and-storage/netlify-blobs/#consistency).
 - Four bounded V2 TV-day requests add broadcaster hints. A separate strongly
   cached V2 livescore request refreshes every two minutes. A complete cold refresh
-  costs at most nine upstream calls, not nine calls per user. TV-day truncation is
-  reported separately as `broadcastsPartial`; no stream is opened for matching.
+  costs nine upstream calls normally, or at most seventeen when truncated TV-day
+  results need eight fixed regional supplements (three concurrent at most).
+  This work is globally cached, not repeated per user. `broadcastsPartial` remains
+  true because regional supplements cannot guarantee worldwide completeness.
+  No stream is opened for matching.
 - Android and web cache the public feed for two minutes and persist public
   metadata for a maximum 24-hour stale fallback. Addon artwork remains supported.
   Fixtures can exist without artwork, but the Sports UI only displays events
   matched to the user's accessible channels. There is no availability toggle.
-- Exact normalized title/participants, sport and a two-hour start tolerance are
-  required for SportsDB matches. Generic league titles and differing youth/women's
-  fixtures cannot borrow a plausible-looking image. No unverified team aliases.
+- Normalized match titles (including provider competition suffixes), or both
+  complete participant names, sport and a two-hour start tolerance are required.
+  Generic league titles and differing youth/women's fixtures cannot borrow artwork.
+  Region-preserving channel keys handle UK-NOWTV decorations and TNT Sport/Sports.
 - Event thumbnail/fanart is preferred. When both verified team crests exist,
-  clients compose an uncropped matchup card on a neutral background. If an image
-  fails, bundled sport artwork remains visible. Times use the device timezone
+  clients compose an uncropped matchup card on a neutral background. Generic sport
+  photography is not used. Events without match artwork or paired crests are not
+  shown; failed banners fall back to verified crests, otherwise the card is removed.
+  Channel category or a sport mentioned in programme descriptions is not sufficient
+  evidence of a sports event. Times use the device timezone
   and the profile's 12/24-hour preference. Attribution lives in About & Credits,
   not in the Sports corner.
 - Fixture IDs remain stable across refreshes. Finished/cancelled fixtures suppress
@@ -136,12 +143,29 @@ can supply their own endpoint; otherwise their existing addon art still works.
   with `SPORTS_METADATA_URL` and local `EPG_AUDIT_DB`. Read-only: no playback probes,
   user credentials or source URLs are read/output.
 
-2026-09-10 catalogue preview audit: the four-day feed returned 2488 events, 883
+2026-09-10 pre-fix catalogue preview audit: the four-day feed returned 2488 events, 883
 banners and 2380 badge pairs. Only four of 791 cached EPG sports candidates matched
 (three distinct matchups). This is not
-full-guide coverage: generic titles remain fallbacks, and the cache's date window
-also limits this snapshot. Do not use the rendering fixtures as proof that all
+full-guide coverage: the old generic-title fallback has since been removed, and
+the cache's date window also limits this snapshot. Do not use rendering fixtures as proof that all
 provider events are enriched. Browser checks cover both artwork modes, picker
 opening/closing at 1672/768/390px, and hiding unmatched events. The host-JS index
 benchmark covers 50k channels and 2k fixtures; it is not an Android frame benchmark.
 Production is not enabled by this PR's isolated preview deployment.
+
+The artwork follow-up passed 28 Android unit tests, 28 web unit tests and six
+backend tests. Web typechecking and real-art browser checks passed at desktop,
+tablet and phone widths; Android instrumentation tests compile but were not run
+in this pass. On the TCL TV with 108,145 stored channels, real SportsDB matchup
+banners appeared for Fenerbahce-Roma, PSV-Shakhtar and Bayern-Bodo/Glimt.
+The supplemented feed increased events with broadcast hints from 163 to 240 in
+the observed response; this is still partial coverage, not a complete global feed.
+Only events with artwork and matching owned channels are shown. No live match
+is invented when the eligible results are upcoming only.
+The final release-signed build was installed as an update on the TCL. Remote
+Right transferred focus from the drawer to the first upcoming card; Select opened
+the Fenerbahce-Roma picker with 29 scheduled channel entries from the stored
+playlists, and Back returned to Sports. A live North Korea U20 Women-Costa Rica
+fixture subsequently appeared with its own matchup artwork. No upcoming stream
+was played to claim broadcast verification. Cold first results still took roughly
+a minute or more on this large list; this is not an instant-load performance claim.

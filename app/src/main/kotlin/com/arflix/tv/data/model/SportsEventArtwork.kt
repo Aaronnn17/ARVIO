@@ -31,12 +31,16 @@ fun sportsArtworkKey(title: String): String = Normalizer.normalize(title, Normal
 /** Only cosmetic title differences are ignored. Age/gender/round qualifiers remain. */
 fun sportsEventIdentity(title: String): String {
     val plain = title.replace(cosmeticTags, " ")
-    val matchup = plain.substringAfterLast(':').trim()
+    val matchup = plain.substringAfterLast(':').substringBefore(',').trim()
     val normalized = sportsArtworkKey((if (matchupSeparator.containsMatchIn(matchup)) matchup else plain)
         .replace(matchupSeparator, " vs "))
     val sides = normalized.split(" vs ")
     return if (sides.size == 2 && sides.all { it.length >= 3 }) sides.sorted().joinToString(" vs ") else normalized
 }
+
+fun sportsQualifierKey(text: String): String = Regex("\\b(women(?:s|'s)?|youth|u\\d{2}|under[ -]?\\d{2})\\b")
+    .findAll(text.lowercase(Locale.ROOT)).map { it.value.replace(Regex("^women.*"), "women").replace("under", "u").replace(Regex("[ -]"), "") }
+    .toSet().sorted().joinToString("|")
 
 fun safeSportsImage(image: String?): String? = image?.takeIf { it.length <= 2048 && !it.contains("_UTC", true) }?.let {
     val uri = runCatching { URI(it) }.getOrNull()

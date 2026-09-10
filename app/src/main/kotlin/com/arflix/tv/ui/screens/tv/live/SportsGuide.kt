@@ -7,6 +7,7 @@ import com.arflix.tv.data.model.SportsEventArtwork
 import com.arflix.tv.data.model.SportsFixture
 import com.arflix.tv.data.model.sportsEventIdentity
 import com.arflix.tv.data.model.safeSportsImage
+import com.arflix.tv.data.model.sportsQualifierKey
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
@@ -28,6 +29,8 @@ internal data class SportsGuideEvent(
     val prominence: Int = 0,
 ) {
     val identity: String = sportsEventIdentity(title)
+    val hasEventArtwork: Boolean get() = !artwork.isNullOrBlank() ||
+        (teamArtwork?.homeBadge != null && teamArtwork.awayBadge != null)
     fun isConfirmedLive(now: Long) = fixture?.status == "live" && now >= fixture.observedAt && now - fixture.observedAt < 300_000
     fun isOnAir(now: Long) = fixture?.status !in setOf("finished", "postponed") &&
         (isConfirmedLive(now) || if (schedules.isEmpty()) programme.isLive(now) else schedules.values.any { it.isLive(now) })
@@ -41,6 +44,7 @@ internal fun attachSportsArtwork(events: List<SportsGuideEvent>, artwork: List<S
         val candidates = byTitle[event.identity].orEmpty().filter {
             val sport = GuideSport.fromText(it.genres.joinToString(" "))
             (sport == event.sport || (sport == null && it.source != "TheSportsDB")) &&
+                sportsQualifierKey("${event.title} ${event.competition.orEmpty()}") == sportsQualifierKey("${it.title} ${it.fixture?.league.orEmpty()}") &&
                 (it.startsAt == null || kotlin.math.abs(it.startsAt - event.programme.startUtcMillis) <=
                     (if (it.source == "TheSportsDB") 2 else 6) * 60 * 60_000L)
         }
@@ -74,7 +78,8 @@ internal enum class GuideSport(val title: String, val asset: String, val terms: 
     }
 }
 
-private val nonEvent = Regex("\\b(highlights?|hoogtepunten|samenvatting|resumen|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned)\\b", RegexOption.IGNORE_CASE)
+private val nonEvent = Regex("\\b(highlights?|hoogtepunten|samenvatting|resumen|replay|re-?run|classic|news|magazine|review|preview|cancelled|canceled|postponed|abandoned|sendepause|off air|no signal|best of|teleshopping|infomercial|documentary)\\b", RegexOption.IGNORE_CASE)
+private val eventMatchup = Regex("\\s+(?:vs?\\.?|versus|at|[-–—])\\s+", RegexOption.IGNORE_CASE)
 private val space = Regex("\\s+")
 
 private val competitions = listOf("UEFA Champions League", "Premier League", "La Liga", "Eredivisie", "Bundesliga",
@@ -138,8 +143,10 @@ internal class SportsProgrammeResolver {
         val key = Key(programme.title, programme.category, programme.description, fallback)
         if (cache.containsKey(key)) return cache[key]
         val metadata = if (nonEvent.containsMatchIn(programme.title)) null else {
-            val text = "${programme.category.orEmpty()} ${programme.title} ${programme.description.orEmpty()}"
-            (GuideSport.fromText(text) ?: fallback)?.let { Metadata(it, sportsEventIdentity(programme.title), competition(text)) }
+            val text = "${programme.category.orEmpty()} ${programme.title}"
+            // Channel genre alone does not make advertising or downtime a sporting event.
+            (GuideSport.fromText(text) ?: fallback?.takeIf { eventMatchup.containsMatchIn(programme.title) })
+                ?.let { Metadata(it, sportsEventIdentity(programme.title), competition(text)) }
         }
         cache[key] = metadata
         return metadata

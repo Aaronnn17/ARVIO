@@ -1,5 +1,5 @@
 const DAY = 86_400_000;
-const CACHE_KEY = 'fixtures-v3';
+const CACHE_KEY = 'fixtures-v4';
 const REFRESH_MS = 30 * 60_000;
 const RETRY_MS = 5 * 60_000;
 const MAX_AGE = 24 * 60 * 60_000;
@@ -83,6 +83,15 @@ async function fetchFixtures({ fetcher, apiKey, now }) {
   // A bounded broadcast feed, never one request per event or per user's channel.
   // Keep fixtures usable even if the optional TV listing service is unavailable.
   let broadcastsPartial = false;
+  const mergeBroadcasts = rows => {
+    for (const row of rows.slice(0, 100)) {
+      const event = events.get(String(row.idEvent));
+      const start = utcTimestamp(row.strTimeStamp);
+      if (!event || typeof row.strChannel !== 'string' || !row.strChannel.trim() || !Number.isFinite(start)) continue;
+      const broadcaster = { name: row.strChannel.trim().slice(0, 120), country: String(row.strCountry || '').slice(0, 80), startsAt: start };
+      if (!event.broadcasters.some(b => b.name === broadcaster.name && b.country === broadcaster.country && b.startsAt === start)) event.broadcasters.push(broadcaster);
+    }
+  };
   for (const offset of [-1, 0, 1, 2]) {
     try {
       const day = new Date(now + offset * DAY).toISOString().slice(0, 10);
@@ -93,14 +102,25 @@ async function fetchFixtures({ fetcher, apiKey, now }) {
       const payload = await response.json();
       if (!Array.isArray(payload.filter)) throw new Error('Unavailable');
       broadcastsPartial ||= payload.filter.length >= 100;
-      for (const row of payload.filter.slice(0, 100)) {
-        const event = events.get(String(row.idEvent));
-        const start = utcTimestamp(row.strTimeStamp);
-        if (!event || typeof row.strChannel !== 'string' || !row.strChannel.trim() || !Number.isFinite(start)) continue;
-        const broadcaster = { name: row.strChannel.trim().slice(0, 120), country: String(row.strCountry || '').slice(0, 80), startsAt: start };
-        if (!event.broadcasters.some(b => b.name === broadcaster.name && b.country === broadcaster.country && b.startsAt === start)) event.broadcasters.push(broadcaster);
-      }
+      mergeBroadcasts(payload.filter);
     } catch { broadcastsPartial = true; break; }
+  }
+  // The day endpoint stops at 100 broadcasts, often before European evening fixtures.
+  // Supplement only truncated/failed feeds. These are shared requests, never per viewer.
+  if (broadcastsPartial) {
+    const countries = ['united_kingdom', 'netherlands', 'united_states', 'germany', 'france', 'spain', 'italy', 'brazil'];
+    for (let i = 0; i < countries.length; i += 3) {
+      await Promise.all(countries.slice(i, i + 3).map(async country => {
+        try {
+          const response = await fetcher(`https://www.thesportsdb.com/api/v2/json/filter/tv/country/${country}`, {
+            signal: AbortSignal.timeout(4_000), redirect: 'error', headers: { Accept: 'application/json', 'X-API-KEY': apiKey },
+          });
+          if (!response.ok) return;
+          const payload = await response.json();
+          if (Array.isArray(payload.filter)) mergeBroadcasts(payload.filter);
+        } catch { /* A missing regional feed must not discard the fixture catalogue. */ }
+      }));
+    }
   }
   return { version: 1, catalogueEnabled: true, updatedAt: now, partial, broadcastsPartial,
     rankingBasis: 'competition-and-broadcast-reach', attribution: 'TheSportsDB', events: [...events.values()] };

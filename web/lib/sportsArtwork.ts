@@ -1,6 +1,6 @@
 import { jsonRequest, proxiedUrl } from "./http";
 import { config } from "./config";
-import { guideSports, sportsArtworkKey, sportsEventIdentity, safeSportsImage, type SportsGuideEvent } from "./sportsGuide";
+import { guideSports, sportsArtworkKey, sportsEventIdentity, sportsQualifierKey, safeSportsImage, type SportsGuideEvent } from "./sportsGuide";
 export { sportsArtworkKey } from "./sportsGuide";
 import type { InstalledAddon } from "./types";
 
@@ -80,6 +80,7 @@ export function attachSportsArtwork(events: SportsGuideEvent[], artwork: SportsE
     const matches = byTitle.get(sportsEventIdentity(event.title))?.filter(item => {
     const sport = guideSports.find(s => s.pattern.test(item.genres.join(" ")));
     return (sport?.id === event.sportId || (!sport && item.source !== "TheSportsDB"))
+      && sportsQualifierKey(`${event.title} ${event.competition ?? ""}`) === sportsQualifierKey(`${item.title} ${item.fixture?.league ?? ""}`)
       && (item.startsAt === undefined || Math.abs(item.startsAt - event.programme.startUtcMillis) <= (item.source === "TheSportsDB" ? 2 : 6) * 60 * 60_000);
     }) ?? [];
     const match = matches.find(item => item.homeBadge && item.awayBadge);

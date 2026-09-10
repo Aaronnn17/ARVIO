@@ -72,3 +72,18 @@ test('cache failure and missing API key never fall back to direct traffic', asyn
   assert.equal((await handler({ httpMethod: 'GET' })).statusCode, 503);
   assert.equal(calls, 0);
 });
+
+test('truncated daily broadcasts get bounded shared regional coverage', async () => {
+  const { fetchFixtures } = require('../netlify/functions/_sports-metadata');
+  let calls = 0;
+  const result = await fetchFixtures({ apiKey: 'test', now, fetcher: async url => {
+    calls++;
+    const payload = url.includes('/country/') ? { filter: [{ idEvent: '123', strChannel: 'TNT Sports 2', strCountry: 'United Kingdom', strTimeStamp: '2026-09-10T14:00:00Z' }] }
+      : url.includes('/filter/') ? { filter: Array.from({length: 100}, () => ({idEvent: 'not-in-window'})) } : { events: [fixture] };
+    return { ok: true, json: async () => payload };
+  } });
+  assert.equal(calls, 16, 'four fixture days, four TV days, eight regional supplements');
+  assert.equal(result.events[0].broadcasters.length, 1, 'deduplicate across feeds');
+  assert.equal(result.events[0].broadcasters[0].name, 'TNT Sports 2');
+  assert.equal(result.broadcastsPartial, true, 'supplementing cannot promise complete worldwide coverage');
+});
