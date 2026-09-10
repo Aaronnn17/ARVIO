@@ -382,6 +382,7 @@ export interface IptvNowNext {
 }
 
 export interface IptvSnapshot {
+  scopeKey?: string;
   identitiesLoaded?: boolean;
   allChannels?: IptvChannel[];
   channels: IptvChannel[];

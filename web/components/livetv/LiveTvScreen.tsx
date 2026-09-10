@@ -36,6 +36,7 @@ export function LiveTvScreen() {
   const { iptvSnapshot, settings, setSettings, playChannel, recordChannelPlayback, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth, activeProfile, activeChannel, addons } = useApp();
   const lastChannelKey = `${LAST_CHANNEL_KEY}:${auth?.userId ?? "local"}:${activeProfile?.id ?? "local"}`;
   const listRef = useRef<HTMLElement>(null);
+  const pointerNavigation = useRef(false);
 
   // Open a channel straight in VLC/Infuse from the detail panel — the reliable
   // path for the many IPTV providers whose plain-HTTP streams a secure web page
@@ -90,7 +91,10 @@ export function LiveTvScreen() {
     return result;
   }, [channels]);
   const channelById = useMemo(() => channelIdentityIndex(channels), [channels]);
-  const enabledPlaylists = playlists.filter((playlist) => playlist.enabled && playlist.m3uUrl.trim());
+  const enabledPlaylists = useMemo(() => playlists.filter((playlist) => playlist.enabled && playlist.m3uUrl.trim()), [playlists]);
+  useEffect(() => {
+    if (provider !== "all" && !enabledPlaylists.some(playlist => playlist.id === provider)) setProvider("all");
+  }, [enabledPlaylists, provider]);
   const favoriteChannels = useMemo(() => resolveChannelReferences(favorites, channelById), [favorites, channelById]);
   const favoriteIds = useMemo(() => new Set(favoriteChannels.map(channel => channel.id)), [favoriteChannels]);
   const recentChannels = useMemo(() => resolveChannelReferences([...tvSession.recentChannelIds].reverse(), channelById), [tvSession, channelById]);
@@ -193,9 +197,15 @@ export function LiveTvScreen() {
     setSelectedChannelId(tvSession.lastChannelId || loadStored<string | null>(lastChannelKey, null));
   }, [lastChannelKey, tvSession.lastChannelId]);
   const watchChannel = useCallback((channel: IptvChannel) => {
+    setSelectedChannelId(channel.id);
     saveStored(lastChannelKey, channel.id);
+    if (activeChannel?.id === channel.id) {
+      window.dispatchEvent(new Event("arvio:expand-live-player"));
+      return;
+    }
     playChannel(channel);
-  }, [lastChannelKey, playChannel]);
+    setGroupsOpen(false);
+  }, [lastChannelKey, playChannel, activeChannel?.id]);
 
   // Catch-up listings for the selected channel (channels the panel archives).
   useEffect(() => {
@@ -236,7 +246,7 @@ export function LiveTvScreen() {
     // Effect replay/remount must not leave a cancelled timer blocking future batches.
     guideTimerRef.current = null;
     guideQueueRef.current.clear();
-  }, []);
+  }, [playlistSignature, lastChannelKey]);
 
   useEffect(() => {
     if (selectedChannel) requestGuide(selectedChannel);
@@ -310,7 +320,7 @@ export function LiveTvScreen() {
   </button>;
 
   return (
-    <div className="screen livetv-shell">
+    <div className="screen livetv-shell" onPointerDownCapture={() => { pointerNavigation.current = true; }} onKeyDownCapture={() => { pointerNavigation.current = false; }}>
       {channels.length === 0 && <header className="livetv-topbar">
         <div className="livetv-heading">
           <h2>Live TV</h2>
@@ -382,7 +392,7 @@ export function LiveTvScreen() {
         </div>
       )}
 
-      {!playlists.length && !managing && (
+      {!playlists.length && !channels.length && !managing && (
         <section className="livetv-empty">
           <Tv size={44} />
           <h3>Add your IPTV playlist</h3>
@@ -396,8 +406,9 @@ export function LiveTvScreen() {
           {groupsOpen && <button className="tv-drawer-scrim" type="button" aria-label="Close categories" onClick={() => setGroupsOpen(false)} />}
           <nav className="livetv-cats" aria-label="Channel categories" inert={!groupsOpen} onKeyDown={event => {
             if (event.key === "ArrowRight" && !(event.target as HTMLElement).matches("input, select")) {
-              const first = listRef.current?.querySelector<HTMLElement>('[data-virtual-index] button, .tv-event-card');
-              if (first) { event.preventDefault(); first.focus({ preventScroll: true }); }
+              const first = listRef.current?.querySelector<HTMLElement>('.is-selected .livetv-guide-channel, .is-selected .livetv-row-main')
+                ?? listRef.current?.querySelector<HTMLElement>('[data-virtual-index] button, .tv-event-card');
+              if (first) { event.preventDefault(); event.stopPropagation(); first.focus({ preventScroll: true }); }
             }
           }}>
             <select aria-label="Playlist provider" value={provider} onChange={event => { setProvider(event.target.value); setActiveCategory("all"); }}>
@@ -417,16 +428,16 @@ export function LiveTvScreen() {
           </nav>
 
           <main ref={listRef} className="livetv-list" aria-label={activeCategoryLabel} onFocusCapture={event => {
-            if ((event.target as HTMLElement).closest(".livetv-guide-channel, .livetv-guide-block, .livetv-row-main, .tv-event-card")) setGroupsOpen(false);
+            if (!pointerNavigation.current && (event.target as HTMLElement).closest(".livetv-guide-channel, .livetv-guide-block, .livetv-row-main, .tv-event-card")) setGroupsOpen(false);
           }} onKeyDown={(event) => {
             if ((event.target as HTMLElement).closest("dialog")) return;
             if (event.key === "Escape" || (event.key === "ArrowLeft" && !(event.target as HTMLElement).closest(".livetv-guide-block"))) {
-              if (!groupsOpen) { event.preventDefault(); setGroupsOpen(true); requestAnimationFrame(() => document.querySelector<HTMLElement>(".livetv-cats button.is-active")?.focus()); }
+              if (!groupsOpen) { event.preventDefault(); event.stopPropagation(); setGroupsOpen(true); requestAnimationFrame(() => document.querySelector<HTMLElement>(".livetv-cats button.is-active")?.focus()); }
             }
           }}>
             {activeCategory === "sports" ? <SportsGuidePane key={activeProfile?.id ?? "local"} clockFormat={settings.clockFormat} channels={channels} guide={iptvSnapshot.nowNext} addons={addons}
               providerNames={Object.fromEntries(playlists.map((playlist) => [playlist.id, playlist.name]))}
-              onPlay={watchChannel} onEnter={() => setGroupsOpen(false)}
+              onPlay={watchChannel} onEnter={() => { if (!pointerNavigation.current) setGroupsOpen(false); }}
               onOpenCategories={() => { setGroupsOpen(true); requestAnimationFrame(() => document.querySelector<HTMLElement>(".livetv-cats button.is-active")?.focus()); }} /> : <>
             <div className="livetv-list-head">
               <button type="button" className="livetv-chipbtn" title="Toggle categories" aria-label="Toggle categories" aria-expanded={groupsOpen} onClick={() => setGroupsOpen(!groupsOpen)}><PanelLeft size={20} /></button>

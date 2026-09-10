@@ -1,4 +1,8 @@
-import type { IptvChannel, IptvTvSession } from "./types";
+import type { IptvChannel, IptvSnapshot, IptvTvSession } from "./types";
+
+export function isCurrentIptvSnapshot(snapshot: IptvSnapshot, scopeKey: string, signature: string) {
+  return snapshot.scopeKey === scopeKey && snapshot.signature === signature;
+}
 
 export function normalizeTvSession(value: unknown): IptvTvSession {
   let raw = value;

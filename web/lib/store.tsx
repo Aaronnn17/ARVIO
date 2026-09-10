@@ -16,7 +16,7 @@ import { prepareBrowserStream } from "./prepareBrowserStream";
 import { reportHomeServerPlayback } from "./homeServerPlayback";
 import { loadHomeServerRows } from "./homeserver";
 import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvChannelIdentities, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
-import { recordTvPlayback } from "./iptvSession";
+import { isCurrentIptvSnapshot, recordTvPlayback } from "./iptvSession";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId } from "./tmdb";
@@ -1147,7 +1147,7 @@ export function AppProvider({
       );
       // Stamp which playlists this snapshot came from so Live TV can reuse it
       // on re-entry instead of rebuilding ~139k channels every visit.
-      if (isCurrent()) setIptvSnapshot({ ...loadedIptv, signature });
+      if (isCurrent()) setIptvSnapshot({ ...loadedIptv, signature, scopeKey: `${account ?? "local"}:${profileId ?? "local"}` });
     } catch (error) {
       if (isCurrent()) setToast(error instanceof Error ? error.message : "Failed to load Live TV");
     } finally {
@@ -1166,7 +1166,8 @@ export function AppProvider({
     void loadIptvChannelIdentities(settings.iptvPlaylists, channels, { userAgent: settings.customUserAgent }).then(enriched => {
       if (cancelled || activeProfileIdRef.current !== profileId) return;
       const byId = new Map(enriched.map(channel => [channel.id, channel]));
-      setIptvSnapshot(current => ({ ...current, identitiesLoaded: true, allChannels: enriched,
+      setIptvSnapshot(current => current.scopeKey !== iptvSnapshot.scopeKey || current.signature !== iptvSnapshot.signature
+        || (current.allChannels ?? current.channels) !== channels ? current : ({ ...current, identitiesLoaded: true, allChannels: enriched,
         channels: current.channels.map(channel => byId.get(channel.id) ?? channel) }));
     });
     return () => { cancelled = true; };
@@ -2472,7 +2473,8 @@ export function AppProvider({
     activeChannel,
     addons,
     addonsReady,
-    iptvSnapshot,
+    iptvSnapshot: isCurrentIptvSnapshot(iptvSnapshot, `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`,
+      iptvPlaylistSignature(settings.iptvPlaylists)) ? iptvSnapshot : emptyIptv,
     query,
     setQuery,
     results,
@@ -2526,7 +2528,7 @@ export function AppProvider({
     openContextMenu,
     closeContextMenu
   }), [
-    view, cloudLoginRequired, profiles, activeProfile, avatarImages, manageMode,
+    view, cloudLoginRequired, profiles, activeProfile, activeProfileId, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
     section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
     addons, addonsReady, iptvSnapshot, query, results, searchState, settingsSyncState, settings, auth, traktConnected, mdblistConnected, simklConnected, trackingPreferences, deviceCode, simklDeviceCode, busy, toast,
