@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -166,7 +167,8 @@ fun AppBottomBar(currentRoute: String?, onNavigate: (String) -> Unit, modifier: 
             0f to Color.Transparent, 0.30f to background.copy(alpha = 0.65f),
             0.75f to background.copy(alpha = 0.92f), 1f to background.copy(alpha = 0.98f)))
         .navigationBarsPadding().padding(top = 20.dp)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+        // Lower the whole touch row while keeping the fade and content clearance stable.
+        Row(modifier = Modifier.fillMaxWidth().offset(y = 6.dp).padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             bottomBarItems.forEach { item ->
                 val isSelected = currentRoute?.contains(item.route, ignoreCase = true) == true
