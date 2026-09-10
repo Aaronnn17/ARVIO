@@ -3690,21 +3690,27 @@ fun LiveTvScreen(
                 )
                 val overlayVariants = remember(playingChannel, visibleEnrichedState.value.all) {
                     playingChannel?.let { current ->
-                        // 1. We set up the cleaner to remove labels such as RAW, FHD, 4K, brackets, hyphens, or languages.
+                        // 1. Preparamos el limpiador para quitar etiquetas como RAW, FHD, 4K, corchetes, guiones o idiomas.
                         val qualityRegex = Regex("(?i)\\b(?:4k|uhd|fhd|hd|sd|1080p|720p|60fps|raw|es|en)\\b|[\\(\\)\\[\\]\\-]")
-                        val currentEpg = current.source.epgId?.takeIf { it.isNotBlank() }
-                        val currentTvgName = current.source.tvgName?.takeIf { it.isNotBlank() }
+                        
+                        // 2. Rescatamos el tvg-id (epgId) y tvg-name normalizados (sin espacios extra y en minúsculas)
+                        val currentEpg = current.source.epgId?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
+                        val currentTvgName = current.source.tvgName?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
                         val currentCleanName = current.name.replace(qualityRegex, "").replace(Regex("\\s+"), " ").trim().lowercase()
 
-                        // 2. We scan ALL loaded channels for exact matches of EPG entries or plain text names.
+                        // 3. Filtramos TODOS los canales cargados cruzando tvg-id, tvg-name o nombre limpio
                         visibleEnrichedState.value.all.filter { ch ->
-                            val matchEpg = currentEpg != null && ch.source.epgId == currentEpg
-                            val matchTvg = currentTvgName != null && ch.source.tvgName == currentTvgName
-                            val cleanName = ch.name.replace(qualityRegex, "").replace(Regex("\\s+"), " ").trim().lowercase()
-                            val matchName = currentCleanName.isNotBlank() && cleanName == currentCleanName
+                            val targetEpg = ch.source.epgId?.trim()?.lowercase()
+                            val targetTvgName = ch.source.tvgName?.trim()?.lowercase()
+                            val targetCleanName = ch.name.replace(qualityRegex, "").replace(Regex("\\s+"), " ").trim().lowercase()
 
+                            val matchEpg = currentEpg != null && targetEpg == currentEpg
+                            val matchTvg = currentTvgName != null && targetTvgName == currentTvgName
+                            val matchName = currentCleanName.isNotBlank() && targetCleanName == currentCleanName
+
+                            // Si coinciden en tu tvg-id manual, en el tvg-name o en el nombre base, se fusionan
                             matchEpg || matchTvg || matchName
-                        }.distinctBy { it.id } // We avoid duplicate channels
+                        }.distinctBy { it.id } // Evitamos canales duplicados
                     }.orEmpty()
                 }
 
