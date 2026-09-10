@@ -3688,10 +3688,30 @@ fun LiveTvScreen(
                         openFullscreenGuide(channel, fromQuickZap = true)
                     }
                 )
+                val overlayVariants = remember(playingChannel, visibleEnrichedState.value.all) {
+                    playingChannel?.let { current ->
+                        // 1. We set up the cleaner to remove labels such as RAW, FHD, 4K, brackets, hyphens, or languages.
+                        val qualityRegex = Regex("(?i)\\b(?:4k|uhd|fhd|hd|sd|1080p|720p|60fps|raw|es|en)\\b|[\\(\\)\\[\\]\\-]")
+                        val currentEpg = current.source.epgId?.takeIf { it.isNotBlank() }
+                        val currentTvgName = current.source.tvgName?.takeIf { it.isNotBlank() }
+                        val currentCleanName = current.name.replace(qualityRegex, "").replace(Regex("\\s+"), " ").trim().lowercase()
+
+                        // 2. We scan ALL loaded channels for exact matches of EPG entries or plain text names.
+                        visibleEnrichedState.value.all.filter { ch ->
+                            val matchEpg = currentEpg != null && ch.source.epgId == currentEpg
+                            val matchTvg = currentTvgName != null && ch.source.tvgName == currentTvgName
+                            val cleanName = ch.name.replace(qualityRegex, "").replace(Regex("\\s+"), " ").trim().lowercase()
+                            val matchName = currentCleanName.isNotBlank() && cleanName == currentCleanName
+
+                            matchEpg || matchTvg || matchName
+                        }.distinctBy { it.id } // We avoid duplicate channels
+                    }.orEmpty()
+                }
+
                 FullscreenSourcesOverlay(
                     visible = isFullScreen && sourcesOpen,
                     currentChannel = playingChannel,
-                    variants = playingChannel?.let { channel -> variantGroups[variantGroupKey(channel)] }.orEmpty(),
+                    variants = overlayVariants,
                     onPick = { channel ->
                         sourcesOpen = false
                         playVariant(channel)
