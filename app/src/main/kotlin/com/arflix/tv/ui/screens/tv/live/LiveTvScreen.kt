@@ -3536,6 +3536,7 @@ fun LiveTvScreen(
                             null
                         },
                         onGuideClick = { openFullscreenGuide() },
+                        onOpenVariants = { playingChannel?.let { openVariantPicker(it) } },
                         onPlayPauseClick = {
                             if (playingCatchupProgram != null) {
                                 toggleCatchupPlayback()
