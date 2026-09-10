@@ -3688,29 +3688,34 @@ fun LiveTvScreen(
                         openFullscreenGuide(channel, fromQuickZap = true)
                     }
                 )
-                val overlayVariants = remember(playingChannel, visibleEnrichedState.value.all) {
+                val overlayVariants = remember(playingChannel, enrichedState.value.all) {
                     playingChannel?.let { current ->
-                        // 1. Preparamos el limpiador para quitar etiquetas como RAW, FHD, 4K, corchetes, guiones o idiomas.
-                        val qualityRegex = Regex("(?i)\\b(?:4k|uhd|fhd|hd|sd|1080p|720p|60fps|raw|es|en)\\b|[\\(\\)\\[\\]\\-]")
-                        
-                        // 2. Rescatamos el tvg-id (epgId) y tvg-name normalizados (sin espacios extra y en minúsculas)
                         val currentEpg = current.source.epgId?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-                        val currentTvgName = current.source.tvgName?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-                        val currentCleanName = current.name.replace(qualityRegex, "").replace(Regex("\\s+"), " ").trim().lowercase()
 
-                        // 3. Filtramos TODOS los canales cargados cruzando tvg-id, tvg-name o nombre limpio
-                        visibleEnrichedState.value.all.filter { ch ->
-                            val targetEpg = ch.source.epgId?.trim()?.lowercase()
-                            val targetTvgName = ch.source.tvgName?.trim()?.lowercase()
-                            val targetCleanName = ch.name.replace(qualityRegex, "").replace(Regex("\\s+"), " ").trim().lowercase()
+                        if (currentEpg != null) {
+                            // 1. MODO TVG-ID: Fusión exacta y estricta por el ID de la guía
+                            enrichedState.value.all.filter { ch ->
+                                ch.source.epgId?.trim()?.lowercase() == currentEpg
+                            }.distinctBy { it.id }
+                        } else {
+                            // 2. MODO RESPALDO: Limpieza de nombre si no hay tvg-id asignado
+                            val qualityRegex = Regex("(?i)\\b(?:4k|uhd|fhd|hd|sd|1080p|720p|60fps|raw|es|en|lat|pt)\\b")
+                            val symbolRegex = Regex("[^a-z0-9]")
+                            
+                            val currentCleanName = current.name
+                                .replace(qualityRegex, "")
+                                .lowercase()
+                                .replace(symbolRegex, "")
 
-                            val matchEpg = currentEpg != null && targetEpg == currentEpg
-                            val matchTvg = currentTvgName != null && targetTvgName == currentTvgName
-                            val matchName = currentCleanName.isNotBlank() && targetCleanName == currentCleanName
+                            enrichedState.value.all.filter { ch ->
+                                val targetCleanName = ch.name
+                                    .replace(qualityRegex, "")
+                                    .lowercase()
+                                    .replace(symbolRegex, "")
 
-                            // Si coinciden en tu tvg-id manual, en el tvg-name o en el nombre base, se fusionan
-                            matchEpg || matchTvg || matchName
-                        }.distinctBy { it.id } // Evitamos canales duplicados
+                                currentCleanName.isNotBlank() && targetCleanName == currentCleanName
+                            }.distinctBy { it.id }
+                        }
                     }.orEmpty()
                 }
 
