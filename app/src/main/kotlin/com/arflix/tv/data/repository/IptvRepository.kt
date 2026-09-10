@@ -3119,6 +3119,16 @@ class IptvRepository @Inject constructor(
     fun pagedPlaylistGroupCounts(): List<Triple<String, String, Int>> =
         runCatching { channelStore.playlistGroupCounts(currentEpgIndexKey) }.getOrDefault(emptyList())
 
+    fun visitStoredChannelLabels(playlistId: String?, visitor: (String, String, String) -> Unit) =
+        channelStore.visitLabels(currentEpgIndexKey, playlistId, visitor)
+
+    fun cachedGuideChannelIds(startMs: Long, endMs: Long): Set<String> =
+        epgIndex.channelIdsInWindow(currentEpgIndexKey, startMs, endMs)
+
+    fun visitCachedGuideWindow(channelIds: Set<String>, startMs: Long, endMs: Long,
+        visitor: (String, IptvProgram) -> Unit) =
+        epgIndex.visitWindow(currentEpgIndexKey, channelIds, startMs, endMs, visitor)
+
     fun pagedChannelsByIds(ids: Collection<String>): List<IptvChannel> =
         runCatching { channelStore.getByIds(currentEpgIndexKey, ids) }.getOrDefault(emptyList())
 
@@ -8192,6 +8202,8 @@ class IptvRepository @Inject constructor(
         var currentDesc: String? = null
 
         val parser = android.util.Xml.newPullParser()
+        var currentArtwork: String? = null
+        var currentCategory: String? = null
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
         parser.setInput(input, null)
         var eventType = parser.eventType
@@ -8239,6 +8251,8 @@ class IptvRepository @Inject constructor(
                                 currentStop = stop
                                 currentTitle = null
                                 currentDesc = null
+                                currentArtwork = null
+                                currentCategory = null
                             }
                         }
                         "title" -> {
@@ -8250,6 +8264,13 @@ class IptvRepository @Inject constructor(
                             if (currentChannelKey != null) {
                                 currentDesc = parser.nextText().trim().ifBlank { null }
                             }
+                        }
+                        "icon" -> if (currentChannelKey != null) {
+                            currentArtwork = com.arflix.tv.data.model.safeSportsImage(parser.getAttributeValue(null, "src"))
+                        }
+                        "category" -> if (currentChannelKey != null) {
+                            val value = parser.nextText().trim()
+                            currentCategory = listOfNotNull(currentCategory, value).joinToString(" ").take(200)
                         }
                     }
                 }
@@ -8269,7 +8290,9 @@ class IptvRepository @Inject constructor(
                                 title = currentTitle ?: context.getString(R.string.program_unknown),
                                 description = currentDesc,
                                 startUtcMillis = currentStart,
-                                endUtcMillis = currentStop
+                                endUtcMillis = currentStop,
+                                artworkUrl = currentArtwork,
+                                category = currentCategory,
                             )
 
                             if (onProgram != null) {
@@ -8337,6 +8360,9 @@ class IptvRepository @Inject constructor(
         var readingDisplayName = false
         var readingTitle = false
         var readingDesc = false
+        var readingCategory = false
+        var currentArtwork: String? = null
+        var currentCategory: String? = null
         val textBuffer = StringBuilder(128)
 
         val handler = object : DefaultHandler() {
@@ -8372,6 +8398,8 @@ class IptvRepository @Inject constructor(
                         }
                         currentTitle = null
                         currentDesc = null
+                        currentArtwork = null
+                        currentCategory = null
                     }
                     "title" -> {
                         if (!currentChannelKey.isNullOrBlank()) {
@@ -8385,12 +8413,19 @@ class IptvRepository @Inject constructor(
                             textBuffer.setLength(0)
                         }
                     }
+                    "icon" -> if (!currentChannelKey.isNullOrBlank()) {
+                        currentArtwork = com.arflix.tv.data.model.safeSportsImage(attributes?.getValue("src"))
+                    }
+                    "category" -> if (!currentChannelKey.isNullOrBlank()) {
+                        readingCategory = true
+                        textBuffer.setLength(0)
+                    }
                 }
             }
 
             override fun characters(ch: CharArray?, start: Int, length: Int) {
                 if (ch == null || length <= 0) return
-                if (readingDisplayName || readingTitle || readingDesc) {
+                if (readingDisplayName || readingTitle || readingDesc || readingCategory) {
                     textBuffer.append(ch, start, length)
                 }
             }
@@ -8431,6 +8466,11 @@ class IptvRepository @Inject constructor(
                             textBuffer.setLength(0)
                         }
                     }
+                    "category" -> if (readingCategory) {
+                        currentCategory = listOfNotNull(currentCategory, textBuffer.toString().trim()).joinToString(" ").take(200)
+                        readingCategory = false
+                        textBuffer.setLength(0)
+                    }
                     "programme" -> {
                         val key = currentChannelKey
                         val resolvedChannels = key?.let {
@@ -8442,7 +8482,9 @@ class IptvRepository @Inject constructor(
                                 title = currentTitle ?: context.getString(R.string.program_unknown),
                                 description = currentDesc,
                                 startUtcMillis = currentStart,
-                                endUtcMillis = currentStop
+                                endUtcMillis = currentStop,
+                                artworkUrl = currentArtwork,
+                                category = currentCategory,
                             )
                             resolvedChannels.forEach { channel ->
                                 val nowProgram = pickNow(nowCandidates[channel.id], program, nowUtc)

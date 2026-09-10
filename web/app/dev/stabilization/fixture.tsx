@@ -11,13 +11,16 @@ import { PlayerOverlay } from "@/components/player/PlayerOverlay";
 import { PaywallScreen } from "@/components/shell/Paywall";
 import { iptvPlaylistSignature } from "@/lib/iptv";
 import { NoAddonsPrompt } from "@/components/shell/NoAddonsPrompt";
+import sportsArtworkFixture from "./sports-artwork.json";
 import type { AppSettings, IptvChannel, IptvNowNext, MediaItem, StreamSource } from "@/lib/types";
 
 const noop = () => {};
 const empty = async () => [];
 const names = ["BBC One", "BBC Two", "ITV", "Channel 4", "National Geographic", "Eurosport", "Discovery", "Sky Arts"];
 const groups = ["Entertainment", "Documentaries", "Sports", "News", "Cinema", "Kids", "Music", "International"];
-const programs = ["The Evening Report", "Wild Coast", "Championship Live", "Inside the Studio", "The Long Journey", "World Stories"];
+const programs = sportsArtworkFixture.metas.map(meta => meta.name);
+const sportsAddons = [{ id: "fixture.sports", name: "Sports fixture", version: "1", manifestUrl: "https://example.invalid/sports/manifest.json",
+  catalogs: [{ type: "sport", id: "sports_today", name: "Sports today" }], resources: ["catalog", "stream"] }];
 const channels: IptvChannel[] = Array.from({ length: 55_000 }, (_, i) => ({
   id: `fixture:${i}`, name: i < 8 ? names[i] : `${names[i % names.length]} ${i + 1}`, group: `${groups[Math.floor(i / 100) % groups.length]} ${Math.floor(i / 100) + 1}`,
   number: String(i + 1), streamUrl: "https://example.invalid/fixture.m3u8", tvgId: `fixture-${i}`, logo: "", catchupDays: 0
@@ -34,6 +37,8 @@ export function StabilizationFixture() {
   const [toast, setToast] = useState("");
   const [failLibrary, setFailLibrary] = useState(false);
   const [activeStream, setActiveStream] = useState<StreamSource | null>(null);
+  const [activeChannel, setActiveChannel] = useState<IptvChannel | null>(null);
+  const closePlayer = useCallback(() => { setActiveStream(null); setActiveChannel(null); }, []);
   const [settings, setSettings] = useState<AppSettings>({ ...defaultSettings, cardLayoutMode: "poster", iptvPlaylists: [{ id: "fixture", name: "Reference playlist", enabled: true, m3uUrl: "https://example.invalid/playlist.m3u" }], favoriteChannelIds: channels.slice(0, 8).map((ch) => ch.id) });
   const [nowNext, setNowNext] = useState<Record<string, IptvNowNext>>({});
   const loadIptvGuide = useCallback(async (rows: IptvChannel[]) => {
@@ -41,7 +46,7 @@ export function StabilizationFixture() {
     setNowNext((old) => {
       const next = { ...old };
       for (const ch of rows) {
-        const entries = Array.from({ length: 5 }, (_, i) => ({ channelId: ch.id, title: programs[(Number(ch.number) + i) % programs.length], startUtcMillis: start + i * 3_600_000, endUtcMillis: start + (i + 1) * 3_600_000 }));
+        const entries = Array.from({ length: 5 }, (_, i) => ({ channelId: ch.id, title: programs[(Number(ch.number) + i) % programs.length], description: sportsArtworkFixture.metas[(Number(ch.number) + i) % programs.length].genres.join(" "), startUtcMillis: start + i * 3_600_000, endUtcMillis: start + (i + 1) * 3_600_000 }));
         next[ch.id] = { now: entries[0], next: entries[1], upcoming: entries.slice(1), recent: [] };
       }
       return next;
@@ -57,14 +62,14 @@ export function StabilizationFixture() {
     view: "app", section: page === "onboarding" ? "home" : page, addonsReady: true, closeDetails: noop,
     settings, setSettings, updateSettings: (patch: object) => setSettings((old) => ({ ...old, ...patch })),
     iptvSnapshot, loadIptvGuide, refreshIptv: async () => {}, busy: "", auth: null, activeProfile: { id: "fixture", name: "Test profile" },
-    profiles: [], addons: [], watchlist: media, continueWatching: media.slice(0, 4), traktConnected: true, simklConnected: true, mdblistConnected: false,
+    profiles: [], addons: sportsAddons, watchlist: media, continueWatching: media.slice(0, 4), traktConnected: true, simklConnected: true, mdblistConnected: false,
     openDetails: (item: MediaItem) => setToast(`Selected: ${item.title}`), openContextMenu: noop, isWatched: () => false,
     loadTrackerLibrary, loadTraktLists, loadTraktListItems: async () => media,
     playChannel: (channel: IptvChannel) => setToast(`Selected: ${channel.name}`), playCatchup: noop, setToast,
     trackingPreferences: { watchlistReadMode: "trakt", continueWatchingReadMode: "both", watchedReadMode: "both", writeToTrakt: true, writeToSimkl: true },
     settingsSyncState: "local", saveTrackingPreferences: noop, setSection: setPage, signOut: noop, refreshData: empty,
-    homeServerRows: [], categories: [], catalogConfigs: [], selected: null, streams: [], activeStream, activeChannel: null, selectedEpisode: null,
-    playStream: setActiveStream, closePlayer: () => setActiveStream(null), advanceEpisode: async () => false,
+    homeServerRows: [], categories: [], catalogConfigs: [], selected: null, streams: [], activeStream, activeChannel, selectedEpisode: null,
+    playStream: setActiveStream, closePlayer, advanceEpisode: async () => false,
   } as unknown as AppStore;
   return <AppContext.Provider value={app}>
     <div data-fixture-ready={ready} style={{ maxWidth: 1600, margin: "auto", padding: "18px 20px" }}>
@@ -77,6 +82,7 @@ export function StabilizationFixture() {
       {toast && <div role="status" className="fixture-toast" onClick={() => setToast("")}>{toast}</div>}
       <PlayerOverlay />
       <div className="fixture-tools">
+        <button onClick={() => { setPage("tv"); setActiveChannel(channels[0]); setActiveStream({ source: "CC0 live-player sample", addonName: "Test fixture", quality: "HD", size: "", url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4" }); }}>Test guide mini-player</button>
         <button onClick={() => { setSettings((old) => ({ ...old, homeServers: (["plex", "jellyfin", "emby"] as const).map((type) => ({ id: type, type, name: `Fixture ${type}`, url: `https://${type}.invalid`, token: "fixture-only", userId: "fixture", enabled: true })) })); setPage("library"); }}>Test home server libraries</button>
         <button onClick={() => setActiveStream({ source: "YouTube player example", addonName: "Test fixture", quality: "", size: "", url: "https://www.youtube.com/watch?v=M7lc1UVf-VE" })}>Test YouTube embed</button>
         <button onClick={() => setActiveStream({ source: "Browser conversion test", addonName: "Local fixture", quality: "540p", size: "", url: "http://127.0.0.1:3099/media/multi.mkv", remux: true })}>Test MKV browser player</button>

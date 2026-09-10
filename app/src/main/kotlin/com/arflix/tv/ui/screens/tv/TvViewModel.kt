@@ -113,7 +113,18 @@ class TvViewModel @Inject constructor(
     val iptvRepository: IptvRepository,
     private val cloudSyncRepository: CloudSyncRepository,
     private val mediaRepository: com.arflix.tv.data.repository.MediaRepository,
+    private val sportsRepository: com.arflix.tv.data.repository.SportsRepository,
+    private val profileManager: com.arflix.tv.data.repository.ProfileManager,
 ) : ViewModel() {
+
+    suspend fun loadSportsGuideArtwork() = sportsRepository.loadGuideArtwork()
+    suspend fun cachedSportsMetadata() = sportsRepository.cachedMetadata()
+    suspend fun loadSportsMetadata() = sportsRepository.loadMetadata()
+    suspend fun loadSportsAddonArtwork() = sportsRepository.loadAddonGuideArtwork()
+    fun sportsClockFormat(profileId: String?) = context.settingsDataStore.data.map { prefs ->
+        val key = profileId?.let { profileManager.profileStringKeyFor(it, "clock_format") } ?: profileManager.profileStringKey("clock_format")
+        prefs[key] ?: "24h"
+    }
 
     /**
      * Resolve an EPG title to a confident TMDB movie/series match.

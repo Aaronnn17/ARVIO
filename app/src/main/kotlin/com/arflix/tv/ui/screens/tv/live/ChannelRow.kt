@@ -1,4 +1,5 @@
 package com.arflix.tv.ui.screens.tv.live
+import androidx.compose.foundation.basicMarquee
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.geometry.CornerRadius
@@ -105,8 +106,7 @@ fun ChannelRow(
         visuallyFocused && isActive -> LiveColors.FocusBg
         isActive -> LiveColors.FocusBg
         visuallyFocused -> LiveColors.PanelRaised
-        stripe -> LiveColors.RowStripe
-        else -> Color.Transparent
+        else -> LiveColors.Panel
     }
     val now = nowNext?.now
     val animatedBorderWidth = animateDpAsState(
@@ -136,14 +136,6 @@ fun ChannelRow(
                     size = surfaceSize,
                     cornerRadius = CornerRadius(radius),
                 )
-                if (isActive) {
-                    drawRoundRect(
-                        color = LiveColors.Accent,
-                        topLeft = Offset(inset + 2.dp.toPx(), 8.dp.toPx()),
-                        size = Size(2.dp.toPx(), (size.height - 16.dp.toPx()).coerceAtLeast(0f)),
-                        cornerRadius = CornerRadius(1.dp.toPx()),
-                    )
-                }
                 drawContent()
                 // Read animation state in drawing, not composition: channel
                 // text and logo layout should not rebuild for each border frame.
@@ -225,22 +217,22 @@ fun ChannelRow(
         // ─ channel number ────────────────────────────────────
         Box(
             modifier = Modifier
-                .width(36.dp)
+                .width(32.dp)
                 .padding(start = 8.dp, end = 4.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(
                 text = channel.number.toString(),
                 style = LiveType.NumberMono.copy(
-                    color = if (isActive) LiveColors.Accent else LiveColors.FgMute,
+                    color = LiveColors.FgDim,
                 ),
             )
         }
 
         // ─ logo ──────────────────────────────────────────────
-        ChannelLogo(channel = channel, size = 32.dp)
+        ChannelLogo(channel = channel, size = 24.dp)
 
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(6.dp))
 
         // ─ name / program / progress / time ──────────────────
         Column(
@@ -253,22 +245,26 @@ fun ChannelRow(
                 Text(
                     text = channel.name,
                     style = LiveType.CellTitle.copy(
-                        color = if (isActive) LiveColors.Accent else LiveColors.Fg,
+                        color = LiveColors.Fg,
+                        fontSize = 11.sp,
+                        lineHeight = 13.sp,
                     ),
-                    maxLines = 1,
+                    maxLines = if (visuallyFocused) 1 else 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier.weight(1f, fill = false).then(if (visuallyFocused) Modifier.basicMarquee(
+                        iterations = Int.MAX_VALUE, initialDelayMillis = 1000,
+                    ) else Modifier),
                 )
                 if (isFavorite) {
                     Spacer(Modifier.width(4.dp))
                     Icon(
                         imageVector = Icons.Filled.Star,
                         contentDescription = null,
-                        tint = Color(0xFFFFC04A), // Golden star
+                        tint = LiveColors.Fg,
                         modifier = Modifier.size(11.dp),
                     )
                 }
-                if (channel.catchupDays > 0) {
+                if (channel.catchupDays > 0 && rowHeight >= 48.dp) {
                     Spacer(Modifier.width(4.dp))
                     Icon(
                         imageVector = Icons.Filled.History,
@@ -282,7 +278,7 @@ fun ChannelRow(
             // itself is shown exclusively in the time-aligned grid cells to
             // the right, not smeared across the channel name column.
             val progress = remember(now, clockTickMillis) { progressOf(now) }
-            if (progress != null) {
+            if (progress != null && rowHeight >= 48.dp) {
                 LinearProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.width(80.dp).height(2.dp),
@@ -293,7 +289,7 @@ fun ChannelRow(
         }
 
         // ─ stacked badges (quality + lang) ───────────────────
-        Column(
+        if (rowHeight >= 48.dp) Column(
             modifier = Modifier.padding(end = 12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
             horizontalAlignment = Alignment.End,
@@ -304,6 +300,12 @@ fun ChannelRow(
                 SmallPillBadge(stringResource(R.string.live_label_sources, variantCount))
             }
             SmallPillBadge(channel.lang)
+        }
+        if (rowHeight < 48.dp) {
+            if (isActive) Row(Modifier.width(18.dp).height(16.dp).padding(end = 5.dp),
+                verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                listOf(7, 12, 9).forEach { h -> Box(Modifier.width(2.dp).height(h.dp).background(LiveColors.Accent)) }
+            } else Spacer(Modifier.width(6.dp))
         }
     }
 }

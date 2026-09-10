@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { UpdateWatcher } from "@/components/shell/UpdateWatcher";
 import "./globals.css";
 import "./premium.css";
+import "./tv-guide.css";
 
 export const metadata: Metadata = {
   title: "ARVIO",

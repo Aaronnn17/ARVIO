@@ -17,6 +17,65 @@ import java.util.UUID
 class IptvStoreDeviceTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test fun programmeArtworkCategoriesAndAliasesSurviveReopening() {
+        val name = "guide-metadata-${UUID.randomUUID()}.db"
+        val now = System.currentTimeMillis()
+        val programme = IptvProgram("North vs South", startUtcMillis = now - 1_000, endUtcMillis = now + 60_000,
+            artworkUrl = "https://example.com/match.webp", category = "Football")
+        try {
+            IptvEpgIndex(context, name).use { store ->
+                store.replaceChannels("test", mapOf("@xml:general" to IptvNowNext(now = programme)), now,
+                    aliases = mapOf("@xml:general" to listOf("provider:general")))
+            }
+            IptvEpgIndex(context, name).use { store ->
+                assertEquals(setOf("provider:general"), store.channelIdsInWindow("test", now, now + 60_000))
+                assertEquals(programme, store.loadNowNext("test", setOf("provider:general"), now).getValue("provider:general").now)
+            }
+        } finally { context.deleteDatabase(name) }
+    }
+
+    @Test fun metadataMigrationKeepsVersionSevenGuideAndCatchup() {
+        val name = "guide-migration-${UUID.randomUUID()}.db"
+        val now = System.currentTimeMillis()
+        try {
+            context.openOrCreateDatabase(name, 0, null).use { db ->
+                db.execSQL("CREATE TABLE epg_programs (source_key TEXT, channel_id TEXT, start_ms INTEGER, end_ms INTEGER, title TEXT, description TEXT, catchup_available INTEGER)")
+                db.execSQL("CREATE TABLE epg_channel_aliases (source_key TEXT, channel_id TEXT, guide_id TEXT, updated_ms INTEGER)")
+                db.execSQL("INSERT INTO epg_programs VALUES (?, ?, ?, ?, ?, ?, ?)", arrayOf<Any>("test", "one", now - 1_000, now + 60_000, "Still here", "Guide", 1))
+                db.version = 7
+            }
+            IptvEpgIndex(context, name).use { store ->
+                val p = store.loadNowNext("test", setOf("one"), now).getValue("one").now!!
+                assertEquals("Still here", p.title)
+                assertEquals(true, p.catchupAvailable)
+                assertEquals(null, p.artworkUrl)
+                assertEquals(8, store.readableDatabase.version)
+            }
+        } finally { context.deleteDatabase(name) }
+    }
+
+    @Test fun eligibleGuideAliasesRespectSourceAndExclusiveTimeWindow() {
+        val name = "guide-identities-${UUID.randomUUID()}.db"
+        val now = System.currentTimeMillis()
+        val live = IptvProgram("Event", startUtcMillis = now - 1_000, endUtcMillis = now + 60_000)
+        try {
+            IptvEpgIndex(context, name).use { store ->
+                store.replaceChannels("one", mapOf(
+                    "direct" to IptvNowNext(now = live),
+                    "@xml:live" to IptvNowNext(now = live),
+                    "@xml:ended" to IptvNowNext(now = live.copy(endUtcMillis = now)),
+                    "@xml:later" to IptvNowNext(next = live.copy(startUtcMillis = now + 60_000, endUtcMillis = now + 120_000))
+                ), now, aliases = mapOf("@xml:live" to listOf("hd", "uhd", "direct"),
+                    "@xml:ended" to listOf("ended"), "@xml:later" to listOf("later")))
+                store.replaceChannels("other", mapOf("@xml:live" to IptvNowNext(now = live)), now,
+                    aliases = mapOf("@xml:live" to listOf("other-channel")))
+                assertEquals(setOf("direct", "hd", "uhd"), store.channelIdsInWindow("one", now, now + 60_000))
+                assertEquals(setOf("other-channel"), store.channelIdsInWindow("other", now, now + 60_000))
+                assertEquals(emptySet<String>(), store.channelIdsInWindow("one", now, now))
+            }
+        } finally { context.deleteDatabase(name) }
+    }
+
     @Test
     fun fiftyThousandChannelsSurviveReloadAndEveryGroupPagesInProviderOrder() {
         val key = "device-regression-${UUID.randomUUID()}"
@@ -34,6 +93,9 @@ class IptvStoreDeviceTest {
             val startupAt = SystemClock.elapsedRealtime()
             assertEquals(240, store.loadStartupChannels(key, 10_000, 240).size)
             assertEquals(50_000, store.count(key))
+            val labels = mutableListOf<String>()
+            store.visitLabels(key, "second") { id, _, _ -> labels.add(id) }
+            assertEquals(all.filter { it.id.startsWith("second:") }.map { it.id }, labels)
             Log.i("IptvStoreDeviceTest", "50k cold store startupMs=${SystemClock.elapsedRealtime() - startupAt}")
             val startedAt = SystemClock.elapsedRealtime()
             listOf("first", "second").forEach { provider -> (0 until 5).forEach { group ->
