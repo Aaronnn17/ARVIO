@@ -126,7 +126,6 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.shape.RoundedCornerShape
 
 
 private object LiveTvScreenRegexes {
@@ -4230,7 +4229,7 @@ fun FullscreenSourcesOverlay(
                         items(variants.size) { index ->
                             val variant = variants[index]
                             val isSelected = variant.id == currentChannel?.id
-                            var isFocused by remember { mutableStateOf(false) }
+                            var isFocused by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
 
                             androidx.compose.foundation.layout.Box(
                                 modifier = androidx.compose.ui.Modifier
