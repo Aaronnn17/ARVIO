@@ -106,6 +106,7 @@ import com.arflix.tv.ui.screens.tv.TvViewModel
 import com.arflix.tv.ui.screens.profile.PinEntryDialog
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.ui.components.AppTopBar
+import com.arflix.tv.ui.components.ChannelLogo
 import com.arflix.tv.ui.components.KeepScreenOn
 import com.arflix.tv.ui.components.AppTopBarHeight
 import com.arflix.tv.ui.components.SidebarItem
@@ -4250,7 +4251,7 @@ fun FullscreenSourcesOverlay(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    com.arflix.tv.ui.components.ChannelLogo(channel = variant, size = 40.dp)
+                                    ChannelLogo(channel = variant, size = 40.dp)
                                     Spacer(modifier = Modifier.width(12.dp))
                                     androidx.tv.material3.Text(
                                         text = variant.name,
