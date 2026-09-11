@@ -126,6 +126,7 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 
 private object LiveTvScreenRegexes {
@@ -4234,7 +4235,7 @@ fun FullscreenSourcesOverlay(
                             androidx.compose.foundation.layout.Box(
                                 modifier = androidx.compose.ui.Modifier
                                     .fillMaxWidth()
-                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(8.dp))
                                     .background(
                                         when {
                                             isFocused -> androidx.compose.ui.graphics.Color.White
