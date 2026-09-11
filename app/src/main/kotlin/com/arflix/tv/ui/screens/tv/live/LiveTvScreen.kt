@@ -1644,6 +1644,9 @@ fun LiveTvScreen(
     }
     var fullscreenGuideOpen by remember { mutableStateOf(false) }
     var quickZapOpen by remember { mutableStateOf(false) }
+    var sourcesOpen by remember { mutableStateOf(false) }
+    var sourcesLoading by remember { mutableStateOf(false) }
+    var overlayVariants by remember { mutableStateOf<List<EnrichedChannel>>(emptyList()) }
     var variantPickerChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
     // Channel long-press menu (favourite, reorder favourites, quality variants).
     var channelMenu by remember { mutableStateOf<ChannelMenuState?>(null) }
@@ -3548,6 +3551,10 @@ fun LiveTvScreen(
                             null
                         },
                         onGuideClick = { openFullscreenGuide() },
+                        onOpenVariants = { 
+                            sourcesOpen = true
+                            hudPokeSignal++ 
+                        },
                         onPlayPauseClick = {
                             if (playingCatchupProgram != null) {
                                 toggleCatchupPlayback()
@@ -3694,6 +3701,46 @@ fun LiveTvScreen(
                         quickZapOpen = false
                         guideOpenedFromQuickZap = true
                         fullscreenGuideOpen = true
+                    }
+                )
+                // Búsqueda directa y limpia por TVG-ID en la Base de Datos SQLite
+                LaunchedEffect(sourcesOpen, playingChannel) {
+                    if (!sourcesOpen || playingChannel == null) return@LaunchedEffect
+                    sourcesLoading = true
+                    
+                    val variants = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val current = playingChannel
+                        // Extraemos el identificador exacto de tu canal actual
+                        val targetEpgId = current.source.epgId?.takeIf { it.isNotBlank() }
+                            ?: current.source.tvgName?.takeIf { it.isNotBlank() }
+                            ?: current.name
+
+                        // Consultamos directamente a SQLite usando nuestro nuevo motor estricto
+                        val dbCandidates = viewModel.iptvRepository.pagedChannelVariants(targetEpgId)
+
+                        // Convertimos a EnrichedChannel para que la interfaz pueda dibujarlos
+                        val enriched = dbCandidates.mapIndexed { index, ch -> ch.enrichForFastStartup(index + 1) }
+
+                        // Garantizamos que el canal actual siempre esté visible en la lista
+                        if (enriched.any { it.id == current.id }) enriched else listOf(current) + enriched
+                    }
+                    
+                    overlayVariants = variants
+                    sourcesLoading = false
+                }
+
+                FullscreenSourcesOverlay(
+                    visible = isFullScreen && sourcesOpen,
+                    isLoading = sourcesLoading,
+                    currentChannel = playingChannel,
+                    variants = overlayVariants,
+                    onPick = { channel ->
+                        sourcesOpen = false
+                        playVariant(channel)
+                    },
+                    onDismiss = {
+                        sourcesOpen = false
+                        hudPokeSignal++
                     }
                 )
             }
@@ -4118,3 +4165,105 @@ internal data class ProgramActionData(
     val channel: EnrichedChannel,
     val program: IptvProgram,
 )
+
+@OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
+@Composable
+fun FullscreenSourcesOverlay(
+    visible: Boolean,
+    isLoading: Boolean,
+    currentChannel: EnrichedChannel?,
+    variants: List<EnrichedChannel>,
+    onPick: (EnrichedChannel) -> Unit,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible,
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInHorizontally { it / 2 },
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutHorizontally { it / 2 },
+        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+    ) {
+        androidx.compose.foundation.layout.Box(
+            modifier = androidx.compose.ui.Modifier
+                .fillMaxSize()
+                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f))
+                .focusable()
+                .clickable { onDismiss() },
+            contentAlignment = androidx.compose.ui.Alignment.CenterEnd
+        ) {
+            androidx.compose.foundation.layout.Column(
+                modifier = androidx.compose.ui.Modifier
+                    .fillMaxHeight()
+                    .width(380.dp)
+                    .background(androidx.compose.ui.graphics.Color(0xFF1A1A1A))
+                    .padding(24.dp)
+                    .clickable(enabled = false) {}
+            ) {
+                androidx.tv.material3.Text(
+                    text = "Fuentes Disponibles",
+                    color = androidx.compose.ui.graphics.Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    modifier = androidx.compose.ui.Modifier.padding(bottom = 16.dp)
+                )
+
+                if (isLoading) {
+                    androidx.compose.foundation.layout.Box(
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize(), 
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        androidx.compose.material3.CircularProgressIndicator(color = LiveColors.Accent)
+                    }
+                } else if (variants.isEmpty() || variants.size == 1) {
+                    androidx.tv.material3.Text(
+                        text = "No hay otras calidades u orígenes detectados para este canal.",
+                        color = androidx.compose.ui.graphics.Color.Gray,
+                        fontSize = 14.sp
+                    )
+                } else {
+                    androidx.compose.foundation.lazy.LazyColumn(
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+                    ) {
+                        items(variants.size) { index ->
+                            val variant = variants[index]
+                            val isSelected = variant.id == currentChannel?.id
+                            var isFocused by remember { mutableStateOf(false) }
+
+                            androidx.compose.foundation.layout.Box(
+                                modifier = androidx.compose.ui.Modifier
+                                    .fillMaxWidth()
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                                    .background(
+                                        when {
+                                            isFocused -> androidx.compose.ui.graphics.Color.White
+                                            isSelected -> LiveColors.Accent.copy(alpha = 0.3f)
+                                            else -> androidx.compose.ui.graphics.Color.Transparent
+                                        }
+                                    )
+                                    .androidx.compose.ui.focus.onFocusChanged { isFocused = it.isFocused }
+                                    .clickable { onPick(variant) }
+                                    .padding(12.dp)
+                            ) {
+                                androidx.compose.foundation.layout.Row(
+                                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                                    modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                                ) {
+                                    ChannelLogo(channel = variant, size = 40.dp)
+                                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.width(12.dp))
+                                    androidx.tv.material3.Text(
+                                        text = variant.name,
+                                        color = if (isFocused) androidx.compose.ui.graphics.Color.Black else androidx.compose.ui.graphics.Color.White,
+                                        fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    androidx.activity.compose.BackHandler(enabled = visible) { onDismiss() }
+}
