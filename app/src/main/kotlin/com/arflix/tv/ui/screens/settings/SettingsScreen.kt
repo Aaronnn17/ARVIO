@@ -140,7 +140,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -235,7 +234,10 @@ import com.arflix.tv.network.OkHttpProvider
  */
 @OptIn(ExperimentalFoundationApi::class)
 class SettingsFocusTracker {
-    val requesters = mutableStateMapOf<Int, BringIntoViewRequester>()
+    // Registration is only consumed by the focus coroutine on the main thread.
+    // Keeping this as a regular map avoids invalidating the whole settings tree
+    // once for every row that registers during composition.
+    val requesters = mutableMapOf<Int, BringIntoViewRequester>()
     fun clear() = requesters.clear()
 }
 
@@ -352,6 +354,10 @@ private fun formatUserAgentPreview(value: String?, maxLength: Int): String {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Modifier.settingsFocusSlot(index: Int): Modifier {
+    // TV uses the lightweight focus-index scroll path below. Keeping a
+    // relocation node on every row adds layout work without contributing to
+    // that path, especially noticeable on lower-memory TV hardware.
+    if (!LocalDeviceType.current.isTouchDevice()) return this
     val tracker = LocalSettingsFocusTracker.current ?: return this
     val requester = remember(index) { BringIntoViewRequester() }
     DisposableEffect(tracker, index, requester) {
@@ -662,7 +668,12 @@ fun SettingsScreen(
         val ratio = sectionIndex.coerceIn(0, maxIndex).toFloat() / maxIndex.toFloat()
         val targetScroll = (maxScroll * ratio).toInt().coerceIn(0, maxScroll)
         if (abs(sectionScrollState.value - targetScroll) > 24) {
-            sectionScrollState.animateScrollTo(targetScroll)
+            // Keep the transition short and cancellable. A long default spring
+            // makes rapid DPAD presses feel delayed and leaves the sidebar behind.
+            sectionScrollState.animateScrollTo(
+                targetScroll,
+                animationSpec = tween(100, easing = FastOutSlowInEasing)
+            )
         }
     }
 
@@ -683,13 +694,12 @@ fun SettingsScreen(
         sectionIndex,
         activeZone,
         uiState.catalogs.size,
-        uiState.addons.size,
-        focusTracker.requesters[contentFocusIndex]
+        uiState.addons.size
     ) {
         if (activeZone != Zone.CONTENT) return@LaunchedEffect
 
         val requester = focusTracker.requesters[contentFocusIndex]
-        if (requester != null) {
+        if (requester != null && isTouchDevice) {
             // Native branch — handles all geometry correctly.
             runCatching { requester.bringIntoView() }
             return@LaunchedEffect
@@ -706,7 +716,17 @@ fun SettingsScreen(
         val ratio = clampedFocus.toFloat() / maxIndex.toFloat()
         val targetScroll = (maxScroll * ratio).toInt().coerceIn(0, maxScroll)
         if (abs(currentScroll - targetScroll) > 24) {
-            scrollState.animateScrollTo(targetScroll)
+            if (isTouchDevice) {
+                scrollState.animateScrollTo(targetScroll)
+            } else {
+                // Settings uses a single, manually managed focus target on TV.
+                // A short animation keeps larger row jumps readable without
+                // building a long animation queue behind the remote input.
+                scrollState.animateScrollTo(
+                    targetScroll,
+                    animationSpec = tween(100, easing = FastOutSlowInEasing)
+                )
+            }
         }
     }
 
