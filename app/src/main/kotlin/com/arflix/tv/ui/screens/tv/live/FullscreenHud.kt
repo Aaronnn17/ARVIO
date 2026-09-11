@@ -159,15 +159,33 @@ fun FullscreenHud(
     // Whenever the controls are on screen they are focused, so "visible" and
     // "operable" can never disagree — showing buttons that ignore the remote is
     // what the first device test rightly called broken.
+    //
+    // The flag records that focus actually *landed*, not that it was attempted,
+    // and it clears whenever the controls leave the screen. Both matter:
+    //  - Opening the controls from a bare screen flips `visible` and
+    //    `showControls` in the same breath, so this effect is relaunched a
+    //    second time while the first run still waits for the row to attach.
+    //    Marking the attempt up front made that second run believe the work was
+    //    done, while the cancelled first run never got to ask — the bar appeared
+    //    and ignored the remote. Opening it while the info bar was already up
+    //    changes only one key, so that path worked and hid the other one.
+    //  - Closing the controls with Back and opening them again leaves `visible`
+    //    untouched, so a flag that only cleared on `!visible` would have stayed
+    //    set and swallowed the second open the same way.
+    // Retrying costs nothing once focus has landed, and covers the row simply
+    // not being attached yet on the frame the HUD fades in.
     LaunchedEffect(visible, showControls) {
-        if (visible && showControls && !initialFocusApplied) {
-            initialFocusApplied = true
-            delay(100)
-            runCatching {
-                playPauseFocusRequester.requestFocus()
-            }
-        } else if (!visible) {
+        if (!visible || !showControls) {
             initialFocusApplied = false
+        } else {
+            var attempts = 0
+            while (!initialFocusApplied && attempts < ControlFocusAttempts) {
+                attempts++
+                delay(ControlFocusRetryMs)
+                if (runCatching { playPauseFocusRequester.requestFocus() }.isSuccess) {
+                    initialFocusApplied = true
+                }
+            }
         }
     }
 
@@ -727,3 +745,9 @@ private fun HudActionButton(
         )
     }
 }
+
+// The control row is asked for focus until it answers: on the frame the HUD
+// fades in from nothing the row may not be attached yet. Ten tries 50 ms apart
+// is half a second at the outside, and it stops at the first one that lands.
+private const val ControlFocusAttempts = 10
+private const val ControlFocusRetryMs = 50L
