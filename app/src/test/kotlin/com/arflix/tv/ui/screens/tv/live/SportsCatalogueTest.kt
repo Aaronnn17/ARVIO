@@ -51,6 +51,11 @@ class SportsCatalogueTest {
         assertFalse(sportsChannelKey("NL | ESPN 2 HD") in keys)
         assertFalse(sportsChannelKey("NL | ESPN 3 HD") in sportsBroadcasterKeys("ESPN 3 France", "Netherlands"))
     }
+    @Test fun broadcasterCountryAliasesMatchProviderLabels() {
+        val keys = sportsBroadcasterKeys("ESPN 3 Netherlands", "The Netherlands")
+        assertTrue(sportsChannelKey("NL | ESPN 3 UHD 8K") in keys)
+        assertFalse(sportsChannelKey("BE | ESPN 3 HD") in keys)
+    }
     @Test fun decoratedMatchTitlesUseRealCrestsWithoutStockArtwork() {
         val item = art.copy(homeTeam = "North", awayTeam = "South", homeBadge = "https://example.com/north.png", awayBadge = "https://example.com/south.png", startsAt = now)
         val decorated = epg.copy(title = "Football: North - South, Premier League 2026/2027")
@@ -98,7 +103,8 @@ class SportsCatalogueTest {
         val live = art.copy(startsAt = now - 60000, fixture = fixture.copy(status = "live"))
         val event = buildSportsCatalogue(emptyList(), listOf(live), emptyList(), now).single()
         assertTrue(event.isConfirmedLive(now))
-        assertFalse(event.isOnAir(now + 300001))
+        assertTrue("A normal score refresh gap must not hide a live fixture", event.isOnAir(now + 5 * 60_000L))
+        assertFalse(event.isOnAir(now + 15 * 60_000L + 1))
         assertTrue(buildSportsCatalogue(listOf(epg), listOf(art.copy(startsAt = now, fixture = fixture.copy(status = "finished"))), emptyList(), now).isEmpty())
     }
     @Test fun featuredHighlightsRankByProminenceAndSportRowsKeepUpcomingChronological() {

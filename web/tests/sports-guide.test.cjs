@@ -59,6 +59,22 @@ test('general channels use programme category and safe artwork without addon', (
   for (const title of ['North vs South cancelled', 'North vs South postponed']) assert.equal(buildSportsGuideEvents([channel], { [a.id]: slice({ ...programme, title }) }, now).length, 0);
   assert.equal(buildSportsGuideEvents([a, b], { [a.id]: slice(p), [b.id]: slice({ ...p, title: 'North Women vs South Women' }) }, now).length, 2);
 });
+test('generic sports channels remain playable when the EPG omits the fixture', () => {
+  const channel = { ...a, name: 'ESPN 2', group: 'Sports', logo: 'https://example.com/espn.png' };
+  const programme = { ...p, title: 'First Take' };
+  const event = buildSportsGuideEvents([channel], { [channel.id]: slice(programme) }, now)[0];
+  assert.equal(event.channelOnly, true);
+  assert.equal(event.artwork, channel.logo);
+  assert.equal(sportsGuideRows([event], now).map(row => row.id).join(','), 'live-channels');
+});
+test('specific sport groups also keep generic live channels playable', () => {
+  const channel = { ...a, name: 'Football 1', group: 'Football', logo: 'https://example.com/football.png' };
+  const programme = { ...p, title: 'Live coverage' };
+  const event = buildSportsGuideEvents([channel], { [channel.id]: slice(programme) }, now)[0];
+  assert.equal(event.channelOnly, true);
+  assert.equal(event.sportId, 'football');
+  assert.equal(sportsGuideRows([event], now).map(row => row.id).join(','), 'live-channels');
+});
 test('American football and football remain separate', () => {
   assert.equal(guideSports.find((s) => s.pattern.test('American football NFL')).id, 'american-football');
 });

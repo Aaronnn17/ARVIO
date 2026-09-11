@@ -3,6 +3,7 @@ const CACHE_KEY = 'fixtures-v5';
 const REFRESH_MS = 30 * 60_000;
 const RETRY_MS = 5 * 60_000;
 const MAX_AGE = 24 * 60 * 60_000;
+const LIVE_STALE_MS = 15 * 60_000;
 
 function image(value) {
   if (typeof value !== 'string' || value.length > 2048) return null;
@@ -136,7 +137,10 @@ async function fetchLive({ fetcher, apiKey, now }) {
   const score = value => value !== null && value !== '' && /^\d{1,3}$/.test(String(value)) ? Number(value) : null;
   return { version: 1, updatedAt: now, events: payload.livescore.slice(0, 500).filter(row => /^\d+$/.test(row.idEvent)).map(row => ({
     id: String(row.idEvent), status: eventStatus(row.strStatus || row.strProgress),
-    observedAt: Math.min(now, utcTimestamp(row.updated) || 0),
+    // `updated` is the provider's event timestamp, not the freshness of our
+    // response. The response itself is the observation and must keep live
+    // fixtures visible across a short upstream timestamp lag.
+    observedAt: now,
     homeScore: score(row.intHomeScore), awayScore: score(row.intAwayScore),
   })) };
 }
@@ -167,9 +171,11 @@ async function cachedResource({ store, apiKey, fetcher = fetch, now = Date.now()
 async function getMetadata(dependencies) {
   const fixtures = await cachedResource(dependencies, CACHE_KEY, REFRESH_MS, fetchFixtures);
   if (!fixtures) return null;
-  const live = await cachedResource(dependencies, 'live-v1', 120_000, fetchLive);
+  // The observation timestamp semantics changed from upstream-event time to
+  // response time; use a new key so old five-minute records cannot linger.
+  const live = await cachedResource(dependencies, 'live-v2', 120_000, fetchLive);
   const now = dependencies.now ?? Date.now();
-  const byId = new Map((live?.events || []).filter(row => now - row.observedAt < 300_000).map(row => [row.id, row]));
+  const byId = new Map((live?.events || []).filter(row => now >= row.observedAt && now - row.observedAt < LIVE_STALE_MS).map(row => [row.id, row]));
   return { ...fixtures, liveUpdatedAt: live?.updatedAt || null, events: fixtures.events.map(event => {
     const update = byId.get(event.id);
     return { ...event, ...(update || {}), observedAt: update?.observedAt ?? fixtures.updatedAt };

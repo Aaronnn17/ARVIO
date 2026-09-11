@@ -158,9 +158,9 @@ class TvOverhaulDeviceTest {
             SportsGuidePane(events, now, false, 0, {}, {}, {}, sidebarOpen = false)
         }
         compose.waitUntil(15_000) {
-            compose.onAllNodesWithTag("sports-event-card", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            compose.onAllNodesWithTag("sports-event-card", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("No sports events matched to your channels").assertIsDisplayed()
+        compose.onNodeWithText("Football schedule").assertIsDisplayed()
         compose.onAllNodesWithTag("sports-artwork-fallback-loaded", useUnmergedTree = true).assertCountEquals(0)
         compose.onAllNodesWithTag("sports-artwork-loaded", useUnmergedTree = true).assertCountEquals(0)
     }
@@ -179,6 +179,6 @@ class TvOverhaulDeviceTest {
             compose.onAllNodes(hasTestTag("sports-event-card") and isFocused(), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
         compose.onAllNodesWithTag("sports-event-card", useUnmergedTree = true)[0].performKeyInput { pressKey(Key.DirectionCenter) }
-        compose.onNodeWithText("Channels").assertIsDisplayed()
+        compose.onNodeWithText("Scheduled channels").assertIsDisplayed()
     }
 }

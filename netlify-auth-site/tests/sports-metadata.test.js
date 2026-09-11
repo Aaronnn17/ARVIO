@@ -60,7 +60,7 @@ test('no-art fixtures survive; terminal/live status and null scores are honest',
   assert.equal(eventStatus('NS'), 'scheduled');
   assert.equal(eventStatus("45+2'"), 'live');
   const response = await fetchLive({ now, apiKey: 'test', fetcher: async () => ({ ok: true, json: async () => ({ livescore: [{ idEvent: '123', strProgress: '2H', updated: '2026-09-10 11:59:00', intHomeScore: null, intAwayScore: '0' }] }) }) });
-  assert.equal(response.events[0].observedAt, now - 60_000);
+  assert.equal(response.events[0].observedAt, now);
   assert.equal(response.events[0].homeScore, null);
   assert.equal(response.events[0].awayScore, 0);
 });

@@ -95,7 +95,6 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.R
 import com.arflix.tv.data.model.PlaylistGroupKey
-import androidx.compose.foundation.basicMarquee
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import kotlinx.coroutines.Job
@@ -535,7 +534,11 @@ fun CategorySidebar(
                     onFocusEnter()
                 }
             }
-            .arvioDpadFocusGroup()
+            // Live TV owns focus restoration explicitly below. Compose's automatic
+            // restorer can attempt to bring a recycled LazyColumn item into view
+            // after the sports/playlist tree changes, when its coordinates are no
+            // longer attached ("LayoutCoordinate operations ... isAttached").
+            .arvioDpadFocusGroup(enableFocusRestorer = false)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -1044,7 +1047,7 @@ private fun rememberCategoryRequester(
     return requester
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SidebarRow(
     label: String,
@@ -1061,7 +1064,7 @@ private fun SidebarRow(
     hasChildren: Boolean = false,
     isOpenGroup: Boolean = false,
     indent: androidx.compose.ui.unit.Dp = 0.dp,
-    labelSize: androidx.compose.ui.unit.TextUnit = 12.sp,
+    labelSize: androidx.compose.ui.unit.TextUnit = 11.sp,
     focusRequester: FocusRequester? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -1189,12 +1192,12 @@ private fun SidebarRow(
                     style = LiveType.CatLabel.copy(
                         color = if (active) LiveColors.Fg else LiveColors.FgDim,
                         fontSize = labelSize,
+                        lineHeight = 13.sp,
                     ),
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).then(if (focused) Modifier.basicMarquee(
-                        iterations = Int.MAX_VALUE, initialDelayMillis = 1000,
-                    ) else Modifier),
+                    softWrap = true,
+                    modifier = Modifier.weight(1f),
                 )
                 if (count > 0) {
                     Text(

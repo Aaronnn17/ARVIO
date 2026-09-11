@@ -87,7 +87,9 @@ object LiveDims {
     // Fixed tracks keep focus and drawer transitions from changing row geometry.
     val SidebarExpanded  = 232.dp
     val SidebarCollapsed = 52.dp
-    val SidebarRowHeight = 40.dp
+    // Two-line labels keep long provider categories readable without changing
+    // the focus geometry while moving through the drawer.
+    val SidebarRowHeight = 52.dp
 
     val MiniPlayerWidth  = 304.dp
     val MiniPlayerHeight = 147.dp

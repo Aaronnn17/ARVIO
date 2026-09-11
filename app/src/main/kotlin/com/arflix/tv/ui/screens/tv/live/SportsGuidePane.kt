@@ -82,9 +82,9 @@ internal fun SportsGuidePane(
     var artworkRetry by remember { mutableIntStateOf(0) }
     var failedArtwork by remember(artworkRetry) { mutableStateOf(emptySet<String>()) }
     var presentationRows by remember { mutableStateOf(emptyList<SportsGuideRow>()) }
-    LaunchedEffect(events, now) {
+    LaunchedEffect(events, now, failedArtwork) {
         presentationRows = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            sportsPresentationRows(events, now, emptySet())
+            sportsPresentationRows(events, now, failedArtwork)
         }
     }
     val rows = remember(presentationRows, focusedRow, focusedOrder) {
@@ -109,7 +109,7 @@ internal fun SportsGuidePane(
     }
     val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
     fun eventTime(event: SportsGuideEvent): String {
-        if (event.isConfirmedLive(now)) return "LIVE"
+        if (event.isConfirmedLive(now) || (event.channelOnly && event.isOnAir(now))) return "LIVE"
         if (event.isOnAir(now)) return "ON AIR"
         val date = Instant.ofEpochMilli(event.programme.startUtcMillis).atZone(ZoneId.systemDefault())
         val day = when (date.toLocalDate()) {
@@ -157,17 +157,19 @@ internal fun SportsGuidePane(
                 Text("Categories", color = LiveColors.Fg, modifier = Modifier.focusRequester(firstFocus)
                     .clickable(onClick = onOpenCategories).padding(16.dp))
             }
-        } else LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp),
+        } else LazyColumn(Modifier.fillMaxSize().testTag("sports-guide-list"), contentPadding = PaddingValues(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(rows, key = { _, row -> row.id }) { rowIndex, row ->
+            val rowKeys = disambiguatedLazyKeys(rows) { it.id }
+            itemsIndexed(rows, key = { index, _ -> rowKeys[index] }) { rowIndex, row ->
                 Column {
                     Row(Modifier.fillMaxWidth().height(if (narrow) 44.dp else 20.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(row.title, color = LiveColors.Fg, fontWeight = FontWeight.Medium, fontSize = 15.sp, lineHeight = 18.sp,
                             modifier = Modifier.weight(1f))
                     }
+                    val eventKeys = remember(row.events) { disambiguatedLazyKeys(row.events) { it.id } }
                     LazyRow(Modifier.padding(horizontal = 18.dp), contentPadding = PaddingValues(vertical = 1.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        itemsIndexed(row.events, key = { _, event -> event.id }) { index, event ->
+                        itemsIndexed(row.events, key = { index, _ -> eventKeys[index] }) { index, event ->
                             val scheduleOnly = row.id.endsWith("-schedule")
                             val itemRequester = remember { FocusRequester() }
                             val requester = if (index == 0 && rowIndex == 0) firstFocus else itemRequester
@@ -273,7 +275,7 @@ internal fun SportsGuidePane(
                 Text(listOfNotNull(event.competition, fixture.venue, fixture.round?.let { "Round $it" }).joinToString(" · "),
                     color = LiveColors.FgDim, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 10.dp))
-                if (fixture.homeScore != null && fixture.awayScore != null && now - fixture.observedAt < 300_000) {
+                if (fixture.homeScore != null && fixture.awayScore != null && event?.isConfirmedLive(now) == true) {
                     Text(if (showScore) "${fixture.homeScore} : ${fixture.awayScore}" else "Show score", color = LiveColors.Fg,
                         fontSize = 12.sp, modifier = Modifier.clickable { showScore = !showScore }.padding(vertical = 10.dp))
                 }
@@ -283,8 +285,9 @@ internal fun SportsGuidePane(
                     fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                 Text(channelCount(sourceChannels.size), fontSize = 11.sp, color = LiveColors.FgDim)
             }
+            val channelKeys = remember(sourceChannels) { disambiguatedLazyKeys(sourceChannels) { it.id } }
             LazyColumn(Modifier.heightIn(max = (if (narrow) 49.dp else 41.dp) * sourceChannels.size.coerceIn(1, 20))) {
-                itemsIndexed(sourceChannels, key = { _, channel -> channel.id }) { index, channel ->
+                itemsIndexed(sourceChannels, key = { index, _ -> channelKeys[index] }) { index, channel ->
                     var focused by remember { mutableStateOf(false) }
                     Row(Modifier.fillMaxWidth().heightIn(min = if (narrow) 48.dp else 40.dp).clip(RoundedCornerShape(4.dp))
                         .then(if (index == 0 && onAir) Modifier.focusRequester(initialFocus) else Modifier)

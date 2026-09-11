@@ -45,4 +45,31 @@ class SportsRefreshDeviceTest {
         compose.runOnIdle { events.value = schedule.reversed() }
         compose.waitUntil(5000) { compose.onAllNodesWithTag("sports-event-card").fetchSemanticsNodes().isNotEmpty() }
     }
+
+    @Test fun scrollingManySportRowsDoesNotCrashOrLoseTheList() {
+        val now = System.currentTimeMillis()
+        val channel = IptvChannel("fixture:scroll", "Test sports channel", "https://example.invalid/not-played", "Sports")
+        val events = GuideSport.entries.flatMapIndexed { sportIndex, sport ->
+            (0 until 14).map { eventIndex ->
+                val programme = IptvProgram(
+                    title = "${sport.title} event $eventIndex",
+                    startUtcMillis = now - 60_000,
+                    endUtcMillis = now + 3_600_000,
+                )
+                // Deliberately repeat a provider-style ID to exercise the exact
+                // duplicate-key case while the lazy list is being scrolled.
+                SportsGuideEvent("scroll:$sportIndex:${eventIndex % 7}", programme.title, sport, programme, listOf(channel))
+            }
+        }
+        compose.setContent { SportsGuidePane(events, now, false, 0, {}, {}, {}, Modifier.fillMaxSize()) }
+        compose.waitUntil(5000) {
+            compose.onAllNodesWithTag("sports-guide-list").fetchSemanticsNodes().isNotEmpty()
+        }
+        val list = compose.onNodeWithTag("sports-guide-list")
+        repeat(20) {
+            list.performTouchInput { swipeUp() }
+            compose.waitForIdle()
+        }
+        list.assertIsDisplayed()
+    }
 }

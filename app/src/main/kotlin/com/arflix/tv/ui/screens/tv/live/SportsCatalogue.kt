@@ -27,20 +27,35 @@ internal fun sportsChannelKey(name: String) = sportsArtworkKey(name.replace(chan
     .replace(channelPackage, "$1 ")
     .replace(tntStation, "tnt sports").replace(beinStation, "bein sports $1")
     .replace(stationNumber, "$1 $2").replace(channelSpaces, " ").trim()
-private val broadcasterRegions = mapOf("united kingdom" to listOf("uk", "gb"), "united states" to listOf("us", "usa"), "netherlands" to listOf("nl", "nld"),
-        "germany" to listOf("de", "ger"), "france" to listOf("fr"), "spain" to listOf("es"), "italy" to listOf("it"), "portugal" to listOf("pt"),
+private val broadcasterRegions = mapOf("united kingdom" to listOf("uk", "gb"), "united states" to listOf("us", "usa"),
+    "netherlands" to listOf("nl", "nld"), "the netherlands" to listOf("nl", "nld"),
+    "germany" to listOf("de", "ger"), "france" to listOf("fr"), "spain" to listOf("es"), "italy" to listOf("it"), "portugal" to listOf("pt"),
         "brazil" to listOf("br"), "australia" to listOf("au"), "canada" to listOf("ca"), "belgium" to listOf("be"), "switzerland" to listOf("ch"),
         "austria" to listOf("at"), "ireland" to listOf("ie"), "denmark" to listOf("dk", "dnk"), "sweden" to listOf("se"), "norway" to listOf("no"),
         "finland" to listOf("fi"), "poland" to listOf("pl"), "romania" to listOf("ro"), "turkey" to listOf("tr"), "india" to listOf("in"),
         "argentina" to listOf("ar"), "mexico" to listOf("mx"), "south africa" to listOf("za"), "new zealand" to listOf("nz"),
         "saudi arabia" to listOf("sa"), "united arab emirates" to listOf("ae", "uae"))
 internal fun sportsBroadcasterKeys(name: String, country: String): List<String> {
-    val codes = broadcasterRegions[country.trim().lowercase(java.util.Locale.ROOT)].orEmpty()
+    val countryKey = country.trim().lowercase(java.util.Locale.ROOT)
+    val codes = broadcasterRegions[countryKey].orEmpty()
     val key = sportsChannelKey(name)
-    // TV listings often include the country in the name, e.g. ESPN 3 Netherlands.
-    // Strip only the explicitly supplied country, never another region or channel number.
-    val countrySuffix = " ${sportsArtworkKey(country)}"
-    val localName = if (country.isNotBlank() && key.endsWith(countrySuffix)) key.removeSuffix(countrySuffix) else key
+    // TV listings are inconsistent about country labels: the API may say
+    // "The Netherlands" while the channel name says "Netherlands". Strip any
+    // known spelling of the supplied country, but never another region or a
+    // channel number, so the generated local aliases remain precise.
+    val countryNames = buildList {
+        if (countryKey.isNotBlank()) add(countryKey)
+        if (countryKey == "the netherlands") add("netherlands")
+        if (countryKey == "united states") addAll(listOf("us", "usa"))
+        if (countryKey == "united kingdom") addAll(listOf("uk", "gb"))
+    }.distinct().sortedByDescending { it.length }
+    val localName = countryNames
+        .asSequence()
+        .map { " ${sportsArtworkKey(it)}" }
+        .firstOrNull { key.endsWith(it) }
+        ?.let { key.removeSuffix(it).trim() }
+        ?.takeIf { it.isNotBlank() }
+        ?: key
     return (listOf(key, localName) + codes.flatMap { listOf("$it $localName", "$localName $it") }).distinct()
 }
 private fun leagueKey(name: String): String {

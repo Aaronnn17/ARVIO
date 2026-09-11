@@ -47,6 +47,15 @@ test('sports channel genre and descriptive mentions do not turn drama or downtim
     assert.equal(buildSportsGuideEvents([{ ...channel, group: 'Football' }], { [channel.id]: { now: p, upcoming: [] } }, now).length, 0, title);
   }
 });
+test('generic sports channel needs an explicit live cue', () => {
+  const { sportsChannelSport, buildSportsGuideEvents } = load('./sportsGuide');
+  assert.equal(sportsChannelSport('Sports ESPN 2 HD').id, 'other');
+  const sportsChannel = { ...channel, name: 'Sports ESPN 2 HD', group: 'Sports' };
+  assert.equal(buildSportsGuideEvents([sportsChannel], { [channel.id]: { now: { ...epg.programme, title: 'Live: First Take' }, upcoming: [] } }, now)[0].sportId, 'other');
+  const channelOnly = buildSportsGuideEvents([sportsChannel], { [channel.id]: { now: { ...epg.programme, title: 'First Take' }, upcoming: [] } }, now);
+  assert.equal(channelOnly.length, 1);
+  assert.equal(channelOnly[0].channelOnly, true);
+});
 test('event UI has no bundled generic sport fallback', () => {
   const pane = fs.readFileSync(`${__dirname}/../components/livetv/SportsGuidePane.tsx`, 'utf8');
   assert.ok(!pane.includes('/images/sports/'));
@@ -93,7 +102,8 @@ test('women, other sports, other leagues and distant broadcasts cannot steal mat
 test('live scores expire independently; finished status suppresses stale guide', () => {
   const event = buildSportsCatalogue([], art({ startsAt: now - 60000, status: 'live' }), [], now)[0];
   assert.equal(isConfirmedLive(event, now), true);
-  assert.equal(isOnAir(event, now + 300001), false);
+  assert.equal(isOnAir(event, now + 5 * 60_000), true);
+  assert.equal(isOnAir(event, now + 15 * 60_000 + 1), false);
   assert.equal(buildSportsCatalogue([epg], art({ startsAt: now, status: 'finished' }), [], now).length, 0);
 });
 test('featured highlights rank prominent competitions; sport rows keep upcoming chronological', () => {

@@ -9,12 +9,49 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SportsGuideTest {
+    @Test fun largePlaylistDoesNotCacheEmptySportsBeforeGuideIndexIsReady() {
+        assertTrue(shouldWaitForSportsGuide(indexedGuideChannelCount = 0, inMemoryGuideChannelCount = 0, largePlaylist = true))
+        assertFalse(shouldWaitForSportsGuide(indexedGuideChannelCount = 1, inMemoryGuideChannelCount = 0, largePlaylist = true))
+        assertFalse(shouldWaitForSportsGuide(indexedGuideChannelCount = 0, inMemoryGuideChannelCount = 1, largePlaylist = true))
+        assertFalse(shouldWaitForSportsGuide(indexedGuideChannelCount = 0, inMemoryGuideChannelCount = 0, largePlaylist = false))
+    }
+
+    @Test fun duplicateLazyIdsReceiveStableOccurrenceSuffixes() {
+        assertEquals(
+            listOf("event#0", "event#1", "other#0", "event#2"),
+            disambiguatedLazyKeys(listOf("event", "event", "other", "event")) { it },
+        )
+    }
+
     @Test fun sportsChannelDoesNotTurnDowntimeOrDramaIntoEvents() {
         val resolver = SportsProgrammeResolver()
         for (title in listOf("Sendepause", "Die Aquarium-Profis", "Murder Under the Friday Night Lights", "Familien Green i storby'n", "Best of NBA Action")) {
             assertNull(title, resolver.resolve(IptvProgram(title, startUtcMillis = 1, endUtcMillis = 2,
                 description = "A family talks about football and cricket"), GuideSport.FOOTBALL))
         }
+    }
+    @Test fun genericSportsChannelNeedsAnExplicitLiveCue() {
+        val resolver = SportsProgrammeResolver()
+        val channelSport = sportsChannelSport("Sports ESPN 2 HD")
+        assertEquals(GuideSport.OTHER, channelSport)
+        assertEquals(GuideSport.OTHER, resolver.resolve(IptvProgram("Live: First Take", startUtcMillis = 1, endUtcMillis = 2), channelSport)?.sport)
+        assertNull(resolver.resolve(IptvProgram("First Take", startUtcMillis = 1, endUtcMillis = 2), channelSport))
+    }
+    @Test fun genericSportsChannelStillAppearsAsPlayableLiveChannel() {
+        val channel = a.copy(name = "ESPN 2", group = "Sports", logo = "https://example.com/espn.png")
+        val live = IptvProgram("First Take", startUtcMillis = now - 60_000, endUtcMillis = now + 60_000)
+        val event = buildSportsGuideEvents(listOf(channel), mapOf(channel.id to slice(live)), now).single()
+        assertTrue(event.channelOnly)
+        assertEquals(channel.logo, event.artwork)
+        assertEquals(listOf("live-channels"), sportsGuideRows(listOf(event), now).map { it.id })
+    }
+    @Test fun specificSportGroupStillAppearsWhenEpgOmitsFixture() {
+        val channel = a.copy(name = "Football 1", group = "Football", logo = "https://example.com/football.png")
+        val live = IptvProgram("Live coverage", startUtcMillis = now - 60_000, endUtcMillis = now + 60_000)
+        val event = buildSportsGuideEvents(listOf(channel), mapOf(channel.id to slice(live)), now).single()
+        assertTrue(event.channelOnly)
+        assertEquals(GuideSport.FOOTBALL, event.sport)
+        assertEquals(listOf("live-channels"), sportsGuideRows(listOf(event), now).map { it.id })
     }
     @Test fun upcomingFilterUsesCalendarDaysAcrossDstWithoutEmptyRows() {
         val zone = ZoneId.of("Europe/Amsterdam")

@@ -101,7 +101,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
     return () => observer.disconnect();
   }, [selectedId]);
   const stamp = (event: SportsGuideEvent) => {
-    if (isConfirmedLive(event, now)) return "LIVE";
+    if (isConfirmedLive(event, now) || (event.channelOnly && isOnAir(event, now))) return "LIVE";
     if (isOnAir(event, now)) return "ON AIR";
     const date = new Date(event.programme.startUtcMillis);
     const today = new Date(now), tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
@@ -154,7 +154,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
       onCancel={(event) => { event.preventDefault(); close(); }} onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
       <header>{selected && !failedArtwork.has(selected.id) && (selected.artwork || selected.teamArtwork) && <div className="tv-event-picker-art"><EventArtwork event={selected} /></div>}<div><p>{selected ? `${stamp(selected)} · ${guideSports.find(s => s.id === selected.sportId)!.title}` : "This event is no longer in the available guide."}</p><h2>{selected?.title ?? "Schedule changed"}</h2></div><button type="button" onClick={close} aria-label="Close"><X /></button></header>
       {selected?.fixture && <div className="tv-event-details"><span>{[selected.competition, selected.fixture.venue, selected.fixture.round ? `Round ${selected.fixture.round}` : undefined].filter(Boolean).join(" · ")}</span>
-        {selected.fixture.homeScore !== undefined && selected.fixture.awayScore !== undefined && now - selected.fixture.observedAt < 300_000 && <button type="button" className="secondary" onClick={() => setShowScore(value => !value)}>{showScore ? `${selected.fixture.homeScore} : ${selected.fixture.awayScore}` : "Show score"}</button>}</div>}
+        {selected.fixture.homeScore !== undefined && selected.fixture.awayScore !== undefined && isConfirmedLive(selected, now) && <button type="button" className="secondary" onClick={() => setShowScore(value => !value)}>{showScore ? `${selected.fixture.homeScore} : ${selected.fixture.awayScore}` : "Show score"}</button>}</div>}
       <h3>{selected && isOnAir(selected, now) ? "Channels" : "Scheduled channels"}<span>{selected ? sportsChannelSummary(selected, now) : "No channels"}</span></h3>
       {!sourceChannels.length && <p className="tv-event-no-channels">No matching channels in your playlists.</p>}
       <VirtualList items={sourceChannels} estimate={72} itemKey={(ch) => ch.id} label="Available channels" renderItem={(ch) =>
