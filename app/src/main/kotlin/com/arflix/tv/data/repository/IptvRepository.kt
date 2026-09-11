@@ -360,6 +360,47 @@ class IptvRepository @Inject constructor(
     @Volatile
     private var cachedStalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi> = emptyMap()
 
+    /**
+     * Scope for the shared Stalker channel-list download. Deliberately not tied
+     * to a caller: when the entry point that started the download gives up (its
+     * own timeout, a screen the user left), the download still finishes and the
+     * next entry point reuses it instead of starting another one.
+     */
+    private val stalkerChannelListScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + Dispatchers.IO
+    )
+
+    /**
+     * What one portal answered: the session it opened and the channels it
+     * returned. A portal that did not answer carries a null [api] and no
+     * channels — that is what makes a failure visible per portal instead of
+     * disappearing into a merged list.
+     */
+    internal data class StalkerPortalChannels(
+        val portalId: String,
+        val api: com.arflix.tv.data.api.StalkerApi?,
+        val channels: List<IptvChannel>
+    )
+
+    /**
+     * One shared download **per portal**.
+     *
+     * Keyed per portal rather than per portal set: with several portals
+     * configured, a portal that is temporarily down must not hide behind one
+     * that answered. Its result is never remembered, so the next ordinary load
+     * asks it again, while the portals that did answer keep their lists.
+     *
+     * `internal` so a test can check what [invalidateCache] and
+     * [ensureCacheOwnership] do to it — the bug this loader exists to prevent
+     * came back through its caller, not through the loader itself (same
+     * convention as [activePlaylists]).
+     */
+    internal val stalkerChannelListLoader =
+        StalkerChannelListLoader<StalkerPortalChannels>(
+            scope = stalkerChannelListScope,
+            isReusable = { it.api != null && it.channels.isNotEmpty() }
+        )
+
     private data class StalkerEpgPortalCacheKey(
         val portalId: String,
         val apiIdentity: String
@@ -593,6 +634,93 @@ class IptvRepository @Inject constructor(
     /** Enabled Stalker portals with a non-blank URL — the ones that load channels. */
     private fun activeStalkerPortals(config: IptvConfig): List<StalkerPortalEntry> =
         config.stalkerPortals.filter { it.enabled && it.portalUrl.isNotBlank() }
+
+    /**
+     * Identifies one configured portal for [stalkerChannelListLoader]. Hashed so
+     * the portal URL and MAC address never travel further than this function.
+     */
+    private fun stalkerPortalKey(portal: StalkerPortalEntry): String {
+        val raw = listOf(portal.id.trim(), portal.portalUrl.trim(), portal.macAddress.trim())
+            .joinToString("|")
+        return MessageDigest.getInstance("SHA-256")
+            .digest(raw.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    /** The loader keys of the portals [config] currently has enabled. */
+    private fun activeStalkerPortalKeys(config: IptvConfig): Set<String> =
+        activeStalkerPortals(config).map { stalkerPortalKey(it) }.toSet()
+
+    /**
+     * Downloads every enabled portal's channel list, each portal at most once
+     * per freshness window, and merges the answers.
+     *
+     * This is the only place that opens portal sessions for the channel list —
+     * the startup prefetch, the live TV snapshot load and the guide backfill
+     * load all come through here, so a start costs one download instead of one
+     * per entry point (measured before: 3 x 29 MB in 17 seconds). Sharing and
+     * the freshness window live in [StalkerChannelListLoader].
+     *
+     * Each portal is loaded under its own key, so a portal that fails is
+     * retried by the next ordinary load while the portals that answered keep
+     * their lists. Merging is the only thing that happens here, and it happens
+     * after the decision what may be remembered — that decision is per portal.
+     *
+     * Channel ids are prefixed with `stalker:<portalId>:<origId>` so playback
+     * can route back to the portal that owns them.
+     *
+     * `internal` so a test can drive the real merge and the real loader keys
+     * with [fetchPortal] standing in for the network; production never passes
+     * it.
+     *
+     * @param freshSinceMs the moment the caller decided it needed fresh data;
+     *   `0` accepts any list inside the freshness window. See
+     *   [StalkerChannelListLoader.load].
+     */
+    internal suspend fun loadStalkerChannels(
+        portals: List<StalkerPortalEntry>,
+        freshSinceMs: Long = 0L,
+        fetchPortal: suspend (StalkerPortalEntry) -> StalkerPortalChannels = { fetchStalkerChannels(it) }
+    ): Pair<Map<String, com.arflix.tv.data.api.StalkerApi>, List<IptvChannel>> = coroutineScope {
+        if (portals.isEmpty()) {
+            return@coroutineScope emptyMap<String, com.arflix.tv.data.api.StalkerApi>() to emptyList()
+        }
+        val answers = portals
+            .map { portal ->
+                async {
+                    stalkerChannelListLoader.load(stalkerPortalKey(portal), freshSinceMs) {
+                        fetchPortal(portal)
+                    }
+                }
+            }
+            .awaitAll()
+        val apis = LinkedHashMap<String, com.arflix.tv.data.api.StalkerApi>()
+        val channels = ArrayList<IptvChannel>()
+        for (answer in answers) {
+            channels.addAll(answer.channels)
+            answer.api?.let { apis[answer.portalId] = it }
+        }
+        apis.toMap() to channels.toList()
+    }
+
+    /**
+     * Opens one portal's session and downloads its channels. A portal that does
+     * not answer returns no session and no channels, which is what keeps its
+     * failure out of [stalkerChannelListLoader]'s memory.
+     */
+    private suspend fun fetchStalkerChannels(portal: StalkerPortalEntry): StalkerPortalChannels =
+        runCatching {
+            val stalker = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
+            if (!stalker.handshake()) {
+                return@runCatching StalkerPortalChannels(portal.id, null, emptyList())
+            }
+            stalker.getProfile()
+            StalkerPortalChannels(
+                portalId = portal.id,
+                api = stalker,
+                channels = stalker.getChannels().map { it.copy(id = "stalker:${portal.id}:${it.id}") }
+            )
+        }.getOrElse { StalkerPortalChannels(portal.id, null, emptyList()) }
 
     @Volatile
     private var xtreamSeriesLoadedAtMs: Long = 0L
@@ -2081,6 +2209,12 @@ class IptvRepository @Inject constructor(
         onProgress: (IptvLoadProgress) -> Unit = {},
         onChannelsReady: suspend (List<IptvChannel>) -> Unit = {}
     ): IptvSnapshot {
+        // Taken before the lock on purpose: it is the moment this caller asked
+        // for data, not the moment it got its turn. A forced reload uses it to
+        // tell "the list is from before I asked" from "someone downloaded it
+        // while I was waiting" — the second entry point reacting to a single
+        // configuration change is the latter, and must not download again.
+        val requestedAtMs = System.currentTimeMillis()
         return withContext(Dispatchers.IO) {
             loadMutex.withLock {
             cleanupStaleEpgTempFiles()
@@ -2107,32 +2241,20 @@ class IptvRepository @Inject constructor(
             // Load every enabled Stalker portal in parallel with M3U/Xtream
             // playlists when both are configured (hybrid mode). Stalker-only
             // (no playlists) keeps the legacy early-return behavior.
+            // A forced reload asks for data that is newer than the request, so
+            // a list remembered from before it is skipped — but one downloaded
+            // while this caller waited for the lock counts, and a download that
+            // is already running is shared. Skipping every remembered list
+            // instead made two entry points reacting to the same configuration
+            // change pull the full channel list twice (measured: 2 x 27.67 MB
+            // on every playlist toggle).
             val stalkerChannelsDeferred = if (stalkerPortals.isNotEmpty()) {
                 async {
                     onProgress(IptvLoadProgress(context.getString(R.string.iptv_connecting_stalker), 10))
-                    stalkerPortals.map { portal ->
-                        async {
-                            runCatching {
-                                val stalker = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
-                                if (!stalker.handshake()) {
-                                    return@runCatching Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList())
-                                }
-                                stalker.getProfile()
-                                val channels = stalker.getChannels()
-                                // Prefix with stalker:<portalId>:<origId> so the
-                                // portal can be identified for playback routing.
-                                Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, stalker, channels.map { it.copy(id = "stalker:${portal.id}:${it.id}") })
-                            }.getOrElse { Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList()) }
-                        }
-                    }.awaitAll().let { results ->
-                        val apis = HashMap<String, com.arflix.tv.data.api.StalkerApi>()
-                        val channels = ArrayList<IptvChannel>()
-                        for ((portalId, api, chs) in results) {
-                            channels.addAll(chs)
-                            api?.let { apis[portalId] = it }
-                        }
-                        apis to channels
-                    }
+                    loadStalkerChannels(
+                        stalkerPortals,
+                        freshSinceMs = if (forcePlaylistReload) requestedAtMs else 0L
+                    )
                 }
             } else {
                 null
@@ -3591,44 +3713,14 @@ class IptvRepository @Inject constructor(
 
         // Stalker-only mode: no playlists configured.
         if (activeLists.isEmpty() && stalkerPortals.isNotEmpty()) {
-            val apis = HashMap<String, com.arflix.tv.data.api.StalkerApi>()
-            val channels = ArrayList<IptvChannel>()
-            for (portal in stalkerPortals) {
-                runCatching {
-                    val stalker = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
-                    if (!stalker.handshake()) return@runCatching
-                    stalker.getProfile()
-                    stalker.getChannels().map { it.copy(id = "stalker:${portal.id}:${it.id}") }
-                        .also { channels.addAll(it) }
-                    apis[portal.id] = stalker
-                }
-            }
+            val (apis, channels) = loadStalkerChannels(stalkerPortals)
             return if (channels.isNotEmpty()) channels to apis else null
         }
 
         // Load playlists and Stalker in parallel when both are configured.
         val (playlistChannels, stalkerApis, stalkerChannels) = coroutineScope {
             val stalkerDeferred = if (stalkerPortals.isNotEmpty()) {
-                async {
-                    stalkerPortals.map { portal ->
-                        async {
-                            runCatching {
-                                val stalker = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
-                                if (!stalker.handshake()) return@runCatching Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList())
-                                stalker.getProfile()
-                                Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, stalker, stalker.getChannels().map { it.copy(id = "stalker:${portal.id}:${it.id}") })
-                            }.getOrElse { Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList()) }
-                        }
-                    }.awaitAll().let { results ->
-                        val apis = HashMap<String, com.arflix.tv.data.api.StalkerApi>()
-                        val channels = ArrayList<IptvChannel>()
-                        for ((portalId, api, chs) in results) {
-                            channels.addAll(chs)
-                            api?.let { apis[portalId] = it }
-                        }
-                        apis to channels
-                    }
-                }
+                async { loadStalkerChannels(stalkerPortals) }
             } else {
                 null
             }
@@ -3703,6 +3795,15 @@ class IptvRepository @Inject constructor(
     }
 
     fun invalidateCache() {
+        // The shared Stalker downloads are deliberately NOT dropped here. Each
+        // is keyed by one portal (id + URL + MAC), and portals that disappear
+        // are released in ensureCacheOwnership, which every entry point passes
+        // through. Everything else this function is called for — a playlist
+        // toggled, an EPG URL edited, a profile switched to one with the same
+        // portals — leaves the portals alone, so their channel lists stay
+        // valid. Dropping them anyway tore up a download that another entry
+        // point was already running and cost a second full 27.67 MB list on
+        // every playlist toggle (measured).
         cachedChannels = emptyList()
         cachedChannelsLookupSource = null
         cachedChannelsById = emptyMap()
@@ -3775,7 +3876,41 @@ class IptvRepository @Inject constructor(
         runCatching { channelCacheFile().delete() }
     }
 
-    private fun ensureCacheOwnership(profileId: String, config: IptvConfig) {
+    /**
+     * Releases what is held for Stalker portals that are no longer configured:
+     * their channel list and, with it, the portal session that came with it.
+     *
+     * [loadStalkerChannels] cannot do this. When the last portal is removed
+     * every caller returns before it is reached, so the removed portal's list
+     * and session stayed in memory until the app was closed.
+     *
+     * Only portals that actually disappeared are dropped. A playlist toggled,
+     * an EPG URL edited or a profile switched to one with the same portals
+     * leaves every key in place, so unrelated changes keep sharing the download
+     * they already have (measured: dropping it anyway cost a second full
+     * 27.67 MB list on every playlist toggle).
+     */
+    private fun releaseStalkerStateForRemovedPortals(config: IptvConfig) {
+        val liveKeys = activeStalkerPortalKeys(config)
+        stalkerChannelListLoader.retainOnly(liveKeys)
+        val livePortalIds = activeStalkerPortals(config).map { it.id }.toSet()
+        if (cachedStalkerApis.keys.any { it !in livePortalIds }) {
+            cachedStalkerApis = cachedStalkerApis.filterKeys { it in livePortalIds }
+        }
+    }
+
+    /**
+     * Runs before any entry point can decide it has nothing to do — the live TV
+     * snapshot load, the cache-only warmup and the cached-snapshot read all pass
+     * through here first, whether or not a source is configured. That makes it
+     * the one place where "the last portal is gone" is actually observed, so it
+     * is where the Stalker state of removed portals is released.
+     *
+     * `internal` so a test can drive it with a plain [IptvConfig], same
+     * convention as [activePlaylists].
+     */
+    internal fun ensureCacheOwnership(profileId: String, config: IptvConfig) {
+        releaseStalkerStateForRemovedPortals(config)
         val sig = buildSourceSignature(config)
         val ownerChanged = cacheOwnerProfileId != null && cacheOwnerProfileId != profileId
         val configChanged = cacheOwnerConfigSig != null && cacheOwnerConfigSig != sig
