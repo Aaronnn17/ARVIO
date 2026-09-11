@@ -399,38 +399,22 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun findChannelVariants(sourceKey: String, epgId: String?, tvgName: String?, namePrefix: String, limit: Int = 200): List<IptvChannel> {
-        if (sourceKey.isBlank()) return emptyList()
+    fun findChannelVariants(sourceKey: String, targetId: String?, limit: Int = 200): List<IptvChannel> {
+        if (sourceKey.isBlank() || targetId.isNullOrBlank()) return emptyList()
 
-        val conditions = mutableListOf<String>()
-        val args = mutableListOf<String>(sourceKey)
+        // Normalizamos el ID que buscamos (quitamos espacios y pasamos a minúsculas)
+        val cleanTarget = targetId.trim().lowercase()
 
-        // 1. Buscamos por tvg-id exacto (ignorando mayúsculas y espacios)
-        if (!epgId.isNullOrBlank()) {
-            conditions.add("LOWER(TRIM(epg_id)) = ?")
-            args.add(epgId.trim().lowercase())
-        }
-        // 2. Buscamos por tvg-name exacto
-        if (!tvgName.isNullOrBlank()) {
-            conditions.add("LOWER(TRIM(tvg_name)) = ?")
-            args.add(tvgName.trim().lowercase())
-        }
-        // 3. Como plan C, buscamos por la primera palabra del nombre (ej: "dazn")
-        if (namePrefix.isNotBlank()) {
-            conditions.add("LOWER(name) LIKE ?")
-            args.add("${namePrefix.trim().lowercase()}%")
-        }
+        // Orden directa y estricta a SQLite: Busca canales que compartan EXACTAMENTE el epg_id o el tvg_name
+        val sql = "SELECT * FROM channels WHERE source_key = ? AND (LOWER(TRIM(epg_id)) = ? OR LOWER(TRIM(tvg_name)) = ?) ORDER BY ord LIMIT ?"
+        val args = arrayOf(sourceKey, cleanTarget, cleanTarget, limit.toString())
 
-        if (conditions.isEmpty()) return emptyList()
-
-        val whereClause = conditions.joinToString(" OR ")
-        val sql = "SELECT * FROM channels WHERE source_key = ? AND ($whereClause) ORDER BY ord LIMIT ?"
-        args.add(limit.toString())
-
-        return readableDatabase.rawQuery(sql, args.toTypedArray()).use { cursor ->
+        return readableDatabase.rawQuery(sql, args).use { cursor ->
             val out = ArrayList<IptvChannel>()
             val cols = ColumnIndices(cursor)
-            while (cursor.moveToNext()) out.add(readChannel(cursor, cols))
+            while (cursor.moveToNext()) {
+                out.add(readChannel(cursor, cols))
+            }
             out
         }
     }
