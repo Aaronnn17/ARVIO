@@ -34,6 +34,11 @@ data class MediaItem(
     val badge: String? = null,
     val genreIds: List<Int> = emptyList(),
     val originalLanguage: String? = null,
+    // The native TMDB name, kept next to the localized [title] because some
+    // providers list a title only under its original name. Null when TMDB has
+    // none, and null on items restored from an older JSON cache - every reader
+    // must treat it as "unknown", never as "same as the title".
+    val originalTitle: String? = null,
     val primaryNetworkLogo: String? = null,
     val isOngoing: Boolean = false,
     val totalEpisodes: Int? = null,

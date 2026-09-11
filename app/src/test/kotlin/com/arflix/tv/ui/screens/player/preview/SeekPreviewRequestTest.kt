@@ -6,6 +6,7 @@ import org.junit.Test
 class SeekPreviewRequestTest {
     @Test fun iptvVodNeverOpensASecondVideoConnectionForPreviewExtraction() {
         assertFalse(allowSecondarySeekPreviewExtraction(512, "iptv_xtream_vod"))
+        assertFalse(allowSecondarySeekPreviewExtraction(512, "iptv_stalker_vod"))
     }
 
     @Test fun otherSourcesRetainExtractionWithinTheDeviceMemoryBudget() {

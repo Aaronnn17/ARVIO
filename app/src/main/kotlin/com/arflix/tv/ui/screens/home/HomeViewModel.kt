@@ -1977,10 +1977,10 @@ class HomeViewModel @Inject constructor(
             delay(if (isLowRamDevice) 10 * 60_000L else 8 * 60_000L)
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                 try {
-                    iptvRepository.warmXtreamVodCachesIfPossible()
+                    iptvRepository.warmVodCachesIfPossible()
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    AppLogger.e("HomeVM", "warmXtreamVodCachesIfPossible failed", e)
+                    AppLogger.e("HomeVM", "warmVodCachesIfPossible failed", e)
                 }
             }
         }

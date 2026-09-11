@@ -15,6 +15,7 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.PersonDetails
 import com.arflix.tv.data.model.Review
 import com.arflix.tv.data.model.SportsAddonCapabilities
+import com.arflix.tv.data.model.IptvVodSourceIds
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.api.TmdbApi
@@ -189,7 +190,7 @@ enum class ToastType {
 }
 
 private fun isSupplementalStream(stream: StreamSource): Boolean =
-    stream.addonId == "iptv_xtream_vod" || stream.addonId == HomeServerRepository.ADDON_ID
+    IptvVodSourceIds.isIptvVodAddonId(stream.addonId) || stream.addonId == HomeServerRepository.ADDON_ID
 
 private fun Addon.isVodStreamingAddon(): Boolean =
     isEnabled &&
@@ -353,6 +354,7 @@ class DetailsViewModel @Inject constructor(
             primaryNetworkLogo = primary.primaryNetworkLogo ?: fallback.primaryNetworkLogo,
             genreIds = if (primary.genreIds.isEmpty()) fallback.genreIds else primary.genreIds,
             originalLanguage = primary.originalLanguage ?: fallback.originalLanguage,
+            originalTitle = primary.originalTitle ?: fallback.originalTitle,
             isOngoing = primary.isOngoing || fallback.isOngoing,
             totalEpisodes = primary.totalEpisodes ?: fallback.totalEpisodes,
             watchedEpisodes = primary.watchedEpisodes ?: fallback.watchedEpisodes,
@@ -3047,6 +3049,9 @@ class DetailsViewModel @Inject constructor(
             return
         }
         val itemTitle = _uiState.value.item?.title.orEmpty()
+        // Passed alongside the displayed title: a provider catalogue may list
+        // the title only under its original name.
+        val itemOriginalTitle = _uiState.value.item?.originalTitle
 
         val vodSources = if (requestMediaType == MediaType.MOVIE) {
             streamRepository.resolveMovieVodSources(
@@ -3054,7 +3059,8 @@ class DetailsViewModel @Inject constructor(
                 title = itemTitle,
                 year = _uiState.value.item?.year?.toIntOrNull(),
                 tmdbId = currentMediaId,
-                timeoutMs = timeoutMs
+                timeoutMs = timeoutMs,
+                originalTitle = itemOriginalTitle
             )
         } else {
             streamRepository.resolveEpisodeVodSources(

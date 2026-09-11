@@ -1,6 +1,7 @@
 package com.arflix.tv.data.repository
 
 import com.arflix.tv.data.model.MediaType
+import com.arflix.tv.data.model.IptvVodSourceIds
 import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.util.Constants
 import java.time.Instant
@@ -46,7 +47,7 @@ internal object ContinueWatchingMerge {
             .map { it.maxWithOrNull(localRecency)!! }
             .filter { item ->
                 item.showKey() !in remoteShows &&
-                    item.streamAddonId?.trim().equals("iptv_xtream_vod", ignoreCase = true) &&
+                    IptvVodSourceIds.isIptvVodAddonId(item.streamAddonId) &&
                     !SportsAddonCapabilities.isLiveStreamOrSportsItem(
                         mediaType = item.mediaType, id = item.id,
                         streamAddonId = item.streamAddonId, title = item.title

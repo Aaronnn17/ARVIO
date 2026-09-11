@@ -35,6 +35,12 @@ class ContinueWatchingMergeTest {
     }
 
     @Test
+    fun persistedStalkerVodProgressIsKeptAlongsideXtreamVod() {
+        val stalkerVod = vod.copy(streamAddonId = "iptv_stalker_vod")
+        assertEquals(listOf(stalkerVod), ContinueWatchingMerge.merge(emptyList(), listOf(stalkerVod)))
+    }
+
+    @Test
     fun partialHistoryDoesNotHideOtherPersistedIptvMovies() {
         assertEquals(listOf(20, 10), ContinueWatchingMerge.merge(listOf(remote), listOf(vod), listOf(remote)).map { it.id })
     }
