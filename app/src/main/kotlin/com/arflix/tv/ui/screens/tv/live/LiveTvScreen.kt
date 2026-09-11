@@ -4178,83 +4178,83 @@ fun FullscreenSourcesOverlay(
     onPick: (EnrichedChannel) -> Unit,
     onDismiss: () -> Unit
 ) {
-    androidx.compose.animation.AnimatedVisibility(
+    AnimatedVisibility(
         visible = visible,
-        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInHorizontally { it / 2 },
-        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutHorizontally { it / 2 },
-        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+        enter = fadeIn() + androidx.compose.animation.slideInHorizontally { it / 2 },
+        exit = fadeOut() + androidx.compose.animation.slideOutHorizontally { it / 2 },
+        modifier = Modifier.fillMaxSize()
     ) {
-        androidx.compose.foundation.layout.Box(
-            modifier = androidx.compose.ui.Modifier
+        Box(
+            modifier = Modifier
                 .fillMaxSize()
-                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f))
+                .background(Color.Black.copy(alpha = 0.6f))
                 .focusable()
                 .clickable { onDismiss() },
-            contentAlignment = androidx.compose.ui.Alignment.CenterEnd
+            contentAlignment = Alignment.CenterEnd
         ) {
-            androidx.compose.foundation.layout.Column(
-                modifier = androidx.compose.ui.Modifier
+            Column(
+                modifier = Modifier
                     .fillMaxHeight()
                     .width(380.dp)
-                    .background(androidx.compose.ui.graphics.Color(0xFF1A1A1A))
+                    .background(Color(0xFF1A1A1A))
                     .padding(24.dp)
                     .clickable(enabled = false) {}
             ) {
                 androidx.tv.material3.Text(
                     text = "Fuentes Disponibles",
-                    color = androidx.compose.ui.graphics.Color.White,
+                    color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    modifier = androidx.compose.ui.Modifier.padding(bottom = 16.dp)
+                    modifier = Modifier.padding(bottom = 16.dp)
                 )
 
                 if (isLoading) {
-                    androidx.compose.foundation.layout.Box(
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize(), 
-                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
                     ) {
-                        androidx.compose.material3.CircularProgressIndicator(color = LiveColors.Accent)
+                        CircularProgressIndicator(color = LiveColors.Accent)
                     }
                 } else if (variants.isEmpty() || variants.size == 1) {
                     androidx.tv.material3.Text(
                         text = "No hay otras calidades u orígenes detectados para este canal.",
-                        color = androidx.compose.ui.graphics.Color.Gray,
+                        color = Color.Gray,
                         fontSize = 14.sp
                     )
                 } else {
                     androidx.compose.foundation.lazy.LazyColumn(
-                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
-                        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         items(variants.size) { index ->
                             val variant = variants[index]
                             val isSelected = variant.id == currentChannel?.id
-                            var isFocused by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                            var isFocused by remember { mutableStateOf(false) }
 
-                            androidx.compose.foundation.layout.Box(
-                                modifier = androidx.compose.ui.Modifier
+                            Box(
+                                modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(
                                         when {
-                                            isFocused -> androidx.compose.ui.graphics.Color.White
+                                            isFocused -> Color.White
                                             isSelected -> LiveColors.Accent.copy(alpha = 0.3f)
-                                            else -> androidx.compose.ui.graphics.Color.Transparent
+                                            else -> Color.Transparent
                                         }
                                     )
-                                    .androidx.compose.ui.focus.onFocusChanged { isFocused = it.isFocused }
+                                    .onFocusChanged { isFocused = it.isFocused }
                                     .clickable { onPick(variant) }
                                     .padding(12.dp)
                             ) {
-                                androidx.compose.foundation.layout.Row(
-                                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                                    modifier = androidx.compose.ui.Modifier.fillMaxWidth()
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    ChannelLogo(channel = variant, size = 40.dp)
-                                    androidx.compose.foundation.layout.Spacer(modifier = androidx.compose.ui.Modifier.width(12.dp))
+                                    com.arflix.tv.ui.components.ChannelLogo(channel = variant, size = 40.dp)
+                                    Spacer(modifier = Modifier.width(12.dp))
                                     androidx.tv.material3.Text(
                                         text = variant.name,
-                                        color = if (isFocused) androidx.compose.ui.graphics.Color.Black else androidx.compose.ui.graphics.Color.White,
+                                        color = if (isFocused) Color.Black else Color.White,
                                         fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
                                         maxLines = 2,
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -4267,5 +4267,5 @@ fun FullscreenSourcesOverlay(
             }
         }
     }
-    androidx.activity.compose.BackHandler(enabled = visible) { onDismiss() }
+    BackHandler(enabled = visible) { onDismiss() }
 }
