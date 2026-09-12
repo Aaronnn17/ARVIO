@@ -47,7 +47,7 @@ class IptvStoreRegressionTest {
 
     @Test
     fun variantLookupFindsUnloadedChannelsWithoutFuzzyMatches() {
-        val base = IptvChannel(id = "p:hd", name = "News HD", streamUrl = "https://example.invalid/hd", epgId = " News.ID ")
+        val base = IptvChannel(id = "p:hd", name = "News HD", group = "News", streamUrl = "https://example.invalid/hd", epgId = " News.ID ")
         val filler = List(300) { base.copy(id = "p:$it", epgId = "other.$it") }
         channels.replaceAll(key, listOf(base) + filler + listOf(
             base.copy(id = "p:sd", epgId = "news.id"),

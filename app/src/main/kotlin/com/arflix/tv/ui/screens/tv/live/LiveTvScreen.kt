@@ -3961,7 +3961,7 @@ fun LiveTvScreen(
                             null
                         },
                         onGuideClick = { openFullscreenGuide() },
-                        onOpenVariants = playingChannel?.let { channel ->
+                        onOpenVariants = playingChannel?.takeIf { playingCatchupProgram == null }?.let { channel ->
                             {
                                 sourcesLoading = true
                                 sourcesFailed = false

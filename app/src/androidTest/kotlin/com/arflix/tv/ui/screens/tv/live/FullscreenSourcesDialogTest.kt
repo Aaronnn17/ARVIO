@@ -23,9 +23,9 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class FullscreenSourcesDialogTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
-    private val current = IptvChannel(id = "p:hd", name = "News HD", streamUrl = "https://example.invalid/hd")
+    private val current = IptvChannel(id = "p:hd", name = "News HD", group = "News", streamUrl = "https://example.invalid/hd")
         .enrichForFastStartup(1)
-    private val backup = IptvChannel(id = "p:sd", name = "News SD", streamUrl = "https://example.invalid/sd")
+    private val backup = IptvChannel(id = "p:sd", name = "News SD", group = "News", streamUrl = "https://example.invalid/sd")
         .enrichForFastStartup(2)
 
     @Test fun remoteCanSelectBackupAfterLoading() {
