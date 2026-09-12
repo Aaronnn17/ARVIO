@@ -22,6 +22,7 @@ import {
   X
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLivePlayerDock } from "./useLivePlayerDock";
 import { config } from "@/lib/config";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { isLiveStreamOrSportsItem, saveProgress, saveWatchedState } from "@/lib/cloud";
@@ -287,6 +288,7 @@ function VideoPlayer({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const dock = useLivePlayerDock(liveTv, stream.url ?? "", close);
   const onClose = useCallback(() => {
     videoRef.current?.dispatchEvent(new Event("arvio-tracking-stop"));
     close();
@@ -920,8 +922,10 @@ function VideoPlayer({
     // timeout: if the element hasn't reached at least metadata within the window,
     // treat it as a failure and escalate down the ladder (next URL, then remux).
     let stallTimer: number | undefined;
+    let playableWatchdog: number | undefined;
     const armStallTimer = () => {
       window.clearTimeout(stallTimer);
+      window.clearTimeout(playableWatchdog);
       // Live channels that hang (provider accepts the connection but never sends
       // data) need a shorter leash than VOD so the ladder keeps moving.
       stallTimer = window.setTimeout(() => {
@@ -931,18 +935,13 @@ function VideoPlayer({
         // before the first byte arrives, which regularly exceeds the VOD
         // budget — condemning sources that were about to work.
       }, liveTv ? 10000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 25000 : 13000));
+      // Metadata can arrive without a playable frame. Give each fallback its
+      // own frame deadline; the original attempt must not cancel a new relay.
+      playableWatchdog = window.setTimeout(() => {
+        if (cancelled || hasPlayed || video.readyState >= 2) return;
+        handlePlaybackError();
+      }, liveTv ? 15000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 38000 : 20000));
     };
-    // Backstop for MSE sources (hls.js / remux): those attach a blob: src and
-    // can fire loadedmetadata — which clears the stall timer — while never
-    // delivering a frame, leaving the spinner up forever with zero network
-    // traffic. This watchdog is independent of those events and only cares
-    // whether playback ever became possible.
-    const playableWatchdog = window.setTimeout(() => {
-      if (cancelled) return;
-      if (video.readyState >= 2) return;
-      handlePlaybackError();
-      // Same reasoning as the stall timer: debrid needs a longer leash.
-    }, liveTv ? 15000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 38000 : 20000));
     const requestPlayback = () => {
       if (cancelled || !video.paused) return;
       setError(false);
@@ -1077,9 +1076,6 @@ function VideoPlayer({
     const startTimer = window.setTimeout(requestPlayback, 0);
     video.addEventListener("loadedmetadata", onReadyToStart, { once: true });
     video.addEventListener("canplay", onReadyToStart, { once: true });
-    const slowTimer = window.setTimeout(() => {
-      if (liveTv && video.readyState === 0 && video.paused) setBuffering(false);
-    }, 6500);
     const onErr = () => handlePlaybackError();
     video.addEventListener("error", onErr);
     // The moment real frames arrive this source has proven it plays here, so
@@ -1100,7 +1096,6 @@ function VideoPlayer({
     return () => {
       cancelled = true;
       window.clearTimeout(startTimer);
-      window.clearTimeout(slowTimer);
       window.clearTimeout(stallTimer);
       window.clearTimeout(playableWatchdog);
       video.removeEventListener("playing", onFirstPlaying);
@@ -1455,6 +1450,7 @@ function VideoPlayer({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (dock.docked) return;
       const target = e.target;
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
       if (e.key !== "Escape" && target instanceof HTMLElement && (
@@ -1523,7 +1519,7 @@ function VideoPlayer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePlay, seekBy, toggleFullscreen, flashControls, onClose, openPanel, activePanel]);
+  }, [togglePlay, seekBy, toggleFullscreen, flashControls, onClose, openPanel, activePanel, dock.docked]);
 
   // Subtitle rendering honours the user's style setting: boxed, outlined,
   // drop-shadowed, or raised — same options as the Android app.
@@ -1574,7 +1570,8 @@ function VideoPlayer({
   return (
     <section
       ref={containerRef}
-      className={`player-overlay ${showControls || activePanel ? "controls-on" : "controls-off"}`}
+      className={`player-overlay ${dock.docked ? "player-docked" : ""} ${showControls || activePanel ? "controls-on" : "controls-off"}`}
+      style={dock.style}
       onMouseMove={flashControls}
     >
       <style>{cueCss}</style>
@@ -1590,6 +1587,13 @@ function VideoPlayer({
           />
         ))}
       </video>
+      {dock.docked && <div className="player-dock-controls">
+        <span role="status">{error ? "Unavailable" : buffering ? "Connecting" : playing ? "LIVE" : "Paused"}</span>
+        <button type="button" onClick={togglePlay} aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause" : "Play"}>{playing ? <Pause size={20} /> : <Play size={20} />}</button>
+        <button type="button" onClick={dock.expand} aria-label="Expand player" title="Expand player"><Maximize size={20} /></button>
+        <button type="button" onClick={onClose} aria-label="Stop channel" title="Stop channel"><X size={20} /></button>
+      </div>}
+      {!dock.docked && dock.canDock && <button type="button" className="player-dock-return" onClick={dock.collapse} aria-label="Return to guide" title="Return to guide"><Minimize size={22} /></button>}
 
       {!booted && !error && (
         <div className="player-boot" style={{ backgroundImage: item?.backdrop ? `url(${item.backdrop})` : undefined }} aria-label="Loading playback">

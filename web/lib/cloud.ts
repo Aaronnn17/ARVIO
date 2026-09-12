@@ -2,6 +2,7 @@ import type { AuthClient } from "./auth";
 import { config, hasNetlifyBackendUrl } from "./config";
 import { parseHomeServerConnectionJson, serializeHomeServerConnectionJson } from "./homeserver";
 import { jsonRequest } from "./http";
+import { mergeTvSessions, normalizeTvSession } from "./iptvSession";
 import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
 import { tmdbImageUrl } from "./mediaImages";
 import type { TraktToken } from "./trakt";
@@ -54,6 +55,7 @@ interface AndroidWatchlistItem {
 }
 
 interface AndroidIptvProfileState {
+  lockedGroups?: string[];
   m3uUrl?: string;
   epgUrl?: string;
   playlists?: IptvPlaylistEntry[];
@@ -522,7 +524,9 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
           enabled: true
         }]
       : [];
-  const playlists = dedupeIptvPlaylists([
+  // An explicit per-profile playlist list is authoritative, including an empty
+  // one. Legacy mirrors can be stale or belong to a different profile.
+  const playlists = "playlists" in state ? profilePlaylists : dedupeIptvPlaylists([
     ...profilePlaylists,
     ...rootSettingsPlaylists,
     ...rootPlaylists,
@@ -531,8 +535,10 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
   return {
     iptvPlaylists: playlists,
     favoriteChannelIds: value !== undefined ? stringArray(state.favoriteChannels) : stringArray(rootState.iptvFavoriteChannels),
+    iptvTvSession: normalizeTvSession((state as Record<string, unknown>).tvSession),
     favoriteGroupIds: value !== undefined ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
     hiddenGroupIds: stringArray(state.hiddenGroups),
+    lockedIptvGroupIds: stringArray(state.lockedGroups),
     groupOrder: stringArray(state.groupOrder),
     iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
     iptvStalkerUrl: stringValue(state.stalkerPortalUrl ?? rootState.iptvStalkerUrl),
@@ -822,6 +828,7 @@ function androidIptvSettings(settings: AppSettings): Record<string, unknown> {
     stalkerPortalUrl: settings.iptvStalkerUrl,
     stalkerMacAddress: settings.iptvStalkerMac,
     favoriteChannels: settings.favoriteChannelIds,
+    tvSession: normalizeTvSession(settings.iptvTvSession),
     favoriteGroups: settings.favoriteGroupIds,
     hiddenGroups: settings.hiddenGroupIds,
     groupOrder: settings.groupOrder,
@@ -847,6 +854,10 @@ export function mergeIptvSettings(existing: Record<string, unknown>, settings: A
   const merged = { ...existing };
   for (const [field, value] of Object.entries(incoming)) {
     if (base && sameFieldValue(value, base[field])) continue;
+    if (field === "tvSession") {
+      merged[field] = mergeTvSessions(existing[field], value);
+      continue;
+    }
     merged[field] = base && field in existing && (field === "favoriteChannels" || field === "favoriteGroups")
       ? mergeFavoriteEdits(stringArray(existing[field]), stringArray(value), stringArray(base[field]))
       : value;

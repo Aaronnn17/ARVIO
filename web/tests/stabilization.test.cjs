@@ -58,7 +58,7 @@ test('Durable settings outbox keeps failed edits and replays only its account', 
   const disk = storage(); let offline = true, writes = 0;
   const m = load('lib/settingsOutbox.ts', { './storage': disk, './cloud': { saveCloudSettings: async () => { if (offline) throw new Error('offline'); writes++; } } });
   const auth = { session: { userId: 'a' } };
-  m.queueSettings(auth, 'p', { accentColor: 'white' }, null);
+  m.queueSettings(auth, 'p', { accentColor: 'white' }, { accentColor: 'blue' });
   await assert.rejects(m.flushSettingsOutbox(auth)); assert.equal(m.hasPendingSettings(auth), true);
   auth.session.userId = 'b'; await m.flushSettingsOutbox(auth); assert.equal(writes, 0);
   auth.session.userId = 'a'; offline = false; await m.flushSettingsOutbox(auth);

@@ -23,7 +23,7 @@ class AppBottomBarResponsiveLayoutTest {
 
         assertThat(spec.itemHeightDp).isEqualTo(48)
         assertThat(spec.iconSizeDp).isEqualTo(20)
-        assertThat(spec.labelFontSizeSp).isEqualTo(8)
+        assertThat(spec.labelFontSizeSp).isEqualTo(10)
     }
 
     @Test

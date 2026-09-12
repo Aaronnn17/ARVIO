@@ -15,11 +15,13 @@ import { playbackPlan } from "./streamCompatibility";
 import { prepareBrowserStream } from "./prepareBrowserStream";
 import { reportHomeServerPlayback } from "./homeServerPlayback";
 import { loadHomeServerRows } from "./homeserver";
-import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, migrateXtreamFavoriteIds, savePlaylists } from "./iptv";
+import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvChannelIdentities, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
+import { isCurrentIptvSnapshot, recordTvPlayback } from "./iptvSession";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId } from "./tmdb";
 import { verifyProfilePin } from "./profilePin";
+import { hydratedProfileId } from "./profiles";
 import { flushSettingsOutbox, hasPendingSettings, queueSettings } from "./settingsOutbox";
 import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/types";
 import { TraktClient, type TraktDeviceCode } from "./trakt";
@@ -515,6 +517,7 @@ export interface AppStore {
   playStream: (stream: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean }) => void;
   playTrailer: (item: MediaItem) => Promise<void>;
   playChannel: (channel: IptvChannel) => void;
+  recordChannelPlayback: (channel: IptvChannel) => void;
   playCatchup: (channel: IptvChannel, program: IptvProgram) => void;
   closePlayer: () => void;
   installAddon: (url: string) => Promise<void>;
@@ -858,8 +861,10 @@ export function AppProvider({
           catalogs: mergeCatalogs(cloud.settings?.catalogs ?? currentSettings.catalogs, cloud.settings?.hiddenCatalogIds ?? currentSettings.hiddenCatalogIds),
           iptvPlaylists: cloud.settings?.iptvPlaylists ?? currentSettings.iptvPlaylists,
           favoriteChannelIds: cloud.settings?.favoriteChannelIds ?? currentSettings.favoriteChannelIds,
+          iptvTvSession: cloud.settings?.iptvTvSession ?? currentSettings.iptvTvSession,
           favoriteGroupIds: cloud.settings?.favoriteGroupIds ?? currentSettings.favoriteGroupIds,
           hiddenGroupIds: cloud.settings?.hiddenGroupIds ?? currentSettings.hiddenGroupIds,
+          lockedIptvGroupIds: cloud.settings?.lockedIptvGroupIds ?? currentSettings.lockedIptvGroupIds,
           groupOrder: cloud.settings?.groupOrder ?? currentSettings.groupOrder
         };
         if (!sameSettings(settingsRef.current, effectiveSettings)) setSettings(effectiveSettings);
@@ -1142,7 +1147,7 @@ export function AppProvider({
       );
       // Stamp which playlists this snapshot came from so Live TV can reuse it
       // on re-entry instead of rebuilding ~139k channels every visit.
-      if (isCurrent()) setIptvSnapshot({ ...loadedIptv, signature });
+      if (isCurrent()) setIptvSnapshot({ ...loadedIptv, signature, scopeKey: `${account ?? "local"}:${profileId ?? "local"}` });
     } catch (error) {
       if (isCurrent()) setToast(error instanceof Error ? error.message : "Failed to load Live TV");
     } finally {
@@ -1154,14 +1159,19 @@ export function AppProvider({
   }, []);
 
   useEffect(() => {
-    if (iptvSnapshot.signature !== iptvPlaylistSignature(settings.iptvPlaylists)) return;
-    const migrated = migrateXtreamFavoriteIds(settings.favoriteChannelIds, iptvSnapshot.allChannels ?? iptvSnapshot.channels);
-    if (migrated === settings.favoriteChannelIds) return;
-    setSettings((current) => ({
-      ...current,
-      favoriteChannelIds: migrateXtreamFavoriteIds(current.favoriteChannelIds, iptvSnapshot.allChannels ?? iptvSnapshot.channels)
-    }));
-  }, [iptvSnapshot, settings.iptvPlaylists, settings.favoriteChannelIds]);
+    const channels = iptvSnapshot.allChannels ?? iptvSnapshot.channels;
+    if (!channels.length || iptvSnapshot.identitiesLoaded || iptvSnapshot.signature !== iptvPlaylistSignature(settings.iptvPlaylists)) return;
+    let cancelled = false;
+    const profileId = activeProfileId;
+    void loadIptvChannelIdentities(settings.iptvPlaylists, channels, { userAgent: settings.customUserAgent }).then(enriched => {
+      if (cancelled || activeProfileIdRef.current !== profileId) return;
+      const byId = new Map(enriched.map(channel => [channel.id, channel]));
+      setIptvSnapshot(current => current.scopeKey !== iptvSnapshot.scopeKey || current.signature !== iptvSnapshot.signature
+        || (current.allChannels ?? current.channels) !== channels ? current : ({ ...current, identitiesLoaded: true, allChannels: enriched,
+        channels: current.channels.map(channel => byId.get(channel.id) ?? channel) }));
+    });
+    return () => { cancelled = true; };
+  }, [iptvSnapshot.allChannels, iptvSnapshot.channels, iptvSnapshot.signature, iptvSnapshot.identitiesLoaded, settings.iptvPlaylists, settings.customUserAgent, activeProfileId]);
 
   const loadIptvGuide = useCallback(async (channels: IptvChannel[]) => {
     if (!channels.length) return;
@@ -1320,6 +1330,9 @@ export function AppProvider({
     } catch {
       baseline = null;
     }
+    // Profile hydration is asynchronous. Until this profile has an acknowledged
+    // baseline, settings still belong to the previous profile or browser defaults.
+    if (!baseline) return;
     const accountId = authClient.session?.userId;
     const submitted = { settings, activeProfileId };
     setSettingsSyncState("pending");
@@ -1369,13 +1382,12 @@ export function AppProvider({
         if (cloud.profiles.length) {
           setProfiles(cloud.profiles);
           setAvatarImages(cloud.avatarImages);
-          if (cloud.activeProfileId) {
-            setActiveProfileId(cloud.activeProfileId);
-            void refreshData(cloud.activeProfileId);
-          } else if (cloud.profiles[0]) {
-            setActiveProfileId(cloud.profiles[0].id);
-            void refreshData(cloud.profiles[0].id);
-          }
+          // Read the current selection when the request completes: a user may
+          // have chosen a profile while this older cloud snapshot was loading.
+          const selectedId = hydratedProfileId(activeProfileIdRef.current, cloud.profiles, cloud.activeProfileId);
+          activeProfileIdRef.current = selectedId;
+          setActiveProfileId(selectedId);
+          void refreshData(selectedId);
         } else {
           // New account with no cloud profiles yet. If the local profiles were
           // stamped for a DIFFERENT account, they leaked from a previous
@@ -1387,7 +1399,7 @@ export function AppProvider({
             saveStored(PROFILES_OWNER_KEY, currentAccountEmail());
             void refreshData(fresh[0].id);
           } else {
-            void refreshData(activeProfileId);
+            void refreshData(activeProfileIdRef.current);
           }
         }
         setCloudProfilesHydrated(true);
@@ -1398,7 +1410,7 @@ export function AppProvider({
     return () => {
       cancelled = true;
     };
-  }, [activeProfileId, auth, refreshData]);
+  }, [auth, refreshData]);
 
   useEffect(() => {
     let current = true;
@@ -1791,6 +1803,10 @@ export function AppProvider({
     return true;
   }, []);
 
+  const recordChannelPlayback = useCallback((channel: IptvChannel) => {
+    setSettings(current => ({ ...current, iptvTvSession: recordTvPlayback(current.iptvTvSession, channel) }));
+  }, []);
+
   const playChannel = useCallback((channel: IptvChannel) => {
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
@@ -1804,10 +1820,11 @@ export function AppProvider({
       description: channel.group,
       behaviorHints: { proxyHeaders: { request: channel.requestHeaders } }
     };
+    recordChannelPlayback(channel);
     if (openLiveExternally(stream, channel.name)) return;
     setActiveChannel(channel);
     setActiveStream(stream);
-  }, [openLiveExternally]);
+  }, [openLiveExternally, recordChannelPlayback]);
 
   // Catch-up plays a finished programme from the panel's archive. It is a
   // seekable VOD stream (no activeChannel → scrubber works), but the player
@@ -2456,7 +2473,8 @@ export function AppProvider({
     activeChannel,
     addons,
     addonsReady,
-    iptvSnapshot,
+    iptvSnapshot: isCurrentIptvSnapshot(iptvSnapshot, `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`,
+      iptvPlaylistSignature(settings.iptvPlaylists)) ? iptvSnapshot : emptyIptv,
     query,
     setQuery,
     results,
@@ -2484,6 +2502,7 @@ export function AppProvider({
     playStream,
     playTrailer,
     playChannel,
+    recordChannelPlayback,
     playCatchup,
     closePlayer,
     installAddon,
@@ -2509,11 +2528,11 @@ export function AppProvider({
     openContextMenu,
     closeContextMenu
   }), [
-    view, cloudLoginRequired, profiles, activeProfile, avatarImages, manageMode,
+    view, cloudLoginRequired, profiles, activeProfile, activeProfileId, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
     section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
     addons, addonsReady, iptvSnapshot, query, results, searchState, settingsSyncState, settings, auth, traktConnected, mdblistConnected, simklConnected, trackingPreferences, deviceCode, simklDeviceCode, busy, toast,
-    updateSettings, refreshData, openDetails, closeDetails, playStream, playTrailer, playChannel, playCatchup, closePlayer,
+    updateSettings, refreshData, openDetails, closeDetails, playStream, playTrailer, playChannel, recordChannelPlayback, playCatchup, closePlayer,
     refreshIptv, loadIptvGuide,
     installAddon, removeAddon, setAddonsState, signIn, signOut, beginTrakt, pollTrakt, disconnectTrakt,
     connectMdblist, disconnectMdblist, beginSimkl, pollSimkl, disconnectSimkl, updateTrackingPreferences,

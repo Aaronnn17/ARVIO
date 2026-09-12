@@ -9,6 +9,7 @@ import com.arflix.tv.network.isIptvProviderRequestPaused
 
 internal class IptvLoadErrorHandlingPolicy : DefaultLoadErrorHandlingPolicy(2) {
     override fun getRetryDelayMsFor(errorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+        if (errorInfo.exception.iptvHlsFormatDetected() != null) return C.TIME_UNSET
         if (isIptvProviderRequestPaused(errorInfo.exception)) return C.TIME_UNSET
         val status = generateSequence<Throwable>(errorInfo.exception) { it.cause }
             .take(16).filterIsInstance<HttpDataSource.InvalidResponseCodeException>()

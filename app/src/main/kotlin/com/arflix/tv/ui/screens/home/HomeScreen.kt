@@ -2,6 +2,7 @@
 
 package com.arflix.tv.ui.screens.home
 
+import com.arflix.tv.ui.components.LocalBottomBarInset
 import androidx.activity.compose.BackHandler
 import android.content.Context
 import android.graphics.Bitmap
@@ -2923,7 +2924,7 @@ private fun MobileHomeRowsLayer(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 16.dp),
+        contentPadding = PaddingValues(bottom = 16.dp + LocalBottomBarInset.current),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // Hero carousel — profile/search row + banner card pager

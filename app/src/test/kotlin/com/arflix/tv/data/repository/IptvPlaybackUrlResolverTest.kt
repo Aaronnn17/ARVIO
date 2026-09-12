@@ -2,6 +2,7 @@ package com.arflix.tv.data.repository
 
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -11,6 +12,44 @@ import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 
 class IptvPlaybackUrlResolverTest {
+    @Test fun `cancelled tune closes the probe without issuing GET fallback`() = runBlocking {
+        val server = java.net.ServerSocket(0)
+        val requestStarted = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val callRef = java.util.concurrent.atomic.AtomicReference<okhttp3.Call>()
+        val worker = Thread {
+            server.accept().use { socket ->
+                val reader = socket.getInputStream().bufferedReader()
+                while (!reader.readLine().isNullOrEmpty()) { }
+                requestStarted.countDown()
+                release.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            }
+        }.apply { isDaemon = true; start() }
+        val calls = AtomicInteger()
+        val client = OkHttpClient.Builder().eventListenerFactory { call ->
+            calls.incrementAndGet(); callRef.set(call); okhttp3.EventListener.NONE
+        }.build()
+        try {
+            val resolver = IptvPlaybackUrlResolver(client)
+            val job = launch(kotlinx.coroutines.Dispatchers.Default) {
+                resolver.resolve("http://127.0.0.1:${server.localPort}/opaque-channel", emptyMap())
+            }
+            assertThat(requestStarted.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue()
+            kotlinx.coroutines.withTimeout(1500) { job.cancel(); job.join() }
+            assertThat(callRef.get().isCanceled()).isTrue()
+            assertThat(calls.get()).isEqualTo(1)
+        } finally {
+            release.countDown(); server.close(); worker.join(2000)
+            client.dispatcher.executorService.shutdownNow(); client.connectionPool.evictAll()
+        }
+    }
+    @Test fun `observed format skips future failures without leaking across authorization headers`() = runBlocking {
+        val resolver = IptvPlaybackUrlResolver(OkHttpClient.Builder().addInterceptor { error("No probe should be sent") }.build())
+        val url = "https://provider.test/live/123.ts"
+        resolver.rememberHls(url, mapOf("Authorization" to "first"), url)
+        assertThat(resolver.resolve(url, mapOf("authorization" to "first")).isHls).isTrue()
+        assertThat(resolver.resolve(url, mapOf("Authorization" to "second")).isHls).isFalse()
+    }
     @Test fun `expired redirect can refresh once for both not found responses`() = runBlocking {
         for (status in listOf(404, 410)) {
             val calls = AtomicInteger()

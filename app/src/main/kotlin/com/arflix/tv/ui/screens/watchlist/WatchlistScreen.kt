@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.watchlist
 
+import com.arflix.tv.ui.components.LocalBottomBarInset
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
@@ -1265,7 +1266,7 @@ private fun ColumnScope.LibraryResults(
                         .fillMaxSize()
                         .graphicsLayer { alpha = contentAlpha }
                         .padding(horizontal = 24.dp),
-                    contentPadding = PaddingValues(top = 6.dp, bottom = 24.dp),
+                    contentPadding = PaddingValues(top = 6.dp, bottom = 24.dp + LocalBottomBarInset.current),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(15.dp),
                     userScrollEnabled = isMobile && !state.isLoading
@@ -1370,7 +1371,7 @@ private fun ColumnScope.WatchlistContent(
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth().padding(start = 24.dp, end = 48.dp),
-                contentPadding = PaddingValues(top = 10.dp, bottom = 16.dp),
+                contentPadding = PaddingValues(top = 10.dp, bottom = 16.dp + LocalBottomBarInset.current),
                 verticalArrangement = Arrangement.spacedBy(if (isMobile) 24.dp else 16.dp),
                 userScrollEnabled = isMobile
             ) {

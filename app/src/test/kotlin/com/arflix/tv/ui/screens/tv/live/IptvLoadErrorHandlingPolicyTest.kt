@@ -45,4 +45,7 @@ class IptvLoadErrorHandlingPolicyTest {
         assertEquals(1_000L, delay(IOException("Connection interrupted")))
         assertEquals(2, policy.getMinimumLoadableRetryCount(C.DATA_TYPE_MEDIA))
     }
+    @Test fun detectedHlsDoesNotRetryTheWrongExtractor() {
+        assertEquals(C.TIME_UNSET, delay(IOException("Open failed", IptvHlsFormatDetected(spec.uri.toString()))))
+    }
 }

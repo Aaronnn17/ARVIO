@@ -234,6 +234,18 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
         return windowForPlaylistGroup(sourceKey, playlistId = null, groupTitle = groupTitle, offset = offset, limit = limit)
     }
 
+    /** Sequential metadata scan without decoding stream headers, DRM or channel objects. */
+    fun visitLabels(sourceKey: String, playlistId: String?, visitor: (String, String, String) -> Unit) {
+        if (sourceKey.isBlank()) return
+        val scoped = !playlistId.isNullOrBlank()
+        val sql = "SELECT id,name,group_title FROM channels WHERE source_key = ?" +
+            (if (scoped) " AND (id LIKE ? OR id LIKE ?)" else "") + " ORDER BY ord"
+        val args = if (scoped) arrayOf(sourceKey, "$playlistId:%", "stalker:$playlistId:%") else arrayOf(sourceKey)
+        readableDatabase.rawQuery(sql, args).use { cursor ->
+            while (cursor.moveToNext()) visitor(cursor.getString(0), cursor.getString(1), cursor.getString(2))
+        }
+    }
+
     fun windowForPlaylistGroup(
         sourceKey: String,
         playlistId: String?,
@@ -402,12 +414,9 @@ internal class IptvChannelStore(context: Context) : SQLiteOpenHelper(
     fun findChannelVariants(sourceKey: String, targetId: String?, limit: Int = 200): List<IptvChannel> {
         if (sourceKey.isBlank() || targetId.isNullOrBlank()) return emptyList()
 
-        // Normalizamos el ID que buscamos (quitamos espacios y pasamos a minúsculas)
-        val cleanTarget = targetId.trim().lowercase()
-
-        // Orden directa y estricta a SQLite: Busca canales que compartan EXACTAMENTE el epg_id o el tvg_name
-        val sql = "SELECT * FROM channels WHERE source_key = ? AND (LOWER(TRIM(epg_id)) = ? OR LOWER(TRIM(tvg_name)) = ?) ORDER BY ord LIMIT ?"
-        val args = arrayOf(sourceKey, cleanTarget, cleanTarget, limit.toString())
+        // Normalize both operands in SQLite so matching is independent of the device locale.
+        val sql = "SELECT * FROM channels WHERE source_key = ? AND (LOWER(TRIM(epg_id)) = LOWER(?) OR LOWER(TRIM(tvg_name)) = LOWER(?)) ORDER BY ord LIMIT ?"
+        val args = arrayOf(sourceKey, targetId.trim(), targetId.trim(), limit.coerceIn(1, 200).toString())
 
         return readableDatabase.rawQuery(sql, args).use { cursor ->
             val out = ArrayList<IptvChannel>()

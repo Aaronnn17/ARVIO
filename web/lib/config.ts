@@ -1,11 +1,12 @@
 function envValue(value: string | undefined, fallback = "") {
-  return value && !value.startsWith("$") ? value : fallback;
+  return value && !value.startsWith("$") && !value.includes("****") ? value : fallback;
 }
 
 const selfHosted = process.env.NEXT_PUBLIC_SELF_HOSTED === "true";
 
 export const config = {
   selfHosted,
+  sportsMetadataUrl: process.env.NEXT_PUBLIC_SPORTS_METADATA_URL ?? "",
   supabaseUrl: selfHosted ? "" : process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
   supabaseAnonKey: selfHosted ? "" : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
   appAnonKey: selfHosted ? "" : envValue(process.env.NEXT_PUBLIC_ARVIO_APP_ANON_KEY, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ""),

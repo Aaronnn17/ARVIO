@@ -748,6 +748,7 @@ fun MobileSubtitlesSheet(
         else -> "Subtitles"
     }
     val showBack = viewStack.size > 1
+    val MAX_SUBTITLE_OFFSET_MS = 120_000L
 
     MobileBottomSheetBase(
         visible = visible,
@@ -769,8 +770,8 @@ fun MobileSubtitlesSheet(
                 DelayAdjusterContent(
                     title = "Subtitle Delay",
                     delayMs = subtitleDelayMs,
-                    minMs = -10000L,
-                    maxMs = 10000L,
+                    minMs = -MAX_SUBTITLE_OFFSET_MS,
+                    maxMs = MAX_SUBTITLE_OFFSET_MS,
                     onUpdateDelay = onUpdateSubtitleDelay
                 )
             }

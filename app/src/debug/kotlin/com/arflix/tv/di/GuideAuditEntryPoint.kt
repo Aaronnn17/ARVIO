@@ -9,4 +9,5 @@ import dagger.hilt.components.SingletonComponent
 @InstallIn(SingletonComponent::class)
 interface GuideAuditEntryPoint {
     fun iptvRepository(): IptvRepository
+    fun sportsRepository(): com.arflix.tv.data.repository.SportsRepository
 }

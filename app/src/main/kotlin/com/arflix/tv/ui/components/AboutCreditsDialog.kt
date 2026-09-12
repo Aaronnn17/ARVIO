@@ -49,6 +49,11 @@ fun AboutCreditsDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.width(100.dp).height(16.dp)
                 )
                 Text(stringResource(R.string.tmdb_attribution))
+                Text("Sports data and artwork provided by TheSportsDB.")
+                Button(
+                    onClick = { runCatching { uriHandler.openUri("https://www.thesportsdb.com") } },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray, contentColor = Color.White)
+                ) { Text("TheSportsDB") }
                 Text(stringResource(R.string.authorized_sources_notice))
                 Button(
                     onClick = { runCatching { uriHandler.openUri("https://arvio.tv/credits/") } },

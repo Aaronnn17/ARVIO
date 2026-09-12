@@ -8,10 +8,12 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.data.model.IptvGuideHistory
+import com.arflix.tv.data.model.IptvVodSourceIds
 import com.arflix.tv.data.model.DrmInfo
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.data.model.IptvSnapshot
+import com.arflix.tv.data.model.StalkerVodLink
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.R
 import com.arflix.tv.network.withIptvProviderRequestGuard
@@ -189,9 +191,38 @@ internal object IptvTitleNormalizer {
     private val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
     private val DIACRITICS_REGEX = Regex("\\p{Mn}+")
 
+    /** Box-drawing bar some IPTV panels use in place of a pipe: "\u2503DE\u2503 Title". */
+    private const val BOX_DRAWING_BAR = '\u2503'
+
+    /**
+     * Leading language/quality tags in pipes: "|DE| Title", "|DE|HD| Title".
+     * The tags share their separators, hence one opening bar followed by
+     * repeated "TAG|" groups rather than repeated "|TAG|" groups.
+     */
+    private val LEADING_PIPE_TAG_REGEX = Regex("""^\s*\|(?:[A-Za-z0-9]{1,6}\|)+\s*""")
+
+    /**
+     * Leading language marker: "DE: Title", "GER - Title", "EN| Title".
+     *
+     * Deliberately an explicit code list instead of a generic two-or-three
+     * letter prefix: the generic form also eats real titles such as
+     * "IT: Chapter Two". Codes that double as English words ("it", "no", "se",
+     * "us") are left out for the same reason.
+     */
+    private val LANGUAGE_PREFIX_REGEX = Regex(
+        """^(?:de|deu|ger|en|eng|fr|fra|fre|es|esp|spa|pt|por|nl|ned|dut|pl|pol|tr|tur|ar|ara|""" +
+            """ru|rus|ro|ron|rom|ita|ell|gre|cz|cze|hu|hun|swe|nor|dan|fin|bg|bul|hr|hrv|srp|""" +
+            """sk|slo|slv|ua|ukr|mk|mkd|vip|multi|dual)\s*[:\-|]\s*""",
+        RegexOption.IGNORE_CASE
+    )
+
     fun normalize(value: String): String {
         if (value.isBlank()) return ""
         val stripped = value
+            .replace(BOX_DRAWING_BAR, '|')
+            .replace(LEADING_PIPE_TAG_REGEX, " ")
+            .trimStart()
+            .replace(LANGUAGE_PREFIX_REGEX, " ")
             .replace(BRACKET_CONTENT_REGEX, " ")
             .replace(PAREN_CONTENT_REGEX, " ")
             .replace(YEAR_PAREN_REGEX, " ")
@@ -360,6 +391,47 @@ class IptvRepository @Inject constructor(
     @Volatile
     private var cachedStalkerApis: Map<String, com.arflix.tv.data.api.StalkerApi> = emptyMap()
 
+    /**
+     * Scope for the shared Stalker channel-list download. Deliberately not tied
+     * to a caller: when the entry point that started the download gives up (its
+     * own timeout, a screen the user left), the download still finishes and the
+     * next entry point reuses it instead of starting another one.
+     */
+    private val stalkerChannelListScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + Dispatchers.IO
+    )
+
+    /**
+     * What one portal answered: the session it opened and the channels it
+     * returned. A portal that did not answer carries a null [api] and no
+     * channels — that is what makes a failure visible per portal instead of
+     * disappearing into a merged list.
+     */
+    internal data class StalkerPortalChannels(
+        val portalId: String,
+        val api: com.arflix.tv.data.api.StalkerApi?,
+        val channels: List<IptvChannel>
+    )
+
+    /**
+     * One shared download **per portal**.
+     *
+     * Keyed per portal rather than per portal set: with several portals
+     * configured, a portal that is temporarily down must not hide behind one
+     * that answered. Its result is never remembered, so the next ordinary load
+     * asks it again, while the portals that did answer keep their lists.
+     *
+     * `internal` so a test can check what [invalidateCache] and
+     * [ensureCacheOwnership] do to it — the bug this loader exists to prevent
+     * came back through its caller, not through the loader itself (same
+     * convention as [activePlaylists]).
+     */
+    internal val stalkerChannelListLoader =
+        StalkerChannelListLoader<StalkerPortalChannels>(
+            scope = stalkerChannelListScope,
+            isReusable = { it.api != null && it.channels.isNotEmpty() }
+        )
+
     private data class StalkerEpgPortalCacheKey(
         val portalId: String,
         val apiIdentity: String
@@ -386,6 +458,44 @@ class IptvRepository @Inject constructor(
     private val stalkerEpgCacheTtlMs = 5 * 60 * 1000L
     private val stalkerShortEpgCacheTtlMs = 2 * 60 * 1000L
     private val stalkerBulkProgramsPerChannelLimit = 16
+
+    private data class StalkerVodSearchCacheKey(
+        val portalId: String,
+        val apiIdentity: String,
+        val query: String
+    )
+
+    private data class StalkerVodSearchCacheEntry(
+        val fetchedAtMs: Long,
+        val items: List<com.arflix.tv.data.api.StalkerApi.StalkerVodItem>
+    )
+
+    /**
+     * Raw portal answers per search term. The persisted movie-source cache
+     * already covers "same movie looked up again", this one covers different
+     * movies that normalize onto the same query and the repeated lookups a
+     * single detail screen can trigger, so neither hits the portal twice.
+     */
+    private val stalkerVodSearchCache =
+        ConcurrentHashMap<StalkerVodSearchCacheKey, StalkerVodSearchCacheEntry>()
+    private val stalkerVodSearchCacheTtlMs = 6 * 60 * 60_000L
+
+    /**
+     * A "the portal knows no such title" answer is kept only briefly. It is a
+     * real answer, so it earns an entry - it stops a browsed-past show from
+     * asking again on every screen - but six hours is far too long to be wrong
+     * about: catalogs change, and a title the portal gains today would stay
+     * invisible for the rest of the day.
+     */
+    private val stalkerVodSearchEmptyCacheTtlMs = 10 * 60_000L
+    private val maxStalkerVodSearchCacheEntries = 64
+
+    /**
+     * Shortest head-of-title that is still worth asking a portal for. Below
+     * this a subtitle split stops naming a film - "It: Chapter Two" would ask
+     * for "It" and get a slice of the catalog back.
+     */
+    private val minStalkerVodQueryHeadLength = 3
 
     /**
      * Public accessor kept for compatibility with code that previously read the
@@ -593,6 +703,93 @@ class IptvRepository @Inject constructor(
     /** Enabled Stalker portals with a non-blank URL — the ones that load channels. */
     private fun activeStalkerPortals(config: IptvConfig): List<StalkerPortalEntry> =
         config.stalkerPortals.filter { it.enabled && it.portalUrl.isNotBlank() }
+
+    /**
+     * Identifies one configured portal for [stalkerChannelListLoader]. Hashed so
+     * the portal URL and MAC address never travel further than this function.
+     */
+    private fun stalkerPortalKey(portal: StalkerPortalEntry): String {
+        val raw = listOf(portal.id.trim(), portal.portalUrl.trim(), portal.macAddress.trim())
+            .joinToString("|")
+        return MessageDigest.getInstance("SHA-256")
+            .digest(raw.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    /** The loader keys of the portals [config] currently has enabled. */
+    private fun activeStalkerPortalKeys(config: IptvConfig): Set<String> =
+        activeStalkerPortals(config).map { stalkerPortalKey(it) }.toSet()
+
+    /**
+     * Downloads every enabled portal's channel list, each portal at most once
+     * per freshness window, and merges the answers.
+     *
+     * This is the only place that opens portal sessions for the channel list —
+     * the startup prefetch, the live TV snapshot load and the guide backfill
+     * load all come through here, so a start costs one download instead of one
+     * per entry point (measured before: 3 x 29 MB in 17 seconds). Sharing and
+     * the freshness window live in [StalkerChannelListLoader].
+     *
+     * Each portal is loaded under its own key, so a portal that fails is
+     * retried by the next ordinary load while the portals that answered keep
+     * their lists. Merging is the only thing that happens here, and it happens
+     * after the decision what may be remembered — that decision is per portal.
+     *
+     * Channel ids are prefixed with `stalker:<portalId>:<origId>` so playback
+     * can route back to the portal that owns them.
+     *
+     * `internal` so a test can drive the real merge and the real loader keys
+     * with [fetchPortal] standing in for the network; production never passes
+     * it.
+     *
+     * @param freshSinceMs the moment the caller decided it needed fresh data;
+     *   `0` accepts any list inside the freshness window. See
+     *   [StalkerChannelListLoader.load].
+     */
+    internal suspend fun loadStalkerChannels(
+        portals: List<StalkerPortalEntry>,
+        freshSinceMs: Long = 0L,
+        fetchPortal: suspend (StalkerPortalEntry) -> StalkerPortalChannels = { fetchStalkerChannels(it) }
+    ): Pair<Map<String, com.arflix.tv.data.api.StalkerApi>, List<IptvChannel>> = coroutineScope {
+        if (portals.isEmpty()) {
+            return@coroutineScope emptyMap<String, com.arflix.tv.data.api.StalkerApi>() to emptyList()
+        }
+        val answers = portals
+            .map { portal ->
+                async {
+                    stalkerChannelListLoader.load(stalkerPortalKey(portal), freshSinceMs) {
+                        fetchPortal(portal)
+                    }
+                }
+            }
+            .awaitAll()
+        val apis = LinkedHashMap<String, com.arflix.tv.data.api.StalkerApi>()
+        val channels = ArrayList<IptvChannel>()
+        for (answer in answers) {
+            channels.addAll(answer.channels)
+            answer.api?.let { apis[answer.portalId] = it }
+        }
+        apis.toMap() to channels.toList()
+    }
+
+    /**
+     * Opens one portal's session and downloads its channels. A portal that does
+     * not answer returns no session and no channels, which is what keeps its
+     * failure out of [stalkerChannelListLoader]'s memory.
+     */
+    private suspend fun fetchStalkerChannels(portal: StalkerPortalEntry): StalkerPortalChannels =
+        runCatching {
+            val stalker = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
+            if (!stalker.handshake()) {
+                return@runCatching StalkerPortalChannels(portal.id, null, emptyList())
+            }
+            stalker.getProfile()
+            StalkerPortalChannels(
+                portalId = portal.id,
+                api = stalker,
+                channels = stalker.getChannels().map { it.copy(id = "stalker:${portal.id}:${it.id}") }
+            )
+        }.getOrElse { StalkerPortalChannels(portal.id, null, emptyList()) }
 
     @Volatile
     private var xtreamSeriesLoadedAtMs: Long = 0L
@@ -2081,6 +2278,12 @@ class IptvRepository @Inject constructor(
         onProgress: (IptvLoadProgress) -> Unit = {},
         onChannelsReady: suspend (List<IptvChannel>) -> Unit = {}
     ): IptvSnapshot {
+        // Taken before the lock on purpose: it is the moment this caller asked
+        // for data, not the moment it got its turn. A forced reload uses it to
+        // tell "the list is from before I asked" from "someone downloaded it
+        // while I was waiting" — the second entry point reacting to a single
+        // configuration change is the latter, and must not download again.
+        val requestedAtMs = System.currentTimeMillis()
         return withContext(Dispatchers.IO) {
             loadMutex.withLock {
             cleanupStaleEpgTempFiles()
@@ -2107,32 +2310,20 @@ class IptvRepository @Inject constructor(
             // Load every enabled Stalker portal in parallel with M3U/Xtream
             // playlists when both are configured (hybrid mode). Stalker-only
             // (no playlists) keeps the legacy early-return behavior.
+            // A forced reload asks for data that is newer than the request, so
+            // a list remembered from before it is skipped — but one downloaded
+            // while this caller waited for the lock counts, and a download that
+            // is already running is shared. Skipping every remembered list
+            // instead made two entry points reacting to the same configuration
+            // change pull the full channel list twice (measured: 2 x 27.67 MB
+            // on every playlist toggle).
             val stalkerChannelsDeferred = if (stalkerPortals.isNotEmpty()) {
                 async {
                     onProgress(IptvLoadProgress(context.getString(R.string.iptv_connecting_stalker), 10))
-                    stalkerPortals.map { portal ->
-                        async {
-                            runCatching {
-                                val stalker = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
-                                if (!stalker.handshake()) {
-                                    return@runCatching Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList())
-                                }
-                                stalker.getProfile()
-                                val channels = stalker.getChannels()
-                                // Prefix with stalker:<portalId>:<origId> so the
-                                // portal can be identified for playback routing.
-                                Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, stalker, channels.map { it.copy(id = "stalker:${portal.id}:${it.id}") })
-                            }.getOrElse { Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList()) }
-                        }
-                    }.awaitAll().let { results ->
-                        val apis = HashMap<String, com.arflix.tv.data.api.StalkerApi>()
-                        val channels = ArrayList<IptvChannel>()
-                        for ((portalId, api, chs) in results) {
-                            channels.addAll(chs)
-                            api?.let { apis[portalId] = it }
-                        }
-                        apis to channels
-                    }
+                    loadStalkerChannels(
+                        stalkerPortals,
+                        freshSinceMs = if (forcePlaylistReload) requestedAtMs else 0L
+                    )
                 }
             } else {
                 null
@@ -3119,6 +3310,16 @@ class IptvRepository @Inject constructor(
     fun pagedPlaylistGroupCounts(): List<Triple<String, String, Int>> =
         runCatching { channelStore.playlistGroupCounts(currentEpgIndexKey) }.getOrDefault(emptyList())
 
+    fun visitStoredChannelLabels(playlistId: String?, visitor: (String, String, String) -> Unit) =
+        channelStore.visitLabels(currentEpgIndexKey, playlistId, visitor)
+
+    fun cachedGuideChannelIds(startMs: Long, endMs: Long): Set<String> =
+        epgIndex.channelIdsInWindow(currentEpgIndexKey, startMs, endMs)
+
+    fun visitCachedGuideWindow(channelIds: Set<String>, startMs: Long, endMs: Long,
+        visitor: (String, IptvProgram) -> Unit) =
+        epgIndex.visitWindow(currentEpgIndexKey, channelIds, startMs, endMs, visitor)
+
     fun pagedChannelsByIds(ids: Collection<String>): List<IptvChannel> =
         runCatching { channelStore.getByIds(currentEpgIndexKey, ids) }.getOrDefault(emptyList())
 
@@ -3134,7 +3335,7 @@ class IptvRepository @Inject constructor(
         runCatching { channelStore.search(currentEpgIndexKey, query, limit) }.getOrDefault(emptyList())
 
     fun pagedChannelVariants(targetId: String?): List<IptvChannel> =
-        runCatching { channelStore.findChannelVariants(currentEpgIndexKey, targetId) }.getOrDefault(emptyList())
+        channelStore.findChannelVariants(currentEpgIndexKey, targetId)
 
     fun indexedGuideWindow(
         channelIds: Set<String>,
@@ -3584,44 +3785,14 @@ class IptvRepository @Inject constructor(
 
         // Stalker-only mode: no playlists configured.
         if (activeLists.isEmpty() && stalkerPortals.isNotEmpty()) {
-            val apis = HashMap<String, com.arflix.tv.data.api.StalkerApi>()
-            val channels = ArrayList<IptvChannel>()
-            for (portal in stalkerPortals) {
-                runCatching {
-                    val stalker = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
-                    if (!stalker.handshake()) return@runCatching
-                    stalker.getProfile()
-                    stalker.getChannels().map { it.copy(id = "stalker:${portal.id}:${it.id}") }
-                        .also { channels.addAll(it) }
-                    apis[portal.id] = stalker
-                }
-            }
+            val (apis, channels) = loadStalkerChannels(stalkerPortals)
             return if (channels.isNotEmpty()) channels to apis else null
         }
 
         // Load playlists and Stalker in parallel when both are configured.
         val (playlistChannels, stalkerApis, stalkerChannels) = coroutineScope {
             val stalkerDeferred = if (stalkerPortals.isNotEmpty()) {
-                async {
-                    stalkerPortals.map { portal ->
-                        async {
-                            runCatching {
-                                val stalker = com.arflix.tv.data.api.StalkerApi(portal.portalUrl, portal.macAddress)
-                                if (!stalker.handshake()) return@runCatching Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList())
-                                stalker.getProfile()
-                                Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, stalker, stalker.getChannels().map { it.copy(id = "stalker:${portal.id}:${it.id}") })
-                            }.getOrElse { Triple<String, com.arflix.tv.data.api.StalkerApi?, List<IptvChannel>>(portal.id, null, emptyList()) }
-                        }
-                    }.awaitAll().let { results ->
-                        val apis = HashMap<String, com.arflix.tv.data.api.StalkerApi>()
-                        val channels = ArrayList<IptvChannel>()
-                        for ((portalId, api, chs) in results) {
-                            channels.addAll(chs)
-                            api?.let { apis[portalId] = it }
-                        }
-                        apis to channels
-                    }
-                }
+                async { loadStalkerChannels(stalkerPortals) }
             } else {
                 null
             }
@@ -3696,6 +3867,15 @@ class IptvRepository @Inject constructor(
     }
 
     fun invalidateCache() {
+        // The shared Stalker downloads are deliberately NOT dropped here. Each
+        // is keyed by one portal (id + URL + MAC), and portals that disappear
+        // are released in ensureCacheOwnership, which every entry point passes
+        // through. Everything else this function is called for — a playlist
+        // toggled, an EPG URL edited, a profile switched to one with the same
+        // portals — leaves the portals alone, so their channel lists stay
+        // valid. Dropping them anyway tore up a download that another entry
+        // point was already running and cost a second full 27.67 MB list on
+        // every playlist toggle (measured).
         cachedChannels = emptyList()
         cachedChannelsLookupSource = null
         cachedChannelsById = emptyMap()
@@ -3705,6 +3885,7 @@ class IptvRepository @Inject constructor(
         cachedEpgAt = 0L
         stalkerEpgCache.clear()
         stalkerShortEpgCache.clear()
+        stalkerVodSearchCache.clear()
         discoveredM3uEpgUrls.clear()
         xtreamVodCacheKey = null
         xtreamVodLoadedAtMs = 0L
@@ -3736,7 +3917,7 @@ class IptvRepository @Inject constructor(
      * way back to the provider.
      *
      * Unlike [invalidateCache], this also deletes the disk catalogs so that
-     * [warmXtreamVodCachesIfPossible] is guaranteed to re-fetch from network.
+     * [warmVodCachesIfPossible] is guaranteed to re-fetch from network.
      */
     suspend fun purgeAllIptvSourceCaches(preserveLiveSnapshot: Boolean = false) {
         val sourceKey = currentEpgIndexKey
@@ -3768,7 +3949,41 @@ class IptvRepository @Inject constructor(
         runCatching { channelCacheFile().delete() }
     }
 
-    private fun ensureCacheOwnership(profileId: String, config: IptvConfig) {
+    /**
+     * Releases what is held for Stalker portals that are no longer configured:
+     * their channel list and, with it, the portal session that came with it.
+     *
+     * [loadStalkerChannels] cannot do this. When the last portal is removed
+     * every caller returns before it is reached, so the removed portal's list
+     * and session stayed in memory until the app was closed.
+     *
+     * Only portals that actually disappeared are dropped. A playlist toggled,
+     * an EPG URL edited or a profile switched to one with the same portals
+     * leaves every key in place, so unrelated changes keep sharing the download
+     * they already have (measured: dropping it anyway cost a second full
+     * 27.67 MB list on every playlist toggle).
+     */
+    private fun releaseStalkerStateForRemovedPortals(config: IptvConfig) {
+        val liveKeys = activeStalkerPortalKeys(config)
+        stalkerChannelListLoader.retainOnly(liveKeys)
+        val livePortalIds = activeStalkerPortals(config).map { it.id }.toSet()
+        if (cachedStalkerApis.keys.any { it !in livePortalIds }) {
+            cachedStalkerApis = cachedStalkerApis.filterKeys { it in livePortalIds }
+        }
+    }
+
+    /**
+     * Runs before any entry point can decide it has nothing to do — the live TV
+     * snapshot load, the cache-only warmup and the cached-snapshot read all pass
+     * through here first, whether or not a source is configured. That makes it
+     * the one place where "the last portal is gone" is actually observed, so it
+     * is where the Stalker state of removed portals is released.
+     *
+     * `internal` so a test can drive it with a plain [IptvConfig], same
+     * convention as [activePlaylists].
+     */
+    internal fun ensureCacheOwnership(profileId: String, config: IptvConfig) {
+        releaseStalkerStateForRemovedPortals(config)
         val sig = buildSourceSignature(config)
         val ownerChanged = cacheOwnerProfileId != null && cacheOwnerProfileId != profileId
         val configChanged = cacheOwnerConfigSig != null && cacheOwnerConfigSig != sig
@@ -5285,12 +5500,13 @@ class IptvRepository @Inject constructor(
         year: Int?,
         imdbId: String? = null,
         tmdbId: Int? = null,
-        allowNetwork: Boolean = true
+        allowNetwork: Boolean = true,
+        originalTitle: String? = null
     ): List<StreamSource> {
         return withContext(Dispatchers.IO) {
             if (!isVodSearchEnabled()) return@withContext emptyList()
             val config = observeConfig().first()
-            xtreamCredentialsForVodImport(config)
+            val xtreamSources = xtreamCredentialsForVodImport(config)
                 .flatMap { creds ->
                     runCatching {
                         findMovieVodSourcesForCredentials(
@@ -5303,7 +5519,23 @@ class IptvRepository @Inject constructor(
                         )
                     }.getOrDefault(emptyList())
                 }
-                .let(::sortVodSources)
+            // Additive second provider: each Stalker portal is searched on its
+            // own, and a failing portal never removes Xtream results.
+            val stalkerSources = activeStalkerPortals(config)
+                .flatMap { portal ->
+                    runCatching {
+                        findStalkerMovieVodSources(
+                            portal = portal,
+                            title = title,
+                            year = year,
+                            tmdbId = tmdbId,
+                            imdbId = imdbId,
+                            allowNetwork = allowNetwork,
+                            originalTitle = originalTitle
+                        )
+                    }.getOrDefault(emptyList())
+                }
+            sortVodSources(xtreamSources + stalkerSources)
         }
     }
 
@@ -5398,6 +5630,360 @@ class IptvRepository @Inject constructor(
         return sources
     }
 
+    // ── Stalker VOD (movies) ────────────────────────────────────────────────
+
+    /**
+     * Stalker counterpart to [findMovieVodSourcesForCredentials].
+     *
+     * Unlike Xtream, a Stalker portal serves its catalog only in small pages
+     * (14 entries on a stock Ministra build), so downloading and indexing the
+     * whole catalog locally would mean hundreds of requests per refresh on a
+     * large portal - exactly the request pattern that gets users throttled or
+     * IP-banned by their provider. The portal's own `search` narrows the same
+     * endpoint server-side instead, and the handful of entries that come back
+     * is scored with the same TMDB-id / title+year matching the Xtream path
+     * uses.
+     */
+    private suspend fun findStalkerMovieVodSources(
+        portal: StalkerPortalEntry,
+        title: String,
+        year: Int?,
+        tmdbId: Int?,
+        imdbId: String?,
+        allowNetwork: Boolean,
+        originalTitle: String? = null
+    ): List<StreamSource> {
+        if (portal.portalUrl.isBlank() || portal.macAddress.isBlank()) return emptyList()
+        val fingerprint = stalkerPortalFingerprint(portal)
+        // Portal id and fingerprint are both part of the key: two portals never
+        // read each other's matches, and re-pointing a portal at another server
+        // invalidates only that portal's entries.
+        val cacheKey = iptvMovieSourceCacheKey(
+            profileIdHash = profileIdHash(),
+            imdbId = imdbId,
+            tmdbId = tmdbId,
+            title = title,
+            year = year
+        )?.let { base -> "stalker|${portal.id}|$base" }
+        if (cacheKey != null) {
+            lookupCachedMovieSources(cacheKey, fingerprint)?.let { return it }
+        }
+        // Nothing to fall back on offline: there is no local Stalker catalog,
+        // the cached result above is the only network-free answer.
+        if (!allowNetwork) return emptyList()
+
+        val normalizedTitle = normalizeLookupText(title)
+        if (normalizedTitle.isBlank()) return emptyList()
+        val api = getOrCreateStalkerApi(portal) ?: return emptyList()
+
+        val normalizedTmdb = normalizeTmdbId(tmdbId)
+        val normalizedOriginalTitle = normalizeLookupText(originalTitle.orEmpty())
+            .takeIf { it.isNotBlank() && it != normalizedTitle }
+        val inputYear = year ?: parseYear(title)
+
+        var matches: List<com.arflix.tv.data.api.StalkerApi.StalkerVodItem> = emptyList()
+        // Counted separately from the matches: portals that ignore `search` answer
+        // every query with the head of their whole catalogue, so a high offered
+        // count next to zero matches names the portal as the cause, whereas both
+        // at zero points at the request or the portal's catalogue.
+        var offered = 0
+        for (query in stalkerVodSearchQueries(title, originalTitle)) {
+            val items = stalkerVodSearch(portal, fingerprint, api, query)
+            offered += items.size
+            if (items.isEmpty()) continue
+            matches = matchStalkerVodItems(
+                items = items,
+                normalizedTitle = normalizedTitle,
+                normalizedTmdb = normalizedTmdb,
+                inputYear = inputYear,
+                normalizedOriginalTitle = normalizedOriginalTitle
+            )
+            if (matches.isNotEmpty()) break
+        }
+        System.err.println(
+            "[Stalker-VOD] portal=${portal.id} title='$title' " +
+                "offered=$offered matches=${matches.size}"
+        )
+        if (matches.isEmpty()) return emptyList()
+
+        val sources = sortVodSources(
+            matches.mapNotNull { item ->
+                item.toStalkerMovieVodSource(portal, title.ifBlank { normalizedTmdb.orEmpty() })
+            }
+        )
+        if (cacheKey != null && sources.isNotEmpty()) {
+            storeCachedMovieSources(cacheKey, sources, fingerprint)
+        }
+        return sources
+    }
+
+    /** Empty answers expire quickly, real hits keep the long TTL. */
+    private fun cacheTtlFor(items: List<*>): Long =
+        if (items.isEmpty()) stalkerVodSearchEmptyCacheTtlMs else stalkerVodSearchCacheTtlMs
+
+    /**
+     * The terms one portal lookup may spend, most likely first. The caller
+     * stops at the first term that produced a match, so the later ones only
+     * cost a request when the earlier ones found nothing.
+     *
+     * A portal matches `search` literally against its own catalog name, and
+     * that name is not the name TMDB shows the user. Measured against a real
+     * portal: TMDB says "Der Astronaut - Project Hail Mary" with an en dash,
+     * the catalog lists "DE - Der Astronaut: Project Hail Mary (2026)" with a
+     * colon, and the literal search therefore answers with nothing at all -
+     * while the same film sits in that catalog eleven times under its original
+     * title. Hence three terms, none of which is enough on its own:
+     *
+     *  1. [originalTitle] - most catalog entries are listed under the original
+     *     name, so this is the term that hits first most of the time.
+     *  2. [title] as displayed - the only term that finds an entry a panel
+     *     carries purely localized: "Die Verurteilten" does not contain
+     *     "The Shawshank Redemption" anywhere.
+     *  3. The part in front of a subtitle separator - the rescue anchor for
+     *     the punctuation mismatch above, and for panels that list "Dune"
+     *     where TMDB says "Dune: Part Two".
+     *
+     * Costs nothing in the common case: when a user browses in the original
+     * language, terms 1 and 2 are the same string and only one request goes
+     * out, exactly as before.
+     */
+    internal fun stalkerVodSearchQueries(
+        title: String,
+        originalTitle: String? = null
+    ): List<String> {
+        val queries = mutableListOf<String>()
+        fun add(candidate: String) {
+            val term = candidate.trim()
+            if (term.isBlank()) return
+            // Case-insensitive: a portal search is case-insensitive too, so a
+            // second spelling of the same term would only buy a second
+            // identical answer.
+            if (queries.any { it.equals(term, ignoreCase = true) }) return
+            queries += term
+        }
+
+        add(originalTitle.orEmpty())
+        val primary = title.trim()
+        add(primary)
+
+        // Derived, not given: only used when it still names the film. Two
+        // characters ("It: Chapter Two" -> "It") would ask the portal for a
+        // slice of its whole catalog instead.
+        val head = primary.subtitleHead()
+        if (head.length >= minStalkerVodQueryHeadLength) add(head)
+
+        return queries
+    }
+
+    /**
+     * Everything in front of the first subtitle separator.
+     *
+     * The dashes are spaced on purpose: an unspaced hyphen belongs to names
+     * like "Spider-Man", and an unspaced en dash to year ranges. The en and em
+     * dash are in the list because TMDB writes German subtitles with them
+     * while portals write a colon - the exact mismatch this whole helper is
+     * about.
+     */
+    private fun String.subtitleHead(): String =
+        substringBefore(':')
+            .substringBefore(" - ")
+            .substringBefore(" – ")
+            .substringBefore(" — ")
+            .trim()
+
+    private suspend fun stalkerVodSearch(
+        portal: StalkerPortalEntry,
+        fingerprint: String,
+        api: com.arflix.tv.data.api.StalkerApi,
+        query: String
+    ): List<com.arflix.tv.data.api.StalkerApi.StalkerVodItem> {
+        val term = query.trim()
+        if (term.isBlank()) return emptyList()
+        val key = StalkerVodSearchCacheKey(portal.id, fingerprint, term.lowercase(Locale.US))
+        val now = System.currentTimeMillis()
+        stalkerVodSearchCache[key]?.let { cached ->
+            if (now - cached.fetchedAtMs < cacheTtlFor(cached.items)) return cached.items
+            stalkerVodSearchCache.remove(key)
+        }
+        // null means the request itself failed. Caching that would turn one
+        // bad moment into hours of "this portal has no such film".
+        val items = api.searchVod(term) ?: return emptyList()
+        if (stalkerVodSearchCache.size >= maxStalkerVodSearchCacheEntries) {
+            // Bounded on purpose: one answer is small, but a long browsing
+            // session must not accumulate an entry per looked-up movie.
+            stalkerVodSearchCache.clear()
+        }
+        stalkerVodSearchCache[key] = StalkerVodSearchCacheEntry(now, items)
+        return items
+    }
+
+    /** Movie entries of a portal search, scored by [matchStalkerCatalogEntries]. */
+    internal fun matchStalkerVodItems(
+        items: List<com.arflix.tv.data.api.StalkerApi.StalkerVodItem>,
+        normalizedTitle: String,
+        normalizedTmdb: String?,
+        inputYear: Int?,
+        normalizedOriginalTitle: String? = null
+    ): List<com.arflix.tv.data.api.StalkerApi.StalkerVodItem> = matchStalkerCatalogEntries(
+        items = items,
+        normalizedTitle = normalizedTitle,
+        normalizedTmdb = normalizedTmdb,
+        inputYear = inputYear,
+        normalizedOriginalTitle = normalizedOriginalTitle
+    ) { StalkerCatalogFields(it.name, it.cmd, it.year, it.tmdbId) }
+
+    /** The fields a Stalker catalog entry is scored on. */
+    private data class StalkerCatalogFields(
+        val name: String?,
+        val cmd: String?,
+        val year: String?,
+        val tmdbId: String?
+    )
+
+    /**
+     * Scores portal entries against a wanted title. Written over the entry's
+     * fields rather than over one item type: `get_ordered_list` answers with
+     * the same four fields for every catalog it serves.
+     *
+     * Two stages, as on the Xtream path: a portal-supplied `tmdb_id` wins
+     * outright, otherwise entries are scored on their title with the existing
+     * [scoreNameMatch] plus the year bonus/penalty and score window
+     * [findMovieCandidatesIndexed] applies. Entries without a `cmd` are dropped
+     * either way - there would be nothing to play.
+     *
+     * [normalizedOriginalTitle] is scored as an equal alternative, not as a
+     * fallback: [stalkerVodSearchQueries] asks the portal for the original
+     * title as well, and a catalog listing the film only under that name -
+     * "EN - Project Hail Mary (2026)" for a user browsing in German - would
+     * otherwise be found and then thrown away. Both names denote the same
+     * film, so the better of the two scores is the entry's score. Portals that
+     * supply a `tmdb_id` never reach this stage.
+     */
+    private fun <T> matchStalkerCatalogEntries(
+        items: List<T>,
+        normalizedTitle: String,
+        normalizedTmdb: String?,
+        inputYear: Int?,
+        normalizedOriginalTitle: String? = null,
+        fields: (T) -> StalkerCatalogFields
+    ): List<T> {
+        if (items.isEmpty()) return emptyList()
+        if (!normalizedTmdb.isNullOrBlank()) {
+            val idMatches = items.filter { normalizeTmdbId(fields(it).tmdbId) == normalizedTmdb }
+            if (idMatches.isNotEmpty()) return idMatches
+        }
+        val wantedNames = listOfNotNull(
+            normalizedTitle.takeIf { it.isNotBlank() },
+            normalizedOriginalTitle?.takeIf { it.isNotBlank() }
+        ).distinct()
+        if (wantedNames.isEmpty()) return emptyList()
+
+        val scored = items
+            .mapNotNull { item ->
+                val entry = fields(item)
+                val itemName = entry.name?.trim().orEmpty()
+                if (itemName.isBlank()) return@mapNotNull null
+                if (entry.cmd.isNullOrBlank()) return@mapNotNull null
+                val score = wantedNames.maxOf { scoreNameMatch(itemName, it) }
+                if (score <= 0) return@mapNotNull null
+                val providerYear = parseYear(entry.year?.trim().orEmpty().ifBlank { itemName })
+                val yearDelta = if (inputYear != null && providerYear != null) {
+                    kotlin.math.abs(providerYear - inputYear)
+                } else null
+                val yearAdjust = when {
+                    yearDelta == null -> 0
+                    yearDelta == 0 -> 20
+                    yearDelta == 1 -> 8
+                    else -> -25
+                }
+                item to (score + yearAdjust)
+            }
+            .sortedByDescending { it.second }
+        val bestScore = scored.firstOrNull()?.second ?: return emptyList()
+        val minScore = maxOf(65, bestScore - 8)
+        return scored.takeWhile { it.second >= minScore }.map { it.first }
+    }
+
+    private fun com.arflix.tv.data.api.StalkerApi.StalkerVodItem.toStalkerMovieVodSource(
+        portal: StalkerPortalEntry,
+        fallbackTitle: String
+    ): StreamSource? {
+        val marker = StalkerVodLink.buildMarker(portal.id, cmd.orEmpty()) ?: return null
+        val sourceName = name?.trim().orEmpty().ifBlank { fallbackTitle }
+        return StreamSource(
+            source = sourceName,
+            addonName = "IPTV VOD",
+            addonId = IptvVodSourceIds.STALKER,
+            quality = stalkerVodQuality(sourceName, hd),
+            size = "",
+            url = marker,
+            description = stalkerVodDescription(portal, time, ratingImdb)
+        )
+    }
+
+    /**
+     * Stalker knows no resolution field - the portal only flags `hd` - so the
+     * title is still the better source when it names one. Falling back to the
+     * flag at least separates HD entries from the rest.
+     */
+    private fun stalkerVodQuality(sourceName: String, hdFlag: String?): String {
+        val inferred = inferQuality(sourceName)
+        if (inferred != "VOD") return inferred
+        return if (hdFlag?.trim() == "1") "HD" else "VOD"
+    }
+
+    /**
+     * The little the portal knows beyond the title, which is what makes two
+     * entries of the same movie tellable apart: which portal it came from, how
+     * long it runs, and its IMDb rating.
+     */
+    private fun stalkerVodDescription(
+        portal: StalkerPortalEntry,
+        runtime: String?,
+        ratingImdb: String?
+    ): String? {
+        val parts = mutableListOf<String>()
+        portal.name.trim().takeIf { it.isNotBlank() }?.let(parts::add)
+        runtime?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
+            val minutes = value.toIntOrNull()
+            parts += if (minutes != null && minutes > 0) "$minutes min" else value
+        }
+        ratingImdb?.trim()?.toDoubleOrNull()?.takeIf { it > 0.0 }?.let { parts += "IMDb $it" }
+        return parts.joinToString(" \u00b7 ").ifBlank { null }
+    }
+
+    /**
+     * Stable, secret-free identity of a portal. Used as the cache fingerprint,
+     * so a portal that gets re-pointed at another server or MAC drops its own
+     * cached matches without touching any other source.
+     */
+    private fun stalkerPortalFingerprint(portal: StalkerPortalEntry): String {
+        val raw = "${portal.portalUrl.trim().trimEnd('/').lowercase(Locale.ROOT)}|" +
+            portal.macAddress.trim().uppercase(Locale.ROOT)
+        return MessageDigest.getInstance("MD5").digest(raw.toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Turns the `stalker_vod://` placeholder of a matched movie into a playable
+     * URL. Called from [StreamRepository.resolveStreamForPlayback] the moment
+     * playback starts - never while a source list is being built.
+     */
+    suspend fun resolveStalkerVodStreamUrl(markerUrl: String): String? {
+        val (portalId, command) = StalkerVodLink.parseMarker(markerUrl) ?: return null
+        val config = observeConfig().first()
+        // No "fall back to the first portal" here: the marker always carries the
+        // portal it came from, and guessing would resolve against a stranger.
+        val portal = config.stalkerPortals.firstOrNull { it.id == portalId } ?: return null
+        if (portal.portalUrl.isBlank() || portal.macAddress.isBlank()) return null
+        val api = getOrCreateStalkerApi(portal) ?: return null
+        val resolved = api.resolveVodStreamUrl(command)
+        System.err.println(
+            "[Stalker-VOD] create_link portal=$portalId resolved=${!resolved.isNullOrBlank()}"
+        )
+        return resolved
+    }
+
     suspend fun findEpisodeVodSource(
         title: String,
         season: Int,
@@ -5470,7 +6056,7 @@ class IptvRepository @Inject constructor(
                 StreamSource(
                     source = sourceName,
                     addonName = "IPTV Series VOD",
-                    addonId = "iptv_xtream_vod",
+                    addonId = IptvVodSourceIds.XTREAM,
                     quality = inferQuality(sourceName),
                     size = "",
                     url = streamUrl
@@ -5636,7 +6222,7 @@ class IptvRepository @Inject constructor(
         return StreamSource(
             source = sourceName,
             addonName = "IPTV VOD",
-            addonId = "iptv_xtream_vod",
+            addonId = IptvVodSourceIds.XTREAM,
             quality = inferQuality(sourceName),
             size = "",
             url = streamUrl
@@ -5654,7 +6240,7 @@ class IptvRepository @Inject constructor(
         return StreamSource(
             source = sourceName,
             addonName = "IPTV Episode VOD",
-            addonId = "iptv_xtream_vod",
+            addonId = IptvVodSourceIds.XTREAM,
             quality = inferQuality(sourceName),
             size = "",
             url = streamUrl
@@ -5672,10 +6258,24 @@ class IptvRepository @Inject constructor(
             )
     }
 
-    suspend fun warmXtreamVodCachesIfPossible() {
+    /**
+     * Background pre-warm for every configured VOD provider, called from the
+     * home, TV and settings screens so the first movie lookup after start-up is
+     * not the one that pays for the cold caches.
+     *
+     * Stalker has no catalog to pre-download - its searches run server-side -
+     * but the portal handshake does probe up to five base paths before the
+     * first request succeeds, so that is what gets warmed here. A new source
+     * that skips this path still works, it just silently loses the head start
+     * this function exists for.
+     */
+    suspend fun warmVodCachesIfPossible() {
         withContext(Dispatchers.IO) {
             if (!isVodSearchEnabled()) return@withContext
             val config = observeConfig().first()
+            activeStalkerPortals(config).forEach { portal ->
+                runCatching { getOrCreateStalkerApi(portal) }
+            }
             xtreamCredentialsForVodImport(config).forEach { creds ->
                 runCatching {
                     loadXtreamVodStreams(creds)
@@ -8195,6 +8795,8 @@ class IptvRepository @Inject constructor(
         var currentDesc: String? = null
 
         val parser = android.util.Xml.newPullParser()
+        var currentArtwork: String? = null
+        var currentCategory: String? = null
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
         parser.setInput(input, null)
         var eventType = parser.eventType
@@ -8242,6 +8844,8 @@ class IptvRepository @Inject constructor(
                                 currentStop = stop
                                 currentTitle = null
                                 currentDesc = null
+                                currentArtwork = null
+                                currentCategory = null
                             }
                         }
                         "title" -> {
@@ -8253,6 +8857,13 @@ class IptvRepository @Inject constructor(
                             if (currentChannelKey != null) {
                                 currentDesc = parser.nextText().trim().ifBlank { null }
                             }
+                        }
+                        "icon" -> if (currentChannelKey != null) {
+                            currentArtwork = com.arflix.tv.data.model.safeSportsImage(parser.getAttributeValue(null, "src"))
+                        }
+                        "category" -> if (currentChannelKey != null) {
+                            val value = parser.nextText().trim()
+                            currentCategory = listOfNotNull(currentCategory, value).joinToString(" ").take(200)
                         }
                     }
                 }
@@ -8272,7 +8883,9 @@ class IptvRepository @Inject constructor(
                                 title = currentTitle ?: context.getString(R.string.program_unknown),
                                 description = currentDesc,
                                 startUtcMillis = currentStart,
-                                endUtcMillis = currentStop
+                                endUtcMillis = currentStop,
+                                artworkUrl = currentArtwork,
+                                category = currentCategory,
                             )
 
                             if (onProgram != null) {
@@ -8340,6 +8953,9 @@ class IptvRepository @Inject constructor(
         var readingDisplayName = false
         var readingTitle = false
         var readingDesc = false
+        var readingCategory = false
+        var currentArtwork: String? = null
+        var currentCategory: String? = null
         val textBuffer = StringBuilder(128)
 
         val handler = object : DefaultHandler() {
@@ -8375,6 +8991,8 @@ class IptvRepository @Inject constructor(
                         }
                         currentTitle = null
                         currentDesc = null
+                        currentArtwork = null
+                        currentCategory = null
                     }
                     "title" -> {
                         if (!currentChannelKey.isNullOrBlank()) {
@@ -8388,12 +9006,19 @@ class IptvRepository @Inject constructor(
                             textBuffer.setLength(0)
                         }
                     }
+                    "icon" -> if (!currentChannelKey.isNullOrBlank()) {
+                        currentArtwork = com.arflix.tv.data.model.safeSportsImage(attributes?.getValue("src"))
+                    }
+                    "category" -> if (!currentChannelKey.isNullOrBlank()) {
+                        readingCategory = true
+                        textBuffer.setLength(0)
+                    }
                 }
             }
 
             override fun characters(ch: CharArray?, start: Int, length: Int) {
                 if (ch == null || length <= 0) return
-                if (readingDisplayName || readingTitle || readingDesc) {
+                if (readingDisplayName || readingTitle || readingDesc || readingCategory) {
                     textBuffer.append(ch, start, length)
                 }
             }
@@ -8434,6 +9059,11 @@ class IptvRepository @Inject constructor(
                             textBuffer.setLength(0)
                         }
                     }
+                    "category" -> if (readingCategory) {
+                        currentCategory = listOfNotNull(currentCategory, textBuffer.toString().trim()).joinToString(" ").take(200)
+                        readingCategory = false
+                        textBuffer.setLength(0)
+                    }
                     "programme" -> {
                         val key = currentChannelKey
                         val resolvedChannels = key?.let {
@@ -8445,7 +9075,9 @@ class IptvRepository @Inject constructor(
                                 title = currentTitle ?: context.getString(R.string.program_unknown),
                                 description = currentDesc,
                                 startUtcMillis = currentStart,
-                                endUtcMillis = currentStop
+                                endUtcMillis = currentStop,
+                                artworkUrl = currentArtwork,
+                                category = currentCategory,
                             )
                             resolvedChannels.forEach { channel ->
                                 val nowProgram = pickNow(nowCandidates[channel.id], program, nowUtc)

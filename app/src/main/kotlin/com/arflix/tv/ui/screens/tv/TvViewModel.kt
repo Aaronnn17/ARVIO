@@ -113,7 +113,19 @@ class TvViewModel @Inject constructor(
     val iptvRepository: IptvRepository,
     private val cloudSyncRepository: CloudSyncRepository,
     private val mediaRepository: com.arflix.tv.data.repository.MediaRepository,
+    private val sportsRepository: com.arflix.tv.data.repository.SportsRepository,
+    private val profileManager: com.arflix.tv.data.repository.ProfileManager,
 ) : ViewModel() {
+
+    suspend fun loadSportsGuideArtwork() = sportsRepository.loadGuideArtwork()
+    suspend fun cachedSportsMetadata() = sportsRepository.cachedMetadata()
+    internal var cachedSportsSchedule: com.arflix.tv.ui.screens.tv.live.SportsScheduleSnapshot? = null
+    suspend fun loadSportsMetadata() = sportsRepository.loadMetadata()
+    suspend fun loadSportsAddonArtwork() = sportsRepository.loadAddonGuideArtwork()
+    fun sportsClockFormat(profileId: String?) = context.settingsDataStore.data.map { prefs ->
+        val key = profileId?.let { profileManager.profileStringKeyFor(it, "clock_format") } ?: profileManager.profileStringKey("clock_format")
+        prefs[key] ?: "24h"
+    }
 
     /**
      * Resolve an EPG title to a confident TMDB movie/series match.
@@ -573,7 +585,7 @@ class TvViewModel @Inject constructor(
     private fun warmXtreamVodCache() {
         if (warmVodJob?.isActive == true) return
         warmVodJob = viewModelScope.launch(Dispatchers.IO) {
-            try { iptvRepository.warmXtreamVodCachesIfPossible() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
+            try { iptvRepository.warmVodCachesIfPossible() } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e }
         }.also { job ->
             job.invokeOnCompletion { warmVodJob = null }
         }
@@ -2039,6 +2051,10 @@ class TvViewModel @Inject constructor(
                 scheduleIptvCloudSync()
             }
         }
+    }
+
+    internal fun rememberPlaybackHls(rawUrl: String, headers: Map<String, String>, playbackUrl: String) {
+        iptvPlaybackUrlResolver.rememberHls(rawUrl, headers, playbackUrl)
     }
 
     internal suspend fun resolvePlayableStreamUrl(

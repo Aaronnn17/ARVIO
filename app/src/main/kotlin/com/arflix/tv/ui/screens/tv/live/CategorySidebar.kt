@@ -113,6 +113,7 @@ fun CategorySidebar(
     selectedId: String,
     playlistSections: List<PlaylistCategorySection> = emptyList(),
     expanded: Boolean,
+    fixedViewport: Boolean = false,
     listState: LazyListState,
     focusRequester: FocusRequester? = null,
     onSelect: (String) -> Unit,
@@ -131,22 +132,28 @@ fun CategorySidebar(
     focusSearchSignal: Int = 0,
     focusCategorySignal: Int = 0,
     isTouchDevice: Boolean = false,
+    providers: List<TvProviderFilter> = emptyList(),
+    selectedProviderId: String = "all",
+    onProviderSelect: (String) -> Unit = {},
+    sidebarWidth: androidx.compose.ui.unit.Dp = LiveDims.SidebarExpanded,
     modifier: Modifier = Modifier,
 ) {
-    val targetWidth = if (expanded) LiveDims.SidebarExpanded else 0.dp
+    val playlistFocus = remember { FocusRequester() }
+    val targetWidth = if (expanded || fixedViewport) sidebarWidth else 0.dp
     val animatedWidth by animateDpAsState(
         targetValue = targetWidth,
         animationSpec = tween(durationMillis = 240),
         label = "sidebar-width",
     )
     val contentAlpha by animateFloatAsState(
-        targetValue = if (expanded) 1f else 0f,
+        targetValue = if (expanded || fixedViewport) 1f else 0f,
         animationSpec = tween(durationMillis = 180),
         label = "sidebar-content-alpha",
     )
     // Keep the content mounted until the width animation finishes. Removing it
     // immediately made the drawer pop out and left a visible focus jump.
-    val contentVisible = expanded || animatedWidth > 0.dp
+    // The workspace owns the slide. Do not fade/rebuild the category rows during it.
+    val contentVisible = if (fixedViewport) LocalLiveDrawerVisible.current else expanded || contentAlpha > 0f
     var expandedCountry by rememberSaveable { mutableStateOf<String?>(null) }
     var expandedAll by rememberSaveable { mutableStateOf(false) }
     var expandedPlaylistIds by rememberSaveable {
@@ -527,21 +534,30 @@ fun CategorySidebar(
                     onFocusEnter()
                 }
             }
-            .arvioDpadFocusGroup()
+            // Live TV owns focus restoration explicitly below. Compose's automatic
+            // restorer can attempt to bring a recycled LazyColumn item into view
+            // after the sports/playlist tree changes, when its coordinates are no
+            // longer attached ("LayoutCoordinate operations ... isAttached").
+            .arvioDpadFocusGroup(enableFocusRestorer = false)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         if (!contentVisible) return@Column
         Column(
             modifier = Modifier
-                .requiredWidth(LiveDims.SidebarExpanded - 20.dp)
+                .requiredWidth(sidebarWidth - 20.dp)
                 .fillMaxHeight(),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
+            if (providers.isNotEmpty()) {
+                PlaylistDropdown(providers, selectedProviderId, onProviderSelect, playlistFocus,
+                    onUp = onMoveUpFromSearch, onDown = { searchFocusRequester.requestFocus() })
+                Spacer(Modifier.height(4.dp))
+            }
             SearchEntry(
                 onClick = onOpenSearch,
                 expanded = contentVisible,
-                onMoveUp = onMoveUpFromSearch,
+                onMoveUp = { if (providers.isNotEmpty()) playlistFocus.requestFocus() else onMoveUpFromSearch() },
                 onMoveDown = {
                     // Down from search is navigation, not activation. Selecting here
                     // closed the drawer while the same physical key was still being
@@ -624,7 +640,7 @@ fun CategorySidebar(
                                 active = selectedId == child.id,
                                 expanded = contentVisible,
                                 indent = 28.dp,
-                                labelSize = 10.5.sp,
+                                labelSize = 11.sp,
                                 hasChildren = child.children.isNotEmpty(),
                                 isOpenGroup = child.containsId(selectedId),
                                 focusRequester = childRequester,
@@ -653,7 +669,7 @@ fun CategorySidebar(
                                         active = selectedId == grandchild.id,
                                         expanded = contentVisible,
                                         indent = 48.dp,
-                                        labelSize = 9.5.sp,
+                                        labelSize = 10.5.sp,
                                         focusRequester = gcRequester,
                                         onFocused = {
                                             lastFocusedCategoryKey = gcKey
@@ -830,7 +846,7 @@ fun CategorySidebar(
                                     active = selectedId == child.id,
                                     expanded = contentVisible,
                                     indent = 40.dp,
-                                    labelSize = 10.5.sp,
+                                    labelSize = 11.sp,
                                     focusRequester = childRequester,
                                     onFocused = {
                                         lastFocusedCategoryKey = childKey
@@ -928,11 +944,11 @@ private fun SearchEntry(
                 }
             }
             .border(
-                width = if (focused) 3.dp else 0.dp,
-                color = if (focused) LiveColors.FocusRing else Color.Transparent,
-                shape = RoundedCornerShape(10.dp),
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) LiveColors.FocusRing else LiveColors.Divider,
+                shape = RoundedCornerShape(5.dp),
             )
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(5.dp))
             .background(if (focused) LiveColors.FocusBg else LiveColors.Panel)
             // Search is the first focusable row in the sidebar, so while the
             // categories are still loading Compose parks the D-pad selector
@@ -972,13 +988,8 @@ private fun SearchEntry(
         )
         if (expanded) {
             Text(
-                text = stringResource(R.string.search),
+                text = stringResource(R.string.live_label_search_channels),
                 style = LiveType.CatLabel.copy(color = LiveColors.FgDim),
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = "/",
-                style = LiveType.NumberMono.copy(color = LiveColors.FgMute),
             )
         }
     }
@@ -1079,14 +1090,6 @@ private fun SidebarRow(
             .height(LiveDims.SidebarRowHeight)
             .padding(start = indent),
     ) {
-        if (active) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(LiveDims.ActiveIndicator)
-                    .background(LiveColors.Accent),
-            )
-        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1097,11 +1100,7 @@ private fun SidebarRow(
                     if (it.isFocused) onFocused?.invoke()
                 }
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-                .border(
-                    width = if (focused) LiveDims.FocusBorder else 0.dp,
-                    color = if (focused) LiveColors.FocusRing else Color.Transparent,
-                    shape = RoundedCornerShape(8.dp),
-                )
+                .liveFocusOutline(focused, 8.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .drawBehind { drawRect(surface.value) }
                 .onPreviewKeyEvent { ev ->
@@ -1171,7 +1170,7 @@ private fun SidebarRow(
                 leadingCode != null -> Text(
                     text = leadingCode,
                     style = LiveType.NumberMono.copy(
-                        color = if (active) LiveColors.Accent else LiveColors.FgMute,
+                        color = LiveColors.FgDim,
                     ),
                     modifier = Modifier.width(20.dp),
                 )
@@ -1182,8 +1181,8 @@ private fun SidebarRow(
                 icon != null -> Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = if (active) LiveColors.Accent else LiveColors.FgDim,
-                    modifier = Modifier.size(14.dp),
+                    tint = if (active) LiveColors.Fg else LiveColors.FgDim,
+                    modifier = Modifier.size(17.dp),
                 )
                 else -> Spacer(Modifier.size(14.dp))
             }
@@ -1193,15 +1192,17 @@ private fun SidebarRow(
                     style = LiveType.CatLabel.copy(
                         color = if (active) LiveColors.Fg else LiveColors.FgDim,
                         fontSize = labelSize,
+                        lineHeight = 13.sp,
                     ),
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                    softWrap = true,
                     modifier = Modifier.weight(1f),
                 )
                 if (count > 0) {
                     Text(
-                        text = formatCount(count),
-                        style = LiveType.NumberMono.copy(color = LiveColors.FgMute, fontSize = 7.sp),
+                        text = java.text.NumberFormat.getIntegerInstance().format(count),
+                        style = LiveType.NumberMono.copy(color = LiveColors.FgDim, fontSize = 9.sp),
                     )
                 }
                 if (hasChildren) {

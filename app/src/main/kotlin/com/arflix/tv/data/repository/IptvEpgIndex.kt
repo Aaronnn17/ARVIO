@@ -14,9 +14,9 @@ import com.arflix.tv.data.model.IptvGuideHistory
  * bound on 50k-channel lists. This SQLite index stores parsed program rows
  * separately, allowing the UI to query only the visible channels instantly.
  */
-internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
+internal class IptvEpgIndex(context: Context, databaseName: String = DATABASE_NAME) : SQLiteOpenHelper(
     context,
-    DATABASE_NAME,
+    databaseName,
     null,
     DATABASE_VERSION
 ) {
@@ -38,6 +38,8 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                 title TEXT NOT NULL,
                 description TEXT,
                 catchup_available INTEGER,
+                artwork_url TEXT,
+                category TEXT,
                 PRIMARY KEY(source_key, channel_id, start_ms, end_ms, title)
             )
             """.trimIndent()
@@ -71,6 +73,11 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion in 2..7 && newVersion >= 8) {
+            db.execSQL("ALTER TABLE epg_programs ADD COLUMN artwork_url TEXT")
+            db.execSQL("ALTER TABLE epg_programs ADD COLUMN category TEXT")
+            if (oldVersion == 7) return
+        }
         if (oldVersion in 2..6 && newVersion >= 7) {
             // Nullable preserves "unknown" for XMLTV and already indexed programmes.
             db.execSQL("ALTER TABLE epg_programs ADD COLUMN catchup_available INTEGER")
@@ -198,6 +205,24 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         upsertSource(sourceKey, updatedAtMs, channelCount, programCount)
     }
 
+    /** Channel identities with cached programmes, including XMLTV alias targets. No network. */
+    fun channelIdsInWindow(sourceKey: String, startMs: Long, endMs: Long): Set<String> {
+        if (sourceKey.isBlank() || startMs >= endMs) return emptySet()
+        // Resolve the eligible guide identities once. Correlated EXISTS caused an
+        // expensive repeated scan for every alias on large provider indexes.
+        return readableDatabase.rawQuery("""
+            WITH eligible AS (
+                SELECT DISTINCT channel_id FROM epg_programs
+                WHERE source_key = ? AND end_ms > ? AND start_ms < ?
+            )
+            SELECT channel_id FROM eligible WHERE channel_id NOT LIKE '@xml:%'
+            UNION SELECT a.channel_id FROM epg_channel_aliases a
+                JOIN eligible p ON p.channel_id = a.guide_id WHERE a.source_key = ?
+        """, arrayOf(sourceKey, startMs.toString(), endMs.toString(), sourceKey)).use { cursor ->
+            buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) }
+        }
+    }
+
     fun loadNowNext(
         sourceKey: String,
         channelIds: Set<String>,
@@ -305,6 +330,13 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    /** Streaming consumers can discard non-sports programmes without materializing a full guide. */
+    fun visitWindow(sourceKey: String, channelIds: Set<String>, startMs: Long, endMs: Long,
+        visitor: (String, IptvProgram) -> Unit) {
+        if (sourceKey.isBlank() || channelIds.isEmpty() || startMs >= endMs) return
+        readableDatabase.useQueryChunks(sourceKey, channelIds, startMs, endMs, visitor)
+    }
+
     fun fullRefreshAtMs(sourceKey: String): Long = readableDatabase.rawQuery(
         "SELECT full_updated_ms FROM epg_sources WHERE source_key = ?", arrayOf(sourceKey),
     ).use { if (it.moveToFirst()) it.getLong(0) else 0L }
@@ -377,7 +409,7 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             .forEach { chunk ->
                 val placeholders = chunk.joinToString(",") { "?" }
                 val sql = """
-                    SELECT channel_id, start_ms, end_ms, title, description, catchup_available
+                    SELECT channel_id, start_ms, end_ms, title, description, catchup_available, artwork_url, category
                     FROM epg_programs
                     WHERE source_key = ?
                       AND channel_id IN ($placeholders)
@@ -399,6 +431,8 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                     val titleCol = cursor.getColumnIndexOrThrow("title")
                     val descCol = cursor.getColumnIndexOrThrow("description")
                     val catchupCol = cursor.getColumnIndexOrThrow("catchup_available")
+                    val artworkCol = cursor.getColumnIndexOrThrow("artwork_url")
+                    val categoryCol = cursor.getColumnIndexOrThrow("category")
                     while (cursor.moveToNext()) {
                         val channelId = cursor.getString(channelCol).orEmpty()
                         val startMs = cursor.getLong(startCol)
@@ -414,6 +448,8 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                                 startUtcMillis = startMs,
                                 endUtcMillis = endMs,
                                 catchupAvailable = if (cursor.isNull(catchupCol)) null else cursor.getInt(catchupCol) != 0,
+                                artworkUrl = cursor.getString(artworkCol),
+                                category = cursor.getString(categoryCol),
                             )
                         )
                     }
@@ -442,6 +478,8 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         val title: String,
         val description: String?,
         val catchupAvailable: Boolean?,
+        val artworkUrl: String?,
+        val category: String?,
     )
 
     private fun SQLiteDatabase.insertNowNextRows(
@@ -457,11 +495,11 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
             abortIfRequested(shouldAbort)
             val rowCount = pending.size
             val statement = statements.getOrPut(rowCount) {
-                val values = List(rowCount) { "(?, ?, ?, ?, ?, ?, ?)" }.joinToString(",")
+                val values = List(rowCount) { "(?, ?, ?, ?, ?, ?, ?, ?, ?)" }.joinToString(",")
                 compileStatement(
                     """
                     INSERT OR IGNORE INTO epg_programs
-                    (source_key, channel_id, start_ms, end_ms, title, description, catchup_available)
+                    (source_key, channel_id, start_ms, end_ms, title, description, catchup_available, artwork_url, category)
                     VALUES $values
                     """.trimIndent()
                 )
@@ -484,6 +522,8 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                     false -> statement.bindLong(bindIndex++, 0L)
                     null -> statement.bindNull(bindIndex++)
                 }
+                row.artworkUrl?.let { statement.bindString(bindIndex++, it) } ?: statement.bindNull(bindIndex++)
+                row.category?.let { statement.bindString(bindIndex++, it) } ?: statement.bindNull(bindIndex++)
             }
             // execute() avoids retrieving a row id for a result that is never used.
             statement.execute()
@@ -515,6 +555,8 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
                         title = titleTrimmed,
                         description = description,
                         catchupAvailable = program.catchupAvailable,
+                        artworkUrl = program.artworkUrl?.take(2048),
+                        category = program.category?.take(200),
                     )
                     if (pending.size == MAX_INSERT_ROWS) {
                         flushPending()
@@ -652,9 +694,9 @@ internal class IptvEpgIndex(context: Context) : SQLiteOpenHelper(
         // v4 removes the duplicate programme-window index to speed up bulk imports.
         // v5 shares XMLTV schedules across variants; v6 distinguishes full and partial refreshes.
         // v7 retains provider archive availability without deleting existing guide data.
-        const val DATABASE_VERSION = 7
+        const val DATABASE_VERSION = 8
         const val MAX_SQL_ARGS = 900
-        const val INSERT_BINDINGS_PER_ROW = 7
+        const val INSERT_BINDINGS_PER_ROW = 9
         const val MAX_INSERT_ROWS = MAX_SQL_ARGS / INSERT_BINDINGS_PER_ROW
         const val MAX_DESCRIPTION_CHARS = 200
         // ±48h of guide needs only ~24-48 programmes each way. Keeping 96+240 held far

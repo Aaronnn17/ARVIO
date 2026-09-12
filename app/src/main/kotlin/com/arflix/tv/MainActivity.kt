@@ -29,6 +29,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
+import com.arflix.tv.ui.components.LocalBottomBarInset
+import com.arflix.tv.ui.components.currentBottomBarSpec
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
@@ -662,7 +672,16 @@ fun ArflixApp(
         }
     }
 
-    Column(
+    val density = LocalDensity.current
+    val barSpec = currentBottomBarSpec()
+    val navigationInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
+    var measuredBarHeight by remember(barSpec, density.fontScale) { mutableStateOf(0.dp) }
+    val barInset = if (showBottomBar) {
+        maxOf(measuredBarHeight, (28 + (barSpec.itemHeightDp ?: 56)).dp + navigationInset)
+    } else 0.dp
+    val contentBehindBar = showBottomBar && currentRoute?.substringBefore('?') in setOf("home", "search", "watchlist")
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             // Background fills edge-to-edge (including behind transparent bars).
@@ -679,40 +698,47 @@ fun ArflixApp(
                     )
                 }
             )
-            // On mobile, push non-player screens between the status bar and navigation bar.
+            // Mobile navigation overlays scrollable content; other screens reserve its height.
             // Player screens remain completely stable edge-to-edge without jumping when
             // transient system bars appear or disappear.
-            .then(if (applySystemBarsPadding) Modifier.systemBarsPadding() else Modifier)
+            .then(when {
+                showBottomBar -> Modifier.windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                applySystemBarsPadding -> Modifier.systemBarsPadding()
+                else -> Modifier
+            })
     ) {
-        Box(modifier = Modifier.weight(1f)) {
-            AppNavigation(
-                navController = navController,
-                startDestination = startDestination,
-                preloadedCategories = preloadedCategories,
-                preloadedHeroItem = preloadedHeroItem,
-                preloadedHeroLogoUrl = preloadedHeroLogoUrl,
-                preloadedLogoCache = preloadedLogoCache,
-                currentProfile = activeProfile,
-                isCloudConnected = authState is AuthState.Authenticated,
-                onSwitchProfile = {
-                    appCoroutineScope.launch {
-                        traktRepository.clearAllProfileCaches()
-                        watchHistoryRepository.clearProfileCaches()
-                        watchlistRepository.clearWatchlistCache()
-                        iptvRepository.invalidateCache()
-                        profileManager.setCurrentProfileId("default")
-                        profileManager.setCurrentProfileName("default")
-                        profileRepository.clearActiveProfile()
-                    }
-                },
-                onTvFullscreenChanged = { fullscreen ->
-                    iptvFullscreen = fullscreen
-                },
-                onExitApp = onExitApp
-            )
+        CompositionLocalProvider(LocalBottomBarInset provides if (contentBehindBar) barInset else 0.dp) {
+            Box(modifier = Modifier.fillMaxSize().padding(bottom = if (contentBehindBar) 0.dp else barInset)) {
+                AppNavigation(
+                    navController = navController,
+                    startDestination = startDestination,
+                    preloadedCategories = preloadedCategories,
+                    preloadedHeroItem = preloadedHeroItem,
+                    preloadedHeroLogoUrl = preloadedHeroLogoUrl,
+                    preloadedLogoCache = preloadedLogoCache,
+                    currentProfile = activeProfile,
+                    isCloudConnected = authState is AuthState.Authenticated,
+                    onSwitchProfile = {
+                        appCoroutineScope.launch {
+                            traktRepository.clearAllProfileCaches()
+                            watchHistoryRepository.clearProfileCaches()
+                            watchlistRepository.clearWatchlistCache()
+                            iptvRepository.invalidateCache()
+                            profileManager.setCurrentProfileId("default")
+                            profileManager.setCurrentProfileName("default")
+                            profileRepository.clearActiveProfile()
+                        }
+                    },
+                    onTvFullscreenChanged = { fullscreen ->
+                        iptvFullscreen = fullscreen
+                    },
+                    onExitApp = onExitApp
+                )
+            }
+
         }
 
-        if (isMobile && !isPlayerRoute) {
+        if (showBottomBar) {
             val bottomBarAlpha by androidx.compose.animation.core.animateFloatAsState(
                 targetValue = if (showBottomBar) 1f else 0f,
                 animationSpec = androidx.compose.animation.core.tween(250),
@@ -729,7 +755,9 @@ fun ArflixApp(
                     }
                 },
                 modifier = Modifier
+                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
+                    .onSizeChanged { measuredBarHeight = with(density) { it.height.toDp() } }
                     .graphicsLayer {
                         alpha = bottomBarAlpha
                     }

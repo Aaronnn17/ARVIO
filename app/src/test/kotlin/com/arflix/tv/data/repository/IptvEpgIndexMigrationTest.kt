@@ -19,6 +19,23 @@ import com.arflix.tv.data.model.IptvProgram
 @Config(sdk = [28], application = Application::class, manifest = Config.NONE)
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class IptvEpgIndexMigrationTest {
+    @Test fun streamingSportsWindowKeepsAliasesCorrectionsAndSourceIsolation() {
+        val now = System.currentTimeMillis()
+        val program = IptvProgram("North vs South", startUtcMillis = now - 60_000, endUtcMillis = now + 60_000, category = "Football")
+        val index = IptvEpgIndex(RuntimeEnvironment.getApplication(), "sports-stream-test.db")
+        try {
+            index.replaceChannels("sports", mapOf("@xml:one" to IptvNowNext(now = program)), now,
+                aliases = mapOf("@xml:one" to listOf("a", "b", "hidden")))
+            index.replaceChannels("sports", mapOf("b" to IptvNowNext(now = program.copy(title = "Correction"))), now)
+            index.replaceChannels("other", mapOf("a" to IptvNowNext(now = program.copy(title = "Other provider"))), now)
+            val streamed = mutableMapOf<String, MutableList<IptvProgram>>()
+            index.visitWindow("sports", setOf("a", "b"), now, now + 120_000) { id, item -> streamed.getOrPut(id) { mutableListOf() }.add(item) }
+            assertEquals(index.loadWindow("sports", setOf("a", "b"), now, now + 120_000), streamed)
+            assertEquals("North vs South", streamed.getValue("a").single().title)
+            assertEquals("Correction", streamed.getValue("b").single().title)
+            assertFalse(streamed.containsKey("hidden"))
+        } finally { index.close() }
+    }
     @Test fun archiveAvailabilityMigrationKeepsExistingSchedules() {
         for (oldVersion in 2..6) {
             val db = mockk<SQLiteDatabase>(relaxed = true)

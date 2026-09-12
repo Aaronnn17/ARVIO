@@ -334,7 +334,19 @@ export interface IptvPlaylistEntry {
   enabled: boolean;
 }
 
+export interface IptvTvSession {
+  lastChannelId: string;
+  lastGroupName: string;
+  lastFocusedZone: string;
+  lastOpenedAt: number;
+  /** Android stores oldest first, most recently played last. */
+  recentChannelIds: string[];
+}
+
 export interface IptvChannel {
+  /** Exact provider-playlist identity used by Android cloud sync. */
+  cloudId?: string;
+  syncAliases?: string[];
   requestHeaders?: Record<string, string>;
   id: string;
   name: string;
@@ -357,6 +369,8 @@ export interface IptvProgram {
   startUtcMillis: number;
   endUtcMillis: number;
   catchupAvailable?: boolean;
+  artworkUrl?: string;
+  category?: string;
 }
 
 export interface IptvNowNext {
@@ -368,6 +382,8 @@ export interface IptvNowNext {
 }
 
 export interface IptvSnapshot {
+  scopeKey?: string;
+  identitiesLoaded?: boolean;
   allChannels?: IptvChannel[];
   channels: IptvChannel[];
   grouped: Record<string, IptvChannel[]>;
@@ -488,8 +504,11 @@ export interface AppSettings {
   iptvStalkerUrl: string;
   iptvStalkerMac: string;
   favoriteChannelIds: string[];
+  iptvTvSession?: IptvTvSession;
   favoriteGroupIds: string[];
   hiddenGroupIds: string[];
+  /** Read from cloud; locked IPTV groups are not exposed without a PIN flow. */
+  lockedIptvGroupIds?: string[];
   groupOrder: string[];
   // Metadata & API Keys
   customTmdbApiKey: string;
