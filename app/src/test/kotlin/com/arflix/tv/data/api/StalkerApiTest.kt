@@ -966,6 +966,26 @@ class StalkerApiTest {
         assertEquals("ffmpeg", StalkerApi.sanitizePlaybackCommand("ffmpeg   "))
     }
 
+    @Test
+    fun `missing series data is a failure rather than an empty catalog`() = runTest {
+        for (payload in listOf("{}", "{\"js\":null}", "{\"js\":{\"error\":\"temporary failure\"}}")) {
+            val api = stubApi(requests = mutableListOf()) { payload }
+            assertNull(api.searchSeries("Example"))
+            assertNull(api.getSeasons("7"))
+        }
+    }
+
+    @Test
+    fun `missing data on a later series page does not return a partial catalog`() = runTest {
+        val api = stubApi(requests = mutableListOf()) { url ->
+            if (url.contains("&p=1&")) {
+                """{"js":{"total_items":2,"max_page_items":1,"data":[{"id":"7","name":"Example"}]}}"""
+            } else """{"js":{"error":"temporary failure"}}"""
+        }
+        assertNull(api.searchSeries("Example"))
+        assertNull(api.getSeasons("7"))
+    }
+
     // ── Series ────────────────────────────────────────────────────────────
 
     @Test

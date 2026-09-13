@@ -12,6 +12,8 @@ import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import java.io.FilterReader
 import java.io.Reader
 import java.util.Locale
@@ -598,10 +600,11 @@ open class StalkerApi(
         try {
             var page = 1
             while (page <= maxPages) {
+                coroutineContext.ensureActive()
                 val url = "$baseUrl&p=$page&JsHttpRequest=1-xml"
                 val response = doGet(url)
                 val parsed = gson.fromJson(response, StalkerSeriesResponse::class.java)
-                val data = parsed?.js?.data ?: break
+                val data = parsed?.js?.data ?: return null
                 if (data.isEmpty()) break
 
                 var newEntries = 0

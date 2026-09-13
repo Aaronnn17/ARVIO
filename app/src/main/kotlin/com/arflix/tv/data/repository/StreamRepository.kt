@@ -2918,7 +2918,7 @@ class StreamRepository @Inject constructor(
         timeoutMs: Long = 45_000L,
         originalTitle: String? = null
     ): List<StreamSource> = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(timeoutMs.coerceIn(500L, 90_000L)) {
+        withPartialVodResults(timeoutMs.coerceIn(500L, 90_000L)) { onSources ->
             runCatching {
                 iptvRepository.findEpisodeVodSources(
                     title = title,
@@ -2927,9 +2927,11 @@ class StreamRepository @Inject constructor(
                     imdbId = imdbId,
                     tmdbId = tmdbId,
                     allowNetwork = true,
-                    originalTitle = originalTitle
+                    originalTitle = originalTitle,
+                    onSources = onSources
                 )
             }.onFailure { e ->
+                if (e is CancellationException) throw e
                 System.err.println("[VOD] resolveEpisodeVodSources failed: ${e.message}")
                 AppLogger.recordException(
                     throwable = e,
@@ -2940,8 +2942,8 @@ class StreamRepository @Inject constructor(
                         "episode_set" to (episode > 0).toString()
                     )
                 )
-            }.getOrDefault(emptyList())
-        }.orEmpty()
+            }.getOrThrow()
+        }
     }
 
     suspend fun prefetchEpisodeVod(

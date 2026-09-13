@@ -6447,7 +6447,8 @@ class IptvRepository @Inject constructor(
         imdbId: String? = null,
         tmdbId: Int? = null,
         allowNetwork: Boolean = true,
-        originalTitle: String? = null
+        originalTitle: String? = null,
+        onSources: (List<StreamSource>) -> Unit = {}
     ): List<StreamSource> {
         return withContext(Dispatchers.IO) {
             if (!isVodSearchEnabled()) return@withContext emptyList()
@@ -6469,6 +6470,8 @@ class IptvRepository @Inject constructor(
             // Additive second provider, exactly as on the movie path: each
             // Stalker portal is searched on its own, and a failing portal never
             // removes Xtream results.
+            onSources(sortVodSources(xtreamSources))
+            val completedSources = xtreamSources.toMutableList()
             val stalkerSources = activeStalkerPortals(config)
                 .flatMap { portal ->
                     runCatching {
@@ -6482,7 +6485,12 @@ class IptvRepository @Inject constructor(
                             allowNetwork = allowNetwork,
                             originalTitle = originalTitle
                         )
-                    }.getOrDefault(emptyList())
+                    }.onFailure { error ->
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                    }.getOrDefault(emptyList()).also { found ->
+                        completedSources.addAll(found)
+                        onSources(sortVodSources(completedSources))
+                    }
                 }
             sortVodSources(xtreamSources + stalkerSources)
         }
