@@ -17,7 +17,7 @@ Web follows the same hierarchy with a virtualized grid, bounded collection-previ
 
 ## Verification
 
-- Android unit suite: 1,121 tests, zero failures, one skipped.
+- Android unit suite after rebasing on main: 1,133 tests, zero failures, one skipped.
 - TV emulator: nine tests covering loaded artwork, filters, title opening, collections, server sources, remote movement, long sidebars, and pagination without a viewport reset.
 - Phone and tablet emulator layouts: three loaded-screen tests each, covering horizontal/poster cards, list/server navigation, and filters.
 - Web: 579 unit tests passed; TypeScript checking and the production build passed.
@@ -30,3 +30,5 @@ Run the browser component checks with `npm run test:library-ui` from `web` (Chro
 Captures are in `artifacts/library-emulator`, with TV, phone, tablet and browser variants. These render the production Library components with deterministic offline artwork and test data, including repeated entries for long-scroll checks. The approximately 2 MB of TMDB artwork lives only in Android test assets and is not part of the production APK. Live personal Trakt, Plex, Jellyfin and Emby accounts were not exercised by these fixture tests.
 
 The implementation follows the concept's information hierarchy, compact spacing, continuous OLED canvas and focus treatment. Generated artwork, real source names, existing global navigation, and user-selected card layouts mean the raster concepts are not a universal pixel-for-pixel reference across devices.
+
+Before delivery, all three approved TV concepts were visually compared with the implementation captures. Phone collections, phone poster/horizontal grids, tablet poster grids and desktop web captures were also inspected. The compact black layout and focus treatment follow the concepts; artwork, typography and available source metadata differ. A clipped Connect server label found in this review now wraps on narrow sidebars. Browser checks, all 579 web unit tests and the production web build passed again on the rebased source.
