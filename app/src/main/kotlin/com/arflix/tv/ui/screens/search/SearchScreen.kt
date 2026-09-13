@@ -715,18 +715,22 @@ fun SearchScreen(
                         .padding(bottom = if (isTouchDevice) 4.dp else 0.dp),
                     focusRequester = if (isTouchDevice) null else filtersFocusRequester
                 )
-                // On a TV the panel hangs under the row, as in the draft; on a phone it rises
-                // from the bottom edge. Same content either way — one surface, not two (E8).
-                openPanelSpec?.let { spec ->
-                    DiscoverFilterPanel(
-                        spec = spec,
-                        focusedOption = if (isTouchDevice) null else panelFocusIndex,
-                        isTouchDevice = isTouchDevice,
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .fillMaxWidth(if (isTouchDevice) 1f else 0.62f)
-                            .padding(horizontal = if (isTouchDevice) 12.dp else 0.dp, vertical = 4.dp)
-                    )
+                // On a TV the panel hangs under the chip that opened it, as in the draft. The
+                // phone gets the same content from the bottom edge instead — further down, at
+                // the screen's outer box, because that is the only place a sheet can sit OVER
+                // the grid instead of pushing it down.
+                if (!isTouchDevice) {
+                    openPanelSpec?.let { spec ->
+                        DiscoverFilterPanel(
+                            spec = spec,
+                            focusedOption = panelFocusIndex,
+                            isTouchDevice = false,
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .fillMaxWidth(0.62f)
+                                .padding(vertical = 4.dp)
+                        )
+                    }
                 }
             }
 
@@ -798,6 +802,22 @@ fun SearchScreen(
             }
         }
 
+        // The phone sheet. One surface, not two (E8): the same panel, only anchored to the
+        // bottom edge where a thumb reaches it, instead of to the chip it belongs to.
+        if (isTouchDevice) {
+            openPanelSpec?.let { spec ->
+                DiscoverFilterPanel(
+                    spec = spec,
+                    focusedOption = null,
+                    isTouchDevice = true,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 12.dp + LocalBottomBarInset.current)
+                )
+            }
+        }
     }
 }
 
