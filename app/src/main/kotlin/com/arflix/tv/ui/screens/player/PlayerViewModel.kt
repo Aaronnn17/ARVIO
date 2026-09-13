@@ -1960,6 +1960,7 @@ class PlayerViewModel @Inject constructor(
 
     private fun languageCodeToName(code: String): String {
         return when (code.lowercase().trim()) {
+            "ms", "msa", "may", "malay", "bahasa melayu" -> "Malay"
             "he", "hebrew", "iw" -> "Hebrew"
             "ar", "arabic" -> "Arabic"
             "fa", "persian", "farsi" -> "Persian"
@@ -2529,6 +2530,8 @@ class PlayerViewModel @Inject constructor(
     private fun normalizeLanguage(lang: String): String {
         val lowerLang = lang.lowercase().trim()
         return when {
+            lowerLang in listOf("ms", "msa", "may", "malay", "bahasa melayu") ||
+                lowerLang.startsWith("ms-") || lowerLang.startsWith("ms_") -> "ms"
             // Full names
             lowerLang == "english" || lowerLang.startsWith("english") -> "en"
             lowerLang == "spanish" || lowerLang.startsWith("spanish") || lowerLang == "espanol" -> "es"
