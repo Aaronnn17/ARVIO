@@ -57,14 +57,9 @@ class EpgProgramActionsTest {
     }
 
     @Test
-    fun watchLiveClearsSelectedProgramSoPlaybackUsesLiveStream() {
-        val selectedProgram = IptvProgram(
-            title = "Live Movie",
-            startUtcMillis = 1_000L,
-            endUtcMillis = 2_000L,
-        )
-
-        assertThat(epgWatchLivePlaybackProgram(selectedProgram)).isNull()
+    fun watchLiveFromVodDialogUsesFullScreenLivePlayback() {
+        assertThat(epgDialogWatchLiveAction())
+            .isEqualTo(EpgInteractionAction.PlayLiveFullscreen)
     }
 
 

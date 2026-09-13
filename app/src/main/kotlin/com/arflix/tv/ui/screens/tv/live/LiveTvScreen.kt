@@ -4326,13 +4326,16 @@ fun LiveTvScreen(
                     androidx.compose.material3.TextButton(
                         onClick = {
                             programActionDialog = null
-                            playProgramInMini(channel, epgWatchLivePlaybackProgram(program))
+                            when (epgDialogWatchLiveAction()) {
+                                EpgInteractionAction.PlayLiveFullscreen -> playLiveFullscreen(channel)
+                                else -> Unit
+                            }
                         },
                     ) {
                         androidx.tv.material3.Text(
                             text = stringResource(R.string.epg_watch_live),
                             style = ArflixTypography.button,
-                            color = TextSecondary,
+                            color = Color.White,
                         )
                     }
                 },
@@ -4554,10 +4557,6 @@ private tailrec fun Context.findActivity(): Activity? {
         else -> null
     }
 }
-
-internal fun epgWatchLivePlaybackProgram(
-    @Suppress("UNUSED_PARAMETER") selectedProgram: IptvProgram,
-): IptvProgram? = null
 
 internal data class ProgramActionData(
     val channel: EnrichedChannel,

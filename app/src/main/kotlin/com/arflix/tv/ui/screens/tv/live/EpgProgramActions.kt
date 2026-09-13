@@ -63,6 +63,9 @@ internal enum class EpgInteractionAction {
     NoOp,
 }
 
+internal fun epgDialogWatchLiveAction(): EpgInteractionAction =
+    EpgInteractionAction.PlayLiveFullscreen
+
 internal suspend fun <T> runEpgLookupWithTimeout(
     timeoutMillis: Long,
     lookup: suspend () -> T,
