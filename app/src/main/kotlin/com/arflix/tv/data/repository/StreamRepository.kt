@@ -2915,9 +2915,10 @@ class StreamRepository @Inject constructor(
         title: String = "",
         tmdbId: Int? = null,
         tvdbId: Int? = null,
-        timeoutMs: Long = 45_000L
+        timeoutMs: Long = 45_000L,
+        originalTitle: String? = null
     ): List<StreamSource> = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(timeoutMs.coerceIn(500L, 90_000L)) {
+        withPartialVodResults(timeoutMs.coerceIn(500L, 90_000L)) { onSources ->
             runCatching {
                 iptvRepository.findEpisodeVodSources(
                     title = title,
@@ -2925,9 +2926,12 @@ class StreamRepository @Inject constructor(
                     episode = episode,
                     imdbId = imdbId,
                     tmdbId = tmdbId,
-                    allowNetwork = true
+                    allowNetwork = true,
+                    originalTitle = originalTitle,
+                    onSources = onSources
                 )
             }.onFailure { e ->
+                if (e is CancellationException) throw e
                 System.err.println("[VOD] resolveEpisodeVodSources failed: ${e.message}")
                 AppLogger.recordException(
                     throwable = e,
@@ -2938,8 +2942,8 @@ class StreamRepository @Inject constructor(
                         "episode_set" to (episode > 0).toString()
                     )
                 )
-            }.getOrDefault(emptyList())
-        }.orEmpty()
+            }.getOrThrow()
+        }
     }
 
     suspend fun prefetchEpisodeVod(
@@ -2947,7 +2951,8 @@ class StreamRepository @Inject constructor(
         season: Int,
         episode: Int,
         title: String = "",
-        tmdbId: Int? = null
+        tmdbId: Int? = null,
+        originalTitle: String? = null
     ) = withContext(Dispatchers.IO) {
         if (title.isBlank()) return@withContext
         try {
@@ -2956,7 +2961,8 @@ class StreamRepository @Inject constructor(
                 season = season,
                 episode = episode,
                 imdbId = imdbId,
-                tmdbId = tmdbId
+                tmdbId = tmdbId,
+                originalTitle = originalTitle
             )
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -2967,14 +2973,16 @@ class StreamRepository @Inject constructor(
     suspend fun prefetchSeriesVodInfo(
         imdbId: String?,
         title: String = "",
-        tmdbId: Int? = null
+        tmdbId: Int? = null,
+        originalTitle: String? = null
     ) = withContext(Dispatchers.IO) {
         if (title.isBlank()) return@withContext
         try {
             iptvRepository.prefetchSeriesInfoForShow(
                 title = title,
                 imdbId = imdbId,
-                tmdbId = tmdbId
+                tmdbId = tmdbId,
+                originalTitle = originalTitle
             )
         } catch (e: Exception) {
             if (e is CancellationException) throw e
