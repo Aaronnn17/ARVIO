@@ -381,31 +381,24 @@ fun SearchScreen(
     val showGrid = showFilters && uiState.hasDiscoverFilters
     val hasGridResults = showGrid && gridItems.isNotEmpty()
     val canEnterResults = activeCategories.isNotEmpty() || hasAiResults || hasGridResults
-    val discoverUsePosterCards = rememberCatalogueRowLayoutMode("search:discover") == CardLayoutMode.POSTER
+    // The discover grid always shows poster cards, no matter what the catalogue row layout
+    // setting says: the approved design shows it that way, and about twice as many titles fit
+    // on a TV screen, which is the whole point of a grid. Rows and the AI grid keep following
+    // the setting.
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     // Card size and column count follow CollectionDetailsScreen — one surface for both devices.
-    val gridCardWidth = if (discoverUsePosterCards) {
-        if (isTouchDevice) 138.dp else when {
-            configuration.screenWidthDp >= 2200 -> 196.dp
-            configuration.screenWidthDp >= 1600 -> 184.dp
-            else -> 172.dp
-        }
-    } else if (isTouchDevice) 220.dp else 260.dp
+    val gridCardWidth = if (isTouchDevice) 138.dp else when {
+        configuration.screenWidthDp >= 2200 -> 196.dp
+        configuration.screenWidthDp >= 1600 -> 184.dp
+        else -> 172.dp
+    }
     val gridColumns = if (isTouchDevice) {
-        if (isLandscape) {
-            if (discoverUsePosterCards) 4 else 3
-        } else if (discoverUsePosterCards) 3 else 2
-    } else if (discoverUsePosterCards) {
+        if (isLandscape) 4 else 3
+    } else {
         when {
             configuration.screenWidthDp >= 2200 -> 8
             configuration.screenWidthDp >= 1600 -> 7
             else -> 5
-        }
-    } else {
-        when {
-            configuration.screenWidthDp >= 2200 -> 6
-            configuration.screenWidthDp >= 1600 -> 5
-            else -> 4
         }
     }
     LaunchedEffect(gridItems.size) {
@@ -797,7 +790,7 @@ fun SearchScreen(
 
                 showGrid -> ContentGrid(
                     items = gridItems,
-                    usePosterCards = discoverUsePosterCards,
+                    usePosterCards = true,
                     isLoading = uiState.isGridLoadingMore,
                     isTouchDevice = isTouchDevice,
                     onItemClick = { onNavigateToDetails(it.mediaType, it.id) },
@@ -1291,8 +1284,11 @@ private fun LoadMoreWhenGridNearsEnd(gridState: LazyGridState, itemCount: Int, o
 }
 
 /**
- * Manual focus paints no system focus, so the viewport has to follow the index itself —
- * the same job `RowsLayer` does for a row.
+ * Manual focus paints no system focus, so the viewport has to follow the index itself — the same
+ * job `RowsLayer` does for a row, and it needs the same second case for a card that is only
+ * clipped at an edge. The decision lives in [gridFollowFor]; this is the part that touches the
+ * grid. Both content paddings are taken off first — the grid has one at the top too — and grid
+ * infos carry IntOffset/IntSize, hence `.offset.y` and `.size.height`.
  */
 @Composable
 private fun FollowFocusedGridItem(gridState: LazyGridState, focusedIndex: Int?, itemCount: Int) {
@@ -1300,11 +1296,23 @@ private fun FollowFocusedGridItem(gridState: LazyGridState, focusedIndex: Int?, 
     LaunchedEffect(focusedIndex, itemCount) {
         if (itemCount == 0) return@LaunchedEffect
         val target = focusedIndex.coerceIn(0, itemCount - 1)
-        val visible = gridState.layoutInfo.visibleItemsInfo
-        if (visible.any { it.index == target }) return@LaunchedEffect
-        val first = visible.firstOrNull()?.index ?: 0
-        if (kotlin.math.abs(target - first) > 24) gridState.scrollToItem(target)
-        else gridState.animateScrollToItem(target)
+        val layout = gridState.layoutInfo
+        val targetInfo = layout.visibleItemsInfo.firstOrNull { it.index == target }
+        val follow = gridFollowFor(
+            targetIndex = target,
+            firstVisibleIndex = layout.visibleItemsInfo.firstOrNull()?.index ?: 0,
+            targetOffsetY = targetInfo?.offset?.y,
+            targetHeight = targetInfo?.size?.height ?: 0,
+            viewportStart = layout.viewportStartOffset + layout.beforeContentPadding,
+            viewportEnd = layout.viewportEndOffset - layout.afterContentPadding
+        )
+        when (follow) {
+            is GridFollow.Stay -> Unit
+            is GridFollow.ScrollBy -> gridState.animateScrollBy(follow.delta.toFloat())
+            is GridFollow.ScrollTo ->
+                if (follow.animate) gridState.animateScrollToItem(follow.index)
+                else gridState.scrollToItem(follow.index)
+        }
     }
 }
 
