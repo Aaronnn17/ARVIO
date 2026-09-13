@@ -166,4 +166,6 @@ _tmp_tv_perf/
 
 # Agent skills & customizations
 .agents/
+!app/src/androidTest/assets/library/*.png
+!app/src/androidTest/assets/library/*.jpg
 /.playback-fixtures/

@@ -1,4 +1,5 @@
 package com.arflix.tv.ui.screens.settings
+import androidx.compose.material.icons.filled.Storage
 
 import androidx.activity.compose.BackHandler
 import com.arflix.tv.ui.motion.*
@@ -270,7 +271,7 @@ private fun tvGeneralRowsForSection(section: String): List<Int> {
         "language" -> listOf(0, 3, 1, 2)
         "subtitles" -> listOf(4, 5, 6, 7, 42, 8, 38, 39, 9)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
-        "playback" -> listOf(10, 11, 12, 16, 15, 40, 27)
+        "playback" -> listOf(10, 11, 12, 43, 44, 16, 15, 40, 27)
         "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22, 41, 36)
         "profiles" -> listOf(19)
         "network" -> listOf(25, 26, 35)
@@ -1027,6 +1028,8 @@ fun SettingsScreen(
                                                 10 -> viewModel.setAutoPlayNext(!uiState.autoPlayNext)
                                                 11 -> viewModel.setAutoPlaySingleSource(!uiState.autoPlaySingleSource)
                                                 12 -> viewModel.cycleAutoPlayMinQuality()
+                                                43 -> viewModel.cycleAutoPlayMaxQuality()
+                                                44 -> viewModel.cycleAutoPlayMaxSize()
                                                 13 -> viewModel.setTrailerAutoPlay(!uiState.trailerAutoPlay)
                                                 14 -> viewModel.setTrailerSoundEnabled(!uiState.trailerSoundEnabled)
                                                 15 -> viewModel.cycleFrameRateMatchingMode()
@@ -1565,6 +1568,8 @@ fun SettingsScreen(
                             autoPlayNext = uiState.autoPlayNext,
                             autoPlaySingleSource = uiState.autoPlaySingleSource,
                             autoPlayMinQuality = uiState.autoPlayMinQuality,
+                            autoPlayMaxQuality = uiState.autoPlayMaxQuality,
+                            autoPlayMaxSizeGb = uiState.autoPlayMaxSizeGb,
                             contentLanguage = uiState.contentLanguage,
                             subtitleSize = uiState.subtitleSize,
                             subtitleColor = uiState.subtitleColor,
@@ -1588,6 +1593,8 @@ fun SettingsScreen(
                             onAutoPlayToggle = { viewModel.setAutoPlayNext(it) },
                             onAutoPlaySingleSourceToggle = { viewModel.setAutoPlaySingleSource(it) },
                             onAutoPlayMinQualityClick = { viewModel.cycleAutoPlayMinQuality() },
+                            onAutoPlayMaxQualityClick = { viewModel.cycleAutoPlayMaxQuality() },
+                            onAutoPlayMaxSizeClick = { viewModel.cycleAutoPlayMaxSize() },
                             trailerAutoPlay = uiState.trailerAutoPlay,
                             onTrailerAutoPlayToggle = { viewModel.setTrailerAutoPlay(it) },
                             trailerSoundEnabled = uiState.trailerSoundEnabled,
@@ -4409,6 +4416,20 @@ private fun MobileSettingsSubPage(
                         onClick = { viewModel.cycleAutoPlayMinQuality() }
                     )
                     MobileSettingsRow(
+                        icon = Icons.Default.HighQuality,
+                        title = stringResource(R.string.auto_play_max_quality),
+                        value = uiState.autoPlayMaxQuality,
+                        isFocused = false,
+                        onClick = { viewModel.cycleAutoPlayMaxQuality() }
+                    )
+                    MobileSettingsRow(
+                        icon = Icons.Default.Storage,
+                        title = stringResource(R.string.auto_play_max_size),
+                        value = if (uiState.autoPlayMaxSizeGb == 0) stringResource(R.string.autoplay_unlimited) else "${uiState.autoPlayMaxSizeGb} GB",
+                        isFocused = false,
+                        onClick = { viewModel.cycleAutoPlayMaxSize() }
+                    )
+                    MobileSettingsRow(
                         icon = Icons.Default.Settings,
                         title = stringResource(R.string.frame_rate),
                         value = uiState.frameRateMatchingMode,
@@ -5670,7 +5691,7 @@ private fun tvSettingsFocusedHelp(section: String, focusedIndex: Int): TvSetting
         "playback" -> when (focusedIndex) {
             0 -> TvSettingsHelp(stringResource(R.string.settings_help_next_autoplay), stringResource(R.string.settings_help_next_autoplay_desc))
             1 -> TvSettingsHelp(stringResource(R.string.settings_help_source_autoplay), stringResource(R.string.settings_help_source_autoplay_desc))
-            6 -> TvSettingsHelp(stringResource(R.string.volume_boost), stringResource(R.string.settings_help_volume_boost_desc))
+            8 -> TvSettingsHelp(stringResource(R.string.volume_boost), stringResource(R.string.settings_help_volume_boost_desc))
             else -> TvSettingsHelp(stringResource(R.string.playback), stringResource(R.string.settings_help_playback_desc))
         }
         "appearance" -> TvSettingsHelp(stringResource(R.string.interface_label), stringResource(R.string.settings_help_interface_desc))
@@ -5726,6 +5747,8 @@ private fun TvGeneralSettingsRows(
     autoPlayNext: Boolean,
     autoPlaySingleSource: Boolean,
     autoPlayMinQuality: String,
+    autoPlayMaxQuality: String,
+    autoPlayMaxSizeGb: Int,
     subtitleSize: String = "Medium",
     subtitleColor: String = "White",
     subtitleOffset: String = "Low",
@@ -5751,6 +5774,8 @@ private fun TvGeneralSettingsRows(
     onAutoPlayToggle: (Boolean) -> Unit,
     onAutoPlaySingleSourceToggle: (Boolean) -> Unit,
     onAutoPlayMinQualityClick: () -> Unit,
+    onAutoPlayMaxQualityClick: () -> Unit,
+    onAutoPlayMaxSizeClick: () -> Unit,
     onDeviceModeClick: () -> Unit = {},
     onContentLanguageClick: () -> Unit = {},
     onSkipProfileSelectionToggle: (Boolean) -> Unit = {},
@@ -5853,6 +5878,8 @@ private fun TvGeneralSettingsRows(
                 10 -> SettingsToggleRow(stringResource(R.string.auto_play_next_title), stringResource(R.string.auto_play_desc), autoPlayNext, focusedIndex == localIndex, onAutoPlayToggle, Modifier.settingsFocusSlot(localIndex))
                 11 -> SettingsToggleRow(stringResource(R.string.autoplay), stringResource(R.string.autoplay_desc), autoPlaySingleSource, focusedIndex == localIndex, onAutoPlaySingleSourceToggle, Modifier.settingsFocusSlot(localIndex))
                 12 -> SettingsRow(Icons.Default.HighQuality, stringResource(R.string.auto_play_min_quality), stringResource(R.string.auto_play_quality_desc), autoPlayMinQuality, focusedIndex == localIndex, onAutoPlayMinQualityClick, Modifier.settingsFocusSlot(localIndex))
+                43 -> SettingsRow(Icons.Default.HighQuality, stringResource(R.string.auto_play_max_quality), "", autoPlayMaxQuality, focusedIndex == localIndex, onAutoPlayMaxQualityClick, Modifier.settingsFocusSlot(localIndex))
+                44 -> SettingsRow(Icons.Default.Storage, stringResource(R.string.auto_play_max_size), "", if (autoPlayMaxSizeGb == 0) stringResource(R.string.autoplay_unlimited) else "$autoPlayMaxSizeGb GB", focusedIndex == localIndex, onAutoPlayMaxSizeClick, Modifier.settingsFocusSlot(localIndex))
                 13 -> SettingsToggleRow(stringResource(R.string.trailer_auto_play), stringResource(R.string.trailer_desc), trailerAutoPlay, focusedIndex == localIndex, onTrailerAutoPlayToggle, Modifier.settingsFocusSlot(localIndex))
                 14 -> SettingsToggleRow(stringResource(R.string.trailer_sound), stringResource(R.string.trailer_sound_desc), trailerSoundEnabled, focusedIndex == localIndex, onTrailerSoundEnabledToggle, Modifier.settingsFocusSlot(localIndex))
                 15 -> SettingsRow(Icons.Default.Movie, stringResource(R.string.frame_rate), stringResource(R.string.frame_rate_desc), frameRateMatchingMode, focusedIndex == localIndex, onFrameRateMatchingClick, Modifier.settingsFocusSlot(localIndex))

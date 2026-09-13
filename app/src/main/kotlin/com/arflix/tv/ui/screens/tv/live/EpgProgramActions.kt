@@ -83,11 +83,8 @@ internal suspend fun awaitLiveEpgProgram(
 
 internal fun channelRowInteractionAction(
     isSamePlayingChannel: Boolean,
-    hasCurrentProgram: Boolean,
-    vodActionsEnabled: Boolean,
 ): EpgInteractionAction = when {
     !isSamePlayingChannel -> EpgInteractionAction.PlayLiveMini
-    vodActionsEnabled && hasCurrentProgram -> EpgInteractionAction.ResolveVodOrPlayFullscreen
     else -> EpgInteractionAction.PlayLiveFullscreen
 }
 

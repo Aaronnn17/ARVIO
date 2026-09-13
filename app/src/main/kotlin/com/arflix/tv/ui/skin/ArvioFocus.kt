@@ -76,23 +76,13 @@ fun Modifier.arvioFocusable(
             animationSpec = tween(durationMillis = 105, easing = tokens.easing),
             label = "arvio_focus_scale",
         )
-        animatedScale
+        if (visualFocused || isPressed) animatedScale else targetScale
     } else {
         targetScale
     }
 
-    // Focus-in must be immediately visible on TV D-pad moves; only fade out.
-    val animatedHighlightAlpha = if (animateFocus) {
-        val animatedAlpha by animateFloatAsState(
-            targetValue = if (visualFocused) 1f else 0f,
-            animationSpec = tween(durationMillis = 120, easing = tokens.easing),
-            label = "arvio_focus_alpha",
-        )
-        animatedAlpha
-    } else {
-        if (visualFocused) 1f else 0f
-    }
-    val highlightAlpha = if (visualFocused) 1f else animatedHighlightAlpha
+    // Focus ownership changes immediately; fading out leaves two highlighted cards.
+    val highlightAlpha = if (visualFocused) 1f else 0f
 
     // Subtle luminous edge always visible on cards that opt in (glass morphism).
     val restBorderAlpha by animateFloatAsState(

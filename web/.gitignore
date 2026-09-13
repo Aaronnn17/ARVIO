@@ -1,4 +1,5 @@
 node_modules/
+.library-ui-test/
 .next/
 .next-overhaul/
 out/

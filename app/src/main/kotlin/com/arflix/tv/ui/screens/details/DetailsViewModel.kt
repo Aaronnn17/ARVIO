@@ -1052,12 +1052,17 @@ class DetailsViewModel @Inject constructor(
                         if (titleForPrefetch.isBlank()) {
                             return@launch
                         }
+                        // Warming has to ask what the real lookup will ask, or it
+                        // binds a show the lookup then searches for again.
+                        val originalTitleForPrefetch =
+                            baseState.item?.originalTitle ?: mergedItem.originalTitle
                         // Start immediately with TMDB/title so resolver can warm caches ASAP.
                         runCatching {
                             streamRepository.prefetchSeriesVodInfo(
                                 imdbId = null,
                                 title = titleForPrefetch,
-                                tmdbId = mediaId
+                                tmdbId = mediaId,
+                                originalTitle = originalTitleForPrefetch
                             )
                         }.onFailure { logDetailsLoadFailure("series VOD prefetch", it) }
                         val externalIds = runCatching { externalIdsDeferred.await() }.getOrNull()
@@ -1065,7 +1070,8 @@ class DetailsViewModel @Inject constructor(
                             streamRepository.prefetchSeriesVodInfo(
                                 imdbId = externalIds?.imdbId,
                                 title = titleForPrefetch,
-                                tmdbId = mediaId
+                                tmdbId = mediaId,
+                                originalTitle = originalTitleForPrefetch
                             )
                         }.onFailure { logDetailsLoadFailure("series VOD prefetch with IMDB ID", it) }
                         val resumeInfo = runCatching { resumeDeferred.await() }.getOrNull()
@@ -1084,7 +1090,8 @@ class DetailsViewModel @Inject constructor(
                                 season = targetSeason,
                                 episode = targetEpisode,
                                 title = titleForPrefetch,
-                                tmdbId = mediaId
+                                tmdbId = mediaId,
+                                originalTitle = originalTitleForPrefetch
                             )
                         }.onFailure { logDetailsLoadFailure("episode VOD prefetch", it) }
                     }
@@ -3057,7 +3064,8 @@ class DetailsViewModel @Inject constructor(
                 title = itemTitle,
                 tmdbId = currentMediaId,
                 tvdbId = _uiState.value.tvdbId,
-                timeoutMs = timeoutMs
+                timeoutMs = timeoutMs,
+                originalTitle = itemOriginalTitle
             )
         }
         val validVodSources = vodSources.filter { !it.url.isNullOrBlank() }

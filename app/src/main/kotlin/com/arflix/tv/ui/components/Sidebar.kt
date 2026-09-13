@@ -154,7 +154,7 @@ private fun SidebarProfileAvatar(
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.12f else 1f,
         animationSpec = tween(
-            durationMillis = AnimationConstants.DURATION_FAST,
+            durationMillis = if (isFocused) AnimationConstants.DURATION_FAST else 0,
             easing = AnimationConstants.EaseOut
         ),
         label = "profile_scale"
@@ -162,7 +162,7 @@ private fun SidebarProfileAvatar(
     val indicatorAlpha by animateFloatAsState(
         targetValue = if (isFocused) 1f else 0f,
         animationSpec = tween(
-            durationMillis = AnimationConstants.DURATION_FAST,
+            durationMillis = if (isFocused) AnimationConstants.DURATION_FAST else 0,
             easing = AnimationConstants.EaseOut
         ),
         label = "profile_indicator"
@@ -222,7 +222,7 @@ private fun SidebarIcon(
             else -> Color(0xFF444444)  // Darker grey when unfocused
         },
         animationSpec = tween(
-            durationMillis = AnimationConstants.DURATION_FAST,
+            durationMillis = if (isFocused) AnimationConstants.DURATION_FAST else 0,
             easing = AnimationConstants.EaseOut
         ),
         label = "icon_color"
@@ -232,7 +232,7 @@ private fun SidebarIcon(
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.12f else 1f,
         animationSpec = tween(
-            durationMillis = AnimationConstants.DURATION_FAST,
+            durationMillis = if (isFocused) AnimationConstants.DURATION_FAST else 0,
             easing = AnimationConstants.EaseOut
         ),
         label = "icon_scale"
@@ -245,7 +245,7 @@ private fun SidebarIcon(
             else -> Color.Transparent
         },
         animationSpec = tween(
-            durationMillis = AnimationConstants.DURATION_FAST,
+            durationMillis = if (isFocused) AnimationConstants.DURATION_FAST else 0,
             easing = AnimationConstants.EaseOut
         ),
         label = "sidebar_chip_bg"
@@ -254,7 +254,7 @@ private fun SidebarIcon(
     val indicatorAlpha by animateFloatAsState(
         targetValue = if (isFocused) 1f else 0f,
         animationSpec = tween(
-            durationMillis = AnimationConstants.DURATION_FAST,
+            durationMillis = if (isFocused) AnimationConstants.DURATION_FAST else 0,
             easing = AnimationConstants.EaseOut
         ),
         label = "sidebar_indicator_alpha"

@@ -1,10 +1,11 @@
 package com.arflix.tv.ui.screens.player
 
 import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.data.model.AutoplayLimits
 import com.arflix.tv.data.repository.ProgressiveStreamResult
 import com.arflix.tv.data.repository.providerScopedStreamIdentity
 import com.arflix.tv.ui.screens.details.isAutoPlayableStream
-import com.arflix.tv.ui.screens.details.qualityScoreForAutoPlay
+import com.arflix.tv.ui.screens.details.matchesAutoplayLimits
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -12,16 +13,19 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withTimeoutOrNull
 
-internal fun eligiblePlayerAutoplayStreams(streams: List<StreamSource>, minimumQuality: Int): List<StreamSource> =
-    streams.filter { isAutoPlayableStream(it) && qualityScoreForAutoPlay(it) >= minimumQuality }
+internal fun eligiblePlayerAutoplayStreams(
+    streams: List<StreamSource>, minimumQuality: Int, limits: AutoplayLimits = AutoplayLimits()
+): List<StreamSource> =
+    streams.filter { isAutoPlayableStream(it) && matchesAutoplayLimits(it, minimumQuality, limits) }
 
 internal enum class PlayerAutoplayAvailability { SEARCHING, READY, NO_MATCH, NO_SOURCES, SELECTED }
 
 internal fun playerAutoplayAvailability(
-    streams: List<StreamSource>, minimumQuality: Int, searchActive: Boolean, hasSelection: Boolean
+    streams: List<StreamSource>, minimumQuality: Int, searchActive: Boolean, hasSelection: Boolean,
+    limits: AutoplayLimits = AutoplayLimits()
 ): PlayerAutoplayAvailability = when {
     hasSelection -> PlayerAutoplayAvailability.SELECTED
-    eligiblePlayerAutoplayStreams(streams, minimumQuality).isNotEmpty() -> PlayerAutoplayAvailability.READY
+    eligiblePlayerAutoplayStreams(streams, minimumQuality, limits).isNotEmpty() -> PlayerAutoplayAvailability.READY
     searchActive -> PlayerAutoplayAvailability.SEARCHING
     streams.isEmpty() -> PlayerAutoplayAvailability.NO_SOURCES
     else -> PlayerAutoplayAvailability.NO_MATCH

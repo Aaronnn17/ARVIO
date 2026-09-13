@@ -24,6 +24,21 @@ const raw = { id: '42', title: 'North vs South', sport: 'Soccer', startsAt: now 
 const art = (changes = {}) => parseSportsMetadata({ version: 1, catalogueEnabled: true, events: [{ ...raw, ...changes }] });
 const epg = { id: 'guide', title: raw.title, sportId: 'football', competition: 'Premier League', programme: { title: raw.title, startUtcMillis: now - 60000, endUtcMillis: now + 3600000 }, channels: [channel], schedules: { [channel.id]: { title: raw.title, startUtcMillis: now - 60000, endUtcMillis: now + 3600000 } } };
 
+test('Fighting metadata uses Boxing league and country suffixes to retain the fight and poster', () => {
+  const metadata = art({ title: 'Ryan Garcia vs Conor Benn', sport: 'Fighting', league: 'Boxing',
+    background: 'https://r2.thesportsdb.com/images/media/event/thumb/fight.jpg',
+    broadcasters: [{ name: 'DAZN UK', country: 'United Kingdom', startsAt: raw.startsAt }] });
+  const station = { ...channel, name: 'UK | DAZN FHD' };
+  const result = buildSportsCatalogue([], metadata, [station], now);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].sportId, 'boxing');
+  assert.equal(result[0].possibleChannels[0].id, station.id);
+  assert.ok(result[0].artwork);
+  const { sportsChannelKey, sportsBroadcasterKeys } = load('./sportsCatalogue');
+  assert.ok(!sportsBroadcasterKeys('Paramount+ US', 'United States').includes(sportsChannelKey('US | Paramount HD')));
+  assert.ok(sportsBroadcasterKeys('Paramount+ US', 'United States').includes(sportsChannelKey('US | Paramount Plus HD')));
+});
+
 test('real provider decorations match broadcasters without mixing countries or channel numbers', () => {
   const { sportsChannelKey } = load('./sportsCatalogue');
   assert.equal(sportsChannelKey('UK-NOWTV| TNT SPORT 2 FHD'), sportsChannelKey('UK TNT Sports 2'));

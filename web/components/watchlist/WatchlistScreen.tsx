@@ -1,9 +1,9 @@
 "use client";
 
-import { Bookmark, Film, LoaderCircle, RefreshCw, Search, Server, Tv } from "lucide-react";
+import { Bookmark, Film, LoaderCircle, RefreshCw, Search, Server, Tv, SlidersHorizontal, ArrowLeft, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MediaCard } from "@/components/media/MediaCard";
-import { TrackerLibrary } from "./TrackerLibrary";
+import { CollectionCover, LibraryGrid, LibraryDialog } from "./LibraryPresentation";
 import { LIBRARY_SORT_OPTIONS, compareLibraryItems } from "@/lib/librarySort";
 import type { HomeServerLibraryOption, HomeServerLibraryPage, HomeServerLibrarySort } from "@/lib/homeserver";
 import { useApp } from "@/lib/store";
@@ -23,6 +23,9 @@ const PROVIDER_LABELS: Record<HomeServerConfig["type"], string> = {
   emby: "Emby"
 };
 const libraryCache = new Map<string, HomeServerLibraryPage>();
+const viewportPositions = new Map<string, number>();
+interface LibraryView { section: "watchlists" | "lists" | "libraries"; openedList: string | null; tab: LibraryTab; trackerTab: "trakt" | "simkl" | null; trackerSource: string; selectedLibrary: string; sort: HomeServerLibrarySort; filter: WatchlistFilter; search: string }
+const savedViews = new Map<string, LibraryView>();
 
 function itemKey(item: MediaItem): string {
   return item.isHomeServer
@@ -33,7 +36,7 @@ function itemKey(item: MediaItem): string {
 export function WatchlistScreen() {
   const {
     watchlist, traktConnected, simklConnected, mdblistConnected, openDetails,
-    settings, trackingPreferences, loadTraktLists, loadTraktListItems, auth, activeProfile
+    settings, trackingPreferences, loadTraktLists, loadTraktListItems, loadTrackerLibrary, loadCatalogRow, catalogConfigs, auth, activeProfile, setSection: navigate
   } = useApp();
   const posterMode = settings.cardLayoutMode === "poster";
   const homeServers = useMemo(
@@ -45,21 +48,32 @@ export function WatchlistScreen() {
     [homeServers]
   );
 
-  const [tab, setTab] = useState<LibraryTab>("watchlist");
-  const [trackerTab, setTrackerTab] = useState<"trakt" | "simkl" | null>(null);
-  const [filter, setFilter] = useState<WatchlistFilter>("all");
-  const [sort, setSort] = useState<HomeServerLibrarySort>("added");
-  const [search, setSearch] = useState("");
+  const viewScope = `${auth?.userId ?? "local"}:${activeProfile?.id ?? "default"}`;
+  const saved = savedViews.get(viewScope);
+  const [section, setSection] = useState<"watchlists" | "lists" | "libraries">(saved?.section ?? "watchlists");
+  const [openedList, setOpenedList] = useState<string | null>(saved?.openedList ?? null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [trackerSource, setTrackerSource] = useState(saved?.trackerSource ?? "watchlist");
+  const [retry, setRetry] = useState(0);
+  const [tab, setTab] = useState<LibraryTab>(saved?.tab ?? "watchlist");
+  const [trackerTab, setTrackerTab] = useState<"trakt" | "simkl" | null>(saved?.trackerTab ?? null);
+  const [filter, setFilter] = useState<WatchlistFilter>(saved?.filter ?? "all");
+  const [sort, setSort] = useState<HomeServerLibrarySort>(saved?.sort ?? "added");
+  const [search, setSearch] = useState(saved?.search ?? "");
   const [searchQuery, setSearchQuery] = useState("");
   const [watchlistSource, setWatchlistSource] = useState("watchlist");
   const [customLists, setCustomLists] = useState<Array<{ id: string; name: string }>>([]);
   const [libraries, setLibraries] = useState<HomeServerLibraryOption[]>([]);
-  const [selectedLibrary, setSelectedLibrary] = useState("");
+  const [selectedLibrary, setSelectedLibrary] = useState(saved?.selectedLibrary ?? "");
   const [libraryPage, setLibraryPage] = useState<HomeServerLibraryPage>({ items: [], hasMore: false, total: 0 });
   const [sourceItems, setSourceItems] = useState<MediaItem[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [libraryError, setLibraryError] = useState(false);
+  const latestView = useRef<LibraryView>({ section, openedList, tab, trackerTab, trackerSource, selectedLibrary, sort, filter, search });
+  latestView.current = { section, openedList, tab, trackerTab, trackerSource, selectedLibrary, sort, filter, search };
+  useEffect(() => () => { savedViews.set(viewScope, latestView.current); if(savedViews.size > 12) savedViews.delete(savedViews.keys().next().value!); }, [viewScope]);
   const requestRef = useRef(0);
   const librariesRequest = useRef(0);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -118,18 +132,25 @@ export function WatchlistScreen() {
     [libraries, selectedLibrary]
   );
 
+  const personalLists = useMemo(() => [
+    ...customLists.map((list) => ({ id: `list:${list.id}`, name: list.name, provider: "Trakt", catalog: null as typeof catalogConfigs[number] | null })),
+    ...catalogConfigs.filter((catalog) => !catalog.isPreinstalled && !["preinstalled", "home_server"].includes(catalog.sourceType.toLowerCase()) && !["collection", "collection_rail"].includes((catalog.kind ?? "").toLowerCase()))
+      .map((catalog) => ({ id: `catalog:${catalog.id}`, name: catalog.title || catalog.name, provider: catalog.addonName || catalog.sourceType, catalog }))
+  ], [customLists, catalogConfigs]);
+  const activeList = personalLists.find((list) => list.id === openedList);
   useEffect(() => {
-    if (tab !== "watchlist" || watchlistSource === "watchlist") {
-      setSourceItems(null);
-      return;
-    }
+    if (tab !== "watchlist") return;
+    if (!trackerTab && !openedList && watchlistSource === "watchlist") { setSourceItems(null); setLoading(false); setLibraryError(false); return; }
     const requestId = ++requestRef.current;
-    setLoading(true);
-    void loadTraktListItems(watchlistSource)
-      .then((items) => { if (requestId === requestRef.current) setSourceItems(items); })
-      .catch(() => { if (requestId === requestRef.current) setSourceItems([]); })
+    setSourceItems(null); setLoading(true); setLibraryError(false);
+    const task = activeList?.catalog ? loadCatalogRow(activeList.catalog).then((row) => row?.items ?? [])
+      : trackerTab ? loadTrackerLibrary(trackerTab, trackerSource)
+      : loadTraktListItems(openedList ?? watchlistSource);
+    void task.then((rows) => { if (requestId === requestRef.current) setSourceItems(rows); })
+      .catch(() => { if (requestId === requestRef.current) setLibraryError(true); })
       .finally(() => { if (requestId === requestRef.current) setLoading(false); });
-  }, [tab, watchlistSource, loadTraktListItems]);
+    return () => { requestRef.current++; };
+  }, [tab, trackerTab, trackerSource, openedList, activeList?.catalog, watchlistSource, loadTraktListItems, loadTrackerLibrary, loadCatalogRow, retry]);
 
   const libraryFilter: WatchlistFilter = "all";
   const cacheKey = `${auth?.userId ?? "local"}:${activeProfile?.id}:${selectedLibrary}|${sort}|${searchQuery.toLowerCase()}`;
@@ -194,155 +215,69 @@ export function WatchlistScreen() {
     }
   }, [activeLibrary?.mediaType, cacheKey, homeServers, libraryError, libraryFilter, libraryPage.hasMore, libraryPage.items.length, loading, loadingMore, searchQuery, selectedLibrary, sort, tab]);
 
-  useEffect(() => {
-    const target = loadMoreRef.current;
-    if (!target || tab === "watchlist") return;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) void loadMore();
-    }, { rootMargin: "600px" });
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [loadMore, tab]);
-
-  const watchlistList = watchlistSource === "watchlist" ? watchlist : (sourceItems ?? []);
+  const watchlistList = !trackerTab && !openedList && watchlistSource === "watchlist" ? watchlist : (sourceItems ?? []);
   const items = useMemo(() => {
     if (tab !== "watchlist") return libraryPage.items;
-    const filtered = filter === "all" ? watchlistList : watchlistList.filter((item) => item.mediaType === filter);
+    const filtered = watchlistList.filter((item) => (filter === "all" || item.mediaType === filter) && item.title.toLowerCase().includes(searchQuery.toLowerCase()));
     return [...filtered].sort((a, b) => compareLibraryItems(a, b, sort));
-  }, [filter, libraryPage.items, sort, tab, watchlistList]);
+  }, [filter, libraryPage.items, sort, tab, watchlistList, searchQuery]);
 
-  const activeServerName = activeLibrary?.serverName ?? visibleLibraries[0]?.serverName ?? "Home server";
-  const heading = tab === "watchlist" ? "Watchlist" : `${PROVIDER_LABELS[tab]} Library`;
-  const watchlistSyncLabel = (() => {
-    const mode = trackingPreferences.watchlistReadMode;
-    if (mode === "both" && traktConnected && simklConnected) return "Trakt + Simkl";
-    if (mode === "simkl" && simklConnected) return "Simkl";
-    if (mode === "mdblist" && mdblistConnected) return "MDBList";
-    if (mode === "trakt" && traktConnected) return "Trakt";
-    if (traktConnected) return "Trakt";
-    if (simklConnected) return "Simkl";
-    if (mdblistConnected) return "MDBList";
-    return null;
-  })();
-  const eyebrow = tab === "watchlist"
-    ? watchlistSyncLabel ? `Synced with ${watchlistSyncLabel}` : "Saved across your ARVIO devices"
-    : loading && !items.length ? `Connecting to ${PROVIDER_LABELS[tab]}` : `${libraryPage.total.toLocaleString()} titles${activeLibrary ? ` in ${activeLibrary.libraryName}` : ""}`;
-
+  const collections = section === "lists" && !openedList;
+  const trackerSources = [
+    ...(traktConnected ? [{ provider: "trakt" as const, id: "watchlist", name: "Watchlist" }, { provider: "trakt" as const, id: "collection", name: "Collection" }, { provider: "trakt" as const, id: "watched", name: "Watched" }] : []),
+    ...(simklConnected ? ["plantowatch", "watching", "completed", "hold", "dropped"].map((id, index) => ({ provider: "simkl" as const, id, name: ["Plan to watch", "Watching", "Completed", "On hold", "Dropped"][index] })) : [])
+  ];
+  const sourceValue = tab !== "watchlist" ? selectedLibrary : trackerTab ? `${trackerTab}:${trackerSource}` : "saved";
+  const selectSource = (value: string) => {
+    if (value === "saved") { setTab("watchlist"); setTrackerTab(null); setWatchlistSource("watchlist"); }
+    else if (value.startsWith("trakt:") || value.startsWith("simkl:")) { const [provider, id] = value.split(":"); setTab("watchlist"); setTrackerTab(provider as "trakt" | "simkl"); setTrackerSource(id); }
+    else { const library = libraries.find((entry) => entry.value === value); if(library) { setTrackerTab(null); setTab(library.serverType); setSelectedLibrary(value); } }
+  };
+  const changeSection = (value: typeof section) => {
+    setSection(value); setOpenedList(null); setSearch(""); setSearchQuery(""); setFilter("all"); setTrackerTab(null);
+    if(value === "libraries") { setTab(providerTypes[0] ?? "watchlist"); if(libraries[0]) selectSource(libraries[0].value); }
+    else { setTab("watchlist"); setWatchlistSource("watchlist"); }
+  };
+  const refresh = () => { if(tab === "watchlist") setRetry((value) => value + 1); else void loadLibrary(true); };
+  const sourceOptions = section === "libraries" ? libraries.map((entry) => ({ value: entry.value, name: `${entry.serverName} / ${entry.libraryName}` }))
+    : [{ value: "saved", name: "My watchlist" }, ...trackerSources.map((entry) => ({ value: `${entry.provider}:${entry.id}`, name: `${entry.provider === "trakt" ? "Trakt" : "Simkl"} / ${entry.name}` }))];
   return (
-    <div className={`screen has-section-heading library-screen ${posterMode ? "poster-results" : ""}`}>
-      <section className="section-heading library-heading">
-        <div className="library-title-block">
-          <p className="eyebrow">{trackerTab ? "Your connected library" : eyebrow}</p>
-          <h2>{trackerTab ? trackerTab === "trakt" ? "Trakt Library" : "Simkl Library" : heading}</h2>
+    <div className={`screen oled-library ${posterMode ? "poster-results" : ""}`}>
+      <header className="oled-library-toolbar">
+        <nav aria-label="Library sections">{([ ["watchlists", "Watchlists"], ["lists", "My lists"], ["libraries", "Libraries"] ] as const).map(([value, label]) =>
+          <button key={value} aria-current={section === value ? "page" : undefined} onClick={() => changeSection(value)}>{label}</button>)}</nav>
+        <div className="oled-library-actions"><span>{collections ? `${personalLists.length} lists` : `${tab !== "watchlist" ? libraryPage.total : items.length} titles`}</span>
+          {collections && <button onClick={() => navigate("settings")}>+ New list</button>}
+          <button aria-label="Search library" onClick={() => setShowSearch(true)}><Search size={22} /></button>
+          <button className="oled-filter-button" onClick={() => setShowFilters(true)}><SlidersHorizontal size={20} /><span>Filters</span></button>
         </div>
-        <nav className="library-provider-tabs" aria-label="Library source">
-            <button type="button" className={!trackerTab && tab === "watchlist" ? "is-active" : ""} onClick={() => { setTrackerTab(null); setTab("watchlist"); }}>
-            <Bookmark size={17} /> Watchlist
-          </button>
-          {providerTypes.map((type) => (
-            <button key={type} type="button" className={!trackerTab && tab === type ? "is-active" : ""} onClick={() => { setTrackerTab(null); setTab(type); }}>
-              <span className={`library-provider-mark is-${type}`} aria-hidden="true" /> {PROVIDER_LABELS[type]}
-            </button>
-          ))}
-          {traktConnected && <button type="button" className={trackerTab === "trakt" ? "is-active" : ""} onClick={() => setTrackerTab("trakt")}><span className="library-provider-mark is-trakt" /> Trakt</button>}
-          {simklConnected && <button type="button" className={trackerTab === "simkl" ? "is-active" : ""} onClick={() => setTrackerTab("simkl")}><span className="library-provider-mark is-simkl" /> Simkl</button>}
-          {!trackerTab && tab !== "watchlist" && (
-            <select className="library-provider-sort" value={sort} onChange={(event) => setSort(event.target.value as HomeServerLibrarySort)} aria-label="Sort titles">
-              {LIBRARY_SORT_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          )}
-        </nav>
-      </section>
-
-      {trackerTab ? <TrackerLibrary key={trackerTab} provider={trackerTab} /> : <div className={`library-workspace ${tab !== "watchlist" && visibleLibraries.length ? "has-library-sidebar" : ""}`}>
-        {tab !== "watchlist" && visibleLibraries.length > 0 && (
-          <aside className="library-sidebar" aria-label={`${PROVIDER_LABELS[tab]} libraries`}>
-            <strong className="library-sidebar-server">{activeServerName}</strong>
-            <span className="library-sidebar-label">Libraries</span>
-            <div role="tablist">
-              {visibleLibraries.map((library) => (
-                <button key={library.value} type="button" role="tab" aria-selected={selectedLibrary === library.value}
-                  className={selectedLibrary === library.value ? "is-active" : ""} onClick={() => setSelectedLibrary(library.value)}>
-                  {library.mediaType === "movie"
-                    ? <Film className={`library-type-icon is-${library.serverType}`} size={17} aria-hidden="true" />
-                    : <Tv className={`library-type-icon is-${library.serverType}`} size={17} aria-hidden="true" />}
-                  <span>{library.libraryName}</span>
-                  {visibleLibraries.filter((item) => item.libraryName === library.libraryName).length > 1 && <small>{library.serverName}</small>}
-                </button>
-              ))}
-            </div>
-          </aside>
-        )}
-        <div className={`library-main ${loading && items.length > 0 ? "is-refreshing" : ""}`}>
-          {tab !== "watchlist" && visibleLibraries.length > 0 && (
-            <label className="library-mobile-select">
-              {activeLibrary?.mediaType === "movie" ? <Film size={16} /> : <Tv size={16} />}
-              <select value={selectedLibrary} onChange={(event) => setSelectedLibrary(event.target.value)} aria-label="Choose library">
-                {visibleLibraries.map((library) => (
-                  <option key={library.value} value={library.value}>
-                    {library.libraryName}{visibleLibraries.filter((item) => item.libraryName === library.libraryName).length > 1 ? ` — ${library.serverName}` : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          <div className="library-toolbar">
-        {tab === "watchlist" && traktConnected && (
-          <select className="watchlist-source" value={watchlistSource} onChange={(event) => setWatchlistSource(event.target.value)} aria-label="Choose list">
-            {traktConnected && BUILTIN_SOURCES.map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}
-            {!traktConnected && <option value="watchlist">Watchlist</option>}
-            {customLists.map((list) => <option key={list.id} value={`list:${list.id}`}>{list.name}</option>)}
-          </select>
-        )}
-        {tab === "watchlist" && (
-          <div className="watchlist-pills" role="group" aria-label="Filter titles">
-            {([["all", "All"], ["movie", "Movies"], ["tv", "Series"]] as const).map(([value, label]) => (
-              <button key={value} type="button" className={`watchlist-pill ${filter === value ? "is-active" : ""}`} onClick={() => setFilter(value)}>{label}</button>
-            ))}
-          </div>
-        )}
-        {tab === "watchlist" && (
-          <select className="watchlist-sort" value={sort} onChange={(event) => setSort(event.target.value as HomeServerLibrarySort)} aria-label="Sort titles">
-            {LIBRARY_SORT_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        )}
-        {tab !== "watchlist" && (
-          <label className="library-search">
-            <Search size={17} />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${PROVIDER_LABELS[tab]}`} />
-          </label>
-        )}
-        {tab !== "watchlist" && (
-          <select className="watchlist-sort library-mobile-sort" value={sort} onChange={(event) => setSort(event.target.value as HomeServerLibrarySort)} aria-label="Sort titles">
-            {LIBRARY_SORT_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        )}
-        {tab !== "watchlist" && (
-          <button type="button" className="library-refresh" title="Refresh library" aria-label="Refresh library" onClick={() => void loadLibrary(true)} disabled={loading}>
-            <RefreshCw size={17} />
-          </button>
-        )}
-          </div>
-
-          {loading && items.length === 0 ? (
-            <div className="library-loading" aria-label="Loading library"><LoaderCircle size={34} /></div>
-          ) : libraryError && items.length === 0 ? (
-            <div className="watchlist-empty"><Server size={42} /><p>Server unavailable</p><span>Check the server connection and try again.</span><button type="button" onClick={() => void loadLibrary(true)}>Retry</button></div>
-          ) : items.length === 0 ? (
-            <div className="watchlist-empty"><Bookmark size={42} /><p>{searchQuery ? "No matching titles" : "This library is empty"}</p><span>{tab === "watchlist" ? "Add movies and series from their details page." : "Try another library or filter."}</span></div>
-          ) : (
-            <>
-              <div className="grid-results library-grid">
-                {items.map((item) => <MediaCard key={itemKey(item)} item={item} onOpen={openDetails} posterMode={posterMode} />)}
-              </div>
-              {libraryError && <div className="library-error" role="alert"><span>The server could not update this library. Loaded titles are still available.</span><button type="button" className="secondary" onClick={() => void (libraryPage.hasMore ? loadMore(true) : loadLibrary(true))}>Retry</button></div>}
-              {loading && items.length > 0 && <div className="library-refreshing-indicator" aria-label="Updating library"><LoaderCircle size={24} /></div>}
-              {tab !== "watchlist" && <div ref={loadMoreRef} className="library-load-more">{loadingMore && <LoaderCircle size={26} />}</div>}
-            </>
-          )}
-        </div>
-      </div>}
+      </header>
+      {!collections && !openedList && <select className="oled-source-select" value={sourceValue} onChange={(event) => selectSource(event.target.value)} aria-label="Library source">{sourceOptions.map((source) => <option key={source.value} value={source.value}>{source.name}</option>)}</select>}
+      {openedList && <div className="oled-list-breadcrumb"><button onClick={() => setOpenedList(null)}><ArrowLeft size={18}/> My lists</button><span>{activeList?.name}</span></div>}
+      <div className={`oled-library-body ${!collections && !openedList ? "with-sources" : ""}`}>
+        {!collections && !openedList && <aside className="oled-source-nav" aria-label="Library sources">
+          {section === "watchlists" ? <>
+            <p>Saved</p><button aria-current={sourceValue === "saved" ? "true" : undefined} onClick={() => selectSource("saved")}><Bookmark size={18}/>My watchlist</button>
+            {(["trakt", "simkl"] as const).map((provider) => trackerSources.some((source) => source.provider === provider) && <div key={provider}><p>{provider === "trakt" ? "Trakt" : "Simkl"}</p>{trackerSources.filter((source) => source.provider === provider).map((source) => <button key={source.id} aria-current={sourceValue === `${provider}:${source.id}` ? "true" : undefined} onClick={() => selectSource(`${provider}:${source.id}`)}>{source.name}</button>)}</div>)}
+          </> : homeServers.map((server) => <div key={server.id}><p>{server.name}<small>{PROVIDER_LABELS[server.type]}</small></p>{libraries.filter((library) => library.serverId === server.id).map((library) => <button key={library.value} aria-current={selectedLibrary === library.value ? "true" : undefined} onClick={() => selectSource(library.value)}>{library.mediaType === "movie" ? <Film size={18}/> : <Tv size={18}/>}<span>{library.libraryName}</span></button>)}</div>)}
+          {section === "libraries" && <button className="oled-connect" onClick={() => navigate("settings")}>+ Connect server</button>}
+        </aside>}
+        <section className="oled-library-content" aria-label={collections ? "Personal lists" : activeList?.name || "Library titles"}>
+          {collections ? <div className="oled-collections">{personalLists.filter((list) => list.name.toLowerCase().includes(searchQuery.toLowerCase())).map((list) => <CollectionCover key={list.id} title={list.name} provider={list.provider} load={() => list.catalog ? loadCatalogRow(list.catalog).then((row) => row?.items ?? []) : loadTraktListItems(list.id)} onOpen={() => { setOpenedList(list.id); setSearch(""); setSearchQuery(""); }} />)}{!personalLists.length && <div className="watchlist-empty"><p>No personal lists yet</p><span>Your custom catalogs and connected personal lists appear here.</span></div>}</div>
+          : section === "libraries" && !libraries.length ? <div className="watchlist-empty"><Server size={36}/><p>No libraries connected</p><button onClick={() => navigate("settings")}>Connect a server</button></div>
+          : loading && !items.length ? <div className="library-loading" aria-label="Loading library"><LoaderCircle size={32}/></div>
+          : !items.length ? <div className="watchlist-empty"><Bookmark size={36}/><p>{libraryError ? "Library unavailable" : "No titles found"}</p>{libraryError ? <button onClick={refresh}>Retry</button> : <span>Choose another source or add titles to your watchlist.</span>}</div>
+          : <><LibraryGrid key={`${auth?.userId}:${activeProfile?.id}:${sourceValue}:${openedList}:${sort}:${searchQuery}:${filter}`} positions={viewportPositions} positionKey={`${viewScope}:${sourceValue}:${openedList}:${sort}:${searchQuery}:${filter}:${posterMode}`} items={items} poster={posterMode} onOpen={openDetails} onNearEnd={tab !== "watchlist" ? loadMore : undefined}/>
+            {libraryError && <div className="library-error" role="alert">Could not update this source. <button onClick={refresh}>Retry</button></div>}
+            {tab !== "watchlist" && <div ref={loadMoreRef} className="library-load-more">{loadingMore && <LoaderCircle size={24}/>}</div>}</>}
+        </section>
+      </div>
+      {showFilters && <LibraryDialog title="Filters" close={() => setShowFilters(false)}>
+        <label>Sort titles<select value={sort} onChange={(event) => setSort(event.target.value as HomeServerLibrarySort)}>{LIBRARY_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        {tab === "watchlist" && !collections && <label>Type<select value={filter} onChange={(event) => setFilter(event.target.value as WatchlistFilter)}><option value="all">All titles</option><option value="movie">Movies</option><option value="tv">Series</option></select></label>}
+        {!collections && <button onClick={refresh}><RefreshCw size={18}/>Refresh source</button>}
+      </LibraryDialog>}
+      {showSearch && <LibraryDialog title="Search library" close={() => setShowSearch(false)}><form onSubmit={(event) => { event.preventDefault(); setShowSearch(false); }}><label>Title<input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search titles or lists" /></label><button type="submit">Done</button></form></LibraryDialog>}
     </div>
   );
 }
