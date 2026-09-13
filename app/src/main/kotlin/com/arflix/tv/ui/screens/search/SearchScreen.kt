@@ -205,7 +205,8 @@ fun SearchScreen(
     val resultsFocusRequester = remember { FocusRequester() }
     val textInputFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val certifications = remember(viewModel) { certificationsForLanguage(viewModel.contentLanguage) }
+    val contentLanguage = viewModel.contentLanguage
+    val certifications = remember(contentLanguage) { certificationsForLanguage(contentLanguage) }
     // The panel that is open under a chip, and where the focus sits inside it. Both live here
     // and not in the view model: nothing about an open panel survives leaving the screen.
     var openPanel by remember { mutableStateOf<DiscoverFilterId?>(null) }
@@ -232,12 +233,7 @@ fun SearchScreen(
             }
         )
     }
-    val quickFilters = discoverChips(
-        state = uiState,
-        isSearching = false,
-        certifications = certifications,
-        actions = filterActions
-    )
+    val quickFilters = discoverChips(state = uiState, certifications = certifications, actions = filterActions)
     val openPanelSpec = openPanel?.let { filterPanelSpec(it, uiState, certifications, filterActions) }
     LaunchedEffect(quickFilters.size) {
         focusedFilterIndex = focusedFilterIndex.coerceIn(0, (quickFilters.size - 1).coerceAtLeast(0))
@@ -247,7 +243,19 @@ fun SearchScreen(
         val maxItem = (activeCategories.getOrNull(currentRowIndex)?.items?.size ?: 1) - 1
         currentItemIndex = currentItemIndex.coerceIn(0, maxItem.coerceAtLeast(0))
     }
-    val filterSelection = "${uiState.selectedType}:${uiState.selectedGenre?.id}:${uiState.selectedCountry?.code}"
+    // A changed filter set means a different list, so the remembered position in the old one is
+    // meaningless. Every filter belongs in this key — a missing one leaves the focus sitting on
+    // the row and card index of a list that is no longer there.
+    val filterSelection = listOf(
+        uiState.selectedType,
+        uiState.selectedGenres.joinToString(",") { it.id.toString() },
+        uiState.matchAllGenres,
+        uiState.sortOption,
+        uiState.rating.min, uiState.rating.max, uiState.rating.minVotes,
+        uiState.year,
+        uiState.certification,
+        uiState.hideWatched
+    ).joinToString(":")
     var previousFilterSelection by rememberSaveable { mutableStateOf(filterSelection) }
     LaunchedEffect(filterSelection) {
         if (previousFilterSelection != filterSelection) {

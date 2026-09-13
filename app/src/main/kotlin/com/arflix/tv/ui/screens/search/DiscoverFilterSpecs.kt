@@ -68,30 +68,27 @@ internal fun SortOption.localizedLabel(): String = stringResource(
 /**
  * The seven chips of the approved design, in its order.
  *
- * While the user is typing, only the two filters TMDB's `search/*` endpoints actually accept
- * are left standing — the media type and the year. The rest do not quietly stop working; they
- * are not there to be tried.
+ * The draft also shows a shortened row while the user is typing — media type and year, the only
+ * two filters TMDB's search endpoints accept. That row is not built here, and the reason is
+ * technical rather than a decision: the search path goes through `search/multi`, which takes a
+ * query and nothing else. A year filter there means replacing that one call with separate
+ * `search/movie` and `search/tv` calls, which changes how search results are ranked. That is its
+ * own change, not part of a filter row, so while typing the row stays away as it does today.
  */
 @Composable
 internal fun discoverChips(
     state: SearchUiState,
-    isSearching: Boolean,
     certifications: List<String>,
     actions: DiscoverFilterActions
-): List<DiscoverChip> {
-    val typeChip = typeChip(state, actions)
-    val yearChip = yearChip(state, actions)
-    if (isSearching) return listOf(typeChip, yearChip)
-    return listOf(
-        typeChip,
-        genreChip(state, actions),
-        sortChip(state, actions),
-        ratingChip(state, actions),
-        yearChip,
-        certificationChip(state, certifications, actions),
-        hideWatchedChip(state, actions)
-    )
-}
+): List<DiscoverChip> = listOf(
+    typeChip(state, actions),
+    genreChip(state, actions),
+    sortChip(state, actions),
+    ratingChip(state, actions),
+    yearChip(state, actions),
+    certificationChip(state, certifications, actions),
+    hideWatchedChip(state, actions)
+)
 
 /** The three media types the app knows, in the order the row shows them. */
 private val TYPES = listOf(DiscoverType.MOVIES, DiscoverType.TV_SHOWS, DiscoverType.ANIME)

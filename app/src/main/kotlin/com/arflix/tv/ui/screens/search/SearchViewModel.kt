@@ -716,11 +716,11 @@ class SearchViewModel @Inject constructor(
                 val items = withContext(Dispatchers.IO) {
                     if (sq.similarTo != null) { val r = mediaRepository.search(sq.similarTo); val m = r.firstOrNull(); if (m != null) mediaRepository.getSimilar(m.mediaType, m.id) else EMPTY_MEDIA_ITEMS }
                     else {
-                        val tvGenre = mapMovieGenreToTvGenre(sq.genreId)
+                        val tvGenre = mapMovieGenresToTvGenres(sq.genreId)
                         when (sq.type) {
                             DiscoverType.MOVIES -> mediaRepository.discoverMovies(sq.genreId, sq.sort, sq.minVotes, 1)
                             DiscoverType.TV_SHOWS -> mediaRepository.discoverTv(tvGenre, sq.sort, sq.minVotes, 1)
-                            DiscoverType.ANIME -> mediaRepository.discoverTv(buildAnimeGenre(tvGenre), sq.sort, sq.minVotes, 1, keywords = "210024")
+                            DiscoverType.ANIME -> mediaRepository.discoverTv(buildAnimeGenre(tvGenre), sq.sort, sq.minVotes, 1, keywords = ANIME_KEYWORD)
                             DiscoverType.ALL -> {
                                 coroutineScope {
                                     val a = async { mediaRepository.discoverMovies(sq.genreId, sq.sort, sq.minVotes, 1) }
