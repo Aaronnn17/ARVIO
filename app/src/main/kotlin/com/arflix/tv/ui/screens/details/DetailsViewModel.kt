@@ -1335,8 +1335,8 @@ class DetailsViewModel @Inject constructor(
                 return
             }
             markEpisodeWatched(
-                seasonNumber = targetEpisode.seasonNumber,
-                episodeNumber = targetEpisode.episodeNumber,
+                season = targetEpisode.seasonNumber,
+                episode = targetEpisode.episodeNumber,
                 watched = !targetEpisode.isWatched
             )
             return
