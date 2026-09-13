@@ -318,6 +318,7 @@ class PlayerViewModel @Inject constructor(
     private var currentInstalledAddons: List<Addon> = emptyList()
     private var currentIsLiveStreamPlayback: Boolean = false
     private var autoPlayMinimumQuality: Int = 0
+    private var autoPlayLimits = com.arflix.tv.data.model.AutoplayLimits()
     private var lastScrobbleTime: Long = 0
     private var lastWatchHistorySaveTime: Long = 0
     private var lastWatchHistorySavedPositionSeconds: Long = -1L
@@ -628,6 +629,7 @@ class PlayerViewModel @Inject constructor(
         currentPreferredBingeGroup = preferredBingeGroup?.trim()?.takeIf { it.isNotBlank() }
         currentIsLiveStreamPlayback = isLiveStreamPlayback
         autoPlayMinimumQuality = 0
+        autoPlayLimits = com.arflix.tv.data.model.AutoplayLimits()
         playbackSessionStartTime = System.currentTimeMillis()
         playbackDiag(
             "loadMedia type=$mediaType id=$mediaId season=$seasonNumber episode=$episodeNumber " +
@@ -706,6 +708,10 @@ class PlayerViewModel @Inject constructor(
             autoPlayMinimumQuality = if (providedStreamUrl.isNullOrBlank()) {
                 minQualityThreshold(prefs[profileManager.profileStringKey("auto_play_min_quality")] ?: "Any")
             } else 0
+            autoPlayLimits = com.arflix.tv.data.model.AutoplayLimits(
+                maximumQuality = prefs[profileManager.profileStringKey("auto_play_max_quality")] ?: "Unlimited",
+                maximumSizeGb = prefs[profileManager.profileIntKey("auto_play_max_size_gb")] ?: 0
+            )
             val subSize = prefs[profileManager.profileStringKey("subtitle_size")] ?: "Medium"
             val subSizePct = prefs[profileManager.profileIntKey("subtitle_size_pct")] ?: when (subSize.lowercase()) {
                 "small" -> 80
@@ -1206,13 +1212,14 @@ class PlayerViewModel @Inject constructor(
                         preferredLanguage
                     )
                     lastMergedStreams = mergedStreams
-                    val autoplayStreams = eligiblePlayerAutoplayStreams(mergedStreams, autoPlayMinimumQuality)
+                    val autoplayStreams = eligiblePlayerAutoplayStreams(mergedStreams, autoPlayMinimumQuality, autoPlayLimits)
 
                     val supplementalSourcesStillLoading =
                         homeServerAppendJob?.isActive == true || vodAppendJob?.isActive == true
                     val availability = playerAutoplayAvailability(
                         streams = mergedStreams,
                         minimumQuality = autoPlayMinimumQuality,
+                        limits = autoPlayLimits,
                         searchActive = !progressive.isFinal || supplementalSourcesStillLoading,
                         hasSelection = !canStartAutoplay()
                     )
@@ -1310,7 +1317,7 @@ class PlayerViewModel @Inject constructor(
                                         preferredLanguage
                                     )
                                 }
-                                if (eligiblePlayerAutoplayStreams(snapshot, autoPlayMinimumQuality).isNotEmpty()) {
+                                if (eligiblePlayerAutoplayStreams(snapshot, autoPlayMinimumQuality, autoPlayLimits).isNotEmpty()) {
                                     autoplaySelected = true
                                     Log.i(
                                         TAG,
@@ -2237,10 +2244,20 @@ class PlayerViewModel @Inject constructor(
         return out
     }
 
+    fun isEligibleForAutomaticPlayback(stream: StreamSource): Boolean =
+        currentIsLiveStreamPlayback ||
+            com.arflix.tv.ui.screens.details.matchesAutoplayLimits(stream, autoPlayMinimumQuality, autoPlayLimits)
+
+    fun acknowledgeAutoplayNoMatch() {
+        if (_uiState.value.error == PlayerMessage.Res(R.string.stream_no_sources_match)) {
+            _uiState.value = _uiState.value.copy(error = null)
+        }
+    }
+
     private fun autoplaySelectBest(streams: List<StreamSource>, preferredLanguage: String) {
         if (!canStartAutoplay()) return
         val healthyStreams = sortStreamsByQualityAndSize(
-            eligiblePlayerAutoplayStreams(streams, autoPlayMinimumQuality), preferredLanguage
+            eligiblePlayerAutoplayStreams(streams, autoPlayMinimumQuality, autoPlayLimits), preferredLanguage
         )
         if (healthyStreams.isEmpty()) return
         val hasExplicitPreferred =
@@ -2402,7 +2419,9 @@ class PlayerViewModel @Inject constructor(
 
     private fun prewarmTopStreams(streams: List<StreamSource>, preferredLanguage: String) {
         if (streams.isEmpty()) return
-        val topStreams = sortStreamsForAutoplay(streams, preferredLanguage).take(3)
+        val topStreams = sortStreamsForAutoplay(
+            eligiblePlayerAutoplayStreams(streams, autoPlayMinimumQuality, autoPlayLimits), preferredLanguage
+        ).take(3)
         val prewarmKey = topStreams.joinToString("|") { stream ->
             "${stream.addonId}:${stream.source}:${stream.url?.substringBefore('|')?.substringBefore('#')}"
         }
@@ -6005,7 +6024,7 @@ class PlayerViewModel @Inject constructor(
                 streamProgress = null,
                 streamLoadPhase = null,
                 error = if (!stillActive && canStartAutoplay() &&
-                    eligiblePlayerAutoplayStreams(state.streams, autoPlayMinimumQuality).isEmpty()
+                    eligiblePlayerAutoplayStreams(state.streams, autoPlayMinimumQuality, autoPlayLimits).isEmpty()
                 ) PlayerMessage.Res(R.string.stream_no_sources_match) else state.error
             )
             return
@@ -6244,7 +6263,10 @@ class PlayerViewModel @Inject constructor(
             )
             prewarmTopStreams(sortedStreams, preferredLanguage)
             if (shouldAutoplay) {
-                pickPreferredStream(sortedStreams, preferredLanguage)?.let { selectStream(it) }
+                autoplaySelectBest(sortedStreams, preferredLanguage)
+                if (eligiblePlayerAutoplayStreams(sortedStreams, autoPlayMinimumQuality, autoPlayLimits).isEmpty()) {
+                    _uiState.value = _uiState.value.copy(error = PlayerMessage.Res(R.string.stream_no_sources_match))
+                }
             }
             // Re-run subtitle selection if stream source just became known
             if (prevSource.isBlank() && newSource.isNotBlank()) {

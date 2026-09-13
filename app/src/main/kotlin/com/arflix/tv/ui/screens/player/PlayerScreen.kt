@@ -883,6 +883,7 @@ fun PlayerScreen(
                 .firstOrNull { idx ->
                     val candidate = streams[idx]
                     candidate.url?.isNotBlank() == true &&
+                        viewModel.isEligibleForAutomaticPlayback(candidate) &&
                         idx !in triedStreamIndexes &&
                         (skipAddonId.isNullOrBlank() || candidate.addonId != skipAddonId) &&
                         !viewModel.isPlaybackHostTemporarilyBad(candidate)
@@ -2955,6 +2956,12 @@ fun PlayerScreen(
 
     // Close menus and pause playback when an error occurs so the error overlay is prominent and idle
     LaunchedEffect(uiState.error) {
+        if (uiState.error == PlayerMessage.Res(R.string.stream_no_sources_match) && uiState.streams.isNotEmpty()) {
+            showSourceMenu = true
+            showControls = true
+            viewModel.acknowledgeAutoplayNoMatch()
+            return@LaunchedEffect
+        }
         if (uiState.error != null) {
             showSourceMenu = false
             showSubtitleMenu = false
@@ -2993,6 +3000,10 @@ fun PlayerScreen(
     }
 
     BackHandler(enabled = showSourceMenu) {
+        if (uiState.selectedStreamUrl.isNullOrBlank()) {
+            onExitPlayer()
+            return@BackHandler
+        }
         showSourceMenu = false
         showControls = true
         coroutineScope.launch {
@@ -3394,6 +3405,10 @@ fun PlayerScreen(
                     // Handle source menu
                     if (showSourceMenu) {
                         if (event.key == Key.Back || event.key == Key.Escape) {
+                            if (uiState.selectedStreamUrl.isNullOrBlank()) {
+                                onExitPlayer()
+                                return@onKeyEvent true
+                            }
                             showSourceMenu = false
                             showControls = true
                             coroutineScope.launch {
@@ -4581,6 +4596,10 @@ fun PlayerScreen(
                     }
                 },
                 onClose = {
+                    if (uiState.selectedStreamUrl.isNullOrBlank()) {
+                        onExitPlayer()
+                        return@StreamSelector
+                    }
                     showSourceMenu = false
                     showControls = true
                     coroutineScope.launch {

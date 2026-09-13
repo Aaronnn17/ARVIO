@@ -131,6 +131,9 @@
     <string name="auto_play_next_title">Auto-Play Next</string>
     <string name="autoplay">Autoplay</string>
     <string name="auto_play_min_quality">Auto-Play Min Quality</string>
+    <string name="auto_play_max_quality">Auto-Play Max Quality</string>
+    <string name="auto_play_max_size">Auto-Play Max File Size</string>
+    <string name="autoplay_unlimited">Unlimited</string>
     <string name="trailer_auto_play">Trailer Auto-Play</string>
     <string name="frame_rate">Match Frame Rate</string>
     <string name="quality_filters">Quality Regex Filters</string>
