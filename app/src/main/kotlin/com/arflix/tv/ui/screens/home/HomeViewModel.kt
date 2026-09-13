@@ -1112,7 +1112,10 @@ class HomeViewModel @Inject constructor(
             .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
         val language = mediaRepository.contentLanguage
             .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
-        return java.io.File(context.filesDir, "home_continue_watching_${profileId}_$language.json")
+        // v2 invalidates the old snapshot, which could contain a mixed or
+        // truncated provider result and would otherwise paint before Trakt
+        // had a chance to publish the corrected list.
+        return java.io.File(context.filesDir, "home_continue_watching_v2_${profileId}_$language.json")
     }
 
     private suspend fun applyContentLanguageFromPrefs(): String {

@@ -242,9 +242,24 @@ export class TraktClient {
       specials: String(includeSpecials),
       count_specials: String(includeSpecials)
     });
-    const progress = await this.trakt<unknown>(`/shows/${traktShowId}/progress/watched?${query.toString()}`, {
-      headers: { "x-user-token": token.access_token }
-    });
+    let progress: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        progress = await this.trakt<unknown>(`/shows/${traktShowId}/progress/watched?${query.toString()}`, {
+          headers: { "x-user-token": token.access_token }
+        });
+        break;
+      } catch (error) {
+        const status = error instanceof HttpError ? error.status : 0;
+        if (attempt >= 2 || (status !== 429 && (status < 500 || status > 599))) throw error;
+        const retryAfter = error instanceof HttpError ? Number(error.retryAfter) : 0;
+        const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(5_000, Math.max(200, retryAfter * 1_000))
+          : 400 * (attempt + 1);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    if (progress === undefined) return null;
     writeProgressCache(token.access_token, traktShowId, includeSpecials, progress, activityKey);
     return progress;
   }
@@ -506,6 +521,13 @@ export class TraktClient {
     const promise = this.refreshToken();
     this.refreshInFlight = { profileId, token, promise };
     try { return await promise; }
+    catch (error) {
+      // A rejected refresh token is not a temporary empty-library result.
+      // Clear it so the UI cannot keep advertising Trakt as connected while
+      // Continue Watching falls back to a stale snapshot.
+      if (error instanceof HttpError && (error.status === 401 || error.status === 403)) this.setToken(null);
+      throw error;
+    }
     finally { if (this.refreshInFlight?.promise === promise) this.refreshInFlight = null; }
   }
 

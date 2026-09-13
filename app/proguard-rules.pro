@@ -79,6 +79,12 @@
 -keep class com.arflix.tv.data.model.** { *; }
 -keep class com.arflix.tv.data.api.** { *; }
 
+# Complete sports catalogue cache is deserialized reflectively in signed builds.
+-keep class com.arflix.tv.ui.screens.tv.live.SportsScheduleSnapshot { *; }
+-keep class com.arflix.tv.ui.screens.tv.live.SportsScheduleKey { *; }
+-keep class com.arflix.tv.ui.screens.tv.live.SportsGuideEvent { *; }
+-keep enum com.arflix.tv.ui.screens.tv.live.GuideSport { *; }
+
 # Keep generic type information for Gson
 -keep class com.google.gson.reflect.TypeToken { *; }
 -keep class * extends com.google.gson.reflect.TypeToken

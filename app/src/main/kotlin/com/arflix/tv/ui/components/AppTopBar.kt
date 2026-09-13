@@ -201,7 +201,7 @@ private fun TopBarNavChip(
             isSelected -> Color.White.copy(alpha = 0.1f)
             else -> Color.Transparent
         },
-        animationSpec = tween(AnimationConstants.DURATION_FAST),
+        animationSpec = tween(if (isFocused) AnimationConstants.DURATION_FAST else 0),
         label = "topbar_chip_bg"
     )
     val iconColor by animateColorAsState(
@@ -210,7 +210,7 @@ private fun TopBarNavChip(
             isSelected -> accent  // selected icon gets accent
             else -> Color.White.copy(alpha = 0.62f)
         },
-        animationSpec = tween(AnimationConstants.DURATION_FAST),
+        animationSpec = tween(if (isFocused) AnimationConstants.DURATION_FAST else 0),
         label = "topbar_icon_color"
     )
     val textColor by animateColorAsState(
@@ -219,12 +219,12 @@ private fun TopBarNavChip(
             isSelected -> accent  // selected text gets accent
             else -> Color.White.copy(alpha = 0.68f)
         },
-        animationSpec = tween(AnimationConstants.DURATION_FAST),
+        animationSpec = tween(if (isFocused) AnimationConstants.DURATION_FAST else 0),
         label = "topbar_text_color"
     )
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.05f else 1f,
-        animationSpec = spring(dampingRatio = 0.75f, stiffness = 400f),
+        animationSpec = tween(if (isFocused) 100 else 0),
         label = "topbar_scale"
     )
     val label = if (item == SidebarItem.TV) {
@@ -282,7 +282,7 @@ private fun TopBarSettingsGear(
             isSelected -> accent  // selected settings gear gets accent
             else -> Color.White.copy(alpha = 0.5f)
         },
-        animationSpec = tween(AnimationConstants.DURATION_FAST),
+        animationSpec = tween(if (isFocused) AnimationConstants.DURATION_FAST else 0),
         label = "topbar_settings_color"
     )
     val containerColor by animateColorAsState(
@@ -291,12 +291,12 @@ private fun TopBarSettingsGear(
             isSelected -> Color.White.copy(alpha = 0.1f)
             else -> Color.Transparent
         },
-        animationSpec = tween(AnimationConstants.DURATION_FAST),
+        animationSpec = tween(if (isFocused) AnimationConstants.DURATION_FAST else 0),
         label = "topbar_settings_bg"
     )
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.08f else 1f,
-        animationSpec = spring(dampingRatio = 0.75f, stiffness = 400f),
+        animationSpec = tween(if (isFocused) 100 else 0),
         label = "topbar_settings_scale"
     )
 
@@ -345,12 +345,12 @@ private fun TopBarProfileAvatar(
 ) {
     val containerColor by animateColorAsState(
         targetValue = if (isFocused) Color.White.copy(alpha = 0.2f) else Color.Transparent,
-        animationSpec = tween(AnimationConstants.DURATION_FAST),
+        animationSpec = tween(if (isFocused) AnimationConstants.DURATION_FAST else 0),
         label = "topbar_profile_bg"
     )
     val scale by animateFloatAsState(
         targetValue = if (isFocused) 1.08f else 1f,
-        animationSpec = spring(dampingRatio = 0.75f, stiffness = 400f),
+        animationSpec = tween(if (isFocused) 100 else 0),
         label = "topbar_profile_scale"
     )
 

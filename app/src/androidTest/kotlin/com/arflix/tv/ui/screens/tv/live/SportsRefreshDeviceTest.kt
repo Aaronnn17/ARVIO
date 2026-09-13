@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.tv.live
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.arflix.tv.data.model.IptvChannel
@@ -12,9 +13,72 @@ import org.junit.Test
 import org.junit.After
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
+import org.junit.Assert.assertTrue
 
 class SportsRefreshDeviceTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun focusRemainsVisibleOnWhiteArtwork() {
+        compose.setContent {
+            Box(Modifier.size(160.dp, 90.dp).testTag("white-art")
+                .liveFocusOutline(true, 4.dp).background(Color.White))
+        }
+        compose.waitForIdle()
+        val pixels = compose.onNodeWithTag("white-art").captureToImage().toPixelMap()
+        val y = pixels.height / 2
+        assertTrue("White outer focus line", pixels[(pixels.width / 160f).toInt(), y].red > .9f)
+        assertTrue("Dark contrasting inner line", pixels[(pixels.width * 4 / 160f).toInt(), y].red < .25f)
+        assertTrue("Artwork is unchanged inside the border", pixels[(pixels.width * 12 / 160f).toInt(), y].red > .9f)
+    }
+
+    @Test fun upcomingEventShowsChannelCountAndScheduledChannelNames() {
+        val now = System.currentTimeMillis()
+        val channel = IptvChannel("test:future", "Broadcaster HD", "https://example.invalid/not-played", "Sports")
+        val programme = IptvProgram("Upcoming fixture", startUtcMillis = now + 3600000, endUtcMillis = now + 7200000)
+        val event = SportsGuideEvent("future", programme.title, GuideSport.BOXING, programme, listOf(channel))
+        compose.setContent { SportsGuidePane(listOf(event), now, false, 0, {}, {}, {}, Modifier.fillMaxSize()) }
+        compose.waitUntil(5000) { compose.onAllNodesWithTag("sports-event-card").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("1 channel").assertIsDisplayed()
+        compose.onNodeWithTag("sports-event-card").performClick()
+        compose.onNodeWithText("Scheduled channels").assertIsDisplayed()
+        compose.onNodeWithText("Broadcaster HD").assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun remoteMovesAcrossOffscreenRowsDuringMetadataRefresh() {
+        val now = System.currentTimeMillis()
+        val channel = IptvChannel("test:remote", "Sports", "https://example.invalid/not-played", "Sports")
+        val schedule = GuideSport.entries.mapIndexed { index, sport ->
+            val programme = IptvProgram("${sport.title} event", startUtcMillis = now - 60000, endUtcMillis = now + 3600000)
+            SportsGuideEvent("remote:$index", programme.title, sport, programme, listOf(channel))
+        }
+        val events = mutableStateOf(schedule)
+        compose.setContent { SportsGuidePane(events.value, now, false, 1, {}, {}, {}, Modifier.fillMaxSize()) }
+        compose.waitUntil(5000) { compose.onAllNodesWithTag("sports-event-card").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(5000) { compose.onAllNodes(isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        repeat(GuideSport.entries.size - 1) { index ->
+            compose.onNode(isFocused()).performKeyInput { pressKey(Key.DirectionDown) }
+            compose.waitForIdle()
+            if (index % 3 == 0) {
+                compose.runOnIdle { events.value = events.value.map { it.copy(prominence = index) } }
+                compose.waitForIdle()
+            }
+        }
+        compose.onNodeWithTag("sports-guide-list").assertIsDisplayed()
+        compose.onNode(isFocused()).assert(hasText("Other sports event"))
+        repeat(GuideSport.entries.size - 1) {
+            compose.onNode(isFocused()).performKeyInput { pressKey(Key.DirectionUp) }
+            compose.waitForIdle()
+        }
+        compose.onNode(isFocused()).assertExists()
+    }
 
     @After fun captureUiState() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()

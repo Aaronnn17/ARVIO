@@ -9,6 +9,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 
 /** Animate only drawing: focus must not resize or remeasure guide content. */
@@ -21,8 +22,17 @@ internal fun Modifier.liveFocusOutline(focused: Boolean, radius: Dp): Modifier {
     )
     return drawWithContent {
         drawContent()
-        if (alpha.value > 0f) {
+        if (focused) {
             val stroke = LiveDims.FocusBorder.toPx()
+            // A dark inner keyline keeps the white focus ring visible on white artwork.
+            val contrastStroke = stroke * 3f
+            drawRoundRect(
+                color = Color.Black.copy(alpha = alpha.value * .9f),
+                topLeft = Offset(contrastStroke / 2f, contrastStroke / 2f),
+                size = Size((size.width - contrastStroke).coerceAtLeast(0f), (size.height - contrastStroke).coerceAtLeast(0f)),
+                cornerRadius = CornerRadius((radius.toPx() - contrastStroke / 2f).coerceAtLeast(0f)),
+                style = Stroke(contrastStroke),
+            )
             drawRoundRect(
                 color = LiveColors.FocusRing.copy(alpha = alpha.value),
                 topLeft = Offset(stroke / 2f, stroke / 2f),

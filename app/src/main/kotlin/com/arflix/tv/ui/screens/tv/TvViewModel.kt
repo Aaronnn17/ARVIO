@@ -120,6 +120,19 @@ class TvViewModel @Inject constructor(
     suspend fun loadSportsGuideArtwork() = sportsRepository.loadGuideArtwork()
     suspend fun cachedSportsMetadata() = sportsRepository.cachedMetadata()
     internal var cachedSportsSchedule: com.arflix.tv.ui.screens.tv.live.SportsScheduleSnapshot? = null
+    private val sportsCatalogueDisk by lazy {
+        // Internal UI model field names may change between signed builds.
+        val installedAt = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime
+        com.arflix.tv.ui.screens.tv.live.SportsCatalogueDiskCache(java.io.File(context.cacheDir, "sports-catalogue-$installedAt.json.gz"))
+    }
+    internal suspend fun restoreSportsCatalogue(key: com.arflix.tv.ui.screens.tv.live.SportsScheduleKey) =
+        withContext(Dispatchers.IO) { sportsCatalogueDisk.read(key) }
+    internal suspend fun saveSportsCatalogue(snapshot: com.arflix.tv.ui.screens.tv.live.SportsScheduleSnapshot) =
+        withContext(Dispatchers.IO) {
+            runCatching { sportsCatalogueDisk.write(snapshot) }
+                .onFailure { System.err.println("[Sports-Cache] save failed: ${it.javaClass.simpleName}") }
+            Unit
+        }
     suspend fun loadSportsMetadata() = sportsRepository.loadMetadata()
     suspend fun loadSportsAddonArtwork() = sportsRepository.loadAddonGuideArtwork()
     fun sportsClockFormat(profileId: String?) = context.settingsDataStore.data.map { prefs ->

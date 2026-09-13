@@ -6,6 +6,56 @@ import org.junit.Test
 import java.time.Instant
 
 class SportsCatalogueTest {
+    @Test fun scheduledEventsDoNotDisappearWhenTheLiveStatusFeedIsLate() {
+        val started = art.copy(startsAt = now - 60_000, fixture = fixture.copy(status = "scheduled"))
+        val event = buildSportsCatalogue(emptyList(), listOf(started), listOf(channel), now).single()
+        assertFalse(event.isOnAir(now))
+        assertTrue(event.isScheduledNow(now))
+        assertTrue(sportsGuideRows(listOf(event), now).any { it.id == "scheduled-now" })
+        assertFalse(event.isScheduledNow(now + 4 * 3600_000L))
+        assertFalse(event.copy(fixture = fixture.copy(status = "finished")).isScheduledNow(now))
+    }
+    @Test fun fastChannelNormalizationKeepsUnicodeAndEventPrefixSemantics() {
+        assertEquals("nl espn 2", sportsChannelKey("NL| ESPN2 FHD"))
+        assertEquals("fr equipe", sportsChannelKey("FR| Équipe HD"))
+        assertEquals("uk tnt sports 2", sportsChannelKey("UK-NOWTV| TNT SPORT 2 FHD"))
+        assertEquals("a vs b", sportsChannelKey("Live: Football: A versus B"))
+        assertEquals("us paramount plus", sportsChannelKey("US| Paramount+ HD"))
+    }
+    @Test fun sportsPrefilterPreservesAllSportTermsAndMixedPriority() {
+        for (sport in GuideSport.entries.filter { it != GuideSport.OTHER }) {
+            assertNotNull(sport.title, GuideSport.fromText("Provider | ${sport.title} HD"))
+        }
+        assertEquals(GuideSport.AMERICAN_FOOTBALL, GuideSport.fromText("Football / NFL"))
+        assertEquals(GuideSport.AUSTRALIAN_FOOTBALL, GuideSport.fromText("Australian football"))
+        assertNull(GuideSport.fromText("NL | General entertainment 4K"))
+    }
+    @Test fun broadcasterCountriesOutsideTheOldRegionalTableMatchPrecisely() {
+        assertTrue(sportsChannelKey("RS| Arena Adrenalin HD") in sportsBroadcasterKeys("Arena Adrenalin RS", "Serbia"))
+        assertTrue(sportsChannelKey("HR| Arena Sport 2 FHD") in sportsBroadcasterKeys("Arena Sport 2", "Croatia"))
+        assertFalse(sportsChannelKey("RS| Arena Sport 2") in sportsBroadcasterKeys("Arena Sport 2", "Croatia"))
+        assertFalse(sportsChannelKey("HR| Arena Sport 3") in sportsBroadcasterKeys("Arena Sport 2", "Croatia"))
+    }
+    @Test fun liveSportsChannelsAreNotSilentlyTruncatedAtTwelve() {
+        val events = (1..40).map { epg.copy(id = "live-channel:$it", channelOnly = true) }
+        val rows = sportsGuideRows(events, now)
+        assertEquals(40, rows.single { it.id == "live-channels" }.events.size)
+    }
+    @Test fun fightingFeedUsesBoxingLeagueAndKeepsEventPosterAndBroadcasters() {
+        val boxing = art.copy(title = "Ryan Garcia vs Conor Benn", genres = listOf("Fighting"),
+            background = "https://r2.thesportsdb.com/images/media/event/thumb/fight.jpg",
+            fixture = fixture.copy(league = "Boxing", broadcasters = listOf(
+                SportsBroadcaster("DAZN UK", "United Kingdom", art.startsAt!!))))
+        val station = channel.copy(name = "UK | DAZN FHD")
+        val result = buildSportsCatalogue(emptyList(), listOf(boxing), listOf(station), now).single()
+        assertEquals(GuideSport.BOXING, result.sport)
+        assertEquals(listOf(station), result.possibleChannels)
+        assertTrue(result.hasEventArtwork)
+        assertEquals(2, sportsPresentationRows(listOf(result), now, emptySet()).size)
+        assertFalse(sportsChannelKey("DE | DAZN") in sportsBroadcasterKeys("DAZN UK", "United Kingdom"))
+        assertFalse(sportsChannelKey("US | Paramount HD") in sportsBroadcasterKeys("Paramount+ US", "United States"))
+        assertTrue(sportsChannelKey("US | Paramount Plus HD") in sportsBroadcasterKeys("Paramount+ US", "United States"))
+    }
     @Test fun largeBroadcastFeedKeepsEveryFixtureAndProviderVariant() {
         val variants = (1..40).map { channel.copy(id = "provider:$it") }
         val repeated = List(200) { fixture.broadcasters.single() }

@@ -80,6 +80,51 @@ class RemoteSyncManagerTest {
     }
 
     @Test
+    fun traktUpNextKeepsItsActivityOrderingWhenSimklHasNoTimestamp() = runBlocking {
+        coEvery { store.readProviders(TrackingFeature.CONTINUE_WATCHING) } returns
+            setOf(SyncProvider.TRAKT, SyncProvider.SIMKL)
+        coEvery { trakt.getContinueWatching(false) } returns listOf(
+            ContinueWatchingItem(
+                7, "Show", MediaType.TV, 20,
+                season = 1, episode = 10, updatedAtMs = 1_000
+            )
+        )
+        coEvery { simkl.getContinueWatching(false) } returns listOf(
+            ContinueWatchingItem(
+                7, "Show", MediaType.TV, 55,
+                season = 1, episode = 9, updatedAtMs = 0
+            )
+        )
+
+        val result = manager.getContinueWatching()
+
+        assertEquals(1, result.size)
+        assertEquals(10, result.single().episode)
+        assertEquals(20, result.single().progress)
+    }
+
+    @Test
+    fun traktPlaybackKeepsItsActivityOrderingWhenSimklHasAnotherEpisode() = runBlocking {
+        coEvery { store.readProviders(TrackingFeature.CONTINUE_WATCHING) } returns
+            setOf(SyncProvider.TRAKT, SyncProvider.SIMKL)
+        coEvery { trakt.getContinueWatching(false) } returns listOf(
+            ContinueWatchingItem(
+                8, "Movie", MediaType.MOVIE, 30, updatedAtMs = 2_000
+            )
+        )
+        coEvery { simkl.getContinueWatching(false) } returns listOf(
+            ContinueWatchingItem(
+                8, "Movie", MediaType.MOVIE, 70, updatedAtMs = 0
+            )
+        )
+
+        val result = manager.getContinueWatching()
+
+        assertEquals(1, result.size)
+        assertEquals(30, result.single().progress)
+    }
+
+    @Test
     fun continueWatchingConnectivityUsesItsOwnProviderSelection() = runBlocking {
         coEvery { store.readProviders(TrackingFeature.CONTINUE_WATCHING) } returns setOf(SyncProvider.TRAKT)
 

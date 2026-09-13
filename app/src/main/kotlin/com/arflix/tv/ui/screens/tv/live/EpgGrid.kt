@@ -275,6 +275,10 @@ fun EpgGrid(
         val currentTargetIdx = nearestProgramIndex(rowIdx, anchorStartMin, preferLive)
         val directRequester = currentTargetIdx?.let { programFocusRequesters[channel.id]?.getOrNull(it) }
         if (directRequester != null && runCatching { directRequester.requestFocus() }.isSuccess) {
+            focusJob = scope.launch {
+                androidx.compose.runtime.withFrameNanos { }
+                revealRow(rowIdx)
+            }
             return true
         }
         focusJob = scope.launch {
@@ -306,6 +310,12 @@ fun EpgGrid(
             else null
         if (directRequester != null && runCatching { directRequester.requestFocus() }.isSuccess) {
             pendingChannelFocusId = null
+            // An attached row may still be clipped. Use the same short, cancellable
+            // reveal as offscreen rows instead of leaving a long default focus spring.
+            focusJob = scope.launch {
+                androidx.compose.runtime.withFrameNanos { }
+                revealRow(rowIdx)
+            }
             return true
         }
         focusJob = scope.launch {

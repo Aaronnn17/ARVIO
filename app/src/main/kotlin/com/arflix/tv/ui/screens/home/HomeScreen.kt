@@ -1725,11 +1725,9 @@ private fun HeroSection(
                     context.cleanOverviewText(overviewOverride ?: currentItem.overview)
                 }
 
-                val overviewMaxHeight = if (isCompactHeight) 38.dp else 56.dp
                 Box(
                     modifier = Modifier
                         .width(heroTextWidth)
-                        .heightIn(max = overviewMaxHeight)
                 ) {
                     Text(
                         text = displayOverview,
@@ -1740,7 +1738,7 @@ private fun HeroSection(
                             shadow = textShadow
                         ),
                         color = Color.White.copy(alpha = 0.9f),
-                        maxLines = if (isCompactHeight) 2 else 3,
+                        maxLines = if (configuration.screenHeightDp < 450) 3 else 4,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

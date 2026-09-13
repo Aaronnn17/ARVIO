@@ -13,7 +13,8 @@ import java.time.ZoneId
 import java.util.Locale
 
 internal data class SportsScheduleKey(val profileId: String?, val providerId: String,
-    val sourceVersion: Long, val excludedGroups: Set<String>, val epgBackfill: Boolean, val window: Long)
+    val sourceVersion: Long, val excludedGroups: Set<String>, val epgBackfill: Boolean, val window: Long,
+    val guideCoverage: Int = 0)
 internal data class SportsScheduleSnapshot(val key: SportsScheduleKey, val events: List<SportsGuideEvent>)
 
 /**
@@ -62,6 +63,10 @@ internal data class SportsGuideEvent(
     fun isOnAir(now: Long) = fixture?.status !in setOf("finished", "postponed") &&
         (isConfirmedLive(now) || if (schedules.isEmpty()) programme.isLive(now) else schedules.values.any { it.isLive(now) })
     fun availableChannels(now: Long) = channels.filter { (schedules[it.id] ?: programme).isLive(now) }
+    // A delayed status feed must not make an event disappear at its start time.
+    // This is deliberately separate from LIVE; the broadcaster is not a stream probe.
+    fun isScheduledNow(now: Long) = fixture?.status == "scheduled" && !isOnAir(now) &&
+        now - programme.startUtcMillis in 0 until 4 * 60 * 60_000L
     fun hasChannels(now: Long) = (if (isOnAir(now)) availableChannels(now) else channels).isNotEmpty() || possibleChannels.isNotEmpty()
 }
 
@@ -108,8 +113,11 @@ internal enum class GuideSport(val title: String, val asset: String, val terms: 
     companion object {
         private val priority = listOf(AMERICAN_FOOTBALL, AUSTRALIAN_FOOTBALL, BASKETBALL, F1, MOTORSPORT, TENNIS, MMA, BOXING,
             CRICKET, BASEBALL, HOCKEY, RUGBY, GOLF, SNOOKER, DARTS, CYCLING, ATHLETICS, VOLLEYBALL, HANDBALL, FOOTBALL)
+        private val anySport = Regex(priority.joinToString("|") { it.terms.pattern })
         fun fromText(text: String): GuideSport? {
             val value = text.lowercase(Locale.ROOT)
+            // Most provider labels are not sports. One negative scan replaces twenty.
+            if (!anySport.containsMatchIn(value)) return null
             // Specific football codes must win over the generic word football.
             return priority.firstOrNull { it.terms.containsMatchIn(value) }
         }
@@ -304,16 +312,19 @@ internal fun sportsGuideRows(events: List<SportsGuideEvent>, now: Long,
         .thenBy { it.programme.startUtcMillis }.thenBy { it.id })
     val verifiedLive = live.filterNot { it.channelOnly }
     val liveChannels = live.filter { it.channelOnly }
+    val scheduledNow = events.filter { it.isScheduledNow(now) }.sortedWith(
+        compareByDescending<SportsGuideEvent> { it.prominence }.thenBy { it.programme.startUtcMillis })
     return buildList {
         // EPG has no viewer metrics. Never call this popularity or confirmed live sport.
         if (verifiedLive.isNotEmpty()) add(SportsGuideRow("featured", "Featured live", verifiedLive.take(8)))
-        if (liveChannels.isNotEmpty()) add(SportsGuideRow("live-channels", "Live sports channels", liveChannels.take(12)))
+        if (liveChannels.isNotEmpty()) add(SportsGuideRow("live-channels", "Live sports channels", liveChannels))
         val upcoming = events.filter { it.programme.startUtcMillis > now && !it.isOnAir(now) &&
             day.includes(it.programme.startUtcMillis, now, zone) }
             .sortedWith(compareByDescending<SportsGuideEvent> { it.prominence }.thenBy { it.programme.startUtcMillis }.thenBy { it.id })
         if (upcoming.isNotEmpty()) add(SportsGuideRow("upcoming", "Upcoming highlights", upcoming.take(8)))
+        if (scheduledNow.isNotEmpty()) add(SportsGuideRow("scheduled-now", "Scheduled now", scheduledNow))
         GuideSport.entries.forEach { sport ->
-            val items = verifiedLive.filter { it.sport == sport } + upcoming.filter { it.sport == sport }.sortedBy { it.programme.startUtcMillis }
+            val items = verifiedLive.filter { it.sport == sport } + scheduledNow.filter { it.sport == sport } + upcoming.filter { it.sport == sport }.sortedBy { it.programme.startUtcMillis }
             if (items.isNotEmpty()) add(SportsGuideRow(sport.name, sport.title, items))
         }
     }
