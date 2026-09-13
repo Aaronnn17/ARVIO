@@ -7,7 +7,6 @@ import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.animateScrollBy
@@ -79,9 +78,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.LayoutDirection
@@ -98,7 +95,6 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.isPortrait
 import com.arflix.tv.ui.components.LoadingIndicator
-import com.arflix.tv.ui.components.movieGenreNameRes
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
@@ -111,7 +107,6 @@ import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
-import com.arflix.tv.ui.skin.resolveAccentColor
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundCard
 import com.arflix.tv.ui.theme.appBackgroundDark
@@ -120,17 +115,6 @@ import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.LocalDeviceType
-
-/**
- * Display-only localization of a TMDB genre chip label. [Genre.id] stays the key
- * the filter is compared and queried by; the English [Genre.name] is the fallback
- * for ids without a resource.
- */
-@Composable
-private fun Genre.localizedName(): String {
-    val res = movieGenreNameRes(id)
-    return if (res != null) stringResource(res) else name
-}
 
 /**
  * Display-only localization of the five discover row titles built in
@@ -221,100 +205,40 @@ fun SearchScreen(
     val resultsFocusRequester = remember { FocusRequester() }
     val textInputFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val actionGenre = remember { ALL_GENRES.firstOrNull { it.id == 28 } }
-    val comedyGenre = remember { ALL_GENRES.firstOrNull { it.id == 35 } }
-    val horrorGenre = remember { ALL_GENRES.firstOrNull { it.id == 27 } }
-    val sciFiGenre = remember { ALL_GENRES.firstOrNull { it.id == 878 } }
-    val japaneseCountry = remember { COUNTRIES.firstOrNull { it.code == "ja" } }
-    val koreanCountry = remember { COUNTRIES.firstOrNull { it.code == "ko" } }
-    val hindiCountry = remember { COUNTRIES.firstOrNull { it.code == "hi" } }
-    // The media type is mandatory while discovering (E2) — "All" is gone from this row,
-    // because a grid that pages through two merged sources loses TMDB's sort order.
-    // It stays untouched in the search state, where there is no grid.
-    val quickFilters = listOfNotNull(
-        DiscoverQuickFilter(
-            key = "movies",
-            label = stringResource(R.string.movies),
-            isSelected = uiState.selectedType == DiscoverType.MOVIES,
-            onSelect = { viewModel.selectType(DiscoverType.MOVIES) }
-        ),
-        DiscoverQuickFilter(
-            key = "shows",
-            label = stringResource(R.string.tv_shows),
-            isSelected = uiState.selectedType == DiscoverType.TV_SHOWS,
-            onSelect = { viewModel.selectType(DiscoverType.TV_SHOWS) }
-        ),
-        DiscoverQuickFilter(
-            key = "anime",
-            label = stringResource(R.string.search_filter_anime),
-            isSelected = uiState.selectedType == DiscoverType.ANIME,
-            onSelect = { viewModel.selectType(DiscoverType.ANIME) }
-        ),
-        actionGenre?.let { genre ->
-            DiscoverQuickFilter(
-                key = "genre_${genre.id}",
-                label = genre.localizedName(),
-                isSelected = uiState.selectedGenre?.id == genre.id,
-                // Tapping the set chip again clears it: with "All" gone, this is the only way
-                // back from a filtered grid to the browse rows.
-                onSelect = { viewModel.selectGenre(if (uiState.selectedGenre?.id == genre.id) null else genre) }
-            )
-        },
-        comedyGenre?.let { genre ->
-            DiscoverQuickFilter(
-                key = "genre_${genre.id}",
-                label = genre.localizedName(),
-                isSelected = uiState.selectedGenre?.id == genre.id,
-                // Tapping the set chip again clears it: with "All" gone, this is the only way
-                // back from a filtered grid to the browse rows.
-                onSelect = { viewModel.selectGenre(if (uiState.selectedGenre?.id == genre.id) null else genre) }
-            )
-        },
-        horrorGenre?.let { genre ->
-            DiscoverQuickFilter(
-                key = "genre_${genre.id}",
-                label = genre.localizedName(),
-                isSelected = uiState.selectedGenre?.id == genre.id,
-                // Tapping the set chip again clears it: with "All" gone, this is the only way
-                // back from a filtered grid to the browse rows.
-                onSelect = { viewModel.selectGenre(if (uiState.selectedGenre?.id == genre.id) null else genre) }
-            )
-        },
-        sciFiGenre?.let { genre ->
-            DiscoverQuickFilter(
-                key = "genre_${genre.id}",
-                label = genre.localizedName(),
-                isSelected = uiState.selectedGenre?.id == genre.id,
-                // Tapping the set chip again clears it: with "All" gone, this is the only way
-                // back from a filtered grid to the browse rows.
-                onSelect = { viewModel.selectGenre(if (uiState.selectedGenre?.id == genre.id) null else genre) }
-            )
-        },
-        japaneseCountry?.let { country ->
-            DiscoverQuickFilter(
-                key = "country_${country.code}",
-                label = country.name,
-                isSelected = uiState.selectedCountry?.code == country.code,
-                onSelect = { viewModel.selectCountry(if (uiState.selectedCountry?.code == country.code) null else country) }
-            )
-        },
-        koreanCountry?.let { country ->
-            DiscoverQuickFilter(
-                key = "country_${country.code}",
-                label = country.name,
-                isSelected = uiState.selectedCountry?.code == country.code,
-                onSelect = { viewModel.selectCountry(if (uiState.selectedCountry?.code == country.code) null else country) }
-            )
-        },
-        hindiCountry?.let { country ->
-            DiscoverQuickFilter(
-                key = "country_${country.code}",
-                label = country.name,
-                isSelected = uiState.selectedCountry?.code == country.code,
-                onSelect = { viewModel.selectCountry(if (uiState.selectedCountry?.code == country.code) null else country) }
-            )
-        }
+    val certifications = remember(viewModel) { certificationsForLanguage(viewModel.contentLanguage) }
+    // The panel that is open under a chip, and where the focus sits inside it. Both live here
+    // and not in the view model: nothing about an open panel survives leaving the screen.
+    var openPanel by remember { mutableStateOf<DiscoverFilterId?>(null) }
+    var panelFocusIndex by remember { mutableIntStateOf(0) }
+    val filterActions = remember(viewModel) {
+        DiscoverFilterActions(
+            onSelectType = viewModel::selectType,
+            onToggleGenre = viewModel::toggleGenre,
+            onMatchAllGenres = viewModel::setMatchAllGenres,
+            onSelectSort = viewModel::selectSort,
+            onSetRating = viewModel::setRating,
+            onSelectYear = viewModel::selectYear,
+            onSelectCertification = viewModel::selectCertification,
+            onToggleHideWatched = { viewModel.setHideWatched(!viewModel.uiState.value.hideWatched) },
+            onOpenPanel = { id ->
+                if (openPanel == id) {
+                    openPanel = null
+                    focusZone = FocusZone.FILTERS
+                } else {
+                    openPanel = id
+                    panelFocusIndex = 0
+                    focusZone = FocusZone.PANEL
+                }
+            }
+        )
+    }
+    val quickFilters = discoverChips(
+        state = uiState,
+        isSearching = false,
+        certifications = certifications,
+        actions = filterActions
     )
+    val openPanelSpec = openPanel?.let { filterPanelSpec(it, uiState, certifications, filterActions) }
     LaunchedEffect(quickFilters.size) {
         focusedFilterIndex = focusedFilterIndex.coerceIn(0, (quickFilters.size - 1).coerceAtLeast(0))
     }
@@ -386,20 +310,14 @@ fun SearchScreen(
     // on a TV screen, which is the whole point of a grid. Rows and the AI grid keep following
     // the setting.
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    // Card size and column count follow CollectionDetailsScreen — one surface for both devices.
-    val gridCardWidth = if (isTouchDevice) 138.dp else when {
-        configuration.screenWidthDp >= 2200 -> 196.dp
-        configuration.screenWidthDp >= 1600 -> 184.dp
-        else -> 172.dp
-    }
+    // Phone keeps the size it was tested with; the TV and desktop grid follows the approved
+    // design instead of CollectionDetailsScreen — see DiscoverGridLayout for why and by how much.
+    val screenWidthDp = configuration.screenWidthDp.dp
+    val gridCardWidth = if (isTouchDevice) 138.dp else discoverGridCardWidth(screenWidthDp)
     val gridColumns = if (isTouchDevice) {
         if (isLandscape) 4 else 3
     } else {
-        when {
-            configuration.screenWidthDp >= 2200 -> 8
-            configuration.screenWidthDp >= 1600 -> 7
-            else -> 5
-        }
+        discoverGridColumns(screenWidthDp, gridCardWidth)
     }
     LaunchedEffect(gridItems.size) {
         gridFocusIndex = gridFocusIndex.coerceIn(0, (gridItems.size - 1).coerceAtLeast(0))
@@ -418,12 +336,17 @@ fun SearchScreen(
             isSearchEditing = false
             keyboardController?.hide()
             runCatching { searchFocusRequester.requestFocus() }
+        } else if (openPanel != null) {
+            openPanel = null
+            focusZone = FocusZone.FILTERS
         } else {
             when (focusZone) {
+                // PANEL: the open panel is handled before this runs.
+                FocusZone.PANEL -> Unit
                 FocusZone.RESULTS -> {
                     if (showFilters && quickFilters.isNotEmpty()) {
                         focusZone = FocusZone.FILTERS
-                        val selectedIdx = quickFilters.indexOfFirst { it.isSelected }.coerceAtLeast(0)
+                        val selectedIdx = quickFilters.indexOfFirst { it.isSet }.coerceAtLeast(0)
                         focusedFilterIndex = if (focusedFilterIndex in quickFilters.indices) focusedFilterIndex else selectedIdx
                         runCatching { filtersFocusRequester.requestFocus() }
                     } else {
@@ -461,6 +384,46 @@ fun SearchScreen(
                 return@onPreviewKeyEvent true
             }
             if (isSearchEditing) return@onPreviewKeyEvent false
+            // An open panel owns every key until it is closed. Without this the chip row would
+            // move at the same time and the panel would end up describing a different chip.
+            if (focusZone == FocusZone.PANEL) {
+                val optionCount = openPanelSpec?.options?.size ?: 0
+                val columns = openPanelSpec?.columns ?: PANEL_COLUMNS
+                val panelHandled = when (event.key) {
+                    Key.Back, Key.Escape -> {
+                        openPanel = null
+                        focusZone = FocusZone.FILTERS
+                        true
+                    }
+                    Key.Enter, Key.DirectionCenter -> {
+                        openPanelSpec?.options?.getOrNull(panelFocusIndex)?.onToggle?.invoke()
+                        true
+                    }
+                    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight -> {
+                        val dx = when (event.key) {
+                            Key.DirectionLeft -> if (isRtl) 1 else -1
+                            Key.DirectionRight -> if (isRtl) -1 else 1
+                            else -> 0
+                        }
+                        val dy = when (event.key) {
+                            Key.DirectionUp -> -1
+                            Key.DirectionDown -> 1
+                            else -> 0
+                        }
+                        val next = movePanelFocus(panelFocusIndex, optionCount, columns, dx, dy)
+                        if (next == PANEL_FOCUS_LEAVE) {
+                            openPanel = null
+                            focusZone = FocusZone.FILTERS
+                        } else {
+                            panelFocusIndex = next
+                        }
+                        true
+                    }
+                    else -> false
+                }
+                if (panelHandled) consumedDpadKey = event.key
+                return@onPreviewKeyEvent panelHandled
+            }
             val effectiveKey = when (event.key) {
                 Key.DirectionLeft  -> if (isRtl) Key.DirectionRight else Key.DirectionLeft
                 Key.DirectionRight -> if (isRtl) Key.DirectionLeft  else Key.DirectionRight
@@ -468,10 +431,12 @@ fun SearchScreen(
             }
             val handled = when (effectiveKey) {
                 Key.Back, Key.Escape -> when (focusZone) {
+                    // PANEL: the open panel is handled before this runs.
+                    FocusZone.PANEL -> false
                     FocusZone.RESULTS -> {
                         if (showFilters && quickFilters.isNotEmpty()) {
                             focusZone = FocusZone.FILTERS
-                            val selectedIdx = quickFilters.indexOfFirst { it.isSelected }.coerceAtLeast(0)
+                            val selectedIdx = quickFilters.indexOfFirst { it.isSet }.coerceAtLeast(0)
                             focusedFilterIndex = if (focusedFilterIndex in quickFilters.indices) focusedFilterIndex else selectedIdx
                             runCatching { filtersFocusRequester.requestFocus() }
                         }
@@ -489,6 +454,8 @@ fun SearchScreen(
                     FocusZone.SIDEBAR -> { onBack(); true }
                 }
                 Key.DirectionUp -> when (focusZone) {
+                    // PANEL: the open panel is handled before this runs.
+                    FocusZone.PANEL -> false
                     FocusZone.SIDEBAR -> true
                     FocusZone.SEARCH_INPUT -> {
                         isSearchEditing = false
@@ -509,7 +476,7 @@ fun SearchScreen(
                         }
                         else if (showFilters && quickFilters.isNotEmpty()) {
                             focusZone = FocusZone.FILTERS
-                            val selectedIdx = quickFilters.indexOfFirst { it.isSelected }.coerceAtLeast(0)
+                            val selectedIdx = quickFilters.indexOfFirst { it.isSet }.coerceAtLeast(0)
                             focusedFilterIndex = if (focusedFilterIndex in quickFilters.indices) focusedFilterIndex else selectedIdx
                             runCatching { filtersFocusRequester.requestFocus() }
                             true
@@ -518,13 +485,15 @@ fun SearchScreen(
                     }
                 }
                 Key.DirectionDown -> when (focusZone) {
+                    // PANEL: the open panel is handled before this runs.
+                    FocusZone.PANEL -> false
                     FocusZone.SIDEBAR -> { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
                     FocusZone.SEARCH_INPUT -> {
                         isSearchEditing = false
                         keyboardController?.hide()
                         if (showFilters && quickFilters.isNotEmpty()) {
                             focusZone = FocusZone.FILTERS
-                            val selectedIdx = quickFilters.indexOfFirst { it.isSelected }.coerceAtLeast(0)
+                            val selectedIdx = quickFilters.indexOfFirst { it.isSet }.coerceAtLeast(0)
                             focusedFilterIndex = if (selectedIdx in quickFilters.indices) selectedIdx else 0
                             runCatching { filtersFocusRequester.requestFocus() }
                         }
@@ -557,6 +526,8 @@ fun SearchScreen(
                     }
                 }
                 Key.DirectionLeft -> when (focusZone) {
+                    // PANEL: the open panel is handled before this runs.
+                    FocusZone.PANEL -> false
                     FocusZone.SIDEBAR -> { if (sidebarFocusIndex > 0) sidebarFocusIndex--; true }
                     FocusZone.RESULTS -> {
                         if (hasAiResults) false
@@ -583,6 +554,8 @@ fun SearchScreen(
                     else -> false
                 }
                 Key.DirectionRight -> when (focusZone) {
+                    // PANEL: the open panel is handled before this runs.
+                    FocusZone.PANEL -> false
                     FocusZone.SIDEBAR -> { if (sidebarFocusIndex < maxSidebarIndex) sidebarFocusIndex++; true }
                     FocusZone.RESULTS -> {
                         if (hasAiResults) false // AI grid: let native focus handle navigation
@@ -610,6 +583,8 @@ fun SearchScreen(
                 }
                 Key.Enter, Key.DirectionCenter -> {
                     when (focusZone) {
+                        // PANEL: the open panel is handled before this runs.
+                        FocusZone.PANEL -> false
                         FocusZone.SIDEBAR -> {
                             if (hasProfile && sidebarFocusIndex == 0) onSwitchProfile()
                             else when (topBarFocusedItem(sidebarFocusIndex, hasProfile)) { SidebarItem.SEARCH -> Unit; SidebarItem.HOME -> onNavigateToHome(); SidebarItem.WATCHLIST -> onNavigateToWatchlist(); SidebarItem.TV -> onNavigateToTv(); SidebarItem.SETTINGS -> onNavigateToSettings(); null -> Unit }
@@ -622,7 +597,7 @@ fun SearchScreen(
                             true
                         }
                         FocusZone.FILTERS -> {
-                            quickFilters.getOrNull(focusedFilterIndex)?.onSelect?.invoke()
+                            quickFilters.getOrNull(focusedFilterIndex)?.onActivate?.invoke()
                             runCatching { filtersFocusRequester.requestFocus() }
                             true
                         }
@@ -709,7 +684,7 @@ fun SearchScreen(
                         keyboardController?.hide()
                         if (showFilters && quickFilters.isNotEmpty()) {
                             focusZone = FocusZone.FILTERS
-                            val selectedIdx = quickFilters.indexOfFirst { it.isSelected }.coerceAtLeast(0)
+                            val selectedIdx = quickFilters.indexOfFirst { it.isSet }.coerceAtLeast(0)
                             focusedFilterIndex = if (selectedIdx in quickFilters.indices) selectedIdx else 0
                             runCatching { filtersFocusRequester.requestFocus() }
                         } else if (canEnterResults) {
@@ -720,43 +695,31 @@ fun SearchScreen(
                 )
             }
 
-            // ── Filter Chips (discover mode) - focusable with D-pad ──
+            // ── Filter row (discover mode) — one painted focus, no native focus target ──
             if (showFilters) {
-                DiscoverFilterStrip(
-                    filters = quickFilters,
-                    focusZone = focusZone,
-                    focusedFilterIndex = focusedFilterIndex,
+                DiscoverFilterRow(
+                    chips = quickFilters,
+                    focusedIndex = focusedFilterIndex,
+                    isRowFocused = focusZone == FocusZone.FILTERS || focusZone == FocusZone.PANEL,
                     isTouchDevice = isTouchDevice,
-                    filtersFocusRequester = filtersFocusRequester,
                     modifier = Modifier
                         .align(Alignment.CenterHorizontally)
                         .padding(bottom = if (isTouchDevice) 4.dp else 0.dp),
-                    isRtl = isRtl,
-                    onFocused = { index ->
-                        focusZone = FocusZone.FILTERS
-                        focusedFilterIndex = index
-                    },
-                    onMoveUp = {
-                        focusZone = FocusZone.SEARCH_INPUT
-                        runCatching { searchFocusRequester.requestFocus() }
-                    },
-                    onMoveDown = {
-                        if (canEnterResults) {
-                            resultsLastNavEventTime = SystemClock.elapsedRealtime()
-                            focusZone = FocusZone.RESULTS
-                        }
-                    },
-                    onMoveLeft = {
-                        if (focusedFilterIndex > 0) {
-                            focusedFilterIndex--
-                        }
-                    },
-                    onMoveRight = {
-                        if (focusedFilterIndex < quickFilters.size - 1) {
-                            focusedFilterIndex++
-                        }
-                    }
+                    focusRequester = if (isTouchDevice) null else filtersFocusRequester
                 )
+                // On a TV the panel hangs under the row, as in the draft; on a phone it rises
+                // from the bottom edge. Same content either way — one surface, not two (E8).
+                openPanelSpec?.let { spec ->
+                    DiscoverFilterPanel(
+                        spec = spec,
+                        focusedOption = if (isTouchDevice) null else panelFocusIndex,
+                        isTouchDevice = isTouchDevice,
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .fillMaxWidth(if (isTouchDevice) 1f else 0.62f)
+                            .padding(horizontal = if (isTouchDevice) 12.dp else 0.dp, vertical = 4.dp)
+                    )
+                }
             }
 
             // ── Content ──
@@ -798,6 +761,10 @@ fun SearchScreen(
                     modifier = if (isTouchDevice) Modifier else Modifier.focusRequester(resultsFocusRequester).focusable(),
                     columns = gridColumns,
                     cardWidth = gridCardWidth,
+                    // One line with an ellipsis, as in the approved design. A second line would
+                    // make cards with long titles taller than their neighbours, and at 105 dp
+                    // that is most of them — the rows of the grid would stop lining up.
+                    titleMaxLines = 1,
                     manualFocusIndex = if (isTouchDevice) null else gridFocusIndex,
                     isZoneFocused = focusZone == FocusZone.RESULTS,
                     gridState = discoverGridState
@@ -825,15 +792,6 @@ fun SearchScreen(
 
     }
 }
-
-// ── Glow Chip ───────────────────────────────────────────────────────────────
-
-private data class DiscoverQuickFilter(
-    val key: String,
-    val label: String,
-    val isSelected: Boolean,
-    val onSelect: () -> Unit
-)
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -946,129 +904,6 @@ private fun SearchInputBar(
                 }
             )
         }
-    }
-}
-
-@Composable
-private fun DiscoverFilterStrip(
-    filters: List<DiscoverQuickFilter>,
-    focusZone: FocusZone,
-    focusedFilterIndex: Int,
-    isTouchDevice: Boolean,
-    modifier: Modifier = Modifier,
-    isRtl: Boolean = false,
-    filtersFocusRequester: FocusRequester? = null,
-    onFocused: (Int) -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-    onMoveLeft: () -> Unit,
-    onMoveRight: () -> Unit
-) {
-    if (filters.isEmpty()) return
-    val rowState = rememberLazyListState()
-
-    LaunchedEffect(focusedFilterIndex, filters.size) {
-        val target = focusedFilterIndex.coerceIn(0, (filters.size - 1).coerceAtLeast(0))
-        val first = rowState.firstVisibleItemIndex
-        val last = rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: first
-        if (target < first || target > last - 1) {
-            rowState.animateScrollToItem(target)
-        }
-    }
-
-    LazyRow(
-        state = rowState,
-        modifier = modifier
-            .padding(bottom = if (isTouchDevice) 8.dp else 8.dp)
-            .then(
-                if (!isTouchDevice && filtersFocusRequester != null) {
-                    Modifier
-                        .focusRequester(filtersFocusRequester)
-                        .focusable()
-                } else Modifier
-            )
-            .arvioDpadFocusGroup(),
-        horizontalArrangement = Arrangement.spacedBy(if (isTouchDevice) 8.dp else 9.dp),
-        contentPadding = PaddingValues(
-            start = if (isTouchDevice) 16.dp else 22.dp,
-            end = if (isTouchDevice) 16.dp else 22.dp,
-            top = 4.dp,
-            bottom = 4.dp
-        )
-    ) {
-        itemsIndexed(filters, key = { _, filter -> filter.key }) { index, filter ->
-            GlowChip(
-                label = filter.label,
-                isSelected = filter.isSelected,
-                isVisuallyFocused = !isTouchDevice && focusZone == FocusZone.FILTERS && focusedFilterIndex == index,
-                isTouchDevice = isTouchDevice,
-                modifier = Modifier.testTag("search-filter-${filter.key}"),
-                onSelect = filter.onSelect
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun GlowChip(
-    label: String,
-    isSelected: Boolean,
-    isVisuallyFocused: Boolean = false,
-    isTouchDevice: Boolean = false,
-    modifier: Modifier = Modifier,
-    onSelect: () -> Unit
-) {
-    val focused = isVisuallyFocused
-    val active = focused || isSelected
-    val chipShape = RoundedCornerShape(8.dp)
-    val accentColor = resolveAccentColor(fallback = Color.White)
-    val backgroundColor = when {
-        focused -> Color.White.copy(alpha = 0.16f)
-        isSelected -> Color.White.copy(alpha = 0.92f)
-        else -> Color.White.copy(alpha = 0.075f)
-    }
-    val borderColor = when {
-        focused -> accentColor
-        isSelected -> Color.White.copy(alpha = 0.92f)
-        else -> Color.White.copy(alpha = 0.24f)
-    }
-    Box(
-        modifier = modifier
-            .semantics(mergeDescendants = true) {
-                selected = isSelected
-                role = Role.Tab
-                // Accessibility activation must not add a second native D-pad focus target.
-                if (!isTouchDevice) onClick { onSelect(); true }
-            }
-            .padding(vertical = 2.dp)
-            .background(
-                color = backgroundColor,
-                shape = chipShape
-            )
-            .border(
-                width = if (focused) 2.5.dp else 1.dp,
-                color = borderColor,
-                shape = chipShape
-            )
-            .then(
-                if (isTouchDevice) Modifier.clickable { onSelect() } else Modifier
-            )
-            .padding(horizontal = 16.dp, vertical = 7.dp)
-    ) {
-        Text(
-            label,
-            style = ArflixTypography.caption.copy(
-                fontSize = 12.sp,
-                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium
-            ),
-            color = when {
-                focused -> Color.White                // White text on dark bg
-                isSelected -> Color.Black             // Black text on bright bg
-                else -> Color.White.copy(alpha = 0.84f)
-            },
-            maxLines = 1
-        )
     }
 }
 
@@ -1334,6 +1169,7 @@ private fun ContentGrid(
     modifier: Modifier = Modifier,
     columns: Int? = null,
     cardWidth: Dp? = null,
+    titleMaxLines: Int = 2,
     manualFocusIndex: Int? = null,
     isZoneFocused: Boolean = true,
     gridState: LazyGridState = rememberLazyGridState()
@@ -1365,7 +1201,7 @@ private fun ContentGrid(
                 width = itemWidth,
                 isLandscape = !usePosterCards,
                 showProgress = false,
-                titleMaxLines = 2,
+                titleMaxLines = titleMaxLines,
                 subtitleMaxLines = 1,
                 isFocusedOverride = itemIsFocused,
                 enableSystemFocus = manualFocusIndex == null && !isTouchDevice,
@@ -1399,4 +1235,9 @@ private fun buildCardSubtitle(item: MediaItem): String {
     return if (year != null) "$mediaLabel · $year" else mediaLabel
 }
 
-private enum class FocusZone { SIDEBAR, SEARCH_INPUT, FILTERS, RESULTS }
+/**
+ * PANEL is the open list under a filter chip. It is its own zone because while it is open the
+ * direction keys belong to it and to nothing else — the chip row underneath must not move at
+ * the same time, which is the usual way a panel ends up reordering things behind itself.
+ */
+private enum class FocusZone { SIDEBAR, SEARCH_INPUT, FILTERS, RESULTS, PANEL }

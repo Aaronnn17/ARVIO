@@ -7,6 +7,8 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.PersonMediaSearchResult
+import com.arflix.tv.data.repository.TraktRepository
+import com.arflix.tv.util.ContentRating
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -71,10 +73,18 @@ enum class SortOption(val label: String, val apiValue: String) { POPULAR("Popula
 
 /** A filter change loads straight away (E4) — debounced so two quick taps cost one load. */
 private const val DISCOVER_FILTER_DEBOUNCE_MS = 350L
-/** The filtered grid has no sort control yet (that is step 3), so it browses by popularity. */
-private const val DISCOVER_GRID_SORT = "popularity.desc"
-/** Same floor the "Trending" row uses: keeps single-vote entries out of the grid. */
+/** Same floor the "Trending" row uses when the user has not set one: keeps single-vote entries out. */
 private const val DISCOVER_GRID_MIN_VOTES = 50
+/**
+ * How many TMDB pages one scroll step may ask for while "hide watched" throws pages away.
+ * Without a cap, a user who has watched everything in a narrow filter would keep the grid
+ * fetching to page 500 in one go.
+ */
+private const val MAX_GRID_PAGE_ATTEMPTS = 5
+/** TMDB's own id for the animation genre — an anime request is never without it. */
+private const val ANIMATION_GENRE_ID = "16"
+/** TMDB keyword id "anime": what separates anime from western animation. */
+private const val ANIME_KEYWORD = "210024"
 /** TMDB serves at most 500 discover pages; asking beyond that only returns errors. */
 private const val TMDB_MAX_DISCOVER_PAGE = 500
 
@@ -100,8 +110,15 @@ data class SearchUiState(
     // discover calls with two page counters, and TMDB's sort order stops holding once the
     // two halves are merged — which breaks an endlessly paging grid.
     val selectedType: DiscoverType = DiscoverType.MOVIES,
-    val selectedGenre: Genre? = null,
-    val selectedCountry: Country? = null,
+    /** Several genres at once, combined with AND unless [matchAllGenres] is turned off (E3). */
+    val selectedGenres: List<Genre> = emptyList(),
+    val matchAllGenres: Boolean = true,
+    val sortOption: SortOption = SortOption.POPULAR,
+    val rating: RatingFilter = RatingFilter(),
+    val year: Int? = null,
+    /** Movies only — `discover/tv` has no certification parameter at TMDB. */
+    val certification: String? = null,
+    val hideWatched: Boolean = false,
     // Discover grid - shown instead of the five rows as soon as a filter is set
     val discoverGridItems: List<MediaItem> = EMPTY_MEDIA_ITEMS,
     val isGridLoading: Boolean = false,
@@ -113,16 +130,19 @@ data class SearchUiState(
     val isAiSearch: Boolean = false
 ) {
     /**
-     * Rows or grid: the media type alone is not a filter (it is always set), so only a
-     * genre or a language switches the browse rows over to the filtered grid.
+     * Rows or grid: the media type alone is not a filter (it is always set), and neither is the
+     * sort order — sorting five browse rows that each have their own sort would mean nothing.
+     * Everything else switches the rows over to the filtered grid.
      */
     val hasDiscoverFilters: Boolean
-        get() = selectedGenre != null || selectedCountry != null
+        get() = selectedGenres.isNotEmpty() || rating.isSet || year != null ||
+            certification != null || hideWatched
 }
 
 @HiltViewModel
 class SearchViewModel @Inject constructor(
-    private val mediaRepository: MediaRepository
+    private val mediaRepository: MediaRepository,
+    private val traktRepository: TraktRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SearchUiState())
@@ -139,6 +159,14 @@ class SearchViewModel @Inject constructor(
     private var activeSearchQuery: String? = null
     private var peopleNeedingCredits: List<PersonMediaSearchResult> = emptyList()
 
+    /**
+     * The profile's TMDB content language, e.g. "de-DE".
+     *
+     * The age-rating panel needs the country behind it: certifications are country-specific
+     * strings, so which list to offer follows from the same setting the age badge already uses.
+     */
+    val contentLanguage: String get() = mediaRepository.contentLanguage
+
     init { startDiscoverLoad() }
 
     // ── Discover Rows (5 dynamic rows based on filters) ─────────────────
@@ -151,9 +179,7 @@ class SearchViewModel @Inject constructor(
         discoverJob = viewModelScope.launch {
             try {
                 val type = state.selectedType
-                val genre = state.selectedGenre?.id?.toString()
-                val lang = state.selectedCountry?.code
-                val isAnime = type == DiscoverType.ANIME
+                val genres = genresParam(state.selectedGenres, state.matchAllGenres)
 
                 val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
                 val cal = java.util.Calendar.getInstance()
@@ -163,21 +189,28 @@ class SearchViewModel @Inject constructor(
                 cal.add(java.util.Calendar.YEAR, -1)
                 val oneYearAgo = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(cal.time)
 
+                // Each row brings its own sort and vote floor — that is what makes it a row and
+                // not a slice of the grid, so the sort chip deliberately does not reach here.
+                fun row(sort: String, minVotes: Int, page: Int = 1, from: String? = null) = DiscoverRequest(
+                    type = type, genres = genres, sort = sort, minVotes = minVotes, page = page,
+                    releaseDateGte = from, releaseDateLte = today
+                )
+
                 val categories = withContext(Dispatchers.IO) {
                     coroutineScope {
                         // Row titles stay English: they are part of the Category id used
                         // as the row's focus key. SearchScreen localizes them for display
                         // only (localizedDiscoverRowTitle).
                         // Row 1: Trending - popular with minimum votes to filter garbage
-                        val row1 = async { buildRow("Trending", type, genre, "popularity.desc", 50, lang, isAnime, 1, releaseDateLte = today) }
+                        val row1 = async { buildRow("Trending", row("popularity.desc", 50)) }
                         // Row 2: Popular This Year - recent + popular, no obscure stuff
-                        val row2 = async { buildRow("Popular This Year", type, genre, "popularity.desc", 20, lang, isAnime, 1, releaseDateGte = oneYearAgo, releaseDateLte = today) }
+                        val row2 = async { buildRow("Popular This Year", row("popularity.desc", 20, from = oneYearAgo)) }
                         // Row 3: Top Rated - high quality, well-known titles
-                        val row3 = async { buildRow("Top Rated", type, genre, "vote_average.desc", 1000, lang, isAnime, 1, releaseDateLte = today) }
+                        val row3 = async { buildRow("Top Rated", row("vote_average.desc", 1000)) }
                         // Row 4: New Releases - last 90 days ONLY, must be actually released (date <= today)
-                        val row4 = async { buildRow("New Releases", type, genre, "popularity.desc", 10, lang, isAnime, 1, releaseDateGte = threeMonthsAgo, releaseDateLte = today) }
+                        val row4 = async { buildRow("New Releases", row("popularity.desc", 10, from = threeMonthsAgo)) }
                         // Row 5: Hidden Gems - good ratings but less mainstream
-                        val row5 = async { buildRow("Hidden Gems", type, genre, "vote_average.desc", 200, lang, isAnime, 2, releaseDateLte = today) }
+                        val row5 = async { buildRow("Hidden Gems", row("vote_average.desc", 200, page = 2)) }
                         listOfNotNull(row1.await(), row2.await(), row3.await(), row4.await(), row5.await())
                     }
                 }
@@ -210,56 +243,118 @@ class SearchViewModel @Inject constructor(
         }
     }
 
-    private suspend fun buildRow(
-        title: String, type: DiscoverType, genre: String?, sort: String,
-        minVotes: Int?, lang: String?, isAnime: Boolean, page: Int,
-        releaseDateGte: String? = null, releaseDateLte: String? = null
-    ): Category? {
+    private suspend fun buildRow(title: String, request: DiscoverRequest): Category? {
         return try {
-            val items = fetchDiscoverPage(type, genre, sort, minVotes, lang, page, releaseDateGte, releaseDateLte)
-            if (items.isEmpty()) null else Category(id = "${type}_${title}_${genre}_${lang}_$page", title = title, items = items.take(20))
+            val items = fetchDiscoverPage(request)
+            if (items.isEmpty()) null
+            else Category(
+                id = "${request.type}_${title}_${request.genres}_${request.page}",
+                title = title,
+                items = items.take(20)
+            )
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { null }
     }
+
+    /**
+     * Everything one discover request needs, in one object.
+     *
+     * The wrappers in `MediaRepository` are called positionally in a dozen places, so a
+     * parameter added in the middle silently shifts `page` and everything after it (T9).
+     * Collecting the filters here means a new filter touches this class and nothing else.
+     */
+    private data class DiscoverRequest(
+        val type: DiscoverType,
+        val genres: String?,
+        val sort: String,
+        val minVotes: Int?,
+        val page: Int,
+        val minRating: Double? = null,
+        val maxRating: Double? = null,
+        val year: Int? = null,
+        val certification: String? = null,
+        val certificationCountry: String? = null,
+        val releaseDateGte: String? = null,
+        val releaseDateLte: String? = null
+    )
 
     /**
      * The single place that turns a filter set into TMDB items. Both the browse rows and the
      * filtered grid go through it, so the movies/series/anime/all split and the movie→series
      * genre remap exist exactly once instead of drifting apart in two copies.
      */
-    private suspend fun fetchDiscoverPage(
-        type: DiscoverType, genre: String?, sort: String, minVotes: Int?, lang: String?, page: Int,
-        releaseDateGte: String? = null, releaseDateLte: String? = null
-    ): List<MediaItem> {
-        val movieGenre = genre
-        val tvGenre = mapMovieGenreToTvGenre(genre)
-        return when (type) {
-            DiscoverType.MOVIES -> mediaRepository.discoverMovies(movieGenre, sort, minVotes, page, language = lang, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte)
-            DiscoverType.TV_SHOWS -> mediaRepository.discoverTv(tvGenre, sort, minVotes, page, language = lang, airDateLte = releaseDateLte, airDateGte = releaseDateGte)
-            DiscoverType.ANIME -> {
-                val animeGenre = buildAnimeGenre(tvGenre)
-                mediaRepository.discoverTv(animeGenre, sort, minVotes, page, language = lang, keywords = "210024", airDateLte = releaseDateLte, airDateGte = releaseDateGte)
-            }
-            DiscoverType.ALL -> {
-                coroutineScope {
-                    val m = async { mediaRepository.discoverMovies(movieGenre, sort, minVotes, page, language = lang, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte) }
-                    val t = async { mediaRepository.discoverTv(tvGenre, sort, minVotes, page, language = lang, airDateLte = releaseDateLte, airDateGte = releaseDateGte) }
-                    interleave(m.await(), t.await())
-                }
+    private suspend fun fetchDiscoverPage(request: DiscoverRequest): List<MediaItem> {
+        val movieGenres = request.genres
+        val tvGenres = mapMovieGenresToTvGenres(request.genres)
+        return when (request.type) {
+            DiscoverType.MOVIES -> discoverMoviesFor(request, movieGenres)
+            DiscoverType.TV_SHOWS -> discoverTvFor(request, tvGenres)
+            DiscoverType.ANIME -> discoverTvFor(request, buildAnimeGenre(tvGenres), keywords = ANIME_KEYWORD)
+            DiscoverType.ALL -> coroutineScope {
+                val m = async { discoverMoviesFor(request, movieGenres) }
+                val t = async { discoverTvFor(request, tvGenres) }
+                interleave(m.await(), t.await())
             }
         }
     }
 
-    private fun mapMovieGenreToTvGenre(genre: String?): String? = when (genre) {
-        "28" -> "10759"
-        "14", "878" -> "10765"
-        "10752" -> "10768"
-        else -> genre
+    private suspend fun discoverMoviesFor(request: DiscoverRequest, genres: String?): List<MediaItem> =
+        // Named throughout on purpose (T9): the wrapper takes thirteen parameters and a
+        // positional call silently shifts `page` the day somebody inserts one in the middle.
+        mediaRepository.discoverMovies(
+            genres = genres,
+            sortBy = request.sort,
+            minVoteCount = request.minVotes,
+            page = request.page,
+            year = request.year,
+            releaseDateLte = request.releaseDateLte,
+            releaseDateGte = request.releaseDateGte,
+            minVoteAverage = request.minRating,
+            maxVoteAverage = request.maxRating,
+            certificationCountry = request.certification?.let { request.certificationCountry },
+            certificationLte = request.certification
+        )
+
+    private suspend fun discoverTvFor(
+        request: DiscoverRequest,
+        genres: String?,
+        keywords: String? = null
+    ): List<MediaItem> =
+        mediaRepository.discoverTv(
+            genres = genres,
+            sortBy = request.sort,
+            minVoteCount = request.minVotes,
+            page = request.page,
+            year = request.year,
+            keywords = keywords,
+            airDateLte = request.releaseDateLte,
+            airDateGte = request.releaseDateGte,
+            minVoteAverage = request.minRating,
+            maxVoteAverage = request.maxRating
+        )
+
+    /**
+     * Every id of a `with_genres` value translated into the series numbering, separator kept.
+     *
+     * The separator carries E3 (comma = AND, pipe = OR), so it has to survive the remap — which
+     * is why this splits on both instead of assuming one of them.
+     */
+    private fun mapMovieGenresToTvGenres(genres: String?): String? {
+        if (genres.isNullOrBlank()) return genres
+        val separator = if (genres.contains('|')) "|" else ","
+        return genres.split(',', '|')
+            .mapNotNull { it.trim().toIntOrNull() }
+            .map { remapGenreId(it, DiscoverType.TV_SHOWS) }
+            .distinct()
+            .joinToString(separator) { it.toString() }
     }
 
-    private fun buildAnimeGenre(genre: String?): String = when (genre) {
-        null, "16" -> "16"
-        else -> "16,$genre"
+    /** Anime is "animation plus whatever else was asked for", and animation is never optional. */
+    private fun buildAnimeGenre(genres: String?): String = when {
+        genres.isNullOrBlank() -> ANIMATION_GENRE_ID
+        genres.split(',', '|').any { it.trim() == ANIMATION_GENRE_ID } -> genres
+        // The comma is deliberate even in "match any" mode: animation is a floor, not a choice.
+        else -> "$ANIMATION_GENRE_ID,$genres"
     }
 
     // ── Discover grid (shown as soon as a filter is set) ────────────────
@@ -286,33 +381,23 @@ class SearchViewModel @Inject constructor(
     private suspend fun fetchGridPage(append: Boolean) {
         val started = _uiState.value
         val signature = filterSignature(started)
-        val page = gridPage + 1
         try {
             val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
-            val items = withContext(Dispatchers.IO) {
-                fetchDiscoverPage(
-                    type = started.selectedType,
-                    genre = started.selectedGenre?.id?.toString(),
-                    sort = DISCOVER_GRID_SORT,
-                    minVotes = DISCOVER_GRID_MIN_VOTES,
-                    lang = started.selectedCountry?.code,
-                    page = page,
-                    releaseDateLte = today
-                )
-            }
+            val startPage = gridPage
+            val collected = withContext(Dispatchers.IO) { collectGridPages(started, today, startPage) }
             val current = _uiState.value
             // The filter moved on while this page was in flight — its answer is stale.
             if (filterSignature(current) != signature || current.query.isNotEmpty()) return
-            items.forEach { mediaRepository.cacheItem(it) }
+            collected.items.forEach { mediaRepository.cacheItem(it) }
             val existing = if (append) current.discoverGridItems else EMPTY_MEDIA_ITEMS
             val known = existing.mapTo(HashSet()) { it.mediaType to it.id }
-            val fresh = items.filter { (it.mediaType to it.id) !in known }
-            gridPage = page
+            val fresh = collected.items.filter { (it.mediaType to it.id) !in known }
+            gridPage = collected.lastPage
             _uiState.value = current.copy(
                 discoverGridItems = existing + fresh,
                 isGridLoading = false,
                 isGridLoadingMore = false,
-                gridEndReached = items.isEmpty() || page >= TMDB_MAX_DISCOVER_PAGE
+                gridEndReached = collected.endReached
             )
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) {
@@ -324,8 +409,83 @@ class SearchViewModel @Inject constructor(
         }
     }
 
-    private fun filterSignature(state: SearchUiState): String =
-        "${state.selectedType}|${state.selectedGenre?.id}|${state.selectedCountry?.code}"
+    /** One batch of grid items plus where the paging got to. */
+    private data class GridPageResult(val items: List<MediaItem>, val lastPage: Int, val endReached: Boolean)
+
+    /**
+     * Fetches pages until there is something to show.
+     *
+     * "Hide watched" is not a TMDB parameter — it can only be applied after the answer arrives,
+     * and a page where every title is already watched would otherwise hand the grid nothing and
+     * look like the end of the list. So the paging keeps going for a bounded number of extra
+     * pages instead, which is the price of that filter and the reason for the cap.
+     */
+    private suspend fun collectGridPages(state: SearchUiState, today: String, startPage: Int): GridPageResult {
+        val watchedFilter = if (state.hideWatched) watchedIdsFor(state.selectedType) else null
+        val collected = mutableListOf<MediaItem>()
+        var page = startPage
+        var endReached = false
+        var attempts = 0
+        while (attempts < MAX_GRID_PAGE_ATTEMPTS) {
+            attempts++
+            page++
+            if (page > TMDB_MAX_DISCOVER_PAGE) { endReached = true; break }
+            val items = fetchDiscoverPage(gridRequestFor(state, page, today))
+            if (items.isEmpty()) { endReached = true; break }
+            collected += if (watchedFilter == null) items else items.filterNot { watchedFilter(it) }
+            if (collected.isNotEmpty()) break
+        }
+        return GridPageResult(collected, page, endReached)
+    }
+
+    private fun gridRequestFor(state: SearchUiState, page: Int, today: String) = DiscoverRequest(
+        type = state.selectedType,
+        genres = genresParam(state.selectedGenres, state.matchAllGenres),
+        sort = state.sortOption.apiValue,
+        minVotes = state.rating.minVotes ?: DISCOVER_GRID_MIN_VOTES,
+        page = page,
+        minRating = state.rating.min,
+        maxRating = state.rating.max,
+        year = state.year,
+        certification = state.certification.takeIf { supportsCertification(state.selectedType) },
+        certificationCountry = ContentRating.regionOf(mediaRepository.contentLanguage),
+        // A release date in the future has no rating and usually no poster either, so the grid
+        // stays on what is actually out — except when a year is asked for explicitly.
+        releaseDateLte = if (state.year == null) today else null
+    )
+
+    /**
+     * Tells a watched title from an unwatched one.
+     *
+     * A film is watched when it is in the watched list. A series has no such single mark, so
+     * "watched" means "already started" — the reading that actually helps while discovering,
+     * since a series you are halfway through is not something you need offered again.
+     */
+    private fun watchedIdsFor(type: DiscoverType): (MediaItem) -> Boolean {
+        val watchedMovies = traktRepository.getWatchedMoviesFromCache()
+        return { item ->
+            when (item.mediaType) {
+                MediaType.MOVIE -> item.id in watchedMovies
+                MediaType.TV -> traktRepository.hasWatchedEpisodes(item.id)
+            }
+        }
+    }
+
+    /**
+     * Identifies the filter set a request was started for. A page that comes back after the
+     * filters moved on belongs to the old set and is dropped, so every filter has to appear
+     * here — one missing field is a stale page landing in the grid.
+     */
+    private fun filterSignature(state: SearchUiState): String = listOf(
+        state.selectedType,
+        state.selectedGenres.joinToString(",") { it.id.toString() },
+        state.matchAllGenres,
+        state.sortOption,
+        state.rating.min, state.rating.max, state.rating.minVotes,
+        state.year,
+        state.certification,
+        state.hideWatched
+    ).joinToString("|")
 
     // ── Filters → reload rows or grid ───────────────────────────────────
 
@@ -360,26 +520,84 @@ class SearchViewModel @Inject constructor(
     }
 
     fun selectType(type: DiscoverType) {
+        val state = _uiState.value
+        if (state.selectedType == type) return
         // Genre ids differ per media type (movie "Action" 28 vs. series "Action & Adventure"
-        // 10759), and not every movie genre has a series counterpart — so switching the type
-        // drops the genre instead of carrying over one that would return nothing.
-        _uiState.value = _uiState.value.copy(selectedType = type, selectedGenre = null)
+        // 10759). Until now the type switch dropped the genre outright; it is remapped instead,
+        // and only a genre with no counterpart at all is let go (FUND C in the file).
+        _uiState.value = state.copy(
+            selectedType = type,
+            selectedGenres = remapGenresForType(state.selectedGenres, type),
+            // TMDB can only filter certifications for movies, so this cannot survive the switch.
+            certification = if (supportsCertification(type)) state.certification else null
+        )
         applyDiscoverSelection()
     }
 
-    fun setDiscoverFilters(type: DiscoverType, genre: Genre?, country: Country?) {
-        _uiState.value = _uiState.value.copy(selectedType = type, selectedGenre = genre, selectedCountry = country)
+    /** Adds or removes one genre — tapping a set genre again is how it is cleared. */
+    fun toggleGenre(genre: Genre) {
+        val state = _uiState.value
+        val genres = if (state.selectedGenres.any { it.id == genre.id }) {
+            state.selectedGenres.filterNot { it.id == genre.id }
+        } else {
+            state.selectedGenres + genre
+        }
+        _uiState.value = state.copy(selectedGenres = genres)
         applyDiscoverSelection()
     }
 
-    fun selectGenre(genre: Genre?) {
-        _uiState.value = _uiState.value.copy(selectedGenre = genre)
+    /** E3: match all chosen genres (TMDB's comma) or any of them (its pipe). */
+    fun setMatchAllGenres(matchAll: Boolean) {
+        val state = _uiState.value
+        if (state.matchAllGenres == matchAll) return
+        _uiState.value = state.copy(matchAllGenres = matchAll)
+        // Nothing changes for a single genre, so the reload would only cost a request.
+        if (state.selectedGenres.size > 1) applyDiscoverSelection()
+    }
+
+    fun selectSort(sort: SortOption) {
+        val state = _uiState.value
+        if (state.sortOption == sort) return
+        _uiState.value = state.copy(sortOption = sort)
+        // The sort order only reaches the grid; the browse rows each carry their own.
+        if (state.hasDiscoverFilters) applyDiscoverSelection()
+    }
+
+    fun setRating(rating: RatingFilter) {
+        _uiState.value = _uiState.value.copy(rating = rating)
         applyDiscoverSelection()
     }
 
-    fun selectCountry(country: Country?) {
-        _uiState.value = _uiState.value.copy(selectedCountry = country)
+    fun selectYear(year: Int?) {
+        _uiState.value = _uiState.value.copy(year = year)
         applyDiscoverSelection()
+    }
+
+    fun selectCertification(certification: String?) {
+        if (!supportsCertification(_uiState.value.selectedType)) return
+        _uiState.value = _uiState.value.copy(certification = certification)
+        applyDiscoverSelection()
+    }
+
+    fun setHideWatched(hide: Boolean) {
+        val state = _uiState.value
+        if (state.hideWatched == hide) return
+        _uiState.value = state.copy(hideWatched = hide)
+        applyDiscoverSelection()
+    }
+
+    /** Back to the browse rows in one step — the way out of a filter set that found nothing. */
+    fun clearDiscoverFilters() {
+        val state = _uiState.value
+        if (!state.hasDiscoverFilters) return
+        _uiState.value = state.copy(
+            selectedGenres = emptyList(),
+            rating = RatingFilter(),
+            year = null,
+            certification = null,
+            hideWatched = false
+        )
+        applyDiscoverSelection(debounce = false)
     }
 
     // ── Search + AI ─────────────────────────────────────────────────────
