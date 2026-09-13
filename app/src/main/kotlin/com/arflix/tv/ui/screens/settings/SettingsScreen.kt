@@ -194,6 +194,7 @@ import com.arflix.tv.data.model.RuntimeKind
 import com.arflix.tv.data.repository.HomeServerConnection
 import com.arflix.tv.data.repository.HomeServerKind
 import com.arflix.tv.data.repository.IptvPlaylistEntry
+import com.arflix.tv.data.repository.MAX_IPTV_PLAYLISTS
 import com.arflix.tv.data.repository.STALKER_PLAYLIST_ID
 import com.arflix.tv.data.repository.StalkerPortalEntry
 import com.arflix.tv.ui.components.AppTopBar
@@ -5621,7 +5622,7 @@ private fun tvSettingsPanelFacts(
             stringResource(R.string.settings_fact_user_agent) to formatUserAgentPreview(uiState.customUserAgent, 40)
         )
         "iptv" -> listOf(
-            stringResource(R.string.settings_fact_playlists) to "${uiState.iptvPlaylists.size}/3",
+            stringResource(R.string.settings_fact_playlists) to "${uiState.iptvPlaylists.size}/$MAX_IPTV_PLAYLISTS",
             stringResource(R.string.settings_fact_channels) to formatCompactCount(uiState.iptvChannelCount),
             stringResource(R.string.settings_fact_epg) to if (uiState.iptvPlaylists.any { it.epgUrl.isNotBlank() || it.epgUrls.orEmpty().isNotEmpty() }) stringResource(R.string.settings_configured) else stringResource(R.string.settings_optional),
             stringResource(R.string.settings_fact_state) to if (uiState.isIptvLoading) stringResource(R.string.settings_refreshing) else stringResource(R.string.settings_ready)
@@ -7035,7 +7036,7 @@ private fun IptvSettings(
                 }
             }
             MobileSettingsCategory(title = stringResource(R.string.settings_section_playlists)) {
-                MobileSettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_playlist), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_add_tv_lists_hint) else stringResource(R.string.settings_create_another_tv), value = if (playlists.size >= 3) stringResource(R.string.settings_badge_full_short) else "", isFocused = false, showDivider = true, onClick = onConfigure)
+                MobileSettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_playlist), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_add_tv_lists_hint) else stringResource(R.string.settings_create_another_tv), value = if (playlists.size >= MAX_IPTV_PLAYLISTS) stringResource(R.string.settings_badge_full_short) else "", isFocused = false, showDivider = true, onClick = onConfigure)
                 playlists.forEachIndexed { index, playlist ->
                     val isSelected = selectedIndices.contains(index)
                     val epgSourceCount = playlist.settingsEpgInput().lineSequence().count { it.isNotBlank() }
@@ -7205,7 +7206,7 @@ private fun IptvSettings(
     } else {
         // TV UI
         Column {
-            SettingsRow(icon = Icons.Default.LiveTv, title = stringResource(R.string.add_playlist), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_add_iptv_lists_hint) else stringResource(R.string.settings_create_another_iptv), value = if (playlists.size >= 3) stringResource(R.string.settings_badge_full) else stringResource(R.string.settings_badge_add), isFocused = focusedIndex == 0, onClick = onConfigure, modifier = Modifier.settingsFocusSlot(0))
+            SettingsRow(icon = Icons.Default.LiveTv, title = stringResource(R.string.add_playlist), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_add_iptv_lists_hint) else stringResource(R.string.settings_create_another_iptv), value = if (playlists.size >= MAX_IPTV_PLAYLISTS) stringResource(R.string.settings_badge_full) else stringResource(R.string.settings_badge_add), isFocused = focusedIndex == 0, onClick = onConfigure, modifier = Modifier.settingsFocusSlot(0))
             Spacer(modifier = Modifier.height(6.dp))
             playlists.forEachIndexed { index, playlist ->
                 val rowIndex = index + 1
