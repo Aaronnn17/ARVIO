@@ -36,7 +36,11 @@ jobs:
             >> gradle.properties
 
       - name: Build sideload debug APK
-        run: ./gradlew assembleSideloadDebug --no-daemon
+        run: |
+          if ! ./gradlew assembleSideloadDebug --no-daemon --console=plain > gradle-build.log 2>&1; then
+            tail -n 300 gradle-build.log
+            exit 1
+          fi
 
       - name: Upload test APK
         uses: actions/upload-artifact@v4
