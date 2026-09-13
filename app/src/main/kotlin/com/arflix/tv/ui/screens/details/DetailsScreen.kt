@@ -201,6 +201,7 @@ import com.arflix.tv.ui.theme.Purple
 import com.arflix.tv.ui.theme.TextPrimary
 import com.arflix.tv.ui.theme.TextSecondary
 import com.arflix.tv.util.DeviceType
+import com.arflix.tv.util.Constants
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.formatGenreName
 import com.arflix.tv.util.isInCinema
@@ -250,6 +251,7 @@ fun DetailsScreen(
     var focusedSection by remember { mutableStateOf(FocusSection.BUTTONS) }
     var buttonIndex by remember { mutableIntStateOf(0) }
     var episodeIndex by rememberSaveable { mutableIntStateOf(0) }
+    var selectedEpisodeIdentity by rememberSaveable { mutableStateOf<EpisodeIdentity?>(null) }
     var ratingsIndex by rememberSaveable { mutableIntStateOf(0) }
     var seasonIndex by rememberSaveable { mutableIntStateOf(0) }
     var castIndex by remember { mutableIntStateOf(0) }
@@ -327,6 +329,7 @@ fun DetailsScreen(
         focusedSection = FocusSection.BUTTONS
         buttonIndex = 0
         episodeIndex = 0
+        selectedEpisodeIdentity = null
         ratingsIndex = 0
         seasonIndex = 0
         castIndex = 0
@@ -383,7 +386,7 @@ fun DetailsScreen(
     // resume / first-unwatched target. Keep the ratings heatmap page (12 episodes/page) aligned.
     LaunchedEffect(
         uiState.currentSeason,
-        uiState.episodes,
+        uiState.episodes.map { it.identity },
         uiState.initialSeasonIndex,
         uiState.initialEpisodeIndex
     ) {
@@ -410,6 +413,7 @@ fun DetailsScreen(
     // focus is reset by the currentSeason-driven effect above once the new season's episodes arrive.
     LaunchedEffect(seasonIndex) {
         if (uiState.totalSeasons > 1 && uiState.currentSeason != seasonIndex + 1) {
+            selectedEpisodeIdentity = null
             delay(100)
             viewModel.loadSeason(seasonIndex + 1)
         }
@@ -417,25 +421,34 @@ fun DetailsScreen(
 
     val currentUiState = rememberUpdatedState(uiState)
     val currentEpisodeIndex = rememberUpdatedState(episodeIndex)
+    val currentSelectedEpisodeIdentity = rememberUpdatedState(selectedEpisodeIdentity)
 
     val onButtonClickRemembered = remember(isMobile, mediaType, mediaId) {
         { idx: Int ->
             val state = currentUiState.value
             val currentEpIdx = currentEpisodeIndex.value
+            val selectedEp = state.episodes.firstOrNull {
+                it.identity == currentSelectedEpisodeIdentity.value
+            }
             when (idx) {
                 0 -> { // Play
                     val season = if (mediaType == MediaType.TV) {
-                        state.playSeason
+                        selectedEp?.seasonNumber
+                            ?: state.playSeason
                             ?: state.episodes.getOrNull(currentEpIdx)?.seasonNumber
                             ?: 1
                     } else null
                     val episode = if (mediaType == MediaType.TV) {
-                        state.playEpisode
+                        selectedEp?.episodeNumber
+                            ?: state.playEpisode
                             ?: state.episodes.getOrNull(currentEpIdx)?.episodeNumber
                             ?: 1
                     } else null
                     val startPositionMs = if (
-                        mediaType == MediaType.TV &&
+                        selectedEp != null
+                    ) {
+                        state.episodePlaybackProgress[selectedEp.identity]?.positionMs
+                    } else if (mediaType == MediaType.TV &&
                         season == state.playSeason &&
                         episode == state.playEpisode
                     ) {
@@ -447,28 +460,35 @@ fun DetailsScreen(
                     if (!state.autoPlaySingleSource) {
                         // Autoplay OFF → open the source picker; never auto-play.
                         showStreamSelector = true
-                        val identity = state.episodes.firstOrNull {
+                        val identity = selectedEp?.identity ?: state.episodes.firstOrNull {
                             it.seasonNumber == season && it.episodeNumber == episode
-                        }?.identity
+                        }?.identity ?: viewModel.resolveEpisodeIdentity(
+                            displaySeason = season,
+                            displayEpisode = episode,
+                            tmdbSeason = state.playTmdbSeason ?: season,
+                            tmdbEpisode = state.playTmdbEpisode ?: episode,
+                        )
                         viewModel.loadStreams(state.imdbId, identity)
                     } else {
                         // Autoplay ON → go straight to the player; PlayerScreen auto-picks.
                         requestFastAutoPlay(
                             state.imdbId, season, episode, startPositionMs,
-                            state.playTmdbSeason ?: season,
-                            state.playTmdbEpisode ?: episode
+                            selectedEp?.tmdbSeasonNumber ?: state.playTmdbSeason ?: season,
+                            selectedEp?.tmdbEpisodeNumber ?: state.playTmdbEpisode ?: episode
                         )
                     }
                 }
                 1 -> { // Sources
                     showStreamSelector = true
-                    val ep = state.episodes.getOrNull(currentEpIdx)
+                    val ep = selectedEp ?: state.episodes.getOrNull(currentEpIdx)
                     viewModel.loadStreams(state.imdbId, ep?.identity)
                 }
                 2 -> { // Trailer
                     state.trailerKey?.let { showTrailerPlayer = true }
                 }
-                3 -> viewModel.toggleWatched(currentEpIdx)
+                3 -> viewModel.toggleWatched(
+                    selectedEp?.let { state.episodes.indexOf(it) }?.takeIf { it >= 0 } ?: currentEpIdx
+                )
                 4 -> viewModel.toggleWatchlist()
                 5 -> { // View Collection — scroll to and focus the collection row on this page
                     focusedSection = FocusSection.COLLECTION
@@ -482,6 +502,7 @@ fun DetailsScreen(
         { idx: Int ->
             seasonIndex = idx
             episodeIndex = 0
+            selectedEpisodeIdentity = null
             ratingsIndex = 0
             viewModel.loadSeason(idx + 1)
         }
@@ -500,12 +521,15 @@ fun DetailsScreen(
             val ep = state.episodes.getOrNull(idx)
             if (ep != null) {
                 episodeIndex = idx
-                if (isMobile || !state.autoPlaySingleSource) {
+                if (currentSelectedEpisodeIdentity.value != ep.identity) {
+                    selectedEpisodeIdentity = ep.identity
+                } else if (isMobile || !state.autoPlaySingleSource) {
                     showStreamSelector = true
                     viewModel.loadStreams(state.imdbId, ep.identity)
                 } else {
                     requestFastAutoPlay(
-                        state.imdbId, ep.seasonNumber, ep.episodeNumber, null,
+                        state.imdbId, ep.seasonNumber, ep.episodeNumber,
+                        state.episodePlaybackProgress[ep.identity]?.positionMs,
                         ep.tmdbSeasonNumber, ep.tmdbEpisodeNumber
                     )
                 }
@@ -789,80 +813,15 @@ fun DetailsScreen(
                             }
                             when (focusedSection) {
                                 FocusSection.BUTTONS -> {
-                                    when (buttonIndex) {
-                                        0 -> { // Play - Auto-play highest quality source
-                                            val season = if (mediaType == MediaType.TV) {
-                                                uiState.playSeason
-                                                    ?: uiState.episodes.getOrNull(episodeIndex)?.seasonNumber
-                                                    ?: 1
-                                            } else null
-                                            val episode = if (mediaType == MediaType.TV) {
-                                                uiState.playEpisode
-                                                    ?: uiState.episodes.getOrNull(episodeIndex)?.episodeNumber
-                                                    ?: 1
-                                            } else null
-                                            val startPositionMs = if (
-                                                mediaType == MediaType.TV &&
-                                                season == uiState.playSeason &&
-                                                episode == uiState.playEpisode
-                                            ) {
-                                                uiState.playPositionMs
-                                            } else if (mediaType == MediaType.MOVIE) {
-                                                uiState.playPositionMs
-                                            } else null
-
-                                            if (!uiState.autoPlaySingleSource) {
-                                                // Autoplay OFF → open the source picker; never auto-play.
-                                                showStreamSelector = true
-                                                val identity = uiState.episodes.firstOrNull {
-                                                    it.seasonNumber == season && it.episodeNumber == episode
-                                                }?.identity
-                                                viewModel.loadStreams(uiState.imdbId, identity)
-                                            } else {
-                                                // Autoplay ON: pick a concrete stream first, then open PlayerScreen.
-                                                requestFastAutoPlay(
-                                                    uiState.imdbId, season, episode, startPositionMs,
-                                                    uiState.playTmdbSeason ?: season,
-                                                    uiState.playTmdbEpisode ?: episode
-                                                )
-                                            }
-                                        }
-                                        1 -> { // Sources - Show StreamSelector for manual selection
-                                            showStreamSelector = true
-                                            // Pass the currently focused episode for TV shows
-                                            val ep = uiState.episodes.getOrNull(episodeIndex)
-                                            viewModel.loadStreams(uiState.imdbId, ep?.identity)
-                                        }
-                                        2 -> { // Trailer
-                                            uiState.trailerKey?.let {
-                                                showTrailerPlayer = true
-                                            }
-                                        }
-                                        3 -> viewModel.toggleWatched(episodeIndex)
-                                        4 -> viewModel.toggleWatchlist()
-                                        5 -> { // View Collection — scroll to and focus the collection row
-                                            focusedSection = FocusSection.COLLECTION
-                                            collectionIndex = 0
-                                        }
-                                    }
+                                    onButtonClickRemembered(buttonIndex)
                                 }
                                 FocusSection.EPISODES -> {
-                                    val ep = uiState.episodes.getOrNull(episodeIndex)
-                                    if (ep != null) {
-                                        if (!uiState.autoPlaySingleSource) {
-                                            showStreamSelector = true
-                                            viewModel.loadStreams(uiState.imdbId, ep.identity)
-                                        } else {
-                                            requestFastAutoPlay(
-                                                uiState.imdbId, ep.seasonNumber, ep.episodeNumber, null,
-                                                ep.tmdbSeasonNumber, ep.tmdbEpisodeNumber
-                                            )
-                                        }
-                                    }
+                                    onEpisodeClickRemembered(episodeIndex)
                                 }
                                 FocusSection.SEASONS -> {
                                     episodeIndex = 0
                                     ratingsIndex = 0
+                                    selectedEpisodeIdentity = null
                                     viewModel.loadSeason(seasonIndex + 1)
                                 }
                                 FocusSection.RATINGS -> {
@@ -944,6 +903,23 @@ fun DetailsScreen(
                 )
             } else {
                 uiState.item?.let { item ->
+                    val selectedEpisode = uiState.episodes.firstOrNull {
+                        it.identity == selectedEpisodeIdentity
+                    }
+                    val selectedProgress = selectedEpisode?.let {
+                        uiState.episodePlaybackProgress[it.identity]
+                    }
+                    val effectivePlayLabel = selectedEpisode?.let { episode ->
+                        context.getString(
+                            if (selectedProgress != null) {
+                                R.string.continue_season_episode
+                            } else {
+                                R.string.play_season_episode
+                            },
+                            episode.seasonNumber,
+                            episode.episodeNumber
+                        )
+                    } ?: uiState.playLabel
                     DetailsContent(
                         item = item,
                         logoUrl = uiState.logoUrl,
@@ -971,7 +947,9 @@ fun DetailsScreen(
                         budget = uiState.budget,
                         externalRatings = uiState.externalRatings,
                         seasonProgress = uiState.seasonProgress,
-                        playLabel = uiState.playLabel,
+                        episodePlaybackProgress = uiState.episodePlaybackProgress,
+                        selectedEpisodeIdentity = selectedEpisodeIdentity,
+                        playLabel = effectivePlayLabel,
                         showEpisodeRatings = uiState.showEpisodeRatings,
                         hasTrailer = uiState.trailerKey != null,
                         contentHasFocus = !isSidebarFocused,
@@ -1042,16 +1020,27 @@ fun DetailsScreen(
                     return@StreamSelector
                 }
                 showStreamSelector = false
-                val ep = uiState.episodes.getOrNull(episodeIndex)
-                viewModel.recordPlayedEpisode(mediaId, ep?.identity)
+                val identity = uiState.streamsEpisodeIdentity
+                    ?: uiState.episodes.firstOrNull { it.identity == selectedEpisodeIdentity }?.identity
+                    ?: uiState.episodes.getOrNull(episodeIndex)?.identity
+                val startPositionMs = if (mediaType == MediaType.MOVIE) {
+                    uiState.playPositionMs
+                } else {
+                    identity?.let { uiState.episodePlaybackProgress[it]?.positionMs }
+                        ?: if (
+                            identity?.displaySeason == uiState.playSeason &&
+                            identity?.displayEpisode == uiState.playEpisode
+                        ) uiState.playPositionMs else null
+                }
+                viewModel.recordPlayedEpisode(mediaId, identity)
                 onNavigateToPlayer(
                     mediaType, mediaId,
-                    ep?.identity,
+                    identity,
                     uiState.imdbId,
                     stream.url?.takeIf { it.isNotBlank() },
                     stream.addonId.takeIf { it.isNotBlank() },
                     stream.source.takeIf { it.isNotBlank() },
-                    null
+                    startPositionMs
                 )
             },
             onClose = {
@@ -1070,7 +1059,8 @@ fun DetailsScreen(
                 onPlay = {
                     showEpisodeContextMenu = false
                     requestFastAutoPlay(
-                        uiState.imdbId, episode.seasonNumber, episode.episodeNumber, null,
+                        uiState.imdbId, episode.seasonNumber, episode.episodeNumber,
+                        uiState.episodePlaybackProgress[episode.identity]?.positionMs,
                         episode.tmdbSeasonNumber, episode.tmdbEpisodeNumber
                     )
                 },
@@ -1208,6 +1198,8 @@ private fun DetailsContent(
     budget: String? = null,
     externalRatings: List<MdbExternalRating> = emptyList(),
     seasonProgress: Map<Int, Pair<Int, Int>> = emptyMap(),
+    episodePlaybackProgress: Map<EpisodeIdentity, EpisodePlaybackProgress> = emptyMap(),
+    selectedEpisodeIdentity: EpisodeIdentity? = null,
     playLabel: String? = null,
     hasTrailer: Boolean = false,
     contentHasFocus: Boolean = true,
@@ -1737,6 +1729,8 @@ private fun DetailsContent(
                                         ) { index, episode ->
                                             EpisodeCard(
                                                 episode = episode,
+                                                playbackProgress = episodePlaybackProgress[episode.identity],
+                                                isSelected = episode.identity == selectedEpisodeIdentity,
                                                 isFocused = false,
                                                 spoilerBlurEnabled = spoilerBlurEnabled,
                                                 onClick = { onEpisodeClick(index) }
@@ -2385,6 +2379,8 @@ private fun DetailsContent(
                 reviewIndex = reviewIndex,
                 similarIndex = similarIndex,
                 seasonProgress = seasonProgress,
+                episodePlaybackProgress = episodePlaybackProgress,
+                selectedEpisodeIdentity = selectedEpisodeIdentity,
                 usePosterCards = usePosterCards,
                 showEpisodeRatings = showEpisodeRatings,
                 spoilerBlurEnabled = spoilerBlurEnabled,
@@ -2425,6 +2421,8 @@ private fun DetailsTvRows(
     reviewIndex: Int,
     similarIndex: Int,
     seasonProgress: Map<Int, Pair<Int, Int>>,
+    episodePlaybackProgress: Map<EpisodeIdentity, EpisodePlaybackProgress>,
+    selectedEpisodeIdentity: EpisodeIdentity?,
     usePosterCards: Boolean,
     showEpisodeRatings: Boolean,
     spoilerBlurEnabled: Boolean,
@@ -2561,6 +2559,8 @@ private fun DetailsTvRows(
             item {
                 DetailsEpisodeRail(
                     episodes = episodes,
+                    episodePlaybackProgress = episodePlaybackProgress,
+                    selectedEpisodeIdentity = selectedEpisodeIdentity,
                     episodeIndex = episodeIndex,
                     focusSectionForUi = focusSectionForUi,
                     configuration = configuration,
@@ -2981,6 +2981,8 @@ private fun DetailsEpisodeRatingsRail(
 @Composable
 private fun DetailsEpisodeRail(
     episodes: List<Episode>,
+    episodePlaybackProgress: Map<EpisodeIdentity, EpisodePlaybackProgress>,
+    selectedEpisodeIdentity: EpisodeIdentity?,
     episodeIndex: Int,
     focusSectionForUi: FocusSection?,
     configuration: android.content.res.Configuration,
@@ -3043,6 +3045,8 @@ private fun DetailsEpisodeRail(
                     }
                     EpisodeCard(
                         episode = episode,
+                        playbackProgress = episodePlaybackProgress[episode.identity],
+                        isSelected = episode.identity == selectedEpisodeIdentity,
                         cardWidth = episodeCardWidth,
                         isFocused = isFocused && !episodeFixedFocus,
                         spoilerBlurEnabled = spoilerBlurEnabled,
@@ -3993,6 +3997,8 @@ private fun PremiumActionButton(
 @Composable
 private fun EpisodeCard(
     episode: Episode,
+    playbackProgress: EpisodePlaybackProgress? = null,
+    isSelected: Boolean = false,
     cardWidth: androidx.compose.ui.unit.Dp = 300.dp,
     isFocused: Boolean,
     spoilerBlurEnabled: Boolean = false,
@@ -4009,7 +4015,11 @@ private fun EpisodeCard(
         animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.8f, stiffness = 400f),
         label = "episode_scale"
     )
-    val borderWidth = if (isFocused || scale != 1f) 3.dp else 0.dp
+    val borderWidth = when {
+        isFocused || scale != 1f -> 3.dp
+        isSelected -> 2.dp
+        else -> 0.dp
+    }
 
     val imageRequest = remember(episode.stillPath, cardWidth, context, density) {
         val widthPx = with(density) { cardWidth.roundToPx() }
@@ -4192,7 +4202,12 @@ private fun EpisodeCard(
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .padding(
+                        start = 10.dp,
+                        end = 10.dp,
+                        top = 8.dp,
+                        bottom = if (playbackProgress != null) 15.dp else 8.dp
+                    )
             ) {
                 Text(
                     text = episode.name,
@@ -4215,6 +4230,28 @@ private fun EpisodeCard(
                     maxLines = 4,
                     overflow = TextOverflow.Ellipsis
                 )
+            }
+
+            if (
+                !episode.isWatched &&
+                playbackProgress != null &&
+                playbackProgress.percent in 1 until Constants.WATCHED_THRESHOLD
+            ) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 7.dp)
+                        .height(4.dp)
+                        .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(2.dp))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(playbackProgress.percent / 100f)
+                            .height(4.dp)
+                            .background(Pink, RoundedCornerShape(2.dp))
+                    )
+                }
             }
 
             if (episode.isWatched) {

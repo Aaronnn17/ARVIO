@@ -47,6 +47,7 @@ import com.arflix.tv.ui.skin.ArvioFocusableSurface
 import com.arflix.tv.ui.skin.ArvioSkin
 import com.arflix.tv.ui.skin.rememberArvioCardShape
 import com.arflix.tv.util.LocalDeviceType
+import com.arflix.tv.util.Constants
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
@@ -360,7 +361,10 @@ fun MediaCard(
                 }
 
                 // Subtle playback progress bar for Continue Watching.
-                if (showProgress && item.showPlaybackProgress && !item.isWatched && item.progress in 1..94) {
+                if (
+                    showProgress && item.showPlaybackProgress && !item.isWatched &&
+                    item.progress in 1 until Constants.WATCHED_THRESHOLD
+                ) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
