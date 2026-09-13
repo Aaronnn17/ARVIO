@@ -3409,6 +3409,9 @@ class IptvRepository @Inject constructor(
     fun pagedSearchChannels(query: String, limit: Int): List<IptvChannel> =
         runCatching { channelStore.search(currentEpgIndexKey, query, limit) }.getOrDefault(emptyList())
 
+    fun pagedChannelVariants(targetId: String?): List<IptvChannel> =
+        channelStore.findChannelVariants(currentEpgIndexKey, targetId)
+
     fun indexedGuideWindow(
         channelIds: Set<String>,
         startMs: Long,
