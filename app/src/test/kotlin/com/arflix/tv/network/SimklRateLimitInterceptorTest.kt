@@ -31,13 +31,13 @@ class SimklRateLimitInterceptorTest {
             times += now
             when (times.size) {
                 1 -> response(429, "2")
-                2 -> response(429, "7")
+                2 -> response(429, "120")
                 else -> response(200)
             }
         }
         limiter.intercept(chain).use { assertEquals(429, it.code) }
         limiter.intercept(chain).close()
-        assertEquals(listOf(0L, 2_000L, 9_000L), times)
+        assertEquals(listOf(0L, 2_000L, 122_000L), times)
     }
 
     @Test fun requestsRemainSpacedAfterSuccessfulRetry() {
@@ -63,5 +63,30 @@ class SimklRateLimitInterceptorTest {
         every { chain.proceed(any()) } returns response(200)
         limiter.intercept(chain).close()
         limiter.intercept(chain)
+    }
+
+    @Test fun anotherRequestDuringBackoffCannotCollideWithTheRetry() {
+        var now = 0L
+        var interleaved = false
+        val times = mutableListOf<Long>()
+        val other = mockk<Interceptor.Chain>()
+        every { other.request() } returns request
+        every { other.call() } returns call
+        every { other.proceed(any()) } answers { times += now; response(200) }
+        var attempts = 0
+        every { chain.proceed(any()) } answers {
+            times += now
+            response(if (attempts++ == 0) 429 else 200, "2")
+        }
+        lateinit var limiter: SimklRateLimitInterceptor
+        limiter = SimklRateLimitInterceptor({ now }, {
+            now += it
+            if (!interleaved) {
+                interleaved = true
+                limiter.intercept(other).close()
+            }
+        })
+        limiter.intercept(chain).close()
+        assertEquals(listOf(0L, 2_000L, 3_000L), times)
     }
 }

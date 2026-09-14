@@ -40,9 +40,11 @@ internal class SimklRateLimitInterceptor(
             awaitPermit(chain)
             val response = chain.proceed(chain.request())
             if (response.code != 429) return response
-            val seconds = (response.header("Retry-After")?.toLongOrNull() ?: 5L).coerceIn(1L, 60L)
+            val seconds = (response.header("Retry-After")?.toLongOrNull() ?: 5L).coerceAtLeast(1L)
             synchronized(lock) {
-                backoffUntil = maxOf(backoffUntil, nowMs() + seconds * 1_000L)
+                val now = nowMs()
+                val delay = seconds.coerceAtMost((Long.MAX_VALUE - now.coerceAtLeast(0L)) / 1_000L) * 1_000L
+                backoffUntil = maxOf(backoffUntil, now + delay)
             }
             // Record the final response's backoff too, but leave it open for the caller.
             if (retried || chain.request().body?.isOneShot() == true) return response
