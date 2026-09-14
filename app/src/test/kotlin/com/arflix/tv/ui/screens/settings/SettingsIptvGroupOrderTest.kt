@@ -61,3 +61,98 @@ class StalkerDpadIndexTest {
         ).isEqualTo(2)
     }
 }
+
+class HeldGroupMoveTargetTest {
+
+    // M3U playlists: reset row at 0, first category row at 1.
+    private val firstM3u = 1
+    // Stalker portals: reset at 0, bulk toggle at 1, first category row at 2.
+    private val firstStalker = 2
+
+    @Test
+    fun movingUpInTheMiddleFollowsTheGroup() {
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 4, firstGroupIndex = firstM3u, groupCount = 10, moveUp = true)
+        ).isEqualTo(3)
+    }
+
+    @Test
+    fun movingDownInTheMiddleFollowsTheGroup() {
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 4, firstGroupIndex = firstM3u, groupCount = 10, moveUp = false)
+        ).isEqualTo(5)
+    }
+
+    @Test
+    fun topGroupCannotMoveUp() {
+        // IptvRepository.moveGroupUp silently does nothing at the top, so the
+        // focus must not move either - otherwise focus and list drift apart.
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = firstM3u, firstGroupIndex = firstM3u, groupCount = 10, moveUp = true)
+        ).isNull()
+    }
+
+    @Test
+    fun bottomGroupCannotMoveDown() {
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 10, firstGroupIndex = firstM3u, groupCount = 10, moveUp = false)
+        ).isNull()
+    }
+
+    @Test
+    fun stalkerPortalsKeepTheBulkToggleRowOutOfReach() {
+        // The first category of a Stalker portal sits at focus index 2; moving
+        // it up must not push it into the bulk-toggle or reset row.
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = firstStalker, firstGroupIndex = firstStalker, groupCount = 5, moveUp = true)
+        ).isNull()
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 3, firstGroupIndex = firstStalker, groupCount = 5, moveUp = true)
+        ).isEqualTo(2)
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 6, firstGroupIndex = firstStalker, groupCount = 5, moveUp = false)
+        ).isNull()
+    }
+
+    @Test
+    fun rowsThatAreNotCategoriesNeverMove() {
+        // Reset row and bulk-toggle row of a Stalker portal.
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 0, firstGroupIndex = firstStalker, groupCount = 5, moveUp = false)
+        ).isNull()
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 1, firstGroupIndex = firstStalker, groupCount = 5, moveUp = true)
+        ).isNull()
+        // Past the last category row.
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 7, firstGroupIndex = firstStalker, groupCount = 5, moveUp = true)
+        ).isNull()
+    }
+
+    @Test
+    fun emptyCategoryListNeverMoves() {
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 1, firstGroupIndex = firstM3u, groupCount = 0, moveUp = true)
+        ).isNull()
+    }
+
+    @Test
+    fun aSingleGroupCannotMoveInEitherDirection() {
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 1, firstGroupIndex = firstM3u, groupCount = 1, moveUp = true)
+        ).isNull()
+        assertThat(
+            heldGroupMoveTarget(focusedIndex = 1, firstGroupIndex = firstM3u, groupCount = 1, moveUp = false)
+        ).isNull()
+    }
+
+    @Test
+    fun repeatedPressesWalkAGroupAllTheWayToTheTopAndThenStop() {
+        // Twenty groups, the focused one sits on position 19 (focus index 20).
+        var focus = 20
+        repeat(25) {
+            focus = heldGroupMoveTarget(focus, firstM3u, groupCount = 20, moveUp = true) ?: focus
+        }
+        assertThat(focus).isEqualTo(firstM3u)
+    }
+}
