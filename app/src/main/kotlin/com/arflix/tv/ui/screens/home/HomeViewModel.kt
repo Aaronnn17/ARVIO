@@ -1978,7 +1978,7 @@ class HomeViewModel @Inject constructor(
         // Defer heavy background warmups so first-launch navigation remains smooth.
         viewModelScope.launch {
             delay(if (isLowRamDevice) 10 * 60_000L else 8 * 60_000L)
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+            kotlinx.coroutines.withContext(Dispatchers.IO) {
                 try {
                     iptvRepository.warmVodCachesIfPossible()
                 } catch (e: Exception) {

@@ -170,6 +170,7 @@ fun MediaCard(
             .build()
     }
     var channelLogoFailed by remember(imageRequest) { mutableStateOf(false) }
+    var artworkIsOpaque by remember(imageRequest) { mutableStateOf(false) }
     // Performance: Removed context/density from keys
     val effectiveLogoImageUrl = logoImageUrl.takeIf { showLogoImage && !isChannelLogo }
     val logoRequest = remember(effectiveLogoImageUrl, isMobile) {
@@ -220,7 +221,7 @@ fun MediaCard(
         ) { _ ->
             Box(modifier = Modifier.fillMaxSize()) {
                 // Channel logos can be transparent: never leave placeholder text behind them.
-                Box(
+                if (!artworkIsOpaque) Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .then(if (isChannelLogo) Modifier.background(ArvioSkin.colors.surface)
@@ -243,8 +244,16 @@ fun MediaCard(
                         model = imageRequest,
                         contentDescription = item.title,
                         contentScale = if (isChannelLogo) ContentScale.Fit else ContentScale.Crop,
-                        onError = { if (isChannelLogo) channelLogoFailed = true },
-                        onSuccess = { if (isChannelLogo) channelLogoFailed = false },
+                        onError = {
+                            artworkIsOpaque = false
+                            if (isChannelLogo) channelLogoFailed = true
+                        },
+                        onSuccess = {
+                            if (isChannelLogo) channelLogoFailed = false
+                            // Keep the fallback behind transparent artwork and crossfades.
+                            artworkIsOpaque = !isMobile && !isChannelLogo &&
+                                it.result.drawable.opacity == android.graphics.PixelFormat.OPAQUE
+                        },
                         modifier = Modifier.fillMaxSize().then(
                             if (isChannelLogo) Modifier.padding(
                                 horizontal = width * 0.1f,

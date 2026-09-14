@@ -240,7 +240,17 @@ class SettingsFocusTracker {
     // Keeping this as a regular map avoids invalidating the whole settings tree
     // once for every row that registers during composition.
     val requesters = mutableMapOf<Int, BringIntoViewRequester>()
-    fun clear() = requesters.clear()
+    val coordinates = mutableMapOf<Int, androidx.compose.ui.layout.LayoutCoordinates>()
+    var viewport: androidx.compose.ui.layout.LayoutCoordinates? = null
+
+    fun revealDelta(index: Int): Float? {
+        val parent = viewport?.takeIf { it.isAttached } ?: return null
+        val child = coordinates[index]?.takeIf { it.isAttached } ?: return null
+        return runCatching {
+            val bounds = parent.localBoundingBoxOf(child, clipBounds = false)
+            com.arflix.tv.ui.focus.focusRevealDelta(bounds.top, bounds.bottom, parent.size.height.toFloat())
+        }.getOrNull()
+    }
 }
 
 val LocalSettingsFocusTracker = compositionLocalOf<SettingsFocusTracker?> { null }
@@ -356,11 +366,17 @@ private fun formatUserAgentPreview(value: String?, maxLength: Int): String {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Modifier.settingsFocusSlot(index: Int): Modifier {
-    // TV uses the lightweight focus-index scroll path below. Keeping a
-    // relocation node on every row adds layout work without contributing to
-    // that path, especially noticeable on lower-memory TV hardware.
-    if (!LocalDeviceType.current.isTouchDevice()) return this
     val tracker = LocalSettingsFocusTracker.current ?: return this
+    if (!LocalDeviceType.current.isTouchDevice()) {
+        val owner = remember(tracker, index) { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
+        DisposableEffect(tracker, index) {
+            onDispose { if (tracker.coordinates[index] === owner[0]) tracker.coordinates.remove(index) }
+        }
+        return this.onGloballyPositioned {
+            owner[0] = it
+            tracker.coordinates[index] = it
+        }
+    }
     val requester = remember(index) { BringIntoViewRequester() }
     DisposableEffect(tracker, index, requester) {
         tracker.requesters[index] = requester
@@ -557,7 +573,8 @@ fun SettingsScreen(
     val focusRequester = remember { FocusRequester() }
     val scrollState = rememberScrollState()
     val sectionScrollState = rememberScrollState()
-    val focusTracker = remember { SettingsFocusTracker() }
+    val focusTracker = remember(sectionIndex, showIptvCategoriesSettings) { SettingsFocusTracker() }
+    val sectionFocusTracker = remember { SettingsFocusTracker() }
     val openSubtitlePicker = {
         viewModel.refreshSubtitleOptions()
         val options = uiState.subtitleOptions
@@ -656,7 +673,6 @@ fun SettingsScreen(
 
     // Reset content scroll AND position cache when switching sections.
     LaunchedEffect(sectionIndex) {
-        focusTracker.clear()
         if (scrollState.value != 0) {
             scrollState.scrollTo(0)
         }
@@ -664,6 +680,12 @@ fun SettingsScreen(
 
     LaunchedEffect(sectionIndex, activeZone, sections.size) {
         if (isTouchDevice || activeZone != Zone.SECTION) return@LaunchedEffect
+        androidx.compose.runtime.withFrameNanos { }
+        sectionFocusTracker.revealDelta(sectionIndex)?.let { delta ->
+            val target = (sectionScrollState.value + delta).toInt().coerceIn(0, sectionScrollState.maxValue)
+            if (target != sectionScrollState.value) sectionScrollState.animateScrollTo(target, tween(100, easing = FastOutSlowInEasing))
+            return@LaunchedEffect
+        }
         val maxScroll = sectionScrollState.maxValue
         if (maxScroll <= 0) return@LaunchedEffect
         val maxIndex = sections.lastIndex.coerceAtLeast(1)
@@ -679,26 +701,27 @@ fun SettingsScreen(
         }
     }
 
-    // Auto-scroll content to keep focused item visible in all sections.
-    //
-    // Strategy: prefer the per-row [BringIntoViewRequester] registered via
-    // Modifier.settingsFocusSlot(...) — this is Compose's native mechanism
-    // for nested-scroll focus-follow and correctly handles variable-height
-    // rows and arbitrary nesting depth. Sections that haven't adopted the
-    // modifier fall back to the legacy ratio heuristic, which is imprecise
-    // but non-regressive.
-    //
-    // Triggers on focus/section change AND on the tracker map itself, so late
-    // layout registrations (which happen one frame after composition) still
-    // produce a correct scroll.
+    // TV reveals measured rows; touch uses native bring-into-view. A new
+    // subpage gets its own tracker even if its first focused index is unchanged.
     LaunchedEffect(
         contentFocusIndex,
+        focusTracker,
         sectionIndex,
         activeZone,
         uiState.catalogs.size,
         uiState.addons.size
     ) {
         if (activeZone != Zone.CONTENT) return@LaunchedEffect
+
+        if (!isTouchDevice) {
+            // Let newly selected sections attach; never retain detached coordinates.
+            androidx.compose.runtime.withFrameNanos { }
+            focusTracker.revealDelta(contentFocusIndex)?.let { delta ->
+                val target = (scrollState.value + delta).toInt().coerceIn(0, scrollState.maxValue)
+                if (target != scrollState.value) scrollState.animateScrollTo(target, tween(100, easing = FastOutSlowInEasing))
+                return@LaunchedEffect
+            }
+        }
 
         val requester = focusTracker.requesters[contentFocusIndex]
         if (requester != null && isTouchDevice) {
@@ -1475,6 +1498,7 @@ fun SettingsScreen(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth()
+                            .onGloballyPositioned { sectionFocusTracker.viewport = it }
                             .verticalScroll(sectionScrollState)
                     ) {
                         sections.forEachIndexed { index, section ->
@@ -1485,6 +1509,7 @@ fun SettingsScreen(
                                 Spacer(modifier = Modifier.height(6.dp))
                             }
                             SettingsSectionItem(
+                                modifier = Modifier.onGloballyPositioned { sectionFocusTracker.coordinates[index] = it },
                                 icon = when (section) {
                                     "language" -> Icons.Default.Language
                                     "subtitles" -> Icons.Default.Subtitles
@@ -1545,6 +1570,7 @@ fun SettingsScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxSize()
+                        .onGloballyPositioned { focusTracker.viewport = it }
                         .verticalScroll(scrollState)
                         .padding(start = 28.dp)
                 ) {
@@ -5275,7 +5301,8 @@ private fun SettingsSectionItem(
     title: String,
     isSelected: Boolean,
     isFocused: Boolean,
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
+    modifier: Modifier = Modifier
 ) {
     val bgColor = when {
         isFocused -> Color.White.copy(alpha = 0.12f)
@@ -5290,7 +5317,7 @@ private fun SettingsSectionItem(
     val accentColor = resolveAccentColor(fallback = Pink)
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable { onClick() }
             .background(bgColor, RoundedCornerShape(12.dp))

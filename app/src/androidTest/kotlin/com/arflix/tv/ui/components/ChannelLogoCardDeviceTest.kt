@@ -85,6 +85,27 @@ class ChannelLogoCardDeviceTest(private val device: DeviceType) {
         compose.onNodeWithText(channel.title, useUnmergedTree = true).assertIsDisplayed()
     }
 
+    @Test fun opaqueMovieArtworkDoesNotKeepHiddenFallbackTextOnTv() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val file = File.createTempFile("opaque-card-", ".jpg", context.cacheDir)
+        val bitmap = Bitmap.createBitmap(320, 180, Bitmap.Config.RGB_565)
+        bitmap.eraseColor(android.graphics.Color.RED)
+        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 100, it) }
+        bitmap.recycle()
+        val art = file.toURI().toString()
+        val movie = channel.copy(id = 42, title = "Opaque movie fixture", status = null,
+            mediaType = MediaType.MOVIE, image = art, backdrop = art)
+        showCard(movie)
+        waitForLogo()
+        if (device == DeviceType.TV) {
+            compose.waitUntil(5000) {
+                compose.onAllNodesWithText(movie.title, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            }
+        }
+        val pixels = compose.onNodeWithTag("card").captureToImage().toPixelMap()
+        assertTrue(isRed(pixels[pixels.width / 2, pixels.height / 2]))
+    }
+
     @Test fun failedLogoShowsChannelName() {
         showCard(channel.copy(image = "file:///missing-arvio-channel-logo.png"))
         compose.waitUntil(5_000) {

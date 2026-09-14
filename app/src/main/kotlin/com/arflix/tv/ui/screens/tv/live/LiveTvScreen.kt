@@ -1642,6 +1642,9 @@ fun LiveTvScreen(
         }
     }
     var broadcastCandidates by remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet) { mutableStateOf(emptyList<IptvChannel>()) }
+    val broadcasterIndexKey = remember(currentProfile?.id, selectedProviderId, hiddenGroupSet, restrictedGroupSet, state.snapshot.loadedAt) {
+        SportsBroadcasterIndexKey(currentProfile?.id, selectedProviderId, state.snapshot.loadedAt.toEpochMilli(), hiddenGroupSet + restrictedGroupSet)
+    }
     var broadcasterKeys by remember { mutableStateOf(emptySet<String>()) }
     LaunchedEffect(sportsArtwork) {
         broadcasterKeys = withContext(Dispatchers.Default) {
@@ -1653,18 +1656,14 @@ fun LiveTvScreen(
         if (broadcasterKeys.isEmpty()) { broadcastCandidates = emptyList(); return@LaunchedEffect }
         sportsBroadcastLoading = true
         val matchingStarted = android.os.SystemClock.elapsedRealtime()
-        try { broadcastCandidates = withContext(Dispatchers.IO) {
-            val ids = linkedSetOf<String>()
-            val excluded = hiddenGroupSet + restrictedGroupSet
-            val scope = kotlinx.coroutines.currentCoroutineContext()
-            val names = hashMapOf<String, Boolean>()
-            viewModel.iptvRepository.visitStoredChannelLabels(selectedProviderId.takeUnless { it == "all" }) { id, name, group ->
-                scope.ensureActive()
-                if (PlaylistGroupKey.build(channelPlaylistId(id), group.trim()) !in excluded && group !in excluded &&
-                    names.getOrPut(name) { sportsChannelKey(name) in broadcasterKeys }) ids.add(id)
+        try {
+            val index = viewModel.sportsBroadcasterIndex(broadcasterIndexKey)
+            broadcastCandidates = withContext(Dispatchers.IO) {
+                val ids = index.matchingIds(broadcasterKeys)
+                ids.chunked(128).flatMap { viewModel.iptvRepository.pagedChannelsByIds(it) }
+                    .filter { !it.enrichForFastStartup(0).isAdult }
             }
-            ids.chunked(128).flatMap { viewModel.iptvRepository.pagedChannelsByIds(it) }.filter { !it.enrichForFastStartup(0).isAdult }
-        } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (_: Exception) { sportsError = true }
         finally {
             sportsBroadcastLoading = false

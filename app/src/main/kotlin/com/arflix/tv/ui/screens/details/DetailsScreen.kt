@@ -383,7 +383,7 @@ fun DetailsScreen(
     // resume / first-unwatched target. Keep the ratings heatmap page (12 episodes/page) aligned.
     LaunchedEffect(
         uiState.currentSeason,
-        uiState.episodes,
+        uiState.episodes.isNotEmpty(),
         uiState.initialSeasonIndex,
         uiState.initialEpisodeIndex
     ) {
