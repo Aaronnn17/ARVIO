@@ -249,3 +249,37 @@ test('actual tracking router uses Continue Watching preferences independently an
   simkl.watched = async () => { throw Error('offline'); };
   await assert.rejects(sync.syncClient().watched('movies', 'continueWatching'), /could not be read/);
 });
+
+test('fresh profiles default Continue Watching to Trakt when Trakt and Simkl are both connected', () => {
+  const saved = storage();
+  const sync = load('lib/sync.ts', {
+    './storage': saved,
+    './store': { traktClient: { isConnected: true } },
+    './simkl': { simklClient: { isConnected: true } },
+    './mdblist': { mdblistClient: { isConnected: false } }
+  });
+  const preferences = sync.defaultTrackingPreferences();
+  assert.equal(preferences.continueWatchingReadMode, 'trakt');
+  assert.equal(preferences.watchlistReadMode, 'trakt');
+  assert.equal(preferences.watchedReadMode, 'trakt');
+});
+
+test('legacy AUTO profiles use the canonical Trakt source instead of merging providers', async () => {
+  const saved = storage();
+  const tracker = (name) => ({ isConnected: true, currentProfileId: 'a', watched: async () => [{ name }] });
+  const trakt = tracker('trakt');
+  const simkl = tracker('simkl');
+  const sync = load('lib/sync.ts', {
+    './storage': saved,
+    './store': { traktClient: trakt },
+    './simkl': { simklClient: simkl },
+    './mdblist': { mdblistClient: { isConnected: false } }
+  });
+  sync.saveTrackingPreferences('a', {
+    watchlistReadMode: 'auto', continueWatchingReadMode: 'auto', watchedReadMode: 'auto',
+    writeToTrakt: true, writeToSimkl: true
+  });
+  const rows = await sync.syncClient().watched('shows', 'continueWatching');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'trakt');
+});

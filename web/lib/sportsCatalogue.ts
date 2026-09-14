@@ -11,16 +11,19 @@ export function sportsProminence(league = "", countries = 0): number {
 }
 
 export function sportsChannelKey(name: string): string {
-  return sportsArtworkKey(name.replace(/\b(uhd|fhd|hd|sd|4k|8k|hevc|h[.]?265|h[.]?264|1080p|720p|2160p|(?:25|30|50|60)fps|raw|backup)\b/gi, ""))
+  return sportsArtworkKey(name.replace(/\b(uhd|fhd|hd|sd|4k|8k|hevc|h[.]?265|h[.]?264|1080p|720p|2160p|(?:25|30|50|60)fps|raw|backup)\b/gi, "").replace(/\+/g, " plus "))
     .replace(/^([a-z]{2,3})\s+nowtv\s+/, "$1 ")
     .replace(/\btnt sport\b/g, "tnt sports").replace(/\bbein\s*sports?\s*(\d*)/g, "bein sports $1")
     .replace(/\b(sports|espn)(\d+)\b/g, "$1 $2").replace(/\s+/g, " ").trim();
 }
 export function sportsBroadcasterKeys(name: string, country: string): string[] {
   const regions: Record<string, string[]> = { "united kingdom": ["uk", "gb"], "united states": ["us", "usa"], netherlands: ["nl", "nld"], germany: ["de", "ger"], france: ["fr"], spain: ["es"], italy: ["it"], portugal: ["pt"], brazil: ["br"], australia: ["au"], canada: ["ca"], belgium: ["be"], switzerland: ["ch"], austria: ["at"], ireland: ["ie"], denmark: ["dk", "dnk"], sweden: ["se"], norway: ["no"], finland: ["fi"], poland: ["pl"], romania: ["ro"], turkey: ["tr"], india: ["in"], argentina: ["ar"], mexico: ["mx"], "south africa": ["za"], "new zealand": ["nz"], "saudi arabia": ["sa"], "united arab emirates": ["ae", "uae"] };
-  const key = sportsChannelKey(name), suffix = ` ${sportsArtworkKey(country)}`;
-  const localName = country && key.endsWith(suffix) ? key.slice(0, -suffix.length) : key;
-  return [...new Set([key, localName, ...(regions[country.toLowerCase()] ?? []).flatMap(code => [`${code} ${localName}`, `${localName} ${code}`])])];
+  const countryKey = country.trim().toLowerCase().replace(/^the netherlands$/, "netherlands");
+  const codes = regions[countryKey] ?? [];
+  const key = sportsChannelKey(name);
+  const suffix = [countryKey, ...codes].map(value => ` ${sportsArtworkKey(value)}`).find(value => key.endsWith(value));
+  const localName = suffix ? key.slice(0, -suffix.length).trim() : key;
+  return [...new Set([key, localName, ...codes.flatMap(code => [`${code} ${localName}`, `${localName} ${code}`])])];
 }
 const leagueKey = (name: string) => sportsArtworkKey(name).replace(/^(english premier league|spanish la liga|italian serie a|german bundesliga|french ligue 1)$/, value => value.split(" ").slice(1).join(" "));
 
@@ -55,7 +58,8 @@ export function buildSportsCatalogue(guide: SportsGuideEvent[], artwork: SportsE
   const seen = new Set<string>();
   for (const item of fixtures) {
     const fixture = item.fixture!, start = item.startsAt!;
-    const sport = guideSports.find(s => s.pattern.test(item.genres.join(" ")));
+    const sport = guideSports.find(s => s.pattern.test(`${item.genres.join(" ")} ${fixture.league ?? ""}`))
+      ?? guideSports.find(s => s.id === "other")!;
     if (!sport || seen.has(fixture.id) || start >= until.getTime() || start < now - 24 * 3600_000) continue;
     seen.add(fixture.id);
     // Match both complete participant names inside decorated EPG titles, not one team or a league alone.

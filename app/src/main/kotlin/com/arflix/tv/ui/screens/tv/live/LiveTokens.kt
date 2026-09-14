@@ -89,7 +89,7 @@ object LiveDims {
     val SidebarCollapsed = 52.dp
     // Two-line labels keep long provider categories readable without changing
     // the focus geometry while moving through the drawer.
-    val SidebarRowHeight = 52.dp
+    val SidebarRowHeight = 36.dp
 
     val MiniPlayerWidth  = 304.dp
     val MiniPlayerHeight = 147.dp

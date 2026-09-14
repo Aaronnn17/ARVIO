@@ -1,6 +1,5 @@
 package com.arflix.tv.ui.screens.tv.live
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.layout.layout
 
 import androidx.compose.animation.core.animateFloatAsState
@@ -105,10 +104,10 @@ fun ProgramCell(
         isNow -> LiveColors.FocusBg
         else -> LiveColors.Panel
     }
-    val bg = animateColorAsState(
-        if (focused) LiveColors.PanelRaised else baseBg,
-        tween(120), label = "programme-surface",
-    )
+    val bg = if (focused) Color.White else baseBg
+    val foreground = if (focused) Color.Black else LiveColors.Fg
+    val secondary = if (focused) Color.Black.copy(alpha = .7f) else LiveColors.FgDim
+    val muted = if (focused) Color.Black.copy(alpha = .65f) else LiveColors.FgMute
     val contentAlpha = animateFloatAsState(
         targetValue = if (isPast && !focused && !isCatchupSupported) 0.55f else 1f,
         animationSpec = tween(durationMillis = 90),
@@ -143,10 +142,9 @@ fun ProgramCell(
                     Modifier
                 }
             )
-            .liveFocusOutline(focused, LiveDims.CellRadius)
             .drawBehind {
                 val radius = LiveDims.CellRadius.toPx()
-                drawRoundRect(bg.value, cornerRadius = CornerRadius(radius))
+                drawRoundRect(bg, cornerRadius = CornerRadius(radius))
             }
             .then(if (focusable) Modifier.focusable() else Modifier)
             .then(
@@ -213,19 +211,19 @@ fun ProgramCell(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val nowMs = clockTickMillis
                 if (isPast && isCatchupSupported && width >= 150.dp) {
-                    Badge(stringResource(R.string.live_badge_archive), LiveColors.FgDim, LiveColors.PanelRaised)
+                    Badge(stringResource(R.string.live_badge_archive), secondary, if (focused) Color.Black.copy(alpha = 0.08f) else LiveColors.PanelRaised)
                     Spacer(Modifier.size(6.dp))
                 } else if (!isPast) {
                     val isNewTag = (nowMs - program.startUtcMillis) in 0..24L * 60 * 60 * 1000L &&
                         !program.isLive(nowMs)
                     if (isNewTag) {
-                        Badge(stringResource(R.string.live_badge_new), LiveColors.FgDim, LiveColors.PanelRaised)
+                        Badge(stringResource(R.string.live_badge_new), secondary, if (focused) Color.Black.copy(alpha = 0.08f) else LiveColors.PanelRaised)
                         Spacer(Modifier.size(6.dp))
                     }
                 }
                 Text(
                     text = program.title,
-                    style = LiveType.CellTitle.copy(color = LiveColors.Fg, fontSize = 10.sp, lineHeight = 12.sp),
+                    style = LiveType.CellTitle.copy(color = foreground, fontSize = 10.sp, lineHeight = 12.sp),
                     maxLines = if (width < 120.dp) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
@@ -234,7 +232,7 @@ fun ProgramCell(
             if (rowHeight >= 60.dp && width >= 150.dp && !program.description.isNullOrBlank()) {
                 Text(
                     text = program.description!!,
-                    style = LiveType.BodySynopsis.copy(color = LiveColors.FgDim, fontSize = 8.sp, lineHeight = 10.sp),
+                    style = LiveType.BodySynopsis.copy(color = secondary, fontSize = 8.sp, lineHeight = 10.sp),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -245,14 +243,14 @@ fun ProgramCell(
             ) {
                 Text(
                     text = formatClock(program.startUtcMillis),
-                    style = LiveType.TimeMono.copy(color = LiveColors.FgMute, fontSize = 8.sp, lineHeight = 10.sp),
+                    style = LiveType.TimeMono.copy(color = muted, fontSize = 8.sp, lineHeight = 10.sp),
                 )
                 val mins = ((program.endUtcMillis - program.startUtcMillis) / 60_000L)
                     .coerceAtLeast(0L)
                 if (mins > 0) {
                     Text(
                         text = stringResource(R.string.live_label_duration_min, mins),
-                        style = LiveType.TimeMono.copy(color = LiveColors.FgMute, fontSize = 8.sp, lineHeight = 10.sp),
+                        style = LiveType.TimeMono.copy(color = muted, fontSize = 8.sp, lineHeight = 10.sp),
                     )
                 }
             }

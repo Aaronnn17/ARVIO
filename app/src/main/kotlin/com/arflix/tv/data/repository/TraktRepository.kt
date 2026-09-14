@@ -100,7 +100,10 @@ class TraktRepository @Inject constructor(
     private fun tokenUpdatedAtKey() = profileManager.profileLongKey("trakt_token_updated_at_v3")
     private fun includeSpecialsKey() = profileManager.profileBooleanKey("trakt_include_specials")
     private fun dismissedContinueWatchingKey() = profileManager.profileStringKey("trakt_dismissed_continue_watching_v1")
-    private fun continueWatchingCacheKey() = profileManager.profileStringKey("trakt_continue_watching_cache_v4")
+    // v5 invalidates snapshots written by the old 50-show/18-month resolver.
+    // Keeping that snapshot would make the corrected resolver appear broken
+    // until the old five-minute cache expired.
+    private fun continueWatchingCacheKey() = profileManager.profileStringKey("trakt_continue_watching_cache_v5")
     // Local Continue Watching for profiles without Trakt - stores progress locally per profile
     private fun localContinueWatchingKey() = profileManager.profileStringKey("local_continue_watching_v1")
     private fun localWatchedMoviesKey() = profileManager.profileStringKey("local_watched_movies_v1")
@@ -120,7 +123,10 @@ class TraktRepository @Inject constructor(
     @Volatile private var continueWatchingFetchingProfileId: String? = null
     private var lastContinueWatchingFetch = 0L
     private val CONTINUE_WATCHING_CACHE_MS = 300_000L // 5 minute cache to reduce API calls and improve performance
-    private val TRAKT_UP_NEXT_RECENT_WINDOW_MS = 548L * 24L * 60L * 60L * 1000L // 18 months
+    // Keep this in lockstep with the web client. Trakt's watched-shows endpoint
+    // is paginated, so a small client-side cap silently made Android disagree
+    // with Trakt and web for users with larger histories.
+    private val TRAKT_UP_NEXT_SHOW_LIMIT = 300
     @Volatile private var tokenRefreshBackoffUntilMs: Long = 0L
     private val TOKEN_REFRESH_RETRY_BACKOFF_MS = 5 * 60 * 1000L
     private val tokenRefreshMutex = Mutex()
@@ -268,6 +274,13 @@ class TraktRepository @Inject constructor(
                 newToken.accessToken
             } catch (e: HttpException) {
                 val code = e.code()
+                if (code == 401 || code == 403) {
+                    // A rejected refresh token cannot recover automatically.
+                    // Keeping it made the UI report Trakt as connected while
+                    // Continue Watching silently fell back to an old snapshot.
+                    invalidateStoredTraktSession()
+                    return@withLock null
+                }
                 val retryAfterMs = e.response()
                     ?.headers()
                     ?.get("Retry-After")
@@ -299,6 +312,23 @@ class TraktRepository @Inject constructor(
             prefs[expiresAtKey()] = token.createdAt + token.expiresIn
             prefs[tokenUpdatedAtKey()] = System.currentTimeMillis()
         }
+    }
+
+    private suspend fun invalidateStoredTraktSession() {
+        ensureProfileCacheScope()
+        context.traktDataStore.edit { prefs ->
+            prefs.remove(accessTokenKey())
+            prefs.remove(refreshTokenKey())
+            prefs.remove(expiresAtKey())
+            prefs[tokenUpdatedAtKey()] = System.currentTimeMillis()
+        }
+        tokenRefreshBackoffUntilMs = 0L
+        clearProfileScopedMemoryCaches(clearPreloaded = false)
+        AppLogger.breadcrumb(
+            tag = "Trakt",
+            message = "trakt_session_invalidated",
+            severity = "warning"
+        )
     }
 
     /**
@@ -576,7 +606,11 @@ class TraktRepository @Inject constructor(
         val all = mutableListOf<TraktWatchedShow>()
         val seen = LinkedHashSet<String>()
         var page = 1
-        val limit = 250
+        // Trakt caps watched-show responses that include progress at 100 rows.
+        // Asking for 250 can return a partial response or an unreliable page
+        // boundary, which made the first sync contain only a fraction of the
+        // user's Up Next shows.
+        val limit = 100
 
         while (true) {
             val pageItems = traktApi.getWatchedShows(
@@ -1404,22 +1438,30 @@ class TraktRepository @Inject constructor(
                 block: suspend (String) -> T
             ): T {
                 var lastErr: Exception? = null
-                repeat(2) { attempt ->
+                repeat(3) { attempt ->
                     try {
                         return block(authHolder[0])
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
 
                         lastErr = e
-                        if (attempt == 0 && isAuthError(e)) {
+                        val httpEx = e as? retrofit2.HttpException
+                        val retryable = isAuthError(e) || httpEx?.code() == 429 || httpEx?.code() in 500..599
+                        if (attempt < 2 && retryable) {
                             // Token may be expired – force-refresh and retry
-                            val refreshed = refreshTokenIfNeeded()
-                            if (refreshed != null) authHolder[0] = "Bearer $refreshed"
-                            delay(200)
-                        } else if (attempt == 0) {
-                            delay(500)
+                            if (isAuthError(e)) {
+                                val refreshed = refreshTokenIfNeeded()
+                                if (refreshed != null) authHolder[0] = "Bearer $refreshed"
+                            }
+                            val retryAfterMs = httpEx?.response()?.headers()?.get("Retry-After")
+                                ?.toLongOrNull()
+                                ?.times(1000L)
+                            delay(retryAfterMs?.coerceIn(200L, 5_000L) ?: (400L * (attempt + 1)))
                         }
                     }
+                }
+                if (lastErr != null && isAuthError(lastErr!!)) {
+                    invalidateStoredTraktSession()
                 }
                 throw lastErr ?: IllegalStateException("$label failed")
             }
@@ -1507,7 +1549,8 @@ class TraktRepository @Inject constructor(
                                     progress = item.progress.toInt().coerceIn(0, 100),
                                     resumePositionSeconds = 0L,
                                     durationSeconds = 0L,
-                                    year = movie.year?.toString() ?: ""
+                                    year = movie.year?.toString() ?: "",
+                                    updatedAtMs = parseIso8601(item.pausedAt ?: "")
                                 ),
                                 lastActivityAt = item.pausedAt ?: ""
                             )
@@ -1543,7 +1586,8 @@ class TraktRepository @Inject constructor(
                                 season = season,
                                 episode = number,
                                 episodeTitle = episode.title,
-                                year = show.year?.toString() ?: ""
+                                year = show.year?.toString() ?: "",
+                                updatedAtMs = parseIso8601(item.pausedAt ?: "")
                             ),
                             lastActivityAt = item.pausedAt ?: ""
                         )
@@ -1576,14 +1620,16 @@ class TraktRepository @Inject constructor(
                     .sortedByDescending { it.lastWatchedAt ?: it.lastUpdatedAt ?: "" }
                     .toList()
 
-                val recentCutoffMs = System.currentTimeMillis() - TRAKT_UP_NEXT_RECENT_WINDOW_MS
-                val recentWatchedShows = allWatchedShows.filter { watched ->
-                    parseIso8601(watched.lastWatchedAt ?: watched.lastUpdatedAt ?: "") >= recentCutoffMs
-                }
-                val watchedShows = (if (recentWatchedShows.size >= 8) recentWatchedShows else allWatchedShows)
-                    .take(Constants.MAX_PROGRESS_ENTRIES)
+                // Trakt's "Continue Watching" is based on watched-show progress,
+                // not only on a recent local playback timestamp. Do not switch to
+                // an 18-month subset: that made a valid older show disappear on
+                // Android while it remained visible in Trakt and the web client.
+                val watchedShows = allWatchedShows.take(TRAKT_UP_NEXT_SHOW_LIMIT)
 
-                val semaphore = Semaphore(8)
+                // Trakt's progress endpoint is called once per watched show.
+                // Keep the first sync below the provider's burst threshold so
+                // rate limiting does not turn a complete list into one result.
+                val semaphore = Semaphore(4)
                 val watchedProgressCandidates = watchedShows.map { watched ->
                     async {
                         semaphore.withPermit {
@@ -1619,6 +1665,11 @@ class TraktRepository @Inject constructor(
                             if (progress.aired <= 0 || progress.completed >= progress.aired) return@withPermit null
                             if (!includeSpecials && nextEpisode.season == 0) return@withPermit null
 
+                            val activityAt = progress.lastWatchedAt
+                                ?: watched.lastWatchedAt
+                                ?: watched.lastUpdatedAt
+                                ?: ""
+                            val activityAtMs = parseIso8601(activityAt)
                             val exactKey = "${MediaType.TV}:$tmdbId:${nextEpisode.season}:${nextEpisode.number}"
                             val showKey = "${MediaType.TV}:$tmdbId"
                             if (exactKey in processedKeys || showKey in processedKeys) return@withPermit null
@@ -1639,10 +1690,15 @@ class TraktRepository @Inject constructor(
                                     episodeTitle = nextEpisode.title,
                                     year = show.year?.toString() ?: "",
                                     isUpNext = true,
+                                    // RemoteSyncManager uses this timestamp when
+                                    // Trakt and another tracker are both enabled.
+                                    // Leaving it at the model default (0) let the
+                                    // other provider replace a valid Trakt item.
+                                    updatedAtMs = activityAtMs,
                                     totalEpisodes = progress.aired.coerceAtLeast(0),
                                     watchedEpisodes = progress.completed.coerceIn(0, progress.aired.coerceAtLeast(0))
                                 ),
-                                lastActivityAt = progress.lastWatchedAt ?: watched.lastWatchedAt ?: watched.lastUpdatedAt ?: ""
+                                lastActivityAt = activityAt
                             )
                         }
                     }
@@ -2295,7 +2351,10 @@ class TraktRepository @Inject constructor(
         streamKey: String? = null,
         streamAddonId: String? = null,
         streamTitle: String? = null,
-        year: String = ""
+        year: String = "",
+        isUpNext: Boolean = false,
+        episodeAirDate: String = "",
+        emitUpdate: Boolean = true,
     ) {
         ensureProfileCacheScope()
         if (SportsAddonCapabilities.isLiveStreamOrSportsItem(
@@ -2310,7 +2369,7 @@ class TraktRepository @Inject constructor(
 
         // Keep accidental taps out, but still keep real partial sessions on long content
         // where percent can be low while position is already meaningful.
-        if ((progress < Constants.MIN_PROGRESS_THRESHOLD && !hasMeaningfulPosition) || progress >= Constants.WATCHED_THRESHOLD) {
+        if (!isUpNext && ((progress < Constants.MIN_PROGRESS_THRESHOLD && !hasMeaningfulPosition) || progress >= Constants.WATCHED_THRESHOLD)) {
             // If watched (>= threshold), remove from Continue Watching
             if (progress >= Constants.WATCHED_THRESHOLD) {
                 removeFromContinueWatchingCache(tmdbId, season, episode, mediaType)
@@ -2336,6 +2395,8 @@ class TraktRepository @Inject constructor(
             streamAddonId = streamAddonId,
             streamTitle = streamTitle,
             year = year,
+            releaseDate = episodeAirDate,
+            isUpNext = isUpNext,
             updatedAtMs = System.currentTimeMillis()
         )
 
@@ -2379,7 +2440,9 @@ class TraktRepository @Inject constructor(
             cachedContinueWatching = trimmed
             preloadedProfileCache[currentProfileId()] = trimmed
         }
-        continueWatchingUpdates.upsert(currentProfileId(), item)
+        if (emitUpdate) {
+            continueWatchingUpdates.upsert(currentProfileId(), item)
+        }
     }
 
     /**
@@ -4623,7 +4686,7 @@ data class ContinueWatchingItem(
 ) {
     fun toMediaItem(context: Context? = null): MediaItem {
         val effectiveDurationSeconds = durationSeconds.takeIf { it > 0L } ?: parseRuntimeLabelSeconds(duration)
-        val showPlaybackProgress = !isUpNext && progress in 1..94
+        val showPlaybackProgress = !isUpNext && progress in 1 until Constants.WATCHED_THRESHOLD
         val resumeSeconds = when {
             resumePositionSeconds > 0L -> resumePositionSeconds
             // Only derive resume position from progress if we have a meaningful duration
@@ -4671,7 +4734,7 @@ data class ContinueWatchingItem(
         val timeRemainingSeconds = when {
             effectiveDurationSeconds > 0L && resumePositionSeconds > 0L ->
                 (effectiveDurationSeconds - resumePositionSeconds).coerceAtLeast(0L)
-            !isUpNext && effectiveDurationSeconds > 0L && progress in 1..94 ->
+            !isUpNext && effectiveDurationSeconds > 0L && progress in 1 until Constants.WATCHED_THRESHOLD ->
                 (effectiveDurationSeconds * (100L - progress) / 100L).coerceAtLeast(0L)
             else -> 0L
         }

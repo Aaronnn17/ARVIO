@@ -1,4 +1,5 @@
 package com.arflix.tv.ui.screens.settings
+import com.arflix.tv.data.model.AutoplayLimits
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -156,6 +157,8 @@ data class SettingsUiState(
     val autoPlayNext: Boolean = true,
     val autoPlaySingleSource: Boolean = true,
     val autoPlayMinQuality: String = "Any",
+    val autoPlayMaxQuality: String = "Unlimited",
+    val autoPlayMaxSizeGb: Int = 0,
     val dnsProvider: String = "System DNS",
     val dnsProviderOptions: List<String> = listOf("System DNS", "Cloudflare", "Google", "AdGuard"),
     val customUserAgent: String = "",
@@ -562,6 +565,8 @@ class SettingsViewModel @Inject constructor(
                 context.settingsDataStore.edit { it[autoPlayNextKey()] = true }
             }
             val autoPlayMinQuality = normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()])
+            val autoPlayMaxQuality = AutoplayLimits.normalizeQuality(prefs[profileManager.profileStringKey("auto_play_max_quality")])
+            val autoPlayMaxSizeGb = AutoplayLimits.normalizeSizeGb(prefs[profileManager.profileIntKey("auto_play_max_size_gb")] ?: 0)
             val trailerAutoPlay = prefs[trailerAutoPlayKey()] ?: false
             val trailerSoundEnabled = prefs[trailerSoundEnabledKey()] ?: false
             val trailerDelaySeconds = prefs[trailerDelayKey()]?.toIntOrNull() ?: 2
@@ -674,6 +679,8 @@ class SettingsViewModel @Inject constructor(
                 autoPlayNext = autoPlay,
                 autoPlaySingleSource = autoPlaySingleSource,
                 autoPlayMinQuality = autoPlayMinQuality,
+                autoPlayMaxQuality = autoPlayMaxQuality,
+                autoPlayMaxSizeGb = autoPlayMaxSizeGb,
                 trailerAutoPlay = trailerAutoPlay,
                 trailerSoundEnabled = trailerSoundEnabled,
                 trailerDelaySeconds = trailerDelaySeconds,
@@ -1249,6 +1256,7 @@ class SettingsViewModel @Inject constructor(
             "Kannada",
             "Korean",
             "Lithuanian",
+            "Malay",
             "Malayalam",
             "Marathi",
             "Norwegian",
@@ -1394,22 +1402,62 @@ class SettingsViewModel @Inject constructor(
 
     fun cycleAutoPlayMinQuality() {
         val current = normalizeAutoPlayMinQuality(_uiState.value.autoPlayMinQuality)
-        val next = when (current) {
-            "Any" -> "720p"
-            "720p" -> "1080p"
-            "1080p" -> "4K"
-            else -> "Any"
+        val maximum = AutoplayLimits(_uiState.value.autoPlayMaxQuality).qualityScore
+        val options = listOf("Any", "720p", "1080p", "4K").filter {
+            com.arflix.tv.ui.screens.details.minQualityThreshold(it) <= maximum
         }
-        setAutoPlayMinQuality(next)
+        setAutoPlayMinQuality(options[(options.indexOf(current) + 1) % options.size])
+    }
+
+    fun cycleAutoPlayMaxQuality() {
+        val options = AutoplayLimits.qualityOptions
+        val next = options[(options.indexOf(_uiState.value.autoPlayMaxQuality) + 1) % options.size]
+        val key = profileManager.profileStringKey("auto_play_max_quality")
+        val minKey = autoPlayMinQualityKey()
+        val profileId = profileManager.getProfileIdSync()
+        viewModelScope.launch {
+            val saved = context.settingsDataStore.edit { prefs ->
+                prefs[key] = next
+                val minimum = com.arflix.tv.ui.screens.details.minQualityThreshold(prefs[minKey] ?: "Any")
+                if (minimum > AutoplayLimits(next).qualityScore) prefs[minKey] = next
+            }
+            if (profileId == profileManager.getProfileIdSync()) {
+                _uiState.value = _uiState.value.copy(autoPlayMaxQuality = next, autoPlayMinQuality = saved[minKey] ?: "Any")
+            }
+            syncLocalStateToCloud(silent = true)
+        }
+    }
+
+    fun cycleAutoPlayMaxSize() {
+        val options = AutoplayLimits.sizeOptionsGb
+        val next = options[(options.indexOf(_uiState.value.autoPlayMaxSizeGb) + 1) % options.size]
+        val key = profileManager.profileIntKey("auto_play_max_size_gb")
+        val profileId = profileManager.getProfileIdSync()
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[key] = next }
+            if (profileId == profileManager.getProfileIdSync()) {
+                _uiState.value = _uiState.value.copy(autoPlayMaxSizeGb = next)
+            }
+            syncLocalStateToCloud(silent = true)
+        }
     }
 
     private fun setAutoPlayMinQuality(value: String) {
         val normalized = normalizeAutoPlayMinQuality(value)
+        val minKey = autoPlayMinQualityKey()
+        val maxKey = profileManager.profileStringKey("auto_play_max_quality")
+        val profileId = profileManager.getProfileIdSync()
         viewModelScope.launch {
-            context.settingsDataStore.edit { prefs ->
-                prefs[autoPlayMinQualityKey()] = normalized
+            val saved = context.settingsDataStore.edit { prefs ->
+                prefs[minKey] = normalized
+                val maximum = AutoplayLimits(prefs[maxKey] ?: "Unlimited")
+                if (com.arflix.tv.ui.screens.details.minQualityThreshold(normalized) > maximum.qualityScore) {
+                    prefs[minKey] = AutoplayLimits.normalizeQuality(prefs[maxKey])
+                }
             }
-            _uiState.value = _uiState.value.copy(autoPlayMinQuality = normalized)
+            if (profileId == profileManager.getProfileIdSync()) {
+                _uiState.value = _uiState.value.copy(autoPlayMinQuality = saved[minKey] ?: "Any")
+            }
             syncLocalStateToCloud(silent = true)
         }
     }

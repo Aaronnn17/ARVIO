@@ -36,13 +36,14 @@ function normalizeEvent(event) {
   // banners match an unqualified men's programme simply because names coincide.
   const qualifier = /women|womens|women's|youth|u\d{2}\b|under[ -]?\d{2}/i;
   const leagueQualifier = String(event.strLeague || '').match(qualifier)?.[0];
-  const sport = rawSport === 'Fighting' && /ufc|mma|mixed martial/i.test(event.strLeague || '') ? 'MMA'
+  const sport = rawSport === 'Fighting' && /boxing|boxen/i.test(event.strLeague || '') ? 'Boxing'
+    : rawSport === 'Fighting' && /ufc|mma|mixed martial/i.test(event.strLeague || '') ? 'MMA'
     : rawSport === 'Motorsport' && /formula 1|formula one/i.test(event.strLeague || '') ? 'Formula 1' : rawSport;
   // SportsDB timestamps without an offset are UTC, never the server's local time.
   const timestamp = event.strTimestamp || (event.dateEvent && event.strTime ? `${event.dateEvent}T${event.strTime}` : '');
   const startsAt = utcTimestamp(timestamp);
   if (!title || !sport || !Number.isFinite(startsAt)) return null;
-  const background = image(event.strThumb) || image(event.strFanart);
+  const background = image(event.strThumb) || image(event.strFanart) || image(event.strBanner) || image(event.strPoster);
   const homeBadge = image(event.strHomeTeamBadge), awayBadge = image(event.strAwayTeamBadge);
   const teamPair = event.idHomeTeam && event.idAwayTeam && event.idHomeTeam !== event.idAwayTeam
     && event.strHomeTeam && event.strAwayTeam;
@@ -66,7 +67,9 @@ async function fetchFixtures({ fetcher, apiKey, now }) {
   const events = new Map();
   let partial = false;
   // Fixed shared window, not client-controlled upstream queries. Covers local today/tomorrow in every timezone.
-  for (const offset of [-1, 0, 1, 2]) {
+  // Four independent days share one bounded refresh, instead of accumulating
+  // up to four network timeouts before the next stage can begin.
+  const fixtureDays = await Promise.all([-1, 0, 1, 2].map(async offset => {
     const day = new Date(now + offset * DAY).toISOString().slice(0, 10);
     const response = await fetcher(`https://www.thesportsdb.com/api/v1/json/${encodeURIComponent(apiKey)}/eventsday.php?d=${day}`, {
       signal: AbortSignal.timeout(4_000), redirect: 'error', headers: { Accept: 'application/json' },
@@ -74,9 +77,11 @@ async function fetchFixtures({ fetcher, apiKey, now }) {
     if (!response.ok) throw new Error('Sports metadata unavailable');
     const payload = await response.json();
     if (!payload || !Object.prototype.hasOwnProperty.call(payload, 'events') || (payload.events !== null && !Array.isArray(payload.events))) throw new Error('Invalid sports metadata');
-    const rows = payload.events || [];
+    return payload.events || [];
+  }));
+  for (const rows of fixtureDays) {
     partial ||= rows.length >= 1500;
-    for (const row of rows.slice(0, 1500)) {
+    for (const row of rows) {
       const event = normalizeEvent(row);
       if (event) events.set(event.id, event);
     }
@@ -85,7 +90,7 @@ async function fetchFixtures({ fetcher, apiKey, now }) {
   // Keep fixtures usable even if the optional TV listing service is unavailable.
   let broadcastsPartial = false;
   const mergeBroadcasts = rows => {
-    for (const row of rows.slice(0, 1500)) {
+    for (const row of rows) {
       const event = events.get(String(row.idEvent));
       const start = utcTimestamp(row.strTimeStamp || row.strTimestamp);
       if (!event || typeof row.strChannel !== 'string' || !row.strChannel.trim() || !Number.isFinite(start)) continue;
@@ -93,7 +98,7 @@ async function fetchFixtures({ fetcher, apiKey, now }) {
       if (!event.broadcasters.some(b => b.name === broadcaster.name && b.country === broadcaster.country && b.startsAt === start)) event.broadcasters.push(broadcaster);
     }
   };
-  for (const offset of [-1, 0, 1, 2]) {
+  await Promise.all([-1, 0, 1, 2].map(async offset => {
     try {
       const day = new Date(now + offset * DAY).toISOString().slice(0, 10);
       // Premium V1 returns up to 1500 listings; the V2 day filter stops at 100.
@@ -106,7 +111,7 @@ async function fetchFixtures({ fetcher, apiKey, now }) {
       broadcastsPartial ||= (payload.tvevents?.length ?? 0) >= 1500;
       mergeBroadcasts(payload.tvevents || []);
     } catch { broadcastsPartial = true; }
-  }
+  }));
   // Supplement only truncated/failed feeds. These are shared requests, never per viewer.
   if (broadcastsPartial) {
     const countries = ['united_kingdom', 'netherlands', 'united_states', 'germany', 'france', 'spain', 'italy', 'brazil'];
