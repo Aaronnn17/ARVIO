@@ -5,7 +5,7 @@
     <string name="app_name">ARVIO</string>
     <string name="about_credits">Acerca de y Créditos</string>
     <string name="about_credits_description">Atribución de metadatos e información de derechos de autor</string>
-    <string name="tmdb_attribution" translatable="false">This product uses the TMDB API but is not endorsed or certified by TMDB.</string>
+    <string name="tmdb_attribution" translatable="false">Este producto utiliza la API de TMDB, pero no cuenta con el respaldo ni la certificación de TMDB.</string>
     <string name="authorized_sources_notice">ARVIO es un centro multimedia para las fuentes que configures. Una entrada de catálogo no otorga derechos de visualización. Conecta solo servicios y medios que estés autorizado a usar.</string>
     <string name="credits_and_copyright">Créditos e informes de derechos de autor</string>
     <string name="trailers_on_youtube">Tráilers en YouTube</string>
@@ -940,7 +940,7 @@
     <string name="details_cd_season_options">Mostrar opciones de temporada</string>
     <string name="home_top10_movies_today">Top 10 Películas Hoy</string>
     <string name="home_top10_shows_today">Top 10 Series Hoy</string>
-    <string name="home_favorite_tv">TV Favorita</string>
+    <string name="home_favorite_tv">Canales favoritos de TV</string>
     <string name="home_sports">Deportes</string>
     <string name="home_popular_live_sports">Deportes en Vivo Populares</string>
     <string name="home_just_added">Recién Añadidos</string>
@@ -1068,7 +1068,7 @@
     <string name="live_badge_new">NUEVO</string>
     <string name="live_badge_ch">CANAL</string>
     <string name="epg_watch_live">Ver en Vivo</string>
-    <string name="epg_search_sources">Stream Now</string>
+    <string name="epg_search_sources">Ver ahora</string>
     <string name="live_label_ch">CANAL %1$d</string>
     <string name="live_label_sources">%1$d fuentes</string>
     <string name="live_label_matches">%1$d coincidencias</string>
