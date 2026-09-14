@@ -1878,12 +1878,14 @@ class MediaRepository @Inject constructor(
 
         val pageRefs: List<Pair<MediaType, Int>>
         val hasMore: Boolean
+        var sourceNextOffset: Int? = null
         if (catalog.sourceType == CatalogSourceType.HOME_SERVER) {
             return@coroutineScope loadHomeServerCatalogPage(catalog, offset, effectiveLimit)
         } else if (catalog.sourceType == CatalogSourceType.ADDON) {
             val page = loadAddonCatalogRefsPage(catalog, offset, effectiveLimit)
             pageRefs = page.refs
-            hasMore = page.hasMore && offset + pageRefs.size < rankedCatalogLimit
+            sourceNextOffset = page.nextOffset
+            hasMore = page.hasMore && page.nextOffset < rankedCatalogLimit
         } else {
             val mediaRefs = when (catalog.sourceType) {
                 CatalogSourceType.TRAKT -> loadTraktCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
@@ -1923,7 +1925,7 @@ class MediaRepository @Inject constructor(
         CategoryPageResult(
             items = items,
             hasMore = hasMore,
-            nextOffset = offset + pageRefs.size
+            nextOffset = sourceNextOffset ?: (offset + pageRefs.size)
         )
     }
 
@@ -2530,7 +2532,8 @@ class MediaRepository @Inject constructor(
 
     private data class AddonCatalogRefsPage(
         val refs: List<Pair<MediaType, Int>>,
-        val hasMore: Boolean
+        val hasMore: Boolean,
+        val nextOffset: Int
     )
 
     private suspend fun loadAddonCatalogRefsPage(
@@ -2539,7 +2542,7 @@ class MediaRepository @Inject constructor(
         limit: Int
     ): AddonCatalogRefsPage = coroutineScope {
         val descriptor = resolveAddonCatalogDescriptor(catalog)
-            ?: return@coroutineScope AddonCatalogRefsPage(emptyList(), hasMore = false)
+            ?: return@coroutineScope AddonCatalogRefsPage(emptyList(), hasMore = false, nextOffset = offset)
 
         val accumulated = LinkedHashSet<Pair<MediaType, Int>>()
         var probeOffset = offset.coerceAtLeast(0)
@@ -2548,14 +2551,18 @@ class MediaRepository @Inject constructor(
         val maxProbes = 3
 
         while (probes < maxProbes && accumulated.size < limit) {
-            val response = runCatching {
+            val response = try {
                 streamRepository.getAddonCatalogPage(
                     addonId = descriptor.addonId,
                     catalogType = descriptor.catalogType,
                     catalogId = descriptor.catalogId,
                     skip = probeOffset
                 )
-            }.getOrNull() ?: break
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                // A failed request is retryable, not an exhausted catalogue.
+                throw e
+            }
 
             val metas = response.metas ?: response.items ?: emptyList()
             if (metas.isEmpty()) {
@@ -2563,21 +2570,23 @@ class MediaRepository @Inject constructor(
                 break
             }
 
+            // Resolve only what this row needs, not a provider's entire 100-item page.
+            // Advance by source entries consumed, including entries that cannot be matched.
+            val consumed = metas.take(limit - accumulated.size)
             parseAddonPageRefs(
-                metas = metas,
+                metas = consumed,
                 descriptor = descriptor
             ).forEach { accumulated.add(it) }
 
-            hasMore = metas.size >= limit
-            if (!hasMore) break
-
-            probeOffset += metas.size
+            hasMore = true // Providers choose their own page size; only empty means exhausted.
+            probeOffset += consumed.size
             probes += 1
         }
 
         AddonCatalogRefsPage(
             refs = accumulated.take(limit),
-            hasMore = hasMore
+            hasMore = hasMore,
+            nextOffset = probeOffset
         )
     }
 
