@@ -4942,11 +4942,10 @@ class HomeViewModel @Inject constructor(
         watchedSeason: Int,
         watchedEpisode: Int,
     ) {
-        traktRepository.removeFromContinueWatchingCache(item.id, null, null, MediaType.TV)
-
         val currentSeasonEpisodes = mediaRepository.getSeasonEpisodes(item.id, watchedSeason)
             .orEmpty()
             .sortedBy { it.episodeNumber }
+        if (currentSeasonEpisodes.isEmpty()) return
         val followingEpisode = currentSeasonEpisodes.firstOrNull {
             it.episodeNumber > watchedEpisode
         } ?: mediaRepository.getSeasonEpisodes(item.id, watchedSeason + 1)

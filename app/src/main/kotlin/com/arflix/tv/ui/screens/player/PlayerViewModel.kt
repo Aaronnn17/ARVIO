@@ -5686,17 +5686,11 @@ class PlayerViewModel @Inject constructor(
         val displaySeason = currentDisplaySeason ?: canonicalSeason
         val displayEpisode = currentDisplayEpisode ?: canonicalEpisode
 
-        // Clear the completed show-level pointer before resolving a real successor. If there is
-        // no next episode, the show is complete and must stay off Continue Watching.
-        traktRepository.removeFromContinueWatchingCache(
-            currentMediaId,
-            null,
-            null,
-            MediaType.TV,
-        )
-
+        // Completion already removed this episode. Keep other saved progress until a
+        // successor is available; saveLocalContinueWatching replaces the show entry.
         val currentDisplayEpisodes = loadPlayerSeasonEpisodes(currentMediaId, displaySeason)
             .sortedBy { it.episodeNumber }
+        if (currentDisplayEpisodes.isEmpty()) return
         val next = currentDisplayEpisodes.firstOrNull { it.episodeNumber > displayEpisode }
             ?: loadPlayerSeasonEpisodes(currentMediaId, displaySeason + 1)
                 .sortedBy { it.episodeNumber }
