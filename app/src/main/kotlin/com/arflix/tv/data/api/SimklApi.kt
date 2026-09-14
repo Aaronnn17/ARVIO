@@ -144,6 +144,7 @@ data class SimklPinResponse(
 
 data class SimklPinPollResponse(
     @SerializedName("result") val result: String, // "KO", "pending", "OK"
+    @SerializedName("message") val message: String? = null,
     @SerializedName("access_token") val accessToken: String? = null,
     @SerializedName("token_type") val tokenType: String? = null,
     @SerializedName("expires_in") val expiresIn: Long? = null,
@@ -240,7 +241,8 @@ data class SimklHistoryShowItem(
     @SerializedName("next_to_watch_info") val nextToWatchInfo: SimklNextToWatchInfo? = null,
     @SerializedName("watched_episodes_count") val watchedEpisodesCount: Int? = null,
     @SerializedName("total_episodes_count") val totalEpisodesCount: Int? = null,
-    @SerializedName("not_aired_episodes_count") val notAiredEpisodesCount: Int? = null
+    @SerializedName("not_aired_episodes_count") val notAiredEpisodesCount: Int? = null,
+    @SerializedName("mapped_tvdb_seasons") val mappedTvdbSeasons: Any? = null
 )
 
 data class SimklNextToWatchInfo(
@@ -273,9 +275,15 @@ data class SimklHistorySeasonItem(
     @SerializedName("episodes") val episodes: List<SimklHistoryEpisodeItem>
 )
 
+data class SimklEpisodeTvdb(
+    @SerializedName("season") val season: Int? = null,
+    @SerializedName("episode") val episode: Int? = null
+)
+
 data class SimklHistoryEpisodeItem(
     @SerializedName("number") val number: Int,
-    @SerializedName("watched_at") val watchedAt: String? = null
+    @SerializedName("watched_at") val watchedAt: String? = null,
+    @SerializedName("tvdb") val tvdb: SimklEpisodeTvdb? = null
 )
 
 data class SimklSyncHistoryBody(

@@ -24,6 +24,7 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
+    private val simklBackoffUntilMs = java.util.concurrent.atomic.AtomicLong(0L)
 
     @Provides
     @Singleton
@@ -144,10 +145,34 @@ object AppModule {
                     requestBuilder.header("Content-Type", "application/json")
                 }
 
+                fun awaitBackoff() {
+                    var now = System.currentTimeMillis()
+                    var deadline = simklBackoffUntilMs.get()
+                    while (now < deadline) {
+                        val waitMs = (deadline - now).coerceAtMost(60_000L)
+                        try {
+                            Thread.sleep(waitMs)
+                        } catch (_: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            break
+                        }
+                        now = System.currentTimeMillis()
+                        deadline = simklBackoffUntilMs.get()
+                    }
+                }
+
+                awaitBackoff()
+
                 val response = chain.proceed(requestBuilder.build())
                 if (response.code == 429) {
-                    val retryAfter = response.header("Retry-After")?.toLongOrNull() ?: 5L
-                    com.arflix.tv.util.AppLogger.w("SimklApi", "HTTP 429 Too Many Requests received from Simkl. Retry-After: ${retryAfter}s")
+                    val retryAfter = (response.header("Retry-After")?.toLongOrNull() ?: 5L).coerceIn(1L, 60L)
+                    val backoffMs = retryAfter * 1000L
+                    val newDeadline = System.currentTimeMillis() + backoffMs
+                    simklBackoffUntilMs.updateAndGet { current -> maxOf(current, newDeadline) }
+                    com.arflix.tv.util.AppLogger.w("SimklApi", "HTTP 429 Too Many Requests received from Simkl. Backing off for ${retryAfter}s")
+                    response.close()
+                    awaitBackoff()
+                    return@addInterceptor chain.proceed(requestBuilder.build())
                 } else if (response.code == 412) {
                     com.arflix.tv.util.AppLogger.e("SimklApi", "HTTP 412 Precondition Failed / client_id_failed from Simkl. Check API key.")
                 }
