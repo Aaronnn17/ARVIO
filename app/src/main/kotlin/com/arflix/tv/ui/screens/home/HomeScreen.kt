@@ -435,7 +435,7 @@ private fun createHomeHeroPlaybackHandles(context: Context): HomeHeroPlaybackHan
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
     val heroDataSourceFactory =
-        OkHttpDataSource.Factory(heroOkHttp).setUserAgent("ARVIO/1.7.0 (Android TV)")
+        OkHttpDataSource.Factory(heroOkHttp).setUserAgent(OkHttpProvider.getAppUserAgent(context))
     val heroHlsFactory = HlsMediaSource.Factory(heroDataSourceFactory)
         .setAllowChunklessPreparation(true)
     val heroDefaultFactory = DefaultMediaSourceFactory(context)
