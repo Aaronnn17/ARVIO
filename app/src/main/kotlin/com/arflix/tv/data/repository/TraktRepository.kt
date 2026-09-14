@@ -2351,7 +2351,10 @@ class TraktRepository @Inject constructor(
         streamKey: String? = null,
         streamAddonId: String? = null,
         streamTitle: String? = null,
-        year: String = ""
+        year: String = "",
+        isUpNext: Boolean = false,
+        episodeAirDate: String = "",
+        emitUpdate: Boolean = true,
     ) {
         ensureProfileCacheScope()
         if (SportsAddonCapabilities.isLiveStreamOrSportsItem(
@@ -2366,7 +2369,7 @@ class TraktRepository @Inject constructor(
 
         // Keep accidental taps out, but still keep real partial sessions on long content
         // where percent can be low while position is already meaningful.
-        if ((progress < Constants.MIN_PROGRESS_THRESHOLD && !hasMeaningfulPosition) || progress >= Constants.WATCHED_THRESHOLD) {
+        if (!isUpNext && ((progress < Constants.MIN_PROGRESS_THRESHOLD && !hasMeaningfulPosition) || progress >= Constants.WATCHED_THRESHOLD)) {
             // If watched (>= threshold), remove from Continue Watching
             if (progress >= Constants.WATCHED_THRESHOLD) {
                 removeFromContinueWatchingCache(tmdbId, season, episode, mediaType)
@@ -2392,6 +2395,8 @@ class TraktRepository @Inject constructor(
             streamAddonId = streamAddonId,
             streamTitle = streamTitle,
             year = year,
+            releaseDate = episodeAirDate,
+            isUpNext = isUpNext,
             updatedAtMs = System.currentTimeMillis()
         )
 
@@ -2435,7 +2440,9 @@ class TraktRepository @Inject constructor(
             cachedContinueWatching = trimmed
             preloadedProfileCache[currentProfileId()] = trimmed
         }
-        continueWatchingUpdates.upsert(currentProfileId(), item)
+        if (emitUpdate) {
+            continueWatchingUpdates.upsert(currentProfileId(), item)
+        }
     }
 
     /**
@@ -4679,7 +4686,7 @@ data class ContinueWatchingItem(
 ) {
     fun toMediaItem(context: Context? = null): MediaItem {
         val effectiveDurationSeconds = durationSeconds.takeIf { it > 0L } ?: parseRuntimeLabelSeconds(duration)
-        val showPlaybackProgress = !isUpNext && progress in 1..94
+        val showPlaybackProgress = !isUpNext && progress in 1 until Constants.WATCHED_THRESHOLD
         val resumeSeconds = when {
             resumePositionSeconds > 0L -> resumePositionSeconds
             // Only derive resume position from progress if we have a meaningful duration
@@ -4727,7 +4734,7 @@ data class ContinueWatchingItem(
         val timeRemainingSeconds = when {
             effectiveDurationSeconds > 0L && resumePositionSeconds > 0L ->
                 (effectiveDurationSeconds - resumePositionSeconds).coerceAtLeast(0L)
-            !isUpNext && effectiveDurationSeconds > 0L && progress in 1..94 ->
+            !isUpNext && effectiveDurationSeconds > 0L && progress in 1 until Constants.WATCHED_THRESHOLD ->
                 (effectiveDurationSeconds * (100L - progress) / 100L).coerceAtLeast(0L)
             else -> 0L
         }
