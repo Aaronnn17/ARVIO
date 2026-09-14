@@ -606,13 +606,21 @@ class SearchViewModel @Inject constructor(
         applyDiscoverSelection()
     }
 
-    /** Back to the browse rows in one step — the way out of a filter set that found nothing. */
+    /**
+     * Back to the browse rows in one step — the way out of a filter set that found nothing.
+     *
+     * Every field [SearchUiState.hasDiscoverFilters] counts has to be cleared here. One left
+     * behind is worse than no reset at all: the guard above lets the call through, the screen
+     * stays on the grid, and nothing on it explains why. The media type deliberately survives —
+     * it is always set, so it is not one of the filters this undoes.
+     */
     fun clearDiscoverFilters() {
         val state = _uiState.value
         if (!state.hasDiscoverFilters) return
         _uiState.value = state.copy(
             selectedGenres = emptyList(),
             rating = RatingFilter(),
+            decade = null,
             year = null,
             certification = null,
             hideWatched = false

@@ -216,14 +216,22 @@ class DiscoverGridTest {
 
     @Test fun clearingEveryFilterBringsTheRowsBackInOneStep() = runBlocking {
         model.toggleGenre(action)
+        // The decade belongs in here: a filter the reset forgets leaves the screen on the grid
+        // with nothing on it explaining why.
+        model.selectDecade(Decade(2000, 2009))
         model.selectYear(2001)
+        model.setRating(RatingFilter(min = 7.0))
+        model.setHideWatched(true)
         withTimeout(5_000) { model.uiState.first { it.hasDiscoverFilters } }
 
         model.clearDiscoverFilters()
         val state = withTimeout(5_000) { model.uiState.first { !it.hasDiscoverFilters } }
 
         assertTrue(state.selectedGenres.isEmpty())
+        assertNull(state.decade)
         assertNull(state.year)
+        assertFalse(state.rating.isSet)
+        assertFalse(state.hideWatched)
         assertTrue(state.discoverGridItems.isEmpty())
     }
 }
