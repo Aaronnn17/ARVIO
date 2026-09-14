@@ -317,13 +317,13 @@ private fun OledSources(sources: List<WatchlistSourceItem>, selectedId: String, 
             item("group:$group") {
                 Column(Modifier.padding(top = 24.dp, bottom = 10.dp, start = 10.dp)) {
                     val provider = (entries.firstOrNull() as? WatchlistSourceItem.TrackerList)?.provider
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         when (provider) {
-                            TrackerLibraryProvider.TRAKT -> Icon(painterResource(R.drawable.ic_trakt), contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
-                            TrackerLibraryProvider.SIMKL -> Icon(painterResource(R.drawable.ic_simkl), contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                            TrackerLibraryProvider.TRAKT -> Icon(painterResource(R.drawable.ic_trakt), contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
+                            TrackerLibraryProvider.SIMKL -> Icon(painterResource(R.drawable.ic_simkl), contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
                             else -> Unit
                         }
-                        Text(group.uppercase(), color = Color.White, fontSize = if (provider != null) 16.sp else 13.sp, fontWeight = FontWeight.Bold, letterSpacing = .6.sp, maxLines = 1)
+                        Text(group.uppercase(), color = Color.White, fontSize = if (provider != null) 8.sp else 13.sp, fontWeight = FontWeight.Bold, letterSpacing = if (provider != null) .3.sp else .6.sp, maxLines = 1)
                     }
                     (entries.firstOrNull() as? WatchlistSourceItem.HomeServer)?.let { Text(it.candidate.serverKind.name.lowercase().replaceFirstChar(Char::titlecase), color = Color.Gray, fontSize = 11.sp) }
                 }
