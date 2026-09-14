@@ -346,6 +346,23 @@ internal fun heldGroupMoveTarget(focusedIndex: Int, firstGroupIndex: Int, groupC
     }
 }
 
+/**
+ * Scroll offset that puts a row in the MIDDLE of a lazy list instead of flush
+ * against its top edge.
+ *
+ * `animateScrollToItem(index)` aligns the row with the top, which leaves no
+ * context above it - on the categories screen that means a group being moved
+ * around is always the topmost visible row. A negative offset pushes it down by
+ * half the remaining viewport. LazyColumn clamps at both ends by itself, so the
+ * first and last rows still sit flush and nothing scrolls into empty space.
+ *
+ * Returns 0 while the list has not been measured yet ([viewportSize] or
+ * [itemSize] still 0), which falls back to the old top alignment for one frame.
+ */
+internal fun centeredScrollOffset(viewportSize: Int, itemSize: Int): Int =
+    if (viewportSize <= 0 || itemSize <= 0 || itemSize >= viewportSize) 0
+    else -((viewportSize - itemSize) / 2)
+
 private fun openExternalUrl(context: Context, url: String) {
     runCatching {
         context.startActivity(
@@ -499,12 +516,12 @@ fun SettingsScreen(
     // Sub-focus for catalog rows: 0 = edit, 1 = up, 2 = down, 3 = layout, 4 = delete
     var catalogActionIndex by remember { mutableIntStateOf(0) }
     // Sub-focus for IPTV playlist rows: 0 = categories, 1 = enable, 2 = edit, 3 = up, 4 = down, 5 = delete
-    // For IPTV category rows: 0 = visibility, 1 = up, 2 = down
+    // For IPTV category rows: 0 = visibility, 1 = hold and move
     var iptvActionIndex by remember { mutableIntStateOf(0) }
-    // The category group currently "held" by its up/down chip, or null when
-    // none is held. While a group is held, D-pad up/down carries it along
-    // instead of moving the focus to the next row. It is remembered by name
-    // because the ordered list lags behind a move by a frame or more.
+    // The category group currently "held" by its move chip, or null when none
+    // is held. While a group is held, D-pad up/down carries it along instead of
+    // moving the focus to the next row. It is remembered by name because the
+    // ordered list lags behind a move by a frame or more.
     var iptvHeldGroup by remember { mutableStateOf<String?>(null) }
     var showIptvCategoriesSettings by remember { mutableStateOf(false) }
     // Rename dialog state
@@ -1022,7 +1039,7 @@ fun SettingsScreen(
                                         addonActionIndex < focusedStremioAddonMaxAction
                                     ) {
                                         addonActionIndex++
-                                    } else if (currentSection == "iptv" && showIptvCategoriesSettings && contentFocusIndex >= firstIptvGroupIndex(uiState.iptvSelectedPlaylistId.orEmpty(), orderedIptvGroups(uiState.iptvSelectedPlaylistId.orEmpty(), uiState.iptvAvailableGroups, uiState.iptvGroupOrder), stalkerIds) && iptvActionIndex < 2) {
+                                    } else if (currentSection == "iptv" && showIptvCategoriesSettings && contentFocusIndex >= firstIptvGroupIndex(uiState.iptvSelectedPlaylistId.orEmpty(), orderedIptvGroups(uiState.iptvSelectedPlaylistId.orEmpty(), uiState.iptvAvailableGroups, uiState.iptvGroupOrder), stalkerIds) && iptvActionIndex < 1) {
                                         iptvActionIndex++
                                     } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 1..m3uCount && iptvActionIndex < iptvRowMaxAction()) {
                                         iptvActionIndex++
@@ -1194,26 +1211,10 @@ fun SettingsScreen(
                                                         if (!group.isNullOrBlank()) {
                                                             when (iptvActionIndex) {
                                                                 0 -> viewModel.toggleIptvHiddenGroup(playlistId, group)
-                                                                1, 2 -> {
-                                                                    val moveUp = iptvActionIndex == 1
-                                                                    // Once a group is held it stays the one being moved: the
-                                                                    // ordered list may still be catching up with the last move.
-                                                                    val movingGroup = iptvHeldGroup ?: group
-                                                                    val target = heldGroupMoveTarget(
-                                                                        focusedIndex = contentFocusIndex,
-                                                                        firstGroupIndex = firstGroupIdx,
-                                                                        groupCount = orderedGroups.size,
-                                                                        moveUp = moveUp
-                                                                    )
-                                                                    if (target != null) {
-                                                                        if (moveUp) viewModel.moveIptvGroupUp(playlistId, movingGroup)
-                                                                        else viewModel.moveIptvGroupDown(playlistId, movingGroup)
-                                                                        // The focus follows the group, not the row number.
-                                                                        contentFocusIndex = target
-                                                                    }
-                                                                    // Grab on the first press, let go on the next one.
-                                                                    iptvHeldGroup = if (iptvHeldGroup == null) group else null
-                                                                }
+                                                                // One neutral chip, so there is no direction to act on:
+                                                                // it takes hold of the group and D-pad up/down move it.
+                                                                // Pressing it again lets go.
+                                                                1 -> iptvHeldGroup = if (iptvHeldGroup == null) group else null
                                                             }
                                                         }
                                                     }
@@ -1828,8 +1829,7 @@ fun SettingsScreen(
                                 focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                                 focusedActionIndex = iptvActionIndex,
                                 onToggleHidden = { viewModel.toggleIptvHiddenGroup(uiState.iptvSelectedPlaylistId ?: "", it) },
-                                onMoveUp = { viewModel.moveIptvGroupUp(uiState.iptvSelectedPlaylistId ?: "", it) },
-                                onMoveDown = { viewModel.moveIptvGroupDown(uiState.iptvSelectedPlaylistId ?: "", it) },
+                                onToggleHold = { group -> iptvHeldGroup = if (iptvHeldGroup == null) group else null },
                                 onReset = { viewModel.resetIptvGroupOrder(uiState.iptvSelectedPlaylistId ?: "") },
                                 showBulkToggle = (uiState.iptvSelectedPlaylistId ?: "") == STALKER_PLAYLIST_ID || (uiState.iptvSelectedPlaylistId ?: "") in uiState.iptvStalkerPortals.map { it.id },
                                 onBulkToggle = { visible -> viewModel.setAllIptvGroupsVisible(uiState.iptvSelectedPlaylistId ?: "", visible) },
@@ -4956,8 +4956,6 @@ private fun MobileSettingsSubPage(
                     focusedIndex = -1,
                     focusedActionIndex = 0,
                     onToggleHidden = { viewModel.toggleIptvHiddenGroup(uiState.iptvSelectedPlaylistId ?: "", it) },
-                    onMoveUp = { viewModel.moveIptvGroupUp(uiState.iptvSelectedPlaylistId ?: "", it) },
-                    onMoveDown = { viewModel.moveIptvGroupDown(uiState.iptvSelectedPlaylistId ?: "", it) },
                     onReset = { viewModel.resetIptvGroupOrder(uiState.iptvSelectedPlaylistId ?: "") },
                     showBulkToggle = (uiState.iptvSelectedPlaylistId ?: "") == STALKER_PLAYLIST_ID || (uiState.iptvSelectedPlaylistId ?: "") in uiState.iptvStalkerPortals.map { it.id },
                     onBulkToggle = { visible -> viewModel.setAllIptvGroupsVisible(uiState.iptvSelectedPlaylistId ?: "", visible) }
@@ -11520,12 +11518,13 @@ private fun IptvCategoriesSettings(
     focusedIndex: Int,
     focusedActionIndex: Int,
     onToggleHidden: (String) -> Unit,
-    onMoveUp: (String) -> Unit,
-    onMoveDown: (String) -> Unit,
     onReset: () -> Unit,
     showBulkToggle: Boolean = false,
     onBulkToggle: (visible: Boolean) -> Unit = {},
-    heldGroup: String? = null
+    // Hold-and-move is a D-pad affair: the phone route renders rows without
+    // chips at all, so both of these stay at their defaults there.
+    heldGroup: String? = null,
+    onToggleHold: (String) -> Unit = {}
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     val heldAccent = resolveAccentColor(fallback = Pink)
@@ -11550,7 +11549,16 @@ private fun IptvCategoriesSettings(
 
     LaunchedEffect(isMobile, focusedIndex, orderedGroups.size) {
         if (!isMobile && focusedIndex >= firstGroupIndex && orderedGroups.isNotEmpty()) {
-            categoryListState.animateScrollToItem((focusedIndex - firstGroupIndex).coerceIn(0, orderedGroups.lastIndex))
+            val row = (focusedIndex - firstGroupIndex).coerceIn(0, orderedGroups.lastIndex)
+            // Keep the focused row in the middle rather than flush against the top
+            // edge: while a group is being moved, the neighbours above it are what
+            // tell the viewer where the group has got to.
+            val info = categoryListState.layoutInfo
+            val centering = centeredScrollOffset(
+                viewportSize = info.viewportEndOffset - info.viewportStartOffset,
+                itemSize = info.visibleItemsInfo.firstOrNull()?.size ?: 0
+            )
+            categoryListState.animateScrollToItem(row, centering)
         }
     }
 
@@ -11705,16 +11713,14 @@ private fun IptvCategoriesSettings(
                                 onClick = { onToggleHidden(group) }
                             )
                             Spacer(modifier = Modifier.width(6.dp))
+                            // One chip, not an up and a down arrow: it takes hold of
+                            // the group, and the D-pad does the moving from there.
+                            // Two direction buttons next to a hold-and-move gesture
+                            // say the same thing twice.
                             CatalogActionChip(
-                                icon = Icons.Default.ArrowUpward,
+                                icon = Icons.Default.SwapVert,
                                 isFocused = isRowFocused && focusedActionIndex == 1,
-                                onClick = { onMoveUp(group) }
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            CatalogActionChip(
-                                icon = Icons.Default.ArrowDownward,
-                                isFocused = isRowFocused && focusedActionIndex == 2,
-                                onClick = { onMoveDown(group) }
+                                onClick = { onToggleHold(group) }
                             )
                         }
                     }

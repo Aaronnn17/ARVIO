@@ -156,3 +156,41 @@ class HeldGroupMoveTargetTest {
         assertThat(focus).isEqualTo(firstM3u)
     }
 }
+
+class CenteredScrollOffsetTest {
+
+    @Test
+    fun aRowIsPushedDownByHalfTheLeftoverViewport() {
+        // 560 dp of list, 70 dp rows: the focused row should start 245 below the
+        // top edge, which is what the negative offset asks the list for.
+        assertThat(centeredScrollOffset(viewportSize = 560, itemSize = 70)).isEqualTo(-245)
+    }
+
+    @Test
+    fun anUnmeasuredListFallsBackToTopAlignment() {
+        // First frame: the list has no geometry yet. Offset 0 is the old
+        // behaviour, which is correct rather than merely harmless.
+        assertThat(centeredScrollOffset(viewportSize = 0, itemSize = 70)).isEqualTo(0)
+        assertThat(centeredScrollOffset(viewportSize = 560, itemSize = 0)).isEqualTo(0)
+    }
+
+    @Test
+    fun aRowTallerThanTheViewportIsNotPushedOffScreen() {
+        assertThat(centeredScrollOffset(viewportSize = 200, itemSize = 200)).isEqualTo(0)
+        assertThat(centeredScrollOffset(viewportSize = 200, itemSize = 260)).isEqualTo(0)
+    }
+
+    @Test
+    fun negativeMeasurementsNeverProduceAnOffset() {
+        assertThat(centeredScrollOffset(viewportSize = -10, itemSize = 70)).isEqualTo(0)
+        assertThat(centeredScrollOffset(viewportSize = 560, itemSize = -70)).isEqualTo(0)
+    }
+
+    @Test
+    fun theOffsetAlwaysPointsUpwardsSoTheRowMovesDown() {
+        // A positive offset would scroll PAST the row and hide it above the edge.
+        for (item in 10..200 step 10) {
+            assertThat(centeredScrollOffset(viewportSize = 560, itemSize = item)).isAtMost(0)
+        }
+    }
+}
