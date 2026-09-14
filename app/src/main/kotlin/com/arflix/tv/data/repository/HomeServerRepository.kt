@@ -192,12 +192,17 @@ internal object HomeServerMatcher {
         if (tvdbId != null && providers["tvdb"]?.toIntOrNull() == tvdbId) {
             score += 900
         }
+        if (score == 0 && (
+            (!cleanImdb.isNullOrBlank() && !providers["imdb"].isNullOrBlank() && providers["imdb"]?.lowercase(Locale.US) != cleanImdb) ||
+            (tmdbId != null && providers["tmdb"]?.toIntOrNull()?.let { it != tmdbId } == true) ||
+            (tvdbId != null && providers["tvdb"]?.toIntOrNull()?.let { it != tvdbId } == true)
+        )) return 0
 
         val requestedNormalized = normalizeTitle(requestedTitle)
         val candidateNormalized = normalizeTitle(candidate.title)
         if (requestedNormalized.isNotBlank() && candidateNormalized.isNotBlank()) {
             when {
-                requestedNormalized == candidateNormalized -> score += 140
+                requestedNormalized == candidateNormalized -> score += 160
                 requestedNormalized in candidateNormalized || candidateNormalized in requestedNormalized -> score += 65
             }
         }
@@ -750,9 +755,17 @@ class HomeServerRepository @Inject constructor(
                 connections.map { connection ->
                     async {
                         try {
-                    val series = findBestSeries(connection, imdbId, title, null, tmdbId, tvdbId)
-                        ?: return@async emptyList<StreamSource>()
-                            val episodeItems = findEpisodes(connection, series.id, season, episode)
+                            val seriesMatches = findSeriesMatches(connection, imdbId, title, null, tmdbId, tvdbId)
+                            val episodeItems = coroutineScope {
+                                seriesMatches.map { series -> async {
+                                    try {
+                                        findEpisodes(connection, series.id, season, episode)
+                                    } catch (e: Exception) {
+                                        if (e is kotlinx.coroutines.CancellationException) throw e
+                                        emptyList()
+                                    }
+                                } }.awaitAll().flatten().distinctBy { it.id }
+                            }
                                 .ifEmpty {
                                     listOfNotNull(
                                         findEpisodeBySearch(
@@ -1759,7 +1772,14 @@ class HomeServerRepository @Inject constructor(
     ): List<HomeServerItem> {
         val candidates = linkedMapOf<String, HomeServerItem>()
         coroutineScope {
-            providerQueries(imdbId, tmdbId, null).map { providerId ->
+            val plexTitleResults = async {
+                if (connection.serverKind == HomeServerKind.PLEX && title.isNotBlank()) {
+                    queryItems(connection, "Movie", mapOf("SearchTerm" to title, "Limit" to "25"))
+                } else emptyList()
+            }
+            providerQueries(imdbId, tmdbId, null)
+                .distinctBy { if (connection.serverKind == HomeServerKind.PLEX) it.lowercase(Locale.US) else it }
+                .map { providerId ->
                 async {
                     try {
                         queryItems(
@@ -1770,53 +1790,65 @@ class HomeServerRepository @Inject constructor(
                     } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                 }
             }.awaitAll().flatten().forEach { candidates[it.id] = it }
+            plexTitleResults.await().forEach { candidates.putIfAbsent(it.id, it) }
         }
         val bestById = bestCandidate(candidates.values, title, year, imdbId, tmdbId, null)
         val bestByIdScore = bestById?.let {
             HomeServerMatcher.score(title, year, imdbId, tmdbId, null, it.info())
         } ?: 0
 
-        if (title.isNotBlank() && (connection.serverKind == HomeServerKind.PLEX || bestByIdScore < 900)) {
+        if (title.isNotBlank() && connection.serverKind != HomeServerKind.PLEX && bestByIdScore < 900) {
             queryItems(
                 connection,
                 itemTypes = "Movie",
                 query = mapOf("SearchTerm" to title, "Limit" to "25")
             ).forEach { candidates[it.id] = it }
         }
-        return matchingMovieCandidates(candidates.values, title, year, imdbId, tmdbId)
+        return matchingCandidates(candidates.values, title, year, imdbId, tmdbId)
     }
 
-    private fun matchingMovieCandidates(
+    private fun matchingCandidates(
         candidates: Collection<HomeServerItem>,
         title: String,
         year: Int?,
         imdbId: String?,
-        tmdbId: Int?
+        tmdbId: Int?,
+        tvdbId: Int? = null
     ): List<HomeServerItem> {
         val scored = candidates
-            .map { item -> item to HomeServerMatcher.score(title, year, imdbId, tmdbId, null, item.info()) }
+            .map { item -> item to HomeServerMatcher.score(title, year, imdbId, tmdbId, tvdbId, item.info()) }
             .filter { (_, score) -> HomeServerMatcher.isAcceptable(score) }
         val bestScore = scored.maxOfOrNull { (_, score) -> score } ?: return emptyList()
         return scored
             .filter { (item, score) ->
-                score == bestScore || HomeServerMatcher.isLikelySameVersion(title, year, item.info())
+                score >= 900 || score == bestScore || HomeServerMatcher.isLikelySameVersion(title, year, item.info())
             }
             .sortedByDescending { (_, score) -> score }
             .map { (item, _) -> item }
             .distinctBy { it.id }
     }
 
-    private suspend fun findBestSeries(
+    private suspend fun findSeriesMatches(
         connection: HomeServerConnection,
         imdbId: String?,
         title: String,
         year: Int?,
         tmdbId: Int?,
         tvdbId: Int?
-    ): HomeServerItem? {
+    ): List<HomeServerItem> {
         val candidates = linkedMapOf<String, HomeServerItem>()
         coroutineScope {
-            providerQueries(imdbId, tmdbId, tvdbId).map { providerId ->
+            val titleResults = async {
+                if (title.isBlank()) emptyList() else try {
+                    queryItems(connection, "Series", mapOf("SearchTerm" to title, "Limit" to "25"))
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    emptyList()
+                }
+            }
+            providerQueries(imdbId, tmdbId, tvdbId)
+                .distinctBy { if (connection.serverKind == HomeServerKind.PLEX) it.lowercase(Locale.US) else it }
+                .map { providerId ->
                 async {
                     try {
                         queryItems(
@@ -1827,20 +1859,10 @@ class HomeServerRepository @Inject constructor(
                     } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
                 }
             }.awaitAll().flatten().forEach { candidates[it.id] = it }
+            titleResults.await().forEach { candidates.putIfAbsent(it.id, it) }
         }
-        val bestById = bestCandidate(candidates.values, title, year, imdbId, tmdbId, tvdbId)
-        if (bestById != null && HomeServerMatcher.score(title, year, imdbId, tmdbId, tvdbId, bestById.info()) >= 900) {
-            return bestById
-        }
-
-        if (title.isNotBlank()) {
-            queryItems(
-                connection,
-                itemTypes = "Series",
-                query = mapOf("SearchTerm" to title, "Limit" to "25")
-            ).forEach { candidates[it.id] = it }
-        }
-        return bestCandidate(candidates.values, title, year, imdbId, tmdbId, tvdbId)
+        // Separate HD/UHD libraries may have distinct series ids, even on one server.
+        return matchingCandidates(candidates.values, title, year, imdbId, tmdbId, tvdbId)
     }
 
     private fun providerQueries(imdbId: String?, tmdbId: Int?, tvdbId: Int?): List<String> {
@@ -2000,15 +2022,14 @@ class HomeServerRepository @Inject constructor(
                 }.distinctBy { it.id }
                 if (providerResults.isNotEmpty()) return providerResults
             }
-            val providerSearchTerm = providerId.substringAfter('.', providerId)
-            val providerFallback = queryPlexSearch(connection, providerSearchTerm, plexType, limit)
-            if (providerFallback.isNotEmpty()) return providerFallback
+            // Text search for a literal IMDb/TMDB id is not a provider-id lookup.
+            // Shared servers may reject GUID filtering; the caller searches the title next.
         }
 
         val searchTerm = query["SearchTerm"]?.takeIf { it.isNotBlank() } ?: return emptyList()
         val globalResults = queryPlexSearch(connection, searchTerm, plexType, limit)
             .filter { item -> itemBelongsToEnabledPlexCollection(item, collections) }
-        if (globalResults.isNotEmpty()) {
+        if (globalResults.any { HomeServerMatcher.normalizeTitle(it.name) == HomeServerMatcher.normalizeTitle(searchTerm) }) {
             return filterPlexEpisodeNumbers(globalResults, query)
         }
 
@@ -2033,9 +2054,7 @@ class HomeServerRepository @Inject constructor(
         } else {
             emptyList()
         }
-        val results = sectionResults.ifEmpty {
-            queryPlexSearch(connection, searchTerm, plexType, limit)
-        }
+        val results = globalResults + sectionResults
 
         return filterPlexEpisodeNumbers(results, query).distinctBy { it.id }
     }

@@ -938,7 +938,7 @@ class PlayerViewModel @Inject constructor(
                             imdbId = currentImdbId,
                             seasonNumber = seasonNumber,
                             episodeNumber = episodeNumber,
-                            timeoutMs = 5_000L
+                            timeoutMs = 20_000L
                         )
                     }.onFailure(childFailed("homeServerAppend"))
                 }
@@ -1108,7 +1108,7 @@ class PlayerViewModel @Inject constructor(
                         imdbId = imdbId,
                         seasonNumber = seasonNumber,
                         episodeNumber = episodeNumber,
-                        timeoutMs = 5_000L
+                        timeoutMs = 20_000L
                     )
                 }
                 vodAppendJob?.cancel()

@@ -1845,7 +1845,7 @@ class DetailsViewModel @Inject constructor(
                         imdbId = resolvedImdbId,
                         season = canonicalSeason,
                         episode = canonicalEpisode,
-                        timeoutMs = 5_000L,
+                        timeoutMs = 20_000L,
                         requestId = requestId,
                         requestMediaType = requestMediaType,
                         requestMediaId = requestMediaId
