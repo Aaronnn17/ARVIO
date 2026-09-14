@@ -83,6 +83,30 @@ class OledLibraryDeviceTest {
         compose.onNodeWithTag("library-grid").performScrollToIndex(0)
         capture("watchlists-poster")
     }
+    @Test fun landscapeFocusedCardsRemainFullyVisibleWhileScrolling() = verifyFocusedScroll(false)
+    @Test fun posterFocusedCardsRemainFullyVisibleWhileScrolling() = verifyFocusedScroll(true)
+
+    private fun verifyFocusedScroll(poster: Boolean) {
+        show(poster)
+        card(0).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus)
+        repeat(14) {
+            compose.onNodeWithTag("oled-library").performKeyInput { pressKey(Key.DirectionDown) }
+            compose.waitForIdle()
+            val focused = compose.onAllNodes(isFocused()).fetchSemanticsNodes().single()
+            val grid = compose.onNodeWithTag("library-grid").getUnclippedBoundsInRoot()
+            val frame = generateSequence(focused.parent) { it.parent }.firstOrNull {
+                it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.TestTag) &&
+                    it.config[androidx.compose.ui.semantics.SemanticsProperties.TestTag].startsWith("library-card-frame-")
+            } ?: error("Focused card has no padded frame")
+            val tag = frame.config[androidx.compose.ui.semantics.SemanticsProperties.TestTag]
+            val bounds = compose.onNodeWithTag(tag).getUnclippedBoundsInRoot()
+            assertTrue("Focused card clipped above: $bounds in $grid", bounds.top >= grid.top)
+            assertTrue("Focused card title clipped below: $bounds in $grid", bounds.bottom <= grid.bottom)
+        }
+        capture(if(poster) "poster-scrolled-focus" else "horizontal-scrolled-focus")
+        repeat(14) { compose.onNodeWithTag("oled-library").performKeyInput { pressKey(Key.DirectionUp) }; compose.waitForIdle() }
+        capture(if(poster) "poster-top-focus" else "horizontal-top-focus")
+    }
     private fun show(poster: Boolean) {
         val context = compose.activity
         val assets = InstrumentationRegistry.getInstrumentation().context.assets
@@ -93,7 +117,9 @@ class OledLibraryDeviceTest {
         val seed = (0 until rows.length()).map { i -> val row = rows.getJSONObject(i)
             MediaItem(id=row.getInt("id"), title=row.getString("title"), year=row.getString("year"), mediaType=MediaType.valueOf(row.getString("mediaType")), image=uri(row.getString("poster")), backdrop=uri(row.getString("backdrop"))) }
         val titles = (0 until 6).flatMap { batch -> seed.map { it.copy(id=it.id + batch*1000000) } }
-        val logos = (0 until rows.length()).associate { i -> watchlistLogoKey(seed[i]) to uri(rows.getJSONObject(i).optString("logo")) }
+        val logos = (0 until 6).flatMap { batch -> (0 until rows.length()).map { i ->
+            watchlistLogoKey(seed[i].copy(id = seed[i].id + batch * 1000000)) to uri(rows.getJSONObject(i).optString("logo"))
+        } }.toMap()
         val lists = listOf("Friday night","Science fiction essentials","Family favourites","Hidden gems","Weekend series","Award winners").mapIndexed { index, title ->
             WatchlistSourceItem.Catalog(CatalogConfig("fixture-$index", title, CatalogSourceType.TRAKT)) }
         val server = HomeServerCatalogCandidate("Movies", "fixture-movies", "Home NAS", "Movies", "movies", HomeServerKind.JELLYFIN, "fixture")
