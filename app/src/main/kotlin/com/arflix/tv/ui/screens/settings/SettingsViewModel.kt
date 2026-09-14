@@ -1265,6 +1265,7 @@ class SettingsViewModel @Inject constructor(
             "Kannada",
             "Korean",
             "Lithuanian",
+            "Malay",
             "Malayalam",
             "Marathi",
             "Norwegian",

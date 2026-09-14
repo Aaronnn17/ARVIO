@@ -317,7 +317,7 @@ class WatchlistViewModel @Inject constructor(
             if (traktConnected) {
                 val personalLists = runCatching { traktRepository.getPersonalLists() }
                     .getOrDefault(emptyList())
-                if (personalLists.isEmpty()) {
+                run {
                     add(
                         WatchlistSourceItem.TrackerList(
                             provider = TrackerLibraryProvider.TRAKT,
@@ -326,7 +326,8 @@ class WatchlistViewModel @Inject constructor(
                             titleRes = R.string.watchlist_tracker_default_list
                         )
                     )
-                } else {
+                }
+                run {
                     personalLists.forEach { list ->
                         add(
                             WatchlistSourceItem.TrackerList(
@@ -942,6 +943,24 @@ class WatchlistViewModel @Inject constructor(
     }
 
     fun ensureLogo(item: MediaItem) = fetchLogos(listOf(item))
+
+    private val previewPermits = Semaphore(2)
+
+    /** A visible collection requests one cover without changing the active list. */
+    suspend fun collectionCover(source: WatchlistSourceItem): String? = previewPermits.withPermit {
+        val explicit = (source as? WatchlistSourceItem.Catalog)?.config?.collectionCoverImageUrl
+        explicit?.takeIf { it.isNotBlank() }
+            ?: sourceItemsCache[source.id]?.firstOrNull()?.let { it.backdrop ?: it.image }
+            ?: try {
+                val first = when(source) {
+                    is WatchlistSourceItem.Catalog -> mediaRepository.loadCustomCatalog(source.config, maxItems = 1)?.items?.firstOrNull()
+                    is WatchlistSourceItem.TrackerList -> traktRepository.getPersonalListItems(source.listKey).firstOrNull()
+                    else -> null
+                }
+                first?.let { it.backdrop ?: it.image }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
+    }
 
     private fun loadWatchlistInstant() {
         sourceLoadJob = viewModelScope.launch {

@@ -41,41 +41,29 @@ class WatchlistHomeLibraryDeviceTest {
 
     @After fun cleanup() { compose.runOnUiThread { store.clear() } }
 
-    @Test fun tvSavedTabsAppearWithoutServerResponsesAndRemainNavigable() {
+    @Test fun tvSavedSourcesRemainNavigableWhileServerIsStalled() {
         show(DeviceType.TV)
-        keys(listOf(Key.Escape, Key.DirectionDown, Key.DirectionRight, Key.DirectionRight, Key.DirectionCenter))
-        compose.runOnIdle {
-            assertEquals(HomeServerKind.JELLYFIN, model.libraryState.value.selectedProvider)
-            assertTrue(model.libraryState.value.isLoading)
-        }
-        compose.onNodeWithText("Jellyfin A").assertIsDisplayed()
-        compose.onAllNodesWithText("Movies").assertCountEquals(2)
-        keys(listOf(Key.DirectionDown, Key.DirectionDown, Key.DirectionDown, Key.DirectionCenter))
-        compose.onNodeWithText("Jellyfin B").assertIsDisplayed()
-        capture("library-jellyfin-saved-tabs")
-        keys(listOf(Key.Escape, Key.DirectionDown, Key.DirectionRight, Key.DirectionCenter))
-        compose.runOnIdle {
-            assertEquals(HomeServerKind.EMBY, model.libraryState.value.selectedProvider)
-            assertNull(model.libraryState.value.error)
-        }
-        compose.onNodeWithText("Emby A").assertIsDisplayed()
-        keys(listOf(Key.DirectionDown, Key.DirectionDown, Key.DirectionDown, Key.DirectionCenter))
-        compose.onNodeWithText("Emby B").assertIsDisplayed()
-        capture("library-emby-saved-tabs")
+        compose.onNodeWithText("Libraries").performClick()
+        choose("Jellyfin A")
+        compose.runOnIdle { assertEquals(HomeServerKind.JELLYFIN, model.libraryState.value.selectedProvider); assertTrue(model.libraryState.value.isLoading) }
+        choose("Emby B")
+        compose.runOnIdle { assertEquals(HomeServerKind.EMBY, model.libraryState.value.selectedProvider); assertNull(model.libraryState.value.error) }
         verify { client wasNot Called }
     }
-
-    @Test fun mobileSavedTabsAppearAndCanSwitchWhileContentIsStalled() {
+    @Test fun mobileCanSwitchSavedSourcesDuringLoading() {
         show(DeviceType.PHONE)
-        compose.onNodeWithText("Jellyfin", useUnmergedTree = true).performClick()
-        compose.runOnIdle { assertEquals(HomeServerKind.JELLYFIN, model.libraryState.value.selectedProvider) }
-        compose.onNodeWithText("Emby", useUnmergedTree = true).performClick()
-        compose.runOnIdle {
-            assertEquals(HomeServerKind.EMBY, model.libraryState.value.selectedProvider)
-            assertTrue(model.libraryState.value.isLoading)
-            assertNull(model.libraryState.value.error)
-        }
+        compose.onNodeWithText("Libraries").performClick()
+        choose("Jellyfin A"); choose("Emby A")
+        compose.runOnIdle { assertEquals(HomeServerKind.EMBY, model.libraryState.value.selectedProvider); assertTrue(model.libraryState.value.isLoading) }
         verify { client wasNot Called }
+    }
+    private fun choose(server: String) {
+        val candidate = model.libraryState.value.libraries.first { it.serverName == server }
+        if(compose.onAllNodesWithTag("library-source-picker").fetchSemanticsNodes().isNotEmpty()) compose.onNodeWithTag("library-source-picker").performClick()
+        val tag = "library-source-server_${candidate.sourceRef}"
+        compose.onNodeWithTag("library-sources").performScrollToNode(hasTestTag(tag))
+        compose.onNodeWithTag(tag).performClick()
+        compose.waitForIdle()
     }
 
     private fun show(device: DeviceType) {
@@ -125,10 +113,6 @@ class WatchlistHomeLibraryDeviceTest {
             CompositionLocalProvider(LocalDeviceType provides device) { WatchlistScreen(viewModel = model) }
         }
         compose.waitUntil(timeoutMillis = 3_000) { model.libraryState.value.providers.size == 3 }
-        compose.onNodeWithText("Plex", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("Jellyfin", useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText("Emby", useUnmergedTree = true).assertIsDisplayed()
-        Log.i("LibraryDeviceTest", "$device saved server tabs visible in ${SystemClock.elapsedRealtime() - started} ms")
         assertEquals(10, model.libraryState.value.libraries.size)
         verify { client wasNot Called }
     }

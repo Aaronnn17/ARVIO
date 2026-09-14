@@ -36,6 +36,7 @@ import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.AnimeMapper
 import com.arflix.tv.util.AnimeSeasonStructure
 import com.arflix.tv.util.Constants
+import com.arflix.tv.util.EpisodeAvailability
 import com.arflix.tv.util.settingsDataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -63,6 +64,7 @@ data class DetailsUiState(
     val logoUrl: String? = null,
     val trailerKey: String? = null,
     val episodes: List<Episode> = emptyList(),
+    val episodePlaybackProgress: Map<EpisodeIdentity, EpisodePlaybackProgress> = emptyMap(),
     val totalSeasons: Int = 1,
     val currentSeason: Int = 1,
     val isSeasonLoading: Boolean = false,
@@ -138,7 +140,10 @@ private data class PlayTarget(
 private data class SeasonProgressResult(
     val progress: Map<Int, Pair<Int, Int>>,
     val hasWatched: Boolean,
-    val nextUnwatched: Pair<Int, Int>?
+    val nextUnwatched: Pair<Int, Int>?,
+    val nextUnaired: Pair<Int, Int>? = null,
+    val nextUnairedAirDate: String = "",
+    val isComplete: Boolean = true,
 )
 
 private data class ResumeInfo(
@@ -885,11 +890,13 @@ class DetailsViewModel @Inject constructor(
                             else -> 0
                         }
                         val hasWatchedEpisodes = decoratedEpisodes.any { it.isWatched }
+                        val playbackProgress = fetchEpisodePlaybackProgress(mediaId, decoratedEpisodes)
                         updateState { state ->
                             val shouldUseEpisodeTarget = !hasExplicitEpisodeTarget &&
                                 (state.playLabel.isNullOrBlank() || state.playLabel == context.getString(R.string.play_start_s1e1))
                             state.copy(
                                 episodes = decoratedEpisodes,
+                                episodePlaybackProgress = playbackProgress,
                                 initialEpisodeIndex = initialEpisodeIndex,
                                 playSeason = if (shouldUseEpisodeTarget) {
                                     nextUnwatchedEpisode?.seasonNumber ?: if (hasWatchedEpisodes) 1 else state.playSeason
@@ -1138,8 +1145,10 @@ class DetailsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 currentSeason = seasonNumber,
                 episodes = decorated,
+                episodePlaybackProgress = emptyMap(),
                 isSeasonLoading = false
             )
+            refreshEpisodePlaybackProgress(decorated)
             prefetchAdjacentSeasons(currentMediaId, seasonNumber, _uiState.value.totalSeasons)
             return
         }
@@ -1148,6 +1157,7 @@ class DetailsViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             currentSeason = seasonNumber,
             episodes = emptyList(),
+            episodePlaybackProgress = emptyMap(),
             isSeasonLoading = true
         )
 
@@ -1193,6 +1203,7 @@ class DetailsViewModel @Inject constructor(
                         currentSeason = seasonNumber,
                         isSeasonLoading = false
                     )
+                    refreshEpisodePlaybackProgress(decoratedEpisodes)
                     prefetchAdjacentSeasons(currentMediaId, seasonNumber, _uiState.value.totalSeasons)
                 } else {
                     _uiState.value = _uiState.value.copy(
@@ -1211,6 +1222,27 @@ class DetailsViewModel @Inject constructor(
                     toastType = ToastType.ERROR
                 )
             }
+        }
+    }
+
+    private suspend fun fetchEpisodePlaybackProgress(
+        mediaId: Int,
+        episodes: List<Episode>,
+    ): Map<EpisodeIdentity, EpisodePlaybackProgress> {
+        val history = runCatching { watchHistoryRepository.getWatchHistory() }
+            .getOrDefault(emptyList())
+        return episodePlaybackProgress(mediaId, episodes, history)
+    }
+
+    private fun refreshEpisodePlaybackProgress(episodes: List<Episode>) {
+        val mediaId = currentMediaId
+        if (mediaId == 0 || currentMediaType != MediaType.TV || episodes.isEmpty()) return
+        val identities = episodes.mapTo(hashSetOf()) { it.identity }
+        viewModelScope.launch {
+            val playbackProgress = fetchEpisodePlaybackProgress(mediaId, episodes)
+            if (currentMediaId != mediaId || currentMediaType != MediaType.TV) return@launch
+            if (_uiState.value.episodes.mapTo(hashSetOf()) { it.identity } != identities) return@launch
+            _uiState.value = _uiState.value.copy(episodePlaybackProgress = playbackProgress)
         }
     }
 
@@ -1301,117 +1333,38 @@ class DetailsViewModel @Inject constructor(
     fun toggleWatched(episodeIndex: Int? = null) {
         val currentItem = _uiState.value.item ?: return
 
+        if (currentMediaType == MediaType.TV) {
+            val targetEpisode = _uiState.value.episodes.getOrNull(episodeIndex ?: 0)
+            if (targetEpisode == null) {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = context.getString(R.string.details_no_episode_selected),
+                    toastType = ToastType.ERROR
+                )
+                return
+            }
+            markEpisodeWatched(
+                season = targetEpisode.seasonNumber,
+                episode = targetEpisode.episodeNumber,
+                watched = !targetEpisode.isWatched
+            )
+            return
+        }
+
         viewModelScope.launch {
             try {
-                if (currentMediaType == MediaType.MOVIE) {
-                    val newWatched = !currentItem.isWatched
-                    if (newWatched) {
-                        traktRepository.markMovieWatched(currentMediaId)
-                        watchHistoryRepository.removeFromHistory(currentMediaId, null, null)
-                    } else {
-                        traktRepository.markMovieUnwatched(currentMediaId)
-                    }
-                    _uiState.value = _uiState.value.copy(
-                        item = currentItem.copy(isWatched = newWatched),
-                        toastMessage = if (newWatched) context.getString(R.string.details_marked_watched) else context.getString(R.string.details_marked_unwatched),
-                        toastType = ToastType.SUCCESS
-                    )
-                    runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
+                val newWatched = !currentItem.isWatched
+                if (newWatched) {
+                    traktRepository.markMovieWatched(currentMediaId)
+                    watchHistoryRepository.removeFromHistory(currentMediaId, null, null)
                 } else {
-                    val targetEpisode = _uiState.value.episodes.getOrNull(episodeIndex ?: 0)
-                    if (targetEpisode == null) {
-                        _uiState.value = _uiState.value.copy(
-                            toastMessage = context.getString(R.string.details_no_episode_selected),
-                            toastType = ToastType.ERROR
-                        )
-                        return@launch
-                    }
-
-                    val episodeWatched = !targetEpisode.isWatched
-                    if (episodeWatched) {
-                        traktRepository.markEpisodeWatched(
-                            currentMediaId,
-                            targetEpisode.tmdbSeasonNumber,
-                            targetEpisode.tmdbEpisodeNumber
-                        )
-                        watchHistoryRepository.removeFromHistory(
-                            currentMediaId,
-                            targetEpisode.tmdbSeasonNumber,
-                            targetEpisode.tmdbEpisodeNumber
-                        )
-
-                        // Save the NEXT episode to CW (local + cloud) so it appears on all devices
-                        try {
-                            val nextIdentity = animeSeasonStructure?.nextAfterDisplay(
-                                targetEpisode.seasonNumber,
-                                targetEpisode.episodeNumber
-                            )
-                            val nextSeason = nextIdentity?.tmdbSeason ?: targetEpisode.tmdbSeasonNumber
-                            val nextEp = nextIdentity?.tmdbEpisode ?: targetEpisode.tmdbEpisodeNumber + 1
-                            traktRepository.saveLocalContinueWatching(
-                                mediaType = MediaType.TV,
-                                tmdbId = currentMediaId,
-                                title = currentItem.title,
-                                posterPath = currentItem.image,
-                                backdropPath = currentItem.backdrop,
-                                season = nextSeason,
-                                episode = nextEp,
-                                displaySeason = nextIdentity?.displaySeason ?: nextSeason,
-                                displayEpisode = nextIdentity?.displayEpisode ?: nextEp,
-                                episodeTitle = null,
-                                progress = 3,
-                                positionSeconds = 0L,
-                                durationSeconds = 1L,
-                                year = currentItem.year
-                            )
-                            watchHistoryRepository.saveProgress(
-                                mediaType = MediaType.TV,
-                                tmdbId = currentMediaId,
-                                title = currentItem.title,
-                                poster = currentItem.image,
-                                backdrop = currentItem.backdrop,
-                                season = nextSeason,
-                                episode = nextEp,
-                                episodeTitle = null,
-                                progress = 0.01f,
-                                duration = 0L,
-                                position = 0L
-                            )
-                        } catch (e: Exception) {
-                            if (e is kotlinx.coroutines.CancellationException) throw e
-                            com.arflix.tv.util.AppLogger.w("DetailsViewModel", "Failed to mark episode watched/save progress: ${e.message}")
-                        }
-                    } else {
-                        traktRepository.markEpisodeUnwatched(
-                            currentMediaId,
-                            targetEpisode.tmdbSeasonNumber,
-                            targetEpisode.tmdbEpisodeNumber
-                        )
-                    }
-
-                    val updatedEpisodes = _uiState.value.episodes.map { ep ->
-                        if (ep.seasonNumber == targetEpisode.seasonNumber &&
-                            ep.episodeNumber == targetEpisode.episodeNumber
-                        ) {
-                            ep.copy(isWatched = episodeWatched)
-                        } else {
-                            ep
-                        }
-                    }
-
-                    val anyWatched = updatedEpisodes.any { it.isWatched }
-                    _uiState.value = _uiState.value.copy(
-                        item = currentItem.copy(isWatched = anyWatched),
-                        episodes = updatedEpisodes,
-                        toastMessage = if (episodeWatched) {
-                            context.getString(R.string.details_episode_marked_watched, targetEpisode.seasonNumber, targetEpisode.episodeNumber)
-                        } else {
-                            context.getString(R.string.details_episode_marked_unwatched, targetEpisode.seasonNumber, targetEpisode.episodeNumber)
-                        },
-                        toastType = ToastType.SUCCESS
-                    )
-                    runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
+                    traktRepository.markMovieUnwatched(currentMediaId)
                 }
+                _uiState.value = _uiState.value.copy(
+                    item = currentItem.copy(isWatched = newWatched),
+                    toastMessage = if (newWatched) context.getString(R.string.details_marked_watched) else context.getString(R.string.details_marked_unwatched),
+                    toastType = ToastType.SUCCESS
+                )
+                runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                 runCatching { cloudSyncRepository.pushToCloud() }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
@@ -1574,6 +1527,11 @@ class DetailsViewModel @Inject constructor(
 
             // Read latest state to avoid overwriting concurrent updates (e.g. seasonProgress)
             val latestState = _uiState.value
+            val playbackProgress = if (mediaType == MediaType.TV) {
+                fetchEpisodePlaybackProgress(tmdbId, updatedEpisodes)
+            } else {
+                emptyMap()
+            }
             val displayPlayTarget = playTarget?.let { target ->
                 val season = target.season ?: return@let null
                 val episode = target.episode ?: return@let null
@@ -1584,6 +1542,7 @@ class DetailsViewModel @Inject constructor(
                 // Only overwrite episodes if we actually computed watched badges;
                 // otherwise keep the latest (avoids blanking if episodes were populated concurrently)
                 episodes = if (updatedEpisodes.isNotEmpty()) updatedEpisodes else latestState.episodes,
+                episodePlaybackProgress = playbackProgress,
                 // Only update seasonProgress if we actually computed new data; preserve existing otherwise
                 seasonProgress = if (updatedProgress !== latestForEpisodes.seasonProgress) updatedProgress else latestState.seasonProgress,
                 playSeason = displayPlayTarget?.displaySeason ?: playTarget?.season ?: latestState.playSeason,
@@ -2108,6 +2067,45 @@ class DetailsViewModel @Inject constructor(
         }
     }
 
+    private suspend fun persistNextEpisodePointer(
+        item: MediaItem,
+        progress: SeasonProgressResult,
+    ) {
+        if (!progress.isComplete) return
+        val airedTarget = progress.nextUnwatched
+        val deferredTarget = progress.nextUnaired
+        val target = airedTarget ?: deferredTarget
+
+        // Remove the previous show-level pointer first. This immediately removes a completed or
+        // caught-up show from Home; an aired replacement below is then published as one update.
+        traktRepository.removeFromContinueWatchingCache(currentMediaId, null, null, MediaType.TV)
+        if (target == null) return
+
+        val (season, episode) = target
+        val displayIdentity = animeSeasonStructure?.identityForTmdb(season, episode)
+        traktRepository.saveLocalContinueWatching(
+            mediaType = MediaType.TV,
+            tmdbId = currentMediaId,
+            title = item.title,
+            posterPath = item.image,
+            backdropPath = item.backdrop,
+            season = season,
+            episode = episode,
+            displaySeason = displayIdentity?.displaySeason ?: season,
+            displayEpisode = displayIdentity?.displayEpisode ?: episode,
+            episodeTitle = null,
+            progress = 0,
+            positionSeconds = 0L,
+            durationSeconds = 0L,
+            year = item.year,
+            isUpNext = true,
+            episodeAirDate = if (airedTarget == null) progress.nextUnairedAirDate else "",
+            // Keep a future pointer on disk so it can reappear after its air date, but do not
+            // publish it into the currently visible Home row before then.
+            emitUpdate = airedTarget != null,
+        )
+    }
+
     fun markEpisodeWatched(season: Int, episode: Int, watched: Boolean) {
         viewModelScope.launch {
             try {
@@ -2118,47 +2116,13 @@ class DetailsViewModel @Inject constructor(
                 val canonicalEpisode = selectedEpisode?.tmdbEpisodeNumber ?: episode
                 if (watched) {
                     traktRepository.markEpisodeWatched(currentMediaId, canonicalSeason, canonicalEpisode)
-                    // Also remove from Supabase watch_history (removes from Continue Watching)
                     watchHistoryRepository.removeFromHistory(currentMediaId, canonicalSeason, canonicalEpisode)
-
-                    // Save the NEXT episode to CW (local + cloud) so it appears on all devices
-                    val item = _uiState.value.item
-                    if (item != null) {
-                        try {
-                            val nextIdentity = animeSeasonStructure?.nextAfterDisplay(season, episode)
-                            val nextSeason = nextIdentity?.tmdbSeason ?: canonicalSeason
-                            val nextEp = nextIdentity?.tmdbEpisode ?: canonicalEpisode + 1
-                            traktRepository.saveLocalContinueWatching(
-                                mediaType = MediaType.TV,
-                                tmdbId = currentMediaId,
-                                title = item.title,
-                                posterPath = item.image,
-                                backdropPath = item.backdrop,
-                                season = nextSeason,
-                                episode = nextEp,
-                                displaySeason = nextIdentity?.displaySeason ?: nextSeason,
-                                displayEpisode = nextIdentity?.displayEpisode ?: nextEp,
-                                episodeTitle = null,
-                                progress = 3,
-                                positionSeconds = 0L,
-                                durationSeconds = 1L,
-                                year = item.year
-                            )
-                            watchHistoryRepository.saveProgress(
-                                mediaType = MediaType.TV,
-                                tmdbId = currentMediaId,
-                                title = item.title,
-                                poster = item.image,
-                                backdrop = item.backdrop,
-                                season = nextSeason,
-                                episode = nextEp,
-                                episodeTitle = null,
-                                progress = 0.01f,
-                                duration = 0L,
-                                position = 0L
-                            )
-                        } catch (_: Exception) {}
-                    }
+                    traktRepository.removeFromContinueWatchingCache(
+                        currentMediaId,
+                        canonicalSeason,
+                        canonicalEpisode,
+                        MediaType.TV,
+                    )
                 } else {
                     traktRepository.markEpisodeUnwatched(currentMediaId, canonicalSeason, canonicalEpisode)
                 }
@@ -2169,7 +2133,35 @@ class DetailsViewModel @Inject constructor(
                         ep.copy(isWatched = watched)
                     } else ep
                 }
-                _uiState.value = _uiState.value.copy(episodes = updatedEpisodes)
+                val refreshedProgress = fetchSeasonProgress(currentMediaId)
+                val resumeInfo = fetchResumeInfo(currentMediaId, MediaType.TV)
+                val playTarget = buildPlayTarget(MediaType.TV, refreshedProgress, resumeInfo)
+                if (resumeInfo == null) {
+                    _uiState.value.item?.let { persistNextEpisodePointer(it, refreshedProgress) }
+                }
+                val displayPlayTarget = playTarget?.let { target ->
+                    val targetSeason = target.season ?: return@let null
+                    val targetEpisode = target.episode ?: return@let null
+                    animeSeasonStructure?.identityForTmdb(targetSeason, targetEpisode)
+                }
+                _uiState.value = _uiState.value.copy(
+                    item = _uiState.value.item?.copy(
+                        isWatched = if (refreshedProgress.isComplete) {
+                            refreshedProgress.hasWatched && refreshedProgress.nextUnwatched == null
+                        } else _uiState.value.item?.isWatched ?: false
+                    ),
+                    episodes = updatedEpisodes,
+                    episodePlaybackProgress = fetchEpisodePlaybackProgress(currentMediaId, updatedEpisodes),
+                    seasonProgress = if (refreshedProgress.isComplete) refreshedProgress.progress else _uiState.value.seasonProgress,
+                    playSeason = displayPlayTarget?.displaySeason ?: playTarget?.season,
+                    playEpisode = displayPlayTarget?.displayEpisode ?: playTarget?.episode,
+                    playTmdbSeason = playTarget?.season,
+                    playTmdbEpisode = playTarget?.episode,
+                    playLabel = displayPlayTarget?.let {
+                        context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
+                    } ?: playTarget?.label,
+                    playPositionMs = playTarget?.positionMs,
+                )
                 runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                 // Push cloud snapshot so other devices see the episode watched-status
                 // change and the updated Continue Watching entry.
@@ -2193,7 +2185,10 @@ class DetailsViewModel @Inject constructor(
                         ?: mediaRepository.getSeasonEpisodes(currentMediaId, season)
                 }
 
-                if (seasonEpisodes.isEmpty()) {
+                val airedEpisodes = seasonEpisodes.filter { episode ->
+                    EpisodeAvailability.hasAired(episode.airDate)
+                }
+                if (airedEpisodes.isEmpty()) {
                     _uiState.value = _uiState.value.copy(
                         toastMessage = context.getString(R.string.details_no_episodes_season, season),
                         toastType = ToastType.ERROR
@@ -2204,13 +2199,15 @@ class DetailsViewModel @Inject constructor(
                 // OPTIMISTIC UPDATE: Update local state immediately so the UI responds instantly
                 val updatedEpisodes = if (_uiState.value.currentSeason == season) {
                     _uiState.value.episodes.map { ep ->
-                        if (ep.seasonNumber == season) ep.copy(isWatched = true) else ep
+                        if (ep.seasonNumber == season) {
+                            EpisodeAvailability.markWatchedIfAired(ep)
+                        } else ep
                     }
                 } else {
                     _uiState.value.episodes
                 }
                 val optimisticProgress = _uiState.value.seasonProgress.toMutableMap().apply {
-                    this[season] = Pair(seasonEpisodes.size, seasonEpisodes.size)
+                    this[season] = Pair(airedEpisodes.size, airedEpisodes.size)
                 }
                 _uiState.value = _uiState.value.copy(
                     episodes = updatedEpisodes,
@@ -2220,11 +2217,11 @@ class DetailsViewModel @Inject constructor(
                 // BATCH: Use single Trakt API call for all episodes, then concurrent Supabase writes.
                 // Previously this looped sequentially calling markEpisodeWatched() per episode,
                 // each making its own Supabase + Trakt network call — taking ~5-12s for a full season.
-                val canonicalGroups = seasonEpisodes.groupBy { it.tmdbSeasonNumber }
+                val canonicalGroups = airedEpisodes.groupBy { it.tmdbSeasonNumber }
 
                 if (animeSeasonStructure == null) {
                     // Preserve the existing single-season fast path for ordinary TV shows.
-                    val episodeNumbers = seasonEpisodes.map { it.episodeNumber }
+                    val episodeNumbers = airedEpisodes.map { it.episodeNumber }
                     runCatching {
                         traktRepository.markSeasonWatched(currentMediaId, season, episodeNumbers)
                     }
@@ -2268,50 +2265,8 @@ class DetailsViewModel @Inject constructor(
                 val refreshedProgress = runCatching { fetchSeasonProgress(currentMediaId) }.getOrNull()
                 val nextUnwatched = refreshedProgress?.nextUnwatched
 
-                if (nextUnwatched != null) {
-                    val (nextSeason, nextEpisode) = nextUnwatched
-                    val nextDisplayIdentity = animeSeasonStructure?.identityForTmdb(nextSeason, nextEpisode)
-                    runCatching {
-                        traktRepository.saveLocalContinueWatching(
-                            mediaType = MediaType.TV,
-                            tmdbId = currentMediaId,
-                            title = currentItem.title,
-                            posterPath = currentItem.image,
-                            backdropPath = currentItem.backdrop,
-                            season = nextSeason,
-                            episode = nextEpisode,
-                            displaySeason = nextDisplayIdentity?.displaySeason ?: nextSeason,
-                            displayEpisode = nextDisplayIdentity?.displayEpisode ?: nextEpisode,
-                            episodeTitle = null,
-                            progress = 3,
-                            positionSeconds = 0L, // next episode: no resume position yet
-                            durationSeconds = 0L, // next episode: unknown duration
-                            year = currentItem.year
-                        )
-                        watchHistoryRepository.saveProgress(
-                            mediaType = MediaType.TV,
-                            tmdbId = currentMediaId,
-                            title = currentItem.title,
-                            poster = currentItem.image,
-                            backdrop = currentItem.backdrop,
-                            season = nextSeason,
-                            episode = nextEpisode,
-                            episodeTitle = null,
-                            progress = 0.01f,
-                            duration = 0L,
-                            position = 0L
-                        )
-                    }
-                } else {
-                    runCatching {
-                        traktRepository.removeFromContinueWatchingCache(
-                            currentMediaId,
-                            null,
-                            null,
-                            MediaType.TV
-                        )
-                        watchHistoryRepository.removeFromHistory(currentMediaId, null, null)
-                    }
+                if (refreshedProgress != null) {
+                    runCatching { persistNextEpisodePointer(currentItem, refreshedProgress) }
                 }
 
                 val playTarget = buildPlayTarget(currentMediaType, refreshedProgress, null)
@@ -2322,21 +2277,24 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 _uiState.value = _uiState.value.copy(
-                    item = currentItem.copy(isWatched = nextUnwatched == null),
+                    item = if (refreshedProgress?.isComplete == true) {
+                        currentItem.copy(isWatched = nextUnwatched == null)
+                    } else currentItem,
                     episodes = updatedEpisodes,
-                    seasonProgress = refreshedProgress?.progress ?: optimisticProgress,
-                    playSeason = displayPlayTarget?.displaySeason ?: playTarget?.season ?: _uiState.value.playSeason,
-                    playEpisode = displayPlayTarget?.displayEpisode ?: playTarget?.episode ?: _uiState.value.playEpisode,
-                    playTmdbSeason = playTarget?.season ?: _uiState.value.playTmdbSeason,
-                    playTmdbEpisode = playTarget?.episode ?: _uiState.value.playTmdbEpisode,
+                    seasonProgress = refreshedProgress?.takeIf { it.isComplete }?.progress ?: optimisticProgress,
+                    episodePlaybackProgress = fetchEpisodePlaybackProgress(currentMediaId, updatedEpisodes),
+                    playSeason = displayPlayTarget?.displaySeason ?: playTarget?.season,
+                    playEpisode = displayPlayTarget?.displayEpisode ?: playTarget?.episode,
+                    playTmdbSeason = playTarget?.season,
+                    playTmdbEpisode = playTarget?.episode,
                     playLabel = displayPlayTarget?.let {
                         if (playTarget?.label == context.getString(R.string.play_start_s1e1)) {
                             context.getString(R.string.play_start_s1e1)
                         } else {
                             context.getString(R.string.continue_season_episode, it.displaySeason, it.displayEpisode)
                         }
-                    } ?: playTarget?.label ?: _uiState.value.playLabel,
-                    playPositionMs = playTarget?.positionMs ?: _uiState.value.playPositionMs,
+                    } ?: playTarget?.label,
+                    playPositionMs = playTarget?.positionMs,
                     toastMessage = context.getString(R.string.details_season_marked_watched, season),
                     toastType = ToastType.SUCCESS
                 )
@@ -2456,13 +2414,7 @@ class DetailsViewModel @Inject constructor(
     private suspend fun fetchSeasonProgress(tmdbId: Int): SeasonProgressResult {
         return try {
             val cachedEpisodes = runCatching { traktRepository.getWatchedEpisodesFromCache() }.getOrDefault(emptySet())
-            val cachedCountsBySeason = mutableMapOf<Int, Int>()
             val cachedKeysForShow = cachedEpisodes.filter { it.startsWith("show_tmdb:$tmdbId:") }.toSet()
-            for (key in cachedKeysForShow) {
-                val parts = key.split(":")
-                val seasonNum = parts.getOrNull(2)?.toIntOrNull() ?: continue
-                cachedCountsBySeason[seasonNum] = (cachedCountsBySeason[seasonNum] ?: 0) + 1
-            }
 
             val watchedKeys = if (cachedKeysForShow.isNotEmpty()) {
                 cachedKeysForShow
@@ -2482,23 +2434,27 @@ class DetailsViewModel @Inject constructor(
 
             val progressMap = mutableMapOf<Int, Pair<Int, Int>>()
             var nextUnwatched: Pair<Int, Int>? = null
+            var nextUnaired: Pair<Int, Int>? = null
+            var nextUnairedAirDate = ""
+            var isComplete = true
 
             for (seasonNum in seasonNumbers) {
                 try {
                     val seasonDetails = tmdbApi.getTvSeason(tmdbId, seasonNum, Constants.TMDB_API_KEY)
-                    val totalEpisodes = seasonDetails.episodes.size
+                    val orderedEpisodes = seasonDetails.episodes.sortedBy { it.episodeNumber }
+                    if (orderedEpisodes.isEmpty()) isComplete = false
+                    val airedEpisodes = orderedEpisodes.filter { episode ->
+                        EpisodeAvailability.hasAired(episode.airDate)
+                    }
+                    val totalEpisodes = airedEpisodes.size
 
-                    val watchedCount = if (cachedCountsBySeason.isNotEmpty()) {
-                        cachedCountsBySeason[seasonNum] ?: 0
-                    } else {
-                        watchedKeys.count { key ->
-                            key.startsWith("show_tmdb:$tmdbId:$seasonNum:")
-                        }
+                    val watchedCount = airedEpisodes.count { episode ->
+                        watchedKeys.contains("show_tmdb:$tmdbId:$seasonNum:${episode.episodeNumber}")
                     }
                     progressMap[seasonNum] = Pair(watchedCount, totalEpisodes)
 
                     if (nextUnwatched == null) {
-                        val firstUnwatched = seasonDetails.episodes.firstOrNull { episode ->
+                        val firstUnwatched = airedEpisodes.firstOrNull { episode ->
                             val key = "show_tmdb:$tmdbId:$seasonNum:${episode.episodeNumber}"
                             !watchedKeys.contains(key)
                         }
@@ -2506,8 +2462,19 @@ class DetailsViewModel @Inject constructor(
                             nextUnwatched = Pair(seasonNum, firstUnwatched.episodeNumber)
                         }
                     }
+                    if (nextUnaired == null) {
+                        val firstUnaired = orderedEpisodes.firstOrNull { episode ->
+                            val key = "show_tmdb:$tmdbId:$seasonNum:${episode.episodeNumber}"
+                            !EpisodeAvailability.hasAired(episode.airDate) && !watchedKeys.contains(key)
+                        }
+                        if (firstUnaired != null) {
+                            nextUnaired = Pair(seasonNum, firstUnaired.episodeNumber)
+                            nextUnairedAirDate = firstUnaired.airDate.orEmpty()
+                        }
+                    }
                 } catch (e: Exception) {
-                    // Skip seasons we can't load
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    isComplete = false
                 }
             }
 
@@ -2523,11 +2490,15 @@ class DetailsViewModel @Inject constructor(
 
             SeasonProgressResult(
                 progress = displayProgress,
-                hasWatched = watchedKeys.isNotEmpty() || progressMap.values.any { it.first > 0 },
-                nextUnwatched = nextUnwatched
+                hasWatched = progressMap.values.any { it.first > 0 },
+                nextUnwatched = nextUnwatched,
+                nextUnaired = nextUnaired,
+                nextUnairedAirDate = nextUnairedAirDate,
+                isComplete = isComplete,
             )
         } catch (e: Exception) {
-            SeasonProgressResult(emptyMap(), false, null)
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            SeasonProgressResult(emptyMap(), false, null, isComplete = false)
         }
     }
 
@@ -2814,11 +2785,25 @@ class DetailsViewModel @Inject constructor(
         }
         if (mediaType == MediaType.MOVIE) return null
         if (result == null) return null
+        if (!result.isComplete) {
+            val state = _uiState.value
+            return PlayTarget(
+                season = state.playTmdbSeason ?: state.playSeason,
+                episode = state.playTmdbEpisode ?: state.playEpisode,
+                label = state.playLabel.orEmpty(),
+                positionMs = state.playPositionMs,
+            )
+        }
         return if (!result.hasWatched) {
+            val firstAired = result.nextUnwatched ?: return null
             PlayTarget(
-                season = 1,
-                episode = 1,
-                label = context.getString(R.string.play_start_s1e1)
+                season = firstAired.first,
+                episode = firstAired.second,
+                label = if (firstAired == (1 to 1)) {
+                    context.getString(R.string.play_start_s1e1)
+                } else {
+                    context.getString(R.string.play_season_episode, firstAired.first, firstAired.second)
+                }
             )
         } else {
             val next = result.nextUnwatched
@@ -2829,11 +2814,7 @@ class DetailsViewModel @Inject constructor(
                     label = context.getString(R.string.continue_season_episode, next.first, next.second)
                 )
             } else {
-                PlayTarget(
-                    season = 1,
-                    episode = 1,
-                    label = context.getString(R.string.play_start_s1e1)
-                )
+                null
             }
         }
     }

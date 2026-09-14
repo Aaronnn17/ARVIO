@@ -41,6 +41,7 @@ import com.arflix.tv.data.repository.WatchHistoryRepository
 import com.arflix.tv.util.AnimeMapper
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
+import com.arflix.tv.util.EpisodeAvailability
 import com.arflix.tv.util.fallbackAdjacentEpisodeIdentity
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.weightedSubtitleScore
@@ -1962,6 +1963,7 @@ class PlayerViewModel @Inject constructor(
 
     private fun languageCodeToName(code: String): String {
         return when (code.lowercase().trim()) {
+            "ms", "msa", "may", "malay", "bahasa melayu" -> "Malay"
             "he", "hebrew", "iw" -> "Hebrew"
             "ar", "arabic" -> "Arabic"
             "fa", "persian", "farsi" -> "Persian"
@@ -2531,6 +2533,8 @@ class PlayerViewModel @Inject constructor(
     private fun normalizeLanguage(lang: String): String {
         val lowerLang = lang.lowercase().trim()
         return when {
+            lowerLang in listOf("ms", "msa", "may", "malay", "bahasa melayu") ||
+                lowerLang.startsWith("ms-") || lowerLang.startsWith("ms_") -> "ms"
             // Full names
             lowerLang == "english" || lowerLang.startsWith("english") -> "en"
             lowerLang == "spanish" || lowerLang.startsWith("spanish") || lowerLang == "espanol" -> "es"
@@ -5681,6 +5685,44 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    private suspend fun persistNextEpisodeAfterCompletion() {
+        val canonicalSeason = currentSeason ?: return
+        val canonicalEpisode = currentEpisode ?: return
+        val displaySeason = currentDisplaySeason ?: canonicalSeason
+        val displayEpisode = currentDisplayEpisode ?: canonicalEpisode
+
+        // Completion already removed this episode. Keep other saved progress until a
+        // successor is available; saveLocalContinueWatching replaces the show entry.
+        val currentDisplayEpisodes = loadPlayerSeasonEpisodes(currentMediaId, displaySeason)
+            .sortedBy { it.episodeNumber }
+        if (currentDisplayEpisodes.isEmpty()) return
+        val next = currentDisplayEpisodes.firstOrNull { it.episodeNumber > displayEpisode }
+            ?: loadPlayerSeasonEpisodes(currentMediaId, displaySeason + 1)
+                .sortedBy { it.episodeNumber }
+                .firstOrNull()
+            ?: return
+        val aired = EpisodeAvailability.hasAired(next.airDate)
+
+        traktRepository.saveLocalContinueWatching(
+            mediaType = MediaType.TV,
+            tmdbId = currentMediaId,
+            title = currentItemTitle.ifEmpty { currentTitle },
+            posterPath = currentPoster,
+            backdropPath = currentBackdrop,
+            season = next.tmdbSeasonNumber,
+            episode = next.tmdbEpisodeNumber,
+            displaySeason = next.seasonNumber,
+            displayEpisode = next.episodeNumber,
+            episodeTitle = next.name,
+            progress = 0,
+            positionSeconds = 0L,
+            durationSeconds = 0L,
+            isUpNext = true,
+            episodeAirDate = next.airDate.orEmpty(),
+            emitUpdate = aired,
+        )
+    }
+
     fun saveProgress(
         position: Long,
         duration: Long,
@@ -5917,36 +5959,11 @@ class PlayerViewModel @Inject constructor(
                     )
                 }
 
-                // When a TV episode completes, immediately save the next episode to
-                // local Continue Watching so CW isn't empty between episodes.
-                val cwSeason = currentSeason
-                val cwEpisode = currentEpisode
-                if (currentMediaType == MediaType.TV && cwSeason != null && cwEpisode != null) {
+                // Keep an aired next episode visible immediately. A future episode is retained
+                // only as a dated, hidden pointer so it can reappear on its release day.
+                if (currentMediaType == MediaType.TV) {
                     try {
-                        val nextIdentity = runCatching {
-                            animeMapper.resolveAnimeSeasonStructure(currentMediaId)
-                                ?.nextAfterDisplay(
-                                    currentDisplaySeason ?: cwSeason,
-                                    currentDisplayEpisode ?: cwEpisode
-                                )
-                        }.getOrNull()
-                        val nextSeason = nextIdentity?.tmdbSeason ?: cwSeason
-                        val nextEpisode = nextIdentity?.tmdbEpisode ?: (cwEpisode + 1)
-                        traktRepository.saveLocalContinueWatching(
-                            mediaType = currentMediaType,
-                            tmdbId = currentMediaId,
-                            title = currentItemTitle.ifEmpty { currentTitle },
-                            posterPath = currentPoster,
-                            backdropPath = currentBackdrop,
-                            season = nextSeason,
-                            episode = nextEpisode,
-                            displaySeason = nextIdentity?.displaySeason ?: nextSeason,
-                            displayEpisode = nextIdentity?.displayEpisode ?: nextEpisode,
-                            episodeTitle = null,
-                            progress = 3, // meets MIN_PROGRESS_THRESHOLD to avoid filter
-                            positionSeconds = 0L, // next episode: no resume position yet
-                            durationSeconds = 0L  // next episode: unknown duration
-                        )
+                        persistNextEpisodeAfterCompletion()
                     } catch (_: Exception) {
                         // Best-effort: don't let CW save failure affect playback
                     }
