@@ -34,6 +34,8 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import com.arflix.tv.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
@@ -314,7 +316,15 @@ private fun OledSources(sources: List<WatchlistSourceItem>, selectedId: String, 
         groups.forEach { (group, entries) ->
             item("group:$group") {
                 Column(Modifier.padding(top = 24.dp, bottom = 10.dp, start = 10.dp)) {
-                    Text(group.uppercase(), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    val provider = (entries.firstOrNull() as? WatchlistSourceItem.TrackerList)?.provider
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        when (provider) {
+                            TrackerLibraryProvider.TRAKT -> Icon(painterResource(R.drawable.ic_trakt), contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                            TrackerLibraryProvider.SIMKL -> Icon(painterResource(R.drawable.ic_simkl), contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                            else -> Unit
+                        }
+                        Text(group.uppercase(), color = Color.White, fontSize = if (provider != null) 16.sp else 13.sp, fontWeight = FontWeight.Bold, letterSpacing = .6.sp, maxLines = 1)
+                    }
                     (entries.firstOrNull() as? WatchlistSourceItem.HomeServer)?.let { Text(it.candidate.serverKind.name.lowercase().replaceFirstChar(Char::titlecase), color = Color.Gray, fontSize = 11.sp) }
                 }
             }
