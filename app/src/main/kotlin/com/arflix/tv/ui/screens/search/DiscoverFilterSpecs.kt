@@ -29,15 +29,22 @@ internal data class DiscoverFilterActions(
     val onMatchAllGenres: (Boolean) -> Unit,
     val onSelectSort: (SortOption) -> Unit,
     val onSetRating: (RatingFilter) -> Unit,
+    val onSelectDecade: (Decade?) -> Unit,
     val onSelectYear: (Int?) -> Unit,
     val onSelectCertification: (String?) -> Unit,
     val onToggleHideWatched: () -> Unit,
     val onOpenPanel: (DiscoverFilterId) -> Unit
 )
 
-/** Rating steps offered in the panel — whole and half points, which is how people say it. */
-private val RATING_STEPS = listOf(5.0, 6.0, 7.0, 8.0, 9.0)
-private val RATING_CEILINGS = listOf(6.0, 7.0, 8.0, 9.0, 10.0)
+/** How wide each captioned row of tiles is. Narrow enough that a phone never has to clip one. */
+private const val MATCH_COLUMNS = 4
+private const val VOTE_COLUMNS = 5
+private const val DECADE_COLUMNS = 4
+private const val YEAR_COLUMNS = 5
+private const val DROPDOWN_COLUMNS = 2
+
+/** The marks under the rating bar. They label the bar; they are not values one can pick. */
+private val RATING_BAR_TICKS = listOf(0.0, 2.5, 5.0, 7.5, 10.0)
 
 /**
  * Display-only localization of a TMDB genre name.
@@ -165,19 +172,32 @@ private fun ratingChipValue(rating: RatingFilter): String {
     return rating.minVotes?.let { "$range · $it+" } ?: range
 }
 
-/** "7.0", not "7.0000001" — the value sits on a chip, not in a log line. */
-private fun formatRating(value: Double): String = String.format(java.util.Locale.US, "%.1f", value)
+/**
+ * "7", not "7.0" — the two rating fields offer whole points only, so a trailing zero would be
+ * the only decimal on the screen. A half point kept from an older state still prints as one.
+ */
+private fun formatRating(value: Double): String =
+    if (value % 1.0 == 0.0) value.toInt().toString()
+    else String.format(java.util.Locale.getDefault(), "%.1f", value)
 
 @Composable
 private fun yearChip(state: SearchUiState, actions: DiscoverFilterActions) = DiscoverChip(
     id = DiscoverFilterId.YEAR,
     key = "year",
     label = stringResource(R.string.search_filter_year),
-    value = state.year?.toString(),
+    // A decade alone already filters (J1), so the chip has to be able to say "2010s" as well
+    // as "2014" — otherwise a set filter would look unset.
+    value = state.year?.toString() ?: state.decade?.let { decadeLabel(it) },
     icon = Icons.Default.DateRange,
-    isSet = state.year != null,
+    isSet = state.year != null || state.decade != null,
     onActivate = { actions.onOpenPanel(DiscoverFilterId.YEAR) }
 )
+
+/** "2020s" / "older" — what one decade tile says. */
+@Composable
+private fun decadeLabel(decade: Decade): String =
+    if (decade.isTail) stringResource(R.string.search_filter_decade_older)
+    else stringResource(R.string.search_filter_decade, decadeLabelNumber(decade.start))
 
 @Composable
 private fun certificationChip(
@@ -237,74 +257,135 @@ private fun genrePanel(state: SearchUiState, actions: DiscoverFilterActions) = F
     subtitle = state.selectedGenres.size
         .takeIf { it > 0 }
         ?.let { stringResource(R.string.search_filter_selected_count, it) },
-    options = genresFor(state.selectedType).map { genre ->
-        PanelOption(
-            key = "genre_${genre.id}",
-            label = genre.localizedNameFor(state.selectedType),
-            isSelected = state.selectedGenres.any { it.id == genre.id },
-            onToggle = { actions.onToggleGenre(genre) }
+    sections = listOf(
+        // Its own section, which is the point: as a decoration above the grid the switch was
+        // unreachable with a remote (Ä4a). A section the focus can enter fixes that by itself.
+        PanelSection(
+            key = "genre_match",
+            entries = PanelEntries.Tiles(
+                listOf(
+                    PanelOption(
+                        key = "match_all",
+                        label = stringResource(R.string.search_filter_match_all),
+                        isSelected = state.matchAllGenres,
+                        onToggle = { actions.onMatchAllGenres(true) }
+                    ),
+                    PanelOption(
+                        key = "match_any",
+                        label = stringResource(R.string.search_filter_match_any),
+                        isSelected = !state.matchAllGenres,
+                        onToggle = { actions.onMatchAllGenres(false) }
+                    )
+                )
+            ),
+            columns = MATCH_COLUMNS
+        ),
+        PanelSection(
+            key = "genre_list",
+            entries = PanelEntries.Tiles(
+                genresFor(state.selectedType).map { genre ->
+                    PanelOption(
+                        key = "genre_${genre.id}",
+                        label = genre.localizedNameFor(state.selectedType),
+                        isSelected = state.selectedGenres.any { it.id == genre.id },
+                        onToggle = { actions.onToggleGenre(genre) }
+                    )
+                }
+            )
         )
-    },
-    mode = PanelMode(
-        leftLabel = stringResource(R.string.search_filter_match_all),
-        rightLabel = stringResource(R.string.search_filter_match_any),
-        isLeftSelected = state.matchAllGenres,
-        onSelect = actions.onMatchAllGenres
     ),
-    footer = stringResource(R.string.search_filter_panel_hint)
+    // "AND" and "OR" are the two words the user expected of his own accord; the line under them
+    // is there for everyone who does not read them as the words from the arithmetic corner.
+    footer = stringResource(R.string.search_filter_match_hint)
 )
 
 @Composable
 private fun sortPanel(state: SearchUiState, actions: DiscoverFilterActions) = FilterPanelSpec(
     id = DiscoverFilterId.SORT,
     title = stringResource(R.string.search_filter_sort),
-    options = SortOption.entries.map { sort ->
-        PanelOption(
-            key = "sort_$sort",
-            label = sort.localizedLabel(),
-            isSelected = state.sortOption == sort,
-            onToggle = { actions.onSelectSort(sort) }
+    sections = listOf(
+        PanelSection(
+            key = "sort_list",
+            entries = PanelEntries.Tiles(
+                SortOption.entries.map { sort ->
+                    PanelOption(
+                        key = "sort_$sort",
+                        label = sort.localizedLabel(),
+                        isSelected = state.sortOption == sort,
+                        onToggle = { actions.onSelectSort(sort) }
+                    )
+                }
+            )
         )
-    },
+    ),
     footer = stringResource(R.string.search_filter_panel_hint)
 )
 
 @Composable
 private fun ratingPanel(state: SearchUiState, actions: DiscoverFilterActions): FilterPanelSpec {
     val any = stringResource(R.string.search_filter_any)
-    val from = ratingOptions(
-        prefix = "min", any = any, values = RATING_STEPS, selected = state.rating.min,
-        onPick = { actions.onSetRating(state.rating.copy(min = it)) }
-    )
-    val to = ratingOptions(
-        prefix = "max", any = any, values = RATING_CEILINGS, selected = state.rating.max,
-        onPick = { actions.onSetRating(state.rating.copy(max = it)) }
-    )
-    val votes = MIN_VOTE_OPTIONS.map { value ->
-        PanelOption(
-            key = "votes_$value",
-            label = value?.let { "$it+" } ?: any,
-            isSelected = state.rating.minVotes == value,
-            onToggle = { actions.onSetRating(state.rating.copy(minVotes = value)) }
+    val rating = state.rating
+    val fields = listOf(
+        PanelDropdown(
+            key = "rating_min",
+            label = stringResource(R.string.search_filter_rating_from_short),
+            valueLabel = rating.min?.let { formatRating(it) } ?: any,
+            entries = ratingValues("min", any, rating.min) {
+                actions.onSetRating(withRatingFloor(rating, it))
+            }
+        ),
+        PanelDropdown(
+            key = "rating_max",
+            label = stringResource(R.string.search_filter_rating_to_short),
+            valueLabel = rating.max?.let { formatRating(it) } ?: any,
+            entries = ratingValues("max", any, rating.max) {
+                actions.onSetRating(withRatingCeiling(rating, it))
+            }
         )
-    }
+    )
     return FilterPanelSpec(
         id = DiscoverFilterId.RATING,
         title = stringResource(R.string.search_filter_rating),
-        subtitle = stringResource(R.string.search_filter_min_votes),
-        options = from + to + votes,
-        footer = stringResource(R.string.search_filter_votes_hint)
+        subtitle = ratingChipValue(rating),
+        bar = PanelBar(
+            from = rating.min ?: 0.0,
+            to = rating.max ?: 10.0,
+            ticks = RATING_BAR_TICKS.map { formatRating(it) }
+        ),
+        sections = listOf(
+            PanelSection(
+                key = "rating_range",
+                entries = PanelEntries.Dropdowns(fields),
+                columns = DROPDOWN_COLUMNS
+            ),
+            PanelSection(
+                key = "rating_votes",
+                caption = stringResource(R.string.search_filter_min_votes),
+                entries = PanelEntries.Tiles(
+                    MIN_VOTE_OPTIONS.map { value ->
+                        PanelOption(
+                            key = "votes_$value",
+                            label = value?.let { "$it+" } ?: any,
+                            isSelected = rating.minVotes == value,
+                            onToggle = { actions.onSetRating(rating.copy(minVotes = value)) }
+                        )
+                    }
+                ),
+                columns = VOTE_COLUMNS
+            )
+        ),
+        footer = stringResource(R.string.search_filter_rating_hint)
     )
 }
 
-private fun ratingOptions(
+/** "Any" plus the whole points, for one of the two rating fields. */
+private fun ratingValues(
     prefix: String,
     any: String,
-    values: List<Double>,
     selected: Double?,
     onPick: (Double?) -> Unit
 ): List<PanelOption> {
-    val all: List<Double?> = listOf(null) + values
+    val all: List<Double?> = listOf(null) + RATING_VALUES
     return all.map { value ->
         PanelOption(
             key = "${prefix}_$value",
@@ -319,22 +400,57 @@ private fun ratingOptions(
 private fun yearPanel(state: SearchUiState, actions: DiscoverFilterActions): FilterPanelSpec {
     val any = stringResource(R.string.search_filter_any)
     val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-    val years = yearOptions(currentYear)
-    val options = listOf(
-        PanelOption("year_any", any, state.year == null) { actions.onSelectYear(null) }
-    ) + years.map { year ->
+    val decades = decadeOptions(currentYear)
+    val decadeTiles = listOf(
+        PanelOption("decade_any", any, state.decade == null) { actions.onSelectDecade(null) }
+    ) + decades.map { decade ->
         PanelOption(
-            key = "year_$year",
-            label = year.toString(),
-            isSelected = state.year == year,
-            onToggle = { actions.onSelectYear(year) }
+            key = "decade_${decade.start}",
+            label = decadeLabel(decade),
+            isSelected = state.decade == decade,
+            onToggle = { actions.onSelectDecade(decade) }
         )
+    }
+    val sections = buildList {
+        add(
+            PanelSection(
+                key = "year_decade",
+                caption = stringResource(R.string.search_filter_decade_caption),
+                entries = PanelEntries.Tiles(decadeTiles),
+                columns = DECADE_COLUMNS
+            )
+        )
+        // The exact year only exists inside a decade — without one there is nothing to narrow,
+        // and offering 1950 to 2026 in one list is the complaint this panel was rebuilt for.
+        state.decade?.let { decade ->
+            val years = yearsIn(decade, currentYear)
+            add(
+                PanelSection(
+                    key = "year_exact",
+                    caption = stringResource(R.string.search_filter_exact_year),
+                    entries = PanelEntries.Tiles(
+                        listOf(
+                            PanelOption("year_any", any, state.year == null) { actions.onSelectYear(null) }
+                        ) + years.map { year ->
+                            PanelOption(
+                                key = "year_$year",
+                                label = year.toString(),
+                                isSelected = state.year == year,
+                                onToggle = { actions.onSelectYear(year) }
+                            )
+                        }
+                    ),
+                    columns = YEAR_COLUMNS
+                )
+            )
+        }
     }
     return FilterPanelSpec(
         id = DiscoverFilterId.YEAR,
         title = stringResource(R.string.search_filter_year),
-        options = options,
-        footer = stringResource(R.string.search_filter_panel_hint)
+        subtitle = state.year?.toString() ?: state.decade?.let { decadeLabel(it) },
+        sections = sections,
+        footer = stringResource(R.string.search_filter_year_hint)
     )
 }
 
@@ -358,7 +474,9 @@ private fun certificationPanel(
     return FilterPanelSpec(
         id = DiscoverFilterId.CERTIFICATION,
         title = stringResource(R.string.search_filter_age),
-        options = options,
+        sections = listOf(
+            PanelSection(key = "cert_list", entries = PanelEntries.Tiles(options))
+        ),
         // The labels are data, not translations: they follow the certification body of the
         // content country, so "12" here is an FSK 12 and a "15" in the UK is a BBFC 15.
         footer = stringResource(R.string.search_filter_age_movies_only)

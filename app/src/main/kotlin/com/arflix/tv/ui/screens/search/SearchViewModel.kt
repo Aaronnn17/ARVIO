@@ -115,6 +115,8 @@ data class SearchUiState(
     val matchAllGenres: Boolean = true,
     val sortOption: SortOption = SortOption.POPULAR,
     val rating: RatingFilter = RatingFilter(),
+    /** The chosen decade (J1). It filters on its own; [year] narrows it further, optionally. */
+    val decade: Decade? = null,
     val year: Int? = null,
     /** Movies only — `discover/tv` has no certification parameter at TMDB. */
     val certification: String? = null,
@@ -135,7 +137,7 @@ data class SearchUiState(
      * Everything else switches the rows over to the filtered grid.
      */
     val hasDiscoverFilters: Boolean
-        get() = selectedGenres.isNotEmpty() || rating.isSet || year != null ||
+        get() = selectedGenres.isNotEmpty() || rating.isSet || decade != null || year != null ||
             certification != null || hideWatched
 }
 
@@ -438,21 +440,26 @@ class SearchViewModel @Inject constructor(
         return GridPageResult(collected, page, endReached)
     }
 
-    private fun gridRequestFor(state: SearchUiState, page: Int, today: String) = DiscoverRequest(
-        type = state.selectedType,
-        genres = genresParam(state.selectedGenres, state.matchAllGenres),
-        sort = state.sortOption.apiValue,
-        minVotes = state.rating.minVotes ?: DISCOVER_GRID_MIN_VOTES,
-        page = page,
-        minRating = state.rating.min,
-        maxRating = state.rating.max,
-        year = state.year,
-        certification = state.certification.takeIf { supportsCertification(state.selectedType) },
-        certificationCountry = ContentRating.regionOf(mediaRepository.contentLanguage),
+    private fun gridRequestFor(state: SearchUiState, page: Int, today: String): DiscoverRequest {
         // A release date in the future has no rating and usually no poster either, so the grid
-        // stays on what is actually out — except when a year is asked for explicitly.
-        releaseDateLte = if (state.year == null) today else null
-    )
+        // stays on what is actually out — except when a year is asked for explicitly. A decade
+        // turns that cap into a window; the rule itself lives in releaseWindowFor.
+        val window = releaseWindowFor(state.decade, state.year, today)
+        return DiscoverRequest(
+            type = state.selectedType,
+            genres = genresParam(state.selectedGenres, state.matchAllGenres),
+            sort = state.sortOption.apiValue,
+            minVotes = state.rating.minVotes ?: DISCOVER_GRID_MIN_VOTES,
+            page = page,
+            minRating = state.rating.min,
+            maxRating = state.rating.max,
+            year = state.year,
+            certification = state.certification.takeIf { supportsCertification(state.selectedType) },
+            certificationCountry = ContentRating.regionOf(mediaRepository.contentLanguage),
+            releaseDateGte = window.from,
+            releaseDateLte = window.to
+        )
+    }
 
     /**
      * Tells a watched title from an unwatched one.
@@ -482,6 +489,7 @@ class SearchViewModel @Inject constructor(
         state.matchAllGenres,
         state.sortOption,
         state.rating.min, state.rating.max, state.rating.minVotes,
+        state.decade,
         state.year,
         state.certification,
         state.hideWatched
@@ -565,6 +573,18 @@ class SearchViewModel @Inject constructor(
 
     fun setRating(rating: RatingFilter) {
         _uiState.value = _uiState.value.copy(rating = rating)
+        applyDiscoverSelection()
+    }
+
+    /**
+     * Picks a decade, and drops an exact year that no longer sits inside it.
+     *
+     * Keeping it would leave the chip saying "2014" under the heading "2020s" and the grid
+     * showing neither — the year is the narrower filter, so it wins until it stops fitting.
+     */
+    fun selectDecade(decade: Decade?) {
+        val year = _uiState.value.year?.takeIf { decade != null && it in decade.start..decade.end }
+        _uiState.value = _uiState.value.copy(decade = decade, year = year)
         applyDiscoverSelection()
     }
 

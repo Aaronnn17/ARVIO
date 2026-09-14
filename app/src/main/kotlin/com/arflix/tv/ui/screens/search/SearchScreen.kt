@@ -210,7 +210,11 @@ fun SearchScreen(
     // The panel that is open under a chip, and where the focus sits inside it. Both live here
     // and not in the view model: nothing about an open panel survives leaving the screen.
     var openPanel by remember { mutableStateOf<DiscoverFilterId?>(null) }
-    var panelFocusIndex by remember { mutableIntStateOf(0) }
+    var panelFocus by remember { mutableStateOf(PanelFocus.START) }
+    // An open drop-down list is a second level inside the panel, so it needs its own position
+    // and its own BACK step — see the three-rung BACK ladder further down.
+    var openDropdown by remember { mutableStateOf<String?>(null) }
+    var dropdownFocusIndex by remember { mutableIntStateOf(0) }
     val filterActions = remember(viewModel) {
         DiscoverFilterActions(
             onSelectType = viewModel::selectType,
@@ -218,16 +222,18 @@ fun SearchScreen(
             onMatchAllGenres = viewModel::setMatchAllGenres,
             onSelectSort = viewModel::selectSort,
             onSetRating = viewModel::setRating,
+            onSelectDecade = viewModel::selectDecade,
             onSelectYear = viewModel::selectYear,
             onSelectCertification = viewModel::selectCertification,
             onToggleHideWatched = { viewModel.setHideWatched(!viewModel.uiState.value.hideWatched) },
             onOpenPanel = { id ->
+                openDropdown = null
                 if (openPanel == id) {
                     openPanel = null
                     focusZone = FocusZone.FILTERS
                 } else {
                     openPanel = id
-                    panelFocusIndex = 0
+                    panelFocus = PanelFocus.START
                     focusZone = FocusZone.PANEL
                 }
             }
@@ -235,6 +241,12 @@ fun SearchScreen(
     }
     val quickFilters = discoverChips(state = uiState, certifications = certifications, actions = filterActions)
     val openPanelSpec = openPanel?.let { filterPanelSpec(it, uiState, certifications, filterActions) }
+    // The exact-year section appears with the decade and vanishes with it, so the remembered
+    // position has to be checked against the panel as it is now.
+    val panelShapes = openPanelSpec?.shapes
+    LaunchedEffect(panelShapes) {
+        panelShapes?.let { panelFocus = clampPanelFocus(panelFocus, it) ?: PanelFocus.START }
+    }
     LaunchedEffect(quickFilters.size) {
         focusedFilterIndex = focusedFilterIndex.coerceIn(0, (quickFilters.size - 1).coerceAtLeast(0))
     }
@@ -252,6 +264,7 @@ fun SearchScreen(
         uiState.matchAllGenres,
         uiState.sortOption,
         uiState.rating.min, uiState.rating.max, uiState.rating.minVotes,
+        uiState.decade,
         uiState.year,
         uiState.certification,
         uiState.hideWatched
@@ -344,6 +357,10 @@ fun SearchScreen(
             isSearchEditing = false
             keyboardController?.hide()
             runCatching { searchFocusRequester.requestFocus() }
+        } else if (openDropdown != null) {
+            // The teuerste Falle of this round: BACK closes the LIST first. Closing the whole
+            // panel here would throw away the half-made entry the list was opened for.
+            openDropdown = null
         } else if (openPanel != null) {
             openPanel = null
             focusZone = FocusZone.FILTERS
@@ -395,16 +412,41 @@ fun SearchScreen(
             // An open panel owns every key until it is closed. Without this the chip row would
             // move at the same time and the panel would end up describing a different chip.
             if (focusZone == FocusZone.PANEL) {
-                val optionCount = openPanelSpec?.options?.size ?: 0
-                val columns = openPanelSpec?.columns ?: PANEL_COLUMNS
-                val panelHandled = when (event.key) {
+                val focusedDropdown = openPanelSpec?.dropdownAt(panelFocus)
+                val openList = focusedDropdown?.takeIf { it.key == openDropdown }?.entries
+                val panelHandled = if (openList != null) {
+                    // An open list owns every key: BACK closes the list and nothing else, and
+                    // left/right are swallowed so the tiles behind it cannot move underneath.
+                    when (event.key) {
+                        Key.Back, Key.Escape -> { openDropdown = null; true }
+                        Key.Enter, Key.DirectionCenter -> {
+                            openList.getOrNull(dropdownFocusIndex)?.onToggle?.invoke()
+                            openDropdown = null
+                            true
+                        }
+                        Key.DirectionUp, Key.DirectionDown -> {
+                            val step = if (event.key == Key.DirectionUp) -1 else 1
+                            dropdownFocusIndex =
+                                moveDropdownFocus(dropdownFocusIndex, openList.size, step)
+                            true
+                        }
+                        Key.DirectionLeft, Key.DirectionRight -> true
+                        else -> false
+                    }
+                } else when (event.key) {
                     Key.Back, Key.Escape -> {
                         openPanel = null
                         focusZone = FocusZone.FILTERS
                         true
                     }
                     Key.Enter, Key.DirectionCenter -> {
-                        openPanelSpec?.options?.getOrNull(panelFocusIndex)?.onToggle?.invoke()
+                        if (focusedDropdown != null) {
+                            openDropdown = focusedDropdown.key
+                            dropdownFocusIndex =
+                                focusedDropdown.entries.indexOfFirst { it.isSelected }.coerceAtLeast(0)
+                        } else {
+                            openPanelSpec?.optionAt(panelFocus)?.onToggle?.invoke()
+                        }
                         true
                     }
                     Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight -> {
@@ -418,12 +460,12 @@ fun SearchScreen(
                             Key.DirectionDown -> 1
                             else -> 0
                         }
-                        val next = movePanelFocus(panelFocusIndex, optionCount, columns, dx, dy)
-                        if (next == PANEL_FOCUS_LEAVE) {
+                        val next = movePanelFocus(panelFocus, panelShapes.orEmpty(), dx, dy)
+                        if (next.hasLeft) {
                             openPanel = null
                             focusZone = FocusZone.FILTERS
                         } else {
-                            panelFocusIndex = next
+                            panelFocus = next
                         }
                         true
                     }
@@ -723,7 +765,9 @@ fun SearchScreen(
                     openPanelSpec?.let { spec ->
                         DiscoverFilterPanel(
                             spec = spec,
-                            focusedOption = panelFocusIndex,
+                            focus = panelFocus,
+                            openDropdownKey = openDropdown,
+                            dropdownFocusIndex = dropdownFocusIndex,
                             isTouchDevice = false,
                             modifier = Modifier
                                 .align(Alignment.CenterHorizontally)
@@ -808,13 +852,22 @@ fun SearchScreen(
             openPanelSpec?.let { spec ->
                 DiscoverFilterPanel(
                     spec = spec,
-                    focusedOption = null,
+                    focus = null,
+                    openDropdownKey = openDropdown,
+                    dropdownFocusIndex = dropdownFocusIndex,
                     isTouchDevice = true,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp)
-                        .padding(bottom = 12.dp + LocalBottomBarInset.current)
+                        .padding(bottom = 12.dp + LocalBottomBarInset.current),
+                    onOpenDropdown = { field ->
+                        openDropdown = if (openDropdown == field.key) null else field.key
+                    },
+                    onPickFromDropdown = { option ->
+                        option.onToggle()
+                        openDropdown = null
+                    }
                 )
             }
         }

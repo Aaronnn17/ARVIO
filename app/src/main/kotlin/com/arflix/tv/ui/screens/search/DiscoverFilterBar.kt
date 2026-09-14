@@ -96,11 +96,21 @@ internal fun DiscoverFilterRow(
 ) {
     if (chips.isEmpty()) return
     val rowState = rememberLazyListState()
+    // Ä3: the row follows the focus only when the focused chip is not WHOLLY in view.
+    // `firstVisibleItemIndex` counts a chip as visible while half of it hangs over the left
+    // edge, which is how the media-type switch stayed cut in half after scrolling to the end
+    // and back — it was "visible", so nothing scrolled it back into place.
     LaunchedEffect(focusedIndex, chips.size) {
         val target = focusedIndex.coerceIn(0, (chips.size - 1).coerceAtLeast(0))
-        val first = rowState.firstVisibleItemIndex
-        val last = rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: first
-        if (target < first || target > last - 1) rowState.animateScrollToItem(target)
+        val layout = rowState.layoutInfo
+        val item = layout.visibleItemsInfo.firstOrNull { it.index == target }
+        val fullyVisible = item != null && isChipFullyVisible(
+            itemOffset = item.offset,
+            itemSize = item.size,
+            contentStart = layout.viewportStartOffset + layout.beforeContentPadding,
+            contentEnd = layout.viewportEndOffset - layout.afterContentPadding
+        )
+        if (!fullyVisible) rowState.animateScrollToItem(target)
     }
     LazyRow(
         state = rowState,
