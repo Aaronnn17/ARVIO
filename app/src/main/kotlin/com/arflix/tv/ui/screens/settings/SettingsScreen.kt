@@ -914,8 +914,11 @@ fun SettingsScreen(
                             heldGroups,
                             uiState.iptvStalkerPortals.map { it.id }.toSet()
                         )
-                        if (contentFocusIndex - heldFirstIndex !in heldGroups.indices) {
-                            // Focus is not on a category row - fall back to normal navigation.
+                        if (heldGroup !in heldGroups || contentFocusIndex - heldFirstIndex !in heldGroups.indices) {
+                            // The group is gone (the playlist reloaded) or the focus is not on a
+                            // category row at all - let go and navigate normally. The position
+                            // itself stays with contentFocusIndex: reading it back out of the
+                            // ordered list would lag behind a move that is still being written.
                             iptvHeldGroup = null
                             return@handler false
                         }
