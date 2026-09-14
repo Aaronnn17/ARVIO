@@ -25,6 +25,9 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object AppModule {
     private val simklBackoffUntilMs = java.util.concurrent.atomic.AtomicLong(0L)
+    private val simklRequestLock = Any()
+    @Volatile
+    private var lastSimklRequestTimestampMs = 0L
 
     @Provides
     @Singleton
@@ -99,51 +102,13 @@ object AppModule {
     @Provides
     @Singleton
     @JvmStatic
-    fun provideSimklApi(okHttpClient: OkHttpClient): com.arflix.tv.data.api.SimklApi {
-        var lastPostTimestampMs = 0L
-        val postLock = Any()
-
+    fun provideSimklApi(
+        okHttpClient: OkHttpClient,
+        @dagger.hilt.android.qualifiers.ApplicationContext context: android.content.Context
+    ): com.arflix.tv.data.api.SimklApi {
         val simklClient = okHttpClient.newBuilder()
             .addInterceptor { chain ->
                 val original = chain.request()
-
-                // Enforce 1 POST request per second per Simkl API policy
-                if (original.method.equals("POST", ignoreCase = true)) {
-                    synchronized(postLock) {
-                        val now = android.os.SystemClock.elapsedRealtime()
-                        val elapsed = now - lastPostTimestampMs
-                        if (elapsed < 1000L) {
-                            val sleepTime = 1000L - elapsed
-                            try {
-                                Thread.sleep(sleepTime)
-                            } catch (_: InterruptedException) {}
-                        }
-                        lastPostTimestampMs = android.os.SystemClock.elapsedRealtime()
-                    }
-                }
-
-                val originalUrl = original.url
-                val urlBuilder = originalUrl.newBuilder()
-                val rawVersion = com.arflix.tv.BuildConfig.VERSION_NAME
-                val cleanVersion = rawVersion.substringBefore("-")
-
-                if (Constants.SIMKL_CLIENT_ID.isNotBlank()) {
-                    urlBuilder.setQueryParameter("client_id", Constants.SIMKL_CLIENT_ID)
-                }
-                urlBuilder.setQueryParameter("app-name", "arvio")
-                urlBuilder.setQueryParameter("app-version", cleanVersion)
-
-                val requestBuilder = original.newBuilder()
-                    .url(urlBuilder.build())
-                    .header("User-Agent", "ARVIO/$cleanVersion (Android TV)")
-
-                if (Constants.SIMKL_CLIENT_ID.isNotBlank()) {
-                    requestBuilder.header("simkl-api-key", Constants.SIMKL_CLIENT_ID)
-                }
-
-                if (original.method.equals("POST", ignoreCase = true) && original.header("Content-Type") == null) {
-                    requestBuilder.header("Content-Type", "application/json")
-                }
 
                 fun awaitBackoff() {
                     var now = System.currentTimeMillis()
@@ -162,6 +127,47 @@ object AppModule {
                 }
 
                 awaitBackoff()
+
+                // Enforce maximum 1 request per second to Simkl API across all HTTP methods
+                // (GET, POST, DELETE, etc.) to strictly comply with Simkl rate limits and prevent
+                // "High Traffic Burst Detected" alerts (3+ reqs/sec from the same IP).
+                synchronized(simklRequestLock) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    val elapsed = now - lastSimklRequestTimestampMs
+                    if (elapsed < 1000L) {
+                        val sleepTime = 1000L - elapsed
+                        try {
+                            Thread.sleep(sleepTime)
+                        } catch (_: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                        }
+                    }
+                    lastSimklRequestTimestampMs = android.os.SystemClock.elapsedRealtime()
+                }
+
+                val originalUrl = original.url
+                val urlBuilder = originalUrl.newBuilder()
+                val rawVersion = com.arflix.tv.BuildConfig.VERSION_NAME
+                val cleanVersion = rawVersion.substringBefore("-")
+
+                if (Constants.SIMKL_CLIENT_ID.isNotBlank()) {
+                    urlBuilder.setQueryParameter("client_id", Constants.SIMKL_CLIENT_ID)
+                }
+                urlBuilder.setQueryParameter("app-name", "arvio")
+                urlBuilder.setQueryParameter("app-version", cleanVersion)
+
+                val requestBuilder = original.newBuilder()
+                    .url(urlBuilder.build())
+                    .header("User-Agent", OkHttpProvider.getAppUserAgent(context))
+
+                if (Constants.SIMKL_CLIENT_ID.isNotBlank()) {
+                    requestBuilder.header("simkl-api-key", Constants.SIMKL_CLIENT_ID)
+                }
+
+                if (original.method.equals("POST", ignoreCase = true) && original.header("Content-Type") == null) {
+                    requestBuilder.header("Content-Type", "application/json")
+                }
+
 
                 val response = chain.proceed(requestBuilder.build())
                 if (response.code == 429) {
