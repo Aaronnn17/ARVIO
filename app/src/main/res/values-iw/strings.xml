@@ -139,6 +139,7 @@
     <string name="auto_play_next">הפעלה אוטומטית של הבא</string>
     <string name="next_episode">הפרק הבא</string>
     <string name="continue_watching">המשך צפייה</string>
+    <string name="home_view_all">הצג הכל</string>
     <string name="my_watchlist">רשימת הצפייה שלי</string>
     <string name="add_to_watchlist">הוסף לרשימת צפייה</string>
     <string name="remove_from_watchlist">הסר מרשימת צפייה</string>

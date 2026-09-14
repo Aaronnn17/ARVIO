@@ -61,6 +61,7 @@ import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -257,6 +258,10 @@ private class HomeFocusState(
     // Keep the exact focused title as well as its index. Catalog refreshes can
     // insert or reorder items, so the numeric index alone is not a stable anchor.
     val rowItemKeysByCategoryId = mutableMapOf<String, String>()
+    // Index a row was clamped to because it briefly shrank (Home reloads rows from their first
+    // page on resume, then pages back in). That clamp is not a user choice, so the focus anchor
+    // must survive it; -1 when no such clamp is pending.
+    var transientClampIndex = -1
 
     companion object {
         // `userHasNavigated` is saved as the 4th element (0/1). Without it,
@@ -284,7 +289,7 @@ private class HomeFocusState(
 }
 
 @Composable
-private fun localizedCategoryTitle(category: Category): String = when (category.id) {
+internal fun localizedCategoryTitle(category: Category): String = when (category.id) {
     "continue_watching"        -> stringResource(R.string.continue_watching)
     "trending_movies"          -> stringResource(R.string.trending_movies)
     "trending_series"          -> stringResource(R.string.trending_series)
@@ -393,6 +398,35 @@ internal fun clampHomeItemIndex(items: List<MediaItem>, index: Int): Int {
     val navigableItemCount = if (realItemCount > 0) realItemCount else items.size
     return if (navigableItemCount == 0) 0 else index.coerceIn(0, navigableItemCount - 1)
 }
+
+/** A fully loaded row shorter than this already shows everything, so it gets no "View all". */
+private const val HOME_VIEW_ALL_MIN_ITEMS = 15
+
+/** Focus-anchor key recorded while a row's trailing "View all" card is focused. */
+private const val HOME_VIEW_ALL_FOCUS_KEY = "__view_all__"
+
+/**
+ * Whether a home row ends with a "View all" card that opens its full paginated grid.
+ * The grid only opens title details, so rows of IPTV channels, sports events or
+ * collection tiles (which need their own routing) are excluded.
+ */
+internal fun homeRowSupportsViewAll(category: Category, hasMore: Boolean): Boolean {
+    if (category.id == "continue_watching" || category.id.startsWith("collection_row_")) return false
+    val realItems = category.items.filterNot { it.isPlaceholder }
+    if (realItems.isEmpty()) return false
+    val hasNonTitleItems = realItems.any { item ->
+        val status = item.status
+        status?.startsWith("iptv:") == true ||
+            status?.startsWith("collection:") == true ||
+            SportsAddonCapabilities.isSportsHomeStatus(status)
+    }
+    if (hasNonTitleItems) return false
+    return hasMore || realItems.size >= HOME_VIEW_ALL_MIN_ITEMS
+}
+
+/** Index of a row's trailing "View all" slot (one past its last title), or -1 when it has none. */
+internal fun homeRowViewAllIndex(category: Category, hasMore: Boolean): Int =
+    if (homeRowSupportsViewAll(category, hasMore)) category.items.count { !it.isPlaceholder } else -1
 
 @androidx.compose.runtime.Immutable
 private data class HomeFocusedHeroSnapshot(
@@ -606,6 +640,7 @@ fun HomeScreen(
     currentProfile: com.arflix.tv.data.model.Profile? = null,
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit = { _, _, _, _ -> },
     onNavigateToCollection: (String) -> Unit = {},
+    onNavigateToCategory: (String) -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
     onNavigateToWatchlist: () -> Unit = {},
     onNavigateToTv: (channelId: String?, streamUrl: String?) -> Unit = { _, _ -> },
@@ -1229,13 +1264,14 @@ fun HomeScreen(
             smoothScrolling = uiState.smoothScrolling,
             isSlowLoading = uiState.isMobileSlowLoading,
             onRetry = { viewModel.retryMobileHomeLoading() },
-            onLoadMoreCategory = { viewModel.loadNextPageForCategory(it) },
+            onLoadMoreCategory = { viewModel.loadNextHomeRowPage(it) },
             onItemFocusedPrefetch = {},
             onMobileCategoryVisiblePosition = { categoryId, lastVisibleItemIndex ->
                 viewModel.onMobileCategoryVisiblePosition(categoryId, lastVisibleItemIndex)
             },
             onNavigateToDetails = navigateToDetailsWithCache,
             onNavigateToCollection = onNavigateToCollection,
+            onNavigateToCategory = onNavigateToCategory,
             onNavigateToSearch = onNavigateToSearch,
             onNavigateToWatchlist = onNavigateToWatchlist,
             onNavigateToTv = onNavigateToTv,
@@ -2339,6 +2375,7 @@ private fun HomeInputLayer(
     onMobileCategoryVisiblePosition: (String, Int) -> Unit = { _, _ -> },
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit,
     onNavigateToCollection: (String) -> Unit,
+    onNavigateToCategory: (String) -> Unit = {},
     onNavigateToSearch: () -> Unit,
     onNavigateToWatchlist: () -> Unit,
     onNavigateToTv: (channelId: String?, streamUrl: String?) -> Unit,
@@ -2449,12 +2486,30 @@ private fun HomeInputLayer(
     // entirely into its loading placeholders.
     LaunchedEffect(focusedCategoryId, focusedItemKeys) {
         val categoryId = focusedCategoryId ?: return@LaunchedEffect
-        val resolvedIndex = resolveHomeItemIndex(
-            itemKeys = focusedItemKeys,
-            preferredItemKey = focusState.rowItemKeysByCategoryId[categoryId],
-            fallbackIndex = focusState.currentItemIndex
-        )
+        val viewAllIndex = focusedCategory
+            ?.let { homeRowViewAllIndex(it, categoryHasMoreMap[it.id] == true) }
+            ?: -1
+        val preferredKey = focusState.rowItemKeysByCategoryId[categoryId]
+        // The anchor map is not saved, so right after returning from the grid the key is
+        // missing and the restored index itself says focus was on the "View all" card.
+        val onViewAllCard = preferredKey == HOME_VIEW_ALL_FOCUS_KEY ||
+            (preferredKey == null && focusState.currentItemIndex == viewAllIndex)
+        val resolvedIndex = when {
+            onViewAllCard && viewAllIndex >= 0 -> viewAllIndex
+            onViewAllCard -> clampHomeItemIndex(focusedCategory?.items.orEmpty(), focusState.currentItemIndex)
+            else -> resolveHomeItemIndex(
+                itemKeys = focusedItemKeys,
+                preferredItemKey = preferredKey,
+                fallbackIndex = focusState.currentItemIndex
+            )
+        }
         if (focusState.currentItemIndex != resolvedIndex) {
+            // The anchored title (or "View all" card) is missing only because the row shrank —
+            // Home reloads rows from their first page on resume, then pages back in. Keep the
+            // anchor so focus returns to it once the row regrows.
+            val anchorMissing = preferredKey != null &&
+                if (onViewAllCard) viewAllIndex < 0 else preferredKey !in focusedItemKeys
+            focusState.transientClampIndex = if (anchorMissing) resolvedIndex else -1
             focusState.currentItemIndex = resolvedIndex
         }
         focusState.rowItemIndicesByCategoryId[categoryId] = resolvedIndex
@@ -2466,9 +2521,21 @@ private fun HomeInputLayer(
         val categoryId = focusedCategoryId ?: return@LaunchedEffect
         val itemIndex = focusState.currentItemIndex
         focusState.rowItemIndicesByCategoryId[categoryId] = itemIndex
-        focusedItemKeys.getOrNull(itemIndex)?.let { itemKey ->
-            focusState.rowItemKeysByCategoryId[categoryId] = itemKey
+        if (itemIndex == focusState.transientClampIndex) {
+            // Forced by a shrunken row, not by the user: keep the previous anchor.
+            focusState.transientClampIndex = -1
+            return@LaunchedEffect
         }
+        focusState.transientClampIndex = -1
+        val viewAllIndex = focusedCategory
+            ?.let { homeRowViewAllIndex(it, categoryHasMoreMap[it.id] == true) }
+            ?: -1
+        val itemKey = if (itemIndex == viewAllIndex) {
+            HOME_VIEW_ALL_FOCUS_KEY
+        } else {
+            focusedItemKeys.getOrNull(itemIndex)
+        }
+        itemKey?.let { focusState.rowItemKeysByCategoryId[categoryId] = it }
     }
 
     val keyEventModifier = if (isMobile) {
@@ -2499,6 +2566,15 @@ private fun HomeInputLayer(
                 return@onPreviewKeyEvent true
             }
 
+            // The trailing "View all" card is a virtual slot one past the row's last title.
+            // getFocusedItem() falls back to the first title for that index, so Enter/Menu
+            // must check this before resolving an item.
+            val isOnViewAllSlot = {
+                val row = categories.getOrNull(focusState.currentRowIndex)
+                row != null &&
+                    focusState.currentItemIndex == homeRowViewAllIndex(row, categoryHasMoreMap[row.id] == true)
+            }
+
             val moveNext = {
                 if (focusState.isSidebarFocused) {
                     if (focusState.sidebarFocusIndex < maxSidebarIndex) {
@@ -2507,8 +2583,10 @@ private fun HomeInputLayer(
                     }
                     true
                 } else {
-                    val maxItems = categories.getOrNull(focusState.currentRowIndex)?.items?.size ?: 0
-                    if (focusState.currentItemIndex < maxItems - 1) {
+                    val row = categories.getOrNull(focusState.currentRowIndex)
+                    val maxItems = row?.items?.size ?: 0
+                    val viewAllSlots = if (row != null && homeRowSupportsViewAll(row, categoryHasMoreMap[row.id] == true)) 1 else 0
+                    if (focusState.currentItemIndex < maxItems - 1 + viewAllSlots) {
                         focusState.currentItemIndex++
                         focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                     }
@@ -2655,7 +2733,7 @@ private fun HomeInputLayer(
                         Key.Menu, Key.Info -> {
                             selectPressedInHome = false
                             selectDownAtMs = 0L
-                            if (!focusState.isSidebarFocused) {
+                            if (!focusState.isSidebarFocused && !isOnViewAllSlot()) {
                                 val currentItem = getFocusedItem(
                                     categories,
                                     focusState.currentRowIndex,
@@ -2677,7 +2755,9 @@ private fun HomeInputLayer(
                     }
                     KeyEventType.KeyUp -> when (event.key) {
                         Key.Enter, Key.DirectionCenter -> {
-                            if (selectPressedInHome && !focusState.isSidebarFocused) {
+                            if (selectPressedInHome && !focusState.isSidebarFocused && isOnViewAllSlot()) {
+                                categories.getOrNull(focusState.currentRowIndex)?.id?.let(onNavigateToCategory)
+                            } else if (selectPressedInHome && !focusState.isSidebarFocused) {
                                 val holdMs = SystemClock.elapsedRealtime() - selectDownAtMs
                                 val currentItem = getFocusedItem(
                                     categories,
@@ -2777,6 +2857,7 @@ private fun HomeInputLayer(
             onSwitchProfile = onSwitchProfile,
             onNavigateToDetails = onNavigateToDetails,
             onMobileCategoryVisiblePosition = onMobileCategoryVisiblePosition,
+            onViewAllCategory = onNavigateToCategory,
             featuredTrailerKey = featuredTrailerKey,
             featuredTrailerDelayMs = featuredTrailerDelayMs,
             featuredTrailerVolume = featuredTrailerVolume,
@@ -2842,6 +2923,7 @@ private fun HomeRowsLayer(
     onSwitchProfile: () -> Unit = {},
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit = { _, _, _, _ -> },
     onMobileCategoryVisiblePosition: (String, Int) -> Unit = { _, _ -> },
+    onViewAllCategory: (String) -> Unit = {},
     featuredTrailerKey: String? = null,
     featuredTrailerDelayMs: Long = 0L,
     featuredTrailerVolume: Float = 0f,
@@ -2866,6 +2948,7 @@ private fun HomeRowsLayer(
             onNavigateToDetails = onNavigateToDetails,
             onItemClick = onItemClick,
             onItemLongClick = onItemLongClick,
+            onViewAllCategory = onViewAllCategory,
             onCategoryVisiblePosition = { categoryId, lastVisibleItemIndex ->
                 onMobileCategoryVisiblePosition(categoryId, lastVisibleItemIndex)
                 val rowIndex = categories.indexOfFirst { it.id == categoryId }
@@ -2892,6 +2975,7 @@ private fun HomeRowsLayer(
             featuredTrailerKey = featuredTrailerKey,
             featuredTrailerDelayMs = featuredTrailerDelayMs,
             featuredTrailerVolume = featuredTrailerVolume,
+            onViewAllCategory = onViewAllCategory,
             onItemClick = onItemClick
         )
     }
@@ -2916,6 +3000,7 @@ private fun MobileHomeRowsLayer(
     onNavigateToDetails: (MediaType, Int, Int?, Int?) -> Unit = { _, _, _, _ -> },
     onItemClick: (MediaItem) -> Unit,
     onItemLongClick: ((MediaItem, Boolean) -> Unit)? = null,
+    onViewAllCategory: (String) -> Unit = {},
     onCategoryVisiblePosition: (String, Int) -> Unit = { _, _ -> }
 ) {
     val mobileItemSpacing = 14.dp
@@ -2965,13 +3050,21 @@ private fun MobileHomeRowsLayer(
                     }
             }
 
+            val rowHasMore = categoryHasMoreMap[category.id] == true
+            val showViewAll = remember(category.items, rowHasMore) {
+                homeRowSupportsViewAll(category, rowHasMore)
+            }
+
             Column(modifier = Modifier.padding(bottom = 0.dp)) {
                 // Section title
                 Row(
-                    modifier = Modifier.padding(
-                        start = contentStartPadding,
-                        bottom = 4.dp
-                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = contentStartPadding,
+                            end = contentStartPadding,
+                            bottom = 4.dp
+                        ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -2988,9 +3081,20 @@ private fun MobileHomeRowsLayer(
                         ),
                         color = Color.White
                     )
+                    if (showViewAll) {
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text(
+                            text = stringResource(R.string.home_view_all),
+                            style = ArflixTypography.label,
+                            color = TextSecondary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable { onViewAllCategory(category.id) }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
                 }
 
-                val rowHasMore = categoryHasMoreMap[category.id] == true
                 val isPortrait = if (isCollectionRow) {
                     category.items.firstOrNull()?.collectionTileShape == CollectionTileShape.POSTER
                 } else {
@@ -3100,7 +3204,19 @@ private fun MobileHomeRowsLayer(
                             }
                         }
 
-                        if (rowHasMore) {
+                        if (showViewAll) {
+                            // Like Nuvio, the "View all" card replaces the loading tail;
+                            // the next page still loads as it scrolls into view.
+                            item(key = "${category.id}_view_all", contentType = "view_all_card") {
+                                HomeViewAllCard(
+                                    width = rowMobileItemWidth,
+                                    isLandscape = !isPortrait,
+                                    isFocused = false,
+                                    enableSystemFocus = false,
+                                    onClick = { onViewAllCategory(category.id) }
+                                )
+                            }
+                        } else if (rowHasMore) {
                             item(key = "${category.id}_loading_more", contentType = "loading_more_card") {
                                 if (isPortrait) {
                                     SkeletonPosterCard(width = rowMobileItemWidth)
@@ -3151,6 +3267,7 @@ private fun TvHomeRowsLayer(
     smoothScrolling: Boolean = true,
     onLoadMoreCategory: (String) -> Unit = {},
     onItemFocusedPrefetch: (MediaItem) -> Unit = {},
+    onViewAllCategory: (String) -> Unit = {},
     featuredTrailerKey: String? = null,
     featuredTrailerDelayMs: Long = 0L,
     featuredTrailerVolume: Float = 0f,
@@ -3311,6 +3428,13 @@ private fun TvHomeRowsLayer(
                     val onRowLoadMore = remember(category.id) {
                         { onLoadMoreCategory(category.id) }
                     }
+                    val rowHasMore = categoryHasMoreMap[category.id] == true
+                    val rowViewAllIndex = remember(category.items, rowHasMore) {
+                        homeRowViewAllIndex(category, rowHasMore)
+                    }
+                    val onRowViewAll = remember(category.id) {
+                        { onViewAllCategory(category.id) }
+                    }
                     val onRowItemFocused = remember(actualRowIndex, category.id) {
                         { item: MediaItem, itemIdx: Int ->
                             focusState.currentRowIndex = actualRowIndex
@@ -3333,11 +3457,17 @@ private fun TvHomeRowsLayer(
                             isRanked = category.title.contains("Top 10", ignoreCase = true),
                             usePosterCards = rowUsePosterCards,
                             startPadding = contentStartPadding,
-                            categoryHasMore = categoryHasMoreMap[category.id] == true,
+                            categoryHasMore = rowHasMore,
                             smoothScrolling = smoothScrolling,
                             onLoadMore = onRowLoadMore,
+                            showViewAll = rowViewAllIndex >= 0,
+                            onViewAll = onRowViewAll,
                             focusedItemIndex = if (rowIsFocused) {
-                                clampHomeItemIndex(category.items, focusState.currentItemIndex)
+                                if (rowViewAllIndex >= 0 && focusState.currentItemIndex == rowViewAllIndex) {
+                                    rowViewAllIndex
+                                } else {
+                                    clampHomeItemIndex(category.items, focusState.currentItemIndex)
+                                }
                             } else {
                                 -1
                             },
@@ -3351,6 +3481,57 @@ private fun TvHomeRowsLayer(
                     }
                 }
             }
+        }
+    }
+}
+
+/** Trailing card of a home row that opens the row's full grid ("View all"). */
+@Composable
+private fun HomeViewAllCard(
+    width: Dp,
+    isLandscape: Boolean,
+    isFocused: Boolean,
+    enableSystemFocus: Boolean,
+    onClick: () -> Unit
+) {
+    val shape = rememberArvioCardShape(ArvioSkin.radius.md)
+    ArvioFocusableSurface(
+        modifier = Modifier
+            .width(width)
+            .aspectRatio(if (isLandscape) 16f / 9f else 2f / 3f),
+        shape = shape,
+        // Dark enough to stay readable over bright hero backdrops.
+        backgroundColor = Color.Black.copy(alpha = 0.6f),
+        outlineColor = ArvioSkin.colors.focusOutline,
+        outlineWidth = 2.5.dp,
+        focusedScale = 1f,
+        animateFocus = false,
+        enableSystemFocus = enableSystemFocus,
+        isFocusedOverride = isFocused,
+        onClick = onClick
+    ) { focused ->
+        val contentColor = if (focused) Color.White else TextSecondary
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(if (isLandscape) 28.dp else 24.dp)
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = stringResource(R.string.home_view_all),
+                style = ArflixTypography.label,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -3555,6 +3736,8 @@ private fun ContentRow(
     categoryHasMore: Boolean = false,
     smoothScrolling: Boolean = true,
     onLoadMore: () -> Unit = {},
+    showViewAll: Boolean = false,
+    onViewAll: () -> Unit = {},
     focusedItemIndex: Int,
     isFastScrolling: Boolean,
     featuredTrailerKey: String? = null,
@@ -3600,10 +3783,13 @@ private fun ContentRow(
     }
     val isRtlLayout = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val totalItems = itemsToRender.size
-    val maxFirstIndex = remember(totalItems) {
-        (totalItems - 1).coerceAtLeast(0)
+    val hasViewAllCard = showViewAll && itemsToRender.none { it.isPlaceholder }
+    // Scroll and focus bounds include the trailing "View all" card when present.
+    val railItemCount = totalItems + if (hasViewAllCard) 1 else 0
+    val maxFirstIndex = remember(railItemCount) {
+        (railItemCount - 1).coerceAtLeast(0)
     }
-    val isScrollable = totalItems > 1
+    val isScrollable = railItemCount > 1
     val itemSpanPx = remember(density, itemWidth, itemSpacing) {
         with(density) { (itemWidth + itemSpacing).toPx().coerceAtLeast(1f) }
     }
@@ -3652,7 +3838,7 @@ private fun ContentRow(
         lastScrollIndex = -1
         lastScrollOffset = -1
     }
-    LaunchedEffect(isCurrentRow, focusedItemIndex, totalItems) {
+    LaunchedEffect(isCurrentRow, focusedItemIndex, railItemCount) {
         if (!isCurrentRow || focusedItemIndex < 0 || totalItems == 0) return@LaunchedEffect
 
         val currentFirstIndex = rowState.firstVisibleItemIndex.coerceAtMost(maxFirstIndex)
@@ -3891,6 +4077,17 @@ private fun ContentRow(
                         )
                     }
                 }
+                }
+                if (hasViewAllCard) {
+                    item(key = "${category.id}_view_all", contentType = "view_all_card") {
+                        HomeViewAllCard(
+                            width = itemWidth,
+                            isLandscape = !effectivePosterMode,
+                            isFocused = isCurrentRow && focusedItemIndex == totalItems,
+                            enableSystemFocus = false,
+                            onClick = onViewAll
+                        )
+                    }
                 }
             }
             if (railFocusOverlayActive) {
