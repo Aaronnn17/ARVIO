@@ -119,7 +119,7 @@ function mergeRows<T extends { movie?: { ids?: SimklIds }; show?: { ids?: SimklI
       const existingItem = map.get(String(id));
       const incomingSeasons = (item as unknown as SimklShowRow).seasons;
       const existingSeasons = (existingItem as unknown as SimklShowRow | undefined)?.seasons;
-      if (key === "show" && existingItem && (!incomingSeasons || incomingSeasons.length === 0) && existingSeasons && existingSeasons.length > 0) {
+      if (key === "show" && existingItem && incomingSeasons == null && existingSeasons && existingSeasons.length > 0) {
         map.set(String(id), { ...item, seasons: existingSeasons });
       } else {
         map.set(String(id), item);

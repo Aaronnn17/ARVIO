@@ -105,6 +105,20 @@ test('Simkl delta without seasons retains existing seasons in snapshot', async (
   assert.equal(client.snapshot.shows[0].seasons?.length, 1, 'seasons must be retained when delta omits them');
 });
 
+test('Simkl explicit empty seasons clears watched episodes', async () => {
+  const { client, state, expire } = libraryFixture();
+  state.initial.shows = [{
+    status: 'watching', show: { ids: { simkl: 10, tmdb: 10 } },
+    seasons: [{ number: 1, episodes: [{ number: 1 }] }]
+  }];
+  await client.watchlist();
+  state.activities = { all: '2026-09-08T11:00:00Z' };
+  state.delta.shows = [{ status: 'plantowatch', show: { ids: { simkl: 10, tmdb: 10 } }, seasons: [] }];
+  expire();
+  await client.watchlist();
+  assert.equal(client.snapshot.shows[0].seasons.length, 0);
+});
+
 test('Simkl snapshot persists across client instances for the same profile', async () => {
   const disk = storage();
   const { SimklClient } = load('lib/simkl.ts', {

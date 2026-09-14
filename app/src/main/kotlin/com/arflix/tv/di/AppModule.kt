@@ -24,10 +24,7 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
-    private val simklBackoffUntilMs = java.util.concurrent.atomic.AtomicLong(0L)
-    private val simklRequestLock = Any()
-    @Volatile
-    private var lastSimklRequestTimestampMs = 0L
+    private val simklRateLimiter = com.arflix.tv.network.SimklRateLimitInterceptor()
 
     @Provides
     @Singleton
@@ -110,41 +107,6 @@ object AppModule {
             .addInterceptor { chain ->
                 val original = chain.request()
 
-                fun awaitBackoff() {
-                    var now = System.currentTimeMillis()
-                    var deadline = simklBackoffUntilMs.get()
-                    while (now < deadline) {
-                        val waitMs = (deadline - now).coerceAtMost(60_000L)
-                        try {
-                            Thread.sleep(waitMs)
-                        } catch (_: InterruptedException) {
-                            Thread.currentThread().interrupt()
-                            break
-                        }
-                        now = System.currentTimeMillis()
-                        deadline = simklBackoffUntilMs.get()
-                    }
-                }
-
-                awaitBackoff()
-
-                // Enforce maximum 1 request per second to Simkl API across all HTTP methods
-                // (GET, POST, DELETE, etc.) to strictly comply with Simkl rate limits and prevent
-                // "High Traffic Burst Detected" alerts (3+ reqs/sec from the same IP).
-                synchronized(simklRequestLock) {
-                    val now = android.os.SystemClock.elapsedRealtime()
-                    val elapsed = now - lastSimklRequestTimestampMs
-                    if (elapsed < 1000L) {
-                        val sleepTime = 1000L - elapsed
-                        try {
-                            Thread.sleep(sleepTime)
-                        } catch (_: InterruptedException) {
-                            Thread.currentThread().interrupt()
-                        }
-                    }
-                    lastSimklRequestTimestampMs = android.os.SystemClock.elapsedRealtime()
-                }
-
                 val originalUrl = original.url
                 val urlBuilder = originalUrl.newBuilder()
                 val rawVersion = com.arflix.tv.BuildConfig.VERSION_NAME
@@ -170,20 +132,12 @@ object AppModule {
 
 
                 val response = chain.proceed(requestBuilder.build())
-                if (response.code == 429) {
-                    val retryAfter = (response.header("Retry-After")?.toLongOrNull() ?: 5L).coerceIn(1L, 60L)
-                    val backoffMs = retryAfter * 1000L
-                    val newDeadline = System.currentTimeMillis() + backoffMs
-                    simklBackoffUntilMs.updateAndGet { current -> maxOf(current, newDeadline) }
-                    com.arflix.tv.util.AppLogger.w("SimklApi", "HTTP 429 Too Many Requests received from Simkl. Backing off for ${retryAfter}s")
-                    response.close()
-                    awaitBackoff()
-                    return@addInterceptor chain.proceed(requestBuilder.build())
-                } else if (response.code == 412) {
+                if (response.code == 412) {
                     com.arflix.tv.util.AppLogger.e("SimklApi", "HTTP 412 Precondition Failed / client_id_failed from Simkl. Check API key.")
                 }
                 response
             }
+            .addInterceptor(simklRateLimiter)
             .build()
 
         return Retrofit.Builder()

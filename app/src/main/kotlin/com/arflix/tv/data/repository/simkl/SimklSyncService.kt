@@ -490,7 +490,7 @@ class SimklSyncService @Inject constructor(
             val key = rowKey(item.show?.ids)
             if (key != null) {
                 val existingItem = map[key]
-                val merged = if (existingItem != null && item.seasons.isNullOrEmpty() && !existingItem.seasons.isNullOrEmpty()) {
+                val merged = if (existingItem != null && item.seasons == null && !existingItem.seasons.isNullOrEmpty()) {
                     item.copy(seasons = existingItem.seasons)
                 } else {
                     item
