@@ -2615,8 +2615,10 @@ fun LiveTvScreen(
         channelNumberBuffer = ""
     }
 
+    val playbackConnections = remember { com.arflix.tv.network.IptvPlaybackConnections() }
     val iptvHttpClient = remember {
         OkHttpClient.Builder()
+            .addInterceptor(playbackConnections)
             .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
             .followRedirects(true)
             .followSslRedirects(true)
@@ -2682,7 +2684,14 @@ fun LiveTvScreen(
             }
     }
 
-    DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
+    DisposableEffect(exoPlayer, iptvHttpClient) {
+        onDispose {
+            exoPlayer.release()
+            playbackConnections.cancelAll()
+            iptvHttpClient.dispatcher.cancelAll()
+            iptvHttpClient.connectionPool.evictAll()
+        }
+    }
 
     var playbackQuality by remember(exoPlayer) { mutableStateOf<LivePlaybackQuality?>(null) }
     DisposableEffect(exoPlayer) {
@@ -2721,12 +2730,27 @@ fun LiveTvScreen(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    var playbackForeground by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    var pendingPlaybackRetry by remember { mutableStateOf<Job?>(null) }
+    val playbackSession = remember(exoPlayer, iptvHttpClient) {
+        LiveTvPlaybackSession(exoPlayer) {
+            pendingPlaybackRetry?.cancel()
+            pendingPlaybackRetry = null
+            playbackConnections.cancelAll()
+            iptvHttpClient.dispatcher.cancelAll()
+            iptvHttpClient.connectionPool.evictAll()
+        }
+    }
     val sportsHiddenPlayback by rememberUpdatedState(sportsSelected && !isFullScreen)
     var resumeAfterSports by remember(exoPlayer) { mutableStateOf(false) }
-    LaunchedEffect(sportsSelected, isFullScreen, exoPlayer) {
+    LaunchedEffect(sportsSelected, isFullScreen, exoPlayer, playbackForeground) {
+        if (!playbackForeground) return@LaunchedEffect
+        playbackSession.resume(isLive = playingCatchupProgram == null, allowed = !sportsHiddenPlayback)
         if (sportsSelected && !isFullScreen) {
             resumeAfterSports = resumeAfterSports || exoPlayer.playWhenReady
-            exoPlayer.pause()
+            playbackSession.suspend()
         } else if (resumeAfterSports) {
             resumeAfterSports = false
             exoPlayer.play()
@@ -2735,9 +2759,13 @@ fun LiveTvScreen(
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, ev ->
             when (ev) {
-                Lifecycle.Event.ON_PAUSE -> exoPlayer.pause()
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    playbackForeground = false
+                    playbackSession.suspend()
+                }
                 Lifecycle.Event.ON_RESUME -> {
-                    if (playingChannelId != null && !sportsHiddenPlayback) exoPlayer.play()
+                    playbackForeground = true
+                    playbackSession.resume(isLive = playingCatchupProgram == null, allowed = !sportsHiddenPlayback)
                     if (currentUiState.isConfigured &&
                         currentUiState.snapshot.channels.isNotEmpty() &&
                         viewModel.iptvRepository.cachedEpgAgeMs() > 6 * 60 * 60_000L
@@ -2753,6 +2781,7 @@ fun LiveTvScreen(
     }
 
     var lastPreparedStreamUrl by remember { mutableStateOf<String?>(null) }
+    var lastRequestedStreamUrl by remember { mutableStateOf<String?>(null) }
     var lastPreparedIsHls by remember { mutableStateOf(false) }
     var lastPreparedMimeType by remember { mutableStateOf<String?>(null) }
     var lastPreparedHeaders by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -2770,6 +2799,7 @@ fun LiveTvScreen(
         forcePrepare: Boolean = false,
         resolvedMimeType: String? = null,
     ) {
+        if (!playbackForeground || sportsHiddenPlayback) return
         val mergedHeaders = (baseRequestHeaders + headers).safePlaybackHeaders()
 
         if (!forcePrepare &&
@@ -2968,8 +2998,13 @@ fun LiveTvScreen(
             }
         }
     }
-    LaunchedEffect(currentStreamUrl, playingCatchupProgram, catchupUrlAnchorOffsetMs, playingChannel?.id) {
+    LaunchedEffect(currentStreamUrl, playingCatchupProgram, catchupUrlAnchorOffsetMs, playingChannel?.id, playbackForeground, sportsHiddenPlayback) {
+        if (!playbackForeground || sportsHiddenPlayback) return@LaunchedEffect
         val rawStream = currentStreamUrl ?: return@LaunchedEffect
+        // A foreground resume re-prepares the retained source; do not probe/open it twice.
+        if (rawStream == lastRequestedStreamUrl && lastPreparedStreamUrl != null && exoPlayer.currentMediaItem?.mediaId == playingChannelId.orEmpty() &&
+            lastPreparedCatchupOffsetMs == (if (playingCatchupProgram != null) catchupUrlAnchorOffsetMs else -1L) &&
+            exoPlayer.playbackState != Player.STATE_IDLE) return@LaunchedEffect
         // Probing a replacement stream must not run alongside the old stream on
         // subscriptions that allow only one video connection.
         exoPlayer.stop()
@@ -3001,6 +3036,7 @@ fun LiveTvScreen(
         val headers = sourceChannel?.requestHeaders.orEmpty()
         val initialSeekMs = if (playingCatchupProgram != null) catchupInSegmentSeekMs else 0L
 
+        lastRequestedStreamUrl = rawStream
         prepareStream(
             stream = target.url,
             isHls = target.isHls,
@@ -3032,7 +3068,8 @@ fun LiveTvScreen(
         lastPreparedHeaders,
         playingChannel?.id,
         playingCatchupProgram,
-        catchupPlaybackOffsetMs
+        catchupPlaybackOffsetMs,
+        playbackForeground
     ) {
         var retryJob: Job? = null
         val liveWindowRecovery = LiveWindowRecovery(android.os.SystemClock::elapsedRealtime)
@@ -3055,6 +3092,7 @@ fun LiveTvScreen(
 
             override fun onPlayerError(error: PlaybackException) {
                 playerIsBuffering = false
+                if (!playbackForeground || sportsHiddenPlayback) return
                 val prepared = lastPreparedStreamUrl ?: return
                 val detectedHls = error.iptvHlsFormatDetected()
                 if (detectedHls?.sourceUrl == prepared && !lastPreparedIsHls &&
@@ -3124,6 +3162,7 @@ fun LiveTvScreen(
                 retryJob?.cancel()
                 retryJob = coroutineScope.launch {
                     delay(1_000L * nextAttempt)
+                    if (!playbackForeground || sportsHiddenPlayback) return@launch
                     val retryTarget = runCatching {
                         if (shouldReusePreparedLiveHls(preparedIsHls, retryProgram != null, unsupportedContainer, httpCode)) {
                             // A playlist reset must not discard the HLS type we
@@ -3173,7 +3212,7 @@ fun LiveTvScreen(
                         forcePrepare = true,
                         resolvedMimeType = retryTarget.mimeType,
                     )
-                }
+                }.also { pendingPlaybackRetry = it }
             }
         }
         exoPlayer.addListener(listener)
