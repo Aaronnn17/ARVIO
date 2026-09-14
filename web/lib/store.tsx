@@ -105,7 +105,9 @@ export function getPriorityConfig(settings: AppSettings): ProviderPriorityConfig
 const LIST_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function cwCacheKeyFor(profileId: string | null | undefined) {
-  return `arvio.web.cw.v2:${profileId ?? "no-profile"}`;
+  // v3 invalidates mixed/provider snapshots created before Continue Watching
+  // used the canonical Trakt source and matching activity ordering.
+  return `arvio.web.cw.v3:${profileId ?? "no-profile"}`;
 }
 
 function watchlistCacheKeyFor(profileId: string | null | undefined) {
@@ -314,7 +316,8 @@ function traktActivityTime(raw: unknown) {
 // How many watched shows we ask Trakt for per-show progress. The activity-keyed
 // progress cache means only shows whose last_watched_at MOVED cost a call on a
 // repeat refresh, so this ceiling mostly bounds the very first sync of a large
-// library. 120 silently truncated Up Next for heavy Trakt users.
+// library. 300 keeps the web and Android resolvers aligned for heavy Trakt
+// users without making a single refresh unbounded.
 const UP_NEXT_SHOW_LIMIT = 300;
 // How many Continue Watching rows get the (expensive) per-item TMDB hydration.
 // Rows past this still render — they just use the data Trakt/cloud already gave
@@ -343,7 +346,9 @@ async function loadTraktUpNext(watchedShowsRows: unknown[], includeSpecials: boo
   // no next episode" — an empty result with failures present is a partial
   // outage, not an empty Continue Watching.
   let fetchFailures = 0;
-  const workers = Array.from({ length: Math.min(8, watchedShows.length) }, async () => {
+  // Keep the first sync below Trakt's burst threshold. A larger pool made a
+  // rate-limited response look like a one-item Continue Watching list.
+  const workers = Array.from({ length: Math.min(4, watchedShows.length) }, async () => {
     while (cursor < watchedShows.length && isCurrent()) {
       const index = cursor;
       cursor += 1;

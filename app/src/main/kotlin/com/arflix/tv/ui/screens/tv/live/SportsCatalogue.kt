@@ -23,11 +23,35 @@ private val tntStation = Regex("\\btnt sport\\b")
 private val beinStation = Regex("\\bbein\\s*sports?\\s*(\\d*)")
 private val stationNumber = Regex("\\b(sports|espn)(\\d+)\\b")
 private val channelSpaces = Regex("\\s+")
-internal fun sportsChannelKey(name: String) = sportsArtworkKey(name.replace(channelQuality, ""))
-    .replace(channelPackage, "$1 ")
-    .replace(tntStation, "tnt sports").replace(beinStation, "bein sports $1")
-    .replace(stationNumber, "$1 $2").replace(channelSpaces, " ").trim()
-private val broadcasterRegions = mapOf("united kingdom" to listOf("uk", "gb"), "united states" to listOf("us", "usa"),
+private val titlePrefixes = listOf("football", "soccer", "basketball", "baseball", "tennis", "ice hockey", "american football", "boxing", "mma", "cricket")
+internal fun sportsChannelKey(name: String): String {
+    val plain = name.replace(channelQuality, "").replace("+", " plus ")
+    val lower = plain.lowercase(java.util.Locale.ROOT)
+    // Provider labels are mostly ASCII. Avoid Unicode normalization and the
+    // event-title regex pipeline for every channel in a 50k-channel playlist.
+    val special = lower.startsWith("live") || lower.contains("vs") || lower.contains("versus") || lower.contains("v.") ||
+        titlePrefixes.any(lower::startsWith)
+    var key = if (special || plain.any { it.code > 127 }) sportsArtworkKey(plain) else buildString(plain.length) {
+        var separator = false
+        for (c in lower) {
+            if (c in 'a'..'z' || c in '0'..'9') {
+                if (separator && isNotEmpty()) append(' ')
+                append(c)
+                separator = false
+            } else separator = true
+        }
+    }
+    if (key.contains("nowtv")) key = key.replace(channelPackage, "$1 ")
+    if (key.contains("tnt sport")) key = key.replace(tntStation, "tnt sports")
+    if (key.contains("bein")) key = key.replace(beinStation, "bein sports $1")
+    if (key.contains("sports") || key.contains("espn")) key = key.replace(stationNumber, "$1 $2")
+    return if (key.contains("  ") || key.endsWith(' ')) key.replace(channelSpaces, " ").trim() else key
+}
+private val broadcasterRegions = java.util.Locale.getISOCountries().associate { code ->
+    val locale = java.util.Locale("", code)
+    locale.getDisplayCountry(java.util.Locale.ENGLISH).lowercase(java.util.Locale.ROOT) to
+        listOf(code.lowercase(java.util.Locale.ROOT), locale.isO3Country.lowercase(java.util.Locale.ROOT))
+} + mapOf("united kingdom" to listOf("uk", "gb"), "united states" to listOf("us", "usa"),
     "netherlands" to listOf("nl", "nld"), "the netherlands" to listOf("nl", "nld"),
     "germany" to listOf("de", "ger"), "france" to listOf("fr"), "spain" to listOf("es"), "italy" to listOf("it"), "portugal" to listOf("pt"),
         "brazil" to listOf("br"), "australia" to listOf("au"), "canada" to listOf("ca"), "belgium" to listOf("be"), "switzerland" to listOf("ch"),
@@ -48,6 +72,7 @@ internal fun sportsBroadcasterKeys(name: String, country: String): List<String> 
         if (countryKey == "the netherlands") add("netherlands")
         if (countryKey == "united states") addAll(listOf("us", "usa"))
         if (countryKey == "united kingdom") addAll(listOf("uk", "gb"))
+        addAll(codes)
     }.distinct().sortedByDescending { it.length }
     val localName = countryNames
         .asSequence()
@@ -88,8 +113,8 @@ internal fun buildSportsCatalogue(guide: List<SportsGuideEvent>, artwork: List<S
     val until = Instant.ofEpochMilli(now).atZone(zone).toLocalDate().plusDays(2).atStartOfDay(zone).toInstant().toEpochMilli()
     val output = fixtures.mapNotNull { item ->
         val fixture = item.fixture!!; val start = item.startsAt!!
-        val sport = GuideSport.fromText(item.genres.joinToString(" ")) ?: return@mapNotNull null
         if (!seen.add(fixture.id) || start >= until || start < now - 86_400_000) return@mapNotNull null
+        val sport = GuideSport.fromText("${item.genres.joinToString(" ")} ${fixture.league.orEmpty()}") ?: GuideSport.OTHER
         val home = participantKeys(item.homeTeam, sport)
         val away = participantKeys(item.awayTeam, sport)
         // Both complete participant names must be present; a league or one team is not enough.

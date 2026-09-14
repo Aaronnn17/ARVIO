@@ -46,6 +46,7 @@ import com.arflix.tv.data.repository.sync.TrackingFeature
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.DeviceType
+import com.arflix.tv.util.EpisodeAvailability
 import com.arflix.tv.util.resolveAppLanguage
 import com.arflix.tv.util.detectDeviceType
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -73,7 +74,6 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.cancelAndJoin
-import java.text.SimpleDateFormat
 import java.util.Collections
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -729,21 +729,6 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun isEpisodeAlreadyAired(rawAirDate: String): Boolean {
-        val value = rawAirDate.trim()
-        if (value.isEmpty()) return true
-        return try {
-            val parser = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-            parser.isLenient = false
-            val parsed = parser.parse(value) ?: return true
-            parsed.time <= System.currentTimeMillis()
-        } catch (e: Exception) {
-                if (e is CancellationException) throw e
-
-            true
-        }
-    }
-
     private suspend fun sanitizeContinueWatchingItems(items: List<ContinueWatchingItem>): List<ContinueWatchingItem> {
         val installedAddons = streamRepository.installedAddons.first()
         val nonLiveItems = items.filterNot { item ->
@@ -769,6 +754,16 @@ class HomeViewModel @Inject constructor(
             val episode = item.episode
             if (season == null || episode == null) {
                 return@mapNotNull item
+            }
+
+            // Locally persisted up-next pointers carry the episode air date. This lets a
+            // caught-up show stay hidden even when TMDB is temporarily unavailable, then
+            // become eligible again as soon as the stored date arrives.
+            if (
+                item.isUpNext && item.releaseDate.isNotBlank() &&
+                !EpisodeAvailability.hasAired(item.releaseDate)
+            ) {
+                return@mapNotNull null
             }
 
             val cacheKey = item.id to season
@@ -801,7 +796,11 @@ class HomeViewModel @Inject constructor(
                 return@mapNotNull item // Keep — episode may not be on TMDB yet
             }
 
-            if (!isEpisodeAlreadyAired(matchedEpisode.airDate)) {
+            if (!EpisodeAvailability.hasAired(
+                    matchedEpisode.airDate,
+                    unknownIsAired = !item.isUpNext,
+                )
+            ) {
                 return@mapNotNull null
             }
 
@@ -1112,7 +1111,10 @@ class HomeViewModel @Inject constructor(
             .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
         val language = mediaRepository.contentLanguage
             .replace(HomeVMRegexes.ALPHANUMERIC_REGEX, "_")
-        return java.io.File(context.filesDir, "home_continue_watching_${profileId}_$language.json")
+        // v2 invalidates the old snapshot, which could contain a mixed or
+        // truncated provider result and would otherwise paint before Trakt
+        // had a chance to publish the corrected list.
+        return java.io.File(context.filesDir, "home_continue_watching_v2_${profileId}_$language.json")
     }
 
     private suspend fun applyContentLanguageFromPrefs(): String {
@@ -2375,6 +2377,8 @@ class HomeViewModel @Inject constructor(
                 persistContinueWatchingCache(emptyList())
             }
             withContext(Dispatchers.Main) {
+                lastContinueWatchingItems = emptyList()
+                lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
                 val current = _uiState.value.categories.filterNot { it.id == "continue_watching" }
                 if (current.size != _uiState.value.categories.size) {
                     _uiState.value = _uiState.value.copy(categories = current)
@@ -3960,7 +3964,7 @@ class HomeViewModel @Inject constructor(
             // was dropping. For non-Trakt items, keep the 1..99 filter to avoid
             // showing completed (100%) or never-started (0%) items.
             .filter { item ->
-                if (useRemoteSync) true else item.progress in 1..99
+                if (useRemoteSync) true else item.isUpNext || item.progress in 1..99
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
     }
@@ -4065,6 +4069,13 @@ class HomeViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(categories = latestCategories)
                     refreshWatchedBadges()
                 } else {
+                    if (force) {
+                        // A forced refresh follows a user-visible state change (playback or a
+                        // watched action). Its empty result is authoritative; retaining the old
+                        // row here is what caused completed shows to hover indefinitely.
+                        publishContinueWatching(emptyList())
+                        return@launch
+                    }
                     // No new data from any source
                     val latestCategories = _uiState.value.categories.toMutableList()
                     val continueWatchingIndex = latestCategories.indexOfFirst { it.id == "continue_watching" }
@@ -4239,7 +4250,7 @@ class HomeViewModel @Inject constructor(
         val repairedItems = repairContinueWatchingMetadataIfNeeded(items)
         return applyContinueWatchingDismissals(sanitizeContinueWatchingItems(repairedItems))
             .filter { item ->
-                if (useRemoteSync) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
+                if (useRemoteSync) true else item.isUpNext || item.progress in 1..99 || item.resumePositionSeconds > 0L
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
     }
@@ -4926,6 +4937,45 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private suspend fun persistFollowingEpisodePointer(
+        item: MediaItem,
+        watchedSeason: Int,
+        watchedEpisode: Int,
+    ) {
+        val currentSeasonEpisodes = mediaRepository.getSeasonEpisodes(item.id, watchedSeason)
+            .orEmpty()
+            .sortedBy { it.episodeNumber }
+        if (currentSeasonEpisodes.isEmpty()) return
+        val followingEpisode = currentSeasonEpisodes.firstOrNull {
+            it.episodeNumber > watchedEpisode
+        } ?: mediaRepository.getSeasonEpisodes(item.id, watchedSeason + 1)
+            .orEmpty()
+            .sortedBy { it.episodeNumber }
+            .firstOrNull()
+            ?: return
+
+        val hasAired = EpisodeAvailability.hasAired(followingEpisode.airDate)
+        traktRepository.saveLocalContinueWatching(
+            mediaType = MediaType.TV,
+            tmdbId = item.id,
+            title = item.title,
+            posterPath = item.image,
+            backdropPath = item.backdrop,
+            season = followingEpisode.tmdbSeasonNumber,
+            episode = followingEpisode.tmdbEpisodeNumber,
+            displaySeason = followingEpisode.seasonNumber,
+            displayEpisode = followingEpisode.episodeNumber,
+            episodeTitle = followingEpisode.name,
+            progress = 0,
+            positionSeconds = 0L,
+            durationSeconds = 0L,
+            year = item.year,
+            isUpNext = true,
+            episodeAirDate = followingEpisode.airDate.orEmpty(),
+            emitUpdate = hasAired,
+        )
+    }
+
     fun toggleWatched(item: MediaItem) {
         viewModelScope.launch {
             try {
@@ -4968,42 +5018,11 @@ class HomeViewModel @Inject constructor(
                         traktRepository.markEpisodeWatched(item.id, nextEp.seasonNumber, nextEp.episodeNumber)
                         watchHistoryRepository.removeFromHistory(item.id, nextEp.seasonNumber, nextEp.episodeNumber)
 
-                        // Save the NEXT episode to CW (local + cloud) so it appears on all devices
                         try {
-                            // Handle season boundaries: if this was the last episode of the season, move to next season
-                            var followingSeason = nextEp.seasonNumber
-                            var followingEpisode = nextEp.episodeNumber + 1
-                            val seasonEpisodes = mediaRepository.getSeasonEpisodes(item.id, nextEp.seasonNumber)
-                            if (seasonEpisodes != null && followingEpisode > seasonEpisodes.size) {
-                                followingSeason = nextEp.seasonNumber + 1
-                                followingEpisode = 1
-                            }
-                            traktRepository.saveLocalContinueWatching(
-                                mediaType = MediaType.TV,
-                                tmdbId = item.id,
-                                title = item.title,
-                                posterPath = item.image,
-                                backdropPath = item.backdrop,
-                                season = followingSeason,
-                                episode = followingEpisode,
-                                episodeTitle = null,
-                                progress = 3,
-                                positionSeconds = 0L,
-                                durationSeconds = 1L,
-                                year = item.year
-                            )
-                            watchHistoryRepository.saveProgress(
-                                mediaType = MediaType.TV,
-                                tmdbId = item.id,
-                                title = item.title,
-                                poster = item.image,
-                                backdrop = item.backdrop,
-                                season = followingSeason,
-                                episode = followingEpisode,
-                                episodeTitle = null,
-                                progress = 0.01f,
-                                duration = 0L,
-                                position = 0L
+                            persistFollowingEpisodePointer(
+                                item = item,
+                                watchedSeason = nextEp.seasonNumber,
+                                watchedEpisode = nextEp.episodeNumber,
                             )
                             lastContinueWatchingUpdateMs = 0L
                             refreshContinueWatchingOnly(force = true)
@@ -5082,42 +5101,11 @@ class HomeViewModel @Inject constructor(
                 if (e is CancellationException) throw e
             }
 
-                        // Save the NEXT episode to CW (local + cloud) so it appears on all devices
                         try {
-                            var followingSeason = nextEp.seasonNumber
-                            var followingEpisode = nextEp.episodeNumber + 1
-                            val seasonEps = mediaRepository.getSeasonEpisodes(item.id, nextEp.seasonNumber)
-                            if (seasonEps != null && followingEpisode > seasonEps.size) {
-                                followingSeason = nextEp.seasonNumber + 1
-                                followingEpisode = 1
-                            }
-                            traktRepository.saveLocalContinueWatching(
-                                mediaType = MediaType.TV,
-                                tmdbId = item.id,
-                                title = item.title,
-                                posterPath = item.image,
-                                backdropPath = item.backdrop,
-                                season = followingSeason,
-                                episode = followingEpisode,
-                                episodeTitle = null,
-                                progress = 3,
-                                positionSeconds = 0L,
-                                durationSeconds = 1L,
-                                year = item.year
-                            )
-                            // Also save to Supabase for cross-device sync
-                            watchHistoryRepository.saveProgress(
-                                mediaType = MediaType.TV,
-                                tmdbId = item.id,
-                                title = item.title,
-                                poster = item.image,
-                                backdrop = item.backdrop,
-                                season = followingSeason,
-                                episode = followingEpisode,
-                                episodeTitle = null,
-                                progress = 0.01f,
-                                duration = 0L,
-                                position = 0L
+                            persistFollowingEpisodePointer(
+                                item = item,
+                                watchedSeason = nextEp.seasonNumber,
+                                watchedEpisode = nextEp.episodeNumber,
                             )
                             // Reset throttle so refresh actually runs
                             lastContinueWatchingUpdateMs = 0L

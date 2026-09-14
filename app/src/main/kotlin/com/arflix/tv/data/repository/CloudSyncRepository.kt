@@ -1,4 +1,5 @@
 package com.arflix.tv.data.repository
+import com.arflix.tv.data.model.AutoplayLimits
 
 import android.content.Context
 import android.util.Log
@@ -281,6 +282,8 @@ class CloudSyncRepository @Inject constructor(
         val autoPlayNext: Boolean = true,
         val autoPlaySingleSource: Boolean = true,
         val autoPlayMinQuality: String = "Any",
+        val autoPlayMaxQuality: String? = null,
+        val autoPlayMaxSizeGb: Int? = null,
         val trailerAutoPlay: Boolean = false,
         val trailerSoundEnabled: Boolean = false,
         val trailerDelaySeconds: Int = 2,
@@ -394,6 +397,8 @@ class CloudSyncRepository @Inject constructor(
     private fun autoPlayNextKey() = profileManager.profileBooleanKey("auto_play_next")
     private fun autoPlaySingleSourceKey() = profileManager.profileBooleanKey("auto_play_single_source")
     private fun autoPlayMinQualityKey() = profileManager.profileStringKey("auto_play_min_quality")
+    private fun autoPlayMaxQualityKeyFor(profileId: String) = profileManager.profileStringKeyFor(profileId, "auto_play_max_quality")
+    private fun autoPlayMaxSizeKeyFor(profileId: String) = profileManager.profileIntKeyFor(profileId, "auto_play_max_size_gb")
     private fun includeSpecialsKey() = profileManager.profileBooleanKey("include_specials")
 
     private fun catalogueRowLayoutModesForProfile(
@@ -671,7 +676,9 @@ class CloudSyncRepository @Inject constructor(
                         autoPlayMinQuality = normalizeAutoPlayMinQuality(
                             prefs[autoPlayMinQualityKeyFor(profile.id)] ?: "Any"
                         ),
-                        includeSpecials = prefs[includeSpecialsKeyFor(profile.id)] ?: false
+                        includeSpecials = prefs[includeSpecialsKeyFor(profile.id)] ?: false,
+                        autoPlayMaxQuality = AutoplayLimits.normalizeQuality(prefs[autoPlayMaxQualityKeyFor(profile.id)]),
+                        autoPlayMaxSizeGb = AutoplayLimits.normalizeSizeGb(prefs[autoPlayMaxSizeKeyFor(profile.id)] ?: 0)
                     )
                 )
             }
@@ -687,6 +694,8 @@ class CloudSyncRepository @Inject constructor(
         root.put("autoPlayNext", prefs[autoPlayNextKey()] ?: true)
         root.put("autoPlaySingleSource", prefs[autoPlaySingleSourceKey()] ?: true)
         root.put("autoPlayMinQuality", normalizeAutoPlayMinQuality(prefs[autoPlayMinQualityKey()] ?: "Any"))
+        root.put("autoPlayMaxQuality", AutoplayLimits.normalizeQuality(prefs[profileManager.profileStringKey("auto_play_max_quality")]))
+        root.put("autoPlayMaxSizeGb", AutoplayLimits.normalizeSizeGb(prefs[profileManager.profileIntKey("auto_play_max_size_gb")] ?: 0))
         root.put("includeSpecials", prefs[includeSpecialsKey()] ?: false)
         root.put("dnsProvider", globalDnsProvider)
         root.put("customUserAgent", prefs[customUserAgentKey] ?: "")
@@ -1499,6 +1508,9 @@ class CloudSyncRepository @Inject constructor(
                         prefs[autoPlayNextKeyFor(profileId)] = state.autoPlayNext
                         prefs[autoPlaySingleSourceKeyFor(profileId)] = state.autoPlaySingleSource
                         prefs[autoPlayMinQualityKeyFor(profileId)] = normalizeAutoPlayMinQuality(state.autoPlayMinQuality)
+                        // Older clients omit these fields; absence must not clear a local limit.
+                        state.autoPlayMaxQuality?.let { prefs[autoPlayMaxQualityKeyFor(profileId)] = AutoplayLimits.normalizeQuality(it) }
+                        state.autoPlayMaxSizeGb?.let { prefs[autoPlayMaxSizeKeyFor(profileId)] = AutoplayLimits.normalizeSizeGb(it) }
                         prefs[includeSpecialsKeyFor(profileId)] = state.includeSpecials
                     }
                 }
@@ -1535,6 +1547,12 @@ class CloudSyncRepository @Inject constructor(
                 prefs[autoPlayNextKeyFor(activeProfileId)] = fallbackAutoPlayNext
                 prefs[autoPlaySingleSourceKeyFor(activeProfileId)] = fallbackAutoPlaySingleSource
                 prefs[autoPlayMinQualityKeyFor(activeProfileId)] = fallbackAutoPlayMinQuality
+                if (root.has("autoPlayMaxQuality") && !root.isNull("autoPlayMaxQuality")) {
+                    prefs[autoPlayMaxQualityKeyFor(activeProfileId)] = AutoplayLimits.normalizeQuality(root.optString("autoPlayMaxQuality"))
+                }
+                if (root.has("autoPlayMaxSizeGb") && !root.isNull("autoPlayMaxSizeGb")) {
+                    prefs[autoPlayMaxSizeKeyFor(activeProfileId)] = AutoplayLimits.normalizeSizeGb(root.optInt("autoPlayMaxSizeGb"))
+                }
                 prefs[includeSpecialsKeyFor(activeProfileId)] = fallbackIncludeSpecials
                 prefs[dnsProviderKeyFor(activeProfileId)] = root.optString("dnsProvider", "system").ifBlank { "system" }
                 root.optString("subtitleUsageJson", "").let { usage ->

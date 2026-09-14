@@ -18,6 +18,52 @@ import java.net.URL
 class SportsMetadataDeviceTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun capturedProviderListMatchesAndDisplaysBoxingPoster() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val folder = File(context.getExternalFilesDir(null), "sports-audit")
+        val channelsFile = File(folder, "sports-provider-channels.json")
+        val metadataFile = File(folder, "sports-metadata-current.json")
+        assumeTrue("Opt-in captured public metadata and channel labels", channelsFile.exists() && metadataFile.exists())
+        val channels = com.google.gson.JsonParser.parseString(channelsFile.readText().removePrefix("\uFEFF")).asJsonArray.map { raw ->
+            val item = raw.asJsonObject
+            IptvChannel("audit:${item.get("stream_id").asString}", item.get("name").asString,
+                "https://example.invalid/not-played", "Sports")
+        }
+        val metadata = parseSportsMetadata(metadataFile.readText())
+        val now = System.currentTimeMillis()
+        val legacyQuality = Regex("\\b(uhd|fhd|hd|sd|4k|8k|hevc|h[.]?265|h[.]?264|1080p|720p|2160p|(?:25|30|50|60)fps|raw|backup)\\b", RegexOption.IGNORE_CASE)
+        val legacyPackage = Regex("^([a-z]{2,3})\\s+nowtv\\s+")
+        val legacyTnt = Regex("\\btnt sport\\b")
+        val legacyBein = Regex("\\bbein\\s*sports?\\s*(\\d*)")
+        val legacyNumber = Regex("\\b(sports|espn)(\\d+)\\b")
+        val legacySpaces = Regex("\\s+")
+        val originalKeys = channels.map { sportsArtworkKey(it.name.replace(legacyQuality, "").replace("+", " plus "))
+            .replace(legacyPackage, "$1 ").replace(legacyTnt, "tnt sports").replace(legacyBein, "bein sports $1")
+            .replace(legacyNumber, "$1 $2").replace(legacySpaces, " ").trim() }
+        val keyStart = android.os.SystemClock.elapsedRealtime()
+        val optimizedKeys = channels.map { sportsChannelKey(it.name) }
+        println("Sports channel-key audit: channels=${channels.size} elapsedMs=${android.os.SystemClock.elapsedRealtime() - keyStart}")
+        assertEquals("Every captured provider label must normalize identically", originalKeys, optimizedKeys)
+        val started = android.os.SystemClock.elapsedRealtime()
+        val result = buildSportsCatalogue(emptyList(), metadata, channels, now)
+        val elapsed = android.os.SystemClock.elapsedRealtime() - started
+        val fight = result.single { it.title == "Ryan Garcia vs Conor Benn" }
+        assertEquals(GuideSport.BOXING, fight.sport)
+        assertTrue(fight.hasEventArtwork)
+        assertTrue(fight.possibleChannels.isNotEmpty())
+        assertFalse(fight.possibleChannels.any { it.name == "US| PARAMOUNT HD" })
+        println("Sports real-list audit: channels=${channels.size} metadata=${metadata.size} matched=${result.count { it.hasChannels(now) }} matchingMs=$elapsed fightChannels=${fight.possibleChannels.size}")
+        compose.setContent { SportsGuidePane(result, now, false, 0, {}, {}, {}, Modifier.fillMaxSize()) }
+        compose.waitUntil(10000) { compose.onAllNodesWithTag("sports-guide-list").fetchSemanticsNodes().isNotEmpty() }
+        val rows = sportsPresentationRows(result, now, emptySet())
+        val boxingRow = rows.indexOfFirst { it.id == "BOXING" }
+        assertTrue(boxingRow >= 0)
+        compose.onNodeWithTag("sports-guide-list").performScrollToIndex(boxingRow)
+        compose.onNodeWithText(fight.title).assertIsDisplayed()
+        compose.waitUntil(20000) { compose.onAllNodesWithTag("sports-artwork-loaded", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+        capture("sports-real-provider-boxing.png")
+    }
+
     @Test fun liveMetadataRendersInActualSportsPane() {
         val endpoint = InstrumentationRegistry.getArguments().getString("sportsMetadataUrl")
         assumeTrue("Requires a deployed metadata endpoint", endpoint?.startsWith("https://") == true)

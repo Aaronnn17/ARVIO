@@ -28,6 +28,22 @@ test('UTC fixtures, verified pairs, and only public artwork fields', () => {
   assert.equal(normalizeEvent({ ...fixture, strThumb: 'https://r2.thesportsdb.com/images/media/event/thumb/a.jpg' }).background.endsWith('a.jpg'), true);
 });
 const fetchPayload = url => url.includes('/livescore/') ? { livescore: [] } : url.includes('eventstv.php') ? { tvevents: [] } : url.includes('/filter/') ? { filter: [] } : { events: [fixture] };
+
+test('boxing is normalized from Fighting and independent days load concurrently', async () => {
+  const { fetchFixtures } = require('../netlify/functions/_sports-metadata');
+  assert.equal(normalizeEvent({ ...fixture, strSport: 'Fighting', strLeague: 'Boxing' }).sport, 'Boxing');
+  assert.equal(normalizeEvent({ ...fixture, strSport: 'Fighting', strLeague: 'UFC' }).sport, 'MMA');
+  let active = 0, peak = 0, calls = 0;
+  const result = await fetchFixtures({ apiKey: 'test', now, fetcher: async url => {
+    active++; calls++; peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    active--;
+    return { ok: true, json: async () => fetchPayload(url) };
+  } });
+  assert.equal(peak, 4);
+  assert.equal(calls, 8);
+  assert.equal(result.events.length, 1);
+});
 test('100 concurrent clients consume NINE bounded upstream requests, then reuse shared cache', async () => {
   let calls = 0;
   const shared = store();
@@ -47,7 +63,7 @@ test('refresh failure serves stale artwork and globally backs off; no secret in 
   const failed = { ...deps, now: now + 31 * 60_000, fetcher: async () => { calls++; throw new Error('https://api/secret-key'); } };
   assert.deepEqual(await getMetadata(failed), old);
   assert.deepEqual(await getMetadata(failed), old);
-  assert.equal(calls, 2);
+  assert.equal(calls, 5, 'four concurrent fixture days and one live refresh fail, then back off');
   const handler = createHandler(() => ({ ...failed, store: store() }));
   const response = await handler({ httpMethod: 'GET' });
   assert.equal(response.statusCode, 503);

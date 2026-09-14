@@ -1,7 +1,6 @@
 package com.arflix.tv.ui.screens.tv.live
 import androidx.compose.foundation.basicMarquee
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.ui.geometry.CornerRadius
 
 import androidx.compose.animation.core.animateDpAsState
@@ -103,18 +102,18 @@ fun ChannelRow(
     // can be swallowed before combinedClickable turns them into a click.
     var longPressConsumed by remember { mutableStateOf(false) }
     val bg = when {
-        visuallyFocused && isActive -> LiveColors.FocusBg
+        visuallyFocused -> Color.White
         isActive -> LiveColors.FocusBg
-        visuallyFocused -> LiveColors.PanelRaised
         else -> LiveColors.Panel
     }
+    val foreground = if (visuallyFocused) Color.Black else LiveColors.Fg
+    val secondary = if (visuallyFocused) Color.Black.copy(alpha = .7f) else LiveColors.FgDim
     val now = nowNext?.now
     val animatedBorderWidth = animateDpAsState(
         targetValue = if (visuallyFocused) LiveDims.FocusBorder else 0.dp,
         animationSpec = tween(durationMillis = 70),
         label = "channel-row-border",
     )
-    val surface = animateColorAsState(bg, tween(120), label = "channel-surface")
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -131,7 +130,7 @@ fun ChannelRow(
                     (size.height - inset * 2).coerceAtLeast(0f),
                 )
                 drawRoundRect(
-                    color = surface.value,
+                    color = bg,
                     topLeft = Offset(inset, inset),
                     size = surfaceSize,
                     cornerRadius = CornerRadius(radius),
@@ -139,7 +138,7 @@ fun ChannelRow(
                 drawContent()
                 // Read animation state in drawing, not composition: channel
                 // text and logo layout should not rebuild for each border frame.
-                val stroke = animatedBorderWidth.value.toPx()
+                val stroke = if (visuallyFocused) animatedBorderWidth.value.toPx() else 0f
                 if (stroke > 0f) {
                     drawRoundRect(
                         color = LiveColors.FocusRing,
@@ -224,7 +223,7 @@ fun ChannelRow(
             Text(
                 text = channel.number.toString(),
                 style = LiveType.NumberMono.copy(
-                    color = LiveColors.FgDim,
+                    color = secondary,
                 ),
             )
         }
@@ -245,7 +244,7 @@ fun ChannelRow(
                 Text(
                     text = channel.name,
                     style = LiveType.CellTitle.copy(
-                        color = LiveColors.Fg,
+                        color = foreground,
                         fontSize = 11.sp,
                         lineHeight = 13.sp,
                     ),
@@ -260,7 +259,7 @@ fun ChannelRow(
                     Icon(
                         imageVector = Icons.Filled.Star,
                         contentDescription = null,
-                        tint = LiveColors.Fg,
+                        tint = foreground,
                         modifier = Modifier.size(11.dp),
                     )
                 }
@@ -269,7 +268,7 @@ fun ChannelRow(
                     Icon(
                         imageVector = Icons.Filled.History,
                         contentDescription = stringResource(R.string.live_cd_catchup_available),
-                        tint = LiveColors.Accent.copy(alpha = 0.8f),
+                        tint = if (visuallyFocused) Color.Black else LiveColors.Accent.copy(alpha = 0.8f),
                         modifier = Modifier.size(11.dp),
                     )
                 }
@@ -282,7 +281,7 @@ fun ChannelRow(
                 LinearProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.width(80.dp).height(2.dp),
-                    color = LiveColors.Accent,
+                    color = if (visuallyFocused) Color.Black else LiveColors.Accent,
                     trackColor = LiveColors.Divider,
                 )
             }
@@ -295,16 +294,16 @@ fun ChannelRow(
             horizontalAlignment = Alignment.End,
         ) {
             if (displayQuality != Quality.UNKNOWN) {
-                SmallPillBadge(if (variantCount > 1) stringResource(R.string.live_label_quality_variants, displayQuality.label, variantCount) else displayQuality.label)
+                SmallPillBadge(if (variantCount > 1) stringResource(R.string.live_label_quality_variants, displayQuality.label, variantCount) else displayQuality.label, visuallyFocused)
             } else if (variantCount > 1) {
-                SmallPillBadge(stringResource(R.string.live_label_sources, variantCount))
+                SmallPillBadge(stringResource(R.string.live_label_sources, variantCount), visuallyFocused)
             }
-            SmallPillBadge(channel.lang)
+            SmallPillBadge(channel.lang, visuallyFocused)
         }
         if (rowHeight < 48.dp) {
             if (isActive) Row(Modifier.width(18.dp).height(16.dp).padding(end = 5.dp),
                 verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                listOf(7, 12, 9).forEach { h -> Box(Modifier.width(2.dp).height(h.dp).background(LiveColors.Accent)) }
+                listOf(7, 12, 9).forEach { h -> Box(Modifier.width(2.dp).height(h.dp).background(if (visuallyFocused) Color.Black else LiveColors.Accent)) }
             } else Spacer(Modifier.width(6.dp))
         }
     }
@@ -312,13 +311,13 @@ fun ChannelRow(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SmallPillBadge(text: String) {
+private fun SmallPillBadge(text: String, focused: Boolean) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(3.dp))
-            .background(LiveColors.Panel)
+            .background(if (focused) Color.Black.copy(alpha = 0.08f) else LiveColors.Panel)
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
-        Text(text.uppercase(), style = LiveType.Badge.copy(color = LiveColors.FgDim))
+        Text(text.uppercase(), style = LiveType.Badge.copy(color = if (focused) Color.Black else LiveColors.FgDim))
     }
 }
