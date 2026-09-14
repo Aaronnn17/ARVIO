@@ -240,7 +240,7 @@ class HomeViewModel @Inject constructor(
 
     // IPTV favorite channels — maps MediaItem.id (Int hash) to channel data
     private val iptvChannelMap = mutableMapOf<Int, com.arflix.tv.data.model.IptvChannel>()
-    private val _sportsHomeRows = MutableStateFlow(sportsRepository.defaultHomeRows())
+    private val _sportsHomeRows = MutableStateFlow<List<Category>>(emptyList())
     val sportsHomeRows: StateFlow<List<Category>> = combine(
         _sportsHomeRows,
         catalogRepository.observeCatalogs().map { catalogs ->
@@ -1667,12 +1667,6 @@ class HomeViewModel @Inject constructor(
     }
 
     init {
-        viewModelScope.launch {
-            streamRepository.installedAddons.collectLatest { addons ->
-                _sportsHomeRows.value = sportsRepository.buildHomeRows(addons, selectedSportsCategoryId)
-            }
-        }
-
         viewModelScope.launch {
             profileManager.activeProfileId
                 .distinctUntilChanged()
