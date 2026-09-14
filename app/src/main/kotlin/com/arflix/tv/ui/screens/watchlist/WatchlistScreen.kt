@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,6 +34,8 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import com.arflix.tv.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
@@ -58,7 +63,7 @@ internal fun librarySources(sources: List<WatchlistSourceItem>, section: Library
         LibrarySection.SERVERS -> it is WatchlistSourceItem.HomeServer
     } }
 
-@OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class)
+@OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun WatchlistScreen(
     viewModel: WatchlistViewModel = hiltViewModel(),
@@ -73,6 +78,7 @@ fun WatchlistScreen(
     val logos by viewModel.logoUrls.collectAsStateWithLifecycle()
     val touch = LocalDeviceType.current.isTouchDevice()
     val poster = rememberCardLayoutMode() == CardLayoutMode.POSTER
+    val scrollScope = rememberCoroutineScope()
     var section by rememberSaveable { mutableStateOf(LibrarySection.WATCHLISTS) }
     var openedList by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -133,11 +139,19 @@ fun WatchlistScreen(
     }
     LaunchedEffect(serverMode, query) { if (serverMode) viewModel.setLibrarySearch(query) }
     LaunchedEffect(serverMode, sort) { if (serverMode) viewModel.setLibrarySort(sort) }
-    LaunchedEffect(grid, sourceKey, items.size, error) {
+    val loadingMore = if(serverMode) servers.isLoadingMore else state.isLoadingMore
+    val hasMore = if(serverMode) servers.hasMore else state.hasMore
+    LaunchedEffect(grid, sourceKey, items.size, rawItems.size, error, loading, loadingMore, hasMore) {
         snapshotFlow { grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }.collect { last ->
-            if (!collections && error == null && last >= items.size - 12 && last >= 0) {
+            if (!collections && error == null && !loading && !loadingMore && hasMore && (items.isEmpty() || last >= items.size - 16)) {
                 if (serverMode) viewModel.loadMoreLibrary() else viewModel.loadMoreActiveSource()
             }
+        }
+    }
+    LaunchedEffect(grid, sourceKey, items, poster) {
+        if (!poster && !collections) snapshotFlow { grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }.collect { last ->
+            val first = grid.firstVisibleItemIndex
+            viewModel.prefetchLogos(items.subList(first.coerceAtMost(items.size), (last + 17).coerceAtMost(items.size)))
         }
     }
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black).testTag("oled-library")) {
@@ -176,7 +190,7 @@ fun WatchlistScreen(
                 }
                 if (!compact) {
                     Spacer(Modifier.weight(1f))
-                    Text(if(collections) "${scopeSources.size} ${tr("lists")}" else "${items.size} ${tr("titles")}", color = Color.LightGray, fontSize = 13.sp)
+                    Text(if(collections) "${scopeSources.size} ${tr("lists")}" else "${items.size}${if(hasMore) "+" else ""} ${tr("titles")}", color = Color.LightGray, fontSize = 13.sp)
                     OledControl("⌕", onClick = { sourcesOpen = false; filters = false; search = true })
                     if(collections) OledControl("+ " + tr("New list"), onClick = { onNavigateToSettings("catalogs") })
                     OledControl(tr("Filters"), modifier = Modifier.focusRequester(filterButton), onClick = { sourcesOpen = false; filters = true })
@@ -205,7 +219,7 @@ fun WatchlistScreen(
                         if(lists.isEmpty()) OledMessage(tr("No lists yet"), tr("Your custom catalogs and personal lists appear here."))
                         LazyVerticalGrid(GridCells.Fixed(columns), state = grid, modifier = Modifier.fillMaxSize(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(18.dp),
-                            contentPadding = PaddingValues(top = if(touch) 6.dp else 0.dp, bottom = 24.dp + LocalBottomBarInset.current)) {
+                            contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp + LocalBottomBarInset.current)) {
                             items(lists, key = { it.id }) { source ->
                                 var cover by remember(source) { mutableStateOf<String?>((source as? WatchlistSourceItem.Catalog)?.config?.collectionCoverImageUrl) }
                                 LaunchedEffect(source) { cover = viewModel.collectionCover(source) }
@@ -221,15 +235,18 @@ fun WatchlistScreen(
                         }
                     } else LazyVerticalGrid(GridCells.Fixed(columns), state = grid, modifier = Modifier.fillMaxSize().testTag("library-grid"),
                         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(18.dp),
-                        contentPadding = PaddingValues(top = if(touch) 6.dp else 0.dp, bottom = 28.dp + LocalBottomBarInset.current)) {
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 28.dp + LocalBottomBarInset.current)) {
                         itemsIndexed(items, key = { index, item -> watchlistItemKey(item, index) }) { index, item ->
+                            val reveal = remember { BringIntoViewRequester() }
                             LaunchedEffect(watchlistLogoKey(item), poster) { if(!poster) viewModel.ensureLogo(item) }
-                            MediaCard(item, width = width, isLandscape = !poster, logoImageUrl = logos[watchlistLogoKey(item)],
+                            Box(Modifier.bringIntoViewRequester(reveal).padding(6.dp).testTag("library-card-frame-$index")) {
+                            MediaCard(item, width = width - 12.dp, isLandscape = !poster, logoImageUrl = logos[watchlistLogoKey(item)],
                                 focusedScale = 1.025f, titleMaxLines = 1, showTitle = true,
                                 modifier = Modifier.testTag("library-card-$index"),
-                                onFocused = { viewModel.saveFocusState(0, index) },
+                                onFocused = { viewModel.saveFocusState(0, index); if(!touch) scrollScope.launch { reveal.bringIntoView() } },
                                 onClick = { onNavigateToDetails(item.mediaType, item.id) },
                                 onLongClick = if(state.selectedSourceId == WatchlistSourceItem.MyWatchlist.id && !serverMode) ({ viewModel.removeFromWatchlist(item) }) else null)
+                            }
                         }
                         if (if(serverMode) servers.isLoadingMore else state.isLoadingMore) item("loading-more", span = { GridItemSpan(maxLineSpan) }) {
                             Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
@@ -298,8 +315,16 @@ private fun OledSources(sources: List<WatchlistSourceItem>, selectedId: String, 
     LazyColumn(modifier.testTag("library-sources"), verticalArrangement = Arrangement.spacedBy(4.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
         groups.forEach { (group, entries) ->
             item("group:$group") {
-                Column(Modifier.padding(top = 10.dp, bottom = 5.dp, start = 10.dp)) {
-                    Text(group, color = Color.LightGray, fontSize = 13.sp)
+                Column(Modifier.padding(top = 24.dp, bottom = 10.dp, start = 10.dp)) {
+                    val provider = (entries.firstOrNull() as? WatchlistSourceItem.TrackerList)?.provider
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        when (provider) {
+                            TrackerLibraryProvider.TRAKT -> Icon(painterResource(R.drawable.ic_trakt), contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
+                            TrackerLibraryProvider.SIMKL -> Icon(painterResource(R.drawable.ic_simkl), contentDescription = null, tint = Color.White, modifier = Modifier.size(11.dp))
+                            else -> Unit
+                        }
+                        Text(group.uppercase(), color = Color.White, fontSize = if (provider != null) 8.sp else 13.sp, fontWeight = FontWeight.Bold, letterSpacing = if (provider != null) .3.sp else .6.sp, maxLines = 1)
+                    }
                     (entries.firstOrNull() as? WatchlistSourceItem.HomeServer)?.let { Text(it.candidate.serverKind.name.lowercase().replaceFirstChar(Char::titlecase), color = Color.Gray, fontSize = 11.sp) }
                 }
             }

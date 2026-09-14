@@ -48,7 +48,7 @@ class SimklAuthManager @Inject constructor(
             syncProviderStore.onProviderConnected(SyncProvider.SIMKL)
             return true
         }
-        if (response.result.equals("KO", ignoreCase = true) || !response.deviceCode.isNullOrBlank()) {
+        if (!response.deviceCode.isNullOrBlank()) {
             throw SimklPinExpiredException("Simkl PIN expired or invalid")
         }
         return false

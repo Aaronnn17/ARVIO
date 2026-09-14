@@ -24,6 +24,7 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
+    private val simklRateLimiter = com.arflix.tv.network.SimklRateLimitInterceptor()
 
     @Provides
     @Singleton
@@ -98,28 +99,13 @@ object AppModule {
     @Provides
     @Singleton
     @JvmStatic
-    fun provideSimklApi(okHttpClient: OkHttpClient): com.arflix.tv.data.api.SimklApi {
-        var lastPostTimestampMs = 0L
-        val postLock = Any()
-
+    fun provideSimklApi(
+        okHttpClient: OkHttpClient,
+        @dagger.hilt.android.qualifiers.ApplicationContext context: android.content.Context
+    ): com.arflix.tv.data.api.SimklApi {
         val simklClient = okHttpClient.newBuilder()
             .addInterceptor { chain ->
                 val original = chain.request()
-
-                // Enforce 1 POST request per second per Simkl API policy
-                if (original.method.equals("POST", ignoreCase = true)) {
-                    synchronized(postLock) {
-                        val now = android.os.SystemClock.elapsedRealtime()
-                        val elapsed = now - lastPostTimestampMs
-                        if (elapsed < 1000L) {
-                            val sleepTime = 1000L - elapsed
-                            try {
-                                Thread.sleep(sleepTime)
-                            } catch (_: InterruptedException) {}
-                        }
-                        lastPostTimestampMs = android.os.SystemClock.elapsedRealtime()
-                    }
-                }
 
                 val originalUrl = original.url
                 val urlBuilder = originalUrl.newBuilder()
@@ -134,7 +120,7 @@ object AppModule {
 
                 val requestBuilder = original.newBuilder()
                     .url(urlBuilder.build())
-                    .header("User-Agent", "ARVIO/$cleanVersion (Android TV)")
+                    .header("User-Agent", OkHttpProvider.getAppUserAgent(context))
 
                 if (Constants.SIMKL_CLIENT_ID.isNotBlank()) {
                     requestBuilder.header("simkl-api-key", Constants.SIMKL_CLIENT_ID)
@@ -144,15 +130,14 @@ object AppModule {
                     requestBuilder.header("Content-Type", "application/json")
                 }
 
+
                 val response = chain.proceed(requestBuilder.build())
-                if (response.code == 429) {
-                    val retryAfter = response.header("Retry-After")?.toLongOrNull() ?: 5L
-                    com.arflix.tv.util.AppLogger.w("SimklApi", "HTTP 429 Too Many Requests received from Simkl. Retry-After: ${retryAfter}s")
-                } else if (response.code == 412) {
+                if (response.code == 412) {
                     com.arflix.tv.util.AppLogger.e("SimklApi", "HTTP 412 Precondition Failed / client_id_failed from Simkl. Check API key.")
                 }
                 response
             }
+            .addInterceptor(simklRateLimiter)
             .build()
 
         return Retrofit.Builder()

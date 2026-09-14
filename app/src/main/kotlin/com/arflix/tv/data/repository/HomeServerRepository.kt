@@ -149,7 +149,8 @@ internal fun homeServerCatalogMediaType(
 
 data class HomeServerCatalogPage(
     val items: List<HomeServerCatalogItem>,
-    val hasMore: Boolean
+    val hasMore: Boolean,
+    val nextOffset: Int? = null
 )
 
 internal data class HomeServerCandidateInfo(
@@ -1694,13 +1695,13 @@ class HomeServerRepository @Inject constructor(
         )
         val container = response.obj("MediaContainer")
         val total = container?.int("totalSize")
-            ?: container?.int("size")
-            ?: response.metadataItems(connection.serverKind).size
-        val items = response.metadataItems(connection.serverKind)
+        val rawItems = response.metadataItems(connection.serverKind)
+        val items = rawItems
             .mapNotNull { it.toCatalogItem(connection, buildCatalogSourceRef(connection, HomeServerCollection(collectionId, type = collectionType))) }
         return HomeServerCatalogPage(
             items = items,
-            hasMore = offset + items.size < total
+            hasMore = rawItems.isNotEmpty() && (total?.let { offset + rawItems.size < it } ?: (rawItems.size >= limit)),
+            nextOffset = offset + rawItems.size
         )
     }
 
@@ -1737,13 +1738,15 @@ class HomeServerRepository @Inject constructor(
             ),
             connection
         )
-        val total = response.int("TotalRecordCount") ?: response.items().size
-        val items = response.items().mapNotNull {
+        val total = response.int("TotalRecordCount")
+        val rawItems = response.items()
+        val items = rawItems.mapNotNull {
             it.toCatalogItem(connection, buildCatalogSourceRef(connection, HomeServerCollection(collectionId, type = "mixed")))
         }
         return HomeServerCatalogPage(
             items = items,
-            hasMore = offset + items.size < total
+            hasMore = rawItems.isNotEmpty() && (total?.let { offset + rawItems.size < it } ?: (rawItems.size >= limit)),
+            nextOffset = offset + rawItems.size
         )
     }
 

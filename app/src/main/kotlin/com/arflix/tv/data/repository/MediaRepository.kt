@@ -113,7 +113,8 @@ class MediaRepository @Inject constructor(
 
     data class CategoryPageResult(
         val items: List<MediaItem>,
-        val hasMore: Boolean
+        val hasMore: Boolean,
+        val nextOffset: Int? = null
     )
 
     private val apiKey = Constants.TMDB_API_KEY
@@ -1921,7 +1922,8 @@ class MediaRepository @Inject constructor(
         }
         CategoryPageResult(
             items = items,
-            hasMore = hasMore
+            hasMore = hasMore,
+            nextOffset = offset + pageRefs.size
         )
     }
 
@@ -1953,7 +1955,8 @@ class MediaRepository @Inject constructor(
         }
         CategoryPageResult(
             items = orderedItems.distinctBy { "${it.mediaType.name}_${it.id}" },
-            hasMore = page.hasMore
+            hasMore = page.hasMore,
+            nextOffset = page.nextOffset
         )
     }
 
@@ -2003,7 +2006,7 @@ class MediaRepository @Inject constructor(
             )
         }
         cacheItems(items)
-        return CategoryPageResult(items = items, hasMore = page.hasMore)
+        return CategoryPageResult(items = items, hasMore = page.hasMore, nextOffset = page.nextOffset)
     }
 
     private suspend fun resolveHomeServerCatalogItem(item: HomeServerCatalogItem): MediaItem? {
@@ -3723,50 +3726,29 @@ class MediaRepository @Inject constructor(
 
     private suspend fun loadTraktCatalogRefs(sourceUrl: String?, sourceRef: String? = null): List<Pair<MediaType, Int>> {
         suspend fun loadFromParsed(parsed: ParsedCatalogUrl): List<Pair<MediaType, Int>> {
-            val items: List<TraktPublicListItem> = when (parsed) {
-                is ParsedCatalogUrl.TraktUserList -> {
-                    val movies = runCatching {
-                        traktApi.getUserListItems(
-                            clientId = Constants.TRAKT_CLIENT_ID,
-                            username = parsed.username,
-                            listId = parsed.listId,
-                            type = "movies",
-                            limit = 100
-                        )
-                    }.getOrElse { emptyList() }
-                    val shows = runCatching {
-                        traktApi.getUserListItems(
-                            clientId = Constants.TRAKT_CLIENT_ID,
-                            username = parsed.username,
-                            listId = parsed.listId,
-                            type = "shows",
-                            limit = 100
-                        )
-                    }.getOrElse { emptyList() }
-                    movies + shows
+            suspend fun loadType(type: String): List<TraktPublicListItem> {
+                val result = mutableListOf<TraktPublicListItem>()
+                var previous: List<TraktPublicListItem>? = null
+                var page = 1
+                while (true) {
+                    val rows = when (parsed) {
+                        is ParsedCatalogUrl.TraktUserList -> traktApi.getUserListItems(
+                            clientId = Constants.TRAKT_CLIENT_ID, username = parsed.username,
+                            listId = parsed.listId, type = type, page = page, limit = 100)
+                        is ParsedCatalogUrl.TraktList -> traktApi.getListItems(
+                            clientId = Constants.TRAKT_CLIENT_ID, listId = parsed.listId,
+                            type = type, page = page, limit = 100)
+                        else -> emptyList()
+                    }
+                    if (rows == previous) break
+                    result += rows
+                    if (rows.size < 100) break
+                    previous = rows
+                    page++
                 }
-                is ParsedCatalogUrl.TraktList -> {
-                    val movies = runCatching {
-                        traktApi.getListItems(
-                            clientId = Constants.TRAKT_CLIENT_ID,
-                            listId = parsed.listId,
-                            type = "movies",
-                            limit = 100
-                        )
-                    }.getOrElse { emptyList() }
-                    val shows = runCatching {
-                        traktApi.getListItems(
-                            clientId = Constants.TRAKT_CLIENT_ID,
-                            listId = parsed.listId,
-                            type = "shows",
-                            limit = 100
-                        )
-                    }.getOrElse { emptyList() }
-                    movies + shows
-                }
-                else -> emptyList()
+                return result
             }
-            return mapTraktItemsToTmdbRefs(items)
+            return mapTraktItemsToTmdbRefs(loadType("movies") + loadType("shows"))
         }
 
         val parsedFromRef = parseTraktRef(sourceRef)
