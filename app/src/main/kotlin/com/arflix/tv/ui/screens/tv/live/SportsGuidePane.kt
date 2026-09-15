@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.tv.live
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -83,8 +84,9 @@ internal fun SportsGuidePane(
     sidebarOpen: Boolean = false,
     clockFormat: String? = null,
 ) {
-    var focusedRow by remember { mutableStateOf<String?>(null) }
-    var focusedOrder by remember { mutableStateOf(emptyList<String>()) }
+    // Only a schedule refresh consumes this order. Focus alone must not rebuild
+    // every catalogue and invalidate all visible lazy rows.
+    val focusedOrder = remember { arrayOfNulls<Pair<String, List<String>>>(1) }
     var artworkRetry by remember { mutableIntStateOf(0) }
     var failedArtwork by remember(artworkRetry) { mutableStateOf(emptySet<String>()) }
     var presentationRows by remember { mutableStateOf(emptyList<SportsGuideRow>()) }
@@ -94,11 +96,12 @@ internal fun SportsGuidePane(
             sportsPresentationRows(events, now, emptySet())
         }
     }
-    val rows = remember(presentationRows, focusedRow, focusedOrder) {
+    val rows = remember(presentationRows) {
+        val focusSnapshot = focusedOrder[0]
+        val focusOrderRanks = focusSnapshot?.second.orEmpty().withIndex().associate { it.value to it.index }
         presentationRows.map { row ->
-            if (row.id == focusedRow) {
-                val rank = focusedOrder.withIndex().associate { it.value to it.index }
-                row.copy(events = row.events.sortedBy { rank[it.id] ?: Int.MAX_VALUE })
+            if (row.id == focusSnapshot?.first) {
+                row.copy(events = row.events.sortedBy { focusOrderRanks[it.id] ?: Int.MAX_VALUE })
             } else row
         }
     }
@@ -113,10 +116,19 @@ internal fun SportsGuidePane(
     val scope = rememberCoroutineScope()
     var navigationJob by remember { mutableStateOf<Job?>(null) }
     var navigationTarget by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var handledFocusSignal by remember { mutableIntStateOf(0) }
+    fun leaveCards() {
+        navigationJob?.cancel()
+        navigationTarget = null
+        onOpenCategories()
+    }
+    val keysByRow = remember(rows) {
+        rows.associate { it.id to disambiguatedLazyKeys(it.events) { event -> event.id } }
+    }
     fun moveTo(rowIndex: Int, columnIndex: Int) {
         val row = rows.getOrNull(rowIndex) ?: return
         val column = columnIndex.coerceIn(0, row.events.lastIndex)
-        val eventKey = disambiguatedLazyKeys(row.events) { it.id }[column]
+        val eventKey = keysByRow.getValue(row.id)[column]
         navigationJob?.cancel()
         navigationTarget = rowIndex to column
         // Already attached targets react in this key event, not after a scroll animation.
@@ -178,11 +190,11 @@ internal fun SportsGuidePane(
         return "$day ${timeFormat.format(Date(event.programme.startUtcMillis))}"
     }
     LaunchedEffect(focusSignal, rows.isEmpty(), sidebarOpen) {
-        if (focusSignal > 0 && rows.isNotEmpty() && !sidebarOpen) {
+        if (focusSignal > handledFocusSignal && rows.isNotEmpty() && !sidebarOpen) {
             // Lazy cards are attached after the drawer starts its layout transition.
             withFrameNanos { }
             withFrameNanos { }
-            runCatching { firstFocus.requestFocus() }
+            if (focusSignal > handledFocusSignal) runCatching { firstFocus.requestFocus() }
         }
     }
     LaunchedEffect(selected) {
@@ -234,7 +246,7 @@ internal fun SportsGuidePane(
                         Text(row.title, color = LiveColors.Fg, fontWeight = FontWeight.Medium, fontSize = 15.sp, lineHeight = 18.sp,
                             modifier = Modifier.weight(1f))
                     }
-                    val eventKeys = remember(row.events) { disambiguatedLazyKeys(row.events) { it.id } }
+                    val eventKeys = keysByRow.getValue(row.id)
                     LazyRow(Modifier.padding(horizontal = 18.dp), state = rowState, contentPadding = PaddingValues(vertical = 1.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         itemsIndexed(row.events, key = { index, _ -> eventKeys[index] }) { index, event ->
@@ -252,8 +264,11 @@ internal fun SportsGuidePane(
                                 .onFocusChanged {
                                     focused = it.isFocused
                                     if (it.isFocused) {
+                                        handledFocusSignal = focusSignal
                                         onContentFocused()
-                                        if (focusedRow != row.id) { focusedRow = row.id; focusedOrder = row.events.map { it.id } }
+                                        if (focusedOrder[0]?.first != row.id) {
+                                            focusedOrder[0] = row.id to row.events.map { it.id }
+                                        }
                                     }
                                 }
                                 .onPreviewKeyEvent { key ->
@@ -262,15 +277,21 @@ internal fun SportsGuidePane(
                                     else {
                                         if (key.type == KeyEventType.KeyDown) when (direction) {
                                             Key.DirectionUp -> if ((navigationTarget?.first ?: rowIndex) > 0) moveTo((navigationTarget?.first ?: rowIndex) - 1, navigationTarget?.second ?: index)
-                                                else if (sidebarOpen) onOpenCategories() else runCatching { categoriesFocus.requestFocus() }.let { }
+                                                else if (sidebarOpen) leaveCards() else {
+                                                    navigationJob?.cancel(); navigationTarget = null
+                                                    runCatching { categoriesFocus.requestFocus() }.let { }
+                                                }
                                             Key.DirectionDown -> moveTo((navigationTarget?.first ?: rowIndex) + 1, navigationTarget?.second ?: index)
-                                            Key.DirectionLeft -> if ((navigationTarget?.second ?: index) == 0) onOpenCategories() else moveTo(navigationTarget?.first ?: rowIndex, (navigationTarget?.second ?: index) - 1)
+                                            Key.DirectionLeft -> if ((navigationTarget?.second ?: index) == 0) leaveCards() else moveTo(navigationTarget?.first ?: rowIndex, (navigationTarget?.second ?: index) - 1)
                                             Key.DirectionRight -> moveTo(navigationTarget?.first ?: rowIndex, (navigationTarget?.second ?: index) + 1)
                                         }
                                         true
                                     }
                                 }
-                                .clickable { returnFocus = requester; showScore = false; selected = event }
+                                .clickable {
+                                    navigationJob?.cancel(); navigationTarget = null
+                                    returnFocus = requester; showScore = false; selected = event
+                                }
                                 .padding(2.dp)) {
                                 if (scheduleOnly) Row(Modifier.fillMaxWidth().height(36.dp)
                                     .border(2.dp, if (focused) Color.White else LiveColors.DividerStrong, RoundedCornerShape(4.dp))
@@ -299,7 +320,9 @@ internal fun SportsGuidePane(
                                 Row(Modifier.fillMaxWidth().height(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(listOfNotNull(event.sport.title, event.competition).joinToString(" · "), color = LiveColors.FgDim, fontSize = 10.sp, lineHeight = 13.sp,
                                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                    val count = ((if (event.isOnAir(now)) event.availableChannels(now) else event.channels) + event.possibleChannels).distinctBy { it.id }.size
+                                    val count = remember(event, now) {
+                                        ((if (event.isOnAir(now)) event.availableChannels(now) else event.channels) + event.possibleChannels).distinctBy { it.id }.size
+                                    }
                                     if (count > 0) {
                                         Icon(Icons.Default.Tv, null, tint = LiveColors.FgDim, modifier = Modifier.size(13.dp))
                                         Text(channelCount(count), color = LiveColors.FgDim, fontSize = 9.sp, lineHeight = 12.sp,
@@ -330,7 +353,7 @@ internal fun SportsGuidePane(
         val possibleIds = event?.possibleChannels.orEmpty().mapTo(hashSetOf()) { it.id }
         val sourceChannels = (confirmedChannels + event?.possibleChannels.orEmpty()).distinctBy { it.id }
         val initialFocus = remember(event?.id) { FocusRequester() }
-        LaunchedEffect(event?.id, onAir, sourceChannels.isEmpty()) {
+        LaunchedEffect(event?.id, sourceChannels.isEmpty()) {
             // The native dialog window must own focus before Compose assigns its row.
             withFrameNanos { }
             withFrameNanos { }
@@ -349,9 +372,12 @@ internal fun SportsGuidePane(
                         overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = LiveColors.Fg,
                         modifier = Modifier.padding(top = 7.dp))
                 }
+                var closeFocused by remember { mutableStateOf(false) }
                 Icon(Icons.Default.Close, "Close", tint = LiveColors.Fg,
                     modifier = Modifier.size(44.dp)
-                        .then(if (!onAir || sourceChannels.isEmpty()) Modifier.focusRequester(initialFocus) else Modifier)
+                        .then(if (sourceChannels.isEmpty()) Modifier.focusRequester(initialFocus) else Modifier)
+                        .onFocusChanged { closeFocused = it.isFocused }
+                        .liveFocusOutline(closeFocused, 4.dp)
                         .clickable(onClick = ::dismiss).padding(10.dp))
             }
             event?.fixture?.let { fixture ->
@@ -373,10 +399,12 @@ internal fun SportsGuidePane(
                 itemsIndexed(sourceChannels, key = { index, _ -> channelKeys[index] }) { index, channel ->
                     var focused by remember { mutableStateOf(false) }
                     Row(Modifier.fillMaxWidth().heightIn(min = if (narrow) 48.dp else 40.dp).clip(RoundedCornerShape(4.dp))
-                        .then(if (index == 0 && onAir) Modifier.focusRequester(initialFocus) else Modifier)
+                        .then(if (index == 0) Modifier.focusRequester(initialFocus) else Modifier)
                         .border(1.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(4.dp))
                         .background(if (focused) LiveColors.FocusBg else Color.Transparent)
                         .onFocusChanged { focused = it.isFocused }
+                        // Scheduled channels are browsable with a remote, but cannot play early.
+                        .focusable(enabled = !canOpenChannel)
                         .clickable(enabled = canOpenChannel) {
                             val time = System.currentTimeMillis()
                             if (event != null && (event.isOnAir(time) || event.isScheduledNow(time)) && (event.availableChannels(time).any { it.id == channel.id } || channel.id in possibleIds)) { dismiss(); onPlay(channel) }

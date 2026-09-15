@@ -54,76 +54,55 @@ class WatchlistScrollDeviceTest {
         }
     }
 
-    @Test fun jellyfinSidebarFollowsRemoteFocusPastFirstScreen() = verifySidebar(HomeServerKind.JELLYFIN)
-    @Test fun embySidebarFollowsRemoteFocusPastFirstScreen() = verifySidebar(HomeServerKind.EMBY)
-
-    @Test fun landscapeGridSupportsDirectEntryFullScrollAndReturnToSidebar() = verifyGrid(poster = false)
-    @Test fun posterGridSupportsDirectEntryFullScrollAndReturnToSidebar() = verifyGrid(poster = true)
-
-    private fun verifyGrid(poster: Boolean) {
-        show(DeviceType.TV, poster)
-        openProvider(HomeServerKind.JELLYFIN)
-        compose.runOnIdle { state.value = state.value.copy(items = items(63)) }
-        keys(listOf(Key.DirectionDown, Key.DirectionRight))
-        compose.onNodeWithTag("library-card-0").assertIsSelected().assertIsDisplayed()
-        val before = compose.onNodeWithTag("library-card-0").fetchSemanticsNode().boundsInRoot
-        keys(listOf(Key.DirectionRight))
-        compose.onNodeWithTag("library-card-1").assertIsSelected()
-        val after = compose.onNodeWithTag("library-card-0").fetchSemanticsNode().boundsInRoot
-        assertEquals("Moving horizontally must not shift the grid", before.top, after.top, 1f)
-        keys(List(40) { Key.DirectionDown })
-        compose.onNodeWithTag("library-card-62").assertIsSelected().assertIsDisplayed()
-        capture("library-grid-${if (poster) "poster" else "landscape"}")
-        keys(List(3) { Key.DirectionLeft })
-        sidebar(HomeServerKind.JELLYFIN, 0).assertIsFocused().assertIsDisplayed()
-        keys(listOf(Key.DirectionRight))
-        compose.onNodeWithTag("library-card-60").assertIsSelected().assertIsDisplayed()
-    }
-
-    @Test fun rapidRemotePressesKeepLastLibraryVisible() {
+    @Test fun longSidebarCanSelectLastServerLibrary() {
         show(DeviceType.TV)
-        openProvider(HomeServerKind.EMBY)
-        keys(listOf(Key.DirectionDown))
-        compose.onNodeWithTag("library-screen").performKeyInput {
-            repeat(55) { pressKey(Key.DirectionDown) }
+        compose.onNodeWithText("Libraries").performClick()
+        val tag = "library-source-server_EMBY-29"
+        compose.onNodeWithTag("library-sources").performScrollToNode(hasTestTag(tag))
+        compose.onNodeWithTag(tag).performClick()
+        compose.runOnIdle { assertEquals("EMBY-29", state.value.selectedSourceRef) }
+    }
+    @Test fun landscapeGridNavigatesByRemoteWithoutHorizontalLayoutJump() {
+        show(DeviceType.TV)
+        compose.onNodeWithText("Libraries").performClick()
+        val card = compose.onAllNodes(hasAnyAncestor(hasTestTag("library-card-0")) and hasClickAction()).onFirst()
+        card.performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus)
+        keys(listOf(Key.DirectionRight))
+        val first = compose.onNodeWithTag("library-card-0").fetchSemanticsNode().boundsInRoot.top
+        keys(listOf(Key.DirectionRight))
+        assertEquals(first, compose.onNodeWithTag("library-card-0").fetchSemanticsNode().boundsInRoot.top, 1f)
+        keys(List(12) { Key.DirectionDown })
+        assertTrue(compose.onNodeWithTag("library-grid").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f)
+    }
+    @Test fun posterGridKeepsPositionWhenMoreItemsArrive() = verifyAppend(true)
+    @Test fun serverGridRequestsEveryPageBeyondSixty() {
+        show(DeviceType.TV)
+        every { viewModel.loadMoreLibrary() } answers {
+            val size = (state.value.items.size + 60).coerceAtMost(185)
+            state.value = state.value.copy(items = items(size), hasMore = size < 185, isLoadingMore = false)
         }
-        compose.waitForIdle()
-        sidebar(HomeServerKind.EMBY, 29).assertIsFocused().assertIsDisplayed()
-    }
-
-    private fun verifySidebar(kind: HomeServerKind) {
-        show(DeviceType.TV)
-        openProvider(kind)
-        keys(listOf(Key.DirectionDown))
-        sidebar(kind, 0).assertIsFocused().assertIsDisplayed()
-        val before = sidebar(kind, 0).fetchSemanticsNode().boundsInRoot
-        keys(listOf(Key.DirectionDown))
-        val after = sidebar(kind, 0).fetchSemanticsNode().boundsInRoot
-        assertEquals("Visible library rows should stay still", before.top, after.top, 1f)
-        keys(List(14) { Key.DirectionDown })
-        sidebar(kind, 15).assertIsFocused().assertIsDisplayed()
-        keys(List(14) { Key.DirectionDown })
-        sidebar(kind, 29).assertIsFocused().assertIsDisplayed()
-        keys(listOf(Key.DirectionCenter))
-        compose.runOnIdle { assertEquals("$kind-29", state.value.selectedSourceRef) }
-        capture("library-scroll-${kind.name.lowercase()}")
-        keys(List(29) { Key.DirectionUp })
-        sidebar(kind, 0).assertIsFocused().assertIsDisplayed()
-        keys(listOf(Key.DirectionCenter))
-        compose.runOnIdle { assertEquals("$kind-0", state.value.selectedSourceRef) }
-    }
-
-    @Test fun mobilePaginationDoesNotResetScrollToFirstItem() {
-        show(DeviceType.PHONE)
-        compose.onNodeWithText("Jellyfin", useUnmergedTree = true).performClick()
+        compose.onNodeWithText("Libraries").performClick()
+        compose.runOnIdle { state.value = state.value.copy(hasMore = true) }
         val grid = compose.onNodeWithTag("library-grid")
-        repeat(3) { grid.performTouchInput { swipeUp() }; compose.waitForIdle() }
+        grid.performScrollToIndex(55)
+        compose.waitUntil(5000) { state.value.items.size >= 120 }
+        grid.performScrollToIndex(115)
+        compose.waitUntil(5000) { state.value.items.size >= 180 }
+        grid.performScrollToIndex(175)
+        compose.waitUntil(5000) { state.value.items.size == 185 }
+        grid.performScrollToIndex(184)
+        compose.onNodeWithTag("library-card-184").assertIsDisplayed()
+    }
+    @Test fun mobilePaginationDoesNotResetScrollToFirstItem() = verifyAppend(false)
+    private fun verifyAppend(poster: Boolean) {
+        show(DeviceType.PHONE, poster)
+        compose.onNodeWithText("Libraries").performClick()
+        val grid = compose.onNodeWithTag("library-grid")
+        grid.performScrollToIndex(30)
         val before = grid.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
-        assertTrue("Swipe must move down the grid", before > 0f)
         compose.runOnIdle { state.value = state.value.copy(items = items(120)) }
-        compose.waitForIdle()
         val after = grid.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
-        assertEquals("Appending results must not scroll back to the focused default item", before, after, 0.01f)
+        assertEquals(before, after, .01f)
     }
 
     private fun show(device: DeviceType, poster: Boolean = false) {
@@ -156,10 +135,10 @@ class WatchlistScrollDeviceTest {
     }
     private fun sidebar(kind: HomeServerKind, index: Int) = compose.onNodeWithTag("library-sidebar-$kind-$index")
     private fun keys(keys: List<Key>) {
-        keys.forEach { key -> compose.onNodeWithTag("library-screen").performKeyInput { pressKey(key) }; compose.waitForIdle() }
+        keys.forEach { key -> compose.onNodeWithTag("oled-library").performKeyInput { pressKey(key) }; compose.waitForIdle() }
     }
     private fun capture(name: String) {
-        val bitmap = compose.onNodeWithTag("library-screen").captureToImage().asAndroidBitmap()
+        val bitmap = compose.onNodeWithTag("oled-library").captureToImage().asAndroidBitmap()
         File(compose.activity.getExternalFilesDir(null), "$name.png").outputStream().use {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
         }

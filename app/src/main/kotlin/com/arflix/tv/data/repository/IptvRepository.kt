@@ -164,6 +164,7 @@ private const val LargeListMemoryChannelLimit = 240
 private const val LargeListMemoryGuideLimit = 512
 private const val LargeListMemoryFavoriteGuideLimit = 256
 internal const val IPTV_GROUP_ORDER_SCHEMA = 3
+internal const val MAX_IPTV_PLAYLISTS = 5
 
 internal fun normalizeIptvSortOrder(value: String?): String = when (value?.trim()?.lowercase()) {
     "number" -> "number"
@@ -1114,7 +1115,7 @@ class IptvRepository @Inject constructor(
         val previousConfig = observeConfig().first()
         val normalized = playlists.mapIndexed { index, item ->
             normalizePlaylistEntry(item, index)
-        }.filterNotNull().take(3)
+        }.filterNotNull().take(MAX_IPTV_PLAYLISTS)
         val primary = normalized.firstOrNull()
         if (normalized == previousConfig.playlists) return
         val nextConfig = previousConfig.copy(
@@ -4403,7 +4404,7 @@ class IptvRepository @Inject constructor(
         )
         val normalizedPlaylists = state.playlists.mapIndexed { index, playlist ->
             normalizePlaylistEntry(playlist, index)
-        }.filterNotNull().take(3)
+        }.filterNotNull().take(MAX_IPTV_PLAYLISTS)
         val effectivePlaylists = normalizedPlaylists.ifEmpty {
             if (normalizedM3u.isBlank()) emptyList() else listOf(
                 IptvPlaylistEntry(

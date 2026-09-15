@@ -82,6 +82,11 @@ export function mergeCatalogs(saved: CatalogConfig[] | undefined, hiddenIds: str
     .filter(isValidCatalog)
     .map(normalizedCatalog)
     .filter((catalog) => catalog.id !== "favorite_tv")
+    .filter((catalog) => !(
+      ["sports", "popular_live_tv"].includes(catalog.id) &&
+      catalog.sourceType === "preinstalled" &&
+      !catalog.sourceUrl?.trim() && !catalog.sourceRef?.trim() && !catalog.addonId?.trim()
+    ))
     .filter((catalog) => !isLegacyServiceCatalog(catalog));
   if (cleaned.length) {
     return cleaned.map((catalog) => ({

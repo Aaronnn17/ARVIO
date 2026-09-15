@@ -46,6 +46,7 @@ import com.arflix.tv.data.repository.sync.TrackingFeature
 import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.DeviceType
+import com.arflix.tv.util.EpisodeAvailability
 import com.arflix.tv.util.resolveAppLanguage
 import com.arflix.tv.util.detectDeviceType
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -73,7 +74,6 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.cancelAndJoin
-import java.text.SimpleDateFormat
 import java.util.Collections
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -234,12 +234,13 @@ class HomeViewModel @Inject constructor(
     private data class CategoryPaginationState(
         var loadedCount: Int = 0,
         var hasMore: Boolean = true,
-        var isLoading: Boolean = false
+        var isLoading: Boolean = false,
+        var nextOffset: Int = loadedCount
     )
 
     // IPTV favorite channels — maps MediaItem.id (Int hash) to channel data
     private val iptvChannelMap = mutableMapOf<Int, com.arflix.tv.data.model.IptvChannel>()
-    private val _sportsHomeRows = MutableStateFlow(sportsRepository.defaultHomeRows())
+    private val _sportsHomeRows = MutableStateFlow<List<Category>>(emptyList())
     val sportsHomeRows: StateFlow<List<Category>> = combine(
         _sportsHomeRows,
         catalogRepository.observeCatalogs().map { catalogs ->
@@ -729,21 +730,6 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun isEpisodeAlreadyAired(rawAirDate: String): Boolean {
-        val value = rawAirDate.trim()
-        if (value.isEmpty()) return true
-        return try {
-            val parser = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-            parser.isLenient = false
-            val parsed = parser.parse(value) ?: return true
-            parsed.time <= System.currentTimeMillis()
-        } catch (e: Exception) {
-                if (e is CancellationException) throw e
-
-            true
-        }
-    }
-
     private suspend fun sanitizeContinueWatchingItems(items: List<ContinueWatchingItem>): List<ContinueWatchingItem> {
         val installedAddons = streamRepository.installedAddons.first()
         val nonLiveItems = items.filterNot { item ->
@@ -769,6 +755,16 @@ class HomeViewModel @Inject constructor(
             val episode = item.episode
             if (season == null || episode == null) {
                 return@mapNotNull item
+            }
+
+            // Locally persisted up-next pointers carry the episode air date. This lets a
+            // caught-up show stay hidden even when TMDB is temporarily unavailable, then
+            // become eligible again as soon as the stored date arrives.
+            if (
+                item.isUpNext && item.releaseDate.isNotBlank() &&
+                !EpisodeAvailability.hasAired(item.releaseDate)
+            ) {
+                return@mapNotNull null
             }
 
             val cacheKey = item.id to season
@@ -801,7 +797,11 @@ class HomeViewModel @Inject constructor(
                 return@mapNotNull item // Keep — episode may not be on TMDB yet
             }
 
-            if (!isEpisodeAlreadyAired(matchedEpisode.airDate)) {
+            if (!EpisodeAvailability.hasAired(
+                    matchedEpisode.airDate,
+                    unknownIsAired = !item.isUpNext,
+                )
+            ) {
                 return@mapNotNull null
             }
 
@@ -1671,12 +1671,6 @@ class HomeViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            streamRepository.installedAddons.collectLatest { addons ->
-                _sportsHomeRows.value = sportsRepository.buildHomeRows(addons, selectedSportsCategoryId)
-            }
-        }
-
-        viewModelScope.launch {
             profileManager.activeProfileId
                 .distinctUntilChanged()
                 .collect { profileId ->
@@ -1981,7 +1975,7 @@ class HomeViewModel @Inject constructor(
         // Defer heavy background warmups so first-launch navigation remains smooth.
         viewModelScope.launch {
             delay(if (isLowRamDevice) 10 * 60_000L else 8 * 60_000L)
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+            kotlinx.coroutines.withContext(Dispatchers.IO) {
                 try {
                     iptvRepository.warmVodCachesIfPossible()
                 } catch (e: Exception) {
@@ -2040,12 +2034,8 @@ class HomeViewModel @Inject constructor(
         }
         viewModelScope.launch {
             catalogRepository.observeCatalogs()
-                .map { catalogs ->
-                    catalogs.joinToString("|") { "${it.id}:${it.title}:${it.sourceUrl.orEmpty()}" }
-                }
                 .distinctUntilChanged()
-                .drop(2) // Skip first two emissions to avoid re-triggering loadHomeData during
-                         // initial startup and ensurePreinstalledDefaults DataStore write.
+                .drop(1) // Initial state is already loaded; do not discard the first user update.
                 .collect {
                     // Apply catalog reorder/add/remove immediately on Home.
                     loadHomeData()
@@ -2381,6 +2371,8 @@ class HomeViewModel @Inject constructor(
                 persistContinueWatchingCache(emptyList())
             }
             withContext(Dispatchers.Main) {
+                lastContinueWatchingItems = emptyList()
+                lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
                 val current = _uiState.value.categories.filterNot { it.id == "continue_watching" }
                 if (current.size != _uiState.value.categories.size) {
                     _uiState.value = _uiState.value.copy(categories = current)
@@ -2570,6 +2562,30 @@ class HomeViewModel @Inject constructor(
 
                 var loadedFreshCatalogRows = false
                 var categories = withContext(networkDispatcher) {
+                    val customCatalogConfigs = savedCatalogs.filter { isCustomCatalogConfig(it) }
+                    val customSemaphore = Semaphore(if (isLowRamDevice) 1 else 2)
+                    val customJobs = customCatalogConfigs.map { cfg ->
+                        async {
+                            customSemaphore.withPermit {
+                                try {
+                                    val result = mediaRepository.loadCustomCatalogPage(cfg, 0, catalogInitialLimit(cfg))
+                                    if (result.items.isEmpty()) return@withPermit null
+                                    val category = Category(cfg.id, cfg.title, result.items).withTop10CapIfNeeded()
+                                    withContext(Dispatchers.Main.immediate) {
+                                        if (requestId == loadHomeRequestId) {
+                                            updateMobileCategoryRow(cfg.id, category,
+                                                hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id),
+                                                nextOffset = result.nextOffset)
+                                        }
+                                    }
+                                    category
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    null
+                                }
+                            }
+                        }
+                    }
                     val baseCategories = runCatching {
                         mediaRepository.getHomeCategories()
                     }.getOrElse { emptyList() }
@@ -2611,13 +2627,7 @@ class HomeViewModel @Inject constructor(
                     // Publish the built-in rows as soon as TMDB responds. Addon,
                     // MDBList, home-server and logo enrichment may take longer, but
                     // they must not hold Trending/Continue Watching in skeleton state.
-                    val currentHasRealBase = _uiState.value.categories.any { category ->
-                        category.id != "continue_watching" &&
-                            !category.id.startsWith("collection_row_") &&
-                            category.items.isNotEmpty() &&
-                            category.items.none { it.isPlaceholder }
-                    }
-                    if (!currentHasRealBase && tmdbPreinstalled.isNotEmpty()) {
+                    if (tmdbPreinstalled.isNotEmpty()) {
                         val earlyCategories = tmdbPreinstalled.toMutableList()
                         val existingContinueWatching = _uiState.value.categories.firstOrNull { category ->
                             category.id == "continue_watching" &&
@@ -2641,7 +2651,10 @@ class HomeViewModel @Inject constructor(
                                 _uiState.value = _uiState.value.copy(
                                     isLoading = false,
                                     isInitialLoad = false,
-                                    categories = earlyCategories,
+                                    categories = orderCategoriesBySavedCatalogs(
+                                        _uiState.value.categories.filter { current -> earlyCategories.none { it.id == current.id } } + earlyCategories,
+                                        savedCatalogs
+                                    ),
                                     heroItem = _uiState.value.heroItem ?: earlyHero,
                                     error = null
                                 )
@@ -2666,8 +2679,16 @@ class HomeViewModel @Inject constructor(
                                     limit = if (isHardCappedTop10Catalog(cfg.id)) TOP_10_ITEM_LIMIT else 20
                                 )
                                 if (result.items.isNotEmpty()) {
-                                    Category(id = cfg.id, title = cfg.title, items = result.items)
+                                    val category = Category(id = cfg.id, title = cfg.title, items = result.items)
                                         .withTop10CapIfNeeded()
+                                    withContext(Dispatchers.Main.immediate) {
+                                        if (requestId == loadHomeRequestId) {
+                                            updateMobileCategoryRow(cfg.id, category,
+                                                hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id),
+                                                nextOffset = result.nextOffset)
+                                        }
+                                    }
+                                    category
                                 } else null
                             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -2694,8 +2715,16 @@ class HomeViewModel @Inject constructor(
                                                 limit = if (isHardCappedTop10Catalog(cfg.id)) TOP_10_ITEM_LIMIT else 20
                                             )
                                             if (result.items.isNotEmpty()) {
-                                                Category(id = cfg.id, title = cfg.title, items = result.items)
+                                                val category = Category(id = cfg.id, title = cfg.title, items = result.items)
                                                     .withTop10CapIfNeeded()
+                                                withContext(Dispatchers.Main.immediate) {
+                                                    if (requestId == loadHomeRequestId) {
+                                                        updateMobileCategoryRow(cfg.id, category,
+                                                            hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id),
+                                                            nextOffset = result.nextOffset)
+                                                    }
+                                                }
+                                                category
                                             } else null
                                         } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -2703,12 +2732,6 @@ class HomeViewModel @Inject constructor(
                                     }
                                 }.awaitAll().filterNotNull()
                                 if (results.isNotEmpty() && requestId == loadHomeRequestId) {
-                                    val current = _uiState.value.categories.toMutableList()
-                                    for (cat in results) {
-                                        val idx = current.indexOfFirst { it.id == cat.id }
-                                        if (idx >= 0) current[idx] = cat else current.add(cat)
-                                    }
-                                    _uiState.value = _uiState.value.copy(categories = current)
                                     markHomeDataLoadSuccessful(requestId)
                                 }
                             }
@@ -2721,38 +2744,7 @@ class HomeViewModel @Inject constructor(
                                 !isCollectionTileConfig(it)
                         }
                         .mapNotNull { cfg -> allPreinstalledById[cfg.id] }
-                    val customCatalogConfigs = savedCatalogs.filter { cfg -> isCustomCatalogConfig(cfg) }
-
-                    // Fetch ALL custom catalogs (Trakt lists, user-added) in parallel
-                    // right here in the bulk path, instead of deferring to
-                    // loadCustomCatalogsIncrementally which loaded them one-by-one and
-                    // caused slow incremental insertion. This way everything appears in
-                    // the single bulk categories set at line ~1250.
-                    val customSemaphore = kotlinx.coroutines.sync.Semaphore(if (isLowRamDevice) 1 else 2)
-                    val freshCustomCategories = customCatalogConfigs.map { cfg ->
-                        async(networkDispatcher) {
-                            customSemaphore.withPermit {
-                                try {
-                                    val result = mediaRepository.loadCustomCatalogPage(
-                                        catalog = cfg,
-                                        offset = 0,
-                                        limit = catalogInitialLimit(cfg)
-                                    )
-                                    if (result.items.isNotEmpty()) {
-                                        val category = Category(id = cfg.id, title = cfg.title, items = result.items)
-                                            .withTop10CapIfNeeded()
-                                        categoryPaginationStates[cfg.id] = CategoryPaginationState(
-                                            loadedCount = category.items.size,
-                                            hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id)
-                                        )
-                                        category
-                                    } else null
-                                } catch (e: Exception) {
-                if (e is CancellationException) throw e
- null }
-                            }
-                        }
-                    }.awaitAll().filterNotNull()
+                    val freshCustomCategories = customJobs.awaitAll().filterNotNull()
                     loadedFreshCatalogRows = loadedFreshCatalogRows || freshCustomCategories.any { hasRealItems(it) }
 
                     // Fall back to previously cached data for any custom catalog
@@ -2856,12 +2848,12 @@ class HomeViewModel @Inject constructor(
                 }
                 categories.forEach { category ->
                     if (category.id != "continue_watching" && !category.id.startsWith("collection_row_")) {
-                        categoryPaginationStates[category.id] = CategoryPaginationState(
+                        categoryPaginationStates.putIfAbsent(category.id, CategoryPaginationState(
                             loadedCount = category.items.size,
                             hasMore = !isSportsCatalogRow(category.id) &&
                                 category.items.size >= getCategoryPageSize(category.id) &&
                                 !isHardCappedTop10Catalog(category.id)
-                        )
+                        ))
                     }
                 }
                 if (requestId != loadHomeRequestId) return@loadHome
@@ -2926,7 +2918,7 @@ class HomeViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isInitialLoad = false,
-                    categories = categories,
+                    categories = preserveExtendedCatalogRows(categories, _uiState.value.categories),
                     collectionRows = collectionRows,
                     heroItem = heroItem,
                     categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
@@ -2972,7 +2964,7 @@ class HomeViewModel @Inject constructor(
                         }
                         _uiState.value = _uiState.value.copy(
                             isLoading = _uiState.value.isLoading,
-                            categories = categories,
+                            categories = preserveExtendedCatalogRows(categories, _uiState.value.categories),
                             collectionRows = collectionRows,
                             heroItem = heroItem,
                             heroLogoUrl = heroLogoFromCache ?: _uiState.value.heroLogoUrl,
@@ -3040,7 +3032,7 @@ class HomeViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isInitialLoad = false,
-                    categories = categories,
+                    categories = preserveExtendedCatalogRows(categories, _uiState.value.categories),
                     collectionRows = collectionRows,
                     heroItem = heroItem,
                     heroLogoUrl = heroLogoUrl,
@@ -3161,7 +3153,8 @@ class HomeViewModel @Inject constructor(
     private fun updateMobileCategoryRow(
         categoryId: String,
         newCategory: Category,
-        hasMore: Boolean = false
+        hasMore: Boolean = false,
+        nextOffset: Int? = null
     ) {
         val currentCategories = _uiState.value.categories.toMutableList()
         val index = currentCategories.indexOfFirst { it.id == categoryId }
@@ -3173,7 +3166,8 @@ class HomeViewModel @Inject constructor(
         val orderedCategories = orderCategoriesBySavedCatalogs(currentCategories, currentSavedCatalogs)
         categoryPaginationStates[categoryId] = CategoryPaginationState(
             loadedCount = newCategory.items.size,
-            hasMore = hasMore
+            hasMore = hasMore,
+            nextOffset = nextOffset ?: newCategory.items.size
         )
         val currentHero = _uiState.value.heroItem
         val newHero = if (currentHero == null || !isEligibleHeroItem(currentHero)) {
@@ -3373,7 +3367,7 @@ class HomeViewModel @Inject constructor(
                             val category = Category(id = cfg.id, title = cfg.title, items = result.items).withTop10CapIfNeeded()
                             withContext(Dispatchers.Main.immediate) {
                                 if (requestId == loadHomeRequestId) {
-                                    updateMobileCategoryRow(cfg.id, category, hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id))
+                                    updateMobileCategoryRow(cfg.id, category, hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id), nextOffset = result.nextOffset)
                                     markHomeDataLoadSuccessful(requestId)
                                     persistCategoriesCache(_uiState.value.categories)
                                 }
@@ -3543,7 +3537,8 @@ class HomeViewModel @Inject constructor(
                             loadedById[catalog.id] = category
                             categoryPaginationStates[catalog.id] = CategoryPaginationState(
                                 loadedCount = category.items.size,
-                                hasMore = firstPage.hasMore && !isHardCappedTop10Catalog(catalog.id)
+                                hasMore = firstPage.hasMore && !isHardCappedTop10Catalog(catalog.id),
+                                nextOffset = firstPage.nextOffset ?: category.items.size
                             )
                         }
                         // Coalesce incremental row inserts so catalog arrivals do
@@ -3652,6 +3647,7 @@ class HomeViewModel @Inject constructor(
         if (!pagination.hasMore || pagination.isLoading) return
 
         pagination.isLoading = true
+        val requestId = loadHomeRequestId
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val currentCategories = _uiState.value.categories
@@ -3672,13 +3668,16 @@ class HomeViewModel @Inject constructor(
                     val cfg = catalog ?: return@launch
                     mediaRepository.loadCustomCatalogPage(
                         catalog = cfg,
-                        offset = realItems.size,
+                        offset = pagination.nextOffset,
                         limit = pageSize
                     )
                 }
 
+                if (requestId != loadHomeRequestId || categoryPaginationStates[categoryId] !== pagination) return@launch
+                val oldOffset = pagination.nextOffset
+                pagination.nextOffset = result.nextOffset ?: (oldOffset + result.items.size)
                 if (result.items.isEmpty()) {
-                    pagination.hasMore = false
+                    pagination.hasMore = result.hasMore && pagination.nextOffset > oldOffset
                     return@launch
                 }
 
@@ -3693,15 +3692,19 @@ class HomeViewModel @Inject constructor(
                     return@launch
                 }
 
-                val updatedCategories = currentCategories.map { category ->
-                    if (category.id == categoryId) {
-                        category.copy(items = realItems + uniqueNewItems)
-                    } else {
-                        category
-                    }
-                }
-
                 uniqueNewItems.forEach { mediaRepository.cacheItem(it) }
+                withContext(Dispatchers.Main.immediate) {
+                    if (requestId != loadHomeRequestId) return@withContext
+                    pagination.loadedCount = realItems.size + uniqueNewItems.size
+                    pagination.hasMore = result.hasMore
+                    _uiState.value = _uiState.value.copy(
+                        categories = _uiState.value.categories.map { category ->
+                            if (category.id == categoryId) category.copy(items = realItems + uniqueNewItems) else category
+                        },
+                        categoryHasMoreMap = _uiState.value.categoryHasMoreMap + (categoryId to result.hasMore)
+                    )
+                }
+                // Artwork enrichment must not hold an already-loaded page off screen.
                 val logoEntries = uniqueNewItems.take(6).mapNotNull { item ->
                     if (!isActionableMediaItem(item) || isIptvItem(item)) return@mapNotNull null
                     val key = "${item.mediaType}_${item.id}"
@@ -3722,17 +3725,6 @@ class HomeViewModel @Inject constructor(
                 }
                 preloadBackdropImages(uniqueNewItems.take(incrementalBackdropPrefetchItems).mapNotNull { it.backdrop ?: it.image })
 
-                pagination.loadedCount = updatedCategories
-                    .firstOrNull { it.id == categoryId }
-                    ?.items
-                    ?.size
-                    ?: pagination.loadedCount
-                pagination.hasMore = result.hasMore
-
-                _uiState.value = _uiState.value.copy(
-                    categories = updatedCategories,
-                    categoryHasMoreMap = _uiState.value.categoryHasMoreMap + (categoryId to result.hasMore)
-                )
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
 
@@ -3989,7 +3981,7 @@ class HomeViewModel @Inject constructor(
             // was dropping. For non-Trakt items, keep the 1..99 filter to avoid
             // showing completed (100%) or never-started (0%) items.
             .filter { item ->
-                if (useRemoteSync) true else item.progress in 1..99
+                if (useRemoteSync) true else item.isUpNext || item.progress in 1..99
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
     }
@@ -4094,6 +4086,13 @@ class HomeViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(categories = latestCategories)
                     refreshWatchedBadges()
                 } else {
+                    if (force) {
+                        // A forced refresh follows a user-visible state change (playback or a
+                        // watched action). Its empty result is authoritative; retaining the old
+                        // row here is what caused completed shows to hover indefinitely.
+                        publishContinueWatching(emptyList())
+                        return@launch
+                    }
                     // No new data from any source
                     val latestCategories = _uiState.value.categories.toMutableList()
                     val continueWatchingIndex = latestCategories.indexOfFirst { it.id == "continue_watching" }
@@ -4268,7 +4267,7 @@ class HomeViewModel @Inject constructor(
         val repairedItems = repairContinueWatchingMetadataIfNeeded(items)
         return applyContinueWatchingDismissals(sanitizeContinueWatchingItems(repairedItems))
             .filter { item ->
-                if (useRemoteSync) true else item.progress in 1..99 || item.resumePositionSeconds > 0L
+                if (useRemoteSync) true else item.isUpNext || item.progress in 1..99 || item.resumePositionSeconds > 0L
             }
             .take(Constants.MAX_CONTINUE_WATCHING)
     }
@@ -4955,6 +4954,45 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private suspend fun persistFollowingEpisodePointer(
+        item: MediaItem,
+        watchedSeason: Int,
+        watchedEpisode: Int,
+    ) {
+        val currentSeasonEpisodes = mediaRepository.getSeasonEpisodes(item.id, watchedSeason)
+            .orEmpty()
+            .sortedBy { it.episodeNumber }
+        if (currentSeasonEpisodes.isEmpty()) return
+        val followingEpisode = currentSeasonEpisodes.firstOrNull {
+            it.episodeNumber > watchedEpisode
+        } ?: mediaRepository.getSeasonEpisodes(item.id, watchedSeason + 1)
+            .orEmpty()
+            .sortedBy { it.episodeNumber }
+            .firstOrNull()
+            ?: return
+
+        val hasAired = EpisodeAvailability.hasAired(followingEpisode.airDate)
+        traktRepository.saveLocalContinueWatching(
+            mediaType = MediaType.TV,
+            tmdbId = item.id,
+            title = item.title,
+            posterPath = item.image,
+            backdropPath = item.backdrop,
+            season = followingEpisode.tmdbSeasonNumber,
+            episode = followingEpisode.tmdbEpisodeNumber,
+            displaySeason = followingEpisode.seasonNumber,
+            displayEpisode = followingEpisode.episodeNumber,
+            episodeTitle = followingEpisode.name,
+            progress = 0,
+            positionSeconds = 0L,
+            durationSeconds = 0L,
+            year = item.year,
+            isUpNext = true,
+            episodeAirDate = followingEpisode.airDate.orEmpty(),
+            emitUpdate = hasAired,
+        )
+    }
+
     fun toggleWatched(item: MediaItem) {
         viewModelScope.launch {
             try {
@@ -4997,42 +5035,11 @@ class HomeViewModel @Inject constructor(
                         traktRepository.markEpisodeWatched(item.id, nextEp.seasonNumber, nextEp.episodeNumber)
                         watchHistoryRepository.removeFromHistory(item.id, nextEp.seasonNumber, nextEp.episodeNumber)
 
-                        // Save the NEXT episode to CW (local + cloud) so it appears on all devices
                         try {
-                            // Handle season boundaries: if this was the last episode of the season, move to next season
-                            var followingSeason = nextEp.seasonNumber
-                            var followingEpisode = nextEp.episodeNumber + 1
-                            val seasonEpisodes = mediaRepository.getSeasonEpisodes(item.id, nextEp.seasonNumber)
-                            if (seasonEpisodes != null && followingEpisode > seasonEpisodes.size) {
-                                followingSeason = nextEp.seasonNumber + 1
-                                followingEpisode = 1
-                            }
-                            traktRepository.saveLocalContinueWatching(
-                                mediaType = MediaType.TV,
-                                tmdbId = item.id,
-                                title = item.title,
-                                posterPath = item.image,
-                                backdropPath = item.backdrop,
-                                season = followingSeason,
-                                episode = followingEpisode,
-                                episodeTitle = null,
-                                progress = 3,
-                                positionSeconds = 0L,
-                                durationSeconds = 1L,
-                                year = item.year
-                            )
-                            watchHistoryRepository.saveProgress(
-                                mediaType = MediaType.TV,
-                                tmdbId = item.id,
-                                title = item.title,
-                                poster = item.image,
-                                backdrop = item.backdrop,
-                                season = followingSeason,
-                                episode = followingEpisode,
-                                episodeTitle = null,
-                                progress = 0.01f,
-                                duration = 0L,
-                                position = 0L
+                            persistFollowingEpisodePointer(
+                                item = item,
+                                watchedSeason = nextEp.seasonNumber,
+                                watchedEpisode = nextEp.episodeNumber,
                             )
                             lastContinueWatchingUpdateMs = 0L
                             refreshContinueWatchingOnly(force = true)
@@ -5111,42 +5118,11 @@ class HomeViewModel @Inject constructor(
                 if (e is CancellationException) throw e
             }
 
-                        // Save the NEXT episode to CW (local + cloud) so it appears on all devices
                         try {
-                            var followingSeason = nextEp.seasonNumber
-                            var followingEpisode = nextEp.episodeNumber + 1
-                            val seasonEps = mediaRepository.getSeasonEpisodes(item.id, nextEp.seasonNumber)
-                            if (seasonEps != null && followingEpisode > seasonEps.size) {
-                                followingSeason = nextEp.seasonNumber + 1
-                                followingEpisode = 1
-                            }
-                            traktRepository.saveLocalContinueWatching(
-                                mediaType = MediaType.TV,
-                                tmdbId = item.id,
-                                title = item.title,
-                                posterPath = item.image,
-                                backdropPath = item.backdrop,
-                                season = followingSeason,
-                                episode = followingEpisode,
-                                episodeTitle = null,
-                                progress = 3,
-                                positionSeconds = 0L,
-                                durationSeconds = 1L,
-                                year = item.year
-                            )
-                            // Also save to Supabase for cross-device sync
-                            watchHistoryRepository.saveProgress(
-                                mediaType = MediaType.TV,
-                                tmdbId = item.id,
-                                title = item.title,
-                                poster = item.image,
-                                backdrop = item.backdrop,
-                                season = followingSeason,
-                                episode = followingEpisode,
-                                episodeTitle = null,
-                                progress = 0.01f,
-                                duration = 0L,
-                                position = 0L
+                            persistFollowingEpisodePointer(
+                                item = item,
+                                watchedSeason = nextEp.seasonNumber,
+                                watchedEpisode = nextEp.episodeNumber,
                             )
                             // Reset throttle so refresh actually runs
                             lastContinueWatchingUpdateMs = 0L

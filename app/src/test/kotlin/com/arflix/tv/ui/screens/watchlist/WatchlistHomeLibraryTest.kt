@@ -3,6 +3,8 @@ package com.arflix.tv.ui.screens.watchlist
 import android.content.Context
 import androidx.lifecycle.ViewModelStore
 import com.arflix.tv.data.model.MediaItem
+import com.arflix.tv.data.model.CatalogConfig
+import com.arflix.tv.data.model.CatalogSourceType
 import com.arflix.tv.data.repository.*
 import com.arflix.tv.data.repository.simkl.SimklAuthManager
 import com.arflix.tv.data.repository.sync.RemoteSyncManager
@@ -25,6 +27,9 @@ class WatchlistHomeLibraryTest {
     private val cloud = mockk<CloudSyncRepository>(relaxed = true)
     private val watchlist = mockk<WatchlistRepository>(relaxed = true)
     private val history = mockk<WatchHistoryRepository>(relaxed = true)
+    private val catalogItems = MutableStateFlow<List<CatalogConfig>>(emptyList())
+    private val traktAuth = MutableStateFlow(false)
+    private val trakt = mockk<TraktRepository>(relaxed = true)
     private lateinit var model: WatchlistViewModel
 
     private fun server(id: String, kind: HomeServerKind) = HomeServerConnection(
@@ -52,18 +57,16 @@ class WatchlistHomeLibraryTest {
         every { watchlist.watchlistItems } returns MutableStateFlow(emptyList())
         coEvery { watchlist.getLocalWatchlistItems() } returns emptyList()
         coEvery { history.getWatchHistory() } returns emptyList()
-        coEvery { media.getLogoUrl(any(), any()) } returns null
+        coEvery { media.getLogoUrl(any<MediaItem>()) } returns null
         coEvery { media.loadHomeServerLibraryPage(any(), any(), any(), any(), any(), any()) } coAnswers {
             awaitCancellation()
         }
-        val trakt = mockk<TraktRepository>(relaxed = true) {
-            every { isAuthenticated } returns MutableStateFlow(false)
-        }
+        every { trakt.isAuthenticated } returns traktAuth
         val profiles = mockk<ProfileManager>(relaxed = true) {
             every { activeProfileId } returns MutableStateFlow("profile")
         }
         val catalogs = mockk<CatalogRepository>(relaxed = true) {
-            every { observeCatalogs() } returns MutableStateFlow(emptyList())
+            every { observeCatalogs() } returns catalogItems
         }
         val simkl = mockk<SimklAuthManager>(relaxed = true)
         coEvery { simkl.isConnected() } returns false
@@ -159,5 +162,84 @@ class WatchlistHomeLibraryTest {
         assertEquals(HomeServerRepository.buildCatalogSourceRef(second, second.collections.single()),
             model.libraryState.value.selectedSourceRef)
         assertTrue(model.libraryState.value.isLoading)
+    }
+
+    @Test fun everyServerProviderLoadsPastSixtyAndKeepsLoadedPagesOnReturn() {
+        coEvery { media.loadHomeServerLibraryPage(any(), any(), any(), any(), any(), any()) } answers {
+            val offset = arg<Int>(1)
+            val end = (offset + 60).coerceAtMost(185)
+            MediaRepository.CategoryPageResult((offset until end).map { MediaItem(id = it + 1, title = "Movie $it") }, end < 185, end)
+        }
+        servers.value = listOf(server("JF", HomeServerKind.JELLYFIN), server("Plex", HomeServerKind.PLEX), server("Emby", HomeServerKind.EMBY))
+        listOf(HomeServerKind.JELLYFIN, HomeServerKind.PLEX, HomeServerKind.EMBY).forEach { kind ->
+            model.selectLibraryProvider(kind)
+            repeat(3) { model.loadMoreLibrary() }
+            assertEquals(185, model.libraryState.value.items.size)
+            assertFalse(model.libraryState.value.hasMore)
+        }
+        model.selectLibraryProvider(HomeServerKind.JELLYFIN)
+        assertEquals(185, model.libraryState.value.items.size)
+    }
+
+    @Test fun serverCursorAdvancesEvenWhenPageContainsDuplicates() {
+        coEvery { media.loadHomeServerLibraryPage(any(), any(), any(), any(), any(), any()) } answers {
+            val offset = arg<Int>(1)
+            MediaRepository.CategoryPageResult(listOf(MediaItem(id = if(offset < 120) 1 else 2, title = "Movie")), offset < 120, offset + 60)
+        }
+        servers.value = listOf(server("JF", HomeServerKind.JELLYFIN))
+        model.selectLibraryProvider(HomeServerKind.JELLYFIN)
+        model.loadMoreLibrary()
+        model.loadMoreLibrary()
+        assertEquals(2, model.libraryState.value.items.size)
+        assertFalse(model.libraryState.value.hasMore)
+        coVerify { media.loadHomeServerLibraryPage(any(), 120, any(), any(), any(), any()) }
+    }
+
+    @Test fun customListsPageBeyondTheOld120ItemLimit() {
+        val catalog = CatalogConfig("large-list", "Large list", CatalogSourceType.TRAKT)
+        coEvery { media.loadCustomCatalogPage(any(), any(), any()) } answers {
+            val offset = arg<Int>(1)
+            val end = (offset + 60).coerceAtMost(305)
+            MediaRepository.CategoryPageResult((offset until end).map { MediaItem(id = it + 1, title = "Movie $it") }, end < 305, end)
+        }
+        catalogItems.value = listOf(catalog)
+        model.selectSource("catalog_large-list")
+        repeat(5) { model.loadMoreActiveSource() }
+        assertEquals(305, model.uiState.value.allItems.size)
+        assertFalse(model.uiState.value.hasMore)
+    }
+
+    @Test fun fastLogoIsPublishedWhileAnotherLogoIsStillPending() = runBlocking {
+        val release = CompletableDeferred<Unit>()
+        val slow = MediaItem(id = 800, title = "Slow")
+        val fast = MediaItem(id = 801, title = "Fast")
+        coEvery { media.getLogoUrl(any<MediaItem>()) } coAnswers {
+            if (firstArg<MediaItem>().id == slow.id) release.await()
+            "https://example.invalid/${firstArg<MediaItem>().id}.png"
+        }
+        model.prefetchLogos(listOf(slow, fast))
+        assertTrue(model.logoUrls.value.containsKey(watchlistLogoKey(fast)))
+        assertFalse(model.logoUrls.value.containsKey(watchlistLogoKey(slow)))
+        release.complete(Unit)
+        assertTrue(model.logoUrls.value.containsKey(watchlistLogoKey(slow)))
+    }
+
+    @Test fun trackerShowsAllItemsBeforeSlowArtworkHydration() {
+        coEvery { trakt.getPersonalLists() } returns emptyList()
+        coEvery { trakt.getWatchlist() } returns (1..605).map { MediaItem(id = it, title = "Movie $it") }
+        coEvery { media.getMovieDetails(any()) } coAnswers { awaitCancellation() }
+        traktAuth.value = true
+        model.selectSource("tracker_trakt___watchlist__")
+        assertEquals(605, model.uiState.value.allItems.size)
+        assertFalse(model.uiState.value.isLoading)
+    }
+
+    @Test fun temporaryLogoFailureCanRetryOnTheNextViewportVisit() {
+        val item = MediaItem(id = 900, title = "Retry")
+        coEvery { media.getLogoUrl(item) } returnsMany listOf(null, "https://example.invalid/logo.png")
+        model.prefetchLogos(listOf(item))
+        assertFalse(model.logoUrls.value.containsKey(watchlistLogoKey(item)))
+        model.prefetchLogos(listOf(item))
+        assertTrue(model.logoUrls.value.containsKey(watchlistLogoKey(item)))
     }
 }

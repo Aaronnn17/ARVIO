@@ -2510,13 +2510,17 @@ fun PlayerScreen(
     // hasPlaybackStarted is also a key because the controls are inside
     // AnimatedVisibility(visible = hasPlaybackStarted && showControls),
     // so the play button isn't in composition until playback begins.
+    val canFocusPlaybackControls by rememberUpdatedState(
+        showControls && hasPlaybackStarted && !showSubtitleMenu && !showSourceMenu && !showSubtitleSettings && uiState.error == null
+    )
     LaunchedEffect(showControls, hasPlaybackStarted) {
-        if (showControls && hasPlaybackStarted && !showSubtitleMenu && !showSourceMenu && uiState.error == null) {
-            delay(300)
-            try {
-                playButtonFocusRequester.requestFocus()
-            } catch (e: Exception) {if (e is kotlinx.coroutines.CancellationException) throw e
-}
+        if (!canFocusPlaybackControls) return@LaunchedEffect
+        // Allow attachment, but do not restart this request when a menu closes:
+        // that menu owns restoration to the button that opened it.
+        repeat(3) {
+            androidx.compose.runtime.withFrameNanos { }
+            if (!canFocusPlaybackControls) return@LaunchedEffect
+            if (runCatching { playButtonFocusRequester.requestFocus() }.isSuccess) return@LaunchedEffect
         }
     }
 

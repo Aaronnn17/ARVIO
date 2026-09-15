@@ -1058,7 +1058,16 @@ class SettingsViewModel @Inject constructor(
 
     // ========== App Updates ==========
 
+    private var lastManualSyncTimeMs = 0L
+
     fun syncAllTrackingProviders(silent: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!silent && now - lastManualSyncTimeMs < 10_000L) {
+            return
+        }
+        if (!silent) {
+            lastManualSyncTimeMs = now
+        }
         viewModelScope.launch(Dispatchers.IO) {
             if (_uiState.value.isSyncing) return@launch
             withContext(Dispatchers.Main) {
@@ -1256,6 +1265,7 @@ class SettingsViewModel @Inject constructor(
             "Kannada",
             "Korean",
             "Lithuanian",
+            "Malay",
             "Malayalam",
             "Marathi",
             "Norwegian",

@@ -113,7 +113,9 @@ class MediaRepository @Inject constructor(
 
     data class CategoryPageResult(
         val items: List<MediaItem>,
-        val hasMore: Boolean
+        val hasMore: Boolean,
+        val nextOffset: Int? = null,
+        val totalCount: Int? = null
     )
 
     private val apiKey = Constants.TMDB_API_KEY
@@ -683,8 +685,6 @@ class MediaRepository @Inject constructor(
                 CatalogConfig("trending_tv", "Trending in Shows", CatalogSourceType.MDBLIST, isPreinstalled = true, sourceUrl = "https://mdblist.com/lists/snoak/trakt-s-trending-shows", sourceRef = "mdblist:https://mdblist.com/lists/snoak/trakt-s-trending-shows"),
                 CatalogConfig("favorite_tv", "Favorite TV", CatalogSourceType.PREINSTALLED, isPreinstalled = true),
                 CatalogConfig("trending_anime", "Trending in Anime", CatalogSourceType.MDBLIST, isPreinstalled = true, sourceUrl = "https://mdblist.com/lists/snoak/trending-anime-shows", sourceRef = "mdblist:https://mdblist.com/lists/snoak/trending-anime-shows"),
-                CatalogConfig(SportsAddonCapabilities.SPORTS_CATEGORY_ROW_ID, "Sports", CatalogSourceType.PREINSTALLED, isPreinstalled = true),
-                CatalogConfig(SportsAddonCapabilities.POPULAR_LIVE_TV_ROW_ID, "Popular Live Sports", CatalogSourceType.PREINSTALLED, isPreinstalled = true),
                 CatalogConfig("top10_movies_today", "Top 10 Movies Today", CatalogSourceType.MDBLIST, isPreinstalled = true, sourceUrl = "https://mdblist.com/lists/snoak/top-10-movies-of-the-day", sourceRef = "mdblist:https://mdblist.com/lists/snoak/top-10-movies-of-the-day"),
                 CatalogConfig("top10_shows_today", "Top 10 Shows Today", CatalogSourceType.MDBLIST, isPreinstalled = true, sourceUrl = "https://mdblist.com/lists/snoak/top-10-shows-of-the-day", sourceRef = "mdblist:https://mdblist.com/lists/snoak/top-10-shows-of-the-day"),
                 CatalogConfig("just_added", "Just Added", CatalogSourceType.MDBLIST, isPreinstalled = true, sourceUrl = "https://mdblist.com/lists/snoak/latest-movies-digital-release", sourceRef = "mdblist:https://mdblist.com/lists/snoak/latest-movies-digital-release"),
@@ -1877,12 +1877,14 @@ class MediaRepository @Inject constructor(
 
         val pageRefs: List<Pair<MediaType, Int>>
         val hasMore: Boolean
+        var sourceNextOffset: Int? = null
         if (catalog.sourceType == CatalogSourceType.HOME_SERVER) {
             return@coroutineScope loadHomeServerCatalogPage(catalog, offset, effectiveLimit)
         } else if (catalog.sourceType == CatalogSourceType.ADDON) {
             val page = loadAddonCatalogRefsPage(catalog, offset, effectiveLimit)
             pageRefs = page.refs
-            hasMore = page.hasMore && offset + pageRefs.size < rankedCatalogLimit
+            sourceNextOffset = page.nextOffset
+            hasMore = page.hasMore && page.nextOffset < rankedCatalogLimit
         } else {
             val mediaRefs = when (catalog.sourceType) {
                 CatalogSourceType.TRAKT -> loadTraktCatalogRefs(catalog.sourceUrl, catalog.sourceRef)
@@ -1921,7 +1923,8 @@ class MediaRepository @Inject constructor(
         }
         CategoryPageResult(
             items = items,
-            hasMore = hasMore
+            hasMore = hasMore,
+            nextOffset = sourceNextOffset ?: (offset + pageRefs.size)
         )
     }
 
@@ -1953,7 +1956,8 @@ class MediaRepository @Inject constructor(
         }
         CategoryPageResult(
             items = orderedItems.distinctBy { "${it.mediaType.name}_${it.id}" },
-            hasMore = page.hasMore
+            hasMore = page.hasMore,
+            nextOffset = page.nextOffset
         )
     }
 
@@ -2003,7 +2007,7 @@ class MediaRepository @Inject constructor(
             )
         }
         cacheItems(items)
-        return CategoryPageResult(items = items, hasMore = page.hasMore)
+        return CategoryPageResult(items = items, hasMore = page.hasMore, nextOffset = page.nextOffset, totalCount = page.totalCount)
     }
 
     private suspend fun resolveHomeServerCatalogItem(item: HomeServerCatalogItem): MediaItem? {
@@ -2527,7 +2531,8 @@ class MediaRepository @Inject constructor(
 
     private data class AddonCatalogRefsPage(
         val refs: List<Pair<MediaType, Int>>,
-        val hasMore: Boolean
+        val hasMore: Boolean,
+        val nextOffset: Int
     )
 
     private suspend fun loadAddonCatalogRefsPage(
@@ -2536,7 +2541,7 @@ class MediaRepository @Inject constructor(
         limit: Int
     ): AddonCatalogRefsPage = coroutineScope {
         val descriptor = resolveAddonCatalogDescriptor(catalog)
-            ?: return@coroutineScope AddonCatalogRefsPage(emptyList(), hasMore = false)
+            ?: return@coroutineScope AddonCatalogRefsPage(emptyList(), hasMore = false, nextOffset = offset)
 
         val accumulated = LinkedHashSet<Pair<MediaType, Int>>()
         var probeOffset = offset.coerceAtLeast(0)
@@ -2545,14 +2550,18 @@ class MediaRepository @Inject constructor(
         val maxProbes = 3
 
         while (probes < maxProbes && accumulated.size < limit) {
-            val response = runCatching {
+            val response = try {
                 streamRepository.getAddonCatalogPage(
                     addonId = descriptor.addonId,
                     catalogType = descriptor.catalogType,
                     catalogId = descriptor.catalogId,
                     skip = probeOffset
                 )
-            }.getOrNull() ?: break
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                // A failed request is retryable, not an exhausted catalogue.
+                throw e
+            }
 
             val metas = response.metas ?: response.items ?: emptyList()
             if (metas.isEmpty()) {
@@ -2560,21 +2569,23 @@ class MediaRepository @Inject constructor(
                 break
             }
 
+            // Resolve only what this row needs, not a provider's entire 100-item page.
+            // Advance by source entries consumed, including entries that cannot be matched.
+            val consumed = metas.take(limit - accumulated.size)
             parseAddonPageRefs(
-                metas = metas,
+                metas = consumed,
                 descriptor = descriptor
             ).forEach { accumulated.add(it) }
 
-            hasMore = metas.size >= limit
-            if (!hasMore) break
-
-            probeOffset += metas.size
+            hasMore = true // Providers choose their own page size; only empty means exhausted.
+            probeOffset += consumed.size
             probes += 1
         }
 
         AddonCatalogRefsPage(
             refs = accumulated.take(limit),
-            hasMore = hasMore
+            hasMore = hasMore,
+            nextOffset = probeOffset
         )
     }
 
@@ -3723,50 +3734,29 @@ class MediaRepository @Inject constructor(
 
     private suspend fun loadTraktCatalogRefs(sourceUrl: String?, sourceRef: String? = null): List<Pair<MediaType, Int>> {
         suspend fun loadFromParsed(parsed: ParsedCatalogUrl): List<Pair<MediaType, Int>> {
-            val items: List<TraktPublicListItem> = when (parsed) {
-                is ParsedCatalogUrl.TraktUserList -> {
-                    val movies = runCatching {
-                        traktApi.getUserListItems(
-                            clientId = Constants.TRAKT_CLIENT_ID,
-                            username = parsed.username,
-                            listId = parsed.listId,
-                            type = "movies",
-                            limit = 100
-                        )
-                    }.getOrElse { emptyList() }
-                    val shows = runCatching {
-                        traktApi.getUserListItems(
-                            clientId = Constants.TRAKT_CLIENT_ID,
-                            username = parsed.username,
-                            listId = parsed.listId,
-                            type = "shows",
-                            limit = 100
-                        )
-                    }.getOrElse { emptyList() }
-                    movies + shows
+            suspend fun loadType(type: String): List<TraktPublicListItem> {
+                val result = mutableListOf<TraktPublicListItem>()
+                var previous: List<TraktPublicListItem>? = null
+                var page = 1
+                while (true) {
+                    val rows = when (parsed) {
+                        is ParsedCatalogUrl.TraktUserList -> traktApi.getUserListItems(
+                            clientId = Constants.TRAKT_CLIENT_ID, username = parsed.username,
+                            listId = parsed.listId, type = type, page = page, limit = 100)
+                        is ParsedCatalogUrl.TraktList -> traktApi.getListItems(
+                            clientId = Constants.TRAKT_CLIENT_ID, listId = parsed.listId,
+                            type = type, page = page, limit = 100)
+                        else -> emptyList()
+                    }
+                    if (rows == previous) break
+                    result += rows
+                    if (rows.size < 100) break
+                    previous = rows
+                    page++
                 }
-                is ParsedCatalogUrl.TraktList -> {
-                    val movies = runCatching {
-                        traktApi.getListItems(
-                            clientId = Constants.TRAKT_CLIENT_ID,
-                            listId = parsed.listId,
-                            type = "movies",
-                            limit = 100
-                        )
-                    }.getOrElse { emptyList() }
-                    val shows = runCatching {
-                        traktApi.getListItems(
-                            clientId = Constants.TRAKT_CLIENT_ID,
-                            listId = parsed.listId,
-                            type = "shows",
-                            limit = 100
-                        )
-                    }.getOrElse { emptyList() }
-                    movies + shows
-                }
-                else -> emptyList()
+                return result
             }
-            return mapTraktItemsToTmdbRefs(items)
+            return mapTraktItemsToTmdbRefs(loadType("movies") + loadType("shows"))
         }
 
         val parsedFromRef = parseTraktRef(sourceRef)

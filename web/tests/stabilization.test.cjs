@@ -127,6 +127,7 @@ test('Tracker read preferences stay independent from connected services', async 
 
 test('A partial tracker outage is not an authoritative empty or partial snapshot', async () => {
   const { m, trakt, simkl } = trackingRouter();
+  m.saveTrackingPreferences('p', { ...m.defaultTrackingPreferences(), watchlistReadMode: 'both' });
   trakt.watchlist = async () => ['retained'];
   simkl.watchlist = async () => { throw new Error('offline'); };
   await assert.rejects(m.syncClient().watchlist(), /saved library has been kept/);

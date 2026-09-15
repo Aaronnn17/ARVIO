@@ -79,7 +79,7 @@ object OkHttpProvider {
     }
 
     @Volatile
-    private var appContext: Context? = null
+    internal var appContext: Context? = null
 
     @Volatile
     private var selectedDnsProvider: AppDnsProvider = AppDnsProvider.SYSTEM
@@ -89,6 +89,18 @@ object OkHttpProvider {
 
     val customUserAgent: String get() = _customUserAgent
     val userAgent: String get() = userAgentOr(DEFAULT_USER_AGENT)
+
+    fun getAppUserAgent(context: Context? = appContext): String {
+        val rawVersion = BuildConfig.VERSION_NAME
+        val cleanVersion = rawVersion.substringBefore("-")
+        val platform = when (context?.let { com.arflix.tv.util.detectDeviceType(it) }) {
+            com.arflix.tv.util.DeviceType.PHONE -> "Android Mobile"
+            com.arflix.tv.util.DeviceType.TABLET -> "Android Tablet"
+            com.arflix.tv.util.DeviceType.TV -> "Android TV"
+            null -> "Android"
+        }
+        return "ARVIO/$cleanVersion ($platform)"
+    }
 
     fun setCustomUserAgent(value: String) {
         _customUserAgent = value.trim().takeIf(::isSafeHeaderValue).orEmpty()

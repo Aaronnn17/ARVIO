@@ -238,7 +238,7 @@ private fun Context.genreNames(mediaType: MediaType, genreIds: List<Int>): List<
     }
 
 @Stable
-private class HomeFocusState(
+internal class HomeFocusState(
     initialRowIndex: Int = 0,
     initialItemIndex: Int = 0,
     initialSidebarIndex: Int = 1
@@ -249,6 +249,8 @@ private class HomeFocusState(
     var currentItemIndex by mutableIntStateOf(initialItemIndex)
     var lastNavEventTime by mutableLongStateOf(0L)
     var userHasNavigated by mutableStateOf(false)
+    var preferredCategoryId: String? = null
+    private var reconciledCategories: List<Category>? = null
     // Per-row item indices — when pressing D-pad Down, we save the current item
     // index for the current row so pressing Up later returns to the same position.
     // Netflix preserves horizontal scroll position across rows; without this,
@@ -258,10 +260,52 @@ private class HomeFocusState(
     // Keep the exact focused title as well as its index. Catalog refreshes can
     // insert or reorder items, so the numeric index alone is not a stable anchor.
     val rowItemKeysByCategoryId = mutableMapOf<String, String>()
-    // Index a row was clamped to because it briefly shrank (Home reloads rows from their first
-    // page on resume, then pages back in). That clamp is not a user choice, so the focus anchor
-    // must survive it; -1 when no such clamp is pending.
-    var transientClampIndex = -1
+    private var categoryHasMoreMap: Map<String, Boolean> = emptyMap()
+
+    private fun selectionKeys(category: Category): List<String> {
+        val keys = stableHomeRowItemKeys(category.id, navigableHomeItems(category.items))
+        return if (homeRowSupportsViewAll(category, categoryHasMoreMap[category.id] == true)) {
+            keys + HOME_VIEW_ALL_FOCUS_KEY
+        } else keys
+    }
+
+    fun restoredItemIndex(category: Category, fallback: Int): Int = resolveHomeItemIndex(
+        selectionKeys(category), rowItemKeysByCategoryId[category.id], fallback,
+    )
+
+    fun recordSelection(categories: List<Category>) {
+        val category = categories.getOrNull(currentRowIndex) ?: return
+        preferredCategoryId = category.id
+        val items = navigableHomeItems(category.items)
+        if (currentItemIndex == homeRowViewAllIndex(category, categoryHasMoreMap[category.id] == true)) {
+            rowItemIndicesByCategoryId[category.id] = currentItemIndex
+            rowItemKeysByCategoryId[category.id] = HOME_VIEW_ALL_FOCUS_KEY
+            return
+        }
+        val item = items.getOrNull(currentItemIndex) ?: return
+        rowItemIndicesByCategoryId[category.id] = currentItemIndex
+        if (!item.isPlaceholder) {
+            rowItemKeysByCategoryId[category.id] = stableHomeRowItemKeys(category.id, items)[currentItemIndex]
+        }
+    }
+
+    fun reconcile(categories: List<Category>, hasMoreMap: Map<String, Boolean> = emptyMap()) {
+        if (categories.isEmpty()) return
+        if (categories === reconciledCategories && categoryHasMoreMap == hasMoreMap) return
+        reconciledCategories = categories
+        categoryHasMoreMap = hasMoreMap
+        currentRowIndex = resolveHomeCategoryIndex(categories.map { it.id }, preferredCategoryId, currentRowIndex)
+        val category = categories[currentRowIndex]
+        preferredCategoryId = category.id
+        val items = navigableHomeItems(category.items)
+        // A transient empty/skeleton response is not a user selection or deletion.
+        if (items.isEmpty() || items.all { it.isPlaceholder }) return
+        val keys = selectionKeys(category)
+        val anchor = rowItemKeysByCategoryId[category.id]
+        val fallback = rowItemIndicesByCategoryId[category.id] ?: currentItemIndex
+        currentItemIndex = resolveHomeItemIndex(keys, anchor, fallback)
+        if (anchor == null || anchor in keys) recordSelection(categories)
+    }
 
     companion object {
         // `userHasNavigated` is saved as the 4th element (0/1). Without it,
@@ -269,19 +313,31 @@ private class HomeFocusState(
         // start row" reset to fire (since the field defaulted back to false),
         // which snapped the scroll position to Trending Movies — losing the
         // user's place in Franchises or wherever they were.
-        val Saver: androidx.compose.runtime.saveable.Saver<HomeFocusState, List<Int>> =
+        val Saver: androidx.compose.runtime.saveable.Saver<HomeFocusState, List<Any>> =
             androidx.compose.runtime.saveable.Saver(
                 save = {
                     listOf(
                         it.currentRowIndex,
                         it.currentItemIndex,
                         it.sidebarFocusIndex,
-                        if (it.userHasNavigated) 1 else 0
+                        if (it.userHasNavigated) 1 else 0,
+                        it.preferredCategoryId.orEmpty(),
+                        HashMap(it.rowItemIndicesByCategoryId),
+                        HashMap(it.rowItemKeysByCategoryId),
+                        it.isSidebarFocused
                     )
                 },
                 restore = {
-                    HomeFocusState(it[0], it[1], it[2]).apply {
+                    HomeFocusState(it[0] as Int, it[1] as Int, it[2] as Int).apply {
                         userHasNavigated = (it.getOrNull(3) ?: 0) == 1
+                        preferredCategoryId = (it.getOrNull(4) as? String)?.takeIf(String::isNotBlank)
+                        (it.getOrNull(5) as? Map<*, *>)?.forEach { (key, value) ->
+                            if (key is String && value is Int) rowItemIndicesByCategoryId[key] = value
+                        }
+                        (it.getOrNull(6) as? Map<*, *>)?.forEach { (key, value) ->
+                            if (key is String && value is String) rowItemKeysByCategoryId[key] = value
+                        }
+                        isSidebarFocused = it.getOrNull(7) as? Boolean ?: false
                     }
                 }
             )
@@ -341,10 +397,13 @@ private fun chooseContinueWatchingCategory(first: Category, second: Category): C
 
 private fun getFocusedItem(categories: List<Category>, rowIndex: Int, itemIndex: Int): MediaItem? {
     val row = categories.getOrNull(rowIndex)
-    return row?.items?.getOrNull(itemIndex)
+    return row?.items?.let(::navigableHomeItems)?.getOrNull(itemIndex)
         ?: row?.items?.firstOrNull()
         ?: categories.firstOrNull()?.items?.firstOrNull()
 }
+
+internal fun navigableHomeItems(items: List<MediaItem>): List<MediaItem> =
+    if (items.any { it.isPlaceholder } && items.any { !it.isPlaceholder }) items.filterNot { it.isPlaceholder } else items
 
 private fun homeRowItemKey(item: MediaItem): String {
     val episodeSuffix = item.nextEpisode?.let { "_S${it.seasonNumber}E${it.episodeNumber}" }.orEmpty()
@@ -469,7 +528,7 @@ private fun createHomeHeroPlaybackHandles(context: Context): HomeHeroPlaybackHan
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
     val heroDataSourceFactory =
-        OkHttpDataSource.Factory(heroOkHttp).setUserAgent("ARVIO/1.7.0 (Android TV)")
+        OkHttpDataSource.Factory(heroOkHttp).setUserAgent(OkHttpProvider.getAppUserAgent(context))
     val heroHlsFactory = HlsMediaSource.Factory(heroDataSourceFactory)
         .setAllowChunklessPreparation(true)
     val heroDefaultFactory = DefaultMediaSourceFactory(context)
@@ -497,10 +556,10 @@ private fun createHomeHeroPlaybackHandles(context: Context): HomeHeroPlaybackHan
 
 private suspend fun androidx.compose.foundation.lazy.LazyListState.animateHomeScrollDelta(
     deltaPx: Float,
-    durationMillis: Int,
-    isRtl: Boolean = false
+    durationMillis: Int
 ) {
-    val targetDelta = if (isRtl) -deltaPx else deltaPx
+    // LazyListState consumes logical forward/backward deltas, also in RTL.
+    val targetDelta = deltaPx
     if (abs(targetDelta) <= 1f) return
     scroll(scrollPriority = MutatePriority.PreventUserInput) {
         var previousValue = 0f
@@ -774,7 +833,7 @@ fun HomeScreen(
     val contentStartPadding = if (isMobile) 16.dp else 36.dp
 
     // Use rememberSaveable to persist focus position across navigation (back from details page)
-    val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
+    val focusState = rememberSaveable(currentProfile?.id, saver = HomeFocusState.Saver) { HomeFocusState() }
     val fastScrollThresholdMs = 650L
     // How long the D-pad must sit still before the hero starts a live IPTV preview.
     // This gates only the IPTV branch of heroVideoUrl (collection MP4s skip it), so it is
@@ -1101,7 +1160,15 @@ fun HomeScreen(
         // On TV, fill the entire screen with the backdrop.
         if (!isMobile) {
             val backdropModifier = Modifier.fillMaxSize()
-            Box(modifier = backdropModifier) {
+            Box(modifier = backdropModifier.graphicsLayer {
+                // Cache the unchanged backdrop and scrims as one full-resolution layer
+                // while the rails move. Video surfaces must remain independently composited.
+                compositingStrategy = if (heroExoPlayer == null) {
+                    androidx.compose.ui.graphics.CompositingStrategy.Offscreen
+                } else {
+                    androidx.compose.ui.graphics.CompositingStrategy.Auto
+                }
+            }) {
                 if (!showCinematicHomeLayer || settledBackdrop == null) {
                     Box(
                         modifier = Modifier
@@ -2342,7 +2409,7 @@ private fun MobileHeroCarousel(
 }
 
 @Composable
-private fun HomeInputLayer(
+internal fun HomeInputLayer(
     categories: List<Category>,
     cardLogoUrls: Map<String, String>,
     cardImdbRatings: Map<String, String> = emptyMap(),
@@ -2395,7 +2462,6 @@ private fun HomeInputLayer(
     var selectDownAtMs by remember { mutableLongStateOf(0L) }
     var rootHasFocus by remember { mutableStateOf(false) }
     val focusRecoveryDelayMs = 180L
-    var preferredCategoryId by rememberSaveable { mutableStateOf<String?>(null) }
     val dpadRepeatGate = rememberArvioDpadRepeatGate(
         horizontalMinRepeatIntervalMs = 80L,
         verticalMinRepeatIntervalMs = 112L
@@ -2416,30 +2482,12 @@ private fun HomeInputLayer(
         }
     }
     LaunchedEffect(hasProfile) {
-        if (hasProfile) focusState.sidebarFocusIndex = 2
+        if (hasProfile && !focusState.userHasNavigated) focusState.sidebarFocusIndex = 2
     }
 
-    // Row insertion/reordering must not replace the focused catalog identity.
-    LaunchedEffect(focusState.currentRowIndex) {
-        preferredCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
-    }
-
-    // Clamp focus indices when the category list structurally changes (rows added
-    // or removed). This uses only the category IDs as the key — NOT item counts —
-    // so it only fires when rows themselves appear/disappear, not when items within
-    // a row change (which happens 8-14 times during cold start as skeletons are
-    // replaced by real data, logos load, badges update, etc.).
-    //
-    // The previous implementation used item counts in the key and also contained
-    // a "fallback to first non-empty row" path that aggressively reset focus
-    // indices, plus a requestFocus() call that fought with the existing focused
-    // card. Both of those caused the visible "trip" on startup where focus
-    // disappeared until the user pressed Up/Down.
-    //
-    // The new approach is purely defensive: only clamp out-of-bounds indices,
-    // never jump to a different row, never re-request focus.
-    val categoryIds = remember(categories) { categories.map { it.id } }
-    LaunchedEffect(categoryIds) {
+    // One owner reconciles both row and title identity. Input records anchors
+    // synchronously, so a late refresh cannot restore the previous key press.
+    LaunchedEffect(categories, categoryHasMoreMap) {
         if (categories.isEmpty()) return@LaunchedEffect
 
         if (!focusState.userHasNavigated && !focusState.isSidebarFocused) {
@@ -2447,18 +2495,13 @@ private fun HomeInputLayer(
             if (focusState.currentRowIndex != preferredStartRow) {
                 focusState.currentRowIndex = preferredStartRow
                 focusState.currentItemIndex = 0
-                preferredCategoryId = categories.getOrNull(preferredStartRow)?.id
+                focusState.preferredCategoryId = categories.getOrNull(preferredStartRow)?.id
             }
         }
 
         // If the preferred category still exists, restore the row index to it.
         // Otherwise keep the current index but clamp to valid range.
-        focusState.currentRowIndex = resolveHomeCategoryIndex(
-            categoryIds = categoryIds,
-            preferredCategoryId = preferredCategoryId,
-            fallbackIndex = focusState.currentRowIndex
-        )
-        preferredCategoryId = categories.getOrNull(focusState.currentRowIndex)?.id
+        focusState.reconcile(categories, categoryHasMoreMap)
     }
 
     BackHandler {
@@ -2472,70 +2515,6 @@ private fun HomeInputLayer(
             }
             focusState.isSidebarFocused = true
         }
-    }
-
-    val focusedCategory = categories.getOrNull(focusState.currentRowIndex)
-    val focusedCategoryId = focusedCategory?.id
-    val focusedItemKeys = remember(focusedCategoryId, focusedCategory?.items) {
-        if (focusedCategory == null) emptyList() else {
-            stableHomeRowItemKeys(focusedCategory.id, focusedCategory.items)
-        }
-    }
-    // Restore the same title when a row is reordered or refreshed. Always clamp
-    // to a real item: an out-of-range index can otherwise scroll a paged rail
-    // entirely into its loading placeholders.
-    LaunchedEffect(focusedCategoryId, focusedItemKeys) {
-        val categoryId = focusedCategoryId ?: return@LaunchedEffect
-        val viewAllIndex = focusedCategory
-            ?.let { homeRowViewAllIndex(it, categoryHasMoreMap[it.id] == true) }
-            ?: -1
-        val preferredKey = focusState.rowItemKeysByCategoryId[categoryId]
-        // The anchor map is not saved, so right after returning from the grid the key is
-        // missing and the restored index itself says focus was on the "View all" card.
-        val onViewAllCard = preferredKey == HOME_VIEW_ALL_FOCUS_KEY ||
-            (preferredKey == null && focusState.currentItemIndex == viewAllIndex)
-        val resolvedIndex = when {
-            onViewAllCard && viewAllIndex >= 0 -> viewAllIndex
-            onViewAllCard -> clampHomeItemIndex(focusedCategory?.items.orEmpty(), focusState.currentItemIndex)
-            else -> resolveHomeItemIndex(
-                itemKeys = focusedItemKeys,
-                preferredItemKey = preferredKey,
-                fallbackIndex = focusState.currentItemIndex
-            )
-        }
-        if (focusState.currentItemIndex != resolvedIndex) {
-            // The anchored title (or "View all" card) is missing only because the row shrank —
-            // Home reloads rows from their first page on resume, then pages back in. Keep the
-            // anchor so focus returns to it once the row regrows.
-            val anchorMissing = preferredKey != null &&
-                if (onViewAllCard) viewAllIndex < 0 else preferredKey !in focusedItemKeys
-            focusState.transientClampIndex = if (anchorMissing) resolvedIndex else -1
-            focusState.currentItemIndex = resolvedIndex
-        }
-        focusState.rowItemIndicesByCategoryId[categoryId] = resolvedIndex
-    }
-
-    // User navigation updates the stable identity anchor. This effect is not
-    // keyed on the item list, so a background reorder cannot overwrite it first.
-    LaunchedEffect(focusedCategoryId, focusState.currentItemIndex) {
-        val categoryId = focusedCategoryId ?: return@LaunchedEffect
-        val itemIndex = focusState.currentItemIndex
-        focusState.rowItemIndicesByCategoryId[categoryId] = itemIndex
-        if (itemIndex == focusState.transientClampIndex) {
-            // Forced by a shrunken row, not by the user: keep the previous anchor.
-            focusState.transientClampIndex = -1
-            return@LaunchedEffect
-        }
-        focusState.transientClampIndex = -1
-        val viewAllIndex = focusedCategory
-            ?.let { homeRowViewAllIndex(it, categoryHasMoreMap[it.id] == true) }
-            ?: -1
-        val itemKey = if (itemIndex == viewAllIndex) {
-            HOME_VIEW_ALL_FOCUS_KEY
-        } else {
-            focusedItemKeys.getOrNull(itemIndex)
-        }
-        itemKey?.let { focusState.rowItemKeysByCategoryId[categoryId] = it }
     }
 
     val keyEventModifier = if (isMobile) {
@@ -2584,7 +2563,7 @@ private fun HomeInputLayer(
                     true
                 } else {
                     val row = categories.getOrNull(focusState.currentRowIndex)
-                    val maxItems = row?.items?.size ?: 0
+                    val maxItems = row?.items?.let(::navigableHomeItems)?.size ?: 0
                     val viewAllSlots = if (row != null && homeRowSupportsViewAll(row, categoryHasMoreMap[row.id] == true)) 1 else 0
                     if (focusState.currentItemIndex < maxItems - 1 + viewAllSlots) {
                         focusState.currentItemIndex++
@@ -2612,7 +2591,10 @@ private fun HomeInputLayer(
                 }
             }
 
-            when (event.type) {
+            // Reconcile against this render's data before applying new input, not in
+            // an asynchronous effect after a background update and key press race.
+            focusState.reconcile(categories, categoryHasMoreMap)
+            val handled = when (event.type) {
                 KeyEventType.KeyDown -> when (event.key) {
                     Key.Enter, Key.DirectionCenter -> {
                         // Track KeyDown time for long-press detection.
@@ -2670,7 +2652,7 @@ private fun HomeInputLayer(
                                 ?.let(focusState.rowItemIndicesByCategoryId::get)
                                 ?: 0
                             focusState.currentItemIndex = targetCategory
-                                ?.let { clampHomeItemIndex(it.items, restoredIndex) }
+                                ?.let { focusState.restoredItemIndex(it, restoredIndex) }
                                 ?: 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             true
@@ -2693,7 +2675,7 @@ private fun HomeInputLayer(
                                 ?.let(focusState.rowItemIndicesByCategoryId::get)
                                 ?: focusState.currentItemIndex
                             focusState.currentItemIndex = targetCategory
-                                ?.let { clampHomeItemIndex(it.items, restoredIndex) }
+                                ?.let { focusState.restoredItemIndex(it, restoredIndex) }
                                 ?: 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             true
@@ -2709,7 +2691,7 @@ private fun HomeInputLayer(
                                 ?.let(focusState.rowItemIndicesByCategoryId::get)
                                 ?: 0
                             focusState.currentItemIndex = targetCategory
-                                ?.let { clampHomeItemIndex(it.items, restoredIndex) }
+                                ?.let { focusState.restoredItemIndex(it, restoredIndex) }
                                 ?: 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             true
@@ -2802,6 +2784,10 @@ private fun HomeInputLayer(
                     }
                     else -> false
                 }
+            if (event.type == KeyEventType.KeyDown && isArvioDpadNavigationKey(event.key)) {
+                focusState.recordSelection(categories)
+            }
+            handled
             }
     }
 
@@ -3273,30 +3259,6 @@ private fun TvHomeRowsLayer(
     featuredTrailerVolume: Float = 0f,
     onItemClick: (MediaItem) -> Unit
 ) {
-    // ── Focus-row stabilizer ──
-    // Track the focused row by its category ID (stable) rather than integer
-    // index. When new catalogs are inserted above the focused row (e.g.,
-    // "Favorite TV" or custom Trakt lists loading), the integer index of the
-    // focused row shifts but its ID stays the same. Without this correction
-    // the LazyColumn would scroll to the wrong row and the focus highlight
-    // would visually "trip" to a different catalog until the user presses
-    // Up/Down to re-establish focus. This was the root cause of the startup
-    // focus/catalog glitch.
-    var focusedCategoryId by remember { mutableStateOf<String?>(null) }
-    // Sync: when the user moves focus (currentRowIndex changes from D-pad),
-    // update the tracked category ID.
-    LaunchedEffect(focusState.currentRowIndex) {
-        val id = categories.getOrNull(focusState.currentRowIndex)?.id
-        if (id != null) focusedCategoryId = id
-    }
-    LaunchedEffect(categories) {
-        val tracked = focusedCategoryId ?: return@LaunchedEffect
-        val newIndex = categories.indexOfFirst { it.id == tracked }
-        if (newIndex >= 0 && newIndex != focusState.currentRowIndex) {
-            focusState.currentRowIndex = newIndex
-        }
-    }
-
     val currentRowIndex = focusState.currentRowIndex
     val rowWindowStart = remember(categories, currentRowIndex, limitRowsDuringStartup) {
         if (!limitRowsDuringStartup || categories.size <= 3) {
@@ -3318,18 +3280,6 @@ private fun TvHomeRowsLayer(
     }
     val localCurrentRowIndex = (currentRowIndex - rowWindowStart)
         .coerceIn(0, (renderedCategories.size - 1).coerceAtLeast(0))
-
-    val density = LocalDensity.current
-    val rowLayoutModes = renderedCategories.map { category ->
-        rememberCatalogueRowLayoutMode("home:${category.id}") == CardLayoutMode.POSTER
-    }
-    val categoryHeightsPx = remember(renderedCategories, rowLayoutModes, density) {
-        renderedCategories.mapIndexed { idx, _ ->
-            val usePoster = rowLayoutModes.getOrNull(idx) ?: false
-            val heightDp = if (usePoster) 245.dp else 202.dp
-            with(density) { heightDp.toPx() }
-        }
-    }
 
     var isFastScrolling by remember { mutableStateOf(false) }
     LaunchedEffect(focusState) {
@@ -3435,13 +3385,14 @@ private fun TvHomeRowsLayer(
                     val onRowViewAll = remember(category.id) {
                         { onViewAllCategory(category.id) }
                     }
-                    val onRowItemFocused = remember(actualRowIndex, category.id) {
+                    val onRowItemFocused = remember(actualRowIndex, category.id, categories) {
                         { item: MediaItem, itemIdx: Int ->
                             focusState.currentRowIndex = actualRowIndex
                             focusState.currentItemIndex = itemIdx
                             focusState.rowItemIndicesByCategoryId[category.id] = itemIdx
                             focusState.isSidebarFocused = false
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
+                            focusState.recordSelection(categories)
                         }
                     }
                     Box(
@@ -3774,14 +3725,12 @@ private fun ContentRow(
                 )
             }
         } else {
-            val realItems = category.items.filterNot { it.isPlaceholder }
-            realItems.ifEmpty { category.items }
+            navigableHomeItems(category.items)
         }
     }
     val itemKeys = remember(category.id, itemsToRender) {
         stableHomeRowItemKeys(category.id, itemsToRender)
     }
-    val isRtlLayout = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val totalItems = itemsToRender.size
     val hasViewAllCard = showViewAll && itemsToRender.none { it.isPlaceholder }
     // Scroll and focus bounds include the trailing "View all" card when present.
@@ -3812,11 +3761,13 @@ private fun ContentRow(
             featuredExpandedForIndex = focusedItemIndex
         }
     }
-    val railFocusOverlayActive = isCurrentRow && isScrollable && focusedItemIndex >= 0 && totalItems > 0 &&
-        !hasFeaturedCard &&
-        focusedItemIndex <= maxFirstIndex &&
-        focusedItemIndex == rowState.firstVisibleItemIndex &&
-        rowState.firstVisibleItemScrollOffset == 0
+    val railFocusOverlayActive by remember(isCurrentRow, isScrollable, focusedItemIndex, totalItems, hasFeaturedCard) {
+        derivedStateOf {
+            isCurrentRow && isScrollable && focusedItemIndex in 0 until totalItems &&
+                !hasFeaturedCard && focusedItemIndex == rowState.firstVisibleItemIndex &&
+                rowState.firstVisibleItemScrollOffset == 0
+        }
+    }
     val focusedCardIndex = if (railFocusOverlayActive) {
         -1
     } else {
@@ -3854,7 +3805,8 @@ private fun ContentRow(
 
         val extraOffset = 0
 
-        if (lastScrollIndex == scrollTargetIndex && lastScrollOffset == extraOffset) return@LaunchedEffect
+        if (lastScrollIndex == scrollTargetIndex && currentFirstIndex == scrollTargetIndex &&
+            abs(currentFirstOffset - extraOffset) <= 1) return@LaunchedEffect
         val isFirstScroll = lastScrollIndex == -1
         lastScrollIndex = scrollTargetIndex
         lastScrollOffset = extraOffset
@@ -3877,15 +3829,16 @@ private fun ContentRow(
             offsetDelta > 1
         ) {
             if (smoothScrolling) {
-                val deltaPx = ((scrollTargetIndex - currentFirstIndex) * itemSpanPx) + (extraOffset - currentFirstOffset)
+                val deltaPx = rowState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == scrollTargetIndex }
+                    ?.offset?.toFloat()
+                    ?: (((scrollTargetIndex - currentFirstIndex) * itemSpanPx) + (extraOffset - currentFirstOffset))
                 rowState.animateHomeScrollDelta(
                     deltaPx = deltaPx,
                     durationMillis = when {
                         isFastScrolling -> 115
                         jumpDistance >= 3 -> 180
                         else -> 150
-                    },
-                    isRtl = isRtlLayout
+                    }
                 )
                 if (
                     !isFastScrolling && (
