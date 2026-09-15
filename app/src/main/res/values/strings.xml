@@ -1636,4 +1636,6 @@
     <string name="discord_rpc_help_desc">Show your watch status on your Discord profile.</string>
     <string name="live_sources_empty">No other sources found for this channel.</string>
     <string name="live_sources_failed">Could not load sources. Please try again.</string>
+    <string name="settings_iptv_fallback_logos">Fallback channel logos</string>
+    <string name="settings_iptv_fallback_logos_desc">Use alternative artwork only when the provider logo is missing or fails to load.</string>
 </resources>

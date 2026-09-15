@@ -71,6 +71,7 @@ import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
 import com.arflix.tv.util.resolveAppLanguage
 import com.arflix.tv.util.IPTV_EPG_VOD_ACTIONS_ENABLED_KEY
 import com.arflix.tv.util.IPTV_VOD_SEARCH_ENABLED_KEY
+import com.arflix.tv.util.IPTV_FALLBACK_LOGOS_ENABLED_KEY
 import com.arflix.tv.util.settingsDataStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -247,6 +248,7 @@ data class SettingsUiState(
     val iptvGroupOrder: List<String> = emptyList(),
     val vodSearchEnabled: Boolean = true,
     val epgVodActionsEnabled: Boolean = true,
+    val fallbackChannelLogosEnabled: Boolean = false,
     // App updates
     val isSelfUpdateSupported: Boolean = true,
     val updateStatus: com.arflix.tv.updater.UpdateStatus = com.arflix.tv.updater.UpdateStatus.Idle,
@@ -742,6 +744,7 @@ class SettingsViewModel @Inject constructor(
                 smoothScrolling = smoothScrolling,
                 vodSearchEnabled = vodSearchEnabled,
                 epgVodActionsEnabled = epgVodActionsEnabled,
+                fallbackChannelLogosEnabled = prefs[IPTV_FALLBACK_LOGOS_ENABLED_KEY] ?: false,
             )
 
             refreshIntegrationUsernames(loadProfileId, isTrakt, isMdbList, isSimkl)
@@ -1664,6 +1667,13 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             context.settingsDataStore.edit { it[IPTV_EPG_VOD_ACTIONS_ENABLED_KEY] = enabled }
             _uiState.value = _uiState.value.copy(epgVodActionsEnabled = enabled)
+        }
+    }
+
+    fun setFallbackChannelLogosEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            context.settingsDataStore.edit { it[IPTV_FALLBACK_LOGOS_ENABLED_KEY] = enabled }
+            _uiState.value = _uiState.value.copy(fallbackChannelLogosEnabled = enabled)
         }
     }
 
