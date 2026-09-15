@@ -700,5 +700,9 @@
   "Trial: {value0} days left": "Prueba: quedan {value0} días",
   "Trial: {value0} hours left": "Prueba: quedan {value0} horas",
   "Trial: {value0} minutes left": "Prueba: quedan {value0} minutos",
-  "Trial: {value0} minute left": "Prueba: queda {value0} minuto"
+  "Trial: {value0} minute left": "Prueba: queda {value0} minuto",
+  "Collection": "Colección",
+  "Watching": "Viendo",
+  "Completed": "Completados",
+  "Dropped": "Abandonados"
 }

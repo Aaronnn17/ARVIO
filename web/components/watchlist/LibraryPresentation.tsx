@@ -44,10 +44,11 @@ export function LibraryGrid({ items, poster, onOpen, onNearEnd, positions, posit
     const cell = (event.target as HTMLElement).closest<HTMLElement>("[data-library-index]");
     if (!cell) return;
     const index = Number(cell.dataset.libraryIndex);
-    const offset = ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns } as Record<string, number>)[event.key];
+    const rtl = getComputedStyle(event.currentTarget).direction === "rtl";
+    const offset = ({ ArrowLeft: rtl ? 1 : -1, ArrowRight: rtl ? -1 : 1, ArrowUp: -columns, ArrowDown: columns } as Record<string, number>)[event.key];
     if (!offset) return;
     const next = index + offset;
-    if(event.key === "ArrowLeft" && index % columns === 0) {
+    if(event.key === (rtl ? "ArrowRight" : "ArrowLeft") && index % columns === 0) {
       const source = document.querySelector<HTMLButtonElement>(".oled-source-nav button[aria-current]");
       if(source) { event.preventDefault(); source.focus(); return; }
     }

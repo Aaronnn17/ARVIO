@@ -23,7 +23,7 @@ function translateTemplate(dictionary: Dictionary, text: string): string | undef
 }
 export function resolveLocale(language: string): string {
   const normalized = language.replace(/_/g, '-');
-  const base = normalized.split('-')[0].toLowerCase().replace(/^iw$/, 'he').replace(/^no$/, 'nb');
+  const base = normalized.split('-')[0].toLowerCase().replace(/^iw$/, 'he').replace(/^no$/, 'nb').replace(/^fil$/, 'tl').replace(/^in$/, 'id');
   if (base === 'en') return 'en';
   const keys = Object.keys(manifest);
   return keys.find(key => key.toLowerCase() === normalized.toLowerCase())
