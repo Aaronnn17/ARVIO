@@ -13,7 +13,9 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.PlayArrow
@@ -39,6 +41,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -47,8 +50,11 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
 import coil.compose.AsyncImage
+import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvChannel
 import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
+import com.arflix.tv.ui.theme.ArflixTypography
+import com.arflix.tv.ui.theme.TextPrimary
 import androidx.compose.ui.unit.LayoutDirection
 import java.time.Instant
 import java.time.ZoneId
@@ -83,6 +89,8 @@ internal fun SportsGuidePane(
     providerNames: Map<String, String> = emptyMap(),
     sidebarOpen: Boolean = false,
     clockFormat: String? = null,
+    showHeader: Boolean = true,
+    onOpenSearch: (() -> Unit)? = null,
 ) {
     // Only a schedule refresh consumes this order. Focus alone must not rebuild
     // every catalogue and invalidate all visible lazy rows.
@@ -204,19 +212,68 @@ internal fun SportsGuidePane(
     BoxWithConstraints(modifier.fillMaxSize().background(LiveColors.Bg)) {
     // Use full-screen dimensions so opening the drawer never resizes loaded artwork.
     val viewport = configuration.screenWidthDp.dp
-    val columns = when { viewport >= 850.dp -> 5; viewport >= 620.dp -> 3; viewport >= 420.dp -> 2; else -> 1 }
-    val cardWidth = if (columns == 1) viewport - 54.dp else (viewport - 36.dp - 12.dp * (columns - 1)) / columns
+    val cardWidth = if (narrow) {
+        180.dp
+    } else {
+        val columns = when {
+            viewport >= 850.dp -> 5
+            viewport >= 620.dp -> 3
+            else -> 2
+        }
+        (viewport - 36.dp - 12.dp * (columns - 1)) / columns
+    }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.height(32.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (!sidebarOpen) Icon(Icons.Outlined.Menu, "Categories", tint = LiveColors.Fg,
-                modifier = Modifier.size(20.dp).focusRequester(categoriesFocus)
-                    .onPreviewKeyEvent { key ->
-                        if (key.key == Key.DirectionDown && key.type == KeyEventType.KeyDown) {
-                            moveTo(0, 0); true
-                        } else false
-                    }.clickable(onClick = onOpenCategories))
-            Text("Sports", color = LiveColors.Fg, fontSize = 21.sp, lineHeight = 25.sp, fontWeight = FontWeight.SemiBold)
+        if (showHeader) {
+            if (!sidebarOpen) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.back),
+                        tint = TextPrimary,
+                        modifier = Modifier
+                            .focusRequester(categoriesFocus)
+                            .onPreviewKeyEvent { key ->
+                                if (key.key == Key.DirectionDown && key.type == KeyEventType.KeyDown) {
+                                    moveTo(0, 0); true
+                                } else false
+                            }
+                            .clickable(onClick = onOpenCategories)
+                            .padding(end = 16.dp)
+                            .size(28.dp),
+                    )
+                    Text(
+                        text = stringResource(R.string.live_quick_sports),
+                        style = ArflixTypography.heroTitle.copy(fontSize = 24.sp),
+                        color = TextPrimary,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (onOpenSearch != null) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = stringResource(R.string.search),
+                            tint = TextPrimary,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clickable(onClick = onOpenSearch),
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    Modifier.height(38.dp).padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("Sports", color = LiveColors.Fg, fontSize = 18.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
         if (rows.isEmpty()) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center,
@@ -229,7 +286,7 @@ internal fun SportsGuidePane(
                     color = LiveColors.FgDim, modifier = Modifier.padding(14.dp))
                 if (!loading) Text("Retry", color = LiveColors.Fg,
                     modifier = Modifier.clickable { artworkRetry++; onRetry() }.padding(16.dp))
-                Text("Categories", color = LiveColors.Fg, modifier = Modifier.focusRequester(firstFocus)
+                Text("Groups", color = LiveColors.Fg, modifier = Modifier.focusRequester(firstFocus)
                     .clickable(onClick = onOpenCategories).padding(16.dp))
             }
         } else LazyColumn(Modifier.fillMaxSize().testTag("sports-guide-list"), state = listState, contentPadding = PaddingValues(bottom = 24.dp),

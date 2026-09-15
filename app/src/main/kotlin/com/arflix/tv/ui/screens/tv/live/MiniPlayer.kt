@@ -461,14 +461,7 @@ private fun ChannelIdentityRow(
         if (channel != null) {
             ChannelLogo(channel = channel, size = 30.dp)
             Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.live_label_ch, channel.number),
-                        style = LiveType.SectionTag.copy(color = LiveColors.FgMute),
-                    )
+                if (channel.genre.name.isNotBlank()) {
                     Text(
                         text = formatGenreName(channel.genre.name),
                         style = LiveType.SectionTag.copy(color = LiveColors.FgMute),
@@ -481,12 +474,12 @@ private fun ChannelIdentityRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    QualityBadge(channel.quality)
+                    if (channel.quality == Quality.K4) {
+                        QualityBadge(channel.quality)
+                    }
                     if (variantCount > 1) {
                         SourceBadge(variantCount, onOpenVariants)
                     }
-                    channel.country?.takeIf { it != channel.lang }?.let { LangBadge(it) }
-                    LangBadge(channel.lang)
                 }
             }
         } else {
