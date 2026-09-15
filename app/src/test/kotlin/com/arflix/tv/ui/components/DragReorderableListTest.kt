@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.components
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -104,6 +105,21 @@ class DragReorderableListTest {
         assertEquals(-4f, scrollFor(50f), 0.001f)
         assertEquals(4f, scrollFor(850f), 0.001f)
         assertTrue(scrollFor(90f) > scrollFor(10f))
+    }
+
+    @Test
+    fun aRowAboveEverythingOnScreenIsRecognisedAsOutOfSight() {
+        // The list is showing rows 3 and below.
+        assertTrue(isAboveViewport(rowIndex = 0, firstVisibleIndex = 3))
+        assertTrue(isAboveViewport(rowIndex = 2, firstVisibleIndex = 3))
+        assertFalse(isAboveViewport(rowIndex = 3, firstVisibleIndex = 3))
+        assertFalse(isAboveViewport(rowIndex = 9, firstVisibleIndex = 3))
+    }
+
+    @Test
+    fun withTheListAtItsTopNothingIsOutOfSightAbove() {
+        assertFalse(isAboveViewport(rowIndex = 0, firstVisibleIndex = 0))
+        assertFalse(isAboveViewport(rowIndex = -1, firstVisibleIndex = 3))
     }
 
     @Test

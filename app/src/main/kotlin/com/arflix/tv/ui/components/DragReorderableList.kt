@@ -78,6 +78,9 @@ class DragReorderState internal constructor(
     /** Set when a row was picked up and put down again without being moved. */
     private var pickedUpWithoutMoving = false
     private var movedWhileHeld = false
+    /** The row that was just put down, and where it was sent - see [settleAfterDrop]. */
+    private var droppedKey: Any? = null
+    private var droppedIndex = -1
 
     /** Top edge of the held row in viewport coordinates - where the finger put it. */
     private var floatingTop = 0f
@@ -144,6 +147,8 @@ class DragReorderState internal constructor(
         // would show or hide the group - which is not what changing one's mind should do. A row
         // that WAS moved never reaches the tap: the movement is claimed by the move itself.
         pickedUpWithoutMoving = draggedKey != null && !movedWhileHeld
+        droppedKey = if (movedWhileHeld) draggedKey else null
+        droppedIndex = requestedIndex
         movedWhileHeld = false
         draggedKey = null
         requestedIndex = -1
@@ -168,6 +173,29 @@ class DragReorderState internal constructor(
     }
 
     /**
+     * After a row is put down: the last move can arrive a moment after the finger has left, and if
+     * it takes the row above the top of the screen the list stays where it is and the group is gone
+     * from view. Waits a few frames for the order to come back, then brings it into view.
+     */
+    internal suspend fun settleAfterDrop() {
+        val key = droppedKey ?: return
+        val index = droppedIndex
+        droppedKey = null
+        droppedIndex = -1
+        if (index < 0) return
+        repeat(SETTLE_FRAMES) {
+            withFrameNanos { }
+            val layout = listState.layoutInfo
+            if (layout.visibleItemsInfo.any { it.key == key }) return
+            val firstVisible = layout.visibleItemsInfo.firstOrNull() ?: return
+            if (isAboveViewport(rowIndex = index, firstVisibleIndex = firstVisible.index)) {
+                listState.animateScrollToItem(index)
+                return
+            }
+        }
+    }
+
+    /**
      * One frame of edge scrolling, driven from the composition (see [rememberDragReorderState]).
      *
      * 🔴 **It is the HELD ROW that is measured against the edges, not the finger.** The row's
@@ -176,10 +204,21 @@ class DragReorderState internal constructor(
      * happens is impossible to tell apart from a scroll that was never asked for.
      */
     internal suspend fun autoScrollStep() {
+        if (draggedKey == null) return
+        val layout = listState.layoutInfo
+        val firstVisible = layout.visibleItemsInfo.firstOrNull() ?: return
+        // 🔴 A list keeps its place by holding on to the row currently at the top of the screen.
+        // Move another row ABOVE that one and the list dutifully stays where it was - so the moved
+        // row lands off screen and the group looks as though it had been swallowed. Bring its place
+        // back into view: the row is drawn at the finger either way, but where it will come down
+        // has to be visible.
+        if (isAboveViewport(rowIndex = requestedIndex, firstVisibleIndex = firstVisible.index)) {
+            listState.scrollToItem(requestedIndex)
+            return
+        }
         // Being picked up is not a request to scroll: a row grabbed at the edge and held still
         // stays where it is until the finger actually moves it.
-        if (draggedKey == null || !movedWhileHeld) return
-        val layout = listState.layoutInfo
+        if (!movedWhileHeld) return
         val delta = autoScrollDelta(
             rowTop = floatingTop,
             rowSize = floatingSize,
@@ -224,7 +263,10 @@ fun rememberDragReorderState(
     // the composition it is started and stopped by the drag it belongs to, and it is beyond doubt
     // that it is clocked frame by frame.
     LaunchedEffect(state.draggedKey) {
-        if (state.draggedKey == null) return@LaunchedEffect
+        if (state.draggedKey == null) {
+            state.settleAfterDrop()
+            return@LaunchedEffect
+        }
         while (isActive) {
             withFrameNanos { }
             state.autoScrollStep()
@@ -304,6 +346,13 @@ internal fun reorderTargetIndex(slots: List<ReorderSlot>, floatingCenter: Float,
 }
 
 /**
+ * Whether a row sits above everything the list is showing - the one direction in which a list can
+ * put a row out of sight without moving itself.
+ */
+internal fun isAboveViewport(rowIndex: Int, firstVisibleIndex: Int): Boolean =
+    rowIndex in 0 until firstVisibleIndex
+
+/**
  * Keeps the held row inside the part of the list that is actually on screen. Everything is in the
  * list's own coordinates, and a viewport too short for the row pins it to the top rather than
  * returning something impossible.
@@ -338,6 +387,7 @@ internal fun autoScrollDelta(
     }
 }
 
+private const val SETTLE_FRAMES = 12
 private val autoScrollEdge = 72.dp
 // Fast enough that a row travels a screenful in a couple of seconds, slow enough that the moves it
 // triggers on the way - one per row it passes - are all safely stored before the next one comes.
