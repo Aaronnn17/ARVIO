@@ -97,6 +97,7 @@
     <string name="cancel">Cancel</string>
     <string name="confirm">Confirm</string>
     <string name="retry">Retry</string>
+    <string name="search_discover_load_failed">Could not load titles</string>
     <string name="delete">Delete</string>
     <string name="add">Add</string>
     <string name="refresh">Refresh</string>
