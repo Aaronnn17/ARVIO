@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
+import './generate-translations.mjs';
 
 const require = createRequire(import.meta.url);
 const env = { ...process.env };

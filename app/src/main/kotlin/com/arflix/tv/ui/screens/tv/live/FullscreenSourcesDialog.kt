@@ -16,15 +16,21 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.arflix.tv.R
+import com.arflix.tv.util.LocalDeviceType
 
 /** A separate focus window keeps the fullscreen player's key handlers behind the selector. */
 @Composable
@@ -36,12 +42,21 @@ internal fun FullscreenSourcesDialog(
     onDismiss: () -> Unit,
     onPick: (EnrichedChannel) -> Unit,
 ) {
+    val touchDevice = LocalDeviceType.current.isTouchDevice()
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        val firstFocus = remember { FocusRequester() }
         val hasAlternatives = !loading && !failed && variants.size > 1
-        LaunchedEffect(hasAlternatives) {
-            firstFocus.requestFocus()
+        val targetKey = if (hasAlternatives) "source:${variants.first().id}" else "cancel"
+        val firstFocus = remember(targetKey) { FocusRequester() }
+        var targetPlaced by remember(targetKey) { mutableStateOf(false) }
+        LaunchedEffect(firstFocus, targetPlaced, touchDevice) {
+            if (!touchDevice && targetPlaced) {
+                withFrameNanos { }
+                // The dialog may close or replace its lazy items before this frame.
+                runCatching { firstFocus.requestFocus() }
+            }
         }
+        val initialFocus = Modifier.focusRequester(firstFocus)
+            .onGloballyPositioned { if (it.isAttached) targetPlaced = true }
         Column(
             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
                 .background(LiveColors.PanelRaised).padding(24.dp),
@@ -61,7 +76,7 @@ internal fun FullscreenSourcesDialog(
                         Button(
                             onClick = { onPick(variant) },
                             modifier = Modifier.fillMaxWidth()
-                                .then(if (index == 0) Modifier.focusRequester(firstFocus) else Modifier),
+                                .then(if (index == 0) initialFocus else Modifier),
                         ) {
                             Text(variant.name)
                         }
@@ -70,7 +85,7 @@ internal fun FullscreenSourcesDialog(
             }
             TextButton(
                 onClick = onDismiss,
-                modifier = if (!hasAlternatives) Modifier.focusRequester(firstFocus) else Modifier,
+                modifier = if (!hasAlternatives) initialFocus else Modifier,
             ) {
                 Text(stringResource(android.R.string.cancel))
             }

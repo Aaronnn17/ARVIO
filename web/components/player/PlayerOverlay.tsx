@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import {
   ArrowLeft,
@@ -179,6 +181,7 @@ function orderedSubtitles(stream: StreamSource, preferred: string) {
 }
 
 export function PlayerOverlay() {
+  const translateUi = useTranslation();
   const {
     activeStream,
     activeChannel,
@@ -215,14 +218,14 @@ export function PlayerOverlay() {
         />
         <div className="youtube-player-toolbar">
           <div className="player-top-left">
-            <button type="button" className="player-icon-btn" onClick={closePlayer} aria-label="Back"><ArrowLeft size={24} /></button>
+            <button type="button" className="player-icon-btn" onClick={closePlayer} aria-label={translateUi("Back")}><ArrowLeft size={24} /></button>
             <div>
-              <p className="eyebrow">Trailer</p>
+              <p className="eyebrow">{translateUi("Trailer")}</p>
               <h2>{title}</h2>
             </div>
           </div>
-          <a className="player-icon-btn" href={`https://www.youtube.com/watch?v=${ytId}`} target="_blank" rel="noopener noreferrer" aria-label="Open in YouTube" title="Open in YouTube"><ExternalLink size={24} /></a>
-          <button type="button" className="player-icon-btn" onClick={closePlayer} aria-label="Close"><X size={24} /></button>
+          <a className="player-icon-btn" href={`https://www.youtube.com/watch?v=${ytId}`} target="_blank" rel="noopener noreferrer" aria-label={translateUi("Open in YouTube")} title={translateUi("Open in YouTube")}><ExternalLink size={24} /></a>
+          <button type="button" className="player-icon-btn" onClick={closePlayer} aria-label={translateUi("Close")}><X size={24} /></button>
         </div>
       </section>
     );
@@ -286,6 +289,7 @@ function VideoPlayer({
   onToast: (message: string) => void;
   onClose: () => void;
 }) {
+  const translateUi = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const dock = useLivePlayerDock(liveTv, stream.url ?? "", close);
@@ -1581,22 +1585,22 @@ function VideoPlayer({
             key={subtitle.id || subtitle.url}
             kind="subtitles"
             srcLang={subtitle.lang || "en"}
-            label={subtitle.label || subtitle.lang || "Subtitle"}
+            label={subtitle.label || subtitle.lang || translateUi("Subtitle")}
             src={resolverSubtitleUrl(subtitle.url)}
             default={activeSubtitle === index}
           />
         ))}
       </video>
       {dock.docked && <div className="player-dock-controls">
-        <span role="status">{error ? "Unavailable" : buffering ? "Connecting" : playing ? "LIVE" : "Paused"}</span>
-        <button type="button" onClick={togglePlay} aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause" : "Play"}>{playing ? <Pause size={20} /> : <Play size={20} />}</button>
-        <button type="button" onClick={dock.expand} aria-label="Expand player" title="Expand player"><Maximize size={20} /></button>
-        <button type="button" onClick={onClose} aria-label="Stop channel" title="Stop channel"><X size={20} /></button>
+        <span role="status">{error ? translateUi("Unavailable") : buffering ? translateUi("Connecting") : playing ? translateUi("LIVE") : translateUi("Paused")}</span>
+        <button type="button" onClick={togglePlay} aria-label={playing ? translateUi("Pause") : translateUi("Play")} title={playing ? translateUi("Pause") : translateUi("Play")}>{playing ? <Pause size={20} /> : <Play size={20} />}</button>
+        <button type="button" onClick={dock.expand} aria-label={translateUi("Expand player")} title={translateUi("Expand player")}><Maximize size={20} /></button>
+        <button type="button" onClick={onClose} aria-label={translateUi("Stop channel")} title={translateUi("Stop channel")}><X size={20} /></button>
       </div>}
-      {!dock.docked && dock.canDock && <button type="button" className="player-dock-return" onClick={dock.collapse} aria-label="Return to guide" title="Return to guide"><Minimize size={22} /></button>}
+      {!dock.docked && dock.canDock && <button type="button" className="player-dock-return" onClick={dock.collapse} aria-label={translateUi("Return to guide")} title={translateUi("Return to guide")}><Minimize size={22} /></button>}
 
       {!booted && !error && (
-        <div className="player-boot" style={{ backgroundImage: item?.backdrop ? `url(${item.backdrop})` : undefined }} aria-label="Loading playback">
+        <div className="player-boot" style={{ backgroundImage: item?.backdrop ? `url(${item.backdrop})` : undefined }} aria-label={translateUi("Loading playback")}>
           {bootLogo
             ? <img className="player-boot-logo" src={bootLogo} alt={title} />
             : <h2 className="player-boot-title">{title}</h2>}
@@ -1607,26 +1611,23 @@ function VideoPlayer({
           <Loader2 size={56} />
           {/* Show how much is actually buffered ahead: a bare spinner cannot
               distinguish "downloading fine" from "wedged and going nowhere". */}
-          {bufferAheadSec > 0 && <span className="player-buffer-health">{Math.round(bufferAheadSec)}s buffered</span>}
+          {bufferAheadSec > 0 && <span className="player-buffer-health">{Math.round(bufferAheadSec)}{translateUi("s buffered")}</span>}
         </div>
       )}
       {error && (
         <div className="player-error">
-          <p>{liveTv ? "This channel could not be played right now." : "This source could not be played in the browser."}</p>
+          <p>{liveTv ? translateUi("This channel could not be played right now.") : translateUi("This source could not be played in the browser.")}</p>
           <span>
-            {errorDetail || "The source could not be opened. Its network access, browser permissions or media format may be unsupported. Try another source or an external player."}
+            {translateUi(errorDetail) || translateUi("The source could not be opened. Its network access, browser permissions or media format may be unsupported. Try another source or an external player.")}
           </span>
           <div className="player-error-actions">
             <button type="button" className="player-error-external" onClick={() => openExternal("vlc", stream)}>
-              <ExternalLink size={15} /> Open in VLC
-            </button>
+              <ExternalLink size={15} /> {translateUi(" Open in VLC")}</button>
             <button type="button" className="player-error-external" onClick={() => openAnyPlayer(stream)}>
-              <ExternalLink size={15} /> Open in player
-            </button>
+              <ExternalLink size={15} /> {translateUi(" Open in player")}</button>
             {!liveTv && !stream.transcoded && parseDebridStream(stream.url) && (
               <button type="button" className="player-error-transcode" onClick={() => onSelectStream(stream, { forceTranscode: true })}>
-                <Play size={15} fill="currentColor" /> Transcode
-              </button>
+                <Play size={15} fill="currentColor" /> {translateUi(" Transcode")}</button>
             )}
           </div>
         </div>
@@ -1634,16 +1635,16 @@ function VideoPlayer({
       {skipOverlay !== null && (
         <div className={`player-skip-overlay ${skipOverlay > 0 ? "forward" : "back"}`}>
           {skipOverlay > 0 ? <RotateCw size={34} /> : <RotateCcw size={34} />}
-          <strong>{skipOverlay > 0 ? "+" : ""}{skipOverlay}s</strong>
+          <strong>{skipOverlay > 0 ? "+" : ""}{skipOverlay}{translateUi("s")}</strong>
         </div>
       )}
       {!playing && !buffering && !error && (
-        <button type="button" className="player-bigplay" onClick={togglePlay} aria-label="Play"><Play size={48} fill="currentColor" /></button>
+        <button type="button" className="player-bigplay" onClick={togglePlay} aria-label={translateUi("Play")}><Play size={48} fill="currentColor" /></button>
       )}
 
       <div className="player-top">
         <div className="player-top-left player-metadata">
-          <button type="button" className="player-icon-btn" onClick={onClose} aria-label="Back"><ArrowLeft size={24} /></button>
+          <button type="button" className="player-icon-btn" onClick={onClose} aria-label={translateUi("Back")}><ArrowLeft size={24} /></button>
           <span className="player-accent-rail" />
           <div>
             <p className="eyebrow">{mediaMeta || stream.source}</p>
@@ -1652,9 +1653,9 @@ function VideoPlayer({
           </div>
         </div>
         <div className="player-top-actions">
-          {nextCountdown !== null && <div className="next-episode-prompt" role="status"><span>Next episode in {nextCountdown}s</span><button type="button" className="icon-button" aria-label="Cancel next episode" onClick={() => { nextDismissed.current = true; setNextCountdown(null); }}><X size={20} /></button></div>}
-          {canAdvance && <button type="button" className="player-next" onClick={() => { setNextCountdown(null); void onAdvance(); }}><SkipForward size={18} /> Next episode</button>}
-          <button type="button" className="player-icon-btn" onClick={onClose} aria-label="Close"><X size={22} /></button>
+          {nextCountdown !== null && <div className="next-episode-prompt" role="status"><span>{translateUi("Next episode in ")}{nextCountdown}{translateUi("s")}</span><button type="button" className="icon-button" aria-label={translateUi("Cancel next episode")} onClick={() => { nextDismissed.current = true; setNextCountdown(null); }}><X size={20} /></button></div>}
+          {canAdvance && <button type="button" className="player-next" onClick={() => { setNextCountdown(null); void onAdvance(); }}><SkipForward size={18} /> {translateUi(" Next episode")}</button>}
+          <button type="button" className="player-icon-btn" onClick={onClose} aria-label={translateUi("Close")}><X size={22} /></button>
         </div>
       </div>
 
@@ -1662,10 +1663,10 @@ function VideoPlayer({
         <aside className="player-side-panel">
           <div className="player-panel-head">
             <div>
-              <p className="eyebrow">{activePanel}</p>
-              <h3>{activePanel === "sources" ? "Choose Source" : activePanel === "subtitles" ? "Subtitles" : activePanel === "audio" ? "Audio" : "Playback Settings"}</h3>
+              <p className="eyebrow">{translateUi(activePanel)}</p>
+              <h3>{activePanel === "sources" ? translateUi("Choose Source") : activePanel === "subtitles" ? translateUi("Subtitles") : activePanel === "audio" ? translateUi("Audio") : translateUi("Playback Settings")}</h3>
             </div>
-            <button type="button" className="player-icon-btn" onClick={() => setActivePanel(null)} aria-label="Close panel"><X size={18} /></button>
+            <button type="button" className="player-icon-btn" onClick={() => setActivePanel(null)} aria-label={translateUi("Close panel")}><X size={18} /></button>
           </div>
 
           {activePanel === "sources" && (
@@ -1680,7 +1681,7 @@ function VideoPlayer({
                     <span className="player-row-icon">{active ? <Check size={17} /> : index + 1}</span>
                     <span>
                       <strong>{candidate.source || candidate.addonName}</strong>
-                      <em>{streamMeta(candidate) || "Direct stream"}</em>
+                      <em>{streamMeta(candidate) || translateUi("Direct stream")}</em>
                       <span className="player-row-actions">
                         <button
                           type="button"
@@ -1689,15 +1690,12 @@ function VideoPlayer({
                             setActivePanel(null);
                           }}
                         >
-                          <Play size={13} fill="currentColor" /> Play
-                        </button>
+                          <Play size={13} fill="currentColor" /> {translateUi(" Play")}</button>
                         <button type="button" onClick={() => openExternal("vlc", candidate)}>
-                          <ExternalLink size={13} /> VLC
-                        </button>
+                          <ExternalLink size={13} /> {translateUi(" VLC")}</button>
                         <button type="button" onClick={() => openAnyPlayer(candidate)}>
-                          <ExternalLink size={13} /> Player
-                        </button>
-                        <button type="button" onClick={() => void copyUrl(candidate)} aria-label="Copy stream URL">
+                          <ExternalLink size={13} /> {translateUi(" Player")}</button>
+                        <button type="button" onClick={() => void copyUrl(candidate)} aria-label={translateUi("Copy stream URL")}>
                           <Copy size={13} />
                         </button>
                       </span>
@@ -1713,7 +1711,7 @@ function VideoPlayer({
               {transportTracks.audioTracks.length > 0 ? transportTracks.audioTracks.map((track) => (
                 <button type="button" key={track.id} className={`player-panel-row ${transportTracks.selectedAudioTrackId === track.id ? "is-active" : ""}`} onClick={() => transportRef.current?.selectAudioTrack(track.id)}>
                   <span className="player-row-icon">{transportTracks.selectedAudioTrackId === track.id ? <Check size={17} /> : ""}</span>
-                  <span><strong>{track.label}</strong><em>{track.language ?? ""}</em></span>
+                  <span><strong>{translateUi(track.label)}</strong><em>{track.language ?? ""}</em></span>
                 </button>
               )) : remuxTracks.length > 0 ? (
                 remuxTracks.map((track) => (
@@ -1725,13 +1723,13 @@ function VideoPlayer({
                     onClick={() => track.browserPlayable && switchRemuxAudio(track.index)}
                   >
                     <span className="player-row-icon">{remuxAudioIndex === track.index ? <Check size={17} /> : ""}</span>
-                    <span><strong>{track.label}</strong><em>{track.browserPlayable ? track.codec : "Lossless — external player only"}</em></span>
+                    <span><strong>{translateUi(track.label)}</strong><em>{track.browserPlayable ? track.codec : translateUi("Lossless — external player only")}</em></span>
                   </button>
                 ))
               ) : audioProbeState === "probing" ? (
-                <p className="player-panel-empty">Reading audio tracks from this source…</p>
+                <p className="player-panel-empty">{translateUi("Reading audio tracks from this source…")}</p>
               ) : (
-                <p className="player-panel-empty">This source plays its default audio track — no other selectable tracks were found.</p>
+                <p className="player-panel-empty">{translateUi("This source plays its default audio track — no other selectable tracks were found.")}</p>
               )}
             </div>
           )}
@@ -1740,7 +1738,7 @@ function VideoPlayer({
             <div className="player-panel-list">
               <button type="button" className={`player-panel-row ${activeSubtitle < 0 ? "is-active" : ""}`} onClick={() => { setActiveSubtitle(-1); setAiSubsActive(false); }}>
                 <span className="player-row-icon">{activeSubtitle < 0 ? <Check size={17} /> : ""}</span>
-                <span><strong>Off</strong><em>No subtitle track</em></span>
+                <span><strong>{translateUi("Off")}</strong><em>{translateUi("No subtitle track")}</em></span>
               </button>
               {aiAvailable && (
                 <button
@@ -1760,10 +1758,10 @@ function VideoPlayer({
                     setAiSubsActive(true);
                   }}
                 >
-                  <span className="player-row-icon">{aiSubsActive ? <Check size={17} /> : "AI"}</span>
+                  <span className="player-row-icon">{aiSubsActive ? <Check size={17} /> : translateUi("AI")}</span>
                   <span>
-                    <strong>AI · {aiTargetName}</strong>
-                    <em>{aiSubsActive ? (aiTranslating ? "Translating…" : "Live-translating English subtitles") : `Translate English subtitles to ${aiTargetName}`}</em>
+                    <strong>{translateUi("AI · ")}{aiTargetName}</strong>
+                    <em>{aiSubsActive ? (aiTranslating ? "Translating…" : "Live-translating English subtitles") : translateUi("Translate English subtitles to {value0}", {value0: aiTargetName})}</em>
                   </span>
                 </button>
               )}
@@ -1776,45 +1774,45 @@ function VideoPlayer({
                 >
                   <span className="player-row-icon">{activeSubtitle === index && !aiSubsActive ? <Check size={17} /> : ""}</span>
                   <span>
-                    <strong>{langName}</strong>
-                    <em>{[subtitle.label && subtitle.label !== langName ? subtitle.label : "", subtitle.provider, subtitle.isForced ? "Forced" : ""].filter(Boolean).join(" - ") || "External subtitle"}</em>
+                    <strong>{translateUi(langName)}</strong>
+                    <em>{[subtitle.label && subtitle.label !== langName ? subtitle.label : "", subtitle.provider, subtitle.isForced ? "Forced" : ""].filter(Boolean).join(" - ") || translateUi("External subtitle")}</em>
                   </span>
                 </button>
               ))}
-              {(stream.subtitles?.length ?? 0) === 0 && <p className="player-panel-empty">No external subtitles were returned for this source.</p>}
+              {(stream.subtitles?.length ?? 0) === 0 && <p className="player-panel-empty">{translateUi("No external subtitles were returned for this source.")}</p>}
             </div>
           )}
 
           {activePanel === "settings" && (
             <div className="player-settings-panel">
-              <div className="player-setting-row"><span><strong>Playback</strong></span><span>{stream.transcoded ? "Server conversion" : stream.remux ? "On-device conversion" : stream.transport === "hls" ? "HLS" : stream.transport === "dash" ? "DASH" : stream.transport === "mpegts" ? "MPEG-TS" : "Direct"}</span></div>
-              <div className="player-setting-row"><span><strong>Video</strong></span><span>{videoRef.current?.videoWidth ? `${videoRef.current.videoWidth} x ${videoRef.current.videoHeight}` : "Loading"}</span></div>
-              <div className="player-setting-row"><span><strong>Buffered ahead</strong></span><span>{Math.round(bufferAheadSec)} s</span></div>
+              <div className="player-setting-row"><span><strong>{translateUi("Playback")}</strong></span><span>{stream.transcoded ? translateUi("Server conversion") : stream.remux ? translateUi("On-device conversion") : stream.transport === "hls" ? translateUi("HLS") : stream.transport === "dash" ? translateUi("DASH") : stream.transport === "mpegts" ? translateUi("MPEG-TS") : translateUi("Direct")}</span></div>
+              <div className="player-setting-row"><span><strong>{translateUi("Video")}</strong></span><span>{videoRef.current?.videoWidth ? translateUi("{value0} x {value1}", {value0: videoRef.current.videoWidth, value1: videoRef.current.videoHeight}) : translateUi("Loading")}</span></div>
+              <div className="player-setting-row"><span><strong>{translateUi("Buffered ahead")}</strong></span><span>{Math.round(bufferAheadSec)} {translateUi(" s")}</span></div>
               {transportTracks.qualities.length > 0 && <div className="player-setting-row">
-                <span><strong>Quality</strong></span>
-                <select aria-label="Playback quality" value={transportTracks.selectedQualityId ?? "auto"} onChange={(event) => transportRef.current?.selectQuality(event.target.value === "auto" ? null : event.target.value)}>
-                  <option value="auto">Auto</option>
-                  {transportTracks.qualities.map((quality) => <option key={quality.id} value={quality.id}>{quality.label}</option>)}
+                <span><strong>{translateUi("Quality")}</strong></span>
+                <select aria-label={translateUi("Playback quality")} value={transportTracks.selectedQualityId ?? "auto"} onChange={(event) => transportRef.current?.selectQuality(event.target.value === "auto" ? null : event.target.value)}>
+                  <option value="auto">{translateUi("Auto")}</option>
+                  {transportTracks.qualities.map((quality) => <option key={quality.id} value={quality.id}>{translateUi(quality.label)}</option>)}
                 </select>
               </div>}
               <button type="button" className="player-setting-toggle" onClick={() => updateSettings({ autoPlayNext: !settings.autoPlayNext })}>
-                <span><strong>Auto-play next episode</strong><em>Play the next episode automatically</em></span>
+                <span><strong>{translateUi("Auto-play next episode")}</strong><em>{translateUi("Play the next episode automatically")}</em></span>
                 <span className={`player-switch ${settings.autoPlayNext ? "is-on" : ""}`} />
               </button>
               <button type="button" className="player-setting-toggle" onClick={() => updateSettings({ autoPlaySingleSource: !settings.autoPlaySingleSource })}>
-                <span><strong>Auto-play single source</strong><em>Start playing when only one source is found</em></span>
+                <span><strong>{translateUi("Auto-play single source")}</strong><em>{translateUi("Start playing when only one source is found")}</em></span>
                 <span className={`player-switch ${settings.autoPlaySingleSource ? "is-on" : ""}`} />
               </button>
               <div className="player-setting-row">
-                <span><strong>Subtitle size</strong></span>
+                <span><strong>{translateUi("Subtitle size")}</strong></span>
                 <div className="player-setting-stepper">
-                  <button type="button" onClick={() => updateSettings({ subtitleSize: Math.max(60, settings.subtitleSize - 10) })} aria-label="Decrease subtitle size">−</button>
+                  <button type="button" onClick={() => updateSettings({ subtitleSize: Math.max(60, settings.subtitleSize - 10) })} aria-label={translateUi("Decrease subtitle size")}>−</button>
                   <b>{settings.subtitleSize}%</b>
-                  <button type="button" onClick={() => updateSettings({ subtitleSize: Math.min(300, settings.subtitleSize + 10) })} aria-label="Increase subtitle size">+</button>
+                  <button type="button" onClick={() => updateSettings({ subtitleSize: Math.min(300, settings.subtitleSize + 10) })} aria-label={translateUi("Increase subtitle size")}>+</button>
                 </div>
               </div>
               <div className="player-setting-row">
-                <span><strong>Subtitle position</strong></span>
+                <span><strong>{translateUi("Subtitle position")}</strong></span>
                 <div className="player-setting-choices">
                   {([["bottom", "Bottom"], ["low", "Low"], ["medium", "Middle"], ["high", "High"]] as const).map(([value, label]) => (
                     <button
@@ -1823,13 +1821,13 @@ function VideoPlayer({
                       className={settings.subtitleOffset === value ? "is-active" : ""}
                       onClick={() => updateSettings({ subtitleOffset: value })}
                     >
-                      {label}
+                      {translateUi(label)}
                     </button>
                   ))}
                 </div>
               </div>
               <div className="player-setting-row">
-                <span><strong>Playback speed</strong></span>
+                <span><strong>{translateUi("Playback speed")}</strong></span>
                 <div className="player-setting-choices">
                   {[0.75, 1, 1.25, 1.5, 2].map((rate) => (
                     <button
@@ -1844,7 +1842,7 @@ function VideoPlayer({
                 </div>
               </div>
               <div className="player-setting-row">
-                <span><strong>Subtitle color</strong></span>
+                <span><strong>{translateUi("Subtitle color")}</strong></span>
                 <div className="player-setting-choices player-subtitle-colors">
                   {([["White", "#ffffff"], ["Yellow", "#ffeb3b"], ["Green", "#4caf50"], ["Cyan", "#00e5ff"]] as const).map(([name, hex]) => (
                     <button
@@ -1853,7 +1851,7 @@ function VideoPlayer({
                       className={settings.subtitleColorName === name ? "is-active" : ""}
                       style={{ ["--dot" as string]: hex }}
                       onClick={() => updateSettings({ subtitleColorName: name, subtitleColor: hex })}
-                      aria-label={`${name} subtitles`}
+                      aria-label={translateUi("{value0} subtitles", {value0: name})}
                     >
                       <i />
                     </button>
@@ -1861,7 +1859,7 @@ function VideoPlayer({
                 </div>
               </div>
               <div className="player-setting-row">
-                <span><strong>Subtitle style</strong></span>
+                <span><strong>{translateUi("Subtitle style")}</strong></span>
                 <div className="player-setting-choices">
                   {(["background", "outline", "shadow", "raised"] as const).map((style) => (
                     <button
@@ -1870,7 +1868,7 @@ function VideoPlayer({
                       className={settings.subtitleStyle === style ? "is-active" : ""}
                       onClick={() => updateSettings({ subtitleStyle: style })}
                     >
-                      {style === "background" ? "Boxed" : style.charAt(0).toUpperCase() + style.slice(1)}
+                      {style === "background" ? translateUi("Boxed") : style.charAt(0).toUpperCase() + style.slice(1)}
                     </button>
                   ))}
                 </div>
@@ -1911,7 +1909,7 @@ function VideoPlayer({
               // 1s keeps keyboard arrows useful; 0.1 made a 2h film 72,000 steps.
               step={1}
               value={scrubDisplayTime}
-              aria-label="Seek"
+              aria-label={translateUi("Seek")}
               aria-valuetext={fmt(scrubDisplayTime)}
               style={{ ["--pct" as string]: `${pct}%`, ["--buf" as string]: `${bufPct}%` }}
               onChange={(e) => setScrubTo(Number(e.target.value))}
@@ -1933,21 +1931,21 @@ function VideoPlayer({
         )}
         <div className="player-controls-row">
           <div className="player-controls-left">
-            <button type="button" className="player-icon-btn player-play-btn" onClick={togglePlay} aria-label={playing ? "Pause" : "Play"}>
+            <button type="button" className="player-icon-btn player-play-btn" onClick={togglePlay} aria-label={playing ? translateUi("Pause") : translateUi("Play")}>
               {playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
             </button>
             {!liveTv && (
               <>
-                <button type="button" className="player-icon-btn player-seek-btn" onClick={() => seekBy(-30)} aria-label="Back 30 seconds">
+                <button type="button" className="player-icon-btn player-seek-btn" onClick={() => seekBy(-30)} aria-label={translateUi("Back 30 seconds")}>
                   <RotateCcw size={22} /><span className="player-seek-label">30</span>
                 </button>
-                <button type="button" className="player-icon-btn player-seek-btn" onClick={() => seekBy(30)} aria-label="Forward 30 seconds">
+                <button type="button" className="player-icon-btn player-seek-btn" onClick={() => seekBy(30)} aria-label={translateUi("Forward 30 seconds")}>
                   <RotateCw size={22} /><span className="player-seek-label">30</span>
                 </button>
               </>
             )}
             <div className="player-volume">
-              <button type="button" className="player-icon-btn" onClick={() => { const v = videoRef.current; if (v) v.muted = !v.muted; }} aria-label="Mute">
+              <button type="button" className="player-icon-btn" onClick={() => { const v = videoRef.current; if (v) v.muted = !v.muted; }} aria-label={translateUi("Mute")}>
                 {muted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
               </button>
               <input
@@ -1968,7 +1966,7 @@ function VideoPlayer({
               />
             </div>
             {liveTv
-              ? <button type="button" className="player-time player-live-indicator" title="Return to live" onClick={() => { if (transportRef.current?.goLive()) void videoRef.current?.play().catch(() => undefined); }}><span className="live-dot" /> LIVE</button>
+              ? <button type="button" className="player-time player-live-indicator" title={translateUi("Return to live")} onClick={() => { if (transportRef.current?.goLive()) void videoRef.current?.play().catch(() => undefined); }}><span className="live-dot" /> {translateUi(" LIVE")}</button>
               : (
                 <span className="player-time">
                   {fmt(scrubDisplayTime)} <em>/</em> {fmt(duration)}
@@ -1986,13 +1984,13 @@ function VideoPlayer({
             </div>
             {!liveTv && (
               <>
-                <button type="button" className={`player-icon-btn ${activePanel === "subtitles" ? "is-active" : ""}`} onClick={() => openPanel("subtitles")} aria-label="Subtitles"><Subtitles size={20} /></button>
-                <button type="button" className={`player-icon-btn ${activePanel === "audio" ? "is-active" : ""}`} onClick={() => openPanel("audio")} aria-label="Audio"><AudioLines size={20} /></button>
+                <button type="button" className={`player-icon-btn ${activePanel === "subtitles" ? "is-active" : ""}`} onClick={() => openPanel("subtitles")} aria-label={translateUi("Subtitles")}><Subtitles size={20} /></button>
+                <button type="button" className={`player-icon-btn ${activePanel === "audio" ? "is-active" : ""}`} onClick={() => openPanel("audio")} aria-label={translateUi("Audio")}><AudioLines size={20} /></button>
               </>
             )}
-            <button type="button" className={`player-icon-btn ${activePanel === "sources" ? "is-active" : ""}`} onClick={() => openPanel("sources")} aria-label="Sources"><Folder size={20} /></button>
-            <button type="button" className={`player-icon-btn ${activePanel === "settings" ? "is-active" : ""}`} onClick={() => openPanel("settings")} aria-label="Player settings"><Settings size={20} /></button>
-            <button type="button" className="player-icon-btn" onClick={toggleFullscreen} aria-label="Fullscreen">
+            <button type="button" className={`player-icon-btn ${activePanel === "sources" ? "is-active" : ""}`} onClick={() => openPanel("sources")} aria-label={translateUi("Sources")}><Folder size={20} /></button>
+            <button type="button" className={`player-icon-btn ${activePanel === "settings" ? "is-active" : ""}`} onClick={() => openPanel("settings")} aria-label={translateUi("Player settings")}><Settings size={20} /></button>
+            <button type="button" className="player-icon-btn" onClick={toggleFullscreen} aria-label={translateUi("Fullscreen")}>
               {fullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
             </button>
           </div>

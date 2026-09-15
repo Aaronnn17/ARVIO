@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { Info, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -11,6 +13,7 @@ import { MediaRail } from "@/components/media/MediaRail";
 import type { Category, MediaItem } from "@/lib/types";
 
 export function HomeScreen() {
+  const translateUi = useTranslation();
   const { hero, categories, catalogConfigs, homeServerRows, continueWatching, openDetails, setHeroPreview, settings } = useApp();
   const posterMode = settings.cardLayoutMode === "poster";
 
@@ -170,13 +173,13 @@ export function HomeScreen() {
             </div>
             <p>
               {(() => {
-                const desc = displayHero.overview || displayHero.subtitle || "Continue from your ARVIO library.";
+                const desc = displayHero.overview || displayHero.subtitle || translateUi("Continue from your ARVIO library.");
                 return desc.length > 150 ? desc.slice(0, 150) + "..." : desc;
               })()}
             </p>
             <div className="hero-actions">
-              <button type="button" className="primary" onClick={() => openDetails(displayHero)}><Play size={20} fill="currentColor" /> Play</button>
-              <button type="button" className="secondary" onClick={() => openDetails(displayHero)}><Info size={20} /> More Info</button>
+              <button type="button" className="primary" onClick={() => openDetails(displayHero)}><Play size={20} fill="currentColor" /> {translateUi(" Play")}</button>
+              <button type="button" className="secondary" onClick={() => openDetails(displayHero)}><Info size={20} /> {translateUi(" More Info")}</button>
             </div>
           </div>
         </section>

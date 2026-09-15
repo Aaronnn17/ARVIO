@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { BadgeCheck, Bookmark, Home, Search, Settings, Tv } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -18,6 +20,7 @@ const nav = [
 ] satisfies Array<{ id: NavSection; label: string; icon: typeof Home }>;
 
 export function TopNav() {
+  const translateUi = useTranslation();
   const { view, section, setSection, switchProfile, activeProfile, avatarImages, settings, closeDetails, selected } = useApp();
   const [scrolled, setScrolled] = useState(false);
   const entitlement = useEntitlement();
@@ -44,9 +47,9 @@ export function TopNav() {
   return (
     <>
       {/* Desktop/Tablet Sidebar / TopNav */}
-      <aside className={`sidebar ${scrolled ? "is-scrolled" : ""}`} aria-label="ARVIO navigation">
+      <aside className={`sidebar ${scrolled ? "is-scrolled" : ""}`} aria-label={translateUi("ARVIO navigation")}>
         <div className="profile-cluster">
-          <button type="button" className="brand" onClick={switchProfile} aria-label="Switch profile">
+          <button type="button" className="brand" onClick={switchProfile} aria-label={translateUi("Switch profile")}>
             {activeProfile ? <ProfileAvatarVisual profile={activeProfile} avatarImages={avatarImages} /> : <img src="/arvio-logo.svg" alt="" />}
           </button>
           <span className="profile-name-text">{activeProfile?.name ?? ""}</span>
@@ -65,7 +68,7 @@ export function TopNav() {
                 }}
               >
                 <Icon size={22} />
-                <span>{item.label}</span>
+                <span>{translateUi(item.label)}</span>
               </button>
             );
           })}
@@ -77,11 +80,11 @@ export function TopNav() {
               href={kofiSubscribeUrl()}
               target="_blank"
               rel="noopener noreferrer"
-              title={trialTitle}
+              title={translateUi(trialTitle)}
               onClick={() => { void trackPremiumEvent(authClient, "checkout_opened", { source: "trial_nav" }); }}
             >
               <BadgeCheck size={18} />
-              <span>{trialLabel}</span>
+              <span>{translateUi(trialLabel)}</span>
             </a>
           )}
           <button
@@ -91,7 +94,7 @@ export function TopNav() {
               closeDetails();
               setSection("settings");
             }}
-            aria-label="Settings"
+            aria-label={translateUi("Settings")}
           >
             <Settings size={26} />
           </button>
@@ -111,8 +114,8 @@ export function TopNav() {
               href={kofiSubscribeUrl()}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={trialTitle}
-              title={trialTitle}
+              aria-label={translateUi(trialTitle)}
+              title={translateUi(trialTitle)}
               onClick={() => { void trackPremiumEvent(authClient, "checkout_opened", { source: "trial_mobile_nav" }); }}
             >
               <BadgeCheck size={20} />
@@ -122,7 +125,7 @@ export function TopNav() {
             type="button"
             className={`mobile-profile-btn ${!selected && view === "profiles" ? "is-active" : ""}`}
             onClick={switchProfile}
-            aria-label="Switch profile"
+            aria-label={translateUi("Switch profile")}
           >
             <div className="mobile-avatar-container">
               {activeProfile ? (
@@ -136,7 +139,7 @@ export function TopNav() {
       </header>
 
       {/* Mobile Bottom Navigation (screen <= 680px) */}
-      <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
+      <nav className="mobile-bottom-nav" aria-label={translateUi("Mobile navigation")}>
         {nav.map((item) => {
           const Icon = item.icon;
           return (
@@ -150,7 +153,7 @@ export function TopNav() {
               }}
             >
               <Icon size={22} />
-              <span>{item.label}</span>
+              <span>{translateUi(item.label)}</span>
             </button>
           );
         })}
@@ -162,10 +165,10 @@ export function TopNav() {
             closeDetails();
             setSection("settings");
           }}
-          aria-label="Settings"
+          aria-label={translateUi("Settings")}
         >
           <Settings size={22} />
-          <span>Settings</span>
+          <span>{translateUi("Settings")}</span>
         </button>
       </nav>
     </>

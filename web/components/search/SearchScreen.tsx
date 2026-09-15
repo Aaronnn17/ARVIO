@@ -1,10 +1,13 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { LoaderCircle, Search } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { MediaCard } from "@/components/media/MediaCard";
 
 export function SearchScreen() {
+  const translateUi = useTranslation();
   const { query, setQuery, results, openDetails, settings, searchState } = useApp();
   const posterMode = settings.cardLayoutMode === "poster";
   return (
@@ -17,13 +20,13 @@ export function SearchScreen() {
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           autoFocus
-          placeholder="Search movies and series"
-          aria-label="Search movies and series"
+          placeholder={translateUi("Search movies and series")}
+          aria-label={translateUi("Search movies and series")}
         />
       </section>
-      {searchState === "loading" && <div className="search-status" role="status"><LoaderCircle size={20} /> Searching</div>}
-      {searchState === "error" && <div className="library-error" role="alert">Search is temporarily unavailable. Please try again.</div>}
-      {query.trim() && searchState === "idle" && !results.length && <div className="watchlist-empty"><Search size={34} /><p>No matching titles</p></div>}
+      {searchState === "loading" && <div className="search-status" role="status"><LoaderCircle size={20} /> {translateUi(" Searching")}</div>}
+      {searchState === "error" && <div className="library-error" role="alert">{translateUi("Search is temporarily unavailable. Please try again.")}</div>}
+      {query.trim() && searchState === "idle" && !results.length && <div className="watchlist-empty"><Search size={34} /><p>{translateUi("No matching titles")}</p></div>}
       <div className="grid-results">
         {results.map((item) => <MediaCard key={`${item.mediaType}-${item.id}`} item={item} onOpen={openDetails} posterMode={posterMode} />)}
       </div>

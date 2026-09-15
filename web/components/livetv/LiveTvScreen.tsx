@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { ArrowDown, ArrowUp, PanelLeft, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, ExternalLink, Eye, EyeOff, History, LayoutGrid, List, ListVideo, Play, Plus, RefreshCw, Search, Star, Trophy, Tv, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -33,6 +35,7 @@ function groupLabel(group: string) {
 }
 
 export function LiveTvScreen() {
+  const translateUi = useTranslation();
   const { iptvSnapshot, settings, setSettings, playChannel, recordChannelPlayback, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth, activeProfile, activeChannel, addons } = useApp();
   const lastChannelKey = `${LAST_CHANNEL_KEY}:${auth?.userId ?? "local"}:${activeProfile?.id ?? "local"}`;
   const listRef = useRef<HTMLElement>(null);
@@ -310,47 +313,46 @@ export function LiveTvScreen() {
 
   const activeCategoryLabel = categories.find((category) => category.id === activeCategory)?.label ?? "All Channels";
   const renderCategory = (category: typeof categories[number]) => <button type="button"
-    className={activeCategory === category.id ? "is-active" : ""} title={category.label}
+    className={activeCategory === category.id ? "is-active" : ""} title={translateUi(category.label)}
     onClick={() => {
       setActiveCategory(category.id); setSelectedChannelId(null);
       if (window.matchMedia("(max-width: 760px)").matches) setGroupsOpen(false);
     }}>
     {category.id === "favorites" ? <Star size={20} /> : category.id === "recent" ? <History size={20} /> : category.id === "sports" ? <Trophy size={20} /> : <LayoutGrid size={20} />}
-    <span>{category.label}</span>{category.id !== "sports" && <em>{resolvingSavedChannels && ["favorites", "recent"].includes(category.id) && !category.count ? <RefreshCw size={14} className="is-spinning" aria-label="Loading saved channels" /> : category.count.toLocaleString()}</em>}
+    <span>{translateUi(category.label)}</span>{category.id !== "sports" && <em>{resolvingSavedChannels && ["favorites", "recent"].includes(category.id) && !category.count ? <RefreshCw size={14} className="is-spinning" aria-label={translateUi("Loading saved channels")} /> : category.count.toLocaleString()}</em>}
   </button>;
 
   return (
     <div className="screen livetv-shell" onPointerDownCapture={() => { pointerNavigation.current = true; }} onKeyDownCapture={() => { pointerNavigation.current = false; }}>
       {channels.length === 0 && <header className="livetv-topbar">
         <div className="livetv-heading">
-          <h2>Live TV</h2>
-          <span>No channels loaded</span>
+          <h2>{translateUi("Live TV")}</h2>
+          <span>{translateUi("No channels loaded")}</span>
         </div>
         <div className="livetv-search">
           <Search size={17} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search channels" aria-label="Search channels" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={translateUi("Search channels")} aria-label={translateUi("Search channels")} />
           {query && (
-            <button type="button" onClick={() => setQuery("")} aria-label="Clear search"><X size={15} /></button>
+            <button type="button" onClick={() => setQuery("")} aria-label={translateUi("Clear search")}><X size={15} /></button>
           )}
         </div>
         <div className="livetv-topbar-actions">
-          <button type="button" className="livetv-chipbtn" title="Toggle categories" aria-label="Toggle categories" aria-expanded={groupsOpen} onClick={() => setGroupsOpen(!groupsOpen)}><PanelLeft size={18} /></button>
-          {enabledPlaylists.length > 1 && <select aria-label="Playlist provider" value={provider} onChange={(event) => { setProvider(event.target.value); setActiveCategory("all"); }}>
-            <option value="all">All playlists</option>
+          <button type="button" className="livetv-chipbtn" title={translateUi("Toggle categories")} aria-label={translateUi("Toggle categories")} aria-expanded={groupsOpen} onClick={() => setGroupsOpen(!groupsOpen)}><PanelLeft size={18} /></button>
+          {enabledPlaylists.length > 1 && <select aria-label={translateUi("Playlist provider")} value={provider} onChange={(event) => { setProvider(event.target.value); setActiveCategory("all"); }}>
+            <option value="all">{translateUi("All playlists")}</option>
             {enabledPlaylists.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>}
           <button type="button" className="livetv-chipbtn" onClick={() => setManaging((value) => !value)} aria-expanded={managing}>
-            <ListVideo size={17} /> Playlists
-          </button>
-          <button type="button" className="livetv-chipbtn" onClick={() => void refreshIptv()} disabled={isLoadingTv} aria-label="Refresh channels">
-            <RefreshCw size={17} className={isLoadingTv ? "is-spinning" : ""} /> {isLoadingTv ? "Refreshing" : "Refresh"}
+            <ListVideo size={17} /> {translateUi(" Playlists")}</button>
+          <button type="button" className="livetv-chipbtn" onClick={() => void refreshIptv()} disabled={isLoadingTv} aria-label={translateUi("Refresh channels")}>
+            <RefreshCw size={17} className={isLoadingTv ? "is-spinning" : ""} /> {isLoadingTv ? translateUi("Refreshing") : translateUi("Refresh")}
           </button>
         </div>
       </header>}
 
       {managing && (
         <section className="livetv-manage">
-          {hiddenGroups.length > 0 && <div className="hidden-groups"><strong>Hidden categories</strong>{hiddenGroups.map((group) => <button type="button" key={group} className="secondary" onClick={() => setSettings({ ...settings, hiddenGroupIds: hiddenGroups.filter((id) => id !== group) })}><Eye size={16} />{group.includes("|") ? group.slice(group.indexOf("|") + 1) : group}</button>)}</div>}
+          {hiddenGroups.length > 0 && <div className="hidden-groups"><strong>{translateUi("Hidden categories")}</strong>{hiddenGroups.map((group) => <button type="button" key={group} className="secondary" onClick={() => setSettings({ ...settings, hiddenGroupIds: hiddenGroups.filter((id) => id !== group) })}><Eye size={16} />{group.includes("|") ? group.slice(group.indexOf("|") + 1) : group}</button>)}</div>}
           {playlists.map((playlist) => (
             <div className="livetv-manage-row" key={playlist.id}>
               <button
@@ -360,34 +362,34 @@ export function LiveTvScreen() {
                   ...settings,
                   iptvPlaylists: playlists.map((p) => p.id === playlist.id ? { ...p, enabled: !p.enabled } : p)
                 })}
-                aria-label={playlist.enabled ? `Disable ${playlist.name}` : `Enable ${playlist.name}`}
+                aria-label={playlist.enabled ? translateUi("Disable {value0}", {value0: playlist.name}) : translateUi("Enable {value0}", {value0: playlist.name})}
               />
               <span className="livetv-manage-name">
                 <strong>{playlist.name}</strong>
-                <em>{playlist.epgUrl || playlist.epgUrls?.length ? "Playlist + EPG" : "Playlist"}</em>
+                <em>{playlist.epgUrl || playlist.epgUrls?.length ? translateUi("Playlist + EPG") : translateUi("Playlist")}</em>
               </span>
               <button
                 type="button"
                 className="livetv-manage-remove"
                 onClick={() => setSettings({ ...settings, iptvPlaylists: playlists.filter((p) => p.id !== playlist.id) })}
-                aria-label={`Remove ${playlist.name}`}
+                aria-label={translateUi("Remove {value0}", {value0: playlist.name})}
               >
                 <X size={16} />
               </button>
             </div>
           ))}
           <div className="livetv-manage-add">
-            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" aria-label="Playlist name" />
-            <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="M3U / Xtream URL (or host user pass)" aria-label="Playlist URL" />
-            <input value={epgUrl} onChange={(event) => setEpgUrl(event.target.value)} placeholder="EPG URL (optional)" aria-label="EPG URL" />
-            <button type="button" className="primary" onClick={addPlaylist}><Plus size={17} /> Add</button>
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder={translateUi("Name")} aria-label={translateUi("Playlist name")} />
+            <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder={translateUi("M3U / Xtream URL (or host user pass)")} aria-label={translateUi("Playlist URL")} />
+            <input value={epgUrl} onChange={(event) => setEpgUrl(event.target.value)} placeholder={translateUi("EPG URL (optional)")} aria-label={translateUi("EPG URL")} />
+            <button type="button" className="primary" onClick={addPlaylist}><Plus size={17} /> {translateUi(" Add")}</button>
           </div>
         </section>
       )}
 
       {hasWarnings && (
         <div className="livetv-warning">
-          <strong>Playlist problem</strong>
+          <strong>{translateUi("Playlist problem")}</strong>
           <span>{iptvSnapshot.playlistWarnings?.[0]}</span>
         </div>
       )}
@@ -395,36 +397,36 @@ export function LiveTvScreen() {
       {!playlists.length && !channels.length && !managing && (
         <section className="livetv-empty">
           <Tv size={44} />
-          <h3>Add your IPTV playlist</h3>
-          <p>Paste an M3U link or Xtream login. Playlists sync through ARVIO Cloud{auth ? "" : " when you sign in"}.</p>
-          <button type="button" className="primary" onClick={() => setManaging(true)}><Plus size={18} /> Add playlist</button>
+          <h3>{translateUi("Add your IPTV playlist")}</h3>
+          <p>{translateUi("Paste an M3U link or Xtream login. Playlists sync through ARVIO Cloud")}{auth ? "" : translateUi(" when you sign in")}.</p>
+          <button type="button" className="primary" onClick={() => setManaging(true)}><Plus size={18} /> {translateUi(" Add playlist")}</button>
         </section>
       )}
 
       {channels.length > 0 && (
         <div className={`livetv-columns tv-guide-workspace ${activeCategory === "sports" ? "sports-active" : ""} ${groupsOpen ? "" : "groups-collapsed"}`}>
-          {groupsOpen && <button className="tv-drawer-scrim" type="button" aria-label="Close categories" onClick={() => setGroupsOpen(false)} />}
-          <nav className="livetv-cats" aria-label="Channel categories" inert={!groupsOpen} onKeyDown={event => {
+          {groupsOpen && <button className="tv-drawer-scrim" type="button" aria-label={translateUi("Close categories")} onClick={() => setGroupsOpen(false)} />}
+          <nav className="livetv-cats" aria-label={translateUi("Channel categories")} inert={!groupsOpen} onKeyDown={event => {
             if (event.key === "ArrowRight" && !(event.target as HTMLElement).matches("input, select")) {
               const first = listRef.current?.querySelector<HTMLElement>('.is-selected .livetv-guide-channel, .is-selected .livetv-row-main')
                 ?? listRef.current?.querySelector<HTMLElement>('[data-virtual-index] button, .tv-event-card');
               if (first) { event.preventDefault(); event.stopPropagation(); first.focus({ preventScroll: true }); }
             }
           }}>
-            <select aria-label="Playlist provider" value={provider} onChange={event => { setProvider(event.target.value); setActiveCategory("all"); }}>
-              <option value="all">All playlists</option>
+            <select aria-label={translateUi("Playlist provider")} value={provider} onChange={event => { setProvider(event.target.value); setActiveCategory("all"); }}>
+              <option value="all">{translateUi("All playlists")}</option>
               {enabledPlaylists.map(playlist => <option key={playlist.id} value={playlist.id}>{playlist.name}</option>)}
             </select>
             <div className="livetv-search"><Search size={18} />
-              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search channels" aria-label="Search channels" />
-              {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search"><X size={16} /></button>}
+              <input value={query} onChange={event => setQuery(event.target.value)} placeholder={translateUi("Search channels")} aria-label={translateUi("Search channels")} />
+              {query && <button type="button" onClick={() => setQuery("")} aria-label={translateUi("Clear search")}><X size={16} /></button>}
             </div>
             <div className="tv-sidebar-destinations">{categories.filter(category => !category.id.startsWith("group:")).map(category => <div key={category.id}>{renderCategory(category)}</div>)}</div>
-            <div className="tv-sidebar-group-heading"><span>Categories</span>
-              <button type="button" title="Manage playlists" aria-label="Manage playlists" onClick={() => setManaging(value => !value)} aria-expanded={managing}><ListVideo size={18} /></button>
-              <button type="button" title="Refresh channels" aria-label="Refresh channels" disabled={isLoadingTv} onClick={() => void refreshIptv()}><RefreshCw size={16} className={isLoadingTv ? "is-spinning" : ""} /></button>
+            <div className="tv-sidebar-group-heading"><span>{translateUi("Categories")}</span>
+              <button type="button" title={translateUi("Manage playlists")} aria-label={translateUi("Manage playlists")} onClick={() => setManaging(value => !value)} aria-expanded={managing}><ListVideo size={18} /></button>
+              <button type="button" title={translateUi("Refresh channels")} aria-label={translateUi("Refresh channels")} disabled={isLoadingTv} onClick={() => void refreshIptv()}><RefreshCw size={16} className={isLoadingTv ? "is-spinning" : ""} /></button>
             </div>
-            <VirtualList items={categories.filter(category => category.id.startsWith("group:"))} estimate={56} itemKey={rowKey} label="Categories" renderItem={renderCategory} />
+            <VirtualList items={categories.filter(category => category.id.startsWith("group:"))} estimate={56} itemKey={rowKey} label={translateUi("Categories")} renderItem={renderCategory} />
           </nav>
 
           <main ref={listRef} className="livetv-list" aria-label={activeCategoryLabel} onFocusCapture={event => {
@@ -440,17 +442,17 @@ export function LiveTvScreen() {
               onPlay={watchChannel} onEnter={() => { if (!pointerNavigation.current) setGroupsOpen(false); }}
               onOpenCategories={() => { setGroupsOpen(true); requestAnimationFrame(() => document.querySelector<HTMLElement>(".livetv-cats button.is-active")?.focus()); }} /> : <>
             <div className="livetv-list-head">
-              <button type="button" className="livetv-chipbtn" title="Toggle categories" aria-label="Toggle categories" aria-expanded={groupsOpen} onClick={() => setGroupsOpen(!groupsOpen)}><PanelLeft size={20} /></button>
+              <button type="button" className="livetv-chipbtn" title={translateUi("Toggle categories")} aria-label={translateUi("Toggle categories")} aria-expanded={groupsOpen} onClick={() => setGroupsOpen(!groupsOpen)}><PanelLeft size={20} /></button>
               <h3>{activeCategoryLabel}</h3>
               <span>{visibleChannels.length.toLocaleString()}</span>
-              <div className="livetv-view-toggle" role="tablist" aria-label="Channel view">
-                <button type="button" className={view === "list" ? "is-active" : ""} onClick={() => setView("list")} title="List view" aria-label="List view"><List size={18} /></button>
-                <button type="button" className={view === "guide" ? "is-active" : ""} onClick={() => setView("guide")} title="Guide view" aria-label="Guide view"><LayoutGrid size={18} /></button>
+              <div className="livetv-view-toggle" role="tablist" aria-label={translateUi("Channel view")}>
+                <button type="button" className={view === "list" ? "is-active" : ""} onClick={() => setView("list")} title={translateUi("List view")} aria-label={translateUi("List view")}><List size={18} /></button>
+                <button type="button" className={view === "guide" ? "is-active" : ""} onClick={() => setView("guide")} title={translateUi("Guide view")} aria-label={translateUi("Guide view")}><LayoutGrid size={18} /></button>
               </div>
               {activeCategory.startsWith("group:") && (
                 <div className="livetv-group-actions">
-                  <button type="button" onClick={() => toggleGroupFavorite(activeCategory.slice(6))} aria-label="Favorite this category"><Star size={15} /></button>
-                  <button type="button" onClick={() => toggleHiddenGroup(activeCategory.slice(6))} aria-label="Hide this category">
+                  <button type="button" onClick={() => toggleGroupFavorite(activeCategory.slice(6))} aria-label={translateUi("Favorite this category")}><Star size={15} /></button>
+                  <button type="button" onClick={() => toggleHiddenGroup(activeCategory.slice(6))} aria-label={translateUi("Hide this category")}>
                     {hiddenGroups.includes(activeCategory.slice(6)) ? <Eye size={15} /> : <EyeOff size={15} />}
                   </button>
                 </div>
@@ -459,13 +461,13 @@ export function LiveTvScreen() {
             {renderedChannels.length === 0 && (
               <div className="livetv-list-empty">
                 <Search size={28} />
-                <p>{resolvingSavedChannels && ["favorites", "recent"].includes(activeCategory) ? "Loading saved channels..." : `No channels match ${query.trim() ? `"${query.trim()}"` : "this category"}.`}</p>
-                {query.trim() && <button type="button" className="secondary" onClick={() => setQuery("")}>Clear search</button>}
+                <p>{resolvingSavedChannels && ["favorites", "recent"].includes(activeCategory) ? translateUi("Loading saved channels...") : translateUi("No channels match {value0}.", {value0: query.trim() ? `"${query.trim()}"` : "this category"})}</p>
+                {query.trim() && <button type="button" className="secondary" onClick={() => setQuery("")}>{translateUi("Clear search")}</button>}
               </div>
             )}
             {view === "list" ? (
               <div className="livetv-rows">
-                <VirtualList key={`${provider}:${activeCategory}:${query}`} items={renderedChannels} itemKey={rowKey} label="Channels" estimate={86} renderItem={(channel) => (
+                <VirtualList key={`${provider}:${activeCategory}:${query}`} items={renderedChannels} itemKey={rowKey} label={translateUi("Channels")} estimate={86} renderItem={(channel) => (
                   <ChannelRow
                     key={channel.id}
                     channel={channel}
@@ -495,14 +497,14 @@ export function LiveTvScreen() {
             </>}
           </main>
 
-          {activeCategory !== "sports" && <aside className="livetv-detail" aria-label="Channel details">
+          {activeCategory !== "sports" && <aside className="livetv-detail" aria-label={translateUi("Channel details")}>
             {selectedChannel ? (
               <>
-                <div id="live-tv-player-dock" className={`livetv-detail-art ${activeChannel ? "has-live-playback" : ""}`} aria-label="Live player">
+                <div id="live-tv-player-dock" className={`livetv-detail-art ${activeChannel ? "has-live-playback" : ""}`} aria-label={translateUi("Live player")}>
                   <ChannelLogo channel={selectedChannel} size={48} />
-                  {!activeChannel && <button type="button" className="livetv-preview-play" aria-label={`Play ${selectedChannel.name}`} title={`Play ${selectedChannel.name}`} onClick={() => watchChannel(selectedChannel)}><Play size={28} fill="currentColor" /></button>}
+                  {!activeChannel && <button type="button" className="livetv-preview-play" aria-label={translateUi("Play {value0}", {value0: selectedChannel.name})} title={translateUi("Play {value0}", {value0: selectedChannel.name})} onClick={() => watchChannel(selectedChannel)}><Play size={28} fill="currentColor" /></button>}
                 </div>
-                <p className="livetv-detail-group">{selectedChannel.group || "Live TV"}</p>
+                <p className="livetv-detail-group">{selectedChannel.group || translateUi("Live TV")}</p>
                 <div className="livetv-channel-identity"><div className="tv-identity-logo"><ChannelLogo channel={selectedChannel} size={28} /></div><span>{selectedChannel.name}{selectedChannel.qualityLabel ? ` · ${selectedChannel.qualityLabel}` : ""}</span></div>
                 <h2>{selectedGuide?.now?.title || selectedChannel.name}</h2>
                 {selectedGuide?.now?.title ? (
@@ -513,39 +515,38 @@ export function LiveTvScreen() {
                     {selectedGuide.now.description && <p>{selectedGuide.now.description}</p>}
                   </div>
                 ) : (
-                  <p className="livetv-detail-empty">No guide data for this channel.</p>
+                  <p className="livetv-detail-empty">{translateUi("No guide data for this channel.")}</p>
                 )}
                 {selectedGuide?.next?.title && (
                   <div className="livetv-program is-next">
                     <div className="livetv-program-head">
-                      <span>NEXT</span>
+                      <span>{translateUi("NEXT")}</span>
                       <em>{fmtTime(selectedGuide.next.startUtcMillis)}</em>
                     </div>
                     <strong>{selectedGuide.next.title}</strong>
                   </div>
                 )}
                 <div className="livetv-detail-actions">
-                  {favoriteIds.has(selectedChannel.id) && <><button className="secondary" type="button" title="Move favorite up" aria-label="Move favorite up" disabled={channelById.get(favorites[0])?.id === selectedChannel.id} onClick={() => moveFavorite(selectedChannel.id, -1)}><ArrowUp size={17} /></button><button className="secondary" type="button" title="Move favorite down" aria-label="Move favorite down" disabled={channelById.get(favorites[favorites.length - 1])?.id === selectedChannel.id} onClick={() => moveFavorite(selectedChannel.id, 1)}><ArrowDown size={17} /></button></>}
-                  <button type="button" className="primary" onClick={() => watchChannel(selectedChannel)}><Play size={17} fill="currentColor" /> Watch</button>
+                  {favoriteIds.has(selectedChannel.id) && <><button className="secondary" type="button" title={translateUi("Move favorite up")} aria-label={translateUi("Move favorite up")} disabled={channelById.get(favorites[0])?.id === selectedChannel.id} onClick={() => moveFavorite(selectedChannel.id, -1)}><ArrowUp size={17} /></button><button className="secondary" type="button" title={translateUi("Move favorite down")} aria-label={translateUi("Move favorite down")} disabled={channelById.get(favorites[favorites.length - 1])?.id === selectedChannel.id} onClick={() => moveFavorite(selectedChannel.id, 1)}><ArrowDown size={17} /></button></>}
+                  <button type="button" className="primary" onClick={() => watchChannel(selectedChannel)}><Play size={17} fill="currentColor" /> {translateUi(" Watch")}</button>
                   <button type="button" className="secondary" onClick={() => openChannelExternally(selectedChannel, "vlc")}>
-                    <ExternalLink size={17} /> VLC
-                  </button>
+                    <ExternalLink size={17} /> {translateUi(" VLC")}</button>
                   <button
                     type="button"
                     className={favoriteIds.has(selectedChannel.id) ? "secondary is-active" : "secondary"}
-                    aria-label={favoriteIds.has(selectedChannel.id) ? "Remove selected favorite" : "Add selected favorite"}
-                    title={favoriteIds.has(selectedChannel.id) ? "Remove favorite" : "Add favorite"}
+                    aria-label={favoriteIds.has(selectedChannel.id) ? translateUi("Remove selected favorite") : translateUi("Add selected favorite")}
+                    title={favoriteIds.has(selectedChannel.id) ? translateUi("Remove favorite") : translateUi("Add favorite")}
                     onClick={() => toggleFavorite(selectedChannel.id)}
                   >
                     <Star size={17} fill={favoriteIds.has(selectedChannel.id) ? "currentColor" : "none"} />
                   </button>
-                  {Boolean(selectedChannel.catchupDays) && <button type="button" className="secondary" aria-label="Show catch-up archive" aria-expanded={archiveOpen} onClick={() => setArchiveOpen(value => !value)}><History size={17} /> Catch-up</button>}
+                  {Boolean(selectedChannel.catchupDays) && <button type="button" className="secondary" aria-label={translateUi("Show catch-up archive")} aria-expanded={archiveOpen} onClick={() => setArchiveOpen(value => !value)}><History size={17} /> {translateUi(" Catch-up")}</button>}
                 </div>
                 {archiveOpen && catchup?.channelId === selectedChannel.id && (
                   <div className="livetv-catchup">
-                    <p className="livetv-catchup-head"><History size={14} /> Catch-up{selectedChannel.catchupDays ? ` · ${selectedChannel.catchupDays}d archive` : ""}</p>
-                    {catchup.loading && <p className="livetv-detail-empty">Loading archive…</p>}
-                    {!catchup.loading && !catchup.programs.length && <p className="livetv-detail-empty">No archive available.</p>}
+                    <p className="livetv-catchup-head"><History size={14} /> {translateUi(" Catch-up")}{selectedChannel.catchupDays ? translateUi(" · {value0}d archive", {value0: selectedChannel.catchupDays}) : ""}</p>
+                    {catchup.loading && <p className="livetv-detail-empty">{translateUi("Loading archive…")}</p>}
+                    {!catchup.loading && !catchup.programs.length && <p className="livetv-detail-empty">{translateUi("No archive available.")}</p>}
                     {catchup.programs.map((program) => (
                       <button
                         type="button"
@@ -567,7 +568,7 @@ export function LiveTvScreen() {
             ) : (
               <div className="livetv-detail-empty-state">
                 <Tv size={44} />
-                <p>Select a channel to see the guide.</p>
+                <p>{translateUi("Select a channel to see the guide.")}</p>
               </div>
             )}
           </aside>}
@@ -577,8 +578,8 @@ export function LiveTvScreen() {
       {playlists.length > 0 && !channels.length && !hasWarnings && (
         <section className="livetv-empty">
           <ChevronDown size={36} className={isLoadingTv ? "is-spinning" : ""} />
-          <h3>{isLoadingTv ? "Loading channels…" : "No channels yet"}</h3>
-          <p>{isLoadingTv ? "Big playlists can take a few seconds." : "Refresh, or double-check the playlist details with your provider."}</p>
+          <h3>{isLoadingTv ? translateUi("Loading channels…") : translateUi("No channels yet")}</h3>
+          <p>{isLoadingTv ? translateUi("Big playlists can take a few seconds.") : translateUi("Refresh, or double-check the playlist details with your provider.")}</p>
         </section>
       )}
     </div>
@@ -611,6 +612,7 @@ function GuideGrid({ channels, favorites, nowNext, selectedId, onFocus, onVisibl
   onPlay: (channel: IptvChannel) => void;
   onCatchup: (channel: IptvChannel, program: IptvProgram) => void;
 }) {
+  const translateUi = useTranslation();
   const [clock, setClock] = useState(0);
   const [manualStart, setManualStart] = useState<number | null>(null);
   const currentStart = Math.floor(clock / 1_800_000) * 1_800_000;
@@ -624,17 +626,17 @@ function GuideGrid({ channels, favorites, nowNext, selectedId, onFocus, onVisibl
     return () => window.clearInterval(timer);
   }, []);
   const nowOffset = ((clock - windowStart) / 60000) * GUIDE_PX_PER_MIN;
-  if (!clock) return <div className="livetv-guide" aria-busy="true" aria-label="Programme guide" />;
+  if (!clock) return <div className="livetv-guide" aria-busy="true" aria-label={translateUi("Programme guide")} />;
 
   return (
-    <div className="livetv-guide" role="grid" aria-label="Programme guide">
-      <div className="guide-window-controls" role="group" aria-label="Guide time window">
-        <button type="button" title="Previous four hours" aria-label="Previous four hours" disabled={windowStart <= currentStart - 48 * 3_600_000} onClick={() => setManualStart(windowStart - 4 * 3_600_000)}><ChevronLeft size={18} /></button>
-        <button type="button" className="guide-now" onClick={() => { setClock(Date.now()); setManualStart(null); }}>Now</button>
-        <button type="button" title="Next four hours" aria-label="Next four hours" disabled={windowStart >= currentStart + 44 * 3_600_000} onClick={() => setManualStart(windowStart + 4 * 3_600_000)}><ChevronRight size={18} /></button>
+    <div className="livetv-guide" role="grid" aria-label={translateUi("Programme guide")}>
+      <div className="guide-window-controls" role="group" aria-label={translateUi("Guide time window")}>
+        <button type="button" title={translateUi("Previous four hours")} aria-label={translateUi("Previous four hours")} disabled={windowStart <= currentStart - 48 * 3_600_000} onClick={() => setManualStart(windowStart - 4 * 3_600_000)}><ChevronLeft size={18} /></button>
+        <button type="button" className="guide-now" onClick={() => { setClock(Date.now()); setManualStart(null); }}>{translateUi("Now")}</button>
+        <button type="button" title={translateUi("Next four hours")} aria-label={translateUi("Next four hours")} disabled={windowStart >= currentStart + 44 * 3_600_000} onClick={() => setManualStart(windowStart + 4 * 3_600_000)}><ChevronRight size={18} /></button>
         <span aria-live="polite">{new Intl.DateTimeFormat([], { weekday: "short", day: "numeric", month: "short" }).format(windowStart)} · {fmtTime(windowStart)}–{fmtTime(windowEnd)}</span>
       </div>
-          <VirtualList items={channels} itemKey={rowKey} label="Guide channels" className="tv-guide-grid" contentWidth={`calc(${totalWidth}px + var(--guide-channel-width))`} preserveHorizontalFocus estimate={62} header={<div className="livetv-guide-timebar">
+          <VirtualList items={channels} itemKey={rowKey} label={translateUi("Guide channels")} className="tv-guide-grid" contentWidth={`calc(${totalWidth}px + var(--guide-channel-width))`} preserveHorizontalFocus estimate={62} header={<div className="livetv-guide-timebar">
             <span className="livetv-guide-corner" />
             <div className="livetv-guide-ticks" style={{ width: `${totalWidth}px` }}>
               {ticks.map((tick) => (
@@ -679,6 +681,7 @@ function GuideRow({ channel, favorite, guide, selected, windowStart, windowEnd, 
   onPlay: () => void;
   onCatchup: (program: IptvProgram) => void;
 }) {
+  const translateUi = useTranslation();
   const rowRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = rowRef.current;
@@ -716,7 +719,7 @@ function GuideRow({ channel, favorite, guide, selected, windowStart, windowEnd, 
         <small className="tv-guide-channel-number">{channel.number}</small>
         <span className="livetv-row-logo"><ChannelLogo channel={channel} size={16} /></span>
         <strong>{channel.name}</strong>
-        {favorite && <Star size={15} fill="currentColor" aria-label="Favorite" />}
+        {favorite && <Star size={15} fill="currentColor" aria-label={translateUi("Favorite")} />}
       </button>
       <div className="livetv-guide-lane" style={{ width: `${totalWidth}px` }}>
         {programs.map((program) => {
@@ -738,7 +741,7 @@ function GuideRow({ channel, favorite, guide, selected, windowStart, windowEnd, 
             </button>
           );
         })}
-        {programs.length === 0 && <span className="livetv-guide-empty">No guide data</span>}
+        {programs.length === 0 && <span className="livetv-guide-empty">{translateUi("No guide data")}</span>}
         {nowOffset >= 0 && nowOffset <= totalWidth && <i className="livetv-guide-nowline" style={{ left: `${nowOffset}px` }} />}
       </div>
     </div>
@@ -755,6 +758,7 @@ function ChannelRow({ channel, guide, favorite, selected, onFocus, onVisible, on
   onPlay: () => void;
   onToggleFavorite: () => void;
 }) {
+  const translateUi = useTranslation();
   const rowRef = useRef<HTMLElement | null>(null);
   const now = guide?.now;
   const next = guide?.next ?? guide?.later ?? guide?.upcoming?.[0];
@@ -789,13 +793,13 @@ function ChannelRow({ channel, guide, favorite, selected, onFocus, onVisible, on
               <span className="livetv-progress"><span style={{ width: `${progress}%` }} /></span>
             </span>
           ) : (
-            <span className="livetv-row-now"><em className="is-muted">{channel.group || "Live TV"}</em></span>
+            <span className="livetv-row-now"><em className="is-muted">{channel.group || translateUi("Live TV")}</em></span>
           )}
           {next?.title && <small>{fmtTime(next.startUtcMillis)} · {next.title}</small>}
         </span>
         <span className="livetv-row-play"><Play size={16} fill="currentColor" /></span>
       </button>
-      <button type="button" className={`livetv-row-star ${favorite ? "is-active" : ""}`} onClick={onToggleFavorite} aria-label={favorite ? "Remove favorite" : "Add favorite"}>
+      <button type="button" className={`livetv-row-star ${favorite ? "is-active" : ""}`} onClick={onToggleFavorite} aria-label={favorite ? translateUi("Remove favorite") : translateUi("Add favorite")}>
         <Star size={17} fill={favorite ? "currentColor" : "none"} />
       </button>
     </article>

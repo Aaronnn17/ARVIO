@@ -97,6 +97,8 @@
     <string name="cancel">Cancel</string>
     <string name="confirm">Confirm</string>
     <string name="retry">Retry</string>
+    <string name="search_discover_load_failed">Could not load titles</string>
+    <string name="search_discover_load_more">Load more</string>
     <string name="delete">Delete</string>
     <string name="add">Add</string>
     <string name="refresh">Refresh</string>
@@ -309,9 +311,17 @@
     <string name="plugins_loading">Plugins: %1$s</string>
 
     <!-- IPTV / Live TV Quick Zap Navigation -->
-    <string name="select_category">Select Category</string>
-    <string name="channel_categories">Channel Categories</string>
+    <string name="select_category">Select Group</string>
+    <string name="channel_categories">Channel Groups</string>
     <string name="channel_guide">Channel Guide</string>
+    <string name="live_groups_title">Groups</string>
+    <string name="live_group_back">Groups</string>
+    <string name="live_quick_all_channels">All channels</string>
+    <string name="live_quick_sports">Sports</string>
+    <string name="live_quick_favourites">Favourites</string>
+    <string name="live_quick_recent">Recently watched</string>
+    <string name="live_channels_count">%1$d channels</string>
+    <string name="live_sports_live_and_upcoming">Live &amp; upcoming</string>
 
 
     <!-- Extracted from code: Settings screen -->
@@ -956,6 +966,38 @@
     <string name="home_cd_rank">Rank #%1$d</string>
     <string name="search_filter_all">All</string>
     <string name="search_filter_anime">Anime</string>
+    <!-- Discover filter row (step 3): one chip per filter, its panel, and the values inside. -->
+    <string name="search_filter_genre">Genre</string>
+    <string name="search_filter_genres">Genres</string>
+    <string name="search_filter_sort">Sort</string>
+    <string name="search_filter_rating">Rating</string>
+    <string name="search_filter_year">Year</string>
+    <string name="search_filter_age">Age rating</string>
+    <string name="search_filter_hide_watched">Hide watched</string>
+    <string name="search_filter_any">Any</string>
+    <string name="search_filter_match_all">AND</string>
+    <string name="search_filter_match_any">OR</string>
+    <string name="search_filter_selected_count">%1$d selected</string>
+    <string name="search_filter_min_votes">Minimum votes</string>
+    <string name="search_filter_rating_from">Rating from</string>
+    <string name="search_filter_rating_to">Rating up to</string>
+    <string name="search_filter_rating_range">%1$s – %2$s</string>
+    <string name="search_filter_clear">Clear filters</string>
+    <string name="search_filter_panel_hint">The grid updates as you tick · BACK closes the panel</string>
+    <string name="search_filter_age_movies_only">Movies only — TMDB has no age filter for series</string>
+    <string name="search_filter_votes_hint">A high floor hides fresh releases, so the default stays Any</string>
+    <string name="search_filter_match_hint">AND: only titles carrying every genre · OR: titles with at least one</string>
+    <string name="search_filter_rating_from_short">From</string>
+    <string name="search_filter_rating_to_short">To</string>
+    <string name="search_filter_rating_hint">Whole points only — no 7.5 · the bar shows what is set</string>
+    <string name="search_filter_decade_caption">Decade</string>
+    <string name="search_filter_decade">%1$ss</string>
+    <string name="search_filter_decade_older">older</string>
+    <string name="search_filter_exact_year">Exact year</string>
+    <string name="search_filter_year_hint">The decade filters on its own · the exact year is one more press, not a must</string>
+    <string name="search_sort_popular">Popular</string>
+    <string name="search_sort_top_rated">Top rated</string>
+    <string name="search_sort_newest">Newest</string>
     <string name="home_no_description">No description available.</string>
     <string name="home_still_loading_catalogue">Still loading your catalogue…</string>
     <string name="home_view_all">View all</string>
@@ -1108,7 +1150,7 @@
     <string name="live_empty_no_channel">No channel</string>
     <string name="live_empty_no_timeline_channel">No programme timeline is available for this channel.</string>
     <string name="live_empty_no_timeline_yet">No guide timeline is available yet.</string>
-    <string name="live_empty_no_channels_category">No channels in this category</string>
+    <string name="live_empty_no_channels_category">No channels in this group</string>
     <string name="live_empty_no_playlist">No IPTV playlist configured.</string>
     <string name="live_placeholder_loading_guide">Loading guide...</string>
     <string name="live_placeholder_no_guide_matched">No guide data matched</string>
@@ -1116,7 +1158,7 @@
     <string name="live_placeholder_no_guide_source">No guide source</string>
     <string name="live_btn_guide">GUIDE</string>
     <string name="live_btn_open_settings">Open settings</string>
-    <string name="live_hint_search">Channel name, number, or category…</string>
+    <string name="live_hint_search">Channel name, number, or group…</string>
     <string name="live_cd_fullscreen">Fullscreen</string>
     <string name="live_cd_close_guide">Close guide</string>
     <string name="live_cd_catchup_available">Catchup available</string>
@@ -1614,8 +1656,8 @@
     <string name="live_menu_move_top">Move to top</string>
     <string name="live_menu_move_up">Move up</string>
     <string name="live_menu_move_down">Move down</string>
-    <string name="live_menu_hide_category">Hide category</string>
-    <string name="live_menu_unhide_category">Unhide category</string>
+    <string name="live_menu_hide_category">Hide group</string>
+    <string name="live_menu_unhide_category">Unhide group</string>
     <string name="live_menu_lock_category">Lock with profile PIN</string>
     <string name="live_menu_unlock_category">Remove PIN lock</string>
     <string name="live_group_enter_pin">Enter PIN to open this group</string>
@@ -1635,4 +1677,6 @@
     <string name="discord_rpc_help_desc">Show your watch status on your Discord profile.</string>
     <string name="live_sources_empty">No other sources found for this channel.</string>
     <string name="live_sources_failed">Could not load sources. Please try again.</string>
+    <string name="settings_iptv_fallback_logos">Fallback channel logos</string>
+    <string name="settings_iptv_fallback_logos_desc">Use alternative artwork only when the provider logo is missing or fails to load.</string>
 </resources>

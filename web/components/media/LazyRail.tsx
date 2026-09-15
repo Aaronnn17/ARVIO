@@ -1,4 +1,5 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
 
 import { useEffect, useRef, useState } from "react";
 import { loadStored, saveStored } from "@/lib/storage";
@@ -21,6 +22,7 @@ export function LazyRail({ catalog, eager = false, posterMode, onOpen, onFocus, 
   onLoaded?: (category: Category) => void;
 }) {
   const { loadCatalogRow, settings } = useApp();
+  const translateUi = useTranslation();
   const cacheKey = catalogCacheKey(catalog, settings.language);
   const ref = useRef<HTMLDivElement | null>(null);
   const startedRef = useRef(false);
@@ -97,7 +99,7 @@ export function LazyRail({ catalog, eager = false, posterMode, onOpen, onFocus, 
   return (
     <section ref={ref} className={`rail rail-skeleton ${effectivePosterMode ? "is-poster" : ""}`} aria-hidden>
       <div className="rail-head">
-        <h3>{catalog.name}</h3>
+        <h3>{catalog.isPreinstalled ? translateUi(catalog.name) : catalog.name}</h3>
       </div>
       <div className="rail-strip">
         {loading && Array.from({ length: 6 }).map((_, index) => <div key={index} className="card-skeleton" />)}

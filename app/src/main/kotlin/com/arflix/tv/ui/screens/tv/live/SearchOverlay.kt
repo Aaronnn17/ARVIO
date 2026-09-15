@@ -48,6 +48,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -165,6 +166,8 @@ fun SearchOverlay(
         onDismiss()
     }
 
+    val isCompact = LocalConfiguration.current.screenWidthDp < 600
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -230,7 +233,7 @@ fun SearchOverlay(
                         },
                     decorationBox = { inner ->
                         if (query.isEmpty()) {
-                            Text(
+                            androidx.compose.material3.Text(
                                 stringResource(R.string.live_hint_search),
                                 style = TextStyle(color = LiveColors.FgMute, fontSize = 18.sp),
                             )
@@ -238,10 +241,12 @@ fun SearchOverlay(
                         inner()
                     },
                 )
-                Text(
-                    "ESC",
-                    style = LiveType.NumberMono.copy(color = LiveColors.FgMute),
-                )
+                if (!isCompact) {
+                    Text(
+                        "ESC",
+                        style = LiveType.NumberMono.copy(color = LiveColors.FgMute),
+                    )
+                }
             }
             Box(
                 modifier = Modifier
@@ -267,6 +272,7 @@ fun SearchOverlay(
                         } else {
                             null
                         },
+                        showChannelNumber = !isCompact,
                         modifier = focusMod,
                     )
                 }
@@ -321,6 +327,7 @@ private fun SearchResultRow(
     matchText: String?,
     onPick: (EnrichedChannel) -> Unit,
     onMoveUp: (() -> Unit)? = null,
+    showChannelNumber: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -364,11 +371,13 @@ private fun SearchResultRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text(
-            text = channel.number.toString(),
-            style = LiveType.NumberMono.copy(color = LiveColors.FgMute),
-            modifier = Modifier.width(40.dp),
-        )
+        if (showChannelNumber) {
+            Text(
+                text = channel.number.toString(),
+                style = LiveType.NumberMono.copy(color = LiveColors.FgMute),
+                modifier = Modifier.width(40.dp),
+            )
+        }
         ChannelLogo(channel = channel, size = 40.dp)
         Column(modifier = Modifier.weight(1f)) {
             Text(

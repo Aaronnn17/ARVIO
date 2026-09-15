@@ -8,8 +8,24 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import com.arflix.tv.util.settingsDataStore
+import com.arflix.tv.util.IPTV_FALLBACK_LOGOS_ENABLED_KEY
 
 object ChannelLogoDirectory {
+    private val preferenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var fallbackPreference: StateFlow<Boolean>? = null
+    @Synchronized fun fallbackEnabled(context: Context): StateFlow<Boolean> =
+        fallbackPreference ?: context.applicationContext.settingsDataStore.data
+            .map { it[IPTV_FALLBACK_LOGOS_ENABLED_KEY] ?: false }
+            .stateIn(preferenceScope, SharingStarted.Eagerly, false)
+            .also { fallbackPreference = it }
+
     private val mutex = Mutex()
     @Volatile private var index: ChannelLogoIndex? = null
 

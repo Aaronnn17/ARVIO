@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { Bookmark, Film, LoaderCircle, RefreshCw, Search, Server, Tv, SlidersHorizontal, ArrowLeft, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -34,6 +36,7 @@ function itemKey(item: MediaItem): string {
 }
 
 export function WatchlistScreen() {
+  const translateUi = useTranslation();
   const {
     watchlist, traktConnected, simklConnected, mdblistConnected, openDetails,
     settings, trackingPreferences, loadTraktLists, loadTraktListItems, loadTrackerLibrary, loadCatalogRow, catalogConfigs, auth, activeProfile, setSection: navigate
@@ -240,44 +243,44 @@ export function WatchlistScreen() {
   };
   const refresh = () => { if(tab === "watchlist") setRetry((value) => value + 1); else void loadLibrary(true); };
   const sourceOptions = section === "libraries" ? libraries.map((entry) => ({ value: entry.value, name: `${entry.serverName} / ${entry.libraryName}` }))
-    : [{ value: "saved", name: "My watchlist" }, ...trackerSources.map((entry) => ({ value: `${entry.provider}:${entry.id}`, name: `${entry.provider === "trakt" ? "Trakt" : "Simkl"} / ${entry.name}` }))];
+    : [{ value: "saved", name: translateUi("My watchlist") }, ...trackerSources.map((entry) => ({ value: `${entry.provider}:${entry.id}`, name: `${entry.provider === "trakt" ? "Trakt" : "Simkl"} / ${translateUi(entry.name)}` }))];
   return (
     <div className={`screen oled-library ${posterMode ? "poster-results" : ""}`}>
       <header className="oled-library-toolbar">
-        <nav aria-label="Library sections">{([ ["watchlists", "Watchlists"], ["lists", "My lists"], ["libraries", "Libraries"] ] as const).map(([value, label]) =>
-          <button key={value} aria-current={section === value ? "page" : undefined} onClick={() => changeSection(value)}>{label}</button>)}</nav>
-        <div className="oled-library-actions"><span>{collections ? `${personalLists.length} lists` : `${tab !== "watchlist" ? libraryPage.total : items.length} titles`}</span>
-          {collections && <button onClick={() => navigate("settings")}>+ New list</button>}
-          <button aria-label="Search library" onClick={() => setShowSearch(true)}><Search size={22} /></button>
-          <button className="oled-filter-button" onClick={() => setShowFilters(true)}><SlidersHorizontal size={20} /><span>Filters</span></button>
+        <nav aria-label={translateUi("Library sections")}>{([ ["watchlists", "Watchlists"], ["lists", "My lists"], ["libraries", "Libraries"] ] as const).map(([value, label]) =>
+          <button key={value} aria-current={section === value ? "page" : undefined} onClick={() => changeSection(value)}>{translateUi(label)}</button>)}</nav>
+        <div className="oled-library-actions"><span>{collections ? translateUi("{value0} lists", {value0: personalLists.length}) : translateUi("{value0} titles", {value0: tab !== "watchlist" ? libraryPage.total : items.length})}</span>
+          {collections && <button onClick={() => navigate("settings")}>{translateUi("+ New list")}</button>}
+          <button aria-label={translateUi("Search library")} onClick={() => setShowSearch(true)}><Search size={22} /></button>
+          <button className="oled-filter-button" onClick={() => setShowFilters(true)}><SlidersHorizontal size={20} /><span>{translateUi("Filters")}</span></button>
         </div>
       </header>
-      {!collections && !openedList && <select className="oled-source-select" value={sourceValue} onChange={(event) => selectSource(event.target.value)} aria-label="Library source">{sourceOptions.map((source) => <option key={source.value} value={source.value}>{source.name}</option>)}</select>}
-      {openedList && <div className="oled-list-breadcrumb"><button onClick={() => setOpenedList(null)}><ArrowLeft size={18}/> My lists</button><span>{activeList?.name}</span></div>}
+      {!collections && !openedList && <select className="oled-source-select" value={sourceValue} onChange={(event) => selectSource(event.target.value)} aria-label={translateUi("Library source")}>{sourceOptions.map((source) => <option key={source.value} value={source.value}>{source.name}</option>)}</select>}
+      {openedList && <div className="oled-list-breadcrumb"><button onClick={() => setOpenedList(null)}><ArrowLeft size={18}/> {translateUi(" My lists")}</button><span>{activeList?.name}</span></div>}
       <div className={`oled-library-body ${!collections && !openedList ? "with-sources" : ""}`}>
-        {!collections && !openedList && <aside className="oled-source-nav" aria-label="Library sources">
+        {!collections && !openedList && <aside className="oled-source-nav" aria-label={translateUi("Library sources")}>
           {section === "watchlists" ? <>
-            <p>Saved</p><button aria-current={sourceValue === "saved" ? "true" : undefined} onClick={() => selectSource("saved")}><Bookmark size={18}/>My watchlist</button>
-            {(["trakt", "simkl"] as const).map((provider) => trackerSources.some((source) => source.provider === provider) && <div key={provider}><p>{provider === "trakt" ? "Trakt" : "Simkl"}</p>{trackerSources.filter((source) => source.provider === provider).map((source) => <button key={source.id} aria-current={sourceValue === `${provider}:${source.id}` ? "true" : undefined} onClick={() => selectSource(`${provider}:${source.id}`)}>{source.name}</button>)}</div>)}
+            <p>{translateUi("Saved")}</p><button aria-current={sourceValue === "saved" ? "true" : undefined} onClick={() => selectSource("saved")}><Bookmark size={18}/>{translateUi("My watchlist")}</button>
+            {(["trakt", "simkl"] as const).map((provider) => trackerSources.some((source) => source.provider === provider) && <div key={provider}><p>{provider === "trakt" ? translateUi("Trakt") : translateUi("Simkl")}</p>{trackerSources.filter((source) => source.provider === provider).map((source) => <button key={source.id} aria-current={sourceValue === `${provider}:${source.id}` ? "true" : undefined} onClick={() => selectSource(`${provider}:${source.id}`)}>{translateUi(source.name)}</button>)}</div>)}
           </> : homeServers.map((server) => <div key={server.id}><p>{server.name}<small>{PROVIDER_LABELS[server.type]}</small></p>{libraries.filter((library) => library.serverId === server.id).map((library) => <button key={library.value} aria-current={selectedLibrary === library.value ? "true" : undefined} onClick={() => selectSource(library.value)}>{library.mediaType === "movie" ? <Film size={18}/> : <Tv size={18}/>}<span>{library.libraryName}</span></button>)}</div>)}
-          {section === "libraries" && <button className="oled-connect" onClick={() => navigate("settings")}>+ Connect server</button>}
+          {section === "libraries" && <button className="oled-connect" onClick={() => navigate("settings")}>{translateUi("+ Connect server")}</button>}
         </aside>}
-        <section className="oled-library-content" aria-label={collections ? "Personal lists" : activeList?.name || "Library titles"}>
-          {collections ? <div className="oled-collections">{personalLists.filter((list) => list.name.toLowerCase().includes(searchQuery.toLowerCase())).map((list) => <CollectionCover key={list.id} title={list.name} provider={list.provider} load={() => list.catalog ? loadCatalogRow(list.catalog).then((row) => row?.items ?? []) : loadTraktListItems(list.id)} onOpen={() => { setOpenedList(list.id); setSearch(""); setSearchQuery(""); }} />)}{!personalLists.length && <div className="watchlist-empty"><p>No personal lists yet</p><span>Your custom catalogs and connected personal lists appear here.</span></div>}</div>
-          : section === "libraries" && !libraries.length ? <div className="watchlist-empty"><Server size={36}/><p>No libraries connected</p><button onClick={() => navigate("settings")}>Connect a server</button></div>
-          : loading && !items.length ? <div className="library-loading" aria-label="Loading library"><LoaderCircle size={32}/></div>
-          : !items.length ? <div className="watchlist-empty"><Bookmark size={36}/><p>{libraryError ? "Library unavailable" : "No titles found"}</p>{libraryError ? <button onClick={refresh}>Retry</button> : <span>Choose another source or add titles to your watchlist.</span>}</div>
+        <section className="oled-library-content" aria-label={collections ? translateUi("Personal lists") : activeList?.name || translateUi("Library titles")}>
+          {collections ? <div className="oled-collections">{personalLists.filter((list) => list.name.toLowerCase().includes(searchQuery.toLowerCase())).map((list) => <CollectionCover key={list.id} title={list.name} provider={list.provider} load={() => list.catalog ? loadCatalogRow(list.catalog).then((row) => row?.items ?? []) : loadTraktListItems(list.id)} onOpen={() => { setOpenedList(list.id); setSearch(""); setSearchQuery(""); }} />)}{!personalLists.length && <div className="watchlist-empty"><p>{translateUi("No personal lists yet")}</p><span>{translateUi("Your custom catalogs and connected personal lists appear here.")}</span></div>}</div>
+          : section === "libraries" && !libraries.length ? <div className="watchlist-empty"><Server size={36}/><p>{translateUi("No libraries connected")}</p><button onClick={() => navigate("settings")}>{translateUi("Connect a server")}</button></div>
+          : loading && !items.length ? <div className="library-loading" aria-label={translateUi("Loading library")}><LoaderCircle size={32}/></div>
+          : !items.length ? <div className="watchlist-empty"><Bookmark size={36}/><p>{libraryError ? translateUi("Library unavailable") : translateUi("No titles found")}</p>{libraryError ? <button onClick={refresh}>{translateUi("Retry")}</button> : <span>{translateUi("Choose another source or add titles to your watchlist.")}</span>}</div>
           : <><LibraryGrid key={`${auth?.userId}:${activeProfile?.id}:${sourceValue}:${openedList}:${sort}:${searchQuery}:${filter}`} positions={viewportPositions} positionKey={`${viewScope}:${sourceValue}:${openedList}:${sort}:${searchQuery}:${filter}:${posterMode}`} items={items} poster={posterMode} onOpen={openDetails} onNearEnd={tab !== "watchlist" ? loadMore : undefined}/>
-            {libraryError && <div className="library-error" role="alert">Could not update this source. <button onClick={refresh}>Retry</button></div>}
+            {libraryError && <div className="library-error" role="alert">{translateUi("Could not update this source. ")}<button onClick={refresh}>{translateUi("Retry")}</button></div>}
             {tab !== "watchlist" && <div ref={loadMoreRef} className="library-load-more">{loadingMore && <LoaderCircle size={24}/>}</div>}</>}
         </section>
       </div>
-      {showFilters && <LibraryDialog title="Filters" close={() => setShowFilters(false)}>
-        <label>Sort titles<select value={sort} onChange={(event) => setSort(event.target.value as HomeServerLibrarySort)}>{LIBRARY_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-        {tab === "watchlist" && !collections && <label>Type<select value={filter} onChange={(event) => setFilter(event.target.value as WatchlistFilter)}><option value="all">All titles</option><option value="movie">Movies</option><option value="tv">Series</option></select></label>}
-        {!collections && <button onClick={refresh}><RefreshCw size={18}/>Refresh source</button>}
+      {showFilters && <LibraryDialog title={translateUi("Filters")} close={() => setShowFilters(false)}>
+        <label>{translateUi("Sort titles")}<select value={sort} onChange={(event) => setSort(event.target.value as HomeServerLibrarySort)}>{LIBRARY_SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{translateUi(option.label)}</option>)}</select></label>
+        {tab === "watchlist" && !collections && <label>{translateUi("Type")}<select value={filter} onChange={(event) => setFilter(event.target.value as WatchlistFilter)}><option value="all">{translateUi("All titles")}</option><option value="movie">{translateUi("Movies")}</option><option value="tv">{translateUi("Series")}</option></select></label>}
+        {!collections && <button onClick={refresh}><RefreshCw size={18}/>{translateUi("Refresh source")}</button>}
       </LibraryDialog>}
-      {showSearch && <LibraryDialog title="Search library" close={() => setShowSearch(false)}><form onSubmit={(event) => { event.preventDefault(); setShowSearch(false); }}><label>Title<input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search titles or lists" /></label><button type="submit">Done</button></form></LibraryDialog>}
+      {showSearch && <LibraryDialog title={translateUi("Search library")} close={() => setShowSearch(false)}><form onSubmit={(event) => { event.preventDefault(); setShowSearch(false); }}><label>{translateUi("Title")}<input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translateUi("Search titles or lists")} /></label><button type="submit">{translateUi("Done")}</button></form></LibraryDialog>}
     </div>
   );
 }

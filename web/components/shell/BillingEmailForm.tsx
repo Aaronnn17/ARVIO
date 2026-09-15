@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { Loader2 } from "lucide-react";
 import { useId, useRef, useState } from "react";
@@ -8,6 +10,7 @@ import { authClient, useApp } from "@/lib/store";
 import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 
 export function BillingEmailForm({ onEntitled }: { onEntitled: (state: EntitlementState) => void }) {
+  const translateUi = useTranslation();
   const { auth, goToLogin } = useApp();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState("");
@@ -46,20 +49,17 @@ export function BillingEmailForm({ onEntitled }: { onEntitled: (state: Entitleme
 
   return <>
     <button type="button" className="paywall-link-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
-      Paid with a different email? Link your Ko-fi email
-    </button>
+      {translateUi("Paid with a different email? Link your Ko-fi email")}</button>
     {open && <form id={id} className="premium-billing-form" onSubmit={submit}>
-      <label>Ko-fi / PayPal email
-        <input type="email" autoComplete="email" value={email} required disabled={busy} maxLength={254}
+      <label>{translateUi("Ko-fi / PayPal email")}<input type="email" autoComplete="email" value={email} required disabled={busy} maxLength={254}
           onChange={event => { setEmail(event.target.value); setCode(""); setVerification(false); setError(null); }} />
       </label>
-      {verification && <label>Code sent to your billing email
-        <input value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} required disabled={busy} maxLength={16} pattern="[a-fA-F0-9]{16}" />
+      {verification && <label>{translateUi("Code sent to your billing email")}<input value={code} onChange={event => setCode(event.target.value)} autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} required disabled={busy} maxLength={16} pattern="[a-fA-F0-9]{16}" />
       </label>}
       <button type="submit" className="paywall-trial" disabled={busy || !email.trim() || (verification && !/^[a-f0-9]{16}$/i.test(code.trim()))}>
-        {busy ? <Loader2 className="paywall-spinner" size={16} /> : verification ? "Verify email" : "Send verification code"}
+        {busy ? <Loader2 className="paywall-spinner" size={16} /> : verification ? translateUi("Verify email") : translateUi("Send verification code")}
       </button>
-      {error && <p className="paywall-error" role="alert">{error}</p>}
+      {error && <p className="paywall-error" role="alert">{translateUi(error ?? "")}</p>}
     </form>}
   </>;
 }

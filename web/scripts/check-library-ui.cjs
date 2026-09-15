@@ -8,7 +8,7 @@ const {chromium}=require('@playwright/test');
 (async()=>{
  const root=path.resolve(__dirname,'..');const out=path.join(root,'.library-ui-test');fs.mkdirSync(out,{recursive:true});
  const stub=path.join(root,'tests/library-ui/stubs.ts');
- await esbuild.build({entryPoints:[path.join(root,'tests/library-ui/entry.tsx')],bundle:true,outfile:path.join(out,'app.js'),jsx:'automatic',define:{'process.env.NODE_ENV':'"test"'},plugins:[{name:'fixture-adapters',setup(build){build.onResolve({filter:/^@\/lib\/(store|tmdb|imdbRatings|homeserver)$/},()=>({path:stub}));build.onResolve({filter:/^@\//},args=>({path:[".tsx",".ts",".js",""].map(ext=>path.join(root,args.path.slice(2)+ext)).find(file=>fs.existsSync(file))}));}}]});
+ await esbuild.build({entryPoints:[path.join(root,'tests/library-ui/entry.tsx')],bundle:true,outfile:path.join(out,'app.js'),jsx:'automatic',define:{'process.env.NODE_ENV':'"test"'},plugins:[{name:'fixture-adapters',setup(build){build.onResolve({filter:/^@\/lib\/(store|tmdb|imdbRatings|homeserver)$/},()=>({path:stub}));build.onResolve({filter:/^@\//},args=>({path:[".tsx",".ts",".js","/index.tsx","/index.ts",""].map(ext=>path.join(root,args.path.slice(2)+ext)).find(file=>fs.existsSync(file))}));}}]});
  const fixture=path.resolve(root,'../app/src/androidTest/assets/library');
  const server=http.createServer((req,res)=>{
   let file=req.url.split('?')[0];

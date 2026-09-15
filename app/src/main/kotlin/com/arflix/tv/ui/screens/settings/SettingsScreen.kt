@@ -618,8 +618,8 @@ fun SettingsScreen(
                 groups.size + (firstIptvGroupIndex(groups) - 1)
             } else {
                 // Add-Playlist + M3U rows + Stalker rows + order + VOD search
-                // + EPG actions + favorites-on-home + refresh + clear
-                6 + uiState.iptvPlaylists.size + uiState.iptvStalkerPortals.size
+                // + EPG actions + favorites-on-home + refresh + clear + fallback logos
+                7 + uiState.iptvPlaylists.size + uiState.iptvStalkerPortals.size
             }
             "home_server" -> uiState.homeServerConnections.size + 3
             "catalogs" -> uiState.catalogs.size + 1 // Add + Import + catalogs
@@ -1372,6 +1372,9 @@ fun SettingsScreen(
                                                     contentFocusIndex == m3uCount + stalkerCount + 6 -> {
                                                         viewModel.clearIptvConfig()
                                                     }
+                                                    contentFocusIndex == m3uCount + stalkerCount + 7 -> {
+                                                        viewModel.setFallbackChannelLogosEnabled(!uiState.fallbackChannelLogosEnabled)
+                                                    }
                                                 }
                                             }
                                         }
@@ -1959,6 +1962,8 @@ fun SettingsScreen(
                             onVodSearchToggle = viewModel::setVodSearchEnabled,
                             epgVodActionsEnabled = uiState.epgVodActionsEnabled,
                             onEpgVodActionsToggle = viewModel::setEpgVodActionsEnabled,
+                            fallbackChannelLogosEnabled = uiState.fallbackChannelLogosEnabled,
+                            onFallbackChannelLogosToggle = viewModel::setFallbackChannelLogosEnabled,
                             favoritesOnHomeEnabled = uiState.iptvFavoritesOnHome,
                             onFavoritesOnHomeToggle = viewModel::setIptvFavoritesOnHome,
                         )
@@ -2020,6 +2025,8 @@ fun SettingsScreen(
                             onVodSearchToggle = viewModel::setVodSearchEnabled,
                             epgVodActionsEnabled = uiState.epgVodActionsEnabled,
                             onEpgVodActionsToggle = viewModel::setEpgVodActionsEnabled,
+                            fallbackChannelLogosEnabled = uiState.fallbackChannelLogosEnabled,
+                            onFallbackChannelLogosToggle = viewModel::setFallbackChannelLogosEnabled,
                             favoritesOnHomeEnabled = uiState.iptvFavoritesOnHome,
                             onFavoritesOnHomeToggle = viewModel::setIptvFavoritesOnHome,
                         )
@@ -5009,6 +5016,8 @@ private fun MobileSettingsSubPage(
                     onVodSearchToggle = viewModel::setVodSearchEnabled,
                     epgVodActionsEnabled = uiState.epgVodActionsEnabled,
                     onEpgVodActionsToggle = viewModel::setEpgVodActionsEnabled,
+                    fallbackChannelLogosEnabled = uiState.fallbackChannelLogosEnabled,
+                    onFallbackChannelLogosToggle = viewModel::setFallbackChannelLogosEnabled,
                     favoritesOnHomeEnabled = uiState.iptvFavoritesOnHome,
                     onFavoritesOnHomeToggle = viewModel::setIptvFavoritesOnHome,
                 )
@@ -7210,6 +7219,8 @@ private fun IptvSettings(
     onVodSearchToggle: (Boolean) -> Unit = {},
     epgVodActionsEnabled: Boolean = true,
     onEpgVodActionsToggle: (Boolean) -> Unit = {},
+    fallbackChannelLogosEnabled: Boolean = false,
+    onFallbackChannelLogosToggle: (Boolean) -> Unit = {},
     favoritesOnHomeEnabled: Boolean = true,
     onFavoritesOnHomeToggle: (Boolean) -> Unit = {},
 ) {
@@ -7411,6 +7422,14 @@ private fun IptvSettings(
                     showDivider = false,
                     onClick = { onFavoritesOnHomeToggle(!favoritesOnHomeEnabled) },
                 )
+                MobileSettingsRow(
+                    icon = Icons.Default.LiveTv,
+                    title = stringResource(R.string.settings_iptv_fallback_logos),
+                    subtitle = stringResource(R.string.settings_iptv_fallback_logos_desc),
+                    value = stringResource(if (fallbackChannelLogosEnabled) R.string.on else R.string.off),
+                    isFocused = false,
+                    onClick = { onFallbackChannelLogosToggle(!fallbackChannelLogosEnabled) },
+                )
             }
             MobileSettingsCategory(title = stringResource(R.string.settings_section_actions)) {
                 val refreshSubtitle = when { isLoading -> stringResource(R.string.settings_refreshing_channels_epg); error != null -> error; playlists.none { it.epgUrl.isNotBlank() || it.epgUrls.orEmpty().isNotEmpty() } -> stringResource(R.string.settings_reload_playlists_now); else -> stringResource(R.string.settings_reload_playlist_epg_now) }
@@ -7590,6 +7609,15 @@ private fun IptvSettings(
             Spacer(modifier = Modifier.height(16.dp))
             val hasNoSources = playlists.isEmpty() && stalkerPortals.isEmpty()
             SettingsRow(icon = Icons.Default.Delete, title = stringResource(R.string.delete_iptv), subtitle = if (hasNoSources) stringResource(R.string.settings_no_playlists_configured) else stringResource(R.string.settings_remove_playlists_epg), value = if (hasNoSources) stringResource(R.string.settings_badge_empty) else stringResource(R.string.settings_badge_delete), isFocused = focusedIndex == trailingBase + 5, onClick = onDelete, modifier = Modifier.settingsFocusSlot(trailingBase + 5))
+            Spacer(modifier = Modifier.height(16.dp))
+            SettingsToggleRow(
+                title = stringResource(R.string.settings_iptv_fallback_logos),
+                subtitle = stringResource(R.string.settings_iptv_fallback_logos_desc),
+                isEnabled = fallbackChannelLogosEnabled,
+                isFocused = focusedIndex == trailingBase + 6,
+                onToggle = onFallbackChannelLogosToggle,
+                modifier = Modifier.settingsFocusSlot(trailingBase + 6),
+            )
             if (isLoading && !progressText.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(stringResource(R.string.settings_progress_format, progressText, progressPercent.coerceIn(0, 100)), style = ArflixTypography.caption, color = TextSecondary)

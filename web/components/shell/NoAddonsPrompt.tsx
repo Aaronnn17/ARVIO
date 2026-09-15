@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { Puzzle, Settings, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -7,6 +9,7 @@ import { useApp } from "@/lib/store";
 const DISMISS_KEY_PREFIX = "arvio.web.noAddonsPrompt.v1:";
 
 export function NoAddonsPrompt() {
+  const translateUi = useTranslation();
   const {
     view,
     section,
@@ -81,26 +84,22 @@ export function NoAddonsPrompt() {
         aria-describedby="no-addons-description"
         onClick={(event) => event.stopPropagation()}
       >
-        <button type="button" className="no-addons-close" onClick={dismiss} aria-label="Close" title="Close">
+        <button type="button" className="no-addons-close" onClick={dismiss} aria-label={translateUi("Close")} title={translateUi("Close")}>
           <X size={20} />
         </button>
 
         <div className="no-addons-heading">
           <span className="no-addons-icon" aria-hidden="true"><Puzzle size={26} /></span>
           <div>
-            <p className="eyebrow">Sources required</p>
-            <h2 id="no-addons-title">Connect your media sources</h2>
+            <p className="eyebrow">{translateUi("Sources required")}</p>
+            <h2 id="no-addons-title">{translateUi("Connect your media sources")}</h2>
           </div>
         </div>
 
         <p id="no-addons-description" className="no-addons-copy">
-          ARVIO does not include a film or TV subscription. Connect your Plex, Emby or Jellyfin
-          server in Settings, or add a compatible addon supplied by a service you are authorized to use.
-        </p>
+          {translateUi("ARVIO does not include a film or TV subscription. Connect your Plex, Emby or Jellyfin server in Settings, or add a compatible addon supplied by a service you are authorized to use.")}</p>
         <p className="no-addons-disclaimer">
-          Catalog information and artwork do not grant viewing rights. Access depends on your
-          own media and the permissions provided by your chosen services.
-        </p>
+          {translateUi("Catalog information and artwork do not grant viewing rights. Access depends on your own media and the permissions provided by your chosen services.")}</p>
 
         <div className="no-addons-actions">
           <button
@@ -112,8 +111,7 @@ export function NoAddonsPrompt() {
               setSection("addons");
             }}
           >
-            <Settings size={17} /> Addon settings
-          </button>
+            <Settings size={17} /> {translateUi(" Addon settings")}</button>
           <button
             type="button"
             ref={browseRef}
@@ -124,8 +122,7 @@ export function NoAddonsPrompt() {
               setSection("settings");
             }}
           >
-            <Settings size={17} /> Open settings
-          </button>
+            <Settings size={17} /> {translateUi(" Open settings")}</button>
         </div>
       </section>
     </div>

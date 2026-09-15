@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { CheckCircle2, Clock3, Play, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -21,6 +23,7 @@ function labelFor(pending: PendingExternalPlayback) {
 }
 
 export function ExternalPlaybackPrompt() {
+  const translateUi = useTranslation();
   const { addons, refreshData, setToast, markWatchedLocally } = useApp();
   const [pending, setPending] = useState<PendingExternalPlayback | null>(null);
   const [mode, setMode] = useState<PromptMode>("choice");
@@ -154,30 +157,26 @@ export function ExternalPlaybackPrompt() {
   if (!pending) return null;
 
   return (
-    <section className="external-playback-modal" role="dialog" aria-modal="true" aria-label="External playback tracking">
+    <section className="external-playback-modal" role="dialog" aria-modal="true" aria-label={translateUi("External playback tracking")}>
       <div className="external-playback-backdrop" />
       <article className="external-playback-card">
-        <button type="button" className="external-playback-close" onClick={() => dismiss()} aria-label="Close external playback prompt">
+        <button type="button" className="external-playback-close" onClick={() => dismiss()} aria-label={translateUi("Close external playback prompt")}>
           <X size={18} />
         </button>
-        <p className="eyebrow">{pending.player === "vlc" ? "VLC" : "Infuse"} Playback</p>
-        <h3>Update your watch progress?</h3>
+        <p className="eyebrow">{pending.player === "vlc" ? translateUi("VLC") : translateUi("Infuse")} {translateUi(" Playback")}</p>
+        <h3>{translateUi("Update your watch progress?")}</h3>
         <p>{labelFor(pending)}</p>
 
         {mode === "choice" ? (
           <div className="external-playback-actions">
             <button type="button" className="primary" disabled={saving} onClick={() => void syncProgress(100, "stop")}>
-              <CheckCircle2 size={18} /> Finished
-            </button>
+              <CheckCircle2 size={18} /> {translateUi(" Finished")}</button>
             <button type="button" className="secondary" disabled={saving} onClick={() => setMode("progress")}>
-              <Clock3 size={18} /> Still watching
-            </button>
+              <Clock3 size={18} /> {translateUi(" Still watching")}</button>
             <button type="button" className="secondary" disabled={saving} onClick={() => void syncProgress(1, "start")}>
-              <Play size={18} fill="currentColor" /> Just started
-            </button>
+              <Play size={18} fill="currentColor" /> {translateUi(" Just started")}</button>
             <button type="button" className="ghost" disabled={saving} onClick={() => dismiss("External playback ignored.")}>
-              No
-            </button>
+              {translateUi("No")}</button>
           </div>
         ) : (
           <>
@@ -189,14 +188,12 @@ export function ExternalPlaybackPrompt() {
               ))}
             </div>
             <button type="button" className="ghost external-back" disabled={saving} onClick={() => setMode("choice")}>
-              Back
-            </button>
+              {translateUi("Back")}</button>
           </>
         )}
 
         <small>
-          ARVIO cannot read playback from external apps, so it only updates Trakt and ARVIO Cloud after you confirm.
-        </small>
+          {translateUi("ARVIO cannot read playback from external apps, so it only updates Trakt and ARVIO Cloud after you confirm.")}</small>
       </article>
     </section>
   );
