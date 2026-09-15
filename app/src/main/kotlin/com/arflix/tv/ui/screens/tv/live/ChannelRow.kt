@@ -93,6 +93,7 @@ fun ChannelRow(
     rowHeight: androidx.compose.ui.unit.Dp = LiveDims.EpgRowHeight,
     forceFocused: Boolean = false,
     displayQuality: Quality = channel.quality,
+    showChannelNumber: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -207,25 +208,28 @@ fun ChannelRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // ─ active left indicator ─────────────────────────────
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(LiveDims.ActiveIndicator),
-        )
-
-        // ─ channel number ────────────────────────────────────
-        Box(
-            modifier = Modifier
-                .width(32.dp)
-                .padding(start = 8.dp, end = 4.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            Text(
-                text = channel.number.toString(),
-                style = LiveType.NumberMono.copy(
-                    color = secondary,
-                ),
+        if (showChannelNumber) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(LiveDims.ActiveIndicator),
             )
+            // ─ channel number ────────────────────────────────────
+            Box(
+                modifier = Modifier
+                    .width(32.dp)
+                    .padding(start = 8.dp, end = 4.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(
+                    text = channel.number.toString(),
+                    style = LiveType.NumberMono.copy(
+                        color = secondary,
+                    ),
+                )
+            }
+        } else {
+            Spacer(Modifier.width(10.dp))
         }
 
         // ─ logo ──────────────────────────────────────────────

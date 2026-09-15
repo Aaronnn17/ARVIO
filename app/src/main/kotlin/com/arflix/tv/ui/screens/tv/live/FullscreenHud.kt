@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -405,8 +406,9 @@ fun FullscreenHud(
                             }
 
                             if (channel != null) {
+                                val isMobile = onBackClick != null || LocalConfiguration.current.screenWidthDp < 600
                                 Text(
-                                    text = "${channel.number}  ${channel.name}",
+                                    text = if (isMobile) channel.name else "${channel.number}  ${channel.name}",
                                     style = LiveType.ChannelName.copy(
                                         color = Color.White,
                                         fontSize = 15.sp,
