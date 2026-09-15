@@ -4366,6 +4366,7 @@ private fun mobileCategoryTitle(page: String): String = when (page) {
     "Tracking Integrations" -> stringResource(R.string.settings_tracking_integrations)
     "Privacy & Data" -> stringResource(R.string.settings_privacy_data_title)
     "Cloud Sync & Account" -> stringResource(R.string.settings_cloud_account_sub_title)
+    "IPTV_CATEGORIES" -> stringResource(R.string.settings_iptv_categories)
     else -> page
 }
 
@@ -11690,15 +11691,28 @@ private fun IptvCategoriesSettings(
             )
         }
 
-        SettingsRow(
-            icon = Icons.Default.Refresh,
-            title = stringResource(R.string.settings_reset_order),
-            subtitle = stringResource(R.string.settings_reset_order_desc),
-            value = stringResource(R.string.settings_badge_reset),
-            isFocused = focusedIndex == 0,
-            onClick = onReset,
-            modifier = Modifier.settingsFocusSlot(0)
-        )
+        if (isMobile) {
+            // The TV row squeezes its title, its description and its badge into one line and
+            // relies on a focus frame to be readable; on a phone that came out overlapping.
+            MobileSettingsRow(
+                icon = Icons.Default.Refresh,
+                title = stringResource(R.string.settings_reset_order),
+                subtitle = stringResource(R.string.settings_reset_order_desc),
+                value = stringResource(R.string.settings_badge_reset),
+                onClick = onReset,
+                showDivider = false
+            )
+        } else {
+            SettingsRow(
+                icon = Icons.Default.Refresh,
+                title = stringResource(R.string.settings_reset_order),
+                subtitle = stringResource(R.string.settings_reset_order_desc),
+                value = stringResource(R.string.settings_badge_reset),
+                isFocused = focusedIndex == 0,
+                onClick = onReset,
+                modifier = Modifier.settingsFocusSlot(0)
+            )
+        }
 
         if (orderedGroups.isNotEmpty()) {
             Spacer(modifier = Modifier.height(10.dp))
@@ -11905,7 +11919,9 @@ private fun MobileIptvCategoryReorderList(
                     isHidden = hiddenGroups.contains(groupKey),
                     isDragged = reorderState.isDragging(groupKey),
                     showDivider = index < orderedGroups.lastIndex,
-                    onClick = { onToggleHidden(group) },
+                    onClick = {
+                        if (!reorderState.consumeClickAfterPickUp()) onToggleHidden(group)
+                    },
                     modifier = dragReorderItem(reorderState, groupKey)
                 )
             }
@@ -11919,7 +11935,6 @@ private fun MobileIptvCategoryReorderList(
  * others have any use for. The handle is a sign that the row can be moved, not a button - the whole
  * row is what gets held.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MobileIptvCategoryRow(
     group: String,
@@ -11936,15 +11951,17 @@ private fun MobileIptvCategoryRow(
             // Opaque underneath, so a held row covers the rows it floats over.
             .background(BackgroundElevated)
             .background(if (isDragged) heldAccent.copy(alpha = 0.20f) else Color.Transparent)
+            .then(
+                // The same frame the remote control draws around a held group, so both ways of
+                // moving a group look like the same thing happening.
+                if (isDragged) Modifier.border(2.dp, heldAccent, RoundedCornerShape(12.dp))
+                else Modifier
+            )
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                // combinedClickable rather than clickable, and the empty onLongClick is the whole
-                // point of it: a row that has been held long enough to be picked up must not also
-                // count as a tap when the finger comes off, or changing one's mind about a move
-                // would hide the group instead. The list above still gets the long press.
-                .combinedClickable(onClick = onClick, onLongClick = {})
+                .clickable { onClick() }
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {

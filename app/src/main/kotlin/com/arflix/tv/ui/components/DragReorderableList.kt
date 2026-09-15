@@ -79,6 +79,10 @@ class DragReorderState internal constructor(
     var draggedKey by mutableStateOf<Any?>(null)
         private set
 
+    /** Set when a row was picked up and put down again without being moved. */
+    private var pickedUpWithoutMoving = false
+    private var movedWhileHeld = false
+
     /** Top edge of the held row in viewport coordinates - where the finger put it. */
     private var floatingTop = 0f
     private var floatingSize = 0
@@ -89,6 +93,21 @@ class DragReorderState internal constructor(
     private var autoScrollJob: Job? = null
 
     fun isDragging(key: Any): Boolean = draggedKey == key
+
+    /**
+     * Whether the tap that is arriving right now is only the release of a row that was picked up,
+     * and should therefore do nothing. Answers once and forgets, so the next real tap counts.
+     *
+     * 🔴 **A row cannot simply be given a long-press handler of its own instead.** A long-press
+     * handler swallows every finger movement that follows it, which is precisely the movement the
+     * move needs - the row would light up and then sit still. So the pick-up is detected in one
+     * place only, here, and the tap asks afterwards whether it still means anything.
+     */
+    fun consumeClickAfterPickUp(): Boolean {
+        val suppress = pickedUpWithoutMoving
+        pickedUpWithoutMoving = false
+        return suppress
+    }
 
     /**
      * How far the held row has to be shifted from where the list laid it out to sit where the
@@ -109,12 +128,15 @@ class DragReorderState internal constructor(
         // what the edge scrolling below compares against the viewport.
         pointerY = grabbed.offset + positionInRow
         requestedIndex = grabbed.index
+        movedWhileHeld = false
+        pickedUpWithoutMoving = false
         onGrab()
         startAutoScroll()
     }
 
     internal fun onDrag(deltaY: Float) {
         if (draggedKey == null) return
+        movedWhileHeld = true
         floatingTop += deltaY
         pointerY += deltaY
         applyMoves()
@@ -123,6 +145,11 @@ class DragReorderState internal constructor(
     internal fun onDragStop() {
         autoScrollJob?.cancel()
         autoScrollJob = null
+        // A row that was picked up and never moved is released like an ordinary tap, and the tap
+        // would show or hide the group - which is not what changing one's mind should do. A row
+        // that WAS moved never reaches the tap: the movement is claimed by the move itself.
+        pickedUpWithoutMoving = draggedKey != null && !movedWhileHeld
+        movedWhileHeld = false
         draggedKey = null
         requestedIndex = -1
     }
