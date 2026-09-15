@@ -1320,6 +1320,9 @@ class HomeViewModel @Inject constructor(
     private val categoryPageSize = if (isLowRamDevice) 8 else 10
     private val initialMdblistCatalogCount = 1
     private val nearEndThreshold = 4
+    // Home rails stop auto-paging here so their trailing "View all" card stays reachable
+    // with the D-pad; the rest of the catalog pages in the "View all" grid.
+    private val homeRowAutoPageLimit = 60
 
     // Track current focus for ahead-of-focus preloading
     private var currentRowIndex = 0
@@ -3554,6 +3557,15 @@ class HomeViewModel @Inject constructor(
         val currentCategory = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
         if (currentCategory.items.isEmpty() || currentCategory.items.all { it.isPlaceholder }) return
         if (focusedItemIndex < currentCategory.items.size - nearEndThreshold) return
+        loadNextHomeRowPage(categoryId)
+    }
+
+    /** Next page for a home rail, capped at [homeRowAutoPageLimit] for rows that end in "View all". */
+    fun loadNextHomeRowPage(categoryId: String) {
+        val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        val realCount = category.items.count { !it.isPlaceholder }
+        val hasMore = _uiState.value.categoryHasMoreMap[categoryId] == true
+        if (realCount >= homeRowAutoPageLimit && homeRowSupportsViewAll(category, hasMore)) return
         loadNextPageForCategory(categoryId)
     }
 
@@ -3561,6 +3573,20 @@ class HomeViewModel @Inject constructor(
         if (lastVisibleItemIndex < 0) return
         maybeLoadNextPageForCategory(categoryId, lastVisibleItemIndex)
         prefetchLogosAroundCategoryPosition(categoryId, lastVisibleItemIndex)
+    }
+
+    /**
+     * "View all" grid scroll position. A grid shows several rows at once, so the next page
+     * is requested [lookAheadItems] before the end instead of the rail's [nearEndThreshold].
+     */
+    fun onViewAllVisiblePosition(categoryId: String, lastVisibleItemIndex: Int, lookAheadItems: Int) {
+        if (lastVisibleItemIndex < 0) return
+        prefetchLogosAroundCategoryPosition(categoryId, lastVisibleItemIndex)
+        val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        val realCount = category.items.count { !it.isPlaceholder }
+        if (lastVisibleItemIndex >= realCount - lookAheadItems) {
+            loadNextPageForCategory(categoryId)
+        }
     }
 
     private fun prefetchLogosAroundCategoryPosition(categoryId: String, itemIndex: Int) {
