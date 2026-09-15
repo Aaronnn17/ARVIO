@@ -234,12 +234,13 @@ class HomeViewModel @Inject constructor(
     private data class CategoryPaginationState(
         var loadedCount: Int = 0,
         var hasMore: Boolean = true,
-        var isLoading: Boolean = false
+        var isLoading: Boolean = false,
+        var nextOffset: Int = loadedCount
     )
 
     // IPTV favorite channels — maps MediaItem.id (Int hash) to channel data
     private val iptvChannelMap = mutableMapOf<Int, com.arflix.tv.data.model.IptvChannel>()
-    private val _sportsHomeRows = MutableStateFlow(sportsRepository.defaultHomeRows())
+    private val _sportsHomeRows = MutableStateFlow<List<Category>>(emptyList())
     val sportsHomeRows: StateFlow<List<Category>> = combine(
         _sportsHomeRows,
         catalogRepository.observeCatalogs().map { catalogs ->
@@ -1319,6 +1320,9 @@ class HomeViewModel @Inject constructor(
     private val categoryPageSize = if (isLowRamDevice) 8 else 10
     private val initialMdblistCatalogCount = 1
     private val nearEndThreshold = 4
+    // Home rails stop auto-paging here so their trailing "View all" card stays reachable
+    // with the D-pad; the rest of the catalog pages in the "View all" grid.
+    private val homeRowAutoPageLimit = 60
 
     // Track current focus for ahead-of-focus preloading
     private var currentRowIndex = 0
@@ -1667,12 +1671,6 @@ class HomeViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            streamRepository.installedAddons.collectLatest { addons ->
-                _sportsHomeRows.value = sportsRepository.buildHomeRows(addons, selectedSportsCategoryId)
-            }
-        }
-
-        viewModelScope.launch {
             profileManager.activeProfileId
                 .distinctUntilChanged()
                 .collect { profileId ->
@@ -1977,7 +1975,7 @@ class HomeViewModel @Inject constructor(
         // Defer heavy background warmups so first-launch navigation remains smooth.
         viewModelScope.launch {
             delay(if (isLowRamDevice) 10 * 60_000L else 8 * 60_000L)
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+            kotlinx.coroutines.withContext(Dispatchers.IO) {
                 try {
                     iptvRepository.warmVodCachesIfPossible()
                 } catch (e: Exception) {
@@ -2036,12 +2034,8 @@ class HomeViewModel @Inject constructor(
         }
         viewModelScope.launch {
             catalogRepository.observeCatalogs()
-                .map { catalogs ->
-                    catalogs.joinToString("|") { "${it.id}:${it.title}:${it.sourceUrl.orEmpty()}" }
-                }
                 .distinctUntilChanged()
-                .drop(2) // Skip first two emissions to avoid re-triggering loadHomeData during
-                         // initial startup and ensurePreinstalledDefaults DataStore write.
+                .drop(1) // Initial state is already loaded; do not discard the first user update.
                 .collect {
                     // Apply catalog reorder/add/remove immediately on Home.
                     loadHomeData()
@@ -2568,6 +2562,30 @@ class HomeViewModel @Inject constructor(
 
                 var loadedFreshCatalogRows = false
                 var categories = withContext(networkDispatcher) {
+                    val customCatalogConfigs = savedCatalogs.filter { isCustomCatalogConfig(it) }
+                    val customSemaphore = Semaphore(if (isLowRamDevice) 1 else 2)
+                    val customJobs = customCatalogConfigs.map { cfg ->
+                        async {
+                            customSemaphore.withPermit {
+                                try {
+                                    val result = mediaRepository.loadCustomCatalogPage(cfg, 0, catalogInitialLimit(cfg))
+                                    if (result.items.isEmpty()) return@withPermit null
+                                    val category = Category(cfg.id, cfg.title, result.items).withTop10CapIfNeeded()
+                                    withContext(Dispatchers.Main.immediate) {
+                                        if (requestId == loadHomeRequestId) {
+                                            updateMobileCategoryRow(cfg.id, category,
+                                                hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id),
+                                                nextOffset = result.nextOffset)
+                                        }
+                                    }
+                                    category
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                    null
+                                }
+                            }
+                        }
+                    }
                     val baseCategories = runCatching {
                         mediaRepository.getHomeCategories()
                     }.getOrElse { emptyList() }
@@ -2609,13 +2627,7 @@ class HomeViewModel @Inject constructor(
                     // Publish the built-in rows as soon as TMDB responds. Addon,
                     // MDBList, home-server and logo enrichment may take longer, but
                     // they must not hold Trending/Continue Watching in skeleton state.
-                    val currentHasRealBase = _uiState.value.categories.any { category ->
-                        category.id != "continue_watching" &&
-                            !category.id.startsWith("collection_row_") &&
-                            category.items.isNotEmpty() &&
-                            category.items.none { it.isPlaceholder }
-                    }
-                    if (!currentHasRealBase && tmdbPreinstalled.isNotEmpty()) {
+                    if (tmdbPreinstalled.isNotEmpty()) {
                         val earlyCategories = tmdbPreinstalled.toMutableList()
                         val existingContinueWatching = _uiState.value.categories.firstOrNull { category ->
                             category.id == "continue_watching" &&
@@ -2639,7 +2651,10 @@ class HomeViewModel @Inject constructor(
                                 _uiState.value = _uiState.value.copy(
                                     isLoading = false,
                                     isInitialLoad = false,
-                                    categories = earlyCategories,
+                                    categories = orderCategoriesBySavedCatalogs(
+                                        _uiState.value.categories.filter { current -> earlyCategories.none { it.id == current.id } } + earlyCategories,
+                                        savedCatalogs
+                                    ),
                                     heroItem = _uiState.value.heroItem ?: earlyHero,
                                     error = null
                                 )
@@ -2664,8 +2679,16 @@ class HomeViewModel @Inject constructor(
                                     limit = if (isHardCappedTop10Catalog(cfg.id)) TOP_10_ITEM_LIMIT else 20
                                 )
                                 if (result.items.isNotEmpty()) {
-                                    Category(id = cfg.id, title = cfg.title, items = result.items)
+                                    val category = Category(id = cfg.id, title = cfg.title, items = result.items)
                                         .withTop10CapIfNeeded()
+                                    withContext(Dispatchers.Main.immediate) {
+                                        if (requestId == loadHomeRequestId) {
+                                            updateMobileCategoryRow(cfg.id, category,
+                                                hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id),
+                                                nextOffset = result.nextOffset)
+                                        }
+                                    }
+                                    category
                                 } else null
                             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -2692,8 +2715,16 @@ class HomeViewModel @Inject constructor(
                                                 limit = if (isHardCappedTop10Catalog(cfg.id)) TOP_10_ITEM_LIMIT else 20
                                             )
                                             if (result.items.isNotEmpty()) {
-                                                Category(id = cfg.id, title = cfg.title, items = result.items)
+                                                val category = Category(id = cfg.id, title = cfg.title, items = result.items)
                                                     .withTop10CapIfNeeded()
+                                                withContext(Dispatchers.Main.immediate) {
+                                                    if (requestId == loadHomeRequestId) {
+                                                        updateMobileCategoryRow(cfg.id, category,
+                                                            hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id),
+                                                            nextOffset = result.nextOffset)
+                                                    }
+                                                }
+                                                category
                                             } else null
                                         } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -2701,12 +2732,6 @@ class HomeViewModel @Inject constructor(
                                     }
                                 }.awaitAll().filterNotNull()
                                 if (results.isNotEmpty() && requestId == loadHomeRequestId) {
-                                    val current = _uiState.value.categories.toMutableList()
-                                    for (cat in results) {
-                                        val idx = current.indexOfFirst { it.id == cat.id }
-                                        if (idx >= 0) current[idx] = cat else current.add(cat)
-                                    }
-                                    _uiState.value = _uiState.value.copy(categories = current)
                                     markHomeDataLoadSuccessful(requestId)
                                 }
                             }
@@ -2719,38 +2744,7 @@ class HomeViewModel @Inject constructor(
                                 !isCollectionTileConfig(it)
                         }
                         .mapNotNull { cfg -> allPreinstalledById[cfg.id] }
-                    val customCatalogConfigs = savedCatalogs.filter { cfg -> isCustomCatalogConfig(cfg) }
-
-                    // Fetch ALL custom catalogs (Trakt lists, user-added) in parallel
-                    // right here in the bulk path, instead of deferring to
-                    // loadCustomCatalogsIncrementally which loaded them one-by-one and
-                    // caused slow incremental insertion. This way everything appears in
-                    // the single bulk categories set at line ~1250.
-                    val customSemaphore = kotlinx.coroutines.sync.Semaphore(if (isLowRamDevice) 1 else 2)
-                    val freshCustomCategories = customCatalogConfigs.map { cfg ->
-                        async(networkDispatcher) {
-                            customSemaphore.withPermit {
-                                try {
-                                    val result = mediaRepository.loadCustomCatalogPage(
-                                        catalog = cfg,
-                                        offset = 0,
-                                        limit = catalogInitialLimit(cfg)
-                                    )
-                                    if (result.items.isNotEmpty()) {
-                                        val category = Category(id = cfg.id, title = cfg.title, items = result.items)
-                                            .withTop10CapIfNeeded()
-                                        categoryPaginationStates[cfg.id] = CategoryPaginationState(
-                                            loadedCount = category.items.size,
-                                            hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id)
-                                        )
-                                        category
-                                    } else null
-                                } catch (e: Exception) {
-                if (e is CancellationException) throw e
- null }
-                            }
-                        }
-                    }.awaitAll().filterNotNull()
+                    val freshCustomCategories = customJobs.awaitAll().filterNotNull()
                     loadedFreshCatalogRows = loadedFreshCatalogRows || freshCustomCategories.any { hasRealItems(it) }
 
                     // Fall back to previously cached data for any custom catalog
@@ -2854,12 +2848,12 @@ class HomeViewModel @Inject constructor(
                 }
                 categories.forEach { category ->
                     if (category.id != "continue_watching" && !category.id.startsWith("collection_row_")) {
-                        categoryPaginationStates[category.id] = CategoryPaginationState(
+                        categoryPaginationStates.putIfAbsent(category.id, CategoryPaginationState(
                             loadedCount = category.items.size,
                             hasMore = !isSportsCatalogRow(category.id) &&
                                 category.items.size >= getCategoryPageSize(category.id) &&
                                 !isHardCappedTop10Catalog(category.id)
-                        )
+                        ))
                     }
                 }
                 if (requestId != loadHomeRequestId) return@loadHome
@@ -2924,7 +2918,7 @@ class HomeViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isInitialLoad = false,
-                    categories = categories,
+                    categories = preserveExtendedCatalogRows(categories, _uiState.value.categories),
                     collectionRows = collectionRows,
                     heroItem = heroItem,
                     categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore },
@@ -2970,7 +2964,7 @@ class HomeViewModel @Inject constructor(
                         }
                         _uiState.value = _uiState.value.copy(
                             isLoading = _uiState.value.isLoading,
-                            categories = categories,
+                            categories = preserveExtendedCatalogRows(categories, _uiState.value.categories),
                             collectionRows = collectionRows,
                             heroItem = heroItem,
                             heroLogoUrl = heroLogoFromCache ?: _uiState.value.heroLogoUrl,
@@ -3038,7 +3032,7 @@ class HomeViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     isInitialLoad = false,
-                    categories = categories,
+                    categories = preserveExtendedCatalogRows(categories, _uiState.value.categories),
                     collectionRows = collectionRows,
                     heroItem = heroItem,
                     heroLogoUrl = heroLogoUrl,
@@ -3159,7 +3153,8 @@ class HomeViewModel @Inject constructor(
     private fun updateMobileCategoryRow(
         categoryId: String,
         newCategory: Category,
-        hasMore: Boolean = false
+        hasMore: Boolean = false,
+        nextOffset: Int? = null
     ) {
         val currentCategories = _uiState.value.categories.toMutableList()
         val index = currentCategories.indexOfFirst { it.id == categoryId }
@@ -3171,7 +3166,8 @@ class HomeViewModel @Inject constructor(
         val orderedCategories = orderCategoriesBySavedCatalogs(currentCategories, currentSavedCatalogs)
         categoryPaginationStates[categoryId] = CategoryPaginationState(
             loadedCount = newCategory.items.size,
-            hasMore = hasMore
+            hasMore = hasMore,
+            nextOffset = nextOffset ?: newCategory.items.size
         )
         val currentHero = _uiState.value.heroItem
         val newHero = if (currentHero == null || !isEligibleHeroItem(currentHero)) {
@@ -3371,7 +3367,7 @@ class HomeViewModel @Inject constructor(
                             val category = Category(id = cfg.id, title = cfg.title, items = result.items).withTop10CapIfNeeded()
                             withContext(Dispatchers.Main.immediate) {
                                 if (requestId == loadHomeRequestId) {
-                                    updateMobileCategoryRow(cfg.id, category, hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id))
+                                    updateMobileCategoryRow(cfg.id, category, hasMore = result.hasMore && !isHardCappedTop10Catalog(cfg.id), nextOffset = result.nextOffset)
                                     markHomeDataLoadSuccessful(requestId)
                                     persistCategoriesCache(_uiState.value.categories)
                                 }
@@ -3541,7 +3537,8 @@ class HomeViewModel @Inject constructor(
                             loadedById[catalog.id] = category
                             categoryPaginationStates[catalog.id] = CategoryPaginationState(
                                 loadedCount = category.items.size,
-                                hasMore = firstPage.hasMore && !isHardCappedTop10Catalog(catalog.id)
+                                hasMore = firstPage.hasMore && !isHardCappedTop10Catalog(catalog.id),
+                                nextOffset = firstPage.nextOffset ?: category.items.size
                             )
                         }
                         // Coalesce incremental row inserts so catalog arrivals do
@@ -3560,6 +3557,15 @@ class HomeViewModel @Inject constructor(
         val currentCategory = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
         if (currentCategory.items.isEmpty() || currentCategory.items.all { it.isPlaceholder }) return
         if (focusedItemIndex < currentCategory.items.size - nearEndThreshold) return
+        loadNextHomeRowPage(categoryId)
+    }
+
+    /** Next page for a home rail, capped at [homeRowAutoPageLimit] for rows that end in "View all". */
+    fun loadNextHomeRowPage(categoryId: String) {
+        val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        val realCount = category.items.count { !it.isPlaceholder }
+        val hasMore = _uiState.value.categoryHasMoreMap[categoryId] == true
+        if (realCount >= homeRowAutoPageLimit && homeRowSupportsViewAll(category, hasMore)) return
         loadNextPageForCategory(categoryId)
     }
 
@@ -3567,6 +3573,20 @@ class HomeViewModel @Inject constructor(
         if (lastVisibleItemIndex < 0) return
         maybeLoadNextPageForCategory(categoryId, lastVisibleItemIndex)
         prefetchLogosAroundCategoryPosition(categoryId, lastVisibleItemIndex)
+    }
+
+    /**
+     * "View all" grid scroll position. A grid shows several rows at once, so the next page
+     * is requested [lookAheadItems] before the end instead of the rail's [nearEndThreshold].
+     */
+    fun onViewAllVisiblePosition(categoryId: String, lastVisibleItemIndex: Int, lookAheadItems: Int) {
+        if (lastVisibleItemIndex < 0) return
+        prefetchLogosAroundCategoryPosition(categoryId, lastVisibleItemIndex)
+        val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        val realCount = category.items.count { !it.isPlaceholder }
+        if (lastVisibleItemIndex >= realCount - lookAheadItems) {
+            loadNextPageForCategory(categoryId)
+        }
     }
 
     private fun prefetchLogosAroundCategoryPosition(categoryId: String, itemIndex: Int) {
@@ -3627,6 +3647,7 @@ class HomeViewModel @Inject constructor(
         if (!pagination.hasMore || pagination.isLoading) return
 
         pagination.isLoading = true
+        val requestId = loadHomeRequestId
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val currentCategories = _uiState.value.categories
@@ -3647,13 +3668,16 @@ class HomeViewModel @Inject constructor(
                     val cfg = catalog ?: return@launch
                     mediaRepository.loadCustomCatalogPage(
                         catalog = cfg,
-                        offset = realItems.size,
+                        offset = pagination.nextOffset,
                         limit = pageSize
                     )
                 }
 
+                if (requestId != loadHomeRequestId || categoryPaginationStates[categoryId] !== pagination) return@launch
+                val oldOffset = pagination.nextOffset
+                pagination.nextOffset = result.nextOffset ?: (oldOffset + result.items.size)
                 if (result.items.isEmpty()) {
-                    pagination.hasMore = false
+                    pagination.hasMore = result.hasMore && pagination.nextOffset > oldOffset
                     return@launch
                 }
 
@@ -3668,15 +3692,19 @@ class HomeViewModel @Inject constructor(
                     return@launch
                 }
 
-                val updatedCategories = currentCategories.map { category ->
-                    if (category.id == categoryId) {
-                        category.copy(items = realItems + uniqueNewItems)
-                    } else {
-                        category
-                    }
-                }
-
                 uniqueNewItems.forEach { mediaRepository.cacheItem(it) }
+                withContext(Dispatchers.Main.immediate) {
+                    if (requestId != loadHomeRequestId) return@withContext
+                    pagination.loadedCount = realItems.size + uniqueNewItems.size
+                    pagination.hasMore = result.hasMore
+                    _uiState.value = _uiState.value.copy(
+                        categories = _uiState.value.categories.map { category ->
+                            if (category.id == categoryId) category.copy(items = realItems + uniqueNewItems) else category
+                        },
+                        categoryHasMoreMap = _uiState.value.categoryHasMoreMap + (categoryId to result.hasMore)
+                    )
+                }
+                // Artwork enrichment must not hold an already-loaded page off screen.
                 val logoEntries = uniqueNewItems.take(6).mapNotNull { item ->
                     if (!isActionableMediaItem(item) || isIptvItem(item)) return@mapNotNull null
                     val key = "${item.mediaType}_${item.id}"
@@ -3697,17 +3725,6 @@ class HomeViewModel @Inject constructor(
                 }
                 preloadBackdropImages(uniqueNewItems.take(incrementalBackdropPrefetchItems).mapNotNull { it.backdrop ?: it.image })
 
-                pagination.loadedCount = updatedCategories
-                    .firstOrNull { it.id == categoryId }
-                    ?.items
-                    ?.size
-                    ?: pagination.loadedCount
-                pagination.hasMore = result.hasMore
-
-                _uiState.value = _uiState.value.copy(
-                    categories = updatedCategories,
-                    categoryHasMoreMap = _uiState.value.categoryHasMoreMap + (categoryId to result.hasMore)
-                )
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
 

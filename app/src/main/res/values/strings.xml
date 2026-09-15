@@ -958,6 +958,7 @@
     <string name="search_filter_anime">Anime</string>
     <string name="home_no_description">No description available.</string>
     <string name="home_still_loading_catalogue">Still loading your catalogue…</string>
+    <string name="home_view_all">View all</string>
     <string name="search_row_trending">Trending</string>
     <string name="search_row_popular_this_year">Popular This Year</string>
     <string name="search_row_top_rated">Top Rated</string>

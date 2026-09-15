@@ -36,6 +36,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.ensureActive
+import com.arflix.tv.ui.screens.tv.live.SportsBroadcasterIndex
+import com.arflix.tv.ui.screens.tv.live.SportsBroadcasterIndexKey
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
@@ -120,6 +125,27 @@ class TvViewModel @Inject constructor(
     suspend fun loadSportsGuideArtwork() = sportsRepository.loadGuideArtwork()
     suspend fun cachedSportsMetadata() = sportsRepository.cachedMetadata()
     internal var cachedSportsSchedule: com.arflix.tv.ui.screens.tv.live.SportsScheduleSnapshot? = null
+    private var sportsBroadcasterIndexLoad: Pair<SportsBroadcasterIndexKey, Deferred<SportsBroadcasterIndex>>? = null
+
+    @androidx.annotation.MainThread
+    internal suspend fun sportsBroadcasterIndex(key: SportsBroadcasterIndexKey): SportsBroadcasterIndex {
+        // Metadata arrives incrementally. Cancelling a UI consumer must not
+        // restart the same large playlist scan on every metadata update.
+        val existing = sportsBroadcasterIndexLoad
+        val job = if (existing?.first == key && !existing.second.isCancelled) existing.second else {
+            existing?.second?.cancel()
+            viewModelScope.async(Dispatchers.IO) {
+                val context = currentCoroutineContext()
+                SportsBroadcasterIndex.build(key) { visitor ->
+                    iptvRepository.visitStoredChannelLabels(key.providerId.takeUnless { it == "all" }) { id, name, group ->
+                        context.ensureActive()
+                        visitor(id, name, group)
+                    }
+                }
+            }.also { sportsBroadcasterIndexLoad = key to it }
+        }
+        return job.await()
+    }
     private val sportsCatalogueDisk by lazy {
         // Internal UI model field names may change between signed builds.
         val installedAt = context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime

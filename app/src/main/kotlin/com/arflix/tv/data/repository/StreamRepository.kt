@@ -1334,18 +1334,23 @@ class StreamRepository @Inject constructor(
                 queryBase = queryBase
             )
             for (url in urls) {
-                val response = runCatching { streamApi.getAddonCatalog(url) }.getOrNull() ?: continue
+                val response = try {
+                    streamApi.getAddonCatalog(url)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    continue
+                }
                 if (firstSuccessful == null) {
                     firstSuccessful = response
                 }
                 val hasItems = !response.metas.isNullOrEmpty() || !response.items.isNullOrEmpty()
-                if (hasItems) {
+                if (hasItems || skip > 0) {
                     return@withContext response
                 }
             }
         }
 
-        firstSuccessful ?: StremioCatalogResponse(metas = emptyList())
+        firstSuccessful ?: throw java.io.IOException("Catalogue request failed")
     }
 
     suspend fun getAddonMeta(
@@ -1378,39 +1383,6 @@ class StreamRepository @Inject constructor(
             "shows" -> listOf("shows", "show", "series", "tv")
             else -> listOf(rawType.trim())
         }.distinct()
-    }
-
-    private fun buildCatalogRequestUrls(
-        baseUrl: String,
-        catalogType: String,
-        catalogId: String,
-        skip: Int,
-        queryBase: String?
-    ): List<String> {
-        val encodedType = URLEncoder.encode(catalogType, "UTF-8")
-        val encodedCatalogId = URLEncoder.encode(catalogId, "UTF-8")
-
-        val withSkipQuery = mutableListOf<String>()
-        if (!queryBase.isNullOrBlank()) {
-            withSkipQuery += queryBase
-        }
-        if (skip > 0) {
-            withSkipQuery += "skip=$skip"
-        }
-
-        val defaultQuery = if (withSkipQuery.isEmpty()) "" else "?${withSkipQuery.joinToString("&")}"
-        val defaultUrl = "$baseUrl/catalog/$encodedType/$encodedCatalogId.json$defaultQuery"
-        if (skip <= 0) {
-            return listOf(defaultUrl)
-        }
-
-        val pathExtra = "skip=$skip"
-        val pathExtraUrl = if (queryBase.isNullOrBlank()) {
-            "$baseUrl/catalog/$encodedType/$encodedCatalogId/$pathExtra.json"
-        } else {
-            "$baseUrl/catalog/$encodedType/$encodedCatalogId/$pathExtra.json?$queryBase"
-        }
-        return listOf(defaultUrl, pathExtraUrl).distinct()
     }
 
     // ========== Stream Resolution ==========

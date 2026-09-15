@@ -75,6 +75,24 @@ class WatchlistScrollDeviceTest {
         assertTrue(compose.onNodeWithTag("library-grid").fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value() > 0f)
     }
     @Test fun posterGridKeepsPositionWhenMoreItemsArrive() = verifyAppend(true)
+    @Test fun serverGridRequestsEveryPageBeyondSixty() {
+        show(DeviceType.TV)
+        every { viewModel.loadMoreLibrary() } answers {
+            val size = (state.value.items.size + 60).coerceAtMost(185)
+            state.value = state.value.copy(items = items(size), hasMore = size < 185, isLoadingMore = false)
+        }
+        compose.onNodeWithText("Libraries").performClick()
+        compose.runOnIdle { state.value = state.value.copy(hasMore = true) }
+        val grid = compose.onNodeWithTag("library-grid")
+        grid.performScrollToIndex(55)
+        compose.waitUntil(5000) { state.value.items.size >= 120 }
+        grid.performScrollToIndex(115)
+        compose.waitUntil(5000) { state.value.items.size >= 180 }
+        grid.performScrollToIndex(175)
+        compose.waitUntil(5000) { state.value.items.size == 185 }
+        grid.performScrollToIndex(184)
+        compose.onNodeWithTag("library-card-184").assertIsDisplayed()
+    }
     @Test fun mobilePaginationDoesNotResetScrollToFirstItem() = verifyAppend(false)
     private fun verifyAppend(poster: Boolean) {
         show(DeviceType.PHONE, poster)

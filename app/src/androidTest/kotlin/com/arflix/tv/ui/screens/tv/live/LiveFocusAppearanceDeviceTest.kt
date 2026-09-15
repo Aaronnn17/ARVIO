@@ -24,6 +24,29 @@ import org.junit.Test
 class LiveFocusAppearanceDeviceTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test fun sharedFocusAnimationDoesNotRecomposeEveryFrame() {
+        val focused = mutableStateOf(false)
+        var compositions = 0
+        compose.setContent {
+            val modifier = Modifier.arvioFocusable(
+                enableSystemFocus = false, useSystemFocusForVisuals = false,
+                isFocusedOverride = focused.value, shape = RoundedCornerShape(6.dp),
+                focusedScale = 1.04f, pressedScale = 1f, showRestBorder = true,
+                outlineWidth = 2.dp, glowWidth = 0.dp, glowAlpha = 0f, outlineColor = Color.White,
+            )
+            androidx.compose.runtime.SideEffect { compositions++ }
+            Box(Modifier.size(160.dp, 90.dp).then(modifier).background(Color.Black))
+        }
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        compose.runOnIdle { focused.value = true }
+        compose.mainClock.advanceTimeByFrame()
+        val atFocus = compositions
+        repeat(12) { compose.mainClock.advanceTimeByFrame() }
+        assertEquals("Animation must update drawing, not composition", atFocus, compositions)
+        compose.mainClock.autoAdvance = true
+    }
+
     @Test fun sharedCardClearsHighlightOnFirstUnfocusedFrame() {
         assertFocusClearsImmediately(false)
     }

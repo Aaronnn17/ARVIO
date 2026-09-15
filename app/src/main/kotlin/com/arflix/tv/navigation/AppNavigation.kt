@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -22,6 +23,7 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.ui.screens.details.DetailsScreen
+import com.arflix.tv.ui.screens.home.CategoryViewAllScreen
 import com.arflix.tv.ui.screens.home.HomeScreen
 import com.arflix.tv.ui.screens.login.LoginScreen
 import com.arflix.tv.ui.screens.player.PlayerScreen
@@ -45,6 +47,11 @@ sealed class Screen(val route: String) {
     data object CollectionDetails : Screen("collections/{catalogId}") {
         fun createRoute(catalogId: String): String {
             return "collections/${android.net.Uri.encode(catalogId)}"
+        }
+    }
+    data object CategoryViewAll : Screen("home_category/{categoryId}") {
+        fun createRoute(categoryId: String): String {
+            return "home_category/${android.net.Uri.encode(categoryId)}"
         }
     }
     data object Tv : Screen("tv?channelId={channelId}&streamUrl={streamUrl}") {
@@ -209,6 +216,9 @@ fun AppNavigation(
                 },
                 onNavigateToCollection = { catalogId ->
                     navController.navigate(Screen.CollectionDetails.createRoute(catalogId))
+                },
+                onNavigateToCategory = { categoryId ->
+                    navController.navigate(Screen.CategoryViewAll.createRoute(categoryId))
                 },
                 onNavigateToSearch = {
                     navigateTopLevel(Screen.Search.route)
@@ -408,6 +418,30 @@ fun AppNavigation(
                 onNavigateToWatchlist = { navigateTopLevel(Screen.Watchlist.route) },
                 onNavigateToTv = { navigateTopLevel(Screen.Tv.createRoute()) },
                 onNavigateToSettings = { navigateTopLevel(Screen.Settings.route) },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // Home row "View all" grid. Shares Home's ViewModel so the row's pages and
+        // pagination state live in one place (Home stays on the back stack underneath).
+        composable(
+            route = Screen.CategoryViewAll.route,
+            arguments = listOf(navArgument("categoryId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val categoryId = backStackEntry.arguments?.getString("categoryId").orEmpty()
+            val homeEntry = remember(backStackEntry) {
+                runCatching { navController.getBackStackEntry(Screen.Home.route) }.getOrNull()
+            }
+            if (categoryId.isBlank() || homeEntry == null) {
+                LaunchedEffect(Unit) { navController.popBackStack() }
+                return@composable
+            }
+            CategoryViewAllScreen(
+                categoryId = categoryId,
+                viewModel = hiltViewModel(homeEntry),
+                onNavigateToDetails = { mediaType, mediaId ->
+                    navController.navigate(Screen.Details.createRoute(mediaType, mediaId))
+                },
                 onBack = { navController.popBackStack() }
             )
         }

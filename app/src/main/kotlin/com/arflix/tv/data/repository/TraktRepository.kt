@@ -92,7 +92,6 @@ class TraktRepository @Inject constructor(
     private val clientId = Constants.TRAKT_CLIENT_ID
     private val clientSecret = Constants.TRAKT_CLIENT_SECRET
     private val PERSONAL_LIST_PAGE_SIZE = 100
-    private val PERSONAL_LIST_ITEM_LIMIT = 500
     // Profile-scoped preference keys - each profile has its own Trakt connection
     private fun accessTokenKey() = profileManager.profileStringKey("trakt_access_token")
     private fun refreshTokenKey() = profileManager.profileStringKey("trakt_refresh_token")
@@ -733,7 +732,7 @@ class TraktRepository @Inject constructor(
     /**
      * Mark episode as watched - updates local cache immediately (optimistic), then syncs to backend
      */
-    suspend fun markEpisodeWatched(showTmdbId: Int, season: Int, episode: Int) {
+    suspend fun markEpisodeWatched(showTmdbId: Int, season: Int, episode: Int, isAnime: Boolean = false) {
         ensureProfileCacheScope()
         // OPTIMISTIC UPDATE: Update all caches immediately so the UI responds instantly
         updateWatchedCache(showTmdbId, season, episode, true)
@@ -751,7 +750,7 @@ class TraktRepository @Inject constructor(
         }
         if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
             try {
-                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
+                simklSyncService.markWatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode, isAnime = isAnime)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 AppLogger.e("TraktRepository", "Failed to mirror episode watched state to Simkl", e)
@@ -783,7 +782,7 @@ class TraktRepository @Inject constructor(
      * Mark episode as unwatched - updates local cache immediately (optimistic), then syncs to backend
      * @param syncTrakt If true (default), also syncs to Trakt. Set false when batch Trakt removal is already done.
      */
-    suspend fun markEpisodeUnwatched(showTmdbId: Int, season: Int, episode: Int, syncTrakt: Boolean = true) {
+    suspend fun markEpisodeUnwatched(showTmdbId: Int, season: Int, episode: Int, syncTrakt: Boolean = true, isAnime: Boolean = false) {
         ensureProfileCacheScope()
         // OPTIMISTIC UPDATE: Update all caches immediately so the UI responds instantly
         updateWatchedCache(showTmdbId, season, episode, false)
@@ -799,7 +798,7 @@ class TraktRepository @Inject constructor(
             }
             if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in syncProviderStore.writeProviders()) {
                 try {
-                    simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode)
+                    simklSyncService.markUnwatched(com.arflix.tv.data.model.MediaType.TV, showTmdbId, season, episode, isAnime = isAnime)
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                 }
@@ -3012,6 +3011,7 @@ class TraktRepository @Inject constructor(
         suspend fun loadItems(): List<TraktPublicListItem> {
             val result = mutableListOf<TraktPublicListItem>()
             var page = 1
+            var previousPage: List<TraktPublicListItem>? = null
             while (true) {
                 val rows = traktApi.getMyListItems(
                     auth = auth,
@@ -3021,16 +3021,18 @@ class TraktRepository @Inject constructor(
                     page = page,
                     limit = PERSONAL_LIST_PAGE_SIZE
                 )
+                if (rows == previousPage) break
                 result += rows
-                if (rows.size < PERSONAL_LIST_PAGE_SIZE || result.size >= PERSONAL_LIST_ITEM_LIMIT) break
+                if (rows.size < PERSONAL_LIST_PAGE_SIZE) break
+                previousPage = rows
                 page += 1
             }
-            return result.take(PERSONAL_LIST_ITEM_LIMIT)
+            return result
         }
 
         return try {
             val rows = loadItems()
-            val items = mapTraktPersonalListItems(rows, PERSONAL_LIST_ITEM_LIMIT)
+            val items = mapTraktPersonalListItems(rows, rows.size)
             AppLogger.breadcrumb(
                 tag = "Trakt",
                 message = "personal_list_mapped raw=${rows.size} mapped=${items.size}",
@@ -4208,7 +4210,7 @@ class TraktRepository @Inject constructor(
     /**
      * Mark entire season as watched
      */
-    suspend fun markSeasonWatched(showTmdbId: Int, seasonNumber: Int, episodes: List<Int>): Boolean {
+    suspend fun markSeasonWatched(showTmdbId: Int, seasonNumber: Int, episodes: List<Int>, isAnime: Boolean = false): Boolean {
         if (episodes.isEmpty()) return true
         val providers = syncProviderStore.writeProviders()
         var synced = false
@@ -4237,7 +4239,7 @@ class TraktRepository @Inject constructor(
         }
 
         if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in providers) {
-            synced = simklSyncService.markSeasonWatched(showTmdbId, seasonNumber, episodes, watched = true) || synced
+            synced = simklSyncService.markSeasonWatched(showTmdbId, seasonNumber, episodes, watched = true, isAnime = isAnime) || synced
         }
 
         episodes.forEach { ep ->
@@ -4313,7 +4315,7 @@ class TraktRepository @Inject constructor(
     /**
      * Remove season from history
      */
-    suspend fun removeSeasonFromHistory(showTmdbId: Int, seasonNumber: Int, episodes: List<Int>): Boolean {
+    suspend fun removeSeasonFromHistory(showTmdbId: Int, seasonNumber: Int, episodes: List<Int>, isAnime: Boolean = false): Boolean {
         if (episodes.isEmpty()) return true
         val providers = syncProviderStore.writeProviders()
         var synced = false
@@ -4344,7 +4346,7 @@ class TraktRepository @Inject constructor(
         }
 
         if (com.arflix.tv.data.repository.sync.SyncProvider.SIMKL in providers) {
-            synced = simklSyncService.markSeasonWatched(showTmdbId, seasonNumber, episodes, watched = false) || synced
+            synced = simklSyncService.markSeasonWatched(showTmdbId, seasonNumber, episodes, watched = false, isAnime = isAnime) || synced
         }
 
         episodes.forEach { ep ->

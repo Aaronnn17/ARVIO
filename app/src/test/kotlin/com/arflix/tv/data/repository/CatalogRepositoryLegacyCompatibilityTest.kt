@@ -11,6 +11,35 @@ import org.junit.Test
 
 class CatalogRepositoryLegacyCompatibilityTest {
     @Test
+    fun `retired sports defaults are excluded but custom sports catalogs survive`() {
+        val repository = CatalogRepository(
+            context = mockk<Context>(relaxed = true),
+            profileManager = mockk<ProfileManager>(relaxed = true),
+            traktApi = mockk<TraktApi>(relaxed = true),
+            okHttpClient = mockk<OkHttpClient>(relaxed = true),
+            invalidationBus = mockk<CloudSyncInvalidationBus>(relaxed = true)
+        )
+        val parse = CatalogRepository::class.java.getDeclaredMethod(
+            "parseCatalogsJson", String::class.java
+        ).apply { isAccessible = true }
+        val retired = """
+            [{"id":"sports","title":"Sports","sourceType":"PREINSTALLED","isPreinstalled":true},
+             {"id":"popular_live_tv","title":"Popular Live Sports","sourceType":"PREINSTALLED"}]
+        """.trimIndent()
+        @Suppress("UNCHECKED_CAST")
+        fun decode(json: String) = parse.invoke(repository, json) as List<CatalogConfig>
+        assertEquals(emptyList<CatalogConfig>(), decode(retired))
+        val mixed = retired.dropLast(1) + """,
+            {"id":"addon_sports","title":"Sports","sourceType":"ADDON","addonId":"my-addon","sourceRef":"my-addon"},
+            {"id":"trending_movies","title":"Trending Movies","sourceType":"PREINSTALLED"}]
+        """.trimIndent()
+        assertEquals(listOf("addon_sports", "trending_movies"), decode(mixed).map { it.id })
+        assertEquals(false, MediaRepository.buildPreinstalledDefaults().any {
+            it.id == "sports" || it.id == "popular_live_tv"
+        })
+    }
+
+    @Test
     fun `catalog without kind defaults to standard`() {
         val repository = CatalogRepository(
             context = mockk<Context>(relaxed = true),
