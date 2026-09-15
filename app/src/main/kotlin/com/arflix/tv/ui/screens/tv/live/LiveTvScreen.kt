@@ -53,6 +53,7 @@ import com.arflix.tv.ui.theme.TextPrimary
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -1069,8 +1070,10 @@ fun LiveTvScreen(
     val filteredChannelsCollapsedState = remember { mutableStateOf<List<EnrichedChannel>>(emptyList()) }
     val filteredChannelIndexState = remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var displayedChannelsCategoryKey by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(filteredChannelsState.value, filteredChannelsCategoryKey, variantGroups) {
+    var displayedChannelsScopeKey by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(filteredChannelsState.value, filteredChannelsCategoryKey, filteredChannelsScopeKey, variantGroups) {
         val categoryKey = filteredChannelsCategoryKey
+        val scopeKey = filteredChannelsScopeKey
         val source = filteredChannelsState.value
         // No variant groups (large list) → reuse the source list as-is, no extra copy.
         val collapsed = if (variantGroups.isEmpty() || categoryKey == "fav" || categoryKey == "recent") {
@@ -1086,9 +1089,10 @@ fun LiveTvScreen(
         filteredChannelsCollapsedState.value = collapsed
         filteredChannelIndexState.value = index
         displayedChannelsCategoryKey = categoryKey
+        displayedChannelsScopeKey = scopeKey
     }
-    val filteredChannels = if (displayedChannelsCategoryKey == selectedCategoryId) filteredChannelsCollapsedState.value else emptyList()
-    val filteredChannelIndexById = if (displayedChannelsCategoryKey == selectedCategoryId) filteredChannelIndexState.value else emptyMap()
+    val filteredChannels = if (displayedChannelsScopeKey == categoryScope && displayedChannelsCategoryKey == selectedCategoryId) filteredChannelsCollapsedState.value else emptyList()
+    val filteredChannelIndexById = if (displayedChannelsScopeKey == categoryScope && displayedChannelsCategoryKey == selectedCategoryId) filteredChannelIndexState.value else emptyMap()
     val selectedCategoryTotalCount = remember(visibleEnrichedState.value.tree, selectedCategoryId, filteredChannels.size) {
         if (selectedCategoryId == "fav" || selectedCategoryId == "recent") filteredChannels.size
         else visibleEnrichedState.value.tree.countForCategory(selectedCategoryId)
@@ -2169,16 +2173,25 @@ fun LiveTvScreen(
         fullscreenGuideOpen = false
     }
 
-    // Prev/next zapping across the full enriched list (not the filtered
-    // category) per user spec. Wraps around.
+    val channelZapOrder = remember(categoryScope, isFullScreen) { ChannelZapOrder() }
+    val zapChannelIds = remember(filteredChannels) { filteredChannels.map { it.id } }
+    SideEffect { channelZapOrder.update(zapChannelIds) }
+
+    // Use the same category and order as the guide, never the global startup window.
     fun zap(delta: Int) {
-        val all = allDisplayChannels
-        if (all.isEmpty()) return
-        val currentDisplayId = displayChannelIdFor(playingChannelId, visibleEnrichedState.value.index.byId, variantGroups)
-        val currentIdx = currentDisplayId?.let { id -> all.indexOfFirst { channel -> channel.id == id } } ?: -1
-        val start = if (currentIdx >= 0) currentIdx else 0
-        val size = all.size
-        tuneToDisplayChannel(all[((start + delta) % size + size) % size])
+        if (filteredChannels.isEmpty()) return
+        channelZapOrder.update(zapChannelIds)
+        val currentDisplayId = displayChannelIdFor(playingChannelId, visibleChannelsById, variantGroups)
+        val complete = filteredChannelsState.value.size >= selectedCategoryTotalCount
+        val targetId = channelZapOrder.next(playingChannelId, currentDisplayId, delta, complete)
+        if (targetId == null) {
+            if (!complete) requestGuideWindowAfter()
+            return
+        }
+        val index = filteredChannelIndexById[targetId] ?: return
+        val target = filteredChannels.getOrNull(index)?.takeIf { it.id == targetId } ?: return
+        if (!complete && index >= filteredChannels.size - 16) requestGuideWindowAfter()
+        tuneToDisplayChannel(target)
     }
 
     // Jump back to the channel that was playing before this one, so the right
@@ -2186,7 +2199,7 @@ fun LiveTvScreen(
     // previous channel yet or it has dropped out of the visible list.
     fun tunePreviousChannel(): Boolean {
         val target = previousChannelId
-            ?.let { id -> allDisplayChannels.firstOrNull { channel -> channel.id == id } }
+            ?.let { id -> visibleChannelsById[id] ?: allDisplayChannels.firstOrNull { channel -> channel.id == id } }
             ?: return false
         tuneToDisplayChannel(target)
         return true

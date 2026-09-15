@@ -1,7 +1,11 @@
 const path=require('node:path'),fs=require('node:fs'),http=require('node:http'),assert=require('node:assert/strict');
 const esbuild=require('esbuild'),ts=require('typescript'),{chromium}=require('@playwright/test');
+const {load}=require('../tests/load.cjs');
 (async()=>{
  const root=path.resolve(__dirname,'..'),out=path.resolve(root,'../artifacts/web-i18n');fs.mkdirSync(out,{recursive:true});
+ const manifest=require('../lib/i18n/manifest.json');
+ const {resolveLocale,translate}=load('lib/i18n/core.ts',{'./manifest.json':manifest});
+ const languages=require('../lib/i18n/languages.json');
  const source=ts.createSourceFile('store.tsx',fs.readFileSync(path.join(root,'lib/store.tsx'),'utf8'),99,true,ts.ScriptKind.TSX);
  let defaults;function visit(n){if(ts.isVariableDeclaration(n)&&n.name.getText(source)==='defaultSettings')defaults=n.initializer.getText(source);ts.forEachChild(n,visit)}visit(source);
  assert(defaults);
@@ -30,6 +34,30 @@ const esbuild=require('esbuild'),ts=require('typescript'),{chromium}=require('@p
    assert.equal(await page.locator('.profile-name-text').textContent(),'Home','User profile name stays unchanged');
    await page.locator('.media-card').first().waitFor();
    await page.screenshot({path:path.join(out,`${name}-spanish-library.png`)});
+   if(process.env.ARVIO_TEST_ALL_LANGUAGES==='1') {
+     for(const {code} of languages) {
+       const locale=resolveLocale(code),dictionary=locale==='en'?{}:JSON.parse(fs.readFileSync(path.join(root,`public/i18n/${locale}.json`),'utf8'));
+       await page.evaluate(code=>window.setFixtureLanguage(code),code);
+       await page.waitForFunction(({code,label})=>document.documentElement.lang===code&&document.querySelector('.oled-library-toolbar nav button:nth-child(2)')?.textContent===label,{code,label:translate(dictionary,'My lists')});
+         assert.equal(await page.locator('.profile-name-text').textContent(),'Home');
+         if(width>=1024) for(const label of ['Collection','Watching','Completed','Dropped']) {
+           await page.getByRole('button',{name:translate(dictionary,label),exact:true}).waitFor();
+         }
+       const rtl=/^(ar|he|fa|ur)(-|$)/.test(code);
+       assert.equal(await page.locator('html').getAttribute('dir'),rtl?'rtl':'ltr');
+       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${code}: no overflow at ${width}px`);
+       if(width>650 && rtl) {
+         await page.locator('[data-library-index="0"] button').focus();
+         await page.keyboard.press('ArrowLeft');
+         await page.waitForFunction(()=>document.activeElement?.closest('[data-library-index]')?.getAttribute('data-library-index')==='1');
+         await page.keyboard.press('ArrowRight');
+         await page.waitForFunction(()=>document.activeElement?.closest('[data-library-index]')?.getAttribute('data-library-index')==='0');
+       }
+       if(['nl','de','fr','ar','he','ja','zh-CN','hi','gu'].includes(locale)) await page.screenshot({path:path.join(out,`${name}-${locale}-library.png`)});
+     }
+     await page.evaluate(()=>window.setFixtureLanguage('es-ES'));
+     await page.getByRole('button',{name:'Listas para ver',exact:true}).waitFor();
+   }
    const navigation=width<681?page.locator('.mobile-bottom-nav'):page.locator('.sidebar');
    await navigation.getByRole('button',{name:'Buscar',exact:true}).click();
    const search=page.getByRole('textbox',{name:'Buscar películas y series'});await search.fill('Dune');
@@ -44,10 +72,11 @@ const esbuild=require('esbuild'),ts=require('typescript'),{chromium}=require('@p
    await page.getByText('Idioma del contenido y la interfaz',{exact:true}).waitFor();
    await page.getByRole('button',{name:'Español',exact:true}).click();
    await page.getByRole('dialog',{name:'Elegir opción'}).waitFor();
-   await page.getByRole('dialog').getByRole('button',{name:'Inglés (EE. UU.)',exact:true}).click();
+   assert.equal(await page.getByRole('dialog').locator('.option-row').count(),languages.length+1,'Every Android language is selectable');
+   await page.getByRole('dialog').getByRole('button',{name:'English (US)',exact:true}).click();
    await page.getByText('Content language',{exact:true}).waitFor();
    await page.getByRole('button',{name:'English (US)',exact:true}).click();
-   await page.getByRole('dialog').getByRole('button',{name:'Spanish',exact:true}).click();
+   await page.getByRole('dialog').getByRole('button',{name:'Español',exact:true}).click();
    await page.getByText('Idioma del contenido y la interfaz',{exact:true}).waitFor();
    await page.screenshot({path:path.join(out,`${name}-spanish-settings.png`)});
    if(name==='tv') {

@@ -1,5 +1,6 @@
 "use client";
 import { useTranslation } from "@/lib/i18n";
+import { CONTENT_LANGUAGE_OPTIONS } from "@/lib/i18n/languageOptions";
 
 
 import {
@@ -144,26 +145,6 @@ const QUALITY_PRESET_LABELS: Array<
   ["custom", "Custom"],
 ];
 
-const CONTENT_LANGUAGE_OPTIONS: Array<[string, string]> = [
-  ["en-US", "English (US)"],
-  ["en-GB", "English (UK)"],
-  ["nl-NL", "Dutch"],
-  ["de-DE", "German"],
-  ["fr-FR", "French"],
-  ["es-ES", "Spanish"],
-  ["it-IT", "Italian"],
-  ["pt-PT", "Portuguese"],
-  ["pt-BR", "Portuguese (Brazil)"],
-  ["tr-TR", "Turkish"],
-  ["pl-PL", "Polish"],
-  ["sv-SE", "Swedish"],
-  ["da-DK", "Danish"],
-  ["fi-FI", "Finnish"],
-  ["no-NO", "Norwegian"],
-  ["ja-JP", "Japanese"],
-  ["ko-KR", "Korean"],
-  ["zh-CN", "Chinese (Simplified)"],
-];
 
 const TRACK_LANGUAGE_OPTIONS: Array<[string, string]> = [
   ["", "Off / Auto"],
@@ -443,11 +424,13 @@ function Select<T extends string>({
   options,
   onChange,
   disabled,
+  translateLabels = true,
 }: {
   value: T;
   options: Array<[T, string]>;
   onChange: (v: T) => void;
   disabled?: boolean;
+  translateLabels?: boolean;
 }) {
   const translateUi = useTranslation();
   const [open, setOpen] = useState(false);
@@ -496,7 +479,7 @@ function Select<T extends string>({
           setOpen(true);
         }}
       >
-        <span>{translateUi(selected)}</span>
+        <span>{translateLabels ? translateUi(selected) : selected}</span>
         <ChevronDown size={17} />
       </button>
       {open && typeof document !== "undefined" && createPortal(
@@ -529,7 +512,7 @@ function Select<T extends string>({
                   className={`option-row ${option === value ? "is-selected" : ""}`}
                   onClick={() => choose(option)}
                 >
-                  <span>{translateUi(label)}</span>
+                  <span>{translateLabels ? translateUi(label) : label}</span>
                   {option === value && <Check size={18} />}
                 </button>
               ))}
@@ -836,6 +819,7 @@ function SectionBody({ section }: { section: SectionId }) {
         <Panel title={translateUi("Language & Audio")}>
           <Row label={translateUi("Content language")}>
             <Select
+              translateLabels={false}
               value={settings.language}
               onChange={(v) => set({ language: v })}
               options={optionsWithCurrent(

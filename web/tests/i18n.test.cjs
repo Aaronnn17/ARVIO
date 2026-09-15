@@ -6,6 +6,8 @@ const ts = require('typescript');
 const {load} = require('./load.cjs');
 const manifest = require('../lib/i18n/manifest.json');
 const es = require('../public/i18n/es.json');
+const phrases = require('../lib/i18n/phrases.json');
+const languages = require('../lib/i18n/languages.json');
 const {resolveLocale, translate, localeUrl} = load('lib/i18n/core.ts', {'./manifest.json':manifest});
 
 test('profile language regions resolve to the same Android translation family', () => {
@@ -35,6 +37,34 @@ test('all Spanish web additions retain every interpolation slot', () => {
     const slots = text => [...text.matchAll(/\{\w+\}/g)].map(m=>m[0]).sort();
     assert.deepEqual(slots(value), slots(key), key);
   }
+});
+test('every Android language resolves to an available web dictionary', () => {
+  for (const {code} of languages) {
+    const locale = resolveLocale(code);
+    if (code.startsWith('en')) assert.equal(locale, 'en');
+    else { assert.notEqual(locale, 'en', code); assert.ok(manifest[locale], code); }
+  }
+  assert.equal(resolveLocale('fil-PH'), 'tl');
+  assert.equal(resolveLocale('in-ID'), 'id');
+});
+test('every language covers all registered web phrases and preserves placeholders', () => {
+  const normalize = text => text.trim().toLowerCase().replace(/…/g,'...');
+  const slots = text => [...text.matchAll(/\{\w+\}/g)].map(match=>match[0]).sort();
+  for (const locale of Object.keys(manifest)) {
+    const dictionary = require(`../public/i18n/${locale}.json`);
+    const indexed = new Map(Object.entries(dictionary).map(([key,value])=>[normalize(key),value]));
+    for (const key of phrases) {
+      const value=indexed.get(normalize(key));
+      assert.equal(typeof value,'string',`${locale}: missing ${key}`);
+      assert.ok(value.trim(),`${locale}: empty ${key}`);
+      assert.deepEqual(slots(value),slots(key),`${locale}: placeholders in ${key}`);
+      assert.doesNotMatch(value, /[⟦⟧⟪⟫]/, `${locale}: authoring token leaked into ${key}`);
+    }
+  }
+});
+test('the registered corpus includes all current display calls and web-only wording', async () => {
+  const {requiredPhrases} = await import('../scripts/translation-sources.mjs');
+  assert.deepEqual(phrases, requiredPhrases());
 });
 test('the interface uses the synced content language without remounting the application', () => {
   const store = fs.readFileSync(path.join(__dirname,'../lib/store.tsx'),'utf8');
