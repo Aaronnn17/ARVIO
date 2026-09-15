@@ -209,6 +209,8 @@ import com.arflix.tv.ui.components.toggleCatalogueRowLayoutMode
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
+import com.arflix.tv.ui.focus.isArvioDpadNavigationKey
+import com.arflix.tv.ui.focus.rememberArvioDpadRepeatGate
 import com.arflix.tv.ui.skin.resolveAccentColor
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.appBackgroundDark
@@ -877,6 +879,13 @@ fun SettingsScreen(
         uiState.pendingPackManifest != null ||
         pluginsModalOpen
 
+    // Same D-pad repeat throttle as Home and Details, so holding a direction
+    // key walks the settings lists at a readable pace instead of blurring.
+    val dpadRepeatGate = rememberArvioDpadRepeatGate(
+        horizontalMinRepeatIntervalMs = 80L,
+        verticalMinRepeatIntervalMs = 112L
+    )
+
     // One press used to reach two receivers: this screen's key handling consumed
     // Key.Back on the way down, and the system's back dispatcher invoked
     // BackHandler on its own afterwards - so the categories screen closed and the
@@ -928,6 +937,21 @@ fun SettingsScreen(
             .onPreviewKeyEvent { event ->
                     if (isTouchDevice) return@onPreviewKeyEvent false
                     if (hasBlockingModal) return@onPreviewKeyEvent false
+
+                if (event.type == KeyEventType.KeyUp && isArvioDpadNavigationKey(event.key)) {
+                    dpadRepeatGate.reset()
+                }
+                if (
+                    event.type == KeyEventType.KeyDown &&
+                    isArvioDpadNavigationKey(event.key) &&
+                    dpadRepeatGate.shouldSkip(
+                        keyCode = event.nativeKeyEvent.keyCode,
+                        repeatCount = event.nativeKeyEvent.repeatCount,
+                        nowMs = SystemClock.elapsedRealtime()
+                    )
+                ) {
+                    return@onPreviewKeyEvent true
+                }
 
                 if (event.type == KeyEventType.KeyDown) {
                     val currentSection = sections.getOrNull(sectionIndex).orEmpty()

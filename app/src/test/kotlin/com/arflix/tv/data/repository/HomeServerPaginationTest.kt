@@ -32,6 +32,7 @@ class HomeServerPaginationTest {
             every { profileStringKeyFor(any(), any()) } answers { stringPreferencesKey("${firstArg<String>()}_${secondArg<String>()}") }
         }
         val client = mockk<OkHttpClient>()
+        var reportedTotal: Int? = null
         every { client.newCall(any()) } answers {
             val request = firstArg<Request>()
             val plex = request.url.encodedPath.startsWith("/library")
@@ -40,8 +41,9 @@ class HomeServerPaginationTest {
                 if(plex) """{"ratingKey":"$it","title":"Movie $it","type":"movie"}"""
                 else """{"Id":"$it","Name":"Movie $it","Type":"Movie"}"""
             }
-            val json = if(plex) """{"MediaContainer":{"size":${if(offset == 0) 2 else 1},"Metadata":[$entries]}}"""
-                else """{"Items":[$entries]}"""
+            val totalField = reportedTotal?.let { "\"${if (plex) "totalSize" else "TotalRecordCount"}\":$it," }.orEmpty()
+            val json = if(plex) """{"MediaContainer":{${totalField}"size":${if(offset == 0) 2 else 1},"Metadata":[$entries]}}"""
+                else """{${totalField}"Items":[$entries]}"""
             mockk<okhttp3.Call> { every { execute() } returns Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
                 .code(200).message("OK").body(json.toResponseBody("application/json".toMediaType())).build() }
         }
@@ -54,15 +56,27 @@ class HomeServerPaginationTest {
         repository.importCloudConnectionsJsonForProfile(profile, Gson().toJson(connections))
         withTimeout(5000) { repository.connections.first { it.size == 3 } }
         connections.forEach { connection ->
+            reportedTotal = null
             val source = HomeServerRepository.buildCatalogSourceRef(connection, connection.collections.single())
             val first = repository.loadCatalogItems(source, 0, 2, propagateErrors = true)
             assertEquals(2, first.items.size)
+            assertNull(first.totalCount)
             assertTrue("${connection.serverKind} stopped at its first page", first.hasMore)
             assertEquals(2, first.nextOffset)
             val last = repository.loadCatalogItems(source, first.nextOffset!!, 2, propagateErrors = true)
             assertEquals(1, last.items.size)
             assertFalse(last.hasMore)
             assertEquals(3, last.nextOffset)
+            reportedTotal = 14439
+            val counted = repository.loadCatalogItems(source, 0, 2, propagateErrors = true)
+            assertEquals(14439, counted.totalCount)
+            assertEquals(2, counted.items.size)
+            assertTrue(counted.hasMore)
+            reportedTotal = 0
+            val empty = repository.loadCatalogItems(source, 3, 2, propagateErrors = true)
+            assertEquals(0, empty.totalCount)
+            assertTrue(empty.items.isEmpty())
+            assertFalse(empty.hasMore)
         }
     }
 }

@@ -114,7 +114,8 @@ class MediaRepository @Inject constructor(
     data class CategoryPageResult(
         val items: List<MediaItem>,
         val hasMore: Boolean,
-        val nextOffset: Int? = null
+        val nextOffset: Int? = null,
+        val totalCount: Int? = null
     )
 
     private val apiKey = Constants.TMDB_API_KEY
@@ -2006,7 +2007,7 @@ class MediaRepository @Inject constructor(
             )
         }
         cacheItems(items)
-        return CategoryPageResult(items = items, hasMore = page.hasMore, nextOffset = page.nextOffset)
+        return CategoryPageResult(items = items, hasMore = page.hasMore, nextOffset = page.nextOffset, totalCount = page.totalCount)
     }
 
     private suspend fun resolveHomeServerCatalogItem(item: HomeServerCatalogItem): MediaItem? {

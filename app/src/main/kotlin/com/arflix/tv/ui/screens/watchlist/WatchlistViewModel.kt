@@ -144,6 +144,7 @@ data class HomeLibraryUiState(
     val isLoading: Boolean = false,
     val isLoadingMore: Boolean = false,
     val hasMore: Boolean = false,
+    val totalCount: Int? = null,
     val sort: HomeServerLibrarySort = HomeServerLibrarySort.RECENTLY_ADDED,
     val searchQuery: String = "",
     val error: String? = null
@@ -212,7 +213,7 @@ class WatchlistViewModel @Inject constructor(
 
     private val _libraryState = MutableStateFlow(HomeLibraryUiState())
     val libraryState: StateFlow<HomeLibraryUiState> = _libraryState.asStateFlow()
-    private val libraryCache = linkedMapOf<String, Pair<List<MediaItem>, Boolean>>()
+    private val libraryCache = linkedMapOf<String, MediaRepository.CategoryPageResult>()
     private val libraryOffsets = mutableMapOf<String, Int>()
     private var libraryLoadJob: Job? = null
     private var librarySearchJob: Job? = null
@@ -392,6 +393,7 @@ class WatchlistViewModel @Inject constructor(
             selectedProvider = selectedProvider,
             selectedSourceRef = selectedSource,
             items = if (selectionChanged || selectedProvider == null) emptyList() else current.items,
+            totalCount = if (selectionChanged || selectedProvider == null) null else current.totalCount,
             isLoading = if (selectionChanged) selectedSource != null else current.isLoading,
             isLoadingMore = if (selectionChanged) false else current.isLoadingMore,
             hasMore = if (selectionChanged) false else current.hasMore,
@@ -409,6 +411,7 @@ class WatchlistViewModel @Inject constructor(
         if (provider == null) {
             _libraryState.value = current.copy(
                 selectedProvider = null,
+                totalCount = null,
                 selectedSourceRef = null,
                 items = emptyList(),
                 isLoading = false,
@@ -420,6 +423,7 @@ class WatchlistViewModel @Inject constructor(
         val firstLibrary = current.libraries.firstOrNull { it.serverKind == provider }
         _libraryState.value = current.copy(
             selectedProvider = provider,
+            totalCount = null,
             selectedSourceRef = firstLibrary?.sourceRef,
             items = emptyList(),
             isLoading = firstLibrary != null,
@@ -434,6 +438,7 @@ class WatchlistViewModel @Inject constructor(
         librarySearchJob?.cancel()
         _libraryState.value = _libraryState.value.copy(
             selectedSourceRef = sourceRef,
+            totalCount = null,
             items = emptyList(),
             isLoadingMore = false,
             error = null
@@ -451,7 +456,7 @@ class WatchlistViewModel @Inject constructor(
         if (_libraryState.value.searchQuery == query) return
         libraryRequestId++
         libraryLoadJob?.cancel()
-        _libraryState.value = _libraryState.value.copy(searchQuery = query)
+        _libraryState.value = _libraryState.value.copy(searchQuery = query, totalCount = null)
         librarySearchJob?.cancel()
         librarySearchJob = viewModelScope.launch {
             delay(300L)
@@ -476,8 +481,9 @@ class WatchlistViewModel @Inject constructor(
         val cached = libraryCache[cacheKey]
         if (cached != null && !force) {
             _libraryState.value = snapshot.copy(
-                items = cached.first,
-                hasMore = cached.second,
+                items = cached.items,
+                hasMore = cached.hasMore,
+                totalCount = cached.totalCount,
                 isLoading = false,
                 isLoadingMore = false,
                 error = null
@@ -503,7 +509,7 @@ class WatchlistViewModel @Inject constructor(
                 if (requestId != libraryRequestId) return@onSuccess
                 val items = page.items.enrichWithPlaybackProgress()
                 if (requestId != libraryRequestId) return@onSuccess
-                libraryCache[cacheKey] = items to page.hasMore
+                libraryCache[cacheKey] = page.copy(items = items)
                 libraryOffsets[cacheKey] = page.nextOffset ?: page.items.size
                 while (libraryCache.size > LIBRARY_CACHE_ENTRY_LIMIT) {
                     val oldest = libraryCache.keys.first()
@@ -513,6 +519,7 @@ class WatchlistViewModel @Inject constructor(
                 _libraryState.value = _libraryState.value.copy(
                     items = items,
                     hasMore = page.hasMore,
+                    totalCount = page.totalCount,
                     isLoading = false,
                     isLoadingMore = false,
                     error = null
@@ -569,10 +576,11 @@ class WatchlistViewModel @Inject constructor(
                 _libraryState.value = current.copy(
                     items = merged,
                     hasMore = more,
+                    totalCount = page.totalCount ?: current.totalCount,
                     isLoadingMore = false,
                     error = null
                 )
-                libraryCache[cacheKey] = merged to more
+                libraryCache[cacheKey] = page.copy(items = merged, hasMore = more, totalCount = page.totalCount ?: current.totalCount)
                 fetchLogos(fresh.take(LIBRARY_LOGO_INITIAL_PREFETCH))
             }.onFailure {
                 if (it is CancellationException) throw it
