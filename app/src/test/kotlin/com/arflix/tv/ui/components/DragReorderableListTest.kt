@@ -79,37 +79,36 @@ class DragReorderableListTest {
         assertEquals(0f, clampFloatingTop(50f, viewportStart = 0, viewportEnd = 80, rowSize = 400), 0f)
     }
 
+    // A row 100 tall in a viewport 1000 tall, with an edge strip of 100.
+    private fun scrollFor(rowTop: Float) =
+        autoScrollDelta(rowTop = rowTop, rowSize = 100, viewportStart = 0f, viewportEnd = 1000f, edgeSize = 100f, maxSpeed = 8f)
+
     @Test
-    fun theMiddleOfTheListDoesNotScroll() {
-        val delta = autoScrollDelta(pointerY = 500f, viewportStart = 0f, viewportEnd = 1000f, edgeSize = 100f, maxSpeed = 8f)
-        assertEquals(0f, delta, 0f)
+    fun aRowInTheMiddleOfTheListDoesNotScroll() {
+        assertEquals(0f, scrollFor(450f), 0f)
     }
 
     @Test
-    fun holdingAtTheTopEdgeScrollsBackwards() {
-        val delta = autoScrollDelta(pointerY = 50f, viewportStart = 0f, viewportEnd = 1000f, edgeSize = 100f, maxSpeed = 8f)
-        assertEquals(-4f, delta, 0.001f)
+    fun aRowLyingAgainstTheTopEdgeScrollsBackwardsAtFullSpeed() {
+        assertEquals(-8f, scrollFor(0f), 0.001f)
     }
 
     @Test
-    fun holdingAtTheBottomEdgeScrollsForwards() {
-        val delta = autoScrollDelta(pointerY = 950f, viewportStart = 0f, viewportEnd = 1000f, edgeSize = 100f, maxSpeed = 8f)
-        assertEquals(4f, delta, 0.001f)
+    fun aRowLyingAgainstTheBottomEdgeScrollsForwardsAtFullSpeed() {
+        assertEquals(8f, scrollFor(900f), 0.001f)
     }
 
     @Test
-    fun theDeeperIntoTheEdgeTheFasterItRunsUpToTheLimit() {
-        val shallow = autoScrollDelta(pointerY = 990f, viewportStart = 0f, viewportEnd = 1000f, edgeSize = 100f, maxSpeed = 8f)
-        val deep = autoScrollDelta(pointerY = 1000f, viewportStart = 0f, viewportEnd = 1000f, edgeSize = 100f, maxSpeed = 8f)
-        val pastTheEdge = autoScrollDelta(pointerY = 1400f, viewportStart = 0f, viewportEnd = 1000f, edgeSize = 100f, maxSpeed = 8f)
-        assertTrue(shallow < deep)
-        assertEquals(8f, deep, 0.001f)
-        assertEquals(8f, pastTheEdge, 0.001f)
+    fun enteringTheEdgeStripOnlyCreeps() {
+        // Half way into the top strip, and half way into the bottom one.
+        assertEquals(-4f, scrollFor(50f), 0.001f)
+        assertEquals(4f, scrollFor(850f), 0.001f)
+        assertTrue(scrollFor(90f) > scrollFor(10f))
     }
 
     @Test
     fun aViewportWithoutHeightNeverScrolls() {
-        assertEquals(0f, autoScrollDelta(10f, 0f, 0f, 100f, 8f), 0f)
-        assertEquals(0f, autoScrollDelta(10f, 0f, 1000f, 0f, 8f), 0f)
+        assertEquals(0f, autoScrollDelta(10f, 100, 0f, 0f, 100f, 8f), 0f)
+        assertEquals(0f, autoScrollDelta(10f, 100, 0f, 1000f, 0f, 8f), 0f)
     }
 }

@@ -10,8 +10,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -24,10 +24,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 
 /**
  * Touch reordering for a [androidx.compose.foundation.lazy.LazyColumn]: press and hold any row,
@@ -69,7 +66,6 @@ import kotlinx.coroutines.launch
 @Stable
 class DragReorderState internal constructor(
     private val listState: LazyListState,
-    private val scope: CoroutineScope,
     private val autoScrollEdgePx: Float,
     private val autoScrollSpeedPx: Float,
     private val onGrab: () -> Unit,
@@ -86,11 +82,8 @@ class DragReorderState internal constructor(
     /** Top edge of the held row in viewport coordinates - where the finger put it. */
     private var floatingTop = 0f
     private var floatingSize = 0
-    /** Finger position in viewport coordinates, which is what the edge scrolling watches. */
-    private var pointerY = 0f
     /** The position this row has been asked to end up at, including moves not yet echoed back. */
     private var requestedIndex = -1
-    private var autoScrollJob: Job? = null
 
     fun isDragging(key: Any): Boolean = draggedKey == key
 
@@ -119,19 +112,15 @@ class DragReorderState internal constructor(
         return floatingTop - item.offset
     }
 
-    internal fun onDragStart(key: Any, positionInRow: Float) {
+    internal fun onDragStart(key: Any) {
         val grabbed = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
-        draggedKey = key
         floatingTop = grabbed.offset.toFloat()
         floatingSize = grabbed.size
-        // The finger position is kept in the list's coordinates, because that is
-        // what the edge scrolling below compares against the viewport.
-        pointerY = grabbed.offset + positionInRow
         requestedIndex = grabbed.index
         movedWhileHeld = false
         pickedUpWithoutMoving = false
+        draggedKey = key
         onGrab()
-        startAutoScroll()
     }
 
     internal fun onDrag(deltaY: Float) {
@@ -147,15 +136,10 @@ class DragReorderState internal constructor(
             viewportEnd = layout.viewportEndOffset,
             rowSize = floatingSize
         )
-        // The finger itself is followed unclamped: pressing PAST the edge is exactly how one asks
-        // the list to carry on scrolling there.
-        pointerY += deltaY
         applyMoves()
     }
 
     internal fun onDragStop() {
-        autoScrollJob?.cancel()
-        autoScrollJob = null
         // A row that was picked up and never moved is released like an ordinary tap, and the tap
         // would show or hide the group - which is not what changing one's mind should do. A row
         // that WAS moved never reaches the tap: the movement is claimed by the move itself.
@@ -183,26 +167,30 @@ class DragReorderState internal constructor(
         }
     }
 
-    /** Keeps the list moving for as long as the held row rests against the top or bottom edge. */
-    private fun startAutoScroll() {
-        autoScrollJob?.cancel()
-        autoScrollJob = scope.launch {
-            while (isActive && draggedKey != null) {
-                withFrameNanos { }
-                val layout = listState.layoutInfo
-                val delta = autoScrollDelta(
-                    pointerY = pointerY,
-                    viewportStart = layout.viewportStartOffset.toFloat(),
-                    viewportEnd = layout.viewportEndOffset.toFloat(),
-                    edgeSize = autoScrollEdgePx,
-                    maxSpeed = autoScrollSpeedPx
-                )
-                if (delta != 0f) {
-                    listState.scrollBy(delta)
-                    applyMoves()
-                }
-            }
-        }
+    /**
+     * One frame of edge scrolling, driven from the composition (see [rememberDragReorderState]).
+     *
+     * 🔴 **It is the HELD ROW that is measured against the edges, not the finger.** The row's
+     * position is this class's own arithmetic and is known exactly; the finger arrives through a
+     * chain of gesture coordinates that is easy to be subtly wrong about - and a scroll that never
+     * happens is impossible to tell apart from a scroll that was never asked for.
+     */
+    internal suspend fun autoScrollStep() {
+        // Being picked up is not a request to scroll: a row grabbed at the edge and held still
+        // stays where it is until the finger actually moves it.
+        if (draggedKey == null || !movedWhileHeld) return
+        val layout = listState.layoutInfo
+        val delta = autoScrollDelta(
+            rowTop = floatingTop,
+            rowSize = floatingSize,
+            viewportStart = layout.viewportStartOffset.toFloat(),
+            viewportEnd = layout.viewportEndOffset.toFloat(),
+            edgeSize = autoScrollEdgePx,
+            maxSpeed = autoScrollSpeedPx
+        )
+        if (delta == 0f) return
+        listState.scrollBy(delta)
+        applyMoves()
     }
 }
 
@@ -218,22 +206,31 @@ fun rememberDragReorderState(
     listState: LazyListState,
     onMove: (key: Any, from: Int, to: Int) -> Unit
 ): DragReorderState {
-    val scope = rememberCoroutineScope()
     val haptics: HapticFeedback = LocalHapticFeedback.current
     val currentOnMove by rememberUpdatedState(onMove)
     val density = LocalDensity.current
     val edgePx = with(density) { autoScrollEdge.toPx() }
     val speedPx = with(density) { autoScrollSpeedPerFrame.toPx() }
-    return remember(listState, scope, edgePx, speedPx) {
+    val state = remember(listState, edgePx, speedPx) {
         DragReorderState(
             listState = listState,
-            scope = scope,
             autoScrollEdgePx = edgePx,
             autoScrollSpeedPx = speedPx,
             onGrab = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
             onMove = { key, from, to -> currentOnMove(key, from, to) }
         )
     }
+    // The edge scrolling runs here rather than in a coroutine the state starts for itself: tied to
+    // the composition it is started and stopped by the drag it belongs to, and it is beyond doubt
+    // that it is clocked frame by frame.
+    LaunchedEffect(state.draggedKey) {
+        if (state.draggedKey == null) return@LaunchedEffect
+        while (isActive) {
+            withFrameNanos { }
+            state.autoScrollStep()
+        }
+    }
+    return state
 }
 
 /**
@@ -256,7 +253,7 @@ fun rememberDragReorderState(
 fun LazyItemScope.dragReorderItem(state: DragReorderState, key: Any): Modifier = Modifier
     .pointerInput(key) {
         detectDragGesturesAfterLongPress(
-            onDragStart = { offset -> state.onDragStart(key, offset.y) },
+            onDragStart = { state.onDragStart(key) },
             onDrag = { change, amount ->
                 change.consume()
                 state.onDrag(amount.y)
@@ -317,29 +314,33 @@ internal fun clampFloatingTop(desiredTop: Float, viewportStart: Int, viewportEnd
 }
 
 /**
- * How far to scroll this frame while a row is held near an edge: negative towards the start of the
- * list, positive towards its end, zero anywhere in the middle. The speed ramps up with how deep
- * into the edge strip the finger is, so resting just inside it creeps and pushing right up against
- * the edge runs at [maxSpeed]. When the viewport is too short for two strips the top one wins.
+ * How far to scroll this frame while the held row rests near an edge: negative towards the start of
+ * the list, positive towards its end, zero anywhere in the middle. The speed ramps up with how
+ * close the row has come, so entering the edge strip creeps and lying against the edge - which is
+ * where the row waits while the finger presses past it - runs at [maxSpeed]. When the viewport is
+ * too short for two strips the top one wins.
  */
 internal fun autoScrollDelta(
-    pointerY: Float,
+    rowTop: Float,
+    rowSize: Int,
     viewportStart: Float,
     viewportEnd: Float,
     edgeSize: Float,
     maxSpeed: Float
 ): Float {
     if (edgeSize <= 0f || viewportEnd <= viewportStart) return 0f
-    val topEdge = viewportStart + edgeSize
-    val bottomEdge = viewportEnd - edgeSize
+    val gapAbove = rowTop - viewportStart
+    val gapBelow = viewportEnd - (rowTop + rowSize)
     return when {
-        pointerY < topEdge -> -maxSpeed * ((topEdge - pointerY) / edgeSize).coerceIn(0f, 1f)
-        pointerY > bottomEdge -> maxSpeed * ((pointerY - bottomEdge) / edgeSize).coerceIn(0f, 1f)
+        gapAbove < edgeSize -> -maxSpeed * ((edgeSize - gapAbove) / edgeSize).coerceIn(0f, 1f)
+        gapBelow < edgeSize -> maxSpeed * ((edgeSize - gapBelow) / edgeSize).coerceIn(0f, 1f)
         else -> 0f
     }
 }
 
 private val autoScrollEdge = 72.dp
-private val autoScrollSpeedPerFrame = 8.dp
+// Fast enough that a row travels a screenful in a couple of seconds, slow enough that the moves it
+// triggers on the way - one per row it passes - are all safely stored before the next one comes.
+private val autoScrollSpeedPerFrame = 10.dp
 private val draggedElevation = 12.dp
 private val draggedCorner = 12.dp
