@@ -108,6 +108,15 @@ class DragReorderableListTest {
     }
 
     @Test
+    fun theClimbTakesAStepOnlyOnceAWholeRowHasBeenAskedFor() {
+        assertFalse(hasClimbedAWholeRow(progress = 99f, rowSize = 100))
+        assertTrue(hasClimbedAWholeRow(progress = 100f, rowSize = 100))
+        assertTrue(hasClimbedAWholeRow(progress = 250f, rowSize = 100))
+        // A row without a measured height never steps, rather than stepping every frame.
+        assertFalse(hasClimbedAWholeRow(progress = 500f, rowSize = 0))
+    }
+
+    @Test
     fun aRowAboveEverythingOnScreenIsRecognisedAsOutOfSight() {
         // The list is showing rows 3 and below.
         assertTrue(isAboveViewport(rowIndex = 0, firstVisibleIndex = 3))

@@ -81,6 +81,8 @@ class DragReorderState internal constructor(
     /** The row that was just put down, and where it was sent - see [settleAfterDrop]. */
     private var droppedKey: Any? = null
     private var droppedIndex = -1
+    /** Distance the row has asked to climb since the last step it took - see [climbOneRow]. */
+    private var climbProgress = 0f
 
     /** Top edge of the held row in viewport coordinates - where the finger put it. */
     private var floatingTop = 0f
@@ -139,7 +141,9 @@ class DragReorderState internal constructor(
             viewportEnd = layout.viewportEndOffset,
             rowSize = floatingSize
         )
-        applyMoves()
+        // At an edge the movement belongs to the edge handling below; correcting the position from
+        // the finger as well would pull the row back down while it is trying to climb.
+        if (!restingAgainstAnEdge()) applyMoves()
     }
 
     internal fun onDragStop() {
@@ -204,22 +208,58 @@ class DragReorderState internal constructor(
      * happens is impossible to tell apart from a scroll that was never asked for.
      */
     internal suspend fun autoScrollStep() {
-        if (draggedKey == null) return
-        val layout = listState.layoutInfo
-        val firstVisible = layout.visibleItemsInfo.firstOrNull() ?: return
-        // 🔴 A list keeps its place by holding on to the row currently at the top of the screen.
-        // Move another row ABOVE that one and the list dutifully stays where it was - so the moved
-        // row lands off screen and the group looks as though it had been swallowed. Bring its place
-        // back into view: the row is drawn at the finger either way, but where it will come down
-        // has to be visible.
-        if (isAboveViewport(rowIndex = requestedIndex, firstVisibleIndex = firstVisible.index)) {
-            listState.scrollToItem(requestedIndex)
-            return
-        }
+        val key = draggedKey ?: return
         // Being picked up is not a request to scroll: a row grabbed at the edge and held still
         // stays where it is until the finger actually moves it.
         if (!movedWhileHeld) return
-        val delta = autoScrollDelta(
+        val delta = edgeSpeed()
+        if (delta == 0f) {
+            climbProgress = 0f
+            return
+        }
+        if (delta > 0f) {
+            // Downwards is the safe direction: a list keeps its place by its FIRST row, and a row
+            // moving down never crosses that one, so nothing is displaced. Plain scrolling.
+            listState.scrollBy(delta)
+            applyMoves()
+            return
+        }
+        climbOneRow(key, -delta)
+    }
+
+    /**
+     * Climbing at the top edge, one row at a time.
+     *
+     * 🔴 **Why this is not simply scrolling in the other direction.** A list keeps its place by
+     * holding on to whatever row is at the top of the screen. Move the held row ABOVE that one and
+     * the list faithfully keeps the other row where it was - so the held row is put off screen, and
+     * a row that is off screen no longer exists as far as the finger on it is concerned: the whole
+     * move breaks off mid-way and the group is left wherever it had got to.
+     *
+     * ⭐ The cure is to make the held row itself the row the list holds on to. Pinned to the top,
+     * it is what the list keeps in place, so every step it takes past the rows above leaves it
+     * exactly where it is - and the list slides underneath it instead.
+     */
+    private suspend fun climbOneRow(key: Any, speed: Float) {
+        if (floatingSize <= 0) return
+        climbProgress += speed
+        if (!hasClimbedAWholeRow(climbProgress, floatingSize)) return
+        val current = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+        if (current.index <= 0) {
+            // Already at the very top: nothing above it to climb past.
+            climbProgress = 0f
+            return
+        }
+        climbProgress -= floatingSize
+        listState.scrollToItem(current.index)
+        onMove(key, current.index, current.index - 1)
+        requestedIndex = current.index - 1
+    }
+
+    /** Whether the row is pressed against one of the list's ends, and how fast it wants to go. */
+    private fun edgeSpeed(): Float {
+        val layout = listState.layoutInfo
+        return autoScrollDelta(
             rowTop = floatingTop,
             rowSize = floatingSize,
             viewportStart = layout.viewportStartOffset.toFloat(),
@@ -227,10 +267,9 @@ class DragReorderState internal constructor(
             edgeSize = autoScrollEdgePx,
             maxSpeed = autoScrollSpeedPx
         )
-        if (delta == 0f) return
-        listState.scrollBy(delta)
-        applyMoves()
     }
+
+    private fun restingAgainstAnEdge(): Boolean = edgeSpeed() != 0f
 }
 
 /**
@@ -344,6 +383,12 @@ internal fun reorderTargetIndex(slots: List<ReorderSlot>, floatingCenter: Float,
     }
     return index.coerceIn(0, itemCount - 1)
 }
+
+/**
+ * Whether enough distance has been asked for to move the held row a whole row further.
+ */
+internal fun hasClimbedAWholeRow(progress: Float, rowSize: Int): Boolean =
+    rowSize > 0 && progress >= rowSize
 
 /**
  * Whether a row sits above everything the list is showing - the one direction in which a list can
