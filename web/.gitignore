@@ -1,5 +1,6 @@
 node_modules/
 .library-ui-test/
+.iptv-groups-ui-test/
 .next/
 .next-overhaul/
 out/

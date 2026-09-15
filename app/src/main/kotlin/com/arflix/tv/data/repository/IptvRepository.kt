@@ -2230,7 +2230,7 @@ class IptvRepository @Inject constructor(
             if (order.isEmpty()) return@edit
             val idx = order.indexOf(target)
             if (idx > 0) { order.removeAt(idx); order.add(idx - 1, target) }
-            prefs[groupOrderKey()] = gson.toJson(order)
+            prefs[groupOrderKey()] = gson.toJson(replacePlaylistGroupOrder(decodeGroupOrder(prefs), order, playlistId))
             prefs[groupOrderSchemaKey()] = IPTV_GROUP_ORDER_SCHEMA.toString()
         }
         groupOrderLocallyDirty = true
@@ -2247,7 +2247,7 @@ class IptvRepository @Inject constructor(
             if (target !in order && currentKeys.contains(target)) order.add(target)
             order.remove(target)
             order.add(0, target)
-            prefs[groupOrderKey()] = gson.toJson(order)
+            prefs[groupOrderKey()] = gson.toJson(replacePlaylistGroupOrder(decodeGroupOrder(prefs), order, playlistId))
             prefs[groupOrderSchemaKey()] = IPTV_GROUP_ORDER_SCHEMA.toString()
         }
         groupOrderLocallyDirty = true
@@ -2263,7 +2263,7 @@ class IptvRepository @Inject constructor(
             if (order.isEmpty()) return@edit
             val idx = order.indexOf(target)
             if (idx >= 0 && idx < order.size - 1) { order.removeAt(idx); order.add(idx + 1, target) }
-            prefs[groupOrderKey()] = gson.toJson(order)
+            prefs[groupOrderKey()] = gson.toJson(replacePlaylistGroupOrder(decodeGroupOrder(prefs), order, playlistId))
             prefs[groupOrderSchemaKey()] = IPTV_GROUP_ORDER_SCHEMA.toString()
         }
         groupOrderLocallyDirty = true
