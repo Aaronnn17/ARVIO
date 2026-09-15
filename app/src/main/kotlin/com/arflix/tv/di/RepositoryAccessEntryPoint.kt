@@ -6,6 +6,7 @@ import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.ProfileRepository
 import com.arflix.tv.data.repository.StreamRepository
+import com.arflix.tv.data.repository.TraktRepository
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
@@ -19,4 +20,7 @@ interface RepositoryAccessEntryPoint {
     fun profileManager(): ProfileManager
     fun cloudSyncInvalidationBus(): CloudSyncInvalidationBus
     fun tmdbApi(): TmdbApi
+
+    /** The discover filter "hide watched" reads the watched lists from here. */
+    fun traktRepository(): TraktRepository
 }

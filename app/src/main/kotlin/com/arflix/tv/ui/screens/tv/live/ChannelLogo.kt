@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
@@ -53,11 +54,16 @@ fun ChannelLogo(
     val initials = remember(channel.name) { initialsFor(channel.name) }
     val variant = (channel.name.firstOrNull()?.code ?: 0) % 3
     val context = LocalContext.current
+    val fallbackEnabled by remember(context) { ChannelLogoDirectory.fallbackEnabled(context) }.collectAsState()
     val density = LocalDensity.current
     val providerUrl = remember(channel.logo) { safeChannelLogoUrl(channel.logo) }
-    var failed by remember(channel.id, providerUrl) { mutableStateOf(emptySet<String>()) }
+    var failed by remember(channel.id, providerUrl, fallbackEnabled) { mutableStateOf(emptySet<String>()) }
     var alternatives by remember(channel.id, providerUrl) { mutableStateOf(emptyList<String>()) }
-    LaunchedEffect(channel.id, channel.source.epgId, channel.name, providerUrl) {
+    LaunchedEffect(channel.id, channel.source.epgId, channel.name, providerUrl, fallbackEnabled, failed) {
+            if (!fallbackEnabled || (providerUrl != null && providerUrl !in failed)) {
+                alternatives = emptyList()
+                return@LaunchedEffect
+            }
             alternatives = try {
                 ChannelLogoDirectory.candidates(context, channel.source.epgId, channel.name)
             } catch (cancelled: CancellationException) {
@@ -66,9 +72,7 @@ fun ChannelLogo(
                 emptyList()
             }
     }
-    // A valid HTTP response can still be a provider's blank/text tile.
-    val logoUrl = (alternatives + listOfNotNull(providerUrl)).distinct()
-        .firstOrNull { it !in failed && !FailedChannelLogos.contains(it) }
+    val logoUrl = selectChannelLogo(providerUrl, alternatives, fallbackEnabled, failed, FailedChannelLogos::contains)
     var showFallback by remember(channel.id, logoUrl) { mutableStateOf(true) }
     Box(
         modifier = modifier
@@ -132,7 +136,7 @@ fun ChannelLogo(
                 contentScale = ContentScale.Fit,
                 onSuccess = { showFallback = false },
                 onError = {
-                    FailedChannelLogos.add(logoUrl)
+                    if (logoUrl != providerUrl) FailedChannelLogos.add(logoUrl)
                     failed = failed + logoUrl
                     showFallback = true
                 },
@@ -145,6 +149,17 @@ fun ChannelLogo(
 }
 
 /** Bound failed-image retries when virtualized rows leave and re-enter the screen. */
+internal fun selectChannelLogo(
+    providerUrl: String?,
+    alternatives: List<String>,
+    fallbackEnabled: Boolean,
+    failed: Set<String>,
+    failedFallback: (String) -> Boolean,
+): String? {
+    if (providerUrl != null && providerUrl !in failed) return providerUrl
+    return if (fallbackEnabled) alternatives.firstOrNull { it !in failed && !failedFallback(it) } else null
+}
+
 private object FailedChannelLogos {
     private val failures = LinkedHashMap<String, Long>()
     @Synchronized fun contains(url: String): Boolean {

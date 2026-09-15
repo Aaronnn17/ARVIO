@@ -9357,7 +9357,8 @@ class IptvRepository @Inject constructor(
                             if (!xmlId.isNullOrBlank()) {
                                 val display = normalizeChannelKey(displayText)
                                 if (display.isNotBlank()) {
-                                    val isUseful = guideKeyCandidates(display).any { it in keyLookup }
+                                    val isUseful = guideKeyCandidates(display).any { it in keyLookup } ||
+                                        "guide-fallback:${normalizeLooseKey(stripQualitySuffixes(display))}" in keyLookup
                                     if (isUseful) {
                                         xmlChannelNameMap.getOrPut(xmlId) { mutableSetOf() }.add(display)
                                     }
@@ -9570,7 +9571,8 @@ class IptvRepository @Inject constructor(
                             if (!xmlId.isNullOrBlank()) {
                                 val display = normalizeChannelKey(textBuffer.toString())
                                 if (display.isNotBlank()) {
-                                    val isUseful = guideKeyCandidates(display).any { it in keyLookup }
+                                    val isUseful = guideKeyCandidates(display).any { it in keyLookup } ||
+                                        "guide-fallback:${normalizeLooseKey(stripQualitySuffixes(display))}" in keyLookup
                                     if (isUseful) {
                                         xmlChannelNameMap.getOrPut(xmlId) { mutableSetOf() }.add(display)
                                     }
@@ -10267,6 +10269,9 @@ class IptvRepository @Inject constructor(
      */
     private fun buildLargeChannelKeyLookup(channels: List<IptvChannel>): Map<String, List<IptvChannel>> {
         val map = LinkedHashMap<String, MutableList<IptvChannel>>(channels.size * 3)
+        val aliases = LinkedHashMap<String, MutableList<IptvChannel>>()
+        val aliasOwners = HashMap<String, String>()
+        val ambiguousAliases = HashSet<String>()
 
         channels.forEach { channel ->
             fun addNormalized(key: String) {
@@ -10293,6 +10298,21 @@ class IptvRepository @Inject constructor(
             // country prefix, but let HD/FHD/SD/LQ variants share its schedule.
             addNormalized(normalizeLooseKey(stripQualitySuffixes(name)))
             if (tvgName.isNotBlank()) addNormalized(normalizeLooseKey(stripQualitySuffixes(tvgName)))
+            listOf(name, tvgName).filter { it.isNotBlank() }.forEach { raw ->
+                val owner = normalizeLooseKey(stripQualitySuffixes(raw))
+                val alias = normalizeLooseKey(stripQualitySuffixes(stripGuidePrefix(raw)))
+                if (alias.isNotBlank() && alias != owner) {
+                    val previous = aliasOwners.putIfAbsent(alias, owner)
+                    if (previous != null && previous != owner) ambiguousAliases += alias
+                    aliases.getOrPut(alias) { mutableListOf() }.add(channel)
+                }
+            }
+        }
+        // Separate fallback namespace: never overwrite exact IDs or merge regional feeds.
+        aliases.forEach { (alias, matches) ->
+            if (alias !in ambiguousAliases && alias !in map) {
+                map["guide-fallback:$alias"] = matches.distinctBy { it.id }.toMutableList()
+            }
         }
         return map
     }
@@ -10318,6 +10338,13 @@ class IptvRepository @Inject constructor(
         names.forEach { display ->
             guideKeyCandidates(display).forEach { key ->
                 keyLookup[key]?.let { return it }
+            }
+        }
+        names.forEach { display ->
+            // Only unprefixed XMLTV names may use an unambiguous region-stripped alias.
+            if (stripGuidePrefix(display) == display.trim()) {
+                val alias = normalizeLooseKey(stripQualitySuffixes(display))
+                keyLookup["guide-fallback:$alias"]?.let { return it }
             }
         }
         return emptyList()

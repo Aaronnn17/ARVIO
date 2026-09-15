@@ -2932,14 +2932,16 @@ fun LiveTvScreen(
         val maxPosition = if (duration > 1_000L) duration - 1_000L else duration
         val current = (catchupUrlAnchorOffsetMs + exoPlayer.currentPosition.coerceAtLeast(0L))
             .let { if (maxPosition > 0L) it.coerceAtMost(maxPosition) else it }
-        val target = (current + deltaMs)
-            .coerceAtLeast(0L)
-            .let { if (maxPosition > 0L) it.coerceAtMost(maxPosition) else it }
-        if (target == catchupPlaybackOffsetMs) {
+        val source = playingChannel?.source
+        val seekable = exoPlayer.isCurrentMediaItemSeekable
+        val granularity = if (source?.catchupUrlAnchorOffset(59_000L) == 0L) {
+            CatchupUrlAnchorGranularityMs
+        } else 1_000L
+        val target = catchupSeekTarget(current, deltaMs, duration, seekable, granularity)
+        if (target == current) {
             hudPokeSignal++
             return
         }
-        val source = playingChannel?.source
         val targetAnchor = source?.catchupUrlAnchorOffset(target) ?: 0L
         val targetInSegment = source?.catchupInSegmentSeekOffset(target) ?: target
         val sameAnchor = targetAnchor == catchupUrlAnchorOffsetMs

@@ -3475,9 +3475,13 @@ class MediaRepository @Inject constructor(
         year: Int? = null,
         keywords: String? = null,
         releaseDateLte: String? = null,
-        releaseDateGte: String? = null
+        releaseDateGte: String? = null,
+        minVoteAverage: Double? = null,
+        maxVoteAverage: Double? = null,
+        certificationCountry: String? = null,
+        certificationLte: String? = null
     ): List<MediaItem> {
-        val response = tmdbApi.discoverMovies(apiKey, genres = genres, sortBy = sortBy, minVoteCount = minVoteCount, page = page, originalLanguage = language, year = year, keywords = keywords, language = contentLanguage, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte)
+        val response = tmdbApi.discoverMovies(apiKey, genres = genres, sortBy = sortBy, minVoteCount = minVoteCount, page = page, originalLanguage = language, year = year, keywords = keywords, language = contentLanguage, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte, minVoteAverage = minVoteAverage, maxVoteAverage = maxVoteAverage, certificationCountry = certificationCountry, certificationLte = certificationLte)
         val items = response.results.map { it.toMediaItem(MediaType.MOVIE) }
         cacheItems(items)
         return items
@@ -3495,9 +3499,11 @@ class MediaRepository @Inject constructor(
         year: Int? = null,
         keywords: String? = null,
         airDateLte: String? = null,
-        airDateGte: String? = null
+        airDateGte: String? = null,
+        minVoteAverage: Double? = null,
+        maxVoteAverage: Double? = null
     ): List<MediaItem> {
-        val response = tmdbApi.discoverTv(apiKey, genres = genres, sortBy = sortBy, minVoteCount = minVoteCount, page = page, originalLanguage = language, year = year, keywords = keywords, language = contentLanguage, airDateLte = airDateLte, airDateGte = airDateGte)
+        val response = tmdbApi.discoverTv(apiKey, genres = genres, sortBy = sortBy, minVoteCount = minVoteCount, page = page, originalLanguage = language, year = year, keywords = keywords, language = contentLanguage, airDateLte = airDateLte, airDateGte = airDateGte, minVoteAverage = minVoteAverage, maxVoteAverage = maxVoteAverage)
         val items = response.results.map { it.toMediaItem(MediaType.TV) }
         cacheItems(items)
         return items

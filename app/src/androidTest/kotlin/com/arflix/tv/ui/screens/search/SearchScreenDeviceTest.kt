@@ -118,27 +118,24 @@ class SearchScreenDeviceTest {
 
     private fun card(row: String, type: MediaType, id: Int) = compose.onNodeWithTag("search-card-$row-$type-$id")
 
-    @Test fun tvSelectionSurvivesKeyUpAndCategoryReload() {
+    @Test fun tvTypeSwitchStepsThroughTheMediaTypesAndReloads() {
         show(DeviceType.TV)
-        keys(listOf(Key.DirectionDown, Key.DirectionRight, Key.DirectionCenter))
-        filter("movies").assertIsSelected()
-        filter("all").assertIsNotSelected()
-        verify(exactly = 1) { viewModel.setDiscoverFilters(DiscoverType.MOVIES, null, null) }
+        // Down leaves the search field for the filter row, OK steps the type switch on.
+        keys(listOf(Key.DirectionDown, Key.DirectionCenter))
+        verify(exactly = 1) { viewModel.selectType(DiscoverType.TV_SHOWS) }
         finishReload()
-        keys(listOf(Key.DirectionRight, Key.DirectionCenter))
-        filter("shows").assertIsSelected()
-        verify(exactly = 1) { viewModel.setDiscoverFilters(DiscoverType.TV_SHOWS, null, null) }
+        keys(listOf(Key.DirectionCenter))
+        verify(exactly = 1) { viewModel.selectType(DiscoverType.ANIME) }
         finishReload()
         capture("tv-filters")
     }
 
     @Test fun tvSearchReturnKeepsSelectedFilterAndReopensEditor() {
         show(DeviceType.TV)
-        keys(listOf(Key.DirectionDown, Key.DirectionRight, Key.DirectionCenter))
+        keys(listOf(Key.DirectionDown, Key.DirectionCenter))
         finishReload()
         keys(listOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionCenter))
-        filter("movies").assertIsSelected()
-        verify(exactly = 2) { viewModel.setDiscoverFilters(DiscoverType.MOVIES, null, null) }
+        verify(exactly = 1) { viewModel.selectType(DiscoverType.ANIME) }
         keys(listOf(Key.DirectionUp, Key.DirectionCenter))
         assertKeyboardVisible()
         compose.onNodeWithTag("search-input").assertIsFocused().performTextInput("test")
@@ -149,41 +146,57 @@ class SearchScreenDeviceTest {
         compose.runOnIdle { assertEquals("updated", state.value.query) }
     }
 
-    @Test fun tvCanEnterResultsAndReturnWithoutSelectingAll() {
+    @Test fun tvCanEnterResultsAndComeBackToTheFilterRow() {
         show(DeviceType.TV)
-        keys(listOf(Key.DirectionDown, Key.DirectionRight, Key.DirectionCenter))
-        finishReload()
-        keys(listOf(Key.DirectionDown, Key.DirectionCenter))
+        keys(listOf(Key.DirectionDown, Key.DirectionDown, Key.DirectionCenter))
         compose.runOnIdle { assertEquals(1, openedId) }
         keys(listOf(Key.DirectionUp, Key.DirectionCenter))
-        verify(exactly = 2) { viewModel.setDiscoverFilters(DiscoverType.MOVIES, null, null) }
-        filter("movies").assertIsSelected()
+        verify(exactly = 1) { viewModel.selectType(DiscoverType.TV_SHOWS) }
+    }
+
+    /**
+     * The genre panel: OK on the chip opens it, OK on an option ticks that genre, BACK closes
+     * it again. This is the one interaction step 3 adds that a screenshot cannot show.
+     */
+    @Test fun tvGenrePanelOpensTicksAndClosesWithBack() {
+        show(DeviceType.TV)
+        keys(listOf(Key.DirectionDown, Key.DirectionRight, Key.DirectionCenter))
+        compose.onNodeWithTag("filter-panel-GENRE").assertExists()
+        keys(listOf(Key.DirectionCenter))
+        compose.runOnIdle { assertEquals(28, state.value.selectedGenres.firstOrNull()?.id) }
+        keys(listOf(Key.Back))
+        compose.onNodeWithTag("filter-panel-GENRE").assertDoesNotExist()
+        capture("tv-genre-panel")
     }
 
     @Test fun tvRtlFiltersUseMirroredHorizontalNavigation() {
         show(DeviceType.TV, LayoutDirection.Rtl)
         keys(listOf(Key.DirectionDown, Key.DirectionLeft, Key.DirectionCenter))
-        filter("movies").assertIsSelected()
+        compose.onNodeWithTag("filter-panel-GENRE").assertExists()
     }
 
     @Test fun tvFilterAccessibilityActionRemainsAvailable() {
         show(DeviceType.TV)
-        filter("movies").assertTextEquals(compose.activity.getString(R.string.movies))
-        filter("movies").assertHasClickAction().performSemanticsAction(SemanticsActions.OnClick) { it() }
-        filter("movies").assertIsSelected()
-        verify(exactly = 1) { viewModel.setDiscoverFilters(DiscoverType.MOVIES, null, null) }
+        filter("type").assertHasClickAction().performSemanticsAction(SemanticsActions.OnClick) { it() }
+        verify(exactly = 1) { viewModel.selectType(DiscoverType.TV_SHOWS) }
+    }
+
+    /** The age chip greys out for series, it does not vanish — TMDB has no such filter there. */
+    @Test fun tvAgeChipStaysInPlaceButGoesQuietForSeries() {
+        show(DeviceType.TV)
+        filter("certification").assertExists()
+        compose.runOnIdle { state.value = state.value.copy(selectedType = DiscoverType.TV_SHOWS) }
+        filter("certification").assertExists().assertHasNoClickAction()
     }
 
     @Test fun mobileTypeAndGenreFiltersRemainClickable() {
         show(DeviceType.PHONE)
-        filter("movies").performClick()
+        filter("type").performClick()
         finishReload()
-        filter("genre_28").performScrollTo().performClick()
-        compose.runOnIdle {
-            assertEquals(DiscoverType.MOVIES, state.value.selectedType)
-            assertEquals(28, state.value.selectedGenre?.id)
-        }
-        filter("genre_28").assertIsSelected()
+        compose.runOnIdle { assertEquals(DiscoverType.TV_SHOWS, state.value.selectedType) }
+        filter("genre").performScrollTo().performClick()
+        compose.onNodeWithTag("filter-option-genre_10759").performClick()
+        compose.runOnIdle { assertEquals(10759, state.value.selectedGenres.firstOrNull()?.id) }
     }
 
     @Test fun mobileRowsDoNotOverlapAndCardsOpenDetails() {
@@ -202,10 +215,25 @@ class SearchScreenDeviceTest {
             assumeTrue("Run TV checks on a landscape TV emulator", config.screenWidthDp >= 600 && config.screenWidthDp > config.screenHeightDp)
         }
         every { viewModel.uiState } returns state
-        every { viewModel.setDiscoverFilters(any(), any(), any()) } answers {
+        every { viewModel.selectType(any()) } answers {
             state.value = state.value.copy(
-                selectedType = firstArg(), selectedGenre = secondArg(), selectedCountry = thirdArg(),
-                discoverCategories = emptyList(), isDiscoverLoading = true
+                selectedType = firstArg(),
+                selectedGenres = emptyList(),
+                discoverCategories = emptyList(),
+                isDiscoverLoading = true
+            )
+        }
+        every { viewModel.toggleGenre(any()) } answers {
+            val genre = firstArg<Genre>()
+            val genres = state.value.selectedGenres
+            state.value = state.value.copy(
+                selectedGenres = if (genres.any { it.id == genre.id }) {
+                    genres.filterNot { it.id == genre.id }
+                } else {
+                    genres + genre
+                },
+                discoverCategories = emptyList(),
+                isDiscoverLoading = true
             )
         }
         every { viewModel.updateQuery(any()) } answers { state.value = state.value.copy(query = firstArg()) }
