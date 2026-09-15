@@ -46,11 +46,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -74,6 +77,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -312,13 +316,37 @@ fun SearchScreen(
         // specific case so it doesn't surface to the user as a crash — TalkBack
         // focus will re-claim on next frame.
         if (!isTouchDevice && focusZone != FocusZone.RESULTS) runCatching { searchFocusRequester.requestFocus() }
-        suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
+        suppressSelectUntilMs = SystemClock.elapsedRealtime() + SEARCH_SELECT_SUPPRESS_MS
     }
     LaunchedEffect(isSearchEditing, searchEditRequestNonce) {
         if (isSearchEditing) {
             runCatching { textInputFocusRequester.requestFocus() }
             keyboardController?.show()
         }
+    }
+    // Coming back from the background composes nothing anew, so the entry guard above would not
+    // run again: re-arm it here and make sure the screen is never resumed in typing mode.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isSearchEditing = false
+                keyboardController?.hide()
+                suppressSelectUntilMs = SystemClock.elapsedRealtime() + SEARCH_SELECT_SUPPRESS_MS
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    // Every door into typing mode goes through here: the D-pad handler below, select on the
+    // search bar itself, and its click. A press that still belongs to the one that OPENED this
+    // screen is dropped — see SearchEditingEntry.kt for what it does to the screen otherwise.
+    fun startSearchEditing() {
+        if (!startsSearchEditing(SystemClock.elapsedRealtime(), suppressSelectUntilMs)) return
+        focusZone = FocusZone.SEARCH_INPUT
+        isSearchEditing = true
+        searchEditRequestNonce++
     }
 
     val showFilters = uiState.query.isEmpty()
@@ -642,9 +670,7 @@ fun SearchScreen(
                             true
                         }
                         FocusZone.SEARCH_INPUT -> {
-                            focusZone = FocusZone.SEARCH_INPUT
-                            isSearchEditing = true
-                            searchEditRequestNonce++
+                            startSearchEditing()
                             true
                         }
                         FocusZone.FILTERS -> {
@@ -724,11 +750,7 @@ fun SearchScreen(
                         }
                     },
                     onFocusLost = { isSearchInputFocused = false },
-                    onStartEditing = {
-                        focusZone = FocusZone.SEARCH_INPUT
-                        isSearchEditing = true
-                        searchEditRequestNonce++
-                    },
+                    onStartEditing = { startSearchEditing() },
                     onMoveUp = {
                         isSearchEditing = false
                         keyboardController?.hide()
