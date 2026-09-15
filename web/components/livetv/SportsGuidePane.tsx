@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { X, Tv, PanelLeft, ChevronRight, Play, RefreshCw } from "lucide-react";
@@ -17,6 +19,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
   addons?: InstalledAddon[];
   clockFormat?: "12h" | "24h";
 }) {
+  const translateUi = useTranslation();
   const [artwork, setArtwork] = useState<SportsEventArtwork[]>([]);
   const [metadataLoading, setMetadataLoading] = useState(true);
   const [retry, setRetry] = useState(0);
@@ -108,14 +111,13 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
     const day = date.toDateString() === today.toDateString() ? "Today" : date.toDateString() === tomorrow.toDateString() ? "Tomorrow" : new Intl.DateTimeFormat([], { weekday: "short", day: "numeric", month: "short" }).format(date);
     return `${day} ${new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit", ...(clockFormat ? { hour12: clockFormat === "12h" } : {}) }).format(date)}`;
   };
-  return <section ref={root} className="tv-sports" aria-label="Sports">
-    <h2><button className="tv-sports-drawer" type="button" aria-label="Categories" onClick={onOpenCategories}><PanelLeft size={22} /></button>Sports
-    </h2>
-    {!rows.length && <div className="tv-sports-empty" role="status"><Tv size={32} /><p>{loading || metadataLoading ? "Reading sports schedule" : failed ? "Schedule unavailable" : visibleEvents.some(e => hasSportsChannels(e, now) && (isOnAir(e, now) || e.programme.startUtcMillis > now)) ? "Event artwork unavailable" : "No sports events matched to your channels"}</p>
-      {!loading && !metadataLoading && <button type="button" className="secondary" onClick={() => setRetry(value => value + 1)}><RefreshCw size={18} />Retry</button>}
-      <button type="button" className="secondary" onClick={onOpenCategories}><PanelLeft size={18} />Categories</button></div>}
+  return <section ref={root} className="tv-sports" aria-label={translateUi("Sports")}>
+    <h2><button className="tv-sports-drawer" type="button" aria-label={translateUi("Categories")} onClick={onOpenCategories}><PanelLeft size={22} /></button>{translateUi("Sports")}</h2>
+    {!rows.length && <div className="tv-sports-empty" role="status"><Tv size={32} /><p>{loading || metadataLoading ? translateUi("Reading sports schedule") : failed ? translateUi("Schedule unavailable") : visibleEvents.some(e => hasSportsChannels(e, now) && (isOnAir(e, now) || e.programme.startUtcMillis > now)) ? translateUi("Event artwork unavailable") : translateUi("No sports events matched to your channels")}</p>
+      {!loading && !metadataLoading && <button type="button" className="secondary" onClick={() => setRetry(value => value + 1)}><RefreshCw size={18} />{translateUi("Retry")}</button>}
+      <button type="button" className="secondary" onClick={onOpenCategories}><PanelLeft size={18} />{translateUi("Categories")}</button></div>}
     {rows.map((row, rowIndex) => <section className={`tv-sports-section${row.id === "more" ? " is-compact" : ""}`} key={row.id} aria-label={row.title}>
-      <div className="tv-sports-row-heading"><h3 title={row.id === "featured" ? "Ranked by competition priority and broadcast reach, not measured viewers" : undefined}>{row.title}</h3></div>
+      <div className="tv-sports-row-heading"><h3 title={row.id === "featured" ? translateUi("Ranked by competition priority and broadcast reach, not measured viewers") : undefined}>{row.title}</h3></div>
       <div className="tv-sports-row" onScroll={e => {
         const element = e.currentTarget;
         if (element.scrollWidth - element.clientWidth - Math.abs(element.scrollLeft) < 600 && (rowLimits[row.id] ?? 16) < row.events.length)
@@ -152,21 +154,22 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
     </section>)}
     <dialog ref={dialog} className="tv-event-picker" style={{ "--source-count": Math.max(1, sourceChannels.length) } as CSSProperties}
       onCancel={(event) => { event.preventDefault(); close(); }} onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
-      <header>{selected && !failedArtwork.has(selected.id) && (selected.artwork || selected.teamArtwork) && <div className="tv-event-picker-art"><EventArtwork event={selected} /></div>}<div><p>{selected ? `${stamp(selected)} · ${guideSports.find(s => s.id === selected.sportId)!.title}` : "This event is no longer in the available guide."}</p><h2>{selected?.title ?? "Schedule changed"}</h2></div><button type="button" onClick={close} aria-label="Close"><X /></button></header>
+      <header>{selected && !failedArtwork.has(selected.id) && (selected.artwork || selected.teamArtwork) && <div className="tv-event-picker-art"><EventArtwork event={selected} /></div>}<div><p>{selected ? `${stamp(selected)} · ${guideSports.find(s => s.id === selected.sportId)!.title}` : translateUi("This event is no longer in the available guide.")}</p><h2>{selected?.title ?? translateUi("Schedule changed")}</h2></div><button type="button" onClick={close} aria-label={translateUi("Close")}><X /></button></header>
       {selected?.fixture && <div className="tv-event-details"><span>{[selected.competition, selected.fixture.venue, selected.fixture.round ? `Round ${selected.fixture.round}` : undefined].filter(Boolean).join(" · ")}</span>
-        {selected.fixture.homeScore !== undefined && selected.fixture.awayScore !== undefined && isConfirmedLive(selected, now) && <button type="button" className="secondary" onClick={() => setShowScore(value => !value)}>{showScore ? `${selected.fixture.homeScore} : ${selected.fixture.awayScore}` : "Show score"}</button>}</div>}
-      <h3>{selected && isOnAir(selected, now) ? "Channels" : "Scheduled channels"}<span>{selected ? sportsChannelSummary(selected, now) : "No channels"}</span></h3>
-      {!sourceChannels.length && <p className="tv-event-no-channels">No matching channels in your playlists.</p>}
-      <VirtualList items={sourceChannels} estimate={72} itemKey={(ch) => ch.id} label="Available channels" renderItem={(ch) =>
+        {selected.fixture.homeScore !== undefined && selected.fixture.awayScore !== undefined && isConfirmedLive(selected, now) && <button type="button" className="secondary" onClick={() => setShowScore(value => !value)}>{showScore ? `${selected.fixture.homeScore} : ${selected.fixture.awayScore}` : translateUi("Show score")}</button>}</div>}
+      <h3>{selected && isOnAir(selected, now) ? translateUi("Channels") : translateUi("Scheduled channels")}<span>{selected ? sportsChannelSummary(selected, now) : translateUi("No channels")}</span></h3>
+      {!sourceChannels.length && <p className="tv-event-no-channels">{translateUi("No matching channels in your playlists.")}</p>}
+      <VirtualList items={sourceChannels} estimate={72} itemKey={(ch) => ch.id} label={translateUi("Available channels")} renderItem={(ch) =>
         <button type="button" className="tv-event-source" disabled={!selected || !isOnAir(selected, now)} onClick={() => {
           if (selected && accessibleIds.has(ch.id) && isOnAir(selected, Date.now()) && (availableEventChannels(selected, Date.now()).some(channel => channel.id === ch.id) || possibleChannels.some(channel => channel.id === ch.id))) { close(); onPlay(ch); }
-        }}><span className="tv-source-logo-fallback"><ChannelLogo channel={ch} size={28} /></span><span><strong>{ch.name}</strong><small>{providerNames[ch.id.split(":")[0]] || ch.group}{possibleChannels.some(candidate => candidate.id === ch.id) ? " · Possible broadcast" : " · Guide match"}</small></span>{ch.qualityLabel && <em>{ch.qualityLabel}</em>}{ch.language && <em>{ch.language.toUpperCase()}</em>}<ChevronRight className="tv-source-arrow" size={22} /><Play className="tv-source-play" size={22} /></button>} />
+        }}><span className="tv-source-logo-fallback"><ChannelLogo channel={ch} size={28} /></span><span><strong>{ch.name}</strong><small>{providerNames[ch.id.split(":")[0]] || ch.group}{possibleChannels.some(candidate => candidate.id === ch.id) ? translateUi(" · Possible broadcast") : translateUi(" · Guide match")}</small></span>{ch.qualityLabel && <em>{ch.qualityLabel}</em>}{ch.language && <em>{ch.language.toUpperCase()}</em>}<ChevronRight className="tv-source-arrow" size={22} /><Play className="tv-source-play" size={22} /></button>} />
     </dialog>
   </section>;
 }
 
 
 function EventArtwork({ event, onUnavailable }: { event: SportsGuideEvent; onUnavailable?: () => void }) {
+  const translateUi = useTranslation();
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const [badges, setBadges] = useState<string[]>([]);
   const loaded = Boolean(event.artwork) && loadedUrl === event.artwork;
@@ -179,7 +182,7 @@ function EventArtwork({ event, onUnavailable }: { event: SportsGuideEvent; onUna
   return <div className="tv-event-image">
     {!loaded && pair && <div className="tv-event-teams" style={{ opacity: pairLoaded ? 1 : 0 }}>
       <img src={pair.homeBadge} alt={pair.homeTeam ?? ""} loading="lazy" decoding="async" onLoad={() => setBadges(current => [...current, pair.homeBadge])} onError={() => setPairFailed(true)} />
-      <strong>VS</strong>
+      <strong>{translateUi("VS")}</strong>
       <img src={pair.awayBadge} alt={pair.awayTeam ?? ""} loading="lazy" decoding="async" onLoad={() => setBadges(current => [...current, pair.awayBadge])} onError={() => setPairFailed(true)} />
     </div>}
     {event.artwork && <img src={event.artwork} alt="" loading="lazy" decoding="async" style={{ opacity: loaded ? 1 : 0 }} onLoad={() => setLoadedUrl(event.artwork!)} onError={() => { setLoadedUrl(null); setBannerFailed(true); }} />}

@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
@@ -12,6 +14,7 @@ export function RailScroller({
   className: string;
   ariaLabel: string;
 }) {
+  const translateUi = useTranslation();
   const ref = useRef<HTMLDivElement | null>(null);
   const [canPrev, setCanPrev] = useState(false);
   const [canNext, setCanNext] = useState(false);
@@ -56,7 +59,7 @@ export function RailScroller({
         className="rail-arrow rail-arrow-left"
         onClick={() => scrollByPage(-1)}
         disabled={!canPrev}
-        aria-label={`Scroll ${ariaLabel} left`}
+        aria-label={translateUi("Scroll {value0} left", {value0: ariaLabel})}
       >
         <ChevronLeft size={24} />
       </button>
@@ -68,7 +71,7 @@ export function RailScroller({
         className="rail-arrow rail-arrow-right"
         onClick={() => scrollByPage(1)}
         disabled={!canNext}
-        aria-label={`Scroll ${ariaLabel} right`}
+        aria-label={translateUi("Scroll {value0} right", {value0: ariaLabel})}
       >
         <ChevronRight size={24} />
       </button>

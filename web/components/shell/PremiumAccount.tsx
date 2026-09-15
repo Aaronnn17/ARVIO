@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { BadgeCheck, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -11,6 +13,7 @@ import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 import { BillingEmailForm } from "./BillingEmailForm";
 
 export function PremiumAccount() {
+  const translateUi = useTranslation();
   const { auth, goToLogin } = useApp();
   const entitlement = useEntitlement();
   const [state, setState] = useState(entitlement);
@@ -42,20 +45,19 @@ export function PremiumAccount() {
     } finally { pending.current = false; setBusy(false); }
   };
   return <section className="premium-account" aria-labelledby="premium-account-title">
-    <h2 id="premium-account-title"><BadgeCheck size={20} /> ARVIO Web Premium</h2>
-    <p className="premium-account-status">{paid ? "Membership active" : trial ? "Free trial active" : "Check membership"}</p>
+    <h2 id="premium-account-title"><BadgeCheck size={20} /> {translateUi(" ARVIO Web Premium")}</h2>
+    <p className="premium-account-status">{paid ? translateUi("Membership active") : trial ? translateUi("Free trial active") : translateUi("Check membership")}</p>
     <p className="premium-account-email">{auth.email}</p>
-    {state?.expiresAt && <p>{trial ? "Trial ends" : "Access until"}: {new Date(state.expiresAt).toLocaleString()}</p>}
-    <p>Browser access on iPhone, iPad, Windows, Mac and Linux. The Android app and Cloud dashboard remain free.</p>
+    {state?.expiresAt && <p>{trial ? translateUi("Trial ends") : translateUi("Access until")}: {new Date(state.expiresAt).toLocaleString()}</p>}
+    <p>{translateUi("Browser access on iPhone, iPad, Windows, Mac and Linux. The Android app and Cloud dashboard remain free.")}</p>
     <div className="premium-account-actions">
       {!paid && <a className="paywall-primary" href={kofiSubscribeUrl()} target="_blank" rel="noopener noreferrer" onClick={() => { void trackPremiumEvent(authClient, "checkout_opened", { content: "account_settings" }); }}>
-        Keep Premium - $2.99/month <ExternalLink size={15} />
+        {translateUi("Keep Premium - $2.99/month ")}<ExternalLink size={15} />
       </a>}
       <button type="button" className="paywall-trial" disabled={busy} onClick={() => void check()}>
-        {busy ? <Loader2 size={16} className="paywall-spinner" /> : <RefreshCw size={16} />} Check payment status
-      </button>
+        {busy ? <Loader2 size={16} className="paywall-spinner" /> : <RefreshCw size={16} />} {translateUi(" Check payment status")}</button>
     </div>
     <BillingEmailForm key={auth.userId} onEntitled={applied} />
-    {message && <p role="status">{message}</p>}
+    {message && <p role="status">{translateUi(message)}</p>}
   </section>;
 }
