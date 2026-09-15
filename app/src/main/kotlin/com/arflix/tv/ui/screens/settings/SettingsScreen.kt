@@ -877,7 +877,23 @@ fun SettingsScreen(
         uiState.pendingPackManifest != null ||
         pluginsModalOpen
 
-    BackHandler(enabled = !isTouchDevice && !hasBlockingModal) {
+    // One press used to reach two receivers: this screen's key handling consumed
+    // Key.Back on the way down, and the system's back dispatcher invoked
+    // BackHandler on its own afterwards - so the categories screen closed and the
+    // zone stepped back as well, two views for one press. Consuming the key event
+    // cannot prevent that: the app sets android:enableOnBackInvokedCallback, so
+    // the dispatcher hears about the press through its own channel and does not
+    // care whether a view swallowed the key. Everywhere else the two receivers
+    // happened to do the same thing, which is why the double step stayed
+    // invisible until the categories screen made them differ.
+    //
+    // BackHandler is therefore the only owner of Back. It is also the one that
+    // always arrives: on API 33+ through the back dispatcher, below that through
+    // Activity.onKeyUp, which now reaches it because nothing consumes the key any
+    // more. Key.Escape keeps its own branch in the key handling below - no
+    // dispatcher speaks for it - and calls the same lambda, so the two can never
+    // drift apart.
+    val goBack: () -> Unit = {
         when (activeZone) {
             Zone.SIDEBAR -> onBack()
             Zone.SECTION -> {
@@ -885,10 +901,23 @@ fun SettingsScreen(
                 isSidebarFocused = true
             }
             Zone.CONTENT -> {
-                activeZone = Zone.SECTION
+                val inIptvCategories =
+                    sections.getOrNull(sectionIndex).orEmpty() == "iptv" && showIptvCategoriesSettings
+                when {
+                    // Let go of the group, but stay on the categories screen.
+                    inIptvCategories && iptvHeldGroup != null -> iptvHeldGroup = null
+                    inIptvCategories -> {
+                        showIptvCategoriesSettings = false
+                        contentFocusIndex = 0
+                        iptvActionIndex = 0
+                    }
+                    else -> activeZone = Zone.SECTION
+                }
             }
         }
     }
+
+    BackHandler(enabled = !isTouchDevice && !hasBlockingModal) { goBack() }
 
     Box(
         modifier = Modifier
@@ -899,17 +928,6 @@ fun SettingsScreen(
             .onPreviewKeyEvent { event ->
                     if (isTouchDevice) return@onPreviewKeyEvent false
                     if (hasBlockingModal) return@onPreviewKeyEvent false
-
-                    // Back arrives as KeyDown and KeyUp. The KeyDown branch below
-                    // already handles it, but the system's back dispatcher fires on
-                    // the UP event, so letting that one through runs BackHandler as
-                    // a second receiver and the screen jumps two views back instead
-                    // of one. Everywhere else both receivers happen to do the same
-                    // thing, which is why the double step stayed invisible until the
-                    // categories screen made them differ.
-                    if (event.type == KeyEventType.KeyUp && (event.key == Key.Back || event.key == Key.Escape)) {
-                        return@onPreviewKeyEvent true
-                    }
 
                 if (event.type == KeyEventType.KeyDown) {
                     val currentSection = sections.getOrNull(sectionIndex).orEmpty()
@@ -990,27 +1008,9 @@ fun SettingsScreen(
                     }
 
                     when (logicalKey) {
-                        Key.Back, Key.Escape -> {
-                            when (activeZone) {
-                                Zone.SIDEBAR -> onBack()
-                                Zone.SECTION -> {
-                                    activeZone = Zone.SIDEBAR
-                                    isSidebarFocused = true
-                                }
-                                Zone.CONTENT -> {
-                                    if (currentSection == "iptv" && showIptvCategoriesSettings && iptvHeldGroup != null) {
-                                        // Let go of the group, but stay on the categories screen.
-                                        iptvHeldGroup = null
-                                    } else if (currentSection == "iptv" && showIptvCategoriesSettings) {
-                                        showIptvCategoriesSettings = false
-                                        contentFocusIndex = 0
-                                        iptvActionIndex = 0
-                                        iptvHeldGroup = null
-                                    } else {
-                                        activeZone = Zone.SECTION
-                                    }
-                                }
-                            }
+                        // Key.Back deliberately absent: BackHandler owns it, see goBack().
+                        Key.Escape -> {
+                            goBack()
                             true
                         }
                         Key.DirectionLeft -> {
@@ -1115,7 +1115,13 @@ fun SettingsScreen(
                                             iptvActionIndex = nextIptvActionIndex(contentFocusIndex)
                                             iptvHeldGroup = null
                                             catalogActionIndex = 0
-                                        } else {
+                                        } else if (!(currentSection == "iptv" && showIptvCategoriesSettings)) {
+                                            // The categories screen is the exception: it is a screen of
+                                            // its own, reached from a row, and walking a group up the
+                                            // list runs into its top edge all the time. Handing the
+                                            // focus to the section strip there drops the user out of
+                                            // the screen they are working in. Back leaves it, Up does
+                                            // not.
                                             activeZone = Zone.SECTION
                                         }
                                     }
