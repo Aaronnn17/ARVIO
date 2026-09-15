@@ -4215,8 +4215,13 @@ private fun MobileSettingsLayout(
     onDisconnectCloud: () -> Unit = {},
     onDisconnectTrakt: () -> Unit = {}
 ) {
+    // Every phone sub-page is opened from the main list and goes back to it. The
+    // categories list is the one exception: it is opened from the TV sources page,
+    // so sending Back to the main list skips a level and loses the page the user
+    // was actually on.
+    val backTarget = if (page == "IPTV_CATEGORIES") "TV" else "MAIN"
     val backMotion = rememberArvioPredictiveBack(enabled = page != "MAIN") {
-        onNavigate("MAIN")
+        onNavigate(backTarget)
     }
 
     var lastSubPage by remember { mutableStateOf(if (page != "MAIN") page else "") }
@@ -4297,7 +4302,7 @@ private fun MobileSettingsLayout(
                         contentDescription = stringResource(R.string.back),
                         tint = TextPrimary,
                         modifier = Modifier
-                            .clickable { onNavigate("MAIN") }
+                            .clickable { onNavigate(backTarget) }
                             .padding(end = 16.dp)
                             .size(28.dp)
                     )
