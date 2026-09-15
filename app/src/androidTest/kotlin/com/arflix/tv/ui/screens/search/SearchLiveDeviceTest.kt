@@ -31,12 +31,13 @@ class SearchLiveDeviceTest {
     @Test fun liveTitlesAreFirstAndCanBeOpenedWithOneDownPress() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("searchLive") == "true")
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val repository = EntryPointAccessors.fromApplication(instrumentation.targetContext,
-            RepositoryAccessEntryPoint::class.java).mediaRepository()
+        val access = EntryPointAccessors.fromApplication(instrumentation.targetContext,
+            RepositoryAccessEntryPoint::class.java)
+        val repository = access.mediaRepository()
         lateinit var model: SearchViewModel
         var openedId: Int? = null
         compose.runOnUiThread {
-            model = SearchViewModel(repository)
+            model = SearchViewModel(repository, access.traktRepository())
             compose.activity.viewModelStore.put("live-search", model)
         }
         compose.setContent {

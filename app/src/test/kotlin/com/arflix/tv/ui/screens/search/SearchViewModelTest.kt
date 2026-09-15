@@ -7,6 +7,7 @@ import com.arflix.tv.data.model.PersonDetails
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.MediaSearchResults
 import com.arflix.tv.data.repository.PersonMediaSearchResult
+import com.arflix.tv.data.repository.TraktRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
@@ -22,6 +23,7 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SearchViewModelTest {
     private val repository = mockk<MediaRepository>(relaxed = true)
+    private val trakt = mockk<TraktRepository>(relaxed = true)
     private val store = ViewModelStore()
     private lateinit var model: SearchViewModel
     private val loki = MediaItem(id = 2, title = "Loki", mediaType = MediaType.TV)
@@ -29,7 +31,7 @@ class SearchViewModelTest {
     @Before fun setUp() {
         Dispatchers.setMain(Dispatchers.Unconfined)
         coEvery { repository.getLogoUrl(any<MediaType>(), any()) } returns null
-        model = SearchViewModel(repository)
+        model = SearchViewModel(repository, trakt)
         store.put("search", model)
     }
 
