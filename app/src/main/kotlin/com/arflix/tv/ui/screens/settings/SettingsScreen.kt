@@ -11698,7 +11698,9 @@ private fun IptvCategoriesSettings(
                 icon = Icons.Default.Refresh,
                 title = stringResource(R.string.settings_reset_order),
                 subtitle = stringResource(R.string.settings_reset_order_desc),
-                value = stringResource(R.string.settings_badge_reset),
+                // No badge on the phone: the row is the button, and the badge took away so much
+                // width that the title was cut off mid-word.
+                value = "",
                 onClick = onReset,
                 showDivider = false
             )

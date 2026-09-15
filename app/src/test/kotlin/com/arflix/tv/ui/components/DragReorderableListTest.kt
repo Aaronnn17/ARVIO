@@ -67,6 +67,19 @@ class DragReorderableListTest {
     }
 
     @Test
+    fun theHeldRowStaysInsideTheListWhenTheFingerLeavesIt() {
+        // Finger above the list, finger below it, finger inside it.
+        assertEquals(0f, clampFloatingTop(-800f, viewportStart = 0, viewportEnd = 1000, rowSize = 100), 0f)
+        assertEquals(900f, clampFloatingTop(5000f, viewportStart = 0, viewportEnd = 1000, rowSize = 100), 0f)
+        assertEquals(420f, clampFloatingTop(420f, viewportStart = 0, viewportEnd = 1000, rowSize = 100), 0f)
+    }
+
+    @Test
+    fun aRowTallerThanTheViewportIsPinnedToTheTopInsteadOfAbsurdity() {
+        assertEquals(0f, clampFloatingTop(50f, viewportStart = 0, viewportEnd = 80, rowSize = 400), 0f)
+    }
+
+    @Test
     fun theMiddleOfTheListDoesNotScroll() {
         val delta = autoScrollDelta(pointerY = 500f, viewportStart = 0f, viewportEnd = 1000f, edgeSize = 100f, maxSpeed = 8f)
         assertEquals(0f, delta, 0f)

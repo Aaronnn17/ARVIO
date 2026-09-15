@@ -137,7 +137,18 @@ class DragReorderState internal constructor(
     internal fun onDrag(deltaY: Float) {
         if (draggedKey == null) return
         movedWhileHeld = true
-        floatingTop += deltaY
+        val layout = listState.layoutInfo
+        // The finger may leave the list - above it, below it, off the screen - but the row it
+        // carries may not: a list clips what hangs out of it, so a row that followed the finger out
+        // would simply disappear, leaving an empty gap behind and no way to tell where it went.
+        floatingTop = clampFloatingTop(
+            desiredTop = floatingTop + deltaY,
+            viewportStart = layout.viewportStartOffset,
+            viewportEnd = layout.viewportEndOffset,
+            rowSize = floatingSize
+        )
+        // The finger itself is followed unclamped: pressing PAST the edge is exactly how one asks
+        // the list to carry on scrolling there.
         pointerY += deltaY
         applyMoves()
     }
@@ -260,8 +271,9 @@ fun LazyItemScope.dragReorderItem(state: DragReorderState, key: Any): Modifier =
                 .zIndex(1f)
                 .graphicsLayer {
                     translationY = state.translationFor(key)
-                    scaleX = DRAGGED_SCALE
-                    scaleY = DRAGGED_SCALE
+                    // Deliberately not scaled up: a row wider than the list is cut off at both
+                    // sides by the list, and a frame missing its left and right edge looks broken
+                    // rather than lifted. The shadow does the lifting.
                     shadowElevation = draggedElevation.toPx()
                     shape = RoundedCornerShape(draggedCorner)
                     clip = false
@@ -295,6 +307,16 @@ internal fun reorderTargetIndex(slots: List<ReorderSlot>, floatingCenter: Float,
 }
 
 /**
+ * Keeps the held row inside the part of the list that is actually on screen. Everything is in the
+ * list's own coordinates, and a viewport too short for the row pins it to the top rather than
+ * returning something impossible.
+ */
+internal fun clampFloatingTop(desiredTop: Float, viewportStart: Int, viewportEnd: Int, rowSize: Int): Float {
+    val lowest = (viewportEnd - rowSize).toFloat()
+    return desiredTop.coerceIn(viewportStart.toFloat(), lowest.coerceAtLeast(viewportStart.toFloat()))
+}
+
+/**
  * How far to scroll this frame while a row is held near an edge: negative towards the start of the
  * list, positive towards its end, zero anywhere in the middle. The speed ramps up with how deep
  * into the edge strip the finger is, so resting just inside it creeps and pushing right up against
@@ -321,4 +343,3 @@ private val autoScrollEdge = 72.dp
 private val autoScrollSpeedPerFrame = 8.dp
 private val draggedElevation = 12.dp
 private val draggedCorner = 12.dp
-private const val DRAGGED_SCALE = 1.03f
