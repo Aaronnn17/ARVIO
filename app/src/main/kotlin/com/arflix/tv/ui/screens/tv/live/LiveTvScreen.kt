@@ -2275,6 +2275,7 @@ fun LiveTvScreen(
         focusCommitJob[0]?.cancel()
         focusedChannelObject[0] = null
         selectedCategoryId = categoryId
+        if (isTouchDevice) currentMode = LiveTvStartup.LiveTvMode.Guide
         categoryDrawerOpen = false
         focusGuideAfterDrawerClose = true
         viewModel.rememberTvSession(
@@ -3592,10 +3593,7 @@ fun LiveTvScreen(
                         }
                     },
                     onSelectGroup = { group ->
-                        noteGuideUserNavigation()
-                        selectedCategoryId = group.id
-                        sportsSelected = false
-                        currentMode = LiveTvStartup.LiveTvMode.Guide
+                        requestCategorySelection(group.id)
                     },
                     onOpenSearch = { searchOpen = true },
                     providers = providerFilters,
