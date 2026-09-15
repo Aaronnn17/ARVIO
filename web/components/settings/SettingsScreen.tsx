@@ -59,6 +59,8 @@ import {
 import { buildHomeServerCatalogConfigs } from "@/lib/homeserver";
 import { defaultSettings, useApp } from "@/lib/store";
 import { PremiumAccount } from "@/components/shell/PremiumAccount";
+import { IptvGroupSettings } from "./IptvGroupSettings";
+import { iptvPlaylistSignature } from "@/lib/iptv";
 import type {
   AppSettings,
   CatalogConfig,
@@ -2017,7 +2019,14 @@ function TelegramSection() {
 
 function TvSettingsSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings, refreshIptv, setToast, busy } = useApp();
+  const { settings, updateSettings, refreshIptv, setToast, busy, iptvSnapshot, activeProfile, auth } = useApp();
+  const activeProfileId = activeProfile?.id;
+  const groupScope = `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`;
+  const playlistSignature = iptvPlaylistSignature(settings.iptvPlaylists);
+  const groupsLoaded = iptvSnapshot.scopeKey === groupScope && iptvSnapshot.signature === playlistSignature;
+  useEffect(() => {
+    if (!groupsLoaded && settings.iptvPlaylists.length) void refreshIptv();
+  }, [groupScope, playlistSignature, groupsLoaded, refreshIptv, settings.iptvPlaylists.length]);
   const [name, setName] = useState("");
   const [m3uUrl, setM3uUrl] = useState("");
   const [epgUrl, setEpgUrl] = useState("");
@@ -2175,6 +2184,7 @@ function TvSettingsSection() {
         <RefreshCw size={18} />{" "}
         {isLoadingTv ? translateUi("Refreshing...") : translateUi("Refresh TV now")}
       </button>
+      <IptvGroupSettings key={groupScope} settings={settings} updateSettings={updateSettings} channels={groupsLoaded ? iptvSnapshot.allChannels ?? iptvSnapshot.channels : []} />
       <Row label={translateUi("Stalker portal URL")}>
         <input
           value={settings.iptvStalkerUrl}

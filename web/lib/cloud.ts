@@ -65,6 +65,7 @@ interface AndroidIptvProfileState {
   favoriteGroups?: string[];
   hiddenGroups?: string[];
   groupOrder?: string[];
+  groupOrderSchema?: number;
   sortOrder?: string;
 }
 
@@ -539,7 +540,7 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
     favoriteGroupIds: value !== undefined ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
     hiddenGroupIds: stringArray(state.hiddenGroups),
     lockedIptvGroupIds: stringArray(state.lockedGroups),
-    groupOrder: stringArray(state.groupOrder),
+    groupOrder: (state.groupOrderSchema ?? 0) >= 3 ? stringArray(state.groupOrder) : [],
     iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
     iptvStalkerUrl: stringValue(state.stalkerPortalUrl ?? rootState.iptvStalkerUrl),
     iptvStalkerMac: stringValue(state.stalkerMacAddress ?? rootState.iptvStalkerMac)
@@ -858,7 +859,24 @@ export function mergeIptvSettings(existing: Record<string, unknown>, settings: A
       merged[field] = mergeTvSessions(existing[field], value);
       continue;
     }
-    merged[field] = base && field in existing && (field === "favoriteChannels" || field === "favoriteGroups")
+    if (field === "groupOrder") {
+      merged.groupOrderSchema = 3;
+      if (base) {
+        const localOrder = stringArray(value);
+        const baseOrder = stringArray(base[field]);
+        let remoteOrder = stringArray(existing[field]);
+        const playlistOf = (key: string) => key.split("|")[0];
+        for (const playlist of new Set([...localOrder, ...baseOrder].map(playlistOf))) {
+          const local = localOrder.filter(key => playlistOf(key) === playlist);
+          const previous = baseOrder.filter(key => playlistOf(key) === playlist);
+          if (sameFieldValue(local, previous)) continue;
+          remoteOrder = [...remoteOrder.filter(key => playlistOf(key) !== playlist), ...local];
+        }
+        merged[field] = remoteOrder;
+        continue;
+      }
+    }
+    merged[field] = base && field in existing && (field === "favoriteChannels" || field === "favoriteGroups" || field === "hiddenGroups")
       ? mergeFavoriteEdits(stringArray(existing[field]), stringArray(value), stringArray(base[field]))
       : value;
   }
