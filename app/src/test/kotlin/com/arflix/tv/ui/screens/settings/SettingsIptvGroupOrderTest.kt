@@ -28,58 +28,104 @@ class StalkerDpadIndexTest {
     }
 
     @Test
-    fun firstIptvGroupIndexStartsAtOneForM3UPlaylists() {
+    fun firstIptvGroupIndexStartsAtTwoForM3UPlaylists() {
+        // M3U and Xtream sources now carry the bulk-toggle row too, so their
+        // categories start at 2 like the Stalker ones (was 1).
         assertThat(
-            firstIptvGroupIndex("list_1", listOf("Movies", "Kids"))
-        ).isEqualTo(1)
+            firstIptvGroupIndex(listOf("Movies", "Kids"))
+        ).isEqualTo(2)
     }
 
     @Test
     fun firstIptvGroupIndexStartsAtTwoForStalkerPortals() {
         // Each Stalker portal gets a bulk-toggle row at index 1.
         assertThat(
-            firstIptvGroupIndex("stalker1", listOf("Movies", "Kids"), setOf("stalker1", "stalker2"))
+            firstIptvGroupIndex(listOf("Movies", "Kids"))
         ).isEqualTo(2)
         assertThat(
-            firstIptvGroupIndex("stalker2", listOf("News"), setOf("stalker1", "stalker2"))
+            firstIptvGroupIndex(listOf("News"))
         ).isEqualTo(2)
     }
 
     @Test
-    fun firstIptvGroupIndexIsOneWhenGroupsEmptyEvenForStalker() {
-        // No bulk-toggle row when there are no groups to toggle.
+    fun firstIptvGroupIndexIsOneWhenThereAreNoGroupsAtAll() {
+        // No bulk-toggle row when there are no categories to toggle - that is
+        // the only case left in which the categories start at 1.
         assertThat(
-            firstIptvGroupIndex("stalker1", emptyList(), setOf("stalker1"))
+            firstIptvGroupIndex(emptyList())
+        ).isEqualTo(1)
+    }
+}
+
+class KeptIptvActionIndexTest {
+
+    // Reset at 0, bulk toggle at 1, five categories at 2..6.
+    private val firstGroup = 2
+    private val groupCount = 5
+
+    @Test
+    fun theColumnSurvivesAStepFromOneCategoryToTheNext() {
+        assertThat(
+            keptIptvActionIndex(actionIndex = 1, targetFocusIndex = 3, firstGroupIndex = firstGroup, groupCount = groupCount)
+        ).isEqualTo(1)
+        assertThat(
+            keptIptvActionIndex(actionIndex = 1, targetFocusIndex = 6, firstGroupIndex = firstGroup, groupCount = groupCount)
         ).isEqualTo(1)
     }
 
     @Test
-    fun firstIptvGroupIndexIsOneForUnknownStalkerPlaylistId() {
-        // Legacy STALKER_PLAYLIST_ID ("stalker") still gets bulk toggle.
+    fun theFirstColumnStaysTheFirstColumn() {
         assertThat(
-            firstIptvGroupIndex("stalker", listOf("Movies"), emptySet())
-        ).isEqualTo(2)
+            keptIptvActionIndex(actionIndex = 0, targetFocusIndex = 4, firstGroupIndex = firstGroup, groupCount = groupCount)
+        ).isEqualTo(0)
+    }
+
+    @Test
+    fun rowsWithoutChipsClampTheColumnBack() {
+        // Reset row and bulk-toggle row have no chips at all.
+        assertThat(
+            keptIptvActionIndex(actionIndex = 1, targetFocusIndex = 0, firstGroupIndex = firstGroup, groupCount = groupCount)
+        ).isEqualTo(0)
+        assertThat(
+            keptIptvActionIndex(actionIndex = 1, targetFocusIndex = 1, firstGroupIndex = firstGroup, groupCount = groupCount)
+        ).isEqualTo(0)
+    }
+
+    @Test
+    fun steppingPastTheLastCategoryClampsTheColumnBack() {
+        assertThat(
+            keptIptvActionIndex(actionIndex = 1, targetFocusIndex = 7, firstGroupIndex = firstGroup, groupCount = groupCount)
+        ).isEqualTo(0)
+    }
+
+    @Test
+    fun anEmptyCategoryListNeverKeepsAColumn() {
+        assertThat(
+            keptIptvActionIndex(actionIndex = 1, targetFocusIndex = 1, firstGroupIndex = 1, groupCount = 0)
+        ).isEqualTo(0)
     }
 }
 
 class HeldGroupMoveTargetTest {
 
-    // M3U playlists: reset row at 0, first category row at 1.
-    private val firstM3u = 1
+    // A source without a bulk-toggle row: reset at 0, first category row at 1.
+    // Since W4 that is only a source with no categories, but the arithmetic
+    // has to stay right for any first index the screen hands in.
+    private val firstAtOne = 1
     // Stalker portals: reset at 0, bulk toggle at 1, first category row at 2.
     private val firstStalker = 2
 
     @Test
     fun movingUpInTheMiddleFollowsTheGroup() {
         assertThat(
-            heldGroupMoveTarget(focusedIndex = 4, firstGroupIndex = firstM3u, groupCount = 10, moveUp = true)
+            heldGroupMoveTarget(focusedIndex = 4, firstGroupIndex = firstAtOne, groupCount = 10, moveUp = true)
         ).isEqualTo(3)
     }
 
     @Test
     fun movingDownInTheMiddleFollowsTheGroup() {
         assertThat(
-            heldGroupMoveTarget(focusedIndex = 4, firstGroupIndex = firstM3u, groupCount = 10, moveUp = false)
+            heldGroupMoveTarget(focusedIndex = 4, firstGroupIndex = firstAtOne, groupCount = 10, moveUp = false)
         ).isEqualTo(5)
     }
 
@@ -88,14 +134,14 @@ class HeldGroupMoveTargetTest {
         // IptvRepository.moveGroupUp silently does nothing at the top, so the
         // focus must not move either - otherwise focus and list drift apart.
         assertThat(
-            heldGroupMoveTarget(focusedIndex = firstM3u, firstGroupIndex = firstM3u, groupCount = 10, moveUp = true)
+            heldGroupMoveTarget(focusedIndex = firstAtOne, firstGroupIndex = firstAtOne, groupCount = 10, moveUp = true)
         ).isNull()
     }
 
     @Test
     fun bottomGroupCannotMoveDown() {
         assertThat(
-            heldGroupMoveTarget(focusedIndex = 10, firstGroupIndex = firstM3u, groupCount = 10, moveUp = false)
+            heldGroupMoveTarget(focusedIndex = 10, firstGroupIndex = firstAtOne, groupCount = 10, moveUp = false)
         ).isNull()
     }
 
@@ -132,17 +178,17 @@ class HeldGroupMoveTargetTest {
     @Test
     fun emptyCategoryListNeverMoves() {
         assertThat(
-            heldGroupMoveTarget(focusedIndex = 1, firstGroupIndex = firstM3u, groupCount = 0, moveUp = true)
+            heldGroupMoveTarget(focusedIndex = 1, firstGroupIndex = firstAtOne, groupCount = 0, moveUp = true)
         ).isNull()
     }
 
     @Test
     fun aSingleGroupCannotMoveInEitherDirection() {
         assertThat(
-            heldGroupMoveTarget(focusedIndex = 1, firstGroupIndex = firstM3u, groupCount = 1, moveUp = true)
+            heldGroupMoveTarget(focusedIndex = 1, firstGroupIndex = firstAtOne, groupCount = 1, moveUp = true)
         ).isNull()
         assertThat(
-            heldGroupMoveTarget(focusedIndex = 1, firstGroupIndex = firstM3u, groupCount = 1, moveUp = false)
+            heldGroupMoveTarget(focusedIndex = 1, firstGroupIndex = firstAtOne, groupCount = 1, moveUp = false)
         ).isNull()
     }
 
@@ -151,9 +197,9 @@ class HeldGroupMoveTargetTest {
         // Twenty groups, the focused one sits on position 19 (focus index 20).
         var focus = 20
         repeat(25) {
-            focus = heldGroupMoveTarget(focus, firstM3u, groupCount = 20, moveUp = true) ?: focus
+            focus = heldGroupMoveTarget(focus, firstAtOne, groupCount = 20, moveUp = true) ?: focus
         }
-        assertThat(focus).isEqualTo(firstM3u)
+        assertThat(focus).isEqualTo(firstAtOne)
     }
 }
 

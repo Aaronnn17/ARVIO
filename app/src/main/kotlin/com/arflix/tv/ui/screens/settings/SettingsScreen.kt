@@ -197,7 +197,6 @@ import com.arflix.tv.data.repository.HomeServerConnection
 import com.arflix.tv.data.repository.HomeServerKind
 import com.arflix.tv.data.repository.IptvPlaylistEntry
 import com.arflix.tv.data.repository.MAX_IPTV_PLAYLISTS
-import com.arflix.tv.data.repository.STALKER_PLAYLIST_ID
 import com.arflix.tv.data.repository.StalkerPortalEntry
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
@@ -315,13 +314,27 @@ internal fun iptvRowMaxAction(): Int = 5
 
 /**
  * Focus index of the first category row inside the IPTV categories screen.
- * Every source that has a bulk-toggle "show all / hide all" row (all Stalker
- * portals and the legacy single Stalker source) gets it at index 1, between
- * Reset and the categories, so its categories start at 2; sources without a
- * bulk toggle start at 1.
+ * Every source with categories carries the bulk-toggle "show all / hide all"
+ * row at index 1, between Reset and the categories, so the categories start at
+ * 2. Only a source without any categories has nothing to toggle and starts at
+ * 1. Nothing about the bulk toggle is Stalker-specific - IptvRepository takes
+ * any playlist id - so M3U and Xtream sources get the same row.
  */
-internal fun firstIptvGroupIndex(playlistId: String, orderedGroups: List<String>, stalkerPortalIds: Set<String> = emptySet()): Int =
-    if (orderedGroups.isNotEmpty() && (playlistId == STALKER_PLAYLIST_ID || playlistId in stalkerPortalIds)) 2 else 1
+internal fun firstIptvGroupIndex(orderedGroups: List<String>): Int =
+    if (orderedGroups.isNotEmpty()) 2 else 1
+
+/**
+ * The sub-focus column ("chip") the IPTV categories screen keeps when the focus
+ * moves to another row.
+ *
+ * Moving up or down used to drop back to the first chip every time, which threw
+ * the focus off the hold chip on the far right after every single step. Now the
+ * column is carried along - but only onto rows that actually have that chip:
+ * the Reset row and the bulk-toggle row have none, so there the column clamps
+ * back to 0. [targetFocusIndex] is the row the focus is about to land on.
+ */
+internal fun keptIptvActionIndex(actionIndex: Int, targetFocusIndex: Int, firstGroupIndex: Int, groupCount: Int): Int =
+    if (groupCount > 0 && targetFocusIndex - firstGroupIndex in 0 until groupCount) actionIndex else 0
 
 /**
  * Focus index a held IPTV category group lands on after being moved one step,
@@ -594,14 +607,13 @@ fun SettingsScreen(
         when (section) {
             in tvGeneralSectionIds -> (tvGeneralRowsForSection(section).size - 1).coerceAtLeast(0)
             "iptv" -> if (showIptvCategoriesSettings) {
-                val stalkerIds = uiState.iptvStalkerPortals.map { it.id }.toSet()
                 val groups = orderedIptvGroups(
                     playlistId = uiState.iptvSelectedPlaylistId.orEmpty(),
                     availableGroups = uiState.iptvAvailableGroups,
                     groupOrder = uiState.iptvGroupOrder
                 )
                 // Reset row + (bulk-toggle row) + category rows.
-                groups.size + (firstIptvGroupIndex(uiState.iptvSelectedPlaylistId.orEmpty(), groups, stalkerIds) - 1)
+                groups.size + (firstIptvGroupIndex(groups) - 1)
             } else {
                 // Add-Playlist + M3U rows + Stalker rows + order + VOD search
                 // + EPG actions + favorites-on-home + refresh + clear
@@ -888,6 +900,17 @@ fun SettingsScreen(
                     if (isTouchDevice) return@onPreviewKeyEvent false
                     if (hasBlockingModal) return@onPreviewKeyEvent false
 
+                    // Back arrives as KeyDown and KeyUp. The KeyDown branch below
+                    // already handles it, but the system's back dispatcher fires on
+                    // the UP event, so letting that one through runs BackHandler as
+                    // a second receiver and the screen jumps two views back instead
+                    // of one. Everywhere else both receivers happen to do the same
+                    // thing, which is why the double step stayed invisible until the
+                    // categories screen made them differ.
+                    if (event.type == KeyEventType.KeyUp && (event.key == Key.Back || event.key == Key.Escape)) {
+                        return@onPreviewKeyEvent true
+                    }
+
                 if (event.type == KeyEventType.KeyDown) {
                     val currentSection = sections.getOrNull(sectionIndex).orEmpty()
                     val focusedStremioAddon = stremioAddons.getOrNull(contentFocusIndex)
@@ -926,11 +949,7 @@ fun SettingsScreen(
                             availableGroups = uiState.iptvAvailableGroups,
                             groupOrder = uiState.iptvGroupOrder
                         )
-                        val heldFirstIndex = firstIptvGroupIndex(
-                            heldPlaylistId,
-                            heldGroups,
-                            uiState.iptvStalkerPortals.map { it.id }.toSet()
-                        )
+                        val heldFirstIndex = firstIptvGroupIndex(heldGroups)
                         if (heldGroup !in heldGroups || contentFocusIndex - heldFirstIndex !in heldGroups.indices) {
                             // The group is gone (the playlist reloaded) or the focus is not on a
                             // category row at all - let go and navigate normally. The position
@@ -948,6 +967,26 @@ fun SettingsScreen(
                         // At the very top or bottom nothing moves, but the group
                         // stays held and the press is swallowed.
                         true
+                    }
+
+                    // Sub-focus column the categories screen keeps when the focus
+                    // steps to [targetIndex]. Only there - the playlist rows carry
+                    // six chips and the catalog rows five, so clamping them needs a
+                    // rule per row type and is a change of its own.
+                    val nextIptvActionIndex: (Int) -> Int = { targetIndex ->
+                        if (currentSection == "iptv" && showIptvCategoriesSettings) {
+                            val groups = orderedIptvGroups(
+                                playlistId = uiState.iptvSelectedPlaylistId.orEmpty(),
+                                availableGroups = uiState.iptvAvailableGroups,
+                                groupOrder = uiState.iptvGroupOrder
+                            )
+                            keptIptvActionIndex(
+                                actionIndex = iptvActionIndex,
+                                targetFocusIndex = targetIndex,
+                                firstGroupIndex = firstIptvGroupIndex(groups),
+                                groupCount = groups.size
+                            )
+                        } else 0
                     }
 
                     when (logicalKey) {
@@ -1029,7 +1068,6 @@ fun SettingsScreen(
                                 }
                                 Zone.CONTENT -> {
                                     iptvHeldGroup = null
-                                    val stalkerIds = uiState.iptvStalkerPortals.map { it.id }.toSet()
                                     val m3uCount = uiState.iptvPlaylists.size
                                     val stalkerCount = uiState.iptvStalkerPortals.size
                                     val stalkerStart = m3uCount + 1
@@ -1039,7 +1077,7 @@ fun SettingsScreen(
                                         addonActionIndex < focusedStremioAddonMaxAction
                                     ) {
                                         addonActionIndex++
-                                    } else if (currentSection == "iptv" && showIptvCategoriesSettings && contentFocusIndex >= firstIptvGroupIndex(uiState.iptvSelectedPlaylistId.orEmpty(), orderedIptvGroups(uiState.iptvSelectedPlaylistId.orEmpty(), uiState.iptvAvailableGroups, uiState.iptvGroupOrder), stalkerIds) && iptvActionIndex < 1) {
+                                    } else if (currentSection == "iptv" && showIptvCategoriesSettings && contentFocusIndex >= firstIptvGroupIndex(orderedIptvGroups(uiState.iptvSelectedPlaylistId.orEmpty(), uiState.iptvAvailableGroups, uiState.iptvGroupOrder)) && iptvActionIndex < 1) {
                                         iptvActionIndex++
                                     } else if (currentSection == "iptv" && !showIptvCategoriesSettings && contentFocusIndex in 1..m3uCount && iptvActionIndex < iptvRowMaxAction()) {
                                         iptvActionIndex++
@@ -1074,7 +1112,7 @@ fun SettingsScreen(
                                         if (contentFocusIndex > 0) {
                                             contentFocusIndex--
                                             addonActionIndex = 0 // Reset to toggle when changing rows
-                                            iptvActionIndex = 0
+                                            iptvActionIndex = nextIptvActionIndex(contentFocusIndex)
                                             iptvHeldGroup = null
                                             catalogActionIndex = 0
                                         } else {
@@ -1108,7 +1146,7 @@ fun SettingsScreen(
                                         if (contentFocusIndex < maxIndex) {
                                             contentFocusIndex++
                                             addonActionIndex = 0 // Reset to toggle when changing rows
-                                            iptvActionIndex = 0
+                                            iptvActionIndex = nextIptvActionIndex(contentFocusIndex)
                                             iptvHeldGroup = null
                                             catalogActionIndex = 0
                                         }
@@ -1186,7 +1224,6 @@ fun SettingsScreen(
                                             }
                                         }
                                         "iptv" -> {
-                                            val stalkerIds = uiState.iptvStalkerPortals.map { it.id }.toSet()
                                             if (showIptvCategoriesSettings) {
                                                 val playlistId = uiState.iptvSelectedPlaylistId.orEmpty()
                                                 val orderedGroups = orderedIptvGroups(
@@ -1194,8 +1231,8 @@ fun SettingsScreen(
                                                     availableGroups = uiState.iptvAvailableGroups,
                                                     groupOrder = uiState.iptvGroupOrder
                                                 )
-                                                val firstGroupIdx = firstIptvGroupIndex(playlistId, orderedGroups, stalkerIds)
-                                                val hasBulkToggle = orderedGroups.isNotEmpty() && (playlistId == STALKER_PLAYLIST_ID || playlistId in stalkerIds)
+                                                val firstGroupIdx = firstIptvGroupIndex(orderedGroups)
+                                                val hasBulkToggle = orderedGroups.isNotEmpty()
                                                 when {
                                                     contentFocusIndex == 0 -> {
                                                         viewModel.resetIptvGroupOrder(playlistId)
@@ -1831,7 +1868,6 @@ fun SettingsScreen(
                                 onToggleHidden = { viewModel.toggleIptvHiddenGroup(uiState.iptvSelectedPlaylistId ?: "", it) },
                                 onToggleHold = { group -> iptvHeldGroup = if (iptvHeldGroup == null) group else null },
                                 onReset = { viewModel.resetIptvGroupOrder(uiState.iptvSelectedPlaylistId ?: "") },
-                                showBulkToggle = (uiState.iptvSelectedPlaylistId ?: "") == STALKER_PLAYLIST_ID || (uiState.iptvSelectedPlaylistId ?: "") in uiState.iptvStalkerPortals.map { it.id },
                                 onBulkToggle = { visible -> viewModel.setAllIptvGroupsVisible(uiState.iptvSelectedPlaylistId ?: "", visible) },
                                 heldGroup = iptvHeldGroup
                             )
@@ -4957,7 +4993,6 @@ private fun MobileSettingsSubPage(
                     focusedActionIndex = 0,
                     onToggleHidden = { viewModel.toggleIptvHiddenGroup(uiState.iptvSelectedPlaylistId ?: "", it) },
                     onReset = { viewModel.resetIptvGroupOrder(uiState.iptvSelectedPlaylistId ?: "") },
-                    showBulkToggle = (uiState.iptvSelectedPlaylistId ?: "") == STALKER_PLAYLIST_ID || (uiState.iptvSelectedPlaylistId ?: "") in uiState.iptvStalkerPortals.map { it.id },
                     onBulkToggle = { visible -> viewModel.setAllIptvGroupsVisible(uiState.iptvSelectedPlaylistId ?: "", visible) }
                 )
             }
@@ -11519,7 +11554,6 @@ private fun IptvCategoriesSettings(
     focusedActionIndex: Int,
     onToggleHidden: (String) -> Unit,
     onReset: () -> Unit,
-    showBulkToggle: Boolean = false,
     onBulkToggle: (visible: Boolean) -> Unit = {},
     // Hold-and-move is a D-pad affair: the phone route renders rows without
     // chips at all, so both of these stay at their defaults there.
@@ -11536,9 +11570,10 @@ private fun IptvCategoriesSettings(
         )
     }
     val categoryListState = rememberLazyListState()
-    // When the bulk toggle is shown it occupies focus index 1, so the first
-    // category row shifts to index 2 (was 1). Reset stays at index 0.
-    val firstGroupIndex = if (showBulkToggle) 2 else 1
+    // The bulk toggle occupies focus index 1 whenever there are categories, so
+    // the first category row sits at index 2. Reset stays at index 0. The same
+    // function the D-pad handling uses, so the two can never drift apart.
+    val firstGroupIndex = firstIptvGroupIndex(orderedGroups)
 
     // Bulk button reflects the current state: when every category is hidden
     // it offers "Show all", otherwise "Hide all".
@@ -11582,7 +11617,7 @@ private fun IptvCategoriesSettings(
             modifier = Modifier.settingsFocusSlot(0)
         )
 
-        if (showBulkToggle && orderedGroups.isNotEmpty()) {
+        if (orderedGroups.isNotEmpty()) {
             Spacer(modifier = Modifier.height(10.dp))
             val bulkTitle = if (allCategoriesHidden) stringResource(R.string.settings_iptv_show_all) else stringResource(R.string.settings_iptv_hide_all)
             val bulkSubtitle = if (allCategoriesHidden) stringResource(R.string.settings_iptv_show_all_desc) else stringResource(R.string.settings_iptv_hide_all_desc)
