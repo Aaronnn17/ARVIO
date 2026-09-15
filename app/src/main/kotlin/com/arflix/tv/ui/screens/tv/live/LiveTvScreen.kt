@@ -4581,3 +4581,107 @@ internal data class ProgramActionData(
     val channel: EnrichedChannel,
     val program: IptvProgram,
 )
+
+@Composable
+fun FullscreenSourcesOverlay(
+    visible: Boolean,
+    isLoading: Boolean,
+    currentChannel: EnrichedChannel?,
+    variants: List<EnrichedChannel>,
+    onPick: (EnrichedChannel) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn() + slideInHorizontally { it / 2 },
+        exit = fadeOut() + slideOutHorizontally { it / 2 },
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.4f)) // Oscurecimiento suave de la pantalla
+                .focusable()
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.CenterEnd // Alineado a la derecha como en el vídeo
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(360.dp)
+                    .background(Color(0xFF0F0F0F).copy(alpha = 0.95f)) // Fondo oscuro casi opaco
+                    .padding(24.dp)
+                    .clickable(enabled = false) {}
+            ) {
+                androidx.tv.material3.Text(
+                    text = "Fuentes Disponibles",
+                    color = Color.White,
+                    fontSize = 20.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+
+                androidx.tv.material3.Text(
+                    text = currentChannel?.name ?: "",
+                    color = Color.Gray,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(bottom = 24.dp),
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(100.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        // Rueda de carga con el azul del reproductor
+                        CircularProgressIndicator(color = Color(0xFF0078D7)) 
+                    }
+                } else if (variants.isEmpty() || variants.size == 1) {
+                    androidx.tv.material3.Text(
+                        text = "No hay otras calidades u orígenes detectados para este canal.",
+                        color = Color.Gray,
+                        fontSize = 14.sp
+                    )
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        items(variants.size) { index ->
+                            val variant = variants[index]
+                            val isSelected = variant.id == currentChannel?.id
+                            var isFocused by remember { mutableStateOf(false) }
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        when {
+                                            isFocused -> Color.White
+                                            isSelected -> Color(0xFF0050B3).copy(alpha = 0.5f) // Azul profundo del reproductor
+                                            else -> Color.Transparent
+                                        }
+                                    )
+                                    .onFocusChanged { isFocused = it.isFocused }
+                                    .clickable { onPick(variant) }
+                                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                            ) {
+                                androidx.tv.material3.Text(
+                                    text = variant.name,
+                                    color = if (isFocused) Color.Black else Color.White,
+                                    fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                                    maxLines = 2,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    BackHandler(enabled = visible) { onDismiss() }
+}
