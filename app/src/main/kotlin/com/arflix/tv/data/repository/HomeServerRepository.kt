@@ -150,7 +150,8 @@ internal fun homeServerCatalogMediaType(
 data class HomeServerCatalogPage(
     val items: List<HomeServerCatalogItem>,
     val hasMore: Boolean,
-    val nextOffset: Int? = null
+    val nextOffset: Int? = null,
+    val totalCount: Int? = null
 )
 
 internal data class HomeServerCandidateInfo(
@@ -1714,7 +1715,8 @@ class HomeServerRepository @Inject constructor(
         return HomeServerCatalogPage(
             items = items,
             hasMore = rawItems.isNotEmpty() && (total?.let { offset + rawItems.size < it } ?: (rawItems.size >= limit)),
-            nextOffset = offset + rawItems.size
+            nextOffset = offset + rawItems.size,
+            totalCount = total?.takeIf { it >= 0 }
         )
     }
 
@@ -1759,7 +1761,8 @@ class HomeServerRepository @Inject constructor(
         return HomeServerCatalogPage(
             items = items,
             hasMore = rawItems.isNotEmpty() && (total?.let { offset + rawItems.size < it } ?: (rawItems.size >= limit)),
-            nextOffset = offset + rawItems.size
+            nextOffset = offset + rawItems.size,
+            totalCount = total?.takeIf { it >= 0 }
         )
     }
 

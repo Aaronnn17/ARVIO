@@ -190,7 +190,8 @@ fun WatchlistScreen(
                 }
                 if (!compact) {
                     Spacer(Modifier.weight(1f))
-                    Text(if(collections) "${scopeSources.size} ${tr("lists")}" else "${items.size}${if(hasMore) "+" else ""} ${tr("titles")}", color = Color.LightGray, fontSize = 13.sp)
+                    val serverTotal = servers.totalCount.takeIf { serverMode && mediaFilter == null }
+                    Text(if(collections) "${scopeSources.size} ${tr("lists")}" else "${serverTotal ?: items.size}${if(serverTotal == null && hasMore) "+" else ""} ${tr("titles")}", color = Color.LightGray, fontSize = 13.sp)
                     OledControl("⌕", onClick = { sourcesOpen = false; filters = false; search = true })
                     if(collections) OledControl("+ " + tr("New list"), onClick = { onNavigateToSettings("catalogs") })
                     OledControl(tr("Filters"), modifier = Modifier.focusRequester(filterButton), onClick = { sourcesOpen = false; filters = true })
