@@ -69,6 +69,15 @@ val COUNTRIES = listOf(
 enum class DiscoverType(val label: String) { ALL("All"), MOVIES("Movies"), TV_SHOWS("TV Shows"), ANIME("Anime") }
 enum class SortOption(val label: String, val apiValue: String) { POPULAR("Popular", "popularity.desc"), TOP_RATED("Top Rated", "vote_average.desc"), NEWEST("Newest", "primary_release_date.desc") }
 
+/** A filter change loads straight away (E4) — debounced so two quick taps cost one load. */
+private const val DISCOVER_FILTER_DEBOUNCE_MS = 350L
+/** The filtered grid has no sort control yet (that is step 3), so it browses by popularity. */
+private const val DISCOVER_GRID_SORT = "popularity.desc"
+/** Same floor the "Trending" row uses: keeps single-vote entries out of the grid. */
+private const val DISCOVER_GRID_MIN_VOTES = 50
+/** TMDB serves at most 500 discover pages; asking beyond that only returns errors. */
+private const val TMDB_MAX_DISCOVER_PAGE = 500
+
 // Memoized empty collections to reduce GC pressure
 private val EMPTY_MEDIA_ITEMS: List<MediaItem> = emptyList()
 private val EMPTY_CATEGORIES: List<Category> = emptyList()
@@ -87,15 +96,30 @@ data class SearchUiState(
     val discoverCategories: List<Category> = EMPTY_CATEGORIES,
     val discoverLogoUrls: Map<String, String> = EMPTY_LOGO_URLS,
     val isDiscoverLoading: Boolean = false,
-    // Filters
-    val selectedType: DiscoverType = DiscoverType.ALL,
+    // Filters. The media type is mandatory while discovering (E2): "All" would need two
+    // discover calls with two page counters, and TMDB's sort order stops holding once the
+    // two halves are merged — which breaks an endlessly paging grid.
+    val selectedType: DiscoverType = DiscoverType.MOVIES,
     val selectedGenre: Genre? = null,
     val selectedCountry: Country? = null,
+    // Discover grid - shown instead of the five rows as soon as a filter is set
+    val discoverGridItems: List<MediaItem> = EMPTY_MEDIA_ITEMS,
+    val isGridLoading: Boolean = false,
+    val isGridLoadingMore: Boolean = false,
+    val gridEndReached: Boolean = false,
+    val gridLoadFailed: Boolean = false,
     // AI
     val aiInterpretation: String? = null,
     val aiResults: List<MediaItem> = EMPTY_MEDIA_ITEMS,
     val isAiSearch: Boolean = false
-)
+) {
+    /**
+     * Rows or grid: the media type alone is not a filter (it is always set), so only a
+     * genre or a language switches the browse rows over to the filtered grid.
+     */
+    val hasDiscoverFilters: Boolean
+        get() = selectedGenre != null || selectedCountry != null
+}
 
 @HiltViewModel
 class SearchViewModel @Inject constructor(
@@ -107,6 +131,16 @@ class SearchViewModel @Inject constructor(
 
     private var searchJob: Job? = null
     private var discoverJob: Job? = null
+    private var filterDebounceJob: Job? = null
+    private var gridPage = 0
+    private var gridGeneration = 0L
+    private var gridJob: Job? = null
+
+    private fun cancelGridLoad() {
+        gridGeneration++
+        gridJob?.cancel()
+        gridJob = null
+    }
     private var cachedSuggestionQuery = ""
     private var cachedSuggestionResults: List<MediaItem> = EMPTY_MEDIA_ITEMS
     private var cachedPeopleQuery = ""
@@ -114,7 +148,7 @@ class SearchViewModel @Inject constructor(
     private var activeSearchQuery: String? = null
     private var peopleNeedingCredits: List<PersonMediaSearchResult> = emptyList()
 
-    init { loadDiscoverRows() }
+    init { startDiscoverLoad() }
 
     // ── Discover Rows (5 dynamic rows based on filters) ─────────────────
 
@@ -191,26 +225,38 @@ class SearchViewModel @Inject constructor(
         releaseDateGte: String? = null, releaseDateLte: String? = null
     ): Category? {
         return try {
-            val movieGenre = genre
-            val tvGenre = mapMovieGenreToTvGenre(genre)
-            val items = when (type) {
-                DiscoverType.MOVIES -> mediaRepository.discoverMovies(movieGenre, sort, minVotes, page, language = lang, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte)
-                DiscoverType.TV_SHOWS -> mediaRepository.discoverTv(tvGenre, sort, minVotes, page, language = lang, airDateLte = releaseDateLte, airDateGte = releaseDateGte)
-                DiscoverType.ANIME -> {
-                    val animeGenre = buildAnimeGenre(tvGenre)
-                    mediaRepository.discoverTv(animeGenre, sort, minVotes, page, language = lang, keywords = "210024", airDateLte = releaseDateLte, airDateGte = releaseDateGte)
-                }
-                DiscoverType.ALL -> {
-                    coroutineScope {
-                        val m = async { mediaRepository.discoverMovies(movieGenre, sort, minVotes, page, language = lang, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte) }
-                        val t = async { mediaRepository.discoverTv(tvGenre, sort, minVotes, page, language = lang, airDateLte = releaseDateLte, airDateGte = releaseDateGte) }
-                        interleave(m.await(), t.await())
-                    }
-                }
-            }
+            val items = fetchDiscoverPage(type, genre, sort, minVotes, lang, page, releaseDateGte, releaseDateLte)
             if (items.isEmpty()) null else Category(id = "${type}_${title}_${genre}_${lang}_$page", title = title, items = items.take(20))
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) { null }
+    }
+
+    /**
+     * The single place that turns a filter set into TMDB items. Both the browse rows and the
+     * filtered grid go through it, so the movies/series/anime/all split and the movie→series
+     * genre remap exist exactly once instead of drifting apart in two copies.
+     */
+    private suspend fun fetchDiscoverPage(
+        type: DiscoverType, genre: String?, sort: String, minVotes: Int?, lang: String?, page: Int,
+        releaseDateGte: String? = null, releaseDateLte: String? = null
+    ): List<MediaItem> {
+        val movieGenre = genre
+        val tvGenre = mapMovieGenreToTvGenre(genre)
+        return when (type) {
+            DiscoverType.MOVIES -> mediaRepository.discoverMovies(movieGenre, sort, minVotes, page, language = lang, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte)
+            DiscoverType.TV_SHOWS -> mediaRepository.discoverTv(tvGenre, sort, minVotes, page, language = lang, airDateLte = releaseDateLte, airDateGte = releaseDateGte)
+            DiscoverType.ANIME -> {
+                val animeGenre = buildAnimeGenre(tvGenre)
+                mediaRepository.discoverTv(animeGenre, sort, minVotes, page, language = lang, keywords = "210024", airDateLte = releaseDateLte, airDateGte = releaseDateGte)
+            }
+            DiscoverType.ALL -> {
+                coroutineScope {
+                    val m = async { mediaRepository.discoverMovies(movieGenre, sort, minVotes, page, language = lang, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte) }
+                    val t = async { mediaRepository.discoverTv(tvGenre, sort, minVotes, page, language = lang, airDateLte = releaseDateLte, airDateGte = releaseDateGte) }
+                    interleave(m.await(), t.await())
+                }
+            }
+        }
     }
 
     private fun mapMovieGenreToTvGenre(genre: String?): String? = when (genre) {
@@ -225,45 +271,137 @@ class SearchViewModel @Inject constructor(
         else -> "16,$genre"
     }
 
-    // ── Filters → reload discover rows ──────────────────────────────────
+    // ── Discover grid (shown as soon as a filter is set) ────────────────
+
+    private fun loadDiscoverGrid() {
+        discoverJob?.cancel()
+        cancelGridLoad()
+        gridPage = 0
+        _uiState.value = _uiState.value.copy(isGridLoading = true, isGridLoadingMore = false, gridEndReached = false, gridLoadFailed = false)
+        val generation = gridGeneration
+        gridJob = viewModelScope.launch { fetchGridPage(append = false, generation) }
+    }
+
+    /**
+     * Endless paging (H9). The grid asks for the next TMDB page when the user nears its end;
+     * everything that could turn that into a request storm is guarded here.
+     */
+    fun loadMoreDiscoverGrid() {
+        val state = _uiState.value
+        if (state.query.isNotEmpty() || !state.hasDiscoverFilters) return
+        if (state.isGridLoading || state.isGridLoadingMore || state.gridEndReached || state.gridLoadFailed) return
+        _uiState.value = state.copy(isGridLoadingMore = true)
+        val generation = gridGeneration
+        gridJob = viewModelScope.launch { fetchGridPage(append = true, generation) }
+    }
+
+    fun retryDiscoverGrid() {
+        val state = _uiState.value
+        if (!state.gridLoadFailed || state.query.isNotEmpty() || !state.hasDiscoverFilters) return
+        val append = gridPage > 0
+        _uiState.value = state.copy(gridLoadFailed = false, isGridLoading = !append, isGridLoadingMore = append)
+        val generation = gridGeneration
+        gridJob = viewModelScope.launch { fetchGridPage(append, generation) }
+    }
+
+    private suspend fun fetchGridPage(append: Boolean, generation: Long) {
+        val started = _uiState.value
+        val signature = filterSignature(started)
+        val page = gridPage + 1
+        try {
+            val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+            val items = withContext(Dispatchers.IO) {
+                fetchDiscoverPage(
+                    type = started.selectedType,
+                    genre = started.selectedGenre?.id?.toString(),
+                    sort = DISCOVER_GRID_SORT,
+                    minVotes = DISCOVER_GRID_MIN_VOTES,
+                    lang = started.selectedCountry?.code,
+                    page = page,
+                    releaseDateLte = today
+                )
+            }
+            val current = _uiState.value
+            // The filter moved on while this page was in flight — its answer is stale.
+            if (generation != gridGeneration || filterSignature(current) != signature || current.query.isNotEmpty()) return
+            items.forEach { mediaRepository.cacheItem(it) }
+            val existing = if (append) current.discoverGridItems else EMPTY_MEDIA_ITEMS
+            val known = existing.mapTo(HashSet()) { it.mediaType to it.id }
+            val fresh = items.filter { known.add(it.mediaType to it.id) }
+            gridPage = page
+            _uiState.value = current.copy(
+                discoverGridItems = existing + fresh,
+                isGridLoading = false,
+                isGridLoadingMore = false,
+                gridEndReached = items.isEmpty() || page >= TMDB_MAX_DISCOVER_PAGE
+            )
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) {
+            val current = _uiState.value
+            if (generation != gridGeneration || filterSignature(current) != signature || current.query.isNotEmpty()) return
+            // Keep the page counter and existing titles; only explicit Retry resumes loading.
+            _uiState.value = current.copy(isGridLoading = false, isGridLoadingMore = false, gridLoadFailed = true)
+        }
+    }
+
+    private fun filterSignature(state: SearchUiState): String =
+        "${state.selectedType}|${state.selectedGenre?.id}|${state.selectedCountry?.code}"
+
+    // ── Filters → reload rows or grid ───────────────────────────────────
+
+    /**
+     * One entry point for every filter change. E4: no "apply" button — the change loads
+     * immediately, debounced by [DISCOVER_FILTER_DEBOUNCE_MS] so two quick taps cost one load
+     * instead of two (and spare the logo requests of the discarded one).
+     */
+    private fun applyDiscoverSelection(debounce: Boolean = true) {
+        cancelGridLoad()
+        filterDebounceJob?.cancel()
+        discoverJob?.cancel()
+        gridPage = 0
+        val state = _uiState.value
+        _uiState.value = state.copy(
+            discoverCategories = EMPTY_CATEGORIES,
+            discoverLogoUrls = EMPTY_LOGO_URLS,
+            discoverGridItems = EMPTY_MEDIA_ITEMS,
+            isDiscoverLoading = !state.hasDiscoverFilters,
+            isGridLoading = state.hasDiscoverFilters,
+            isGridLoadingMore = false,
+            gridEndReached = false,
+            gridLoadFailed = false
+        )
+        if (!debounce) { startDiscoverLoad(); return }
+        filterDebounceJob = viewModelScope.launch {
+            delay(DISCOVER_FILTER_DEBOUNCE_MS)
+            startDiscoverLoad()
+        }
+    }
+
+    private fun startDiscoverLoad() {
+        if (_uiState.value.hasDiscoverFilters) loadDiscoverGrid() else loadDiscoverRows()
+    }
 
     fun selectType(type: DiscoverType) {
-        _uiState.value = _uiState.value.copy(
-            selectedType = type,
-            selectedGenre = null,
-            discoverCategories = EMPTY_CATEGORIES,
-            discoverLogoUrls = EMPTY_LOGO_URLS
-        )
-        loadDiscoverRows()
+        // Genre ids differ per media type (movie "Action" 28 vs. series "Action & Adventure"
+        // 10759), and not every movie genre has a series counterpart — so switching the type
+        // drops the genre instead of carrying over one that would return nothing.
+        _uiState.value = _uiState.value.copy(selectedType = type, selectedGenre = null)
+        applyDiscoverSelection()
     }
 
     fun setDiscoverFilters(type: DiscoverType, genre: Genre?, country: Country?) {
-        _uiState.value = _uiState.value.copy(
-            selectedType = type,
-            selectedGenre = genre,
-            selectedCountry = country,
-            discoverCategories = EMPTY_CATEGORIES,
-            discoverLogoUrls = EMPTY_LOGO_URLS
-        )
-        loadDiscoverRows()
+        _uiState.value = _uiState.value.copy(selectedType = type, selectedGenre = genre, selectedCountry = country)
+        applyDiscoverSelection()
     }
 
     fun selectGenre(genre: Genre?) {
-        _uiState.value = _uiState.value.copy(
-            selectedGenre = genre,
-            discoverCategories = EMPTY_CATEGORIES,
-            discoverLogoUrls = EMPTY_LOGO_URLS
-        )
-        loadDiscoverRows()
+        _uiState.value = _uiState.value.copy(selectedGenre = genre)
+        applyDiscoverSelection()
     }
 
     fun selectCountry(country: Country?) {
-        _uiState.value = _uiState.value.copy(
-            selectedCountry = country,
-            discoverCategories = EMPTY_CATEGORIES,
-            discoverLogoUrls = EMPTY_LOGO_URLS
-        )
-        loadDiscoverRows()
+        _uiState.value = _uiState.value.copy(selectedCountry = country)
+        applyDiscoverSelection()
     }
 
     // ── Search + AI ─────────────────────────────────────────────────────
@@ -280,8 +418,11 @@ class SearchViewModel @Inject constructor(
             clearSearch()
             return
         }
+        filterDebounceJob?.cancel()
         discoverJob?.cancel()
-        _uiState.value = _uiState.value.copy(isLoading = true, isDiscoverLoading = false, error = null, results = EMPTY_MEDIA_ITEMS,
+        cancelGridLoad()
+        _uiState.value = _uiState.value.copy(isLoading = true, isDiscoverLoading = false,
+            isGridLoading = false, isGridLoadingMore = false, error = null, results = EMPTY_MEDIA_ITEMS,
             movieResults = EMPTY_MEDIA_ITEMS, tvResults = EMPTY_MEDIA_ITEMS,
             personResults = EMPTY_CATEGORIES, cardLogoUrls = EMPTY_LOGO_URLS)
         debounceSearch()
@@ -405,15 +546,21 @@ class SearchViewModel @Inject constructor(
     private fun debounceSearch() { searchJob?.cancel(); searchJob = viewModelScope.launch { delay(260); search() } }
 
     fun clearSearch() {
+        cancelGridLoad()
         searchJob?.cancel()
         activeSearchQuery = null
         peopleNeedingCredits = emptyList()
         cachedSuggestionQuery = ""; cachedSuggestionResults = EMPTY_MEDIA_ITEMS
         cachedPeopleQuery = ""; cachedPeopleResults = EMPTY_CATEGORIES
-        _uiState.value = _uiState.value.copy(query = "", isLoading = false, results = EMPTY_MEDIA_ITEMS,
+        _uiState.value = _uiState.value.copy(query = "", isLoading = false, isGridLoading = false, isGridLoadingMore = false, results = EMPTY_MEDIA_ITEMS,
             movieResults = EMPTY_MEDIA_ITEMS, tvResults = EMPTY_MEDIA_ITEMS, personResults = EMPTY_CATEGORIES,
             cardLogoUrls = EMPTY_LOGO_URLS, error = null, isAiSearch = false, aiInterpretation = null, aiResults = EMPTY_MEDIA_ITEMS)
-        if (_uiState.value.discoverCategories.isEmpty()) loadDiscoverRows()
+        val state = _uiState.value
+        if (state.hasDiscoverFilters) {
+            if (state.discoverGridItems.isEmpty()) loadDiscoverGrid()
+        } else if (state.discoverCategories.isEmpty()) {
+            loadDiscoverRows()
+        }
     }
     fun getGenresForType(): List<Genre> = when (_uiState.value.selectedType) { DiscoverType.MOVIES -> MOVIE_GENRES; DiscoverType.TV_SHOWS -> TV_GENRES; DiscoverType.ALL -> ALL_GENRES; DiscoverType.ANIME -> ANIME_GENRES }
     private fun interleave(a: List<MediaItem>, b: List<MediaItem>): List<MediaItem> { val r = mutableListOf<MediaItem>(); for (i in 0 until maxOf(a.size, b.size)) { if (i < a.size) r.add(a[i]); if (i < b.size) r.add(b[i]) }; return r }
