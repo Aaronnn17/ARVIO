@@ -54,12 +54,15 @@ import kotlinx.coroutines.launch
  * ```
  * val listState = rememberLazyListState()
  * val reorderState = rememberDragReorderState(listState) { key, from, to -> /* move one step */ }
- * LazyColumn(state = listState, modifier = Modifier.dragReorderable(reorderState)) {
+ * LazyColumn(state = listState, userScrollEnabled = reorderState.draggedKey == null) {
  *     items(rows, key = { it.id }) { row ->
  *         Row(modifier = dragReorderItem(reorderState, row.id)) { /* ... */ }
  *     }
  * }
  * ```
+ * While a row is held the list is taken off the finger (`userScrollEnabled`): it still scrolls, but
+ * only by itself, at the edges, which is the only scrolling that belongs to a move.
+ *
  * ⚠️ The list must not use a top `contentPadding`: row offsets and the finger position are compared
  * in the same coordinate space, and top padding shifts the two apart.
  */
@@ -97,13 +100,14 @@ class DragReorderState internal constructor(
         return floatingTop - item.offset
     }
 
-    internal fun onDragStart(positionY: Float) {
-        val grabbed = listState.layoutInfo.visibleItemsInfo
-            .firstOrNull { positionY >= it.offset && positionY < it.offset + it.size } ?: return
-        draggedKey = grabbed.key
+    internal fun onDragStart(key: Any, positionInRow: Float) {
+        val grabbed = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+        draggedKey = key
         floatingTop = grabbed.offset.toFloat()
         floatingSize = grabbed.size
-        pointerY = positionY
+        // The finger position is kept in the list's coordinates, because that is
+        // what the edge scrolling below compares against the viewport.
+        pointerY = grabbed.offset + positionInRow
         requestedIndex = grabbed.index
         onGrab()
         startAutoScroll()
@@ -195,43 +199,50 @@ fun rememberDragReorderState(
 }
 
 /**
- * Put on the list itself: press and hold starts a move, a plain drag still scrolls as before.
- */
-fun Modifier.dragReorderable(state: DragReorderState): Modifier = this.pointerInput(state) {
-    detectDragGesturesAfterLongPress(
-        onDragStart = { offset -> state.onDragStart(offset.y) },
-        onDrag = { change, amount ->
-            change.consume()
-            state.onDrag(amount.y)
-        },
-        onDragEnd = { state.onDragStop() },
-        onDragCancel = { state.onDragStop() }
-    )
-}
-
-/**
- * Put on every row: lifts the held row above the list and lets the others slide out of its way.
- * The sliding is [Modifier.animateItemPlacement], which needs nothing but stable keys.
+ * Put on every row, and it does both halves: it takes the press and hold that picks the row up and
+ * the drag that moves it, and it lifts the held row above the list while the others slide out of
+ * its way. The sliding is [Modifier.animateItemPlacement], which needs nothing but stable keys.
  *
- * Called from inside the item itself - `modifier = dragReorderItem(state, key)` - because the
- * placement animation is only available there.
+ * Called from inside the item itself - `modifier = dragReorderItem(state, key)`.
+ *
+ * 🔴 **The gesture belongs on the row, not on the list.** A list scrolls its own content, and it
+ * sees a drag before anything wrapped around it does; a detector sitting outside the list is handed
+ * a gesture the list has already taken for scrolling, so the row lights up when it is picked up and
+ * then refuses to move. Inside the row the drag is claimed first, and the list never sees it.
+ *
+ * The gesture is kept at the FRONT of the modifier chain and keyed by the row's key, so that
+ * picking a row up - which changes everything behind it in the chain - cannot restart the very
+ * gesture that is running.
  */
 @OptIn(ExperimentalFoundationApi::class)
-fun LazyItemScope.dragReorderItem(state: DragReorderState, key: Any): Modifier =
-    if (state.isDragging(key)) {
-        Modifier
-            .zIndex(1f)
-            .graphicsLayer {
-                translationY = state.translationFor(key)
-                scaleX = DRAGGED_SCALE
-                scaleY = DRAGGED_SCALE
-                shadowElevation = draggedElevation.toPx()
-                shape = RoundedCornerShape(draggedCorner)
-                clip = false
-            }
-    } else {
-        Modifier.animateItemPlacement()
+fun LazyItemScope.dragReorderItem(state: DragReorderState, key: Any): Modifier = Modifier
+    .pointerInput(key) {
+        detectDragGesturesAfterLongPress(
+            onDragStart = { offset -> state.onDragStart(key, offset.y) },
+            onDrag = { change, amount ->
+                change.consume()
+                state.onDrag(amount.y)
+            },
+            onDragEnd = { state.onDragStop() },
+            onDragCancel = { state.onDragStop() }
+        )
     }
+    .then(
+        if (state.isDragging(key)) {
+            Modifier
+                .zIndex(1f)
+                .graphicsLayer {
+                    translationY = state.translationFor(key)
+                    scaleX = DRAGGED_SCALE
+                    scaleY = DRAGGED_SCALE
+                    shadowElevation = draggedElevation.toPx()
+                    shape = RoundedCornerShape(draggedCorner)
+                    clip = false
+                }
+        } else {
+            Modifier.animateItemPlacement()
+        }
+    )
 
 // ---------------------------------------------------------------------------
 // The arithmetic, kept free of Compose so it can be tested on its own.
