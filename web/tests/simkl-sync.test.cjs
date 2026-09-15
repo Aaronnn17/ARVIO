@@ -83,6 +83,121 @@ test('failed deletion reconciliation retains the snapshot and retries from the u
   assert.equal(state.requests.filter(p => p.includes('/all?')).length, 3, 'only one full bootstrap');
 });
 
+test('Simkl delta without seasons retains existing seasons in snapshot', async () => {
+  const { client, state, expire } = libraryFixture();
+  state.initial.shows = [{
+    status: 'plantowatch',
+    show: { title: 'Show 1', ids: { simkl: 10, tmdb: 10 } },
+    seasons: [{ number: 1, episodes: [{ number: 1, watched: true }] }]
+  }];
+  await client.watchlist();
+  assert.equal(client.snapshot.shows[0].seasons?.length, 1);
+
+  state.activities = { all: '2026-09-08T11:00:00Z' };
+  // Delta row omits seasons
+  state.delta.shows = [{
+    status: 'watching',
+    show: { title: 'Show 1', ids: { simkl: 10, tmdb: 10 } }
+  }];
+  expire();
+  await client.watchlist();
+  assert.equal(client.snapshot.shows[0].status, 'watching');
+  assert.equal(client.snapshot.shows[0].seasons?.length, 1, 'seasons must be retained when delta omits them');
+});
+
+test('Simkl explicit empty seasons clears watched episodes', async () => {
+  const { client, state, expire } = libraryFixture();
+  state.initial.shows = [{
+    status: 'watching', show: { ids: { simkl: 10, tmdb: 10 } },
+    seasons: [{ number: 1, episodes: [{ number: 1 }] }]
+  }];
+  await client.watchlist();
+  state.activities = { all: '2026-09-08T11:00:00Z' };
+  state.delta.shows = [{ status: 'plantowatch', show: { ids: { simkl: 10, tmdb: 10 } }, seasons: [] }];
+  expire();
+  await client.watchlist();
+  assert.equal(client.snapshot.shows[0].seasons.length, 0);
+});
+
+test('Simkl snapshot persists across client instances for the same profile', async () => {
+  const disk = storage();
+  const { SimklClient } = load('lib/simkl.ts', {
+    './config': { config: {} }, './sync': {}, './storage': disk, './http': {}, './tmdb': {}
+  });
+  const client1 = new SimklClient();
+  client1.setProfile('persisted-profile');
+  client1.setToken({ access_token: 'token-1' });
+  client1.simkl = async req => {
+    if (req === '/sync/activities') return { all: '2026-09-08T10:00:00Z' };
+    const type = req.split('/')[3].split('?')[0];
+    return { [type]: [{ status: 'plantowatch', [type === 'movies' ? 'movie' : 'show']: { ids: { simkl: 99, tmdb: 99 } } }] };
+  };
+  await client1.watchlist();
+  assert.ok(client1.snapshot);
+  assert.equal(client1.snapshot.activity, '2026-09-08T10:00:00Z');
+
+  // Second client on same profile and disk
+  const client2 = new SimklClient();
+  client2.setProfile('persisted-profile');
+  client2.setToken({ access_token: 'token-1' });
+  let bootstrapCalled = false;
+  client2.simkl = async req => {
+    if (req === '/sync/activities') return { all: '2026-09-08T10:00:00Z' };
+    bootstrapCalled = true;
+    return {};
+  };
+  const rows = await client2.watchlist();
+  assert.equal(bootstrapCalled, false, 'bootstrap must not run when persisted snapshot is valid');
+  assert.equal(rows.length, 3);
+});
+
+test('Simkl invalidateSnapshot persists checkedAt = 0 and recreated client loads invalidated timestamp', async () => {
+  const disk = storage();
+  const { SimklClient } = load('lib/simkl.ts', {
+    './config': { config: {} }, './sync': {}, './storage': disk, './http': {}, './tmdb': {}
+  });
+  const client1 = new SimklClient();
+  client1.setProfile('invalidate-profile');
+  client1.setToken({ access_token: 'token-inv' });
+  client1.simkl = async req => {
+    if (req === '/sync/activities') return { all: '2026-09-08T10:00:00Z' };
+    const type = req.split('/')[3].split('?')[0];
+    return { [type]: [{ status: 'plantowatch', [type === 'movies' ? 'movie' : 'show']: { ids: { simkl: 1, tmdb: 1 } } }] };
+  };
+  await client1.watchlist();
+  assert.ok(client1.snapshot.checkedAt > 0);
+
+  // Invalidate via action (e.g. addToWatchlist calls invalidateSnapshot)
+  client1.simkl = async () => ({ result: 'OK' });
+  await client1.addToWatchlist({ mediaType: 'movie', tmdbId: 2 });
+  assert.equal(client1.snapshot.checkedAt, 0);
+
+  // Recreated client on same disk
+  const client2 = new SimklClient();
+  client2.setProfile('invalidate-profile');
+  client2.setToken({ access_token: 'token-inv' });
+  let activitiesChecked = false;
+  client2.simkl = async req => {
+    if (req === '/sync/activities') {
+      activitiesChecked = true;
+      return { all: '2026-09-08T10:00:00Z' };
+    }
+    return {};
+  };
+  await client2.watchlist();
+  assert.equal(activitiesChecked, true, 'recreated client must check activities because persisted snapshot had checkedAt = 0');
+});
+
+test('Simkl getSimklItemUrl favors numeric id over slug', () => {
+  const { getSimklItemUrl } = load('lib/simkl.ts', {
+    './config': { config: {} }, './sync': {}, './storage': storage(), './http': {}, './tmdb': {}
+  });
+  assert.equal(getSimklItemUrl({ simkl: 12345, slug: 'test-movie' }, 'movie'), 'https://simkl.com/movies/12345/test-movie');
+  assert.equal(getSimklItemUrl({ simkl: 12345 }, 'tv'), 'https://simkl.com/tv/12345');
+  assert.equal(getSimklItemUrl({ slug: 'test-anime' }, 'anime'), 'https://simkl.com/anime/test-anime');
+  assert.equal(getSimklItemUrl(null), null);
+});
+
 function routerFixture() {
   const calls = [];
   const provider = name => ({

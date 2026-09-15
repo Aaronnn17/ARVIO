@@ -290,8 +290,8 @@ fun SearchScreen(
             }
         }
     }
-    LaunchedEffect(focusZone, activeCategories.isNotEmpty(), gridItems.isNotEmpty(), isSearchEditing) {
-        if (!isTouchDevice && focusZone == FocusZone.RESULTS && (activeCategories.isNotEmpty() || gridItems.isNotEmpty()) && !isSearchEditing) {
+    LaunchedEffect(focusZone, activeCategories.isNotEmpty(), gridItems.isNotEmpty(), (uiState.gridLoadFailed || uiState.gridScanPaused), isSearchEditing) {
+        if (!isTouchDevice && focusZone == FocusZone.RESULTS && (activeCategories.isNotEmpty() || gridItems.isNotEmpty() || (uiState.gridLoadFailed || uiState.gridScanPaused)) && !isSearchEditing) {
             resultsFocusRequester.requestFocus()
         }
     }
@@ -324,7 +324,8 @@ fun SearchScreen(
     val showFilters = uiState.query.isEmpty()
     // Rows while nothing is filtered, one endlessly paging grid from the first filter on (H9).
     val showGrid = showFilters && uiState.hasDiscoverFilters
-    val hasGridResults = showGrid && gridItems.isNotEmpty()
+    val gridSlotCount = gridItems.size + if ((uiState.gridLoadFailed || uiState.gridScanPaused)) 1 else 0
+    val hasGridResults = showGrid && gridSlotCount > 0
     val canEnterResults = activeCategories.isNotEmpty() || hasAiResults || hasGridResults
     // The discover grid always shows poster cards, no matter what the catalogue row layout
     // setting says: the approved design shows it that way, and about twice as many titles fit
@@ -340,12 +341,12 @@ fun SearchScreen(
     } else {
         discoverGridColumns(screenWidthDp, gridCardWidth)
     }
-    LaunchedEffect(gridItems.size) {
-        gridFocusIndex = gridFocusIndex.coerceIn(0, (gridItems.size - 1).coerceAtLeast(0))
+    LaunchedEffect(gridSlotCount) {
+        gridFocusIndex = gridFocusIndex.coerceIn(0, (gridSlotCount - 1).coerceAtLeast(0))
     }
 
     fun moveGridFocus(offset: Int) {
-        val last = gridItems.lastIndex
+        val last = gridSlotCount - 1
         if (last < 0) return
         gridFocusIndex = (gridFocusIndex + offset).coerceIn(0, last)
         // Asking early keeps the next page ready before the user reaches the bottom edge.
@@ -654,7 +655,11 @@ fun SearchScreen(
                         FocusZone.RESULTS -> {
                             if (hasAiResults) false
                             else if (hasGridResults) {
-                                gridItems.getOrNull(gridFocusIndex)?.let { onNavigateToDetails(it.mediaType, it.id) }
+                                if ((uiState.gridLoadFailed || uiState.gridScanPaused) && gridFocusIndex == gridItems.size) {
+                                    viewModel.retryDiscoverGrid()
+                                } else {
+                                    gridItems.getOrNull(gridFocusIndex)?.let { onNavigateToDetails(it.mediaType, it.id) }
+                                }
                                 true
                             }
                             else {
@@ -801,7 +806,7 @@ fun SearchScreen(
                 showGrid && uiState.isGridLoading && gridItems.isEmpty() ->
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator(color = Pink, size = 48.dp) }
 
-                showGrid && gridItems.isEmpty() -> {
+                showGrid && gridItems.isEmpty() && !(uiState.gridLoadFailed || uiState.gridScanPaused) -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(stringResource(R.string.no_results), style = ArflixTypography.body, color = TextSecondary)
                     }
@@ -814,6 +819,9 @@ fun SearchScreen(
                     isTouchDevice = isTouchDevice,
                     onItemClick = { onNavigateToDetails(it.mediaType, it.id) },
                     onLoadMore = { viewModel.loadMoreDiscoverGrid() },
+                    loadFailed = uiState.gridLoadFailed,
+                    scanPaused = uiState.gridScanPaused,
+                    onRetry = { viewModel.retryDiscoverGrid() },
                     modifier = if (isTouchDevice) Modifier else Modifier.focusRequester(resultsFocusRequester).focusable(),
                     columns = gridColumns,
                     cardWidth = gridCardWidth,
@@ -1253,11 +1261,14 @@ private fun ContentGrid(
     titleMaxLines: Int = 2,
     manualFocusIndex: Int? = null,
     isZoneFocused: Boolean = true,
-    gridState: LazyGridState = rememberLazyGridState()
+    gridState: LazyGridState = rememberLazyGridState(),
+    loadFailed: Boolean = false,
+    scanPaused: Boolean = false,
+    onRetry: () -> Unit = {}
 ) {
     val itemWidth = cardWidth ?: defaultGridCardWidth(usePosterCards, isTouchDevice)
     LoadMoreWhenGridNearsEnd(gridState, items.size, onLoadMore)
-    FollowFocusedGridItem(gridState, manualFocusIndex, items.size)
+    FollowFocusedGridItem(gridState, manualFocusIndex, items.size + if (loadFailed || scanPaused) 1 else 0)
 
     val focusBleedPadding = if (isTouchDevice) 16.dp else 24.dp
     LazyVerticalGrid(
@@ -1292,6 +1303,21 @@ private fun ContentGrid(
                     .semantics { selected = itemIsFocused }
                     .then(if (isTouchDevice) Modifier.clickable { onItemClick(item) } else Modifier)
             )
+        }
+        if (loadFailed || scanPaused) {
+            item(key = "discover_retry", span = { GridItemSpan(maxLineSpan) }) {
+                val retryFocused = isZoneFocused && manualFocusIndex == items.size
+                Text(
+                    text = if (loadFailed) stringResource(R.string.search_discover_load_failed) + " · " + stringResource(R.string.retry)
+                    else stringResource(R.string.search_discover_load_more),
+                    color = if (retryFocused) Color.White else TextSecondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(if (retryFocused) Pink else Color.Transparent)
+                        .clickable(onClick = onRetry)
+                        .padding(16.dp)
+                )
+            }
         }
         if (isLoading) {
             item(span = { GridItemSpan(maxLineSpan) }) {

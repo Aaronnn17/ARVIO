@@ -247,17 +247,23 @@ function DetailsView({ item }: { item: MediaItem }) {
               </span>
             ) : null}
             {detailWatched && <span className="detail-watched-chip"><BadgeCheck size={13} /> Watched</span>}
-            {simklClient.isConnected && (
-              <a
-                href={getSimklItemUrl((displayItem as unknown as { ids?: any })?.ids, displayItem.mediaType === "movie" ? "movie" : "tv") ?? `https://simkl.com/search?q=${encodeURIComponent(displayItem.title)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="simkl-lockup text-xs font-semibold px-1.5 py-0.5 rounded bg-surface-sunk hover:underline inline-flex items-center gap-1"
-                title="View on Simkl"
-              >
-                <span>Simkl</span>
-              </a>
-            )}
+            {(() => {
+              const ids = simklClient.findItemIds(displayItem.id, displayItem.mediaType === "movie" ? "movie" : "tv")
+                ?? (displayItem as unknown as { ids?: any })?.ids;
+              const simklUrl = getSimklItemUrl(ids, displayItem.mediaType === "movie" ? "movie" : "tv")
+                ?? `https://simkl.com/search?q=${encodeURIComponent(displayItem.title)}`;
+              return (
+                <a
+                  href={simklUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="simkl-lockup text-xs font-semibold px-1.5 py-0.5 rounded bg-surface-sunk hover:underline inline-flex items-center gap-1"
+                  title="View on Simkl"
+                >
+                  <span>Simkl</span>
+                </a>
+              );
+            })()}
             {displayItem.genres?.slice(0, 3).map((genre) => <span key={genre}>{genre}</span>)}
           </div>
           {externalRatings.length ? (

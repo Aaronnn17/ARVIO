@@ -1257,6 +1257,13 @@ class CatalogRepository @Inject constructor(
 
     private fun normalizeCatalogConfig(config: CatalogConfig): CatalogConfig? {
         if (config.id.isBlank() || config.title.isBlank()) return null
+        // Retire the old Home sports rows, including saved/cloud-restored defaults.
+        // Add-on catalogs keep their own source and must remain available.
+        if (config.id in setOf(SportsAddonCapabilities.SPORTS_CATEGORY_ROW_ID,
+                SportsAddonCapabilities.POPULAR_LIVE_TV_ROW_ID) &&
+            config.sourceType == CatalogSourceType.PREINSTALLED &&
+            config.sourceUrl.isNullOrBlank() && config.sourceRef.isNullOrBlank() &&
+            config.addonId.isNullOrBlank()) return null
         val normalizedUrl = config.sourceUrl?.trim().takeUnless { it.isNullOrBlank() }
         val normalizedRef = config.sourceRef?.trim().takeUnless { it.isNullOrBlank() }
         val bundledPreinstalled = isBundledPreinstalledCatalogId(config.id)

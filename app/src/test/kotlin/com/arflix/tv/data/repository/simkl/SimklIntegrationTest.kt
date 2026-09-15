@@ -90,6 +90,17 @@ class SimklIntegrationTest {
     }
 
     @Test
+    fun testPollingPendingCodeReturnsFalse() = runBlocking {
+        coEvery { simklApi.pollPinToken(any(), any()) } returns SimklPinPollResponse(
+            result = "KO",
+            message = "Authorization pending",
+            deviceCode = null
+        )
+        val result = authManager.pollPinAuth("PENDING-CODE")
+        assertFalse(result)
+    }
+
+    @Test
     fun testDisconnectClearsToken() = runBlocking {
         authManager.disconnect()
         coEvery { syncProviderStore.getSimklAccessToken() } returns null

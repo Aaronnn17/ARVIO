@@ -46,6 +46,27 @@ class SimklSnapshotRegressionTest {
         coEvery { api.getPlayback(any(), any()) } returns emptyList()
     }
 
+    @Test fun omittedSeasonsRetainHistoryButEmptySeasonsClearIt() = runBlocking {
+        coEvery { api.getAllItems(any(), any(), "shows", any(), any(), any(), any(), any(), any()) } returns json(
+            """{"shows":[{"status":"watching","show":{"ids":{"simkl":2,"tmdb":102}},"seasons":[{"number":1,"episodes":[{"number":1}]}]}]}"""
+        )
+        val sync = service()
+        assertTrue(sync.syncIfNeeded(force = true))
+        assertTrue(sync.getWatchedEpisodes().contains("show_tmdb:102:1:1"))
+        coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(all = second)
+        coEvery { api.getAllItemsDelta(any(), any(), any(), any(), any(), any(), any()) } returns json(
+            """{"shows":[{"status":"watching","show":{"ids":{"simkl":2,"tmdb":102}}}]}"""
+        )
+        assertTrue(sync.syncIfNeeded(force = true))
+        assertTrue(sync.getWatchedEpisodes().contains("show_tmdb:102:1:1"))
+        coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(all = "2026-09-08T12:00:00Z")
+        coEvery { api.getAllItemsDelta(any(), any(), any(), any(), any(), any(), any()) } returns json(
+            """{"shows":[{"status":"plantowatch","show":{"ids":{"simkl":2,"tmdb":102}},"seasons":[]}]}"""
+        )
+        assertTrue(sync.syncIfNeeded(force = true))
+        assertFalse(sync.getWatchedEpisodes().contains("show_tmdb:102:1:1"))
+    }
+
     @Test fun deletionReconcilesOnlyChangedCategory() = runBlocking {
         val sync = service()
         assertTrue(sync.syncIfNeeded(force = true))
@@ -78,26 +99,27 @@ class SimklSnapshotRegressionTest {
         coVerify(exactly = 2) { api.getAllItemsDelta(any(), any(), first, any(), any(), any(), any()) }
     }
 
-    @Test fun failedPlaybackDoesNotAcknowledgeDeltaOrPreventRetry() = runBlocking {
+    @Test fun failedPlaybackDoesNotVetoWatermarkOrLibrarySync() = runBlocking {
         val sync = service()
         assertTrue(sync.syncIfNeeded(force = true))
         coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(all = second)
         coEvery { api.getPlayback(any(), any()) } throws IOException("temporary playback outage")
         assertFalse(sync.syncIfNeeded(force = true))
-        coVerify(exactly = 0) { store.setSimklWatermark(second) }
+        coVerify(exactly = 1) { store.setSimklWatermark(second) }
         coEvery { api.getPlayback(any(), any()) } returns emptyList()
         assertTrue(sync.syncIfNeeded(force = true))
-        coVerify(exactly = 2) { api.getAllItemsDelta(any(), any(), first, any(), any(), any(), any()) }
-        coVerify(exactly = 1) { store.setSimklWatermark(second) }
+        coVerify(exactly = 1) { api.getAllItemsDelta(any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 3) { api.getPlayback(any(), any()) }
     }
 
-    @Test fun failedBootstrapPlaybackIsRetriedEvenWithUnchangedActivities() = runBlocking {
+    @Test fun failedBootstrapPlaybackDoesNotFailLibraryBootstrap() = runBlocking {
         val sync = service()
         coEvery { api.getPlayback(any(), any()) } throws IOException("offline")
         assertFalse(sync.syncIfNeeded(force = true))
         assertEquals(listOf(101), sync.getWatchlistItems().map { it.id })
         coEvery { api.getPlayback(any(), any()) } returns emptyList()
         assertTrue(sync.syncIfNeeded(force = true))
+        coVerify(exactly = 3) { api.getAllItems(any(), any(), any(), any(), any(), any(), any(), any(), any()) }
         coVerify(exactly = 2) { api.getPlayback(any(), any()) }
     }
 
@@ -145,9 +167,9 @@ class SimklSnapshotRegressionTest {
         assertTrue(service(context).syncIfNeeded(force = true))
         val sync = service(context)
         coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(all = second)
-        coEvery { api.getPlayback(any(), any()) } throws IOException("offline")
+        coEvery { api.getAllItemsDelta(any(), any(), any(), any(), any(), any(), any()) } throws IOException("offline")
         assertFalse(sync.syncIfNeeded(force = true))
-        coEvery { api.getPlayback(any(), any()) } returns emptyList()
+        coEvery { api.getAllItemsDelta(any(), any(), any(), any(), any(), any(), any()) } returns json("{}")
         assertTrue(service(context).syncIfNeeded(force = true))
         coVerify(exactly = 2) { api.getAllItemsDelta(any(), any(), first, any(), any(), any(), any()) }
     }

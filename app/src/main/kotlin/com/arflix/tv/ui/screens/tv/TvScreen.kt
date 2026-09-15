@@ -595,9 +595,9 @@ fun TvScreen(
             .readTimeout(300, TimeUnit.SECONDS) // 5 min — live streams should not timeout during normal playback
             .build()
     }
-    val iptvDataSourceFactory = remember(iptvHttpClient) {
+    val iptvDataSourceFactory = remember(iptvHttpClient, context) {
         OkHttpDataSource.Factory(iptvHttpClient)
-            .setUserAgent("ARVIO/1.2.0 (Android TV)")
+            .setUserAgent(OkHttpProvider.getAppUserAgent(context))
     }
     // HLS factory with chunkless preparation (used when stream is detected as HLS)
     val iptvHlsFactory = remember(iptvDataSourceFactory) {

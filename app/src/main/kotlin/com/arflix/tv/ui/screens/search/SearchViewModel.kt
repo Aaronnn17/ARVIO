@@ -126,6 +126,8 @@ data class SearchUiState(
     val isGridLoading: Boolean = false,
     val isGridLoadingMore: Boolean = false,
     val gridEndReached: Boolean = false,
+    val gridLoadFailed: Boolean = false,
+    val gridScanPaused: Boolean = false,
     // AI
     val aiInterpretation: String? = null,
     val aiResults: List<MediaItem> = EMPTY_MEDIA_ITEMS,
@@ -154,6 +156,14 @@ class SearchViewModel @Inject constructor(
     private var discoverJob: Job? = null
     private var filterDebounceJob: Job? = null
     private var gridPage = 0
+    private var gridGeneration = 0L
+    private var gridJob: Job? = null
+
+    private fun cancelGridLoad() {
+        gridGeneration++
+        gridJob?.cancel()
+        gridJob = null
+    }
     private var cachedSuggestionQuery = ""
     private var cachedSuggestionResults: List<MediaItem> = EMPTY_MEDIA_ITEMS
     private var cachedPeopleQuery = ""
@@ -363,9 +373,11 @@ class SearchViewModel @Inject constructor(
 
     private fun loadDiscoverGrid() {
         discoverJob?.cancel()
+        cancelGridLoad()
         gridPage = 0
-        _uiState.value = _uiState.value.copy(isGridLoading = true, isGridLoadingMore = false, gridEndReached = false)
-        discoverJob = viewModelScope.launch { fetchGridPage(append = false) }
+        _uiState.value = _uiState.value.copy(isGridLoading = true, isGridLoadingMore = false, gridEndReached = false, gridLoadFailed = false, gridScanPaused = false)
+        val generation = gridGeneration
+        gridJob = viewModelScope.launch { fetchGridPage(append = false, generation) }
     }
 
     /**
@@ -375,12 +387,22 @@ class SearchViewModel @Inject constructor(
     fun loadMoreDiscoverGrid() {
         val state = _uiState.value
         if (state.query.isNotEmpty() || !state.hasDiscoverFilters) return
-        if (state.isGridLoading || state.isGridLoadingMore || state.gridEndReached) return
+        if (state.isGridLoading || state.isGridLoadingMore || state.gridEndReached || state.gridLoadFailed || state.gridScanPaused) return
         _uiState.value = state.copy(isGridLoadingMore = true)
-        viewModelScope.launch { fetchGridPage(append = true) }
+        val generation = gridGeneration
+        gridJob = viewModelScope.launch { fetchGridPage(append = true, generation) }
     }
 
-    private suspend fun fetchGridPage(append: Boolean) {
+    fun retryDiscoverGrid() {
+        val state = _uiState.value
+        if ((!state.gridLoadFailed && !state.gridScanPaused) || state.query.isNotEmpty() || !state.hasDiscoverFilters) return
+        val append = gridPage > 0
+        _uiState.value = state.copy(gridLoadFailed = false, gridScanPaused = false, isGridLoading = !append, isGridLoadingMore = append)
+        val generation = gridGeneration
+        gridJob = viewModelScope.launch { fetchGridPage(append, generation) }
+    }
+
+    private suspend fun fetchGridPage(append: Boolean, generation: Long) {
         val started = _uiState.value
         val signature = filterSignature(started)
         try {
@@ -389,25 +411,25 @@ class SearchViewModel @Inject constructor(
             val collected = withContext(Dispatchers.IO) { collectGridPages(started, today, startPage) }
             val current = _uiState.value
             // The filter moved on while this page was in flight — its answer is stale.
-            if (filterSignature(current) != signature || current.query.isNotEmpty()) return
+            if (generation != gridGeneration || filterSignature(current) != signature || current.query.isNotEmpty()) return
             collected.items.forEach { mediaRepository.cacheItem(it) }
             val existing = if (append) current.discoverGridItems else EMPTY_MEDIA_ITEMS
             val known = existing.mapTo(HashSet()) { it.mediaType to it.id }
-            val fresh = collected.items.filter { (it.mediaType to it.id) !in known }
+            val fresh = collected.items.filter { known.add(it.mediaType to it.id) }
             gridPage = collected.lastPage
             _uiState.value = current.copy(
                 discoverGridItems = existing + fresh,
                 isGridLoading = false,
                 isGridLoadingMore = false,
-                gridEndReached = collected.endReached
+                gridEndReached = collected.endReached,
+                gridScanPaused = fresh.isEmpty() && !collected.endReached
             )
         } catch (e: CancellationException) { throw e }
         catch (_: Exception) {
             val current = _uiState.value
-            if (filterSignature(current) != signature) return
-            // Stop paging after a failed page: retrying on every scroll frame would be the
-            // request storm that gets users blocked by their provider.
-            _uiState.value = current.copy(isGridLoading = false, isGridLoadingMore = false, gridEndReached = append)
+            if (generation != gridGeneration || filterSignature(current) != signature || current.query.isNotEmpty()) return
+            // Keep the page counter and existing titles; only explicit Retry resumes loading.
+            _uiState.value = current.copy(isGridLoading = false, isGridLoadingMore = false, gridLoadFailed = true)
         }
     }
 
@@ -503,6 +525,7 @@ class SearchViewModel @Inject constructor(
      * instead of two (and spare the logo requests of the discarded one).
      */
     private fun applyDiscoverSelection(debounce: Boolean = true) {
+        cancelGridLoad()
         filterDebounceJob?.cancel()
         discoverJob?.cancel()
         gridPage = 0
@@ -514,7 +537,9 @@ class SearchViewModel @Inject constructor(
             isDiscoverLoading = !state.hasDiscoverFilters,
             isGridLoading = state.hasDiscoverFilters,
             isGridLoadingMore = false,
-            gridEndReached = false
+            gridEndReached = false,
+            gridLoadFailed = false,
+            gridScanPaused = false
         )
         if (!debounce) { startDiscoverLoad(); return }
         filterDebounceJob = viewModelScope.launch {
@@ -644,6 +669,7 @@ class SearchViewModel @Inject constructor(
         }
         filterDebounceJob?.cancel()
         discoverJob?.cancel()
+        cancelGridLoad()
         _uiState.value = _uiState.value.copy(isLoading = true, isDiscoverLoading = false,
             isGridLoading = false, isGridLoadingMore = false, error = null, results = EMPTY_MEDIA_ITEMS,
             movieResults = EMPTY_MEDIA_ITEMS, tvResults = EMPTY_MEDIA_ITEMS,
@@ -769,12 +795,13 @@ class SearchViewModel @Inject constructor(
     private fun debounceSearch() { searchJob?.cancel(); searchJob = viewModelScope.launch { delay(260); search() } }
 
     fun clearSearch() {
+        cancelGridLoad()
         searchJob?.cancel()
         activeSearchQuery = null
         peopleNeedingCredits = emptyList()
         cachedSuggestionQuery = ""; cachedSuggestionResults = EMPTY_MEDIA_ITEMS
         cachedPeopleQuery = ""; cachedPeopleResults = EMPTY_CATEGORIES
-        _uiState.value = _uiState.value.copy(query = "", isLoading = false, results = EMPTY_MEDIA_ITEMS,
+        _uiState.value = _uiState.value.copy(query = "", isLoading = false, isGridLoading = false, isGridLoadingMore = false, results = EMPTY_MEDIA_ITEMS,
             movieResults = EMPTY_MEDIA_ITEMS, tvResults = EMPTY_MEDIA_ITEMS, personResults = EMPTY_CATEGORIES,
             cardLogoUrls = EMPTY_LOGO_URLS, error = null, isAiSearch = false, aiInterpretation = null, aiResults = EMPTY_MEDIA_ITEMS)
         val state = _uiState.value

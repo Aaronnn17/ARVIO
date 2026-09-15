@@ -92,7 +92,7 @@ class ApiProxyInterceptor : Interceptor {
             .url(proxyUrlBuilder.build())
             .header("apikey", Constants.APP_ANON_KEY)
             .header("Authorization", "Bearer ${Constants.APP_ANON_KEY}")
-            .header("User-Agent", "ARVIO/$cleanVersion (Android TV)")
+            .header("User-Agent", OkHttpProvider.getAppUserAgent())
 
         if (!userToken.isNullOrBlank()) {
             builder.header("x-user-token", userToken)

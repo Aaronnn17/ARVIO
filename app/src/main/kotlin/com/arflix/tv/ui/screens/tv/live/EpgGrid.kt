@@ -81,6 +81,8 @@ import com.arflix.tv.R
 import com.arflix.tv.data.model.IptvNowNext
 import com.arflix.tv.data.model.IptvProgram
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
+import com.arflix.tv.ui.focus.arvioManualBringIntoViewBoundary
+import com.arflix.tv.util.LocalDeviceType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -218,6 +220,12 @@ fun EpgGrid(
     var activeChannelFocusIndex by rememberSaveable(scrollResetKey) { mutableIntStateOf(0) }
     var pendingChannelFocusId by remember(scrollResetKey) { mutableStateOf<String?>(null) }
     var focusJob by remember { mutableStateOf<Job?>(null) }
+    DisposableEffect(scrollResetKey, gridFocused, focusMode) {
+        onDispose {
+            focusJob?.cancel()
+            pendingChannelFocusId = null
+        }
+    }
 
     LaunchedEffect(scrollResetKey, channelWindowIdentity) {
         if (channels.isEmpty() || didPositionInitialSelection) return@LaunchedEffect
@@ -695,10 +703,14 @@ fun EpgGrid(
                         val hasFocusable = remember(ch, rowPrograms, clockTickMillis) {
                             hasFocusablePrograms(ch, rowPrograms, clockTickMillis)
                         }
+                        val manualRemoteScroll = !LocalDeviceType.current.isTouchDevice()
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(rowHeight)
+                                // revealRow owns vertical remote scrolling; keep the
+                                // inner timeline's horizontal relocation unchanged.
+                                .then(if (manualRemoteScroll) Modifier.arvioManualBringIntoViewBoundary() else Modifier)
                                 // Keep accessibility geometry sorting local to each guide row.
                                 .semantics { isTraversalGroup = true }
                         ) {

@@ -25,6 +25,60 @@ import org.junit.Assert.assertTrue
 class SportsRefreshDeviceTest {
     @get:Rule val compose = createComposeRule()
 
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun upcomingChannelsScrollWithRemoteWithoutStartingPlayback() {
+        val now = System.currentTimeMillis()
+        val channels = (0 until 52).map { index ->
+            IptvChannel("future:$index", "Scheduled channel $index", "https://example.invalid/not-played", "Sports")
+        }
+        val programme = IptvProgram("Future fixture", startUtcMillis = now + 3600000, endUtcMillis = now + 7200000)
+        val event = SportsGuideEvent("future-scroll", programme.title, GuideSport.FOOTBALL, programme, channels)
+        var playCount = 0
+        compose.setContent {
+            SportsGuidePane(listOf(event), now, false, 0, {}, {}, { playCount++ }, Modifier.fillMaxSize())
+        }
+        compose.waitUntil(5000) { compose.onAllNodesWithTag("sports-event-card").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("sports-event-card").performClick()
+        compose.waitUntil(5000) {
+            compose.onAllNodes(isFocused() and hasText("Scheduled channel 0")).fetchSemanticsNodes().isNotEmpty()
+        }
+        repeat(20) {
+            compose.onNode(isFocused()).performKeyInput { pressKey(Key.DirectionDown) }
+            compose.waitForIdle()
+        }
+        compose.onNode(isFocused()).assert(hasText("Scheduled channel 20")).assertIsDisplayed()
+        compose.onNode(isFocused()).performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.runOnIdle { assertTrue("Upcoming channels must not start playback", playCount == 0) }
+        repeat(20) {
+            compose.onNode(isFocused()).performKeyInput { pressKey(Key.DirectionUp) }
+            compose.waitForIdle()
+        }
+        compose.onNode(isFocused()).assert(hasText("Scheduled channel 0")).assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test fun closingSidebarDoesNotResetAnAlreadyFocusedCard() {
+        val now = System.currentTimeMillis()
+        val channel = IptvChannel("test:sidebar", "Sports", "https://example.invalid/not-played", "Sports")
+        val events = (0..8).map { index ->
+            val programme = IptvProgram("Fixture $index", startUtcMillis = now - 60000, endUtcMillis = now + 3600000)
+            SportsGuideEvent("sidebar:$index", programme.title, GuideSport.FOOTBALL, programme, listOf(channel))
+        }
+        val sidebar = mutableStateOf(false)
+        compose.setContent {
+            SportsGuidePane(events, now, false, 1, { sidebar.value = false }, { sidebar.value = true }, {},
+                Modifier.fillMaxSize(), sidebarOpen = sidebar.value)
+        }
+        compose.waitUntil(5000) { compose.onAllNodes(isFocused()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNode(isFocused()).performKeyInput { pressKey(Key.DirectionRight) }
+        val before = compose.onNode(isFocused()).fetchSemanticsNode().id
+        compose.runOnIdle { sidebar.value = true }
+        compose.waitForIdle()
+        compose.runOnIdle { sidebar.value = false }
+        compose.waitForIdle()
+        assertTrue("Drawer transitions retain the selected event", compose.onNode(isFocused()).fetchSemanticsNode().id == before)
+    }
+
     @Test fun focusRemainsVisibleOnWhiteArtwork() {
         compose.setContent {
             Box(Modifier.size(160.dp, 90.dp).testTag("white-art")
@@ -82,7 +136,7 @@ class SportsRefreshDeviceTest {
 
     @After fun captureUiState() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val bitmap = instrumentation.uiAutomation.takeScreenshot()
+        val bitmap = instrumentation.uiAutomation.takeScreenshot() ?: return
         val folder = File(instrumentation.targetContext.getExternalFilesDir(null), "tv-overhaul").apply { mkdirs() }
         File(folder, "sports-refresh-test.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()

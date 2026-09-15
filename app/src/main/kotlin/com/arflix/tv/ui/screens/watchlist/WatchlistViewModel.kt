@@ -1,6 +1,9 @@
 package com.arflix.tv.ui.screens.watchlist
 
 import android.content.Context
+import coil.imageLoader
+import coil.request.ImageRequest
+import coil.size.Precision
 import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -141,6 +144,7 @@ data class HomeLibraryUiState(
     val isLoading: Boolean = false,
     val isLoadingMore: Boolean = false,
     val hasMore: Boolean = false,
+    val totalCount: Int? = null,
     val sort: HomeServerLibrarySort = HomeServerLibrarySort.RECENTLY_ADDED,
     val searchQuery: String = "",
     val error: String? = null
@@ -209,7 +213,8 @@ class WatchlistViewModel @Inject constructor(
 
     private val _libraryState = MutableStateFlow(HomeLibraryUiState())
     val libraryState: StateFlow<HomeLibraryUiState> = _libraryState.asStateFlow()
-    private val libraryCache = linkedMapOf<String, Pair<List<MediaItem>, Boolean>>()
+    private val libraryCache = linkedMapOf<String, MediaRepository.CategoryPageResult>()
+    private val libraryOffsets = mutableMapOf<String, Int>()
     private var libraryLoadJob: Job? = null
     private var librarySearchJob: Job? = null
     private var libraryRequestId = 0
@@ -226,6 +231,7 @@ class WatchlistViewModel @Inject constructor(
     private var enrichmentInFlight = false
     private var enrichmentRequested = false
     private val logoRequestsInFlight = mutableSetOf<String>()
+    private val logoPermits = Semaphore(5)
 
     private fun watchlistDiagnosticContext(
         phase: String,
@@ -387,6 +393,7 @@ class WatchlistViewModel @Inject constructor(
             selectedProvider = selectedProvider,
             selectedSourceRef = selectedSource,
             items = if (selectionChanged || selectedProvider == null) emptyList() else current.items,
+            totalCount = if (selectionChanged || selectedProvider == null) null else current.totalCount,
             isLoading = if (selectionChanged) selectedSource != null else current.isLoading,
             isLoadingMore = if (selectionChanged) false else current.isLoadingMore,
             hasMore = if (selectionChanged) false else current.hasMore,
@@ -404,6 +411,7 @@ class WatchlistViewModel @Inject constructor(
         if (provider == null) {
             _libraryState.value = current.copy(
                 selectedProvider = null,
+                totalCount = null,
                 selectedSourceRef = null,
                 items = emptyList(),
                 isLoading = false,
@@ -415,6 +423,7 @@ class WatchlistViewModel @Inject constructor(
         val firstLibrary = current.libraries.firstOrNull { it.serverKind == provider }
         _libraryState.value = current.copy(
             selectedProvider = provider,
+            totalCount = null,
             selectedSourceRef = firstLibrary?.sourceRef,
             items = emptyList(),
             isLoading = firstLibrary != null,
@@ -429,6 +438,7 @@ class WatchlistViewModel @Inject constructor(
         librarySearchJob?.cancel()
         _libraryState.value = _libraryState.value.copy(
             selectedSourceRef = sourceRef,
+            totalCount = null,
             items = emptyList(),
             isLoadingMore = false,
             error = null
@@ -446,7 +456,7 @@ class WatchlistViewModel @Inject constructor(
         if (_libraryState.value.searchQuery == query) return
         libraryRequestId++
         libraryLoadJob?.cancel()
-        _libraryState.value = _libraryState.value.copy(searchQuery = query)
+        _libraryState.value = _libraryState.value.copy(searchQuery = query, totalCount = null)
         librarySearchJob?.cancel()
         librarySearchJob = viewModelScope.launch {
             delay(300L)
@@ -465,16 +475,20 @@ class WatchlistViewModel @Inject constructor(
     private fun loadLibraryFirstPage(force: Boolean = false) {
         val snapshot = _libraryState.value
         val sourceRef = snapshot.selectedSourceRef ?: return
+        val requestId = ++libraryRequestId
+        libraryLoadJob?.cancel()
         val cacheKey = libraryCacheKey(snapshot)
         val cached = libraryCache[cacheKey]
         if (cached != null && !force) {
             _libraryState.value = snapshot.copy(
-                items = cached.first,
-                hasMore = cached.second,
+                items = cached.items,
+                hasMore = cached.hasMore,
+                totalCount = cached.totalCount,
                 isLoading = false,
                 isLoadingMore = false,
                 error = null
             )
+            return
         } else {
             _libraryState.value = snapshot.copy(
                 isLoading = true,
@@ -482,8 +496,6 @@ class WatchlistViewModel @Inject constructor(
                 error = null
             )
         }
-        val requestId = ++libraryRequestId
-        libraryLoadJob?.cancel()
         libraryLoadJob = viewModelScope.launch {
             runCatching {
                 mediaRepository.loadHomeServerLibraryPage(
@@ -497,13 +509,17 @@ class WatchlistViewModel @Inject constructor(
                 if (requestId != libraryRequestId) return@onSuccess
                 val items = page.items.enrichWithPlaybackProgress()
                 if (requestId != libraryRequestId) return@onSuccess
-                libraryCache[cacheKey] = items to page.hasMore
+                libraryCache[cacheKey] = page.copy(items = items)
+                libraryOffsets[cacheKey] = page.nextOffset ?: page.items.size
                 while (libraryCache.size > LIBRARY_CACHE_ENTRY_LIMIT) {
-                    libraryCache.remove(libraryCache.keys.first())
+                    val oldest = libraryCache.keys.first()
+                    libraryCache.remove(oldest)
+                    libraryOffsets.remove(oldest)
                 }
                 _libraryState.value = _libraryState.value.copy(
                     items = items,
                     hasMore = page.hasMore,
+                    totalCount = page.totalCount,
                     isLoading = false,
                     isLoadingMore = false,
                     error = null
@@ -532,12 +548,13 @@ class WatchlistViewModel @Inject constructor(
         if (!snapshot.hasMore || snapshot.isLoading || snapshot.isLoadingMore) return
         val requestId = libraryRequestId
         val cacheKey = libraryCacheKey(snapshot)
+        val offset = libraryOffsets[cacheKey] ?: snapshot.items.size
         _libraryState.value = snapshot.copy(isLoadingMore = true)
         viewModelScope.launch {
             runCatching {
                 mediaRepository.loadHomeServerLibraryPage(
                     sourceRef = sourceRef,
-                    offset = snapshot.items.size,
+                    offset = offset,
                     limit = LIBRARY_PAGE_SIZE,
                     sort = snapshot.sort,
                     searchQuery = snapshot.searchQuery
@@ -553,18 +570,22 @@ class WatchlistViewModel @Inject constructor(
                 }.enrichWithPlaybackProgress()
                 if (requestId != libraryRequestId) return@onSuccess
                 val merged = current.items + fresh
+                val nextOffset = page.nextOffset ?: (offset + page.items.size)
+                val more = page.hasMore && nextOffset > offset
+                libraryOffsets[cacheKey] = nextOffset
                 _libraryState.value = current.copy(
                     items = merged,
-                    hasMore = page.hasMore,
+                    hasMore = more,
+                    totalCount = page.totalCount ?: current.totalCount,
                     isLoadingMore = false,
                     error = null
                 )
-                libraryCache[cacheKey] = merged to page.hasMore
+                libraryCache[cacheKey] = page.copy(items = merged, hasMore = more, totalCount = page.totalCount ?: current.totalCount)
                 fetchLogos(fresh.take(LIBRARY_LOGO_INITIAL_PREFETCH))
             }.onFailure {
                 if (it is CancellationException) throw it
                 if (requestId == libraryRequestId) {
-                    _libraryState.value = _libraryState.value.copy(isLoadingMore = false)
+                    _libraryState.value = _libraryState.value.copy(isLoadingMore = false, error = it.message ?: context.getString(R.string.homeserver_connection_failed))
                 }
             }
         }
@@ -689,13 +710,15 @@ class WatchlistViewModel @Inject constructor(
                 )
                 sourceLoadJob = viewModelScope.launch {
                     runCatching {
-                        mediaRepository.loadCustomCatalog(activeSource.config, maxItems = 120)
-                    }.onSuccess { category ->
-                        val items = (category?.items ?: emptyList()).enrichWithPlaybackProgress()
+                        mediaRepository.loadCustomCatalogPage(activeSource.config, offset = 0, limit = LIBRARY_PAGE_SIZE)
+                    }.onSuccess { page ->
+                        val items = page.items.enrichWithPlaybackProgress()
+                        sourcePageStates[cacheKey] = SourcePageState(hasMore = page.hasMore, nextOffset = page.nextOffset ?: page.items.size)
                         sourceItemsCache[cacheKey] = items
                         if (_uiState.value.selectedSourceId == activeSource.id) {
                             _uiState.value = _uiState.value.copy(
                                 isLoading = false,
+                                hasMore = page.hasMore,
                                 movies = items.filter { it.mediaType == MOVIE },
                                 series = items.filter { it.mediaType == TV },
                                 error = null
@@ -734,7 +757,7 @@ class WatchlistViewModel @Inject constructor(
                                 forceRefresh = forceRefresh
                             )
                         }
-                        hydrateTrackerItems(baseItems)
+                        baseItems.mapIndexed { index, item -> item.copy(sourceOrder = index) }
                     }.onSuccess { items ->
                         val enriched = items.enrichWithPlaybackProgress()
                         sourceItemsCache[cacheKey] = enriched
@@ -745,7 +768,18 @@ class WatchlistViewModel @Inject constructor(
                                 series = enriched.filter { it.mediaType == TV },
                                 error = null
                             )
-                            fetchLogos(enriched)
+                            fetchLogos(enriched.take(LIBRARY_LOGO_INITIAL_PREFETCH))
+                        }
+                        enriched.chunked(LIBRARY_PAGE_SIZE).forEach { batch ->
+                            val hydrated = hydrateTrackerItems(batch).associateBy(::watchlistLogoKey)
+                            val updated = sourceItemsCache[cacheKey].orEmpty().map { original ->
+                                hydrated[watchlistLogoKey(original)]?.copy(sourceOrder = original.sourceOrder,
+                                    progress = original.progress, isWatched = original.isWatched,
+                                    showPlaybackProgress = original.showPlaybackProgress) ?: original
+                            }
+                            sourceItemsCache[cacheKey] = updated
+                            if (_uiState.value.selectedSourceId == activeSource.id) _uiState.value = _uiState.value.copy(
+                                movies = updated.filter { it.mediaType == MOVIE }, series = updated.filter { it.mediaType == TV })
                         }
                     }.onFailure { error ->
                         if (_uiState.value.selectedSourceId == activeSource.id) {
@@ -805,7 +839,7 @@ class WatchlistViewModel @Inject constructor(
 
     private suspend fun hydrateTrackerItems(items: List<MediaItem>): List<MediaItem> = coroutineScope {
         val limiter = Semaphore(6)
-        items.take(TRACKER_LIST_ITEM_LIMIT).mapIndexed { index, item ->
+        items.mapIndexed { index, item ->
             async {
                 limiter.withPermit {
                     runCatching {
@@ -822,11 +856,12 @@ class WatchlistViewModel @Inject constructor(
     }
 
     fun loadMoreActiveSource() {
-        val activeSource = _uiState.value.selectedSource as? WatchlistSourceItem.HomeServer ?: return
+        val activeSource = _uiState.value.selectedSource
+        if (activeSource !is WatchlistSourceItem.HomeServer && activeSource !is WatchlistSourceItem.Catalog) return
         val cacheKey = activeSource.id
         val pageState = sourcePageStates[cacheKey] ?: return
         val currentItems = sourceItemsCache[cacheKey].orEmpty()
-        if (!pageState.hasMore || pageState.isLoadingMore || currentItems.isEmpty()) return
+        if (!pageState.hasMore || pageState.isLoadingMore) return
 
         sourcePageStates[cacheKey] = pageState.copy(isLoadingMore = true)
         if (_uiState.value.selectedSourceId == cacheKey) {
@@ -835,8 +870,9 @@ class WatchlistViewModel @Inject constructor(
         sourceLoadMoreJob?.cancel()
         sourceLoadMoreJob = viewModelScope.launch {
             runCatching {
-                mediaRepository.loadHomeServerLibraryPage(
-                    sourceRef = activeSource.candidate.sourceRef,
+                if (activeSource is WatchlistSourceItem.Catalog) mediaRepository.loadCustomCatalogPage(activeSource.config, pageState.nextOffset, LIBRARY_PAGE_SIZE)
+                else mediaRepository.loadHomeServerLibraryPage(
+                    sourceRef = (activeSource as WatchlistSourceItem.HomeServer).candidate.sourceRef,
                     offset = pageState.nextOffset,
                     limit = LIBRARY_PAGE_SIZE,
                     sort = HomeServerLibrarySort.RECENTLY_ADDED
@@ -851,24 +887,26 @@ class WatchlistViewModel @Inject constructor(
                 val mergedItems = currentItems + freshItems
                 sourceItemsCache[cacheKey] = mergedItems
                 sourcePageStates[cacheKey] = SourcePageState(
-                    hasMore = page.hasMore && page.items.isNotEmpty(),
-                    nextOffset = pageState.nextOffset + page.items.size
+                    hasMore = page.hasMore && (page.nextOffset ?: (pageState.nextOffset + page.items.size)) > pageState.nextOffset,
+                    nextOffset = page.nextOffset ?: (pageState.nextOffset + page.items.size)
                 )
                 if (_uiState.value.selectedSourceId == cacheKey) {
                     _uiState.value = _uiState.value.copy(
                         movies = mergedItems.filter { it.mediaType == MOVIE },
                         series = mergedItems.filter { it.mediaType == TV },
-                        hasMore = page.hasMore && page.items.isNotEmpty(),
+                        hasMore = page.hasMore && (page.nextOffset ?: (pageState.nextOffset + page.items.size)) > pageState.nextOffset,
                         isLoadingMore = false,
                         error = null
                     )
                     fetchLogos(freshItems.take(LIBRARY_LOGO_INITIAL_PREFETCH))
                 }
             }.onFailure { error ->
+                if (error is CancellationException) throw error
                 sourcePageStates[cacheKey] = pageState.copy(isLoadingMore = false)
                 if (_uiState.value.selectedSourceId == cacheKey) {
                     _uiState.value = _uiState.value.copy(
                         isLoadingMore = false,
+                        error = error.message ?: context.getString(R.string.homeserver_connection_failed),
                         toastMessage = error.message ?: context.getString(R.string.homeserver_connection_failed),
                         toastType = ToastType.ERROR
                     )
@@ -909,40 +947,36 @@ class WatchlistViewModel @Inject constructor(
         }.getOrDefault(this)
     }
 
-    private fun fetchLogos(items: List<MediaItem>) {
-        viewModelScope.launch {
-            val pending = items
-                .distinctBy(::watchlistLogoKey)
-                .filter { item ->
-                    val key = watchlistLogoKey(item)
-                    key !in _logoUrls.value && logoRequestsInFlight.add(key)
-                }
-            if (pending.isEmpty()) return@launch
+    private fun fetchLogos(items: List<MediaItem>) = prefetchLogos(items.take(LIBRARY_LOGO_INITIAL_PREFETCH))
 
-            val limiter = Semaphore(5)
-            val resolved = try {
-                coroutineScope {
-                    pending.map { item ->
-                        async {
-                            limiter.withPermit {
-                                watchlistLogoKey(item) to runCatching {
-                                    mediaRepository.getLogoUrl(item)
-                                }.getOrNull()
-                            }
-                        }
-                    }.awaitAll()
+    fun prefetchLogos(items: List<MediaItem>) {
+        items.distinctBy(::watchlistLogoKey).forEach { item ->
+            val key = watchlistLogoKey(item)
+            if (key in _logoUrls.value || !logoRequestsInFlight.add(key)) return@forEach
+            viewModelScope.launch {
+                try {
+                    val url = logoPermits.withPermit { mediaRepository.getLogoUrl(item) }
+                    if (url != null) {
+                        _logoUrls.value = _logoUrls.value + (key to url)
+                        val density = context.resources.displayMetrics.density
+                        val width = (220 * density).toInt().coerceAtLeast(1)
+                        val height = (64 * density).toInt().coerceAtLeast(1)
+                        context.imageLoader.enqueue(ImageRequest.Builder(context).data(url)
+                            .size(width, height).precision(Precision.INEXACT).allowHardware(true)
+                            .memoryCacheKey("$url|${width}x$height").build())
+                    }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    // Transient failures remain retryable on the next viewport visit.
+                } finally {
+                    logoRequestsInFlight.remove(key)
                 }
-            } finally {
-                pending.forEach { logoRequestsInFlight.remove(watchlistLogoKey(it)) }
-            }
-            val found = resolved.mapNotNull { (key, url) -> url?.let { key to it } }.toMap()
-            if (found.isNotEmpty()) {
-                _logoUrls.value = _logoUrls.value + found
             }
         }
     }
 
-    fun ensureLogo(item: MediaItem) = fetchLogos(listOf(item))
+    fun ensureLogo(item: MediaItem) = prefetchLogos(listOf(item))
 
     private val previewPermits = Semaphore(2)
 
@@ -1312,7 +1346,6 @@ class WatchlistViewModel @Inject constructor(
         private const val LIBRARY_PAGE_SIZE = 60
         private const val LIBRARY_LOGO_INITIAL_PREFETCH = 12
         private const val LIBRARY_CACHE_ENTRY_LIMIT = 12
-        private const val TRACKER_LIST_ITEM_LIMIT = 240
         private const val TRAKT_WATCHLIST_KEY = "__watchlist__"
         // The status keys stay English so the Simkl API calls keep working;
         // only the rendered list title is localized.

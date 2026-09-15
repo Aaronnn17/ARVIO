@@ -31,7 +31,10 @@ class SimklScrobbler @Inject constructor(
         val action: Action,
         val authHeader: String,
         val body: SimklScrobbleBody,
-        val tmdbId: Int
+        val mediaType: MediaType,
+        val tmdbId: Int,
+        val season: Int? = null,
+        val episode: Int? = null
     )
 
     private companion object {
@@ -64,7 +67,7 @@ class SimklScrobbler @Inject constructor(
         val authHeader = "Bearer $token"
         val body = buildScrobbleBody(mediaType, tmdbId, progress, season, episode, isAnime)
 
-        submit(Command(Action.START, authHeader, body, tmdbId))
+        submit(Command(Action.START, authHeader, body, mediaType, tmdbId, season, episode))
     }
 
     suspend fun scrobblePause(
@@ -79,7 +82,7 @@ class SimklScrobbler @Inject constructor(
         val authHeader = "Bearer $token"
         val body = buildScrobbleBody(mediaType, tmdbId, progress, season, episode, isAnime)
 
-        submit(Command(Action.PAUSE, authHeader, body, tmdbId))
+        submit(Command(Action.PAUSE, authHeader, body, mediaType, tmdbId, season, episode))
     }
 
     suspend fun scrobbleStop(
@@ -94,7 +97,16 @@ class SimklScrobbler @Inject constructor(
         val authHeader = "Bearer $token"
         val body = buildScrobbleBody(mediaType, tmdbId, progress, season, episode, isAnime)
 
-        submit(Command(Action.STOP, authHeader, body, tmdbId))
+        submit(Command(Action.STOP, authHeader, body, mediaType, tmdbId, season, episode))
+    }
+
+    private fun isSameMedia(a: Command, b: Command): Boolean {
+        if (a.mediaType != b.mediaType || a.tmdbId != b.tmdbId) return false
+        return if (a.mediaType == MediaType.TV) {
+            a.season == b.season && a.episode == b.episode
+        } else {
+            true
+        }
     }
 
     private suspend fun submit(command: Command) {
@@ -111,7 +123,13 @@ class SimklScrobbler @Inject constructor(
                 lastWriteAt = now
                 immediate = command
             } else {
-                commandQueue.addLast(command)
+                val tail = commandQueue.lastOrNull()
+                if (tail != null && isSameMedia(tail, command) && tail.action != Action.STOP && command.action != Action.STOP) {
+                    commandQueue.removeLast()
+                    commandQueue.addLast(command)
+                } else {
+                    commandQueue.addLast(command)
+                }
                 ensureWorkerLocked()
             }
         }

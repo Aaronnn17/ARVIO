@@ -30,6 +30,75 @@ import org.junit.Test
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class DiscoverGridTest {
+    @Test fun fullyWatchedBatchOffersExplicitContinuationInsteadOfFalseEnd() = runBlocking {
+        every { trakt.getWatchedMoviesFromCache() } returns setOf(1)
+        var calls = 0
+        coEvery {
+            repository.discoverMovies(genres = any(), page = any(), sortBy = any(), minVoteCount = any(), language = any(), year = any(), keywords = any(), releaseDateLte = any(), releaseDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), certificationCountry = any(), certificationLte = any())
+        } coAnswers {
+            calls++
+            if (arg<Int>(3) <= 5) listOf(movie(1)) else listOf(movie(2))
+        }
+        model.setHideWatched(true)
+        val paused = withTimeout(5_000) { model.uiState.first { it.gridScanPaused } }
+        assertTrue(paused.discoverGridItems.isEmpty())
+        assertFalse(paused.gridEndReached)
+        val before = calls
+        model.loadMoreDiscoverGrid()
+        assertEquals(before, calls)
+        model.retryDiscoverGrid()
+        val continued = withTimeout(5_000) { model.uiState.first { it.discoverGridItems.isNotEmpty() } }
+        assertEquals(listOf(2), continued.discoverGridItems.map { it.id })
+        assertFalse(continued.gridScanPaused)
+    }
+
+    @Test fun failedPageWaitsForExplicitRetryAndKeepsExistingTitles() = runBlocking {
+        var attempts = 0
+        coEvery {
+            repository.discoverMovies(genres = "28", page = any(), sortBy = any(), minVoteCount = any(), language = any(), year = any(), keywords = any(), releaseDateLte = any(), releaseDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), certificationCountry = any(), certificationLte = any())
+        } coAnswers {
+            if (arg<Int>(3) == 1) listOf(movie(1))
+            else if (++attempts == 1) throw java.io.IOException("offline")
+            else listOf(movie(2), movie(2))
+        }
+        model.toggleGenre(action)
+        withTimeout(5_000) { model.uiState.first { it.discoverGridItems.size == 1 } }
+        model.loadMoreDiscoverGrid()
+        val failed = withTimeout(5_000) { model.uiState.first { it.gridLoadFailed } }
+        assertFalse(failed.gridEndReached)
+        assertEquals(listOf(1), failed.discoverGridItems.map { it.id })
+        model.loadMoreDiscoverGrid()
+        assertEquals(1, attempts)
+        model.retryDiscoverGrid()
+        val retried = withTimeout(5_000) { model.uiState.first { it.discoverGridItems.size == 2 } }
+        assertEquals(listOf(1, 2), retried.discoverGridItems.map { it.id })
+        assertFalse(retried.gridLoadFailed)
+        assertEquals(2, attempts)
+    }
+
+    @Test fun changingFiltersCancelsTheInFlightNextPage() = runBlocking {
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val cancelled = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery {
+            repository.discoverMovies(genres = "28", page = any(), sortBy = any(), minVoteCount = any(), language = any(), year = any(), keywords = any(), releaseDateLte = any(), releaseDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), certificationCountry = any(), certificationLte = any())
+        } coAnswers {
+            if (arg<Int>(3) == 1) listOf(movie(1)) else {
+                started.complete(Unit)
+                try { kotlinx.coroutines.awaitCancellation() }
+                finally { cancelled.complete(Unit) }
+            }
+        }
+        model.toggleGenre(action)
+        withTimeout(5_000) { model.uiState.first { it.discoverGridItems.size == 1 } }
+        model.loadMoreDiscoverGrid()
+        withTimeout(5_000) { started.await() }
+        model.clearDiscoverFilters()
+        model.toggleGenre(action)
+        withTimeout(5_000) { cancelled.await() }
+        val refreshed = withTimeout(5_000) { model.uiState.first { !it.isGridLoading && it.discoverGridItems.isNotEmpty() } }
+        assertEquals(listOf(1), refreshed.discoverGridItems.map { it.id })
+    }
+
     private val repository = mockk<MediaRepository>(relaxed = true)
     private val trakt = mockk<TraktRepository>(relaxed = true)
     private val store = ViewModelStore()

@@ -325,6 +325,7 @@ class PlayerViewModel @Inject constructor(
     private var lastWatchHistorySavedPositionSeconds: Long = -1L
     private var lastIsPlaying: Boolean = false
     private var hasMarkedWatched: Boolean = false
+    private var hasScrobbledIntermediateStop: Boolean = false
     private var hasManualSubtitleSelection: Boolean = false
     // True only when the user explicitly picked a subtitle track from the menu (not AI/auto-match).
     // A late-arriving embedded preferred-language track overrides auto selections but never this.
@@ -639,6 +640,7 @@ class PlayerViewModel @Inject constructor(
         )
         currentEpisodeTitle = null
         hasMarkedWatched = false
+        hasScrobbledIntermediateStop = false
         lastIsPlaying = false
         lastScrobbleTime = 0
         lastWatchHistorySaveTime = 0
@@ -936,7 +938,7 @@ class PlayerViewModel @Inject constructor(
                             imdbId = currentImdbId,
                             seasonNumber = seasonNumber,
                             episodeNumber = episodeNumber,
-                            timeoutMs = 5_000L
+                            timeoutMs = 20_000L
                         )
                     }.onFailure(childFailed("homeServerAppend"))
                 }
@@ -1106,7 +1108,7 @@ class PlayerViewModel @Inject constructor(
                         imdbId = imdbId,
                         seasonNumber = seasonNumber,
                         episodeNumber = episodeNumber,
-                        timeoutMs = 5_000L
+                        timeoutMs = 20_000L
                     )
                 }
                 vodAppendJob?.cancel()
@@ -5754,6 +5756,7 @@ class PlayerViewModel @Inject constructor(
 
             // Scrobble start/pause/updates with debounce
             if (!isLiveStreamOrSports && isPlaying && !lastIsPlaying) {
+                hasScrobbledIntermediateStop = false
                 try {
                     remoteSyncManager.scrobbleStart(
                         mediaType = currentMediaType,
@@ -5771,7 +5774,8 @@ class PlayerViewModel @Inject constructor(
                 lastScrobbleTime = currentTime
             } else if (!isLiveStreamOrSports && !isPlaying && lastIsPlaying) {
                 try {
-                    if (progressPercent >= 80 && !hasMarkedWatched) {
+                    if (progressPercent in 80 until Constants.WATCHED_THRESHOLD && !hasScrobbledIntermediateStop && !hasMarkedWatched) {
+                        hasScrobbledIntermediateStop = true
                         remoteSyncManager.scrobbleStop(
                             mediaType = currentMediaType,
                             tmdbId = currentMediaId,
