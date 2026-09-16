@@ -2,10 +2,15 @@ package com.arflix.tv.ui.screens.tv.live
 
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -44,7 +49,7 @@ class FullscreenSourcesDialogTest {
         var selected: String? = null
         compose.setContent {
             CompositionLocalProvider(LocalDeviceType provides deviceType) {
-                if (open.value) FullscreenSourcesDialog(current, variants.value, loading.value, failed.value,
+                if (open.value) SourcesPanel(current, variants.value, loading.value, failed.value,
                     { open.value = false }, { selected = it.id; open.value = false })
             }
         }
@@ -62,7 +67,7 @@ class FullscreenSourcesDialogTest {
         val loading = mutableStateOf(true)
         var selected: String? = null
         compose.setContent {
-            FullscreenSourcesDialog(current, listOf(current, backup), loading.value, false, {}, { selected = it.id })
+            SourcesPanel(current, listOf(current, backup), loading.value, false, {}, { selected = it.id })
         }
         compose.onNodeWithText(compose.activity.getString(android.R.string.cancel)).assertIsFocused()
         compose.runOnIdle { loading.value = false }
@@ -75,7 +80,7 @@ class FullscreenSourcesDialogTest {
     @Test fun backDismissesAnEmptySelector() {
         var dismissals = 0
         compose.setContent {
-            FullscreenSourcesDialog(current, listOf(current), false, false, { dismissals++ }, {})
+            SourcesPanel(current, listOf(current), false, false, { dismissals++ }, {})
         }
         compose.onNodeWithText(compose.activity.getString(android.R.string.cancel)).assertIsFocused()
         Espresso.pressBack()
@@ -85,10 +90,61 @@ class FullscreenSourcesDialogTest {
     @Test fun failedLookupCanBeClosedWithTheRemote() {
         var dismissals = 0
         compose.setContent {
-            FullscreenSourcesDialog(current, emptyList(), false, true, { dismissals++ }, {})
+            SourcesPanel(current, emptyList(), false, true, { dismissals++ }, {})
         }
+        compose.onNodeWithText(compose.activity.getString(com.arflix.tv.R.string.live_sources_failed)).assertIsDisplayed()
         compose.onNodeWithText(compose.activity.getString(android.R.string.cancel))
             .assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
         compose.runOnIdle { assertEquals(1, dismissals) }
     }
+
+    @Test fun selectedSourceOffScreenIsScrolledIntoViewAndFocused() {
+        val alternatives = (1..20).map { index ->
+            IptvChannel(id = "p:$index", name = "Source $index", group = "News", streamUrl = "https://example.invalid/$index")
+                .enrichForFastStartup(index)
+        }
+        var selected: String? = null
+        compose.setContent {
+            SourcesPanel(alternatives.last(), alternatives, false, false, {}, { selected = it.id })
+        }
+        compose.onNode(hasText("Source 20") and hasClickAction()).assertIsDisplayed().assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionUp) }
+        compose.onNodeWithText("Source 19").assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.runOnIdle { assertEquals("p:19", selected) }
+    }
+
+    @Test fun sourceNavigationDoesNotReachUnderlyingPlayerHandlers() {
+        var playerKeys = 0
+        var selected: String? = null
+        compose.setContent {
+            Box(Modifier.onPreviewKeyEvent { playerKeys++; true }) {
+                SourcesPanel(current, listOf(current, backup), false, false, {}, { selected = it.id })
+            }
+        }
+        compose.onNode(hasText("News HD") and hasClickAction()).assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionDown) }
+        compose.onNodeWithText("News SD").assertIsFocused().performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.runOnIdle {
+            assertEquals(backup.id, selected)
+            assertEquals(0, playerKeys)
+        }
+    }
 }
+
+@Composable
+private fun SourcesPanel(
+    channel: EnrichedChannel,
+    variants: List<EnrichedChannel>,
+    loading: Boolean,
+    failed: Boolean,
+    onDismiss: () -> Unit,
+    onPick: (EnrichedChannel) -> Unit,
+) = FullscreenSourcesOverlay(
+    visible = true,
+    isLoading = loading,
+    failed = failed,
+    currentChannel = channel,
+    variants = variants,
+    onPick = onPick,
+    onDismiss = onDismiss,
+)
