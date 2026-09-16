@@ -14,8 +14,8 @@ package com.arflix.tv.ui.screens.search
  * comes up) but never asked about — this function is the question that was missing. Every door
  * into typing mode goes through it.
  */
-internal fun startsSearchEditing(nowMs: Long, suppressSelectUntilMs: Long): Boolean =
-    nowMs >= suppressSelectUntilMs
+internal fun startsSearchEditing(nowMs: Long, suppressSelectUntilMs: Long, repeatCount: Int = 0): Boolean =
+    repeatCount == 0 && nowMs >= suppressSelectUntilMs
 
 /**
  * How long after entering the screen a select press is taken for the one that opened it.

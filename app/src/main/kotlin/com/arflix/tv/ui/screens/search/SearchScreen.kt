@@ -361,8 +361,8 @@ fun SearchScreen(
     // Every door into typing mode goes through here: the D-pad handler below, select on the
     // search bar itself, and its click. A press that still belongs to the one that OPENED this
     // screen is dropped — see SearchEditingEntry.kt for what it does to the screen otherwise.
-    fun startSearchEditing() {
-        if (!startsSearchEditing(SystemClock.elapsedRealtime(), suppressSelectUntilMs)) return
+    fun startSearchEditing(repeatCount: Int = 0) {
+        if (!startsSearchEditing(SystemClock.elapsedRealtime(), suppressSelectUntilMs, repeatCount)) return
         focusZone = FocusZone.SEARCH_INPUT
         isSearchEditing = true
         searchEditRequestNonce++
@@ -689,7 +689,7 @@ fun SearchScreen(
                             true
                         }
                         FocusZone.SEARCH_INPUT -> {
-                            startSearchEditing()
+                            startSearchEditing(event.nativeKeyEvent.repeatCount)
                             true
                         }
                         FocusZone.FILTERS -> {
@@ -769,7 +769,7 @@ fun SearchScreen(
                         }
                     },
                     onFocusLost = { isSearchInputFocused = false },
-                    onStartEditing = { startSearchEditing() },
+                    onStartEditing = { repeatCount -> startSearchEditing(repeatCount) },
                     onMoveUp = {
                         isSearchEditing = false
                         keyboardController?.hide()
@@ -937,7 +937,7 @@ private fun SearchInputBar(
     onSearch: () -> Unit,
     onFocused: () -> Unit,
     onFocusLost: () -> Unit,
-    onStartEditing: () -> Unit,
+    onStartEditing: (Int) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit
 ) {
@@ -983,7 +983,7 @@ private fun SearchInputBar(
                 when (event.key) {
                     Key.DirectionUp -> { onMoveUp(); true }
                     Key.DirectionDown -> { onMoveDown(); true }
-                    Key.Enter, Key.DirectionCenter -> { onStartEditing(); true }
+                    Key.Enter, Key.DirectionCenter -> { onStartEditing(event.nativeKeyEvent.repeatCount); true }
                     else -> false
                 }
             }
@@ -998,7 +998,7 @@ private fun SearchInputBar(
         pressedScale = 0.985f,
         useSystemFocusForVisuals = false,
         isFocusedOverride = isFocused,
-        onClick = onStartEditing,
+        onClick = { onStartEditing(0) },
         onFocusChanged = { if (it) onFocused() else onFocusLost() }
     ) {
         Row(

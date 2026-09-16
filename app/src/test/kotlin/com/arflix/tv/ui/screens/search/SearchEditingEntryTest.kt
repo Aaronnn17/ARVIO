@@ -76,6 +76,16 @@ class SearchEditingEntryTest {
         assertFalse(startsSearchEditing(windowEndsMs - 1, windowEndsMs))
         assertTrue(startsSearchEditing(windowEndsMs, windowEndsMs))
     }
+
+    @Test fun heldOpeningSelectRemainsSuppressedAfterTheTimeWindow() {
+        assertFalse(startsSearchEditing(windowEndsMs + 1000, windowEndsMs, repeatCount = 1))
+        assertFalse(startsSearchEditing(windowEndsMs + 5000, windowEndsMs, repeatCount = 20))
+    }
+
+    @Test fun releasingAndPressingSelectAgainCanStartEditing() {
+        assertFalse(startsSearchEditing(windowEndsMs + 1000, windowEndsMs, repeatCount = 3))
+        assertTrue(startsSearchEditing(windowEndsMs + 1100, windowEndsMs, repeatCount = 0))
+    }
 }
 
 /**
