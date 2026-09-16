@@ -283,6 +283,24 @@ class DiscoverGridTest {
         assertFalse(state.gridEndReached)
     }
 
+    @Test fun theResetChipComesWithTheGridAndLeavesWithIt() = runBlocking {
+        // The whole round trip the chip goes through, on the state the row is built from: it is
+        // not in the row while nothing is set, it is there once a filter is, and one press later
+        // both the filter and the chip itself are gone again.
+        assertFalse(showsClearChip(model.uiState.value))
+
+        model.toggleGenre(action)
+        model.setHideWatched(true)
+        withTimeout(5_000) { model.uiState.first { showsClearChip(it) } }
+
+        model.clearDiscoverFilters()
+        val state = withTimeout(5_000) { model.uiState.first { !showsClearChip(it) } }
+
+        assertFalse(state.hasDiscoverFilters)
+        assertTrue(state.selectedGenres.isEmpty())
+        assertFalse(state.hideWatched)
+    }
+
     @Test fun clearingEveryFilterBringsTheRowsBackInOneStep() = runBlocking {
         model.toggleGenre(action)
         // The decade belongs in here: a filter the reset forgets leaves the screen on the grid

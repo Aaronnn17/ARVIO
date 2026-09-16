@@ -257,6 +257,37 @@ class DiscoverFiltersTest {
         assertEquals("80", decadeLabelNumber(1980))
     }
 
+    // ── The reset chip: when it is there, and where the frame goes ──────
+
+    @Test fun theResetChipStaysAwayWhileThereIsNothingToReset() {
+        assertFalse(showsClearChip(SearchUiState()))
+    }
+
+    @Test fun theResetChipAppearsAsSoonAsOneFilterIsSet() {
+        assertTrue(showsClearChip(SearchUiState(selectedGenres = listOf(action))))
+        assertTrue(showsClearChip(SearchUiState(decade = Decade(2000, 2009))))
+        assertTrue(showsClearChip(SearchUiState(year = 2001)))
+        assertTrue(showsClearChip(SearchUiState(rating = RatingFilter(min = 7.0))))
+        assertTrue(showsClearChip(SearchUiState(certification = "16")))
+        assertTrue(showsClearChip(SearchUiState(hideWatched = true)))
+    }
+
+    @Test fun theTwoThingsThatAreAlwaysSetDoNotBringTheResetChip() {
+        // The media type and the sort order are never off, so a reset chip next to them would
+        // never leave the row again — and pressing it would change nothing.
+        assertFalse(showsClearChip(SearchUiState(selectedType = DiscoverType.TV_SHOWS)))
+        assertFalse(showsClearChip(SearchUiState(sortOption = SortOption.TOP_RATED)))
+    }
+
+    @Test fun pressingTheResetChipMovesTheFrameOntoTheLastRemainingChip() {
+        // Eight chips, the frame on the eighth: after the press there are seven, so index 6.
+        assertEquals(6, focusAfterClearChip(7))
+    }
+
+    @Test fun theFrameNeverStepsOutOfTheRowToTheLeftEither() {
+        assertEquals(0, focusAfterClearChip(0))
+    }
+
     // ── The release window behind a decade ──────────────────────────────
 
     private val today = "2026-09-14"

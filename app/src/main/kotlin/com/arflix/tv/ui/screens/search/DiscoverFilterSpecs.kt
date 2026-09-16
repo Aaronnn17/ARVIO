@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.search
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.FilterAltOff
 import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.StarBorder
@@ -33,6 +34,7 @@ internal data class DiscoverFilterActions(
     val onSelectYear: (Int?) -> Unit,
     val onSelectCertification: (String?) -> Unit,
     val onToggleHideWatched: () -> Unit,
+    val onClearFilters: () -> Unit,
     val onOpenPanel: (DiscoverFilterId) -> Unit
 )
 
@@ -73,7 +75,11 @@ internal fun SortOption.localizedLabel(): String = stringResource(
 )
 
 /**
- * The seven chips of the approved design, in its order.
+ * The seven chips of the approved design, in its order, plus the reset chip behind them.
+ *
+ * The reset chip is the one entry that comes and goes: it joins the row once a filter is set and
+ * leaves again the moment it has cleared them, which is why it is added last and conditionally
+ * rather than sitting in the fixed list ([showsClearChip]).
  *
  * The draft also shows a shortened row while the user is typing — media type and year, the only
  * two filters TMDB's search endpoints accept. That row is not built here, and the reason is
@@ -87,15 +93,16 @@ internal fun discoverChips(
     state: SearchUiState,
     certifications: List<String>,
     actions: DiscoverFilterActions
-): List<DiscoverChip> = listOf(
-    typeChip(state, actions),
-    genreChip(state, actions),
-    sortChip(state, actions),
-    ratingChip(state, actions),
-    yearChip(state, actions),
-    certificationChip(state, certifications, actions),
-    hideWatchedChip(state, actions)
-)
+): List<DiscoverChip> = buildList {
+    add(typeChip(state, actions))
+    add(genreChip(state, actions))
+    add(sortChip(state, actions))
+    add(ratingChip(state, actions))
+    add(yearChip(state, actions))
+    add(certificationChip(state, certifications, actions))
+    add(hideWatchedChip(state, actions))
+    if (showsClearChip(state)) add(clearChip(actions))
+}
 
 /** The three media types the app knows, in the order the row shows them. */
 private val TYPES = listOf(DiscoverType.MOVIES, DiscoverType.TV_SHOWS, DiscoverType.ANIME)
@@ -232,6 +239,25 @@ private fun hideWatchedChip(state: SearchUiState, actions: DiscoverFilterActions
     onActivate = actions.onToggleHideWatched
 )
 
+/**
+ * The eighth chip: one press and every filter is off again.
+ *
+ * It is not a filter itself, so it never wears the white "this narrows the list" colour — that
+ * colour has to keep meaning one thing — and it opens nothing, so it carries no chevron either.
+ * The media type survives the press on purpose; it is always set and therefore not a filter
+ * (the reason is written out on [SearchViewModel.clearDiscoverFilters]).
+ */
+@Composable
+private fun clearChip(actions: DiscoverFilterActions) = DiscoverChip(
+    id = DiscoverFilterId.CLEAR,
+    key = "clear",
+    label = stringResource(R.string.search_filter_clear),
+    icon = Icons.Default.FilterAltOff,
+    hasPanel = false,
+    isSet = false,
+    onActivate = actions.onClearFilters
+)
+
 /** The panel that belongs to [id], or `null` for a chip that is a plain switch. */
 @Composable
 internal fun filterPanelSpec(
@@ -248,6 +274,8 @@ internal fun filterPanelSpec(
     DiscoverFilterId.YEAR -> yearPanel(state, actions)
     DiscoverFilterId.CERTIFICATION -> certificationPanel(state, certifications, actions)
     DiscoverFilterId.HIDE_WATCHED -> null
+    // The reset chip acts on the press itself; there is nothing to choose behind it.
+    DiscoverFilterId.CLEAR -> null
 }
 
 @Composable
