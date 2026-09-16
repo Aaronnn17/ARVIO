@@ -7,6 +7,7 @@ const ts = require('typescript');
 const { load, storage } = require('./load.cjs');
 
 const cw = load('lib/continueWatching.ts');
+const availability = load('lib/episodeAvailability.ts');
 const flush = () => new Promise(setImmediate);
 const before = Date.parse('2026-09-08T10:00:00Z');
 const after = '2026-09-08T11:00:00Z';
@@ -57,6 +58,8 @@ function harness(options = {}) {
   const tracker = { setProfile() {}, isConnected: true, hiddenProgressShowIds: async () => new Set(), continueWatchingActivity: options.activity ?? (async () => null) };
   const noop = () => {};
   const globals = {
+    episodeAvailabilityKey: availability.episodeAvailabilityKey,
+    validateContinueWatchingEpisodes: availability.createEpisodeValidator(options.episodeLookup ?? (async () => ({ exists: true, airDate: '2020-01-01' }))),
     ...cw, activeProfileId: 'a', activeProfileIdRef: { current: 'a' },
     authClient: { session: null }, refreshKeyRef: { current: null }, refreshGenerationRef: { current: 0 },
     refreshInFlightRef: { current: null }, cwSourceRef: { current: initial.length ? 'seed' : 'none' },
@@ -86,6 +89,30 @@ function harness(options = {}) {
   globals.mergeTraktWithLocalResume = extracted('mergeTraktWithLocalResume', {});
   return { state, cache, calls, globals, refresh: extracted('refreshData', globals) };
 }
+
+test('missing paused episode cannot suppress a valid next episode', async () => {
+  const invalid = { ...episode, episodeNumber: 7 };
+  const valid = { ...episode, episodeNumber: 6, badge: 'Up Next' };
+  const h = harness({ initial: [invalid], playback: [invalid], watched: async () => [],
+    episodeLookup: async item => ({ exists: item.episodeNumber !== 7, airDate: '2020-01-01' }),
+    progress: async () => ({ items: [valid], fetchFailures: 0 }) });
+  await h.refresh();
+  assert.deepEqual(h.state.errors, []);
+  assert.equal(h.state.cw.length, 1);
+  assert.equal(h.state.cw[0].episodeNumber, 6);
+});
+
+test('partial progress failure cannot resurrect a confirmed nonexistent cached episode', async () => {
+  const invalid = { ...episode, episodeNumber: 7, badge: 'Up Next' };
+  const h = harness({ initial: [invalid], playback: [invalid], watched: async () => [],
+    episodeLookup: async () => ({ exists: false }),
+    progress: async () => ({ items: [], fetchFailures: 1 }) });
+  await h.refresh();
+  assert.deepEqual(h.state.errors, []);
+  assert.equal(h.state.cw.length, 0);
+  assert.equal(h.state.categories.length, 0);
+  assert.equal((h.cache.get('cw:a') ?? []).length, 0);
+});
 
 test('TV completion removes saved movie and episode from state, home rail and disk before slow progress resolves', async () => {
   const progress = deferred();

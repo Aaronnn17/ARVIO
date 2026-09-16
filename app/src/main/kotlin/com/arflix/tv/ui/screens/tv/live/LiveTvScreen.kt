@@ -21,8 +21,19 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.clickable
@@ -1658,7 +1669,7 @@ fun LiveTvScreen(
             sportsMetadataLoading = true
             try {
             var metadata = viewModel.cachedSportsMetadata()
-            var addonArtwork = sportsArtwork.filter { it.source != "TheSportsDB" }
+            var addonArtwork = sportsArtwork.filter { !it.isScheduleMetadata }
             sportsArtwork = metadata + addonArtwork
             kotlinx.coroutines.coroutineScope {
                 launch { metadata = viewModel.loadSportsMetadata(); sportsArtwork = metadata + addonArtwork }
@@ -1944,7 +1955,11 @@ fun LiveTvScreen(
                 val candidates = viewModel.iptvRepository.pagedChannelVariants(targetId)
                     .mapIndexed { index, source -> source.enrichForFastStartup(index + 1) }
                     .filterNot { isRestrictedPlaylistGroup(it, hiddenGroupSet + restrictedGroupSet) }
-                (listOf(channel) + candidates).distinctBy { it.id }
+
+                // If the database already returns the channel, we use its natural order.
+                // We'll only force it if, for some strange reason, it doesn't appear in the results.
+                val baseList = if (candidates.any { it.id == channel.id }) candidates else listOf(channel) + candidates
+                baseList.distinctBy { it.id }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
@@ -2725,11 +2740,7 @@ fun LiveTvScreen(
     DisposableEffect(exoPlayer, iptvHttpClient) {
         onDispose {
             exoPlayer.release()
-            playbackConnections.cancelAll()
-            iptvHttpClient.dispatcher.cancelAll()
-            CoroutineScope(Dispatchers.IO).launch {
-                runCatching { iptvHttpClient.connectionPool.evictAll() }
-            }
+            playbackConnections.cancelAllAsync(iptvHttpClient)
         }
     }
 
@@ -2778,11 +2789,7 @@ fun LiveTvScreen(
         LiveTvPlaybackSession(exoPlayer) {
             pendingPlaybackRetry?.cancel()
             pendingPlaybackRetry = null
-            playbackConnections.cancelAll()
-            iptvHttpClient.dispatcher.cancelAll()
-            CoroutineScope(Dispatchers.IO).launch {
-                runCatching { iptvHttpClient.connectionPool.evictAll() }
-            }
+            playbackConnections.cancelAllAsync(iptvHttpClient)
         }
     }
     val sportsHiddenPlayback by rememberUpdatedState(sportsSelected && !isFullScreen)
@@ -4381,29 +4388,28 @@ fun LiveTvScreen(
         }
 
         if (!searchOpen) {
-            sourcesChannel?.let { channel ->
-                FullscreenSourcesDialog(
-                    channel = channel,
-                    variants = sourcesVariants,
-                    loading = sourcesLoading,
-                    failed = sourcesFailed,
-                    onDismiss = {
-                        sourcesChannel = null
-                        hudPokeSignal++
-                    },
-                    onPick = { variant ->
-                        sourcesChannel = null
-                        if (variant.id != playingChannelId) {
-                            retainedPlayingChannel = variant
-                            playingChannelId = variant.id
-                            epgPrefetchAnchorId = variant.id
-                            playingCatchupProgram = null
-                            catchupPlaybackOffsetMs = 0L
-                        }
-                        hudPokeSignal++
-                    },
-                )
-            }
+            FullscreenSourcesOverlay(
+                visible = isFullScreen && sourcesChannel != null,
+                isLoading = sourcesLoading,
+                failed = sourcesFailed,
+                currentChannel = sourcesChannel,
+                variants = sourcesVariants,
+                onPick = { variant ->
+                    sourcesChannel = null
+                    if (variant.id != playingChannelId) {
+                        retainedPlayingChannel = variant
+                        playingChannelId = variant.id
+                        epgPrefetchAnchorId = variant.id
+                        playingCatchupProgram = null
+                        catchupPlaybackOffsetMs = 0L
+                    }
+                    hudPokeSignal++
+                },
+                onDismiss = {
+                    sourcesChannel = null
+                    hudPokeSignal++
+                }
+            )
             val pickerChannel = variantPickerChannel
             VariantPickerOverlay(
                 channel = pickerChannel,
@@ -4750,3 +4756,158 @@ internal data class ProgramActionData(
     val channel: EnrichedChannel,
     val program: IptvProgram,
 )
+
+@Composable
+fun FullscreenSourcesOverlay(
+    visible: Boolean,
+    isLoading: Boolean,
+    failed: Boolean,
+    currentChannel: EnrichedChannel?,
+    variants: List<EnrichedChannel>,
+    onPick: (EnrichedChannel) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val transition = remember { MutableTransitionState(false) }
+    transition.targetState = visible
+    if (!transition.currentState && !transition.targetState) return
+    val touchDevice = LocalDeviceType.current.isTouchDevice()
+    val hasAlternatives = !isLoading && !failed && variants.size > 1
+    val selectedIndex = variants.indexOfFirst { it.id == currentChannel?.id }.coerceAtLeast(0)
+    val targetKey = if (hasAlternatives) variants[selectedIndex].id else "cancel"
+    val firstFocus = remember(targetKey) { FocusRequester() }
+    var targetPlaced by remember(targetKey) { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    LaunchedEffect(targetKey, visible) {
+        if (visible && hasAlternatives) listState.scrollToItem(selectedIndex)
+    }
+    LaunchedEffect(firstFocus, targetPlaced, touchDevice, visible) {
+        if (visible && !touchDevice && targetPlaced) {
+            withFrameNanos { }
+            runCatching { firstFocus.requestFocus() }
+        }
+    }
+    val initialFocus = Modifier.focusRequester(firstFocus)
+        .onGloballyPositioned { if (it.isAttached) targetPlaced = true }
+    // Keep the player's remote handlers in a different focus window.
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        AnimatedVisibility(
+            visibleState = transition,
+            enter = fadeIn() + slideInHorizontally { it / 2 },
+            exit = fadeOut() + slideOutHorizontally { it / 2 },
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.CenterEnd // Panel anchored on the right
+            ) {
+                Box(Modifier.matchParentSize().pointerInput(onDismiss) { detectTapGestures { onDismiss() } })
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(360.dp)
+                        .background(Color(0xFF141414).copy(alpha = 0.98f)) // Premium, nearly opaque black background
+                        .padding(horizontal = 24.dp, vertical = 32.dp)
+                        .pointerInput(Unit) { detectTapGestures { } }
+                ) {
+                    androidx.tv.material3.Text(
+                        text = stringResource(R.string.live_label_choose_source),
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    androidx.tv.material3.Text(
+                        text = currentChannel?.name ?: "",
+                        color = Color.Gray,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(bottom = 24.dp)
+                    )
+
+                    if (isLoading) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(100.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // Scroll wheel in the same cyan/mint color as your buttons
+                            CircularProgressIndicator(color = Color(0xFF5CE1E6))
+                        }
+                    } else if (failed) {
+                        Text(stringResource(R.string.live_sources_failed), color = Color.White)
+                    } else if (variants.isEmpty() || variants.size == 1) {
+                        androidx.tv.material3.Text(
+                            text = stringResource(R.string.live_sources_empty),
+                            color = Color.LightGray,
+                            fontSize = 14.sp
+                        )
+                    } else {
+                        LazyColumn(
+                            state = listState,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth().weight(1f)
+                        ) {
+                            items(variants, key = { it.id }) { variant ->
+                                val isSelected = variant.id == currentChannel?.id
+                                var isFocused by remember { mutableStateOf(false) }
+
+                                // Dynamic colors based on status (Focused, Selected, or Normal)
+                                val containerBg = when {
+                                    isFocused -> Color.White
+                                    isSelected -> Color(0xFF5CE1E6).copy(alpha = 0.15f) // Subtle cyan background
+                                    else -> Color.Transparent
+                                }
+                                val textColor = when {
+                                    isFocused -> Color.Black
+                                    isSelected -> Color(0xFF5CE1E6) // Bright cyan text (just like your buttons)
+                                    else -> Color.White
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(containerBg)
+                                        .onFocusChanged { isFocused = it.isFocused }
+                                        .then(if (variant.id == targetKey) initialFocus else Modifier)
+                                        .clickable { onPick(variant) }
+                                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                                ) {
+                                    // Small vertical indicator for the channel that is currently playing
+                                    if (isSelected && !isFocused) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(3.dp)
+                                                .height(16.dp)
+                                                .background(Color(0xFF5CE1E6), RoundedCornerShape(50))
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                    }
+
+                                    androidx.tv.material3.Text(
+                                        text = variant.name,
+                                        color = textColor,
+                                        fontSize = 15.sp,
+                                        fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    androidx.compose.material3.TextButton(
+                        onClick = onDismiss,
+                        modifier = if (!hasAlternatives) initialFocus else Modifier,
+                    ) {
+                        Text(stringResource(android.R.string.cancel))
+                    }
+                }
+            }
+        }
+    }
+}

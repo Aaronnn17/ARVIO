@@ -96,9 +96,7 @@ class LiveTvPlaybackSessionTest {
             }
             assertTrue(reading.await(5, TimeUnit.SECONDS))
             LiveTvPlaybackSession(player) {
-                connections.cancelAll()
-                client.dispatcher.cancelAll()
-                client.connectionPool.evictAll()
+                kotlinx.coroutines.runBlocking { connections.cancelAllAsync(client).join() }
             }.suspend()
             assertTrue(call.isCanceled())
             assertEquals(-1, disconnected.get(5, TimeUnit.SECONDS))

@@ -13,6 +13,7 @@ data class SportsEventArtwork(val title: String, val background: String, val gen
     val homeTeam: String? = null, val awayTeam: String? = null,
     val source: String? = null, val fixture: SportsFixture? = null) {
     val key: String = sportsArtworkKey(title)
+    val isScheduleMetadata: Boolean get() = source == "TheSportsDB" || source == "ESPN" || source == "MLB"
 }
 
 private val marks = Regex("\\p{M}+")

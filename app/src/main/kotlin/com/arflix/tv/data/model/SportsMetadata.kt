@@ -25,7 +25,7 @@ fun parseSportsMetadata(body: String): List<SportsEventArtwork> {
             val home = safeSportsImage(text("homeBadge"))
             val away = safeSportsImage(text("awayBadge"))
             val catalogueEnabled = root.get("catalogueEnabled")?.asBoolean == true
-            val fixture = if (catalogueEnabled && text("id")?.matches(Regex("\\d+")) == true) SportsFixture(
+            val fixture = if (catalogueEnabled && text("id")?.matches(Regex("(?:\\d+|espn:[a-z]+:\\d+|mlb:\\d+)")) == true) SportsFixture(
                 id = text("id")!!, league = text("league"), qualifier = text("qualifier"), venue = text("venue"), round = text("round"),
                 status = text("status") ?: "scheduled", observedAt = item.get("observedAt")?.asLong ?: 0L,
                 homeScore = text("homeScore")?.toIntOrNull(), awayScore = text("awayScore")?.toIntOrNull(),
@@ -37,7 +37,8 @@ fun parseSportsMetadata(body: String): List<SportsEventArtwork> {
             if (fixture == null && background == null && (home == null || away == null)) return@runCatching null
             SportsEventArtwork(title, background.orEmpty(), listOf(sport), start,
                 homeBadge = if (away != null) home else null, awayBadge = if (home != null) away else null,
-                homeTeam = text("homeTeam"), awayTeam = text("awayTeam"), source = "TheSportsDB", fixture = fixture)
+                homeTeam = text("homeTeam"), awayTeam = text("awayTeam"),
+                source = text("source")?.takeIf { it == "ESPN" || it == "MLB" } ?: "TheSportsDB", fixture = fixture)
         }.getOrNull()
     }
 }

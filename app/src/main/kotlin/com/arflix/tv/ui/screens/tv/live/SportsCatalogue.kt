@@ -96,7 +96,11 @@ private val footballAliases = listOf(
 private fun participantKeys(name: String?, sport: GuideSport): List<String> {
     val key = sportsArtworkKey(name.orEmpty())
     if (key.length < 3) return emptyList()
-    return if (sport == GuideSport.FOOTBALL) footballAliases.firstOrNull { key in it } ?: listOf(key) else listOf(key)
+    if (sport != GuideSport.FOOTBALL) return listOf(key)
+    // Keep disambiguators such as AC; only strip legal club affixes.
+    val short = key.replace(Regex("^(?:(?:fc|cf|club|clube)\\s+)+"), "")
+        .replace(Regex("(?:\\s+(?:fc|cf|afc))+$"), "")
+    return (listOf(key, short) + footballAliases.firstOrNull { short in it }.orEmpty()).distinct().filter { it.length >= 3 }
 }
 
 internal fun buildSportsCatalogue(guide: List<SportsGuideEvent>, artwork: List<SportsEventArtwork>, channels: List<IptvChannel>, now: Long,

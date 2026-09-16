@@ -6,6 +6,7 @@ import metadata from './_sports-metadata.js';
 const handler = metadata.createHandler(() => ({
   store: getStore({ name: 'sports-metadata', consistency: 'strong' }),
   apiKey: process.env.SPORTSDB_API_KEY,
+  supplemental: process.env.SPORTS_SUPPLEMENTAL_ENABLED !== 'false',
 }));
 
 export default async request => {

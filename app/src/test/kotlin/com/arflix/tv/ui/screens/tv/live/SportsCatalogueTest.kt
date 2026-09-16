@@ -6,6 +6,16 @@ import org.junit.Test
 import java.time.Instant
 
 class SportsCatalogueTest {
+    @Test fun supplementalFixturesAndLegalClubNamesMatchWithoutUiChanges() {
+        val body = """{"version":1,"catalogueEnabled":true,"events":[{"id":"espn:epl:123","source":"ESPN","title":"Manchester United FC vs Club Atletico Madrid","homeTeam":"Manchester United FC","awayTeam":"Club Atletico Madrid","sport":"Soccer","startsAt":$now}]}"""
+        val metadata = parseSportsMetadata(body).single()
+        assertEquals("espn:epl:123", metadata.fixture!!.id)
+        assertEquals("ESPN", metadata.source)
+        assertTrue(metadata.isScheduleMetadata)
+        val result = buildSportsCatalogue(listOf(epg.copy(title = "Live: Man Utd vs Atl Madrid", competition = null)), listOf(metadata), listOf(channel), now)
+        assertEquals(1, result.size)
+        assertEquals(1, result.single().channels.size)
+    }
     @Test fun scheduledEventsDoNotDisappearWhenTheLiveStatusFeedIsLate() {
         val started = art.copy(startsAt = now - 60_000, fixture = fixture.copy(status = "scheduled"))
         val event = buildSportsCatalogue(emptyList(), listOf(started), listOf(channel), now).single()
