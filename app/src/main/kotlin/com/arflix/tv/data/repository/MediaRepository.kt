@@ -3465,6 +3465,10 @@ class MediaRepository @Inject constructor(
 
     /**
      * Discover movies via TMDB discover API with optional genre/sort/vote filters.
+     *
+     * Two date windows, deliberately kept apart: `releaseDate*` accepts a film with ANY release
+     * in the window (a re-run counts), `primaryReleaseDate*` only one whose FIRST release falls
+     * in it — the date the card prints. A filter the user reads off the poster wants the second.
      */
     suspend fun discoverMovies(
         genres: String? = null,
@@ -3476,12 +3480,14 @@ class MediaRepository @Inject constructor(
         keywords: String? = null,
         releaseDateLte: String? = null,
         releaseDateGte: String? = null,
+        primaryReleaseDateLte: String? = null,
+        primaryReleaseDateGte: String? = null,
         minVoteAverage: Double? = null,
         maxVoteAverage: Double? = null,
         certificationCountry: String? = null,
         certificationLte: String? = null
     ): List<MediaItem> {
-        val response = tmdbApi.discoverMovies(apiKey, genres = genres, sortBy = sortBy, minVoteCount = minVoteCount, page = page, originalLanguage = language, year = year, keywords = keywords, language = contentLanguage, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte, minVoteAverage = minVoteAverage, maxVoteAverage = maxVoteAverage, certificationCountry = certificationCountry, certificationLte = certificationLte)
+        val response = tmdbApi.discoverMovies(apiKey, genres = genres, sortBy = sortBy, minVoteCount = minVoteCount, page = page, originalLanguage = language, year = year, keywords = keywords, language = contentLanguage, releaseDateLte = releaseDateLte, releaseDateGte = releaseDateGte, primaryReleaseDateLte = primaryReleaseDateLte, primaryReleaseDateGte = primaryReleaseDateGte, minVoteAverage = minVoteAverage, maxVoteAverage = maxVoteAverage, certificationCountry = certificationCountry, certificationLte = certificationLte)
         val items = response.results.map { it.toMediaItem(MediaType.MOVIE) }
         cacheItems(items)
         return items
@@ -3489,6 +3495,9 @@ class MediaRepository @Inject constructor(
 
     /**
      * Discover TV shows via TMDB discover API with optional genre/sort/vote/language/year filters.
+     *
+     * Same split as [discoverMovies]: `airDate*` asks when an EPISODE aired (what the home
+     * screen's anime rows need), `firstAirDate*` when the show STARTED — the date on the card.
      */
     suspend fun discoverTv(
         genres: String? = null,
@@ -3500,10 +3509,12 @@ class MediaRepository @Inject constructor(
         keywords: String? = null,
         airDateLte: String? = null,
         airDateGte: String? = null,
+        firstAirDateLte: String? = null,
+        firstAirDateGte: String? = null,
         minVoteAverage: Double? = null,
         maxVoteAverage: Double? = null
     ): List<MediaItem> {
-        val response = tmdbApi.discoverTv(apiKey, genres = genres, sortBy = sortBy, minVoteCount = minVoteCount, page = page, originalLanguage = language, year = year, keywords = keywords, language = contentLanguage, airDateLte = airDateLte, airDateGte = airDateGte, minVoteAverage = minVoteAverage, maxVoteAverage = maxVoteAverage)
+        val response = tmdbApi.discoverTv(apiKey, genres = genres, sortBy = sortBy, minVoteCount = minVoteCount, page = page, originalLanguage = language, year = year, keywords = keywords, language = contentLanguage, airDateLte = airDateLte, airDateGte = airDateGte, firstAirDateLte = firstAirDateLte, firstAirDateGte = firstAirDateGte, minVoteAverage = minVoteAverage, maxVoteAverage = maxVoteAverage)
         val items = response.results.map { it.toMediaItem(MediaType.TV) }
         cacheItems(items)
         return items

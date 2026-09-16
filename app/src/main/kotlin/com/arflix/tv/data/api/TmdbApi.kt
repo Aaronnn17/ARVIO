@@ -38,8 +38,14 @@ interface TmdbApi {
         @Query("vote_average.gte") minVoteAverage: Double? = null,
         @Query("vote_average.lte") maxVoteAverage: Double? = null,
         @Query("with_keywords") keywords: String? = null,
+        // `air_date` is the broadcast date of an individual episode, so a show with a recent
+        // episode passes it no matter when it started. That is what the home screen's anime
+        // rows want and what a "shows that started in the nineties" filter must not use — for
+        // that, `first_air_date` is the date the card actually prints. Both stay available.
         @Query("air_date.gte") airDateGte: String? = null,
         @Query("air_date.lte") airDateLte: String? = null,
+        @Query("first_air_date.gte") firstAirDateGte: String? = null,
+        @Query("first_air_date.lte") firstAirDateLte: String? = null,
         @Query("language") language: String? = null,
         @Query("page") page: Int = 1
     ): TmdbListResponse
@@ -59,8 +65,13 @@ interface TmdbApi {
         @Query("with_keywords") keywords: String? = null,
         @Query("with_original_language") originalLanguage: String? = null,
         @Query("primary_release_year") year: Int? = null,
+        // `release_date` matches ANY release of a film — every country, a re-run, a digital
+        // start — while the card shows the first one. `primary_release_date` is that first
+        // one, the same date `primary_release_year` above filters by. Both stay available.
         @Query("release_date.gte") releaseDateGte: String? = null,
         @Query("release_date.lte") releaseDateLte: String? = null,
+        @Query("primary_release_date.gte") primaryReleaseDateGte: String? = null,
+        @Query("primary_release_date.lte") primaryReleaseDateLte: String? = null,
         @Query("with_watch_providers") watchProviders: Int? = null,
         @Query("watch_region") watchRegion: String? = null,
         @Query("language") language: String? = null,
