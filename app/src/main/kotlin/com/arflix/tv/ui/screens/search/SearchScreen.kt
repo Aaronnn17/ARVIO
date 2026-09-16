@@ -11,15 +11,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -46,11 +49,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -74,6 +80,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -132,7 +139,7 @@ private fun localizedDiscoverRowTitle(category: Category): String = when (catego
     else -> category.title
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SearchScreen(
     viewModel: SearchViewModel = hiltViewModel(),
@@ -312,13 +319,53 @@ fun SearchScreen(
         // specific case so it doesn't surface to the user as a crash — TalkBack
         // focus will re-claim on next frame.
         if (!isTouchDevice && focusZone != FocusZone.RESULTS) runCatching { searchFocusRequester.requestFocus() }
-        suppressSelectUntilMs = SystemClock.elapsedRealtime() + 150L
+        suppressSelectUntilMs = SystemClock.elapsedRealtime() + SEARCH_SELECT_SUPPRESS_MS
     }
     LaunchedEffect(isSearchEditing, searchEditRequestNonce) {
         if (isSearchEditing) {
             runCatching { textInputFocusRequester.requestFocus() }
             keyboardController?.show()
         }
+    }
+    // A keyboard that closes itself takes its BACK press with it, so the screen is never told
+    // it is gone and typing mode outlives it — every direction key then goes to an input that
+    // is no longer there. Follow what the keyboard actually does instead (SearchEditingEntry).
+    val imeVisible = WindowInsets.isImeVisible
+    var keyboardWasSeen by remember { mutableStateOf(false) }
+    LaunchedEffect(isSearchEditing, imeVisible) {
+        if (!isSearchEditing) {
+            keyboardWasSeen = false
+            return@LaunchedEffect
+        }
+        if (imeVisible) keyboardWasSeen = true
+        if (!searchEditingSurvivesKeyboard(imeVisible, keyboardWasSeen)) {
+            isSearchEditing = false
+            runCatching { searchFocusRequester.requestFocus() }
+        }
+    }
+    // Coming back from the background composes nothing anew, so the entry guard above would not
+    // run again: re-arm it here and make sure the screen is never resumed in typing mode.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isSearchEditing = false
+                keyboardController?.hide()
+                suppressSelectUntilMs = SystemClock.elapsedRealtime() + SEARCH_SELECT_SUPPRESS_MS
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    // Every door into typing mode goes through here: the D-pad handler below, select on the
+    // search bar itself, and its click. A press that still belongs to the one that OPENED this
+    // screen is dropped — see SearchEditingEntry.kt for what it does to the screen otherwise.
+    fun startSearchEditing(repeatCount: Int = 0) {
+        if (!startsSearchEditing(SystemClock.elapsedRealtime(), suppressSelectUntilMs, repeatCount)) return
+        focusZone = FocusZone.SEARCH_INPUT
+        isSearchEditing = true
+        searchEditRequestNonce++
     }
 
     val showFilters = uiState.query.isEmpty()
@@ -642,9 +689,7 @@ fun SearchScreen(
                             true
                         }
                         FocusZone.SEARCH_INPUT -> {
-                            focusZone = FocusZone.SEARCH_INPUT
-                            isSearchEditing = true
-                            searchEditRequestNonce++
+                            startSearchEditing(event.nativeKeyEvent.repeatCount)
                             true
                         }
                         FocusZone.FILTERS -> {
@@ -724,11 +769,7 @@ fun SearchScreen(
                         }
                     },
                     onFocusLost = { isSearchInputFocused = false },
-                    onStartEditing = {
-                        focusZone = FocusZone.SEARCH_INPUT
-                        isSearchEditing = true
-                        searchEditRequestNonce++
-                    },
+                    onStartEditing = { repeatCount -> startSearchEditing(repeatCount) },
                     onMoveUp = {
                         isSearchEditing = false
                         keyboardController?.hide()
@@ -896,7 +937,7 @@ private fun SearchInputBar(
     onSearch: () -> Unit,
     onFocused: () -> Unit,
     onFocusLost: () -> Unit,
-    onStartEditing: () -> Unit,
+    onStartEditing: (Int) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit
 ) {
@@ -942,7 +983,7 @@ private fun SearchInputBar(
                 when (event.key) {
                     Key.DirectionUp -> { onMoveUp(); true }
                     Key.DirectionDown -> { onMoveDown(); true }
-                    Key.Enter, Key.DirectionCenter -> { onStartEditing(); true }
+                    Key.Enter, Key.DirectionCenter -> { onStartEditing(event.nativeKeyEvent.repeatCount); true }
                     else -> false
                 }
             }
@@ -957,7 +998,7 @@ private fun SearchInputBar(
         pressedScale = 0.985f,
         useSystemFocusForVisuals = false,
         isFocusedOverride = isFocused,
-        onClick = onStartEditing,
+        onClick = { onStartEditing(0) },
         onFocusChanged = { if (it) onFocused() else onFocusLost() }
     ) {
         Row(
