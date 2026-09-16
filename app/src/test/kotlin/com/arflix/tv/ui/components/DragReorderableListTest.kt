@@ -1,5 +1,12 @@
 package com.arflix.tv.ui.components
 
+import androidx.compose.foundation.lazy.LazyListItemInfo
+import androidx.compose.foundation.lazy.LazyListLayoutInfo
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.runtime.snapshots.SnapshotStateObserver
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -11,6 +18,43 @@ import org.junit.Test
  * same height: the point of reading the real layout is that nothing breaks when they differ.
  */
 class DragReorderableListTest {
+
+    @Test
+    fun dragWithinTheSameRowInvalidatesItsDrawingWithoutALayoutChange() {
+        val item = mockk<LazyListItemInfo> {
+            every { key } returns "held"
+            every { index } returns 1
+            every { offset } returns 100
+            every { size } returns 100
+        }
+        val layout = mockk<LazyListLayoutInfo> {
+            every { visibleItemsInfo } returns listOf(item)
+            every { viewportStartOffset } returns 0
+            every { viewportEndOffset } returns 1000
+            every { totalItemsCount } returns 4
+        }
+        val list = mockk<LazyListState> { every { layoutInfo } returns layout }
+        var moves = 0
+        val state = DragReorderState(list, 32f, 8f, {}, { _, _, _ -> moves++ })
+        state.onDragStart("held")
+        Snapshot.sendApplyNotifications()
+        var invalidations = 0
+        val observer = SnapshotStateObserver { it() }
+        observer.start()
+        try {
+            observer.observeReads(Any(), { _: Any -> invalidations++ }) {
+                assertEquals(0f, state.translationFor("held"), 0f)
+            }
+            Snapshot.withMutableSnapshot { state.onDrag(10f) }
+            Snapshot.sendApplyNotifications()
+            assertEquals(10f, state.translationFor("held"), 0f)
+            assertEquals(0, moves)
+            assertEquals("Drawing must be invalidated even when the layout stays unchanged", 1, invalidations)
+        } finally {
+            observer.stop()
+            observer.clear()
+        }
+    }
 
     private val evenRows = listOf(
         ReorderSlot(index = 0, offset = 0, size = 100),

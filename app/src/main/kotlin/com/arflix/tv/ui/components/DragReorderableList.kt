@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -85,7 +86,7 @@ class DragReorderState internal constructor(
     private var climbProgress = 0f
 
     /** Top edge of the held row in viewport coordinates - where the finger put it. */
-    private var floatingTop = 0f
+    private var floatingTop by mutableFloatStateOf(0f)
     private var floatingSize = 0
     /** The position this row has been asked to end up at, including moves not yet echoed back. */
     private var requestedIndex = -1
