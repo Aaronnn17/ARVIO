@@ -9,6 +9,7 @@ export interface SportsFixture { id: string; league?: string; qualifier?: string
   broadcasters: { name: string; country: string; startsAt: number }[] }
 export interface SportsEventArtwork { title: string; key: string; background: string; genres: string[]; startsAt?: number;
   homeBadge?: string; awayBadge?: string; homeTeam?: string; awayTeam?: string; source?: string; fixture?: SportsFixture }
+const isScheduleMetadata = (item: SportsEventArtwork) => ["TheSportsDB", "ESPN", "MLB"].includes(item.source ?? "");
 
 export function parseSportsMetadata(payload: unknown): SportsEventArtwork[] {
   const data = payload as { version?: number; catalogueEnabled?: boolean; events?: Record<string, unknown>[] } | null;
@@ -19,7 +20,7 @@ export function parseSportsMetadata(payload: unknown): SportsEventArtwork[] {
     const picture = (key: string) => typeof item[key] === "string" ? safeSportsImage(item[key] as string) : undefined;
     const background = picture("background"), homeBadge = picture("homeBadge"), awayBadge = picture("awayBadge");
     const text = (key: string) => typeof item[key] === "string" ? item[key] as string : undefined;
-    const fixture: SportsFixture | undefined = data.catalogueEnabled && /^\d+$/.test(text("id") ?? "") ? {
+    const fixture: SportsFixture | undefined = data.catalogueEnabled && /^(?:\d+|espn:[a-z]+:\d+|mlb:\d+)$/.test(text("id") ?? "") ? {
       id: text("id")!, league: text("league"), qualifier: text("qualifier"), venue: text("venue"), round: text("round"),
       status: text("status") ?? "scheduled", observedAt: typeof item.observedAt === "number" ? item.observedAt : 0,
       homeScore: typeof item.homeScore === "number" ? item.homeScore : undefined, awayScore: typeof item.awayScore === "number" ? item.awayScore : undefined,
@@ -28,7 +29,8 @@ export function parseSportsMetadata(payload: unknown): SportsEventArtwork[] {
     if (!fixture && !background && !(homeBadge && awayBadge)) return [];
     return [{ title: item.title, key: sportsArtworkKey(item.title), background: background ?? "", genres: [item.sport], startsAt: item.startsAt,
       homeBadge: awayBadge ? homeBadge : undefined, awayBadge: homeBadge ? awayBadge : undefined,
-      homeTeam: typeof item.homeTeam === "string" ? item.homeTeam : undefined, awayTeam: typeof item.awayTeam === "string" ? item.awayTeam : undefined, source: "TheSportsDB", fixture }];
+      homeTeam: typeof item.homeTeam === "string" ? item.homeTeam : undefined, awayTeam: typeof item.awayTeam === "string" ? item.awayTeam : undefined,
+      source: ["ESPN", "MLB"].includes(text("source") ?? "") ? text("source") : "TheSportsDB", fixture }];
   });
 }
 
@@ -79,9 +81,9 @@ export function attachSportsArtwork(events: SportsGuideEvent[], artwork: SportsE
   return events.map(event => {
     const matches = byTitle.get(sportsEventIdentity(event.title))?.filter(item => {
     const sport = guideSports.find(s => s.pattern.test(item.genres.join(" ")));
-    return (sport?.id === event.sportId || (!sport && item.source !== "TheSportsDB"))
+    return (sport?.id === event.sportId || (!sport && !isScheduleMetadata(item)))
       && sportsQualifierKey(`${event.title} ${event.competition ?? ""}`) === sportsQualifierKey(`${item.title} ${item.fixture?.league ?? ""}`)
-      && (item.startsAt === undefined || Math.abs(item.startsAt - event.programme.startUtcMillis) <= (item.source === "TheSportsDB" ? 2 : 6) * 60 * 60_000);
+      && (item.startsAt === undefined || Math.abs(item.startsAt - event.programme.startUtcMillis) <= (isScheduleMetadata(item) ? 2 : 6) * 60 * 60_000);
     }) ?? [];
     const match = matches.find(item => item.homeBadge && item.awayBadge);
     return { ...event, artwork: safeSportsImage(event.programme.artworkUrl) ?? matches.map(item => safeSportsImage(item.background)).find(Boolean),

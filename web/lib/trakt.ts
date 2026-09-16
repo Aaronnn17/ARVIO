@@ -264,6 +264,15 @@ export class TraktClient {
     return progress;
   }
 
+  async episodeSummary(showId: number, season: number, episode: number) {
+    const token = await this.refreshIfNeeded();
+    if (!token) throw new Error("Trakt is not connected");
+    return this.trakt<{ season: number; number: number; first_aired?: string | null }>(
+      `/shows/${showId}/seasons/${season}/episodes/${episode}?extended=full`,
+      { headers: { "x-user-token": token.access_token } }
+    );
+  }
+
   async history(type?: "movies" | "shows" | "episodes") {
     const token = await this.refreshIfNeeded();
     if (!token) return [];

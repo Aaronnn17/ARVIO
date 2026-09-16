@@ -4,6 +4,12 @@ import okhttp3.Call
 import okhttp3.Interceptor
 import okhttp3.Response
 import okhttp3.ResponseBody
+import okhttp3.OkHttpClient
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import okio.ForwardingSource
 import okio.buffer
 import java.util.concurrent.ConcurrentHashMap
@@ -14,6 +20,16 @@ internal class IptvPlaybackConnections : Interceptor {
 
     fun cancelAll() {
         calls.toList().forEach { it.cancel() }
+    }
+
+    fun cancelAllAsync(client: OkHttpClient, dispatcher: CoroutineDispatcher = Dispatchers.IO): Job {
+        // Snapshot before dispatch: a quick resume must not cancel the new channel's calls.
+        val closing = (calls.toList() + client.dispatcher.queuedCalls() + client.dispatcher.runningCalls()).distinct()
+        return CoroutineScope(dispatcher).launch {
+            // TLS socket cancellation may write close_notify, so it must not run on main.
+            closing.forEach { call -> runCatching { call.cancel() } }
+            runCatching { client.connectionPool.evictAll() }
+        }
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {

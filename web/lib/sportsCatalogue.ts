@@ -35,7 +35,10 @@ const footballAliases = [
 function participantKeys(name: string | undefined, sport: string): string[] {
   const key = name ? sportsArtworkKey(name) : "";
   if (key.length < 3) return [];
-  return sport === "football" ? footballAliases.find(group => group.includes(key)) ?? [key] : [key];
+  if (sport !== "football") return [key];
+  // Strip legal club affixes, never disambiguators such as AC (Milan vs Inter Milan).
+  const short = key.replace(/^(?:(?:fc|cf|club|clube)\s+)+/, "").replace(/(?:\s+(?:fc|cf|afc))+$/, "");
+  return [...new Set([key, short, ...(footballAliases.find(group => group.includes(short)) ?? [])])].filter(k => k.length >= 3);
 }
 
 export function buildSportsCatalogue(guide: SportsGuideEvent[], artwork: SportsEventArtwork[], channels: IptvChannel[], now: number): SportsGuideEvent[] {
