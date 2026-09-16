@@ -4,6 +4,7 @@ const REFRESH_MS = 30 * 60_000;
 const RETRY_MS = 5 * 60_000;
 const MAX_AGE = 24 * 60 * 60_000;
 const LIVE_STALE_MS = 15 * 60_000;
+const { FEEDS, fetchFeed, mergeFixtures } = require('./_sports-supplement');
 
 function image(value) {
   if (typeof value !== 'string' || value.length > 2048) return null;
@@ -173,7 +174,7 @@ async function cachedResource({ store, apiKey, fetcher = fetch, now = Date.now()
   }
 }
 
-async function getMetadata(dependencies) {
+async function getPrimaryMetadata(dependencies) {
   const fixtures = await cachedResource(dependencies, CACHE_KEY, REFRESH_MS, fetchFixtures);
   if (!fixtures) return null;
   // The observation timestamp semantics changed from upstream-event time to
@@ -185,6 +186,35 @@ async function getMetadata(dependencies) {
     const update = byId.get(event.id);
     return { ...event, ...(update || {}), observedAt: update?.observedAt ?? fixtures.updatedAt };
   }) };
+}
+
+async function supplementalMetadata(dependencies) {
+  const now = dependencies.now ?? Date.now();
+  const snapshots = [];
+  // At most three feeds refresh concurrently, behind per-feed cross-instance leases.
+  for (let i = 0; i < FEEDS.length; i += 3) {
+    snapshots.push(...await Promise.all(FEEDS.slice(i, i + 3).map(async feed => {
+      const key = `supplement-v1:${feed.id}`;
+      try {
+        if (dependencies.refreshSupplemental) return await cachedResource(
+          { ...dependencies, apiKey: 'public-metadata', now }, key, 5 * 60_000, options => fetchFeed(options, feed));
+        // Viewer requests only read these records; extra feeds never delay opening Sports.
+        const record = await dependencies.store.getWithMetadata(key, { type: 'json', consistency: 'strong' });
+        const payload = record?.data?.payload;
+        return payload?.version === 1 && now >= payload.updatedAt && now - payload.updatedAt < MAX_AGE ? payload : null;
+      } catch { return null; }
+    })));
+  }
+  return snapshots.filter(Boolean).flatMap(snapshot => snapshot.events);
+}
+
+async function getMetadata(dependencies) {
+  if (!dependencies.supplemental) return getPrimaryMetadata(dependencies);
+  const [primary, extra] = await Promise.all([getPrimaryMetadata(dependencies), supplementalMetadata(dependencies)]);
+  if (!primary && !extra.length) return null;
+  const baseline = primary || { version: 1, catalogueEnabled: true, updatedAt: dependencies.now ?? Date.now(),
+    partial: true, broadcastsPartial: true, rankingBasis: 'competition-and-broadcast-reach', events: [] };
+  return { ...baseline, events: mergeFixtures(baseline.events, extra) };
 }
 
 const headers = {

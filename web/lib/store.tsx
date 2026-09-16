@@ -8,6 +8,8 @@ import { config, getAuthPortalUrl } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
 import { getContinueWatching, isLiveStreamOrSportsItem, pullCloudContinueWatchingDismissals, pullCloudPayload, pullCloudProfiles, pullCloudTrackingSelection, pullCloudWatchedKeys, pullCloudWatchlist, removeContinueWatchingProgress, saveCloudAddons, saveCloudProfiles, saveCloudSettings, saveCloudTrackingSelection, saveCloudWatchlist, saveWatchedState } from "./cloud";
 import { completionTimes, includeIptvContinueWatching, isUnwatchedContinueWatching, mergePartialContinueWatching, mergeTrackerContinueWatching, pruneCompletedResume, traktProgressActivityKey } from "./continueWatching";
+import { createEpisodeValidator, episodeAvailabilityKey } from "./episodeAvailability";
+import { HttpError } from "./http";
 import { cachedDebridDirectUrl, parseDebridStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { trackPremiumEvent } from "./premiumAnalytics";
@@ -20,7 +22,7 @@ import { buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvChannelIdentities
 import { isCurrentIptvSnapshot, recordTvPlayback } from "./iptvSession";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
-import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId } from "./tmdb";
+import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId, tmdb } from "./tmdb";
 import { verifyProfilePin } from "./profilePin";
 import { hydratedProfileId } from "./profiles";
 import { flushSettingsOutbox, hasPendingSettings, queueSettings } from "./settingsOutbox";
@@ -62,6 +64,23 @@ purgeLegacyStorage();
 
 export const authClient = new AuthClient();
 export const traktClient = new TraktClient();
+const validateContinueWatchingEpisodes = createEpisodeValidator(async (item) => {
+  try {
+    if (item.traktId) {
+      const episode = await traktClient.episodeSummary(item.traktId, item.seasonNumber!, item.episodeNumber!);
+      return { exists: episode.season === item.seasonNumber && episode.number === item.episodeNumber, airDate: episode.first_aired };
+    }
+    const id = item.tmdbId ?? item.id;
+    if (id <= 0) throw new Error("Episode has no supported metadata identity");
+    const episode = await tmdb<{ season_number: number; episode_number: number; air_date?: string | null }>(
+      `tv/${id}/season/${item.seasonNumber}/episode/${item.episodeNumber}`
+    );
+    return { exists: episode.season_number === item.seasonNumber && episode.episode_number === item.episodeNumber, airDate: episode.air_date };
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) return { exists: false };
+    throw error;
+  }
+});
 
 const settingsKey = "arvio.web.settings";
 const PROFILES_KEY = "arvio.web.profiles";
@@ -106,9 +125,8 @@ export function getPriorityConfig(settings: AppSettings): ProviderPriorityConfig
 const LIST_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function cwCacheKeyFor(profileId: string | null | undefined) {
-  // v3 invalidates mixed/provider snapshots created before Continue Watching
-  // used the canonical Trakt source and matching activity ordering.
-  return `arvio.web.cw.v3:${profileId ?? "no-profile"}`;
+  // Old rails may contain nonexistent/unaired episodes that were never validated.
+  return `arvio.web.cw.v4:${profileId ?? "no-profile"}`;
 }
 
 function watchlistCacheKeyFor(profileId: string | null | undefined) {
@@ -992,11 +1010,17 @@ export function AppProvider({
         const dismissedAt = Math.max(cloudDismissals.get(showKey) ?? 0, cloudDismissals.get(exactKey) ?? 0);
         return dismissedAt > 0 && (item.activityAt ?? 0) <= dismissedAt;
       };
-      const cloudCw = historyRows.map(historyToItem);
-      const traktPlaybackCw = playbackRows
+      const rejectedEpisodes = new Set<string>();
+      let episodeLookupFailures = 0;
+      const validateEpisodes = (items: MediaItem[]) => validateContinueWatchingEpisodes(
+        items, rejectedEpisodes, () => { episodeLookupFailures += 1; }
+      );
+      const cloudCw = await validateEpisodes(historyRows.map(historyToItem));
+      const traktPlaybackCw = await validateEpisodes(playbackRows
         .map(traktPlaybackToMedia)
         .filter(isPausedPlaybackItem)
-        .filter((item) => !isHiddenShow(item) && !isDismissed(item));
+        .filter((item) => !isHiddenShow(item) && !isDismissed(item)));
+      if (!isCurrent()) return;
 
       // ── Fast paint ─────────────────────────────────────────────────────────
       // The cloud watchlist + cloud/playback CW are already available now (the
@@ -1055,7 +1079,8 @@ export function AppProvider({
       const upNext = cwUsesTrakt
         ? await loadTraktUpNext(cwTraktShows, effectiveSettings.includeSpecials, hiddenShowIds, isCurrent).catch(() => ({ items: [] as MediaItem[], fetchFailures: 1 }))
         : { items: [] as MediaItem[], fetchFailures: 0 };
-      const upNextRows = upNext.items;
+      const upNextRows = await validateEpisodes(upNext.items);
+      if (!isCurrent()) return;
       const watchedKeys = new Set([...traktWatchedKeys(watchedMoviesRows, watchedShowsRows), ...cloudWatchedKeys]);
       // Cloud watched flags may be older than a provider's reset/progress response.
       // Keep those flags for badges, but do not let them veto tracker Continue Watching.
@@ -1076,7 +1101,7 @@ export function AppProvider({
       // preflight intermittently, especially on VPN/datacenter IPs) — keep
       // showing the cached rail instead of wiping it with an empty list.
       const traktOutage = readFailures.has("playback") || readFailures.has("cw-watched") || readFailures.has("cw-movies") || readFailures.has("cw-shows");
-      if (!traktOutage && upNext.fetchFailures === 0 && isCurrent() && activitySignature) {
+      if (!traktOutage && upNext.fetchFailures === 0 && episodeLookupFailures === 0 && isCurrent() && activitySignature) {
         traktActivityRef.current = { key: `${accountId ?? "local"}:${profileId}`, signature: activitySignature };
       }
       // Enriched CW (adds Trakt up-next episodes) replaces the fast paint. When
@@ -1085,8 +1110,8 @@ export function AppProvider({
       // and its cache so a finished library can't resurrect a stale rail. During
       // an outage (all reads empty) we keep whatever is painted.
       if (!traktOutage && isCurrent()) {
-        const reconcile = (current: MediaItem[]) => upNext.fetchFailures > 0
-          ? mergePartialContinueWatching(cw, current.filter((item) => !isHiddenShow(item) && !isDismissed(item)), cwCompletions)
+        const reconcile = (current: MediaItem[]) => upNext.fetchFailures > 0 || episodeLookupFailures > 0
+          ? mergePartialContinueWatching(cw, current.filter((item) => !isHiddenShow(item) && !isDismissed(item) && !rejectedEpisodes.has(episodeAvailabilityKey(item))), cwCompletions)
           : cw;
         if (cw.length) {
           cwSourceRef.current = "fresh";
@@ -1097,7 +1122,7 @@ export function AppProvider({
             const previous = current.find((c) => c.id === "continue_watching")?.items ?? [];
             return [{ id: "continue_watching", title: "Continue Watching", items: reconcile(previous) }, ...others];
           });
-        } else if (traktReady && upNext.fetchFailures === 0) {
+        } else if (traktReady && upNext.fetchFailures === 0 && episodeLookupFailures === 0) {
           // Only clear on a CLEAN pass: any per-show progress failure means this
           // empty result could be a partial outage, and wiping the cache would
           // recreate the blank-rail-on-startup bug the seed exists to prevent.
@@ -1105,6 +1130,14 @@ export function AppProvider({
           setContinueWatching([]);
           setCategories((current) => current.filter((c) => c.id !== "continue_watching"));
           removeStored(cwCacheKey);
+        } else if (rejectedEpisodes.size > 0) {
+          setContinueWatching(reconcile);
+          saveCachedList(cwCacheKey, reconcile(readCachedList(cwCacheKey)), 20);
+          setCategories((current) => current.flatMap((category) => {
+            if (category.id !== "continue_watching") return [category];
+            const items = reconcile(category.items);
+            return items.length ? [{ ...category, items }] : [];
+          }));
         }
       }
       // Refresh the watchlist with the authoritative Trakt list if it differs.

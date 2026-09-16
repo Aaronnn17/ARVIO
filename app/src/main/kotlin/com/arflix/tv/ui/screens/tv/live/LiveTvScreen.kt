@@ -1658,7 +1658,7 @@ fun LiveTvScreen(
             sportsMetadataLoading = true
             try {
             var metadata = viewModel.cachedSportsMetadata()
-            var addonArtwork = sportsArtwork.filter { it.source != "TheSportsDB" }
+            var addonArtwork = sportsArtwork.filter { !it.isScheduleMetadata }
             sportsArtwork = metadata + addonArtwork
             kotlinx.coroutines.coroutineScope {
                 launch { metadata = viewModel.loadSportsMetadata(); sportsArtwork = metadata + addonArtwork }
@@ -2725,11 +2725,7 @@ fun LiveTvScreen(
     DisposableEffect(exoPlayer, iptvHttpClient) {
         onDispose {
             exoPlayer.release()
-            playbackConnections.cancelAll()
-            iptvHttpClient.dispatcher.cancelAll()
-            CoroutineScope(Dispatchers.IO).launch {
-                runCatching { iptvHttpClient.connectionPool.evictAll() }
-            }
+            playbackConnections.cancelAllAsync(iptvHttpClient)
         }
     }
 
@@ -2778,11 +2774,7 @@ fun LiveTvScreen(
         LiveTvPlaybackSession(exoPlayer) {
             pendingPlaybackRetry?.cancel()
             pendingPlaybackRetry = null
-            playbackConnections.cancelAll()
-            iptvHttpClient.dispatcher.cancelAll()
-            CoroutineScope(Dispatchers.IO).launch {
-                runCatching { iptvHttpClient.connectionPool.evictAll() }
-            }
+            playbackConnections.cancelAllAsync(iptvHttpClient)
         }
     }
     val sportsHiddenPlayback by rememberUpdatedState(sportsSelected && !isFullScreen)

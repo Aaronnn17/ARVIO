@@ -75,10 +75,10 @@ internal fun attachSportsArtwork(events: List<SportsGuideEvent>, artwork: List<S
     return events.map { event ->
         val candidates = byTitle[event.identity].orEmpty().filter {
             val sport = GuideSport.fromText(it.genres.joinToString(" "))
-            (sport == event.sport || (sport == null && it.source != "TheSportsDB")) &&
+            (sport == event.sport || (sport == null && !it.isScheduleMetadata)) &&
                 sportsQualifierKey("${event.title} ${event.competition.orEmpty()}") == sportsQualifierKey("${it.title} ${it.fixture?.league.orEmpty()}") &&
                 (it.startsAt == null || kotlin.math.abs(it.startsAt - event.programme.startUtcMillis) <=
-                    (if (it.source == "TheSportsDB") 2 else 6) * 60 * 60_000L)
+                    (if (it.isScheduleMetadata) 2 else 6) * 60 * 60_000L)
         }
         val match = candidates.firstOrNull { it.homeBadge != null && it.awayBadge != null }
         val banner = candidates.firstOrNull { safeSportsImage(it.background) != null }

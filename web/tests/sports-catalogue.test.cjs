@@ -24,6 +24,16 @@ const raw = { id: '42', title: 'North vs South', sport: 'Soccer', startsAt: now 
 const art = (changes = {}) => parseSportsMetadata({ version: 1, catalogueEnabled: true, events: [{ ...raw, ...changes }] });
 const epg = { id: 'guide', title: raw.title, sportId: 'football', competition: 'Premier League', programme: { title: raw.title, startUtcMillis: now - 60000, endUtcMillis: now + 3600000 }, channels: [channel], schedules: { [channel.id]: { title: raw.title, startUtcMillis: now - 60000, endUtcMillis: now + 3600000 } } };
 
+test('supplemental fixtures keep their identity and legal club names match the guide', () => {
+  const metadata = art({ id: 'espn:epl:123', source: 'ESPN', title: 'Manchester United FC vs Club Atletico Madrid',
+    homeTeam: 'Manchester United FC', awayTeam: 'Club Atletico Madrid', startsAt: now });
+  const result = buildSportsCatalogue([{ ...epg, title: 'Live: Man Utd vs Atl Madrid' }], metadata, [channel], now);
+  assert.equal(metadata[0].fixture.id, 'espn:epl:123'); assert.equal(metadata[0].source, 'ESPN');
+  assert.equal(result.length, 1); assert.equal(result[0].channels.length, 1);
+  assert.equal(art({ id: 'mlb:123', source: 'MLB' })[0].fixture.id, 'mlb:123');
+  assert.equal(art({ id: 'malicious:123' }).length, 0);
+});
+
 test('Fighting metadata uses Boxing league and country suffixes to retain the fight and poster', () => {
   const metadata = art({ title: 'Ryan Garcia vs Conor Benn', sport: 'Fighting', league: 'Boxing',
     background: 'https://r2.thesportsdb.com/images/media/event/thumb/fight.jpg',
