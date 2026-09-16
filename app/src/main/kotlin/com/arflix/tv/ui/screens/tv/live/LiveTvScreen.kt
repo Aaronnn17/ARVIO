@@ -23,6 +23,12 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.clickable
@@ -4212,29 +4218,27 @@ fun LiveTvScreen(
         }
 
         if (!searchOpen) {
-            sourcesChannel?.let { channel ->
-                FullscreenSourcesDialog(
-                    channel = channel,
-                    variants = sourcesVariants,
-                    loading = sourcesLoading,
-                    failed = sourcesFailed,
-                    onDismiss = {
-                        sourcesChannel = null
-                        hudPokeSignal++
-                    },
-                    onPick = { variant ->
-                        sourcesChannel = null
-                        if (variant.id != playingChannelId) {
-                            retainedPlayingChannel = variant
-                            playingChannelId = variant.id
-                            epgPrefetchAnchorId = variant.id
-                            playingCatchupProgram = null
-                            catchupPlaybackOffsetMs = 0L
-                        }
-                        hudPokeSignal++
-                    },
-                )
-            }
+            FullscreenSourcesOverlay(
+                visible = isFullScreen && sourcesChannel != null,
+                isLoading = sourcesLoading,
+                currentChannel = sourcesChannel,
+                variants = sourcesVariants,
+                onPick = { variant ->
+                    sourcesChannel = null
+                    if (variant.id != playingChannelId) {
+                        retainedPlayingChannel = variant
+                        playingChannelId = variant.id
+                        epgPrefetchAnchorId = variant.id
+                        playingCatchupProgram = null
+                        catchupPlaybackOffsetMs = 0L
+                    }
+                    hudPokeSignal++
+                },
+                onDismiss = {
+                    sourcesChannel = null
+                    hudPokeSignal++
+                }
+            )
             val pickerChannel = variantPickerChannel
             VariantPickerOverlay(
                 channel = pickerChannel,
@@ -4600,23 +4604,23 @@ fun FullscreenSourcesOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.4f)) // Oscurecimiento suave de la pantalla
+                .background(Color.Black.copy(alpha = 0.4f)) // Softly dims the screen
                 .focusable()
                 .clickable { onDismiss() },
-            contentAlignment = Alignment.CenterEnd // Alineado a la derecha como en el vídeo
+            contentAlignment = Alignment.CenterEnd // Panel anchored on the right
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(360.dp)
-                    .background(Color(0xFF0F0F0F).copy(alpha = 0.95f)) // Fondo oscuro casi opaco
-                    .padding(24.dp)
-                    .clickable(enabled = false) {}
+                    .background(Color(0xFF141414).copy(alpha = 0.98f)) // Premium, nearly opaque black background
+                    .padding(horizontal = 24.dp, vertical = 32.dp)
+                    .clickable(enabled = false) {} // Prevents clicks from going beyond the panel
             ) {
                 androidx.tv.material3.Text(
-                    text = "Fuentes Disponibles",
+                    text = "Fuentes disponibles",
                     color = Color.White,
-                    fontSize = 20.sp,
+                    fontSize = 22.sp,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                     modifier = Modifier.padding(bottom = 6.dp)
                 )
@@ -4625,9 +4629,9 @@ fun FullscreenSourcesOverlay(
                     text = currentChannel?.name ?: "",
                     color = Color.Gray,
                     fontSize = 14.sp,
-                    modifier = Modifier.padding(bottom = 24.dp),
                     maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(bottom = 24.dp)
                 )
 
                 if (isLoading) {
@@ -4635,13 +4639,13 @@ fun FullscreenSourcesOverlay(
                         modifier = Modifier.fillMaxWidth().height(100.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        // Rueda de carga con el azul del reproductor
-                        CircularProgressIndicator(color = Color(0xFF0078D7)) 
+                        // Scroll wheel in the same cyan/mint color as your buttons
+                        CircularProgressIndicator(color = Color(0xFF5CE1E6)) 
                     }
                 } else if (variants.isEmpty() || variants.size == 1) {
                     androidx.tv.material3.Text(
-                        text = "No hay otras calidades u orígenes detectados para este canal.",
-                        color = Color.Gray,
+                        text = "No hay otras calidades u orígenes detectados.",
+                        color = Color.DarkGray,
                         fontSize = 14.sp
                     )
                 } else {
@@ -4654,27 +4658,46 @@ fun FullscreenSourcesOverlay(
                             val isSelected = variant.id == currentChannel?.id
                             var isFocused by remember { mutableStateOf(false) }
 
-                            Box(
+                            // Dynamic colors based on status (Focused, Selected, or Normal)
+                            val containerBg = when {
+                                isFocused -> Color.White
+                                isSelected -> Color(0xFF5CE1E6).copy(alpha = 0.15f) // Subtle cyan background
+                                else -> Color.Transparent
+                            }
+                            val textColor = when {
+                                isFocused -> Color.Black
+                                isSelected -> Color(0xFF5CE1E6) // Bright cyan text (just like your buttons)
+                                else -> Color.White
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        when {
-                                            isFocused -> Color.White
-                                            isSelected -> Color(0xFF0050B3).copy(alpha = 0.5f) // Azul profundo del reproductor
-                                            else -> Color.Transparent
-                                        }
-                                    )
+                                    .background(containerBg)
                                     .onFocusChanged { isFocused = it.isFocused }
                                     .clickable { onPick(variant) }
                                     .padding(horizontal = 16.dp, vertical = 14.dp)
                             ) {
+                                // Small vertical indicator for the channel that is currently playing
+                                if (isSelected && !isFocused) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(3.dp)
+                                            .height(16.dp)
+                                            .background(Color(0xFF5CE1E6), RoundedCornerShape(50))
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                }
+
                                 androidx.tv.material3.Text(
                                     text = variant.name,
-                                    color = if (isFocused) Color.Black else Color.White,
-                                    fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                                    color = textColor,
+                                    fontSize = 15.sp,
+                                    fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
                                     maxLines = 2,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
