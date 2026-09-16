@@ -232,6 +232,7 @@ fun SearchScreen(
             onSelectDecade = viewModel::selectDecade,
             onSelectYear = viewModel::selectYear,
             onSelectCertification = viewModel::selectCertification,
+            onSelectLanguage = viewModel::selectLanguage,
             onToggleHideWatched = { viewModel.setHideWatched(!viewModel.uiState.value.hideWatched) },
             onClearFilters = viewModel::clearDiscoverFilters,
             onOpenPanel = { id ->

@@ -120,6 +120,13 @@ data class SearchUiState(
     val year: Int? = null,
     /** Movies only — `discover/tv` has no certification parameter at TMDB. */
     val certification: String? = null,
+    /**
+     * The title's original language as a TMDB code, `null` for "any" (S3: one at a time).
+     *
+     * The original language, not the app's: it decides which titles the grid shows, never which
+     * words the app uses. The two live far apart on purpose — see [DiscoverRequest.language].
+     */
+    val language: String? = null,
     val hideWatched: Boolean = false,
     // Discover grid - shown instead of the five rows as soon as a filter is set
     val discoverGridItems: List<MediaItem> = EMPTY_MEDIA_ITEMS,
@@ -140,7 +147,7 @@ data class SearchUiState(
      */
     val hasDiscoverFilters: Boolean
         get() = selectedGenres.isNotEmpty() || rating.isSet || decade != null || year != null ||
-            certification != null || hideWatched
+            certification != null || language != null || hideWatched
 }
 
 @HiltViewModel
@@ -286,6 +293,15 @@ class SearchViewModel @Inject constructor(
         val year: Int? = null,
         val certification: String? = null,
         val certificationCountry: String? = null,
+        /**
+         * The original language wanted, or `null` for any of them.
+         *
+         * `MediaRepository` calls its parameter `language` too, and there it becomes
+         * `with_original_language` — the language a title was made in. The language the app is
+         * read in travels beside it as `contentLanguage` and is none of this class's business
+         * (T8). Reading this name as "the app's language" builds the filter the wrong way round.
+         */
+        val language: String? = null,
         val releaseDateGte: String? = null,
         val releaseDateLte: String? = null
     )
@@ -324,7 +340,8 @@ class SearchViewModel @Inject constructor(
             minVoteAverage = request.minRating,
             maxVoteAverage = request.maxRating,
             certificationCountry = request.certification?.let { request.certificationCountry },
-            certificationLte = request.certification
+            certificationLte = request.certification,
+            language = request.language
         )
 
     private suspend fun discoverTvFor(
@@ -342,7 +359,8 @@ class SearchViewModel @Inject constructor(
             airDateLte = request.releaseDateLte,
             airDateGte = request.releaseDateGte,
             minVoteAverage = request.minRating,
-            maxVoteAverage = request.maxRating
+            maxVoteAverage = request.maxRating,
+            language = request.language
         )
 
     /**
@@ -478,6 +496,7 @@ class SearchViewModel @Inject constructor(
             year = state.year,
             certification = state.certification.takeIf { supportsCertification(state.selectedType) },
             certificationCountry = ContentRating.regionOf(mediaRepository.contentLanguage),
+            language = state.language,
             releaseDateGte = window.from,
             releaseDateLte = window.to
         )
@@ -624,6 +643,19 @@ class SearchViewModel @Inject constructor(
         applyDiscoverSelection()
     }
 
+    /**
+     * Picks the original language a title has to be in, or drops the filter again with `null`.
+     *
+     * One at a time (S3), so a second press on another tile replaces the first rather than
+     * adding to it — and only ever one code leaves for TMDB.
+     */
+    fun selectLanguage(code: String?) {
+        val state = _uiState.value
+        if (state.language == code) return
+        _uiState.value = state.copy(language = code)
+        applyDiscoverSelection()
+    }
+
     fun setHideWatched(hide: Boolean) {
         val state = _uiState.value
         if (state.hideWatched == hide) return
@@ -648,6 +680,7 @@ class SearchViewModel @Inject constructor(
             decade = null,
             year = null,
             certification = null,
+            language = null,
             hideWatched = false
         )
         applyDiscoverSelection(debounce = false)

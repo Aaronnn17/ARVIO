@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.search
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -269,6 +270,7 @@ class DiscoverFiltersTest {
         assertTrue(showsClearChip(SearchUiState(year = 2001)))
         assertTrue(showsClearChip(SearchUiState(rating = RatingFilter(min = 7.0))))
         assertTrue(showsClearChip(SearchUiState(certification = "16")))
+        assertTrue(showsClearChip(SearchUiState(language = "ja")))
         assertTrue(showsClearChip(SearchUiState(hideWatched = true)))
     }
 
@@ -286,6 +288,26 @@ class DiscoverFiltersTest {
 
     @Test fun theFrameNeverStepsOutOfTheRowToTheLeftEither() {
         assertEquals(0, focusAfterClearChip(0))
+    }
+
+    // ── The original-language filter ────────────────────────────────────
+
+    @Test fun exactlyTheThreeLanguagesThatUsedToBeInTheRowAreOffered() {
+        assertEquals(listOf("ja", "ko", "hi"), DISCOVER_LANGUAGES)
+    }
+
+    @Test fun everyOfferedLanguageHasATextOfItsOwnRatherThanAnEnglishFallback() {
+        // The English-only table in Constants is the trap here: a language without its own text
+        // would read "Japanese" in the German menu.
+        DISCOVER_LANGUAGES.forEach { code ->
+            assertNotNull("no text for $code", languageNameRes(code))
+        }
+        assertNull("a code nobody offers has no text either", languageNameRes("de"))
+    }
+
+    @Test fun aLanguageSwitchesTheRowsOverToTheGridLikeEveryOtherFilter() {
+        assertTrue(SearchUiState(language = "ko").hasDiscoverFilters)
+        assertFalse(SearchUiState(language = null).hasDiscoverFilters)
     }
 
     // ── The release window behind a decade ──────────────────────────────

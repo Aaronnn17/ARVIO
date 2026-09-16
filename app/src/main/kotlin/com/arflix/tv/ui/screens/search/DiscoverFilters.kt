@@ -8,7 +8,19 @@ import com.arflix.tv.util.ContentRating
  * [CLEAR] is the only one that is not always there: it joins the row once something is set and
  * leaves it again as soon as it has done its job.
  */
-enum class DiscoverFilterId { TYPE, GENRE, SORT, RATING, YEAR, CERTIFICATION, HIDE_WATCHED, CLEAR }
+enum class DiscoverFilterId {
+    TYPE, GENRE, SORT, RATING, YEAR, CERTIFICATION, LANGUAGE, HIDE_WATCHED, CLEAR
+}
+
+/**
+ * The original languages the row offers, in the order the panel shows them.
+ *
+ * Exactly the three that used to sit in the row as buttons of their own and were lost when the
+ * row was rebuilt. They are deliberately not "every language TMDB knows": the yardstick is what
+ * was there before, so this is a restored control rather than a new one. Anyone widening the
+ * list asks first.
+ */
+val DISCOVER_LANGUAGES: List<String> = listOf("ja", "ko", "hi")
 
 /**
  * Rating range plus the vote floor, the three values that share one panel.
