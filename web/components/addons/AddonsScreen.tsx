@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { Plus, Sparkles } from "lucide-react";
 import { useState } from "react";
@@ -18,6 +20,7 @@ function resourceLabel(resources: unknown) {
 }
 
 export function AddonsScreen() {
+  const translateUi = useTranslation();
   const { addons, installAddon, removeAddon, setToast } = useApp();
   const [url, setUrl] = useState("");
   const [installing, setInstalling] = useState(false);
@@ -40,12 +43,12 @@ export function AddonsScreen() {
   return (
     <div className="screen has-section-heading">
       <section className="section-heading">
-        <p className="eyebrow">Sources</p>
-        <h2>Addons</h2>
+        <p className="eyebrow">{translateUi("Sources")}</p>
+        <h2>{translateUi("Addons")}</h2>
       </section>
       <div className="inline-form wide">
-        <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://addon.example.com/manifest.json" />
-        <button type="button" className="primary" disabled={installing} onClick={() => void install()}><Plus size={18} /> {installing ? "Installing..." : "Install"}</button>
+        <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder={translateUi("https://addon.example.com/manifest.json")} />
+        <button type="button" className="primary" disabled={installing} onClick={() => void install()}><Plus size={18} /> {installing ? translateUi("Installing...") : translateUi("Install")}</button>
       </div>
       <div className="addon-grid">
         {addons.map((addon) => (
@@ -57,7 +60,7 @@ export function AddonsScreen() {
               <span>{addon.version}</span>
               <span>{resourceLabel(addon.resources)}</span>
             </div>
-            <button type="button" className="secondary" onClick={() => removeAddon(addon)}>Remove</button>
+            <button type="button" className="secondary" onClick={() => removeAddon(addon)}>{translateUi("Remove")}</button>
           </article>
         ))}
       </div>

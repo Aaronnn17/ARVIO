@@ -1,0 +1,8 @@
+{
+  "Play {value0}": "{value0} ஐ இயக்கு",
+  "TVDB is disabled until a custom API key is provided": "தனிப்பயன் API விசை வழங்கப்படும் வரை TVDB முடக்கப்பட்டிருக்கும்",
+  "Collection": "தொகுப்பு",
+  "Watching": "பார்த்து வருபவை",
+  "Completed": "முடித்தவை",
+  "Dropped": "கைவிட்டவை"
+}

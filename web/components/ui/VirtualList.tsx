@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useRef, useState, type ReactNode } from "react";
@@ -9,6 +11,7 @@ export function VirtualList<T>({ items, itemKey, renderItem, estimate = 80, labe
   estimate?: number; label: string; className?: string;
   contentWidth?: string; header?: ReactNode; preserveHorizontalFocus?: boolean;
 }) {
+  const translateUi = useTranslation();
   const parent = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState<{ key: string; index: number } | null>(null);
   const focusedIndex = !focused ? -1 : items[focused.index] && itemKey(items[focused.index]) === focused.key
@@ -27,7 +30,7 @@ export function VirtualList<T>({ items, itemKey, renderItem, estimate = 80, labe
     }
   });
   return (
-    <div ref={parent} className={`virtual-list ${className}`} aria-label={label}
+    <div ref={parent} className={`virtual-list ${className}`} aria-label={translateUi(label)}
       onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(null); }}
       onKeyDown={(event) => {
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;

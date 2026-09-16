@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { BadgeCheck, Check, ExternalLink, Loader2, LogOut, RefreshCw, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,6 +27,7 @@ const SHOW_TRIAL = true;
 // A still-valid cached membership survives transient backend errors. Unknown
 // access is retryable, not a free membership or a request to pay again.
 export function EntitlementGate({ children }: { children: React.ReactNode }) {
+  const translateUi = useTranslation();
   const { auth, signOut, goToLogin } = useApp();
   const accountId = auth?.userId ?? null;
   const [state, setState] = useState<EntitlementState | null>(() => cachedEntitlement(authClient));
@@ -122,10 +125,10 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
     return (
       <main className="paywall">
         <div className="paywall-card" role="alert">
-          <h1>We could not check your membership</h1>
-          <p className="paywall-sub">Your payment status has not changed. Please retry before subscribing again.</p>
-          <button className="paywall-trial" onClick={() => setRetry((value) => value + 1)}><RefreshCw size={16} /> Check access again</button>
-          <button className="paywall-link-toggle" onClick={goToLogin}>Reconnect to Cloud</button>
+          <h1>{translateUi("We could not check your membership")}</h1>
+          <p className="paywall-sub">{translateUi("Your payment status has not changed. Please retry before subscribing again.")}</p>
+          <button className="paywall-trial" onClick={() => setRetry((value) => value + 1)}><RefreshCw size={16} /> {translateUi(" Check access again")}</button>
+          <button className="paywall-link-toggle" onClick={goToLogin}>{translateUi("Reconnect to Cloud")}</button>
         </div>
       </main>
     );
@@ -161,6 +164,7 @@ export function PaywallScreen({
   onConnect: () => void;
   onSignOut: () => void;
 }) {
+  const translateUi = useTranslation();
   const [busy, setBusy] = useState<"trial" | "check" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const trialAvailable = state?.trialAvailable ?? true;
@@ -243,22 +247,20 @@ export function PaywallScreen({
           <img src="/arvio-wordmark.svg" alt="ARVIO" className="paywall-wordmark" />
         </div>
 
-        <h1>{expired ? "Your ARVIO Web membership has ended" : "ARVIO Web is a members feature"}</h1>
+        <h1>{expired ? translateUi("Your ARVIO Web membership has ended") : translateUi("ARVIO Web is a members feature")}</h1>
         <p className="paywall-sub">
-          Take your existing ARVIO setup to Windows, Mac, iPhone, iPad and smart-TV browsers.
-          Your profiles, libraries, addons and progress stay connected through ARVIO Cloud.
-        </p>
+          {translateUi("Take your existing ARVIO setup to Windows, Mac, iPhone, iPad and smart-TV browsers. Your profiles, libraries, addons and progress stay connected through ARVIO Cloud.")}</p>
 
-        <div className="paywall-benefits" aria-label="ARVIO Web benefits">
-          <span><Check size={15} /> Same profiles, libraries and watch progress</span>
-          <span><Check size={15} /> Watch or download directly on Windows, Mac and mobile</span>
-          <span><Check size={15} /> Browser playback and one-click VLC</span>
-          <span><Check size={15} /> Android and TV app remains completely free</span>
+        <div className="paywall-benefits" aria-label={translateUi("ARVIO Web benefits")}>
+          <span><Check size={15} /> {translateUi(" Same profiles, libraries and watch progress")}</span>
+          <span><Check size={15} /> {translateUi(" Watch or download directly on Windows, Mac and mobile")}</span>
+          <span><Check size={15} /> {translateUi(" Browser playback and one-click VLC")}</span>
+          <span><Check size={15} /> {translateUi(" Android and TV app remains completely free")}</span>
         </div>
 
         <div className="paywall-price">
           <span className="paywall-amount">$2.99</span>
-          <span className="paywall-period">/ month</span>
+          <span className="paywall-period">{translateUi("/ month")}</span>
         </div>
 
         <a
@@ -268,30 +270,28 @@ export function PaywallScreen({
           rel="noopener noreferrer"
           onClick={() => { void trackPremiumEvent(authClient, "checkout_opened"); }}
         >
-          <BadgeCheck size={18} /> Subscribe on Ko-fi <ExternalLink size={15} />
+          <BadgeCheck size={18} /> {translateUi(" Subscribe on Ko-fi ")}<ExternalLink size={15} />
         </a>
-        <p className="paywall-disclaimer">Use the email on your ARVIO Cloud account at checkout, or link your billing email below. Membership does not include media or subscriptions to other services.</p>
+        <p className="paywall-disclaimer">{translateUi("Use the email on your ARVIO Cloud account at checkout, or link your billing email below. Membership does not include media or subscriptions to other services.")}</p>
 
         {SHOW_TRIAL && trialAvailable && !expired && (
           <button type="button" className="paywall-trial" onClick={() => void beginTrial()} disabled={busy !== null}>
             {busy === "trial" ? <Loader2 className="paywall-spinner" size={16} /> : <Sparkles size={16} />}
-            {isSignedIn ? `Start ${trialDays}-day free trial` : `Connect to Cloud for ${trialDays}-day trial`}
+            {isSignedIn ? translateUi("Start {value0}-day free trial", {value0: trialDays}) : translateUi("Connect to Cloud for {value0}-day trial", {value0: trialDays})}
           </button>
         )}
 
         <button type="button" className="paywall-trial" onClick={() => void checkAccess()} disabled={busy !== null}>
-          {busy === "check" ? <Loader2 className="paywall-spinner" size={16} /> : <RefreshCw size={16} />} I have paid, check access
-        </button>
+          {busy === "check" ? <Loader2 className="paywall-spinner" size={16} /> : <RefreshCw size={16} />} {translateUi(" I have paid, check access")}</button>
         <BillingEmailForm key={accountId} onEntitled={onEntitled} />
 
-        {error && <p className="paywall-error">{error}</p>}
+        {error && <p className="paywall-error">{translateUi(error ?? "")}</p>}
 
-        <p className="paywall-proof">10,000+ users · 10+ contributors · open source</p>
+        <p className="paywall-proof">{translateUi("10,000+ users · 10+ contributors · open source")}</p>
 
         {isSignedIn && (
           <button type="button" className="paywall-signout" onClick={onSignOut}>
-            <LogOut size={15} /> Sign out
-          </button>
+            <LogOut size={15} /> {translateUi(" Sign out")}</button>
         )}
       </div>
     </main>

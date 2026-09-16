@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { Check, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -12,6 +14,7 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
   onDelete?: () => void;
   onClose: () => void;
 }) {
+  const translateUi = useTranslation();
   const [name, setName] = useState(initial?.name ?? "");
   const [avatarColor, setAvatarColor] = useState(initial?.avatarColor ?? profileColors[0]);
   const [avatarId, setAvatarId] = useState(initial?.avatarId ?? 0);
@@ -34,8 +37,8 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
     <div className="modal-scrim" onClick={onClose}>
       <div className="profile-dialog" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <div className="profile-dialog-head">
-          <h2>{mode === "add" ? "Add Profile" : "Edit Profile"}</h2>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={20} /></button>
+          <h2>{mode === "add" ? translateUi("Add Profile") : translateUi("Edit Profile")}</h2>
+          <button type="button" className="icon-button" onClick={onClose} aria-label={translateUi("Close")}><X size={20} /></button>
         </div>
 
         <div className="profile-dialog-preview">
@@ -56,12 +59,12 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
           className="profile-name-input"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="Profile name"
+          placeholder={translateUi("Profile name")}
           autoFocus
           maxLength={20}
         />
 
-        <h3 className="profile-dialog-label">Color (letter avatar)</h3>
+        <h3 className="profile-dialog-label">{translateUi("Color (letter avatar)")}</h3>
         <div className="color-row">
           {profileColors.map((color) => (
             <button
@@ -70,18 +73,18 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
               className={`color-dot ${avatarId === 0 && avatarColor === color ? "is-active" : ""}`}
               style={{ background: colorToCss(color) }}
               onClick={() => { setAvatarColor(color); setAvatarId(0); }}
-              aria-label="Pick color"
+              aria-label={translateUi("Pick color")}
             >
               {avatarId === 0 && avatarColor === color ? <Check size={16} /> : null}
             </button>
           ))}
         </div>
 
-        <h3 className="profile-dialog-label">Avatar</h3>
+        <h3 className="profile-dialog-label">{translateUi("Avatar")}</h3>
         <div className="avatar-picker">
           {avatarCategories.map((category) => (
             <div className="avatar-category" key={category.label}>
-              <span className="avatar-category-label">{category.label}</span>
+              <span className="avatar-category-label">{translateUi(category.label)}</span>
               <div className="avatar-grid">
                 {category.ids.map((id) => (
                   <button
@@ -101,10 +104,10 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
 
         <div className="profile-dialog-actions">
           {mode === "edit" && onDelete && (
-            <button type="button" className="secondary text-button danger" onClick={onDelete}><Trash2 size={18} /> Delete</button>
+            <button type="button" className="secondary text-button danger" onClick={onDelete}><Trash2 size={18} /> {translateUi(" Delete")}</button>
           )}
           <button type="button" className="primary" onClick={() => onConfirm(name.trim() || "Profile", avatarColor, avatarId)} disabled={!name.trim()}>
-            {mode === "add" ? "Create" : "Save"}
+            {mode === "add" ? translateUi("Create") : translateUi("Save")}
           </button>
         </div>
       </div>

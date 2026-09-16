@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { Cloud, Pencil, Plus } from "lucide-react";
 import { useState } from "react";
@@ -10,6 +12,7 @@ import { ProfileDialog } from "./ProfileDialog";
 import { PinDialog } from "./PinDialog";
 
 export function ProfileSelectionScreen() {
+  const translateUi = useTranslation();
   const {
     profiles, avatarImages, manageMode, setManageMode,
     selectProfile, createProfile, updateProfile, deleteProfile,
@@ -37,7 +40,7 @@ export function ProfileSelectionScreen() {
           <img className="profile-brand-logo" src="/arvio-icon-512.png" alt="" width={56} height={56} />
           <img className="profile-wordmark" src="/arvio-wordmark.svg" alt="ARVIO" />
         </div>
-        <h1 className="profile-heading">{manageMode ? "Manage Profiles" : "Who's watching?"}</h1>
+        <h1 className="profile-heading">{manageMode ? translateUi("Manage Profiles") : translateUi("Who's watching?")}</h1>
 
         <div className="profile-row">
           {profiles.map((profile) => (
@@ -54,7 +57,7 @@ export function ProfileSelectionScreen() {
                   <div className="avatar-edit-overlay"><Pencil size={26} /></div>
                 )}
               </div>
-              <span>{openingProfileId === profile.id ? "Opening..." : profile.name}</span>
+              <span>{openingProfileId === profile.id ? translateUi("Opening...") : profile.name}</span>
             </button>
           ))}
 
@@ -63,13 +66,13 @@ export function ProfileSelectionScreen() {
               <div className="avatar-tile add">
                 <Plus size={48} />
               </div>
-              <span>Add Profile</span>
+              <span>{translateUi("Add Profile")}</span>
             </button>
           )}
         </div>
 
         <button type="button" className="manage-profiles-btn" onClick={() => setManageMode(!manageMode)}>
-          {manageMode ? "Done" : "Manage Profiles"}
+          {manageMode ? translateUi("Done") : translateUi("Manage Profiles")}
         </button>
 
         {!auth && !config.selfHosted && (
@@ -82,8 +85,7 @@ export function ProfileSelectionScreen() {
               goToLogin();
             }}
           >
-            <Cloud size={18} /> Connect to Cloud
-          </button>
+            <Cloud size={18} /> {translateUi(" Connect to Cloud")}</button>
         )}
       </div>
 

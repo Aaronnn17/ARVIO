@@ -12944,3 +12944,14 @@ html { background: #000; }
  .oled-library .media-card .card-meta-row{font-size:18px;}
 }
 .oled-collection-cover{aspect-ratio:2.2;}
+.iptv-group-settings{margin-top:24px;min-width:0;}
+.iptv-group-settings>select{width:100%;margin:12px 0;}
+.iptv-group-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+.iptv-group-list{max-height:480px;overflow:auto;}
+.iptv-group-row{display:grid;grid-template-columns:minmax(0,1fr) repeat(4,36px);gap:6px;align-items:center;padding:8px 4px;border-bottom:1px solid #444;}
+.iptv-group-row.is-held{outline:2px solid var(--accent,#df4965);outline-offset:-2px;}
+.iptv-group-settings .iptv-group-row>button{width:36px;min-height:36px;height:36px;padding:0;display:grid;place-items:center;border-radius:6px;}
+.iptv-group-settings .iptv-group-actions>button{width:auto;min-height:40px;padding:8px 12px;display:inline-flex;gap:6px;align-items:center;border-radius:6px;white-space:nowrap;}
+.iptv-group-settings button svg{display:block;flex-shrink:0;}
+.iptv-group-name{overflow-wrap:anywhere;min-width:0;}
+.iptv-group-name small{display:block;opacity:.65;font-size:12px;}

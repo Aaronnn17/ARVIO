@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -42,10 +44,11 @@ export function LibraryGrid({ items, poster, onOpen, onNearEnd, positions, posit
     const cell = (event.target as HTMLElement).closest<HTMLElement>("[data-library-index]");
     if (!cell) return;
     const index = Number(cell.dataset.libraryIndex);
-    const offset = ({ ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns } as Record<string, number>)[event.key];
+    const rtl = getComputedStyle(event.currentTarget).direction === "rtl";
+    const offset = ({ ArrowLeft: rtl ? 1 : -1, ArrowRight: rtl ? -1 : 1, ArrowUp: -columns, ArrowDown: columns } as Record<string, number>)[event.key];
     if (!offset) return;
     const next = index + offset;
-    if(event.key === "ArrowLeft" && index % columns === 0) {
+    if(event.key === (rtl ? "ArrowRight" : "ArrowLeft") && index % columns === 0) {
       const source = document.querySelector<HTMLButtonElement>(".oled-source-nav button[aria-current]");
       if(source) { event.preventDefault(); source.focus(); return; }
     }
@@ -66,6 +69,7 @@ export function LibraryGrid({ items, poster, onOpen, onNearEnd, positions, posit
 }
 
 export function CollectionCover({ title, provider, load, onOpen }: { title: string; provider: string; load: () => Promise<MediaItem[]>; onOpen: () => void }) {
+  const translateUi = useTranslation();
   const target = useRef<HTMLButtonElement>(null);
   const loader = useRef(load);
   loader.current = load;
@@ -83,11 +87,12 @@ export function CollectionCover({ title, provider, load, onOpen }: { title: stri
   }, []);
   return <button ref={target} className="oled-collection" onClick={onOpen}>
     <div className="oled-collection-cover">{cover ? <img src={cover} alt="" loading="lazy"/> : <span aria-hidden="true">▤</span>}</div>
-    <div className="oled-collection-caption"><strong>{title}</strong><span>{count !== null ? `${count} titles · ` : ""}{provider}</span></div>
+    <div className="oled-collection-caption"><strong>{title}</strong><span>{count !== null ? translateUi("{value0} titles · ", {value0: count}) : ""}{provider}</span></div>
   </button>;
 }
 
 export function LibraryDialog({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
+  const translateUi = useTranslation();
   const dialog = useRef<HTMLDivElement>(null);
   const closeRef = useRef(close); closeRef.current = close;
   useEffect(() => {
@@ -106,6 +111,6 @@ export function LibraryDialog({ title, close, children }: { title: string; close
     return () => { document.removeEventListener("keydown", onKey, true); previous?.focus(); };
   }, []);
   return <div className="oled-dialog-backdrop" onClick={close}><div ref={dialog} role="dialog" aria-modal="true" aria-label={title} className="oled-dialog" onClick={(event) => event.stopPropagation()}>
-    <button className="oled-dialog-close" aria-label="Close" onClick={close}>×</button><h2>{title}</h2>{children}
+    <button className="oled-dialog-close" aria-label={translateUi("Close")} onClick={close}>×</button><h2>{title}</h2>{children}
   </div></div>;
 }

@@ -1,4 +1,7 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+import { CONTENT_LANGUAGE_OPTIONS } from "@/lib/i18n/languageOptions";
+
 
 import {
   ArrowDown,
@@ -56,6 +59,8 @@ import {
 import { buildHomeServerCatalogConfigs } from "@/lib/homeserver";
 import { defaultSettings, useApp } from "@/lib/store";
 import { PremiumAccount } from "@/components/shell/PremiumAccount";
+import { IptvGroupSettings } from "./IptvGroupSettings";
+import { iptvPlaylistSignature } from "@/lib/iptv";
 import type {
   AppSettings,
   CatalogConfig,
@@ -140,26 +145,6 @@ const QUALITY_PRESET_LABELS: Array<
   ["custom", "Custom"],
 ];
 
-const CONTENT_LANGUAGE_OPTIONS: Array<[string, string]> = [
-  ["en-US", "English (US)"],
-  ["en-GB", "English (UK)"],
-  ["nl-NL", "Dutch"],
-  ["de-DE", "German"],
-  ["fr-FR", "French"],
-  ["es-ES", "Spanish"],
-  ["it-IT", "Italian"],
-  ["pt-PT", "Portuguese"],
-  ["pt-BR", "Portuguese (Brazil)"],
-  ["tr-TR", "Turkish"],
-  ["pl-PL", "Polish"],
-  ["sv-SE", "Swedish"],
-  ["da-DK", "Danish"],
-  ["fi-FI", "Finnish"],
-  ["no-NO", "Norwegian"],
-  ["ja-JP", "Japanese"],
-  ["ko-KR", "Korean"],
-  ["zh-CN", "Chinese (Simplified)"],
-];
 
 const TRACK_LANGUAGE_OPTIONS: Array<[string, string]> = [
   ["", "Off / Auto"],
@@ -232,6 +217,7 @@ function qualityPresetFilters(
 }
 
 export function SettingsScreen() {
+  const translateUi = useTranslation();
   const [section, setSection] = useState<SectionId>("accounts");
   const [collapsed, setCollapsed] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -245,7 +231,7 @@ export function SettingsScreen() {
         type="button"
         className={`settings-floating-menu-btn ${mobileMenuOpen ? "is-open" : ""}`}
         onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+        aria-label={mobileMenuOpen ? translateUi("Close navigation menu") : translateUi("Open navigation menu")}
       >
         <Menu size={20} />
       </button>
@@ -257,11 +243,11 @@ export function SettingsScreen() {
             type="button"
             className="settings-collapse-btn"
             onClick={() => setCollapsed(!collapsed)}
-            aria-label={collapsed ? "Expand settings menu" : "Collapse settings menu"}
+            aria-label={collapsed ? translateUi("Expand settings menu") : translateUi("Collapse settings menu")}
           >
             <Menu size={20} />
           </button>
-          <h2 className="settings-sidebar-title">Settings</h2>
+          <h2 className="settings-sidebar-title">{translateUi("Settings")}</h2>
         </div>
         <nav className="settings-nav">
           {SECTIONS.map((s) => {
@@ -278,10 +264,10 @@ export function SettingsScreen() {
                   // panel frame visibly leaping around.
                   window.scrollTo({ top: 0 });
                 }}
-                title={s.label}
+                title={translateUi(s.label)}
               >
                 <span className="settings-btn-icon"><Icon size={18} /></span>
-                <span className="settings-btn-label">{s.label}</span>
+                <span className="settings-btn-label">{translateUi(s.label)}</span>
               </button>
             );
           })}
@@ -295,12 +281,12 @@ export function SettingsScreen() {
       >
         <div className="settings-mobile-drawer" onClick={(e) => e.stopPropagation()}>
           <div className="settings-mobile-drawer-header">
-            <span className="settings-mobile-drawer-title">{activeSectionObj?.label ?? "Navigation"}</span>
+            <span className="settings-mobile-drawer-title">{translateUi(activeSectionObj?.label ?? "Navigation")}</span>
             <button
               type="button"
               className="settings-mobile-drawer-close"
               onClick={() => setMobileMenuOpen(false)}
-              aria-label="Close settings menu"
+              aria-label={translateUi("Close settings menu")}
             >
               <X size={20} />
             </button>
@@ -321,7 +307,7 @@ export function SettingsScreen() {
                   }}
                 >
                   <span className="settings-btn-icon"><Icon size={18} /></span>
-                  <span className="settings-btn-label">{s.label}</span>
+                  <span className="settings-btn-label">{translateUi(s.label)}</span>
                 </button>
               );
             })}
@@ -366,20 +352,25 @@ class SettingsSectionBoundary extends Component<
 
   render() {
     if (!this.state.hasError) return this.props.children;
-    return (
+    return <SettingsError message={this.state.message} retry={() => this.setState({ hasError: false, message: "" })} />;
+  }
+}
+
+function SettingsError({message, retry}: {message:string; retry:()=>void}) {
+  const translateUi = useTranslation();
+  return (
       <section className="settings-panel-card settings-error-card">
-        <h2>Settings section unavailable</h2>
-        <p className="empty">{this.state.message}</p>
+        <h2>{translateUi("Settings section unavailable")}</h2>
+        <p className="empty">{translateUi(message)}</p>
         <button
           type="button"
           className="secondary text-button"
-          onClick={() => this.setState({ hasError: false, message: "" })}
+          onClick={retry}
         >
-          Try again
+          {translateUi("Try again")}
         </button>
       </section>
     );
-  }
 }
 
 /* ---------- reusable rows ---------- */
@@ -393,11 +384,12 @@ function Row({
   hint?: string;
   children: ReactNode;
 }) {
+  const translateUi = useTranslation();
   return (
     <div className="set-row">
       <span className="set-label">
-        {label}
-        {hint && <em>{hint}</em>}
+        {translateUi(label)}
+        {hint && <em>{translateUi(hint ?? "")}</em>}
       </span>
       <span className="set-control">{children}</span>
     </div>
@@ -432,12 +424,15 @@ function Select<T extends string>({
   options,
   onChange,
   disabled,
+  translateLabels = true,
 }: {
   value: T;
   options: Array<[T, string]>;
   onChange: (v: T) => void;
   disabled?: boolean;
+  translateLabels?: boolean;
 }) {
+  const translateUi = useTranslation();
   const [open, setOpen] = useState(false);
   const selected = options.find(([option]) => option === value)?.[1] ?? value;
   const choose = (next: T) => {
@@ -484,7 +479,7 @@ function Select<T extends string>({
           setOpen(true);
         }}
       >
-        <span>{selected}</span>
+        <span>{translateLabels ? translateUi(selected) : selected}</span>
         <ChevronDown size={17} />
       </button>
       {open && typeof document !== "undefined" && createPortal(
@@ -497,18 +492,17 @@ function Select<T extends string>({
             className="option-sheet"
             role="dialog"
             aria-modal="true"
-            aria-label="Choose option"
+            aria-label={translateUi("Choose option")}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="option-sheet-head">
-              <strong>Choose option</strong>
+              <strong>{translateUi("Choose option")}</strong>
               <button
                 type="button"
                 className="secondary"
                 onClick={() => setOpen(false)}
               >
-                Close
-              </button>
+                {translateUi("Close")}</button>
             </div>
             <div className="option-sheet-list">
               {options.map(([option, label]) => (
@@ -518,7 +512,7 @@ function Select<T extends string>({
                   className={`option-row ${option === value ? "is-selected" : ""}`}
                   onClick={() => choose(option)}
                 >
-                  <span>{label}</span>
+                  <span>{translateLabels ? translateUi(label) : label}</span>
                   {option === value && <Check size={18} />}
                 </button>
               ))}
@@ -534,6 +528,7 @@ function Select<T extends string>({
 /* ---------- section body ---------- */
 
 function SectionBody({ section }: { section: SectionId }) {
+  const translateUi = useTranslation();
   const app = useApp();
   const { settings } = app;
   const set = (patch: Partial<AppSettings>) => app.updateSettings(patch);
@@ -575,26 +570,24 @@ function SectionBody({ section }: { section: SectionId }) {
   switch (section) {
     case "credits":
       return (
-        <Panel title="About ARVIO">
-          <h3>Credits</h3>
+        <Panel title={translateUi("About ARVIO")}>
+          <h3>{translateUi("Credits")}</h3>
           <a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer">
             <img src="/tmdb-logo.svg" alt="TMDB" width={100} height={16} />
           </a>
-          <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
-          <p>Sports data and artwork provided by <a href="https://www.thesportsdb.com" target="_blank" rel="noopener noreferrer">TheSportsDB</a>.</p>
-          <p>ARVIO is a media hub for sources you configure. Catalog entries do not grant viewing rights.
-            Connect only services and media you are authorized to use.</p>
+          <p>{translateUi("This product uses the TMDB API but is not endorsed or certified by TMDB.")}</p>
+          <p>{translateUi("Sports data and artwork provided by ")}<a href="https://www.thesportsdb.com" target="_blank" rel="noopener noreferrer">{translateUi("TheSportsDB")}</a>.</p>
+          <p>{translateUi("ARVIO is a media hub for sources you configure. Catalog entries do not grant viewing rights. Connect only services and media you are authorized to use.")}</p>
           <a className="secondary text-button" href="https://arvio.tv/credits/" target="_blank" rel="noopener noreferrer">
-            <ExternalLink size={16} /> Credits &amp; copyright reports
-          </a>
+            <ExternalLink size={16} /> {translateUi(" Credits & copyright reports")}</a>
         </Panel>
       );
     case "accounts":
       return <AccountsSection />;
     case "profiles":
       return (
-        <Panel title="Profiles">
-          <Row label="Skip profile selection on launch">
+        <Panel title={translateUi("Profiles")}>
+          <Row label={translateUi("Skip profile selection on launch")}>
             <Toggle
               value={settings.skipProfileSelection}
               onChange={(v) => set({ skipProfileSelection: v })}
@@ -605,19 +598,18 @@ function SectionBody({ section }: { section: SectionId }) {
             className="secondary text-button"
             onClick={app.switchProfile}
           >
-            <User size={18} /> Manage profiles
-          </button>
+            <User size={18} /> {translateUi(" Manage profiles")}</button>
         </Panel>
       );
     case "playback":
       return (
-        <Panel title="Playback">
+        <Panel title={translateUi("Playback")}>
           <Row
-            label="Play Live TV in"
+            label={translateUi("Play Live TV in")}
             // Movies and series always open in an external player now, so this
             // choice only routes Live TV. Saying otherwise here would be the
             // same broken promise we removed from the source list.
-            hint="Movies and series always open in an external player like VLC. This picks where Live TV channels play; ARVIO still syncs Trakt when you return"
+            hint={translateUi("Movies and series always open in an external player like VLC. This picks where Live TV channels play; ARVIO still syncs Trakt when you return")}
           >
             <Select
               value={settings.defaultPlayer}
@@ -631,15 +623,15 @@ function SectionBody({ section }: { section: SectionId }) {
           </Row>
           {isMac() ? (
             <Row
-              label="VLC One-Click Setup"
-              hint="macOS self-registers the vlc:// protocol upon VLC installation — no setup script required"
+              label={translateUi("VLC One-Click Setup")}
+              hint={translateUi("macOS self-registers the vlc:// protocol upon VLC installation — no setup script required")}
             >
-              <span className="muted" style={{ fontSize: "13px" }}>Natively supported</span>
+              <span className="muted" style={{ fontSize: "13px" }}>{translateUi("Natively supported")}</span>
             </Row>
           ) : isLinux() ? (
             <Row
-              label="VLC One-Click Setup"
-              hint="Download vlc-setup.sh to enable direct vlc:// launching on Linux without saving .m3u playlist files"
+              label={translateUi("VLC One-Click Setup")}
+              hint={translateUi("Download vlc-setup.sh to enable direct vlc:// launching on Linux without saving .m3u playlist files")}
             >
               <button
                 type="button"
@@ -652,13 +644,12 @@ function SectionBody({ section }: { section: SectionId }) {
                   );
                 }}
               >
-                <Download size={16} /> Download .sh
-              </button>
+                <Download size={16} /> {translateUi(" Download .sh")}</button>
             </Row>
           ) : isWindows() ? (
             <Row
-              label="VLC One-Click Setup"
-              hint="Download vlc-setup.bat to enable direct vlc:// launching on Windows without saving .m3u playlist files"
+              label={translateUi("VLC One-Click Setup")}
+              hint={translateUi("Download vlc-setup.bat to enable direct vlc:// launching on Windows without saving .m3u playlist files")}
             >
               <button
                 type="button"
@@ -671,23 +662,22 @@ function SectionBody({ section }: { section: SectionId }) {
                   );
                 }}
               >
-                <Download size={16} /> Download .bat
-              </button>
+                <Download size={16} /> {translateUi(" Download .bat")}</button>
             </Row>
           ) : null}
-          <Row label="Auto play next episode">
+          <Row label={translateUi("Auto play next episode")}>
             <Toggle
               value={settings.autoPlayNext}
               onChange={(v) => set({ autoPlayNext: v })}
             />
           </Row>
-          <Row label="Auto play single source">
+          <Row label={translateUi("Auto play single source")}>
             <Toggle
               value={settings.autoPlaySingleSource}
               onChange={(v) => set({ autoPlaySingleSource: v })}
             />
           </Row>
-          <Row label="Auto play minimum quality">
+          <Row label={translateUi("Auto play minimum quality")}>
             <Select
               value={settings.autoPlayMinQuality}
               onChange={(v) => set({ autoPlayMinQuality: v })}
@@ -700,8 +690,8 @@ function SectionBody({ section }: { section: SectionId }) {
             />
           </Row>
           <Row
-            label="Frame rate matching"
-            hint="Applies on TV devices; synced from here"
+            label={translateUi("Frame rate matching")}
+            hint={translateUi("Applies on TV devices; synced from here")}
           >
             <Select
               value={settings.frameRateMatchingMode}
@@ -714,8 +704,8 @@ function SectionBody({ section }: { section: SectionId }) {
             />
           </Row>
           <Row
-            label="Volume boost"
-            hint="Applies on TV devices; synced from here"
+            label={translateUi("Volume boost")}
+            hint={translateUi("Applies on TV devices; synced from here")}
           >
             <Select
               value={String(settings.volumeBoostDb)}
@@ -726,13 +716,13 @@ function SectionBody({ section }: { section: SectionId }) {
               ])}
             />
           </Row>
-          <Row label="Include specials">
+          <Row label={translateUi("Include specials")}>
             <Toggle
               value={settings.includeSpecials}
               onChange={(v) => set({ includeSpecials: v })}
             />
           </Row>
-          <Row label="Quality filter preset">
+          <Row label={translateUi("Quality filter preset")}>
             <Select
               value={settings.qualityFilterPreset}
               onChange={setQualityPreset}
@@ -743,20 +733,19 @@ function SectionBody({ section }: { section: SectionId }) {
             <input
               value={qualityFilterName}
               onChange={(e) => setQualityFilterName(e.target.value)}
-              placeholder="Filter name"
+              placeholder={translateUi("Filter name")}
             />
             <input
               value={qualityFilterPattern}
               onChange={(e) => setQualityFilterPattern(e.target.value)}
-              placeholder="Regex to hide matching sources"
+              placeholder={translateUi("Regex to hide matching sources")}
             />
             <button
               type="button"
               className="secondary text-button"
               onClick={addQualityFilter}
             >
-              <Plus size={18} /> Add filter
-            </button>
+              <Plus size={18} /> {translateUi(" Add filter")}</button>
           </div>
           <div className="settings-list">
             {safeArray(settings.qualityFilters).map((filter) => (
@@ -827,9 +816,10 @@ function SectionBody({ section }: { section: SectionId }) {
       );
     case "language":
       return (
-        <Panel title="Language & Audio">
-          <Row label="Content language">
+        <Panel title={translateUi("Language & Audio")}>
+          <Row label={translateUi("Content language")}>
             <Select
+              translateLabels={false}
               value={settings.language}
               onChange={(v) => set({ language: v })}
               options={optionsWithCurrent(
@@ -839,7 +829,7 @@ function SectionBody({ section }: { section: SectionId }) {
               )}
             />
           </Row>
-          <Row label="Primary subtitle language">
+          <Row label={translateUi("Primary subtitle language")}>
             <Select
               value={settings.defaultSubtitle || ""}
               onChange={(v) => set({ defaultSubtitle: v })}
@@ -850,7 +840,7 @@ function SectionBody({ section }: { section: SectionId }) {
               )}
             />
           </Row>
-          <Row label="Secondary subtitle language">
+          <Row label={translateUi("Secondary subtitle language")}>
             <Select
               value={settings.secondarySubtitle || ""}
               onChange={(v) => set({ secondarySubtitle: v })}
@@ -861,7 +851,7 @@ function SectionBody({ section }: { section: SectionId }) {
               )}
             />
           </Row>
-          <Row label="Audio language">
+          <Row label={translateUi("Audio language")}>
             <Select
               value={settings.audioLanguage || ""}
               onChange={(v) => set({ audioLanguage: v })}
@@ -876,9 +866,9 @@ function SectionBody({ section }: { section: SectionId }) {
       );
     case "subtitles":
       return (
-        <Panel title="Subtitles">
+        <Panel title={translateUi("Subtitles")}>
           <SubtitlePreview settings={settings} />
-          <Row label="Subtitle size (%)">
+          <Row label={translateUi("Subtitle size (%)")}>
             <input
               type="number"
               min={60}
@@ -887,7 +877,7 @@ function SectionBody({ section }: { section: SectionId }) {
               onChange={(e) => set({ subtitleSize: Number(e.target.value) })}
             />
           </Row>
-          <Row label="Subtitle color">
+          <Row label={translateUi("Subtitle color")}>
             <Select
               value={settings.subtitleColorName}
               onChange={setSubtitleColor}
@@ -898,7 +888,7 @@ function SectionBody({ section }: { section: SectionId }) {
               ).map((name) => [name, name])}
             />
           </Row>
-          <Row label="Custom subtitle color">
+          <Row label={translateUi("Custom subtitle color")}>
             <input
               type="color"
               value={settings.subtitleColor}
@@ -910,7 +900,7 @@ function SectionBody({ section }: { section: SectionId }) {
               }
             />
           </Row>
-          <Row label="Subtitle offset (ms)">
+          <Row label={translateUi("Subtitle offset (ms)")}>
             <input
               type="number"
               value={settings.subtitleOffsetMs}
@@ -919,7 +909,7 @@ function SectionBody({ section }: { section: SectionId }) {
               }
             />
           </Row>
-          <Row label="Subtitle screen position">
+          <Row label={translateUi("Subtitle screen position")}>
             <Select
               value={settings.subtitleOffset}
               onChange={(v) => set({ subtitleOffset: v })}
@@ -931,7 +921,7 @@ function SectionBody({ section }: { section: SectionId }) {
               ]}
             />
           </Row>
-          <Row label="Subtitle style">
+          <Row label={translateUi("Subtitle style")}>
             <Select
               value={settings.subtitleStyle}
               onChange={(v) => set({ subtitleStyle: v })}
@@ -943,19 +933,19 @@ function SectionBody({ section }: { section: SectionId }) {
               ]}
             />
           </Row>
-          <Row label="Stylized subtitles">
+          <Row label={translateUi("Stylized subtitles")}>
             <Toggle
               value={settings.subtitleStylized}
               onChange={(v) => set({ subtitleStylized: v })}
             />
           </Row>
-          <Row label="Filter subtitles by language">
+          <Row label={translateUi("Filter subtitles by language")}>
             <Toggle
               value={settings.filterSubtitlesByLanguage}
               onChange={(v) => set({ filterSubtitlesByLanguage: v })}
             />
           </Row>
-          <Row label="Remove hearing-impaired [SDH] tags">
+          <Row label={translateUi("Remove hearing-impaired [SDH] tags")}>
             <Toggle
               value={settings.removeHearingImpaired}
               onChange={(v) => set({ removeHearingImpaired: v })}
@@ -965,14 +955,14 @@ function SectionBody({ section }: { section: SectionId }) {
       );
     case "ai":
       return (
-        <Panel title="AI Subtitles">
-          <Row label="AI subtitle enhancement">
+        <Panel title={translateUi("AI Subtitles")}>
+          <Row label={translateUi("AI subtitle enhancement")}>
             <Toggle
               value={settings.aiSubtitlesEnabled}
               onChange={(v) => set({ aiSubtitlesEnabled: v })}
             />
           </Row>
-          <Row label="AI model">
+          <Row label={translateUi("AI model")}>
             <Select
               value={settings.aiSubtitleModel}
               onChange={(v) => set({ aiSubtitleModel: v })}
@@ -983,26 +973,26 @@ function SectionBody({ section }: { section: SectionId }) {
               ]}
             />
           </Row>
-          <Row label="Auto-select best match">
+          <Row label={translateUi("Auto-select best match")}>
             <Toggle
               value={settings.aiAutoSelect}
               onChange={(v) => set({ aiAutoSelect: v })}
             />
           </Row>
-          <Row label="AI API key">
+          <Row label={translateUi("AI API key")}>
             <input
               type="password"
               value={settings.aiApiKey}
               onChange={(e) => set({ aiApiKey: e.target.value })}
-              placeholder="••••••••"
+              placeholder={translateUi("••••••••")}
             />
           </Row>
         </Panel>
       );
     case "appearance":
       return (
-        <Panel title="Appearance">
-          <Row label="Card layout">
+        <Panel title={translateUi("Appearance")}>
+          <Row label={translateUi("Card layout")}>
             <Select
               value={settings.cardLayoutMode}
               onChange={(v) => set({ cardLayoutMode: v })}
@@ -1012,7 +1002,7 @@ function SectionBody({ section }: { section: SectionId }) {
               ]}
             />
           </Row>
-          <Row label="Device mode">
+          <Row label={translateUi("Device mode")}>
             <Select
               value={settings.deviceModeOverride}
               onChange={(v) => set({ deviceModeOverride: v })}
@@ -1025,32 +1015,32 @@ function SectionBody({ section }: { section: SectionId }) {
               ]}
             />
           </Row>
-          <Row label="OLED black background">
+          <Row label={translateUi("OLED black background")}>
             <Toggle
               value={settings.oledBlack}
               onChange={(v) => set({ oledBlack: v })}
             />
           </Row>
 
-          <Row label="Show budget / revenue">
+          <Row label={translateUi("Show budget / revenue")}>
             <Toggle
               value={settings.showBudget}
               onChange={(v) => set({ showBudget: v })}
             />
           </Row>
-          <Row label="Smooth scrolling">
+          <Row label={translateUi("Smooth scrolling")}>
             <Toggle
               value={settings.smoothScrolling}
               onChange={(v) => set({ smoothScrolling: v })}
             />
           </Row>
-          <Row label="Spoiler blur">
+          <Row label={translateUi("Spoiler blur")}>
             <Toggle
               value={settings.spoilerBlur}
               onChange={(v) => set({ spoilerBlur: v })}
             />
           </Row>
-          <Row label="Accent theme">
+          <Row label={translateUi("Accent theme")}>
             <Select
               value={settings.accentColor}
               onChange={(v) => set({ accentColor: v })}
@@ -1067,8 +1057,8 @@ function SectionBody({ section }: { section: SectionId }) {
       );
     case "network":
       return (
-        <Panel title="Network">
-          <Row label="DNS provider">
+        <Panel title={translateUi("Network")}>
+          <Row label={translateUi("DNS provider")}>
             <Select
               value={settings.dnsProvider}
               onChange={(v) => set({ dnsProvider: v })}
@@ -1081,27 +1071,27 @@ function SectionBody({ section }: { section: SectionId }) {
               ]}
             />
           </Row>
-          <Row label="Show loading statistics">
+          <Row label={translateUi("Show loading statistics")}>
             <Toggle
               value={settings.showLoadingStats}
               onChange={(v) => set({ showLoadingStats: v })}
             />
           </Row>
           <Row
-            label="Custom user agent"
-            hint="Cloud-saved for Android; browsers may ignore it"
+            label={translateUi("Custom user agent")}
+            hint={translateUi("Cloud-saved for Android; browsers may ignore it")}
           >
             <input
               value={settings.customUserAgent}
               onChange={(e) => set({ customUserAgent: e.target.value })}
-              placeholder="Default"
+              placeholder={translateUi("Default")}
             />
           </Row>
-          <Row label="TorrServer base URL" hint="Cloud-saved for Android">
+          <Row label={translateUi("TorrServer base URL")} hint={translateUi("Cloud-saved for Android")}>
             <input
               value={settings.torrServerBaseUrl}
               onChange={(e) => set({ torrServerBaseUrl: e.target.value })}
-              placeholder="http://127.0.0.1:8090"
+              placeholder={translateUi("http://127.0.0.1:8090")}
             />
           </Row>
         </Panel>
@@ -1126,6 +1116,7 @@ function SectionBody({ section }: { section: SectionId }) {
 }
 
 function MetadataSection({ settings, set }: { settings: AppSettings; set: (patch: Partial<AppSettings>) => void }) {
+  const translateUi = useTranslation();
   const animeChain = (settings.metadataAnimeProviders || ["anilist", "tvdb", "tmdb"]).join(" → ").toUpperCase();
   const tvChain = (settings.metadataTvProviders || ["tvdb", "tmdb"]).join(" → ").toUpperCase();
   const movieChain = (settings.metadataMovieProviders || ["tmdb"]).join(" → ").toUpperCase();
@@ -1133,54 +1124,54 @@ function MetadataSection({ settings, set }: { settings: AppSettings; set: (patch
 
   return (
     <div className="settings-section">
-      <Panel title="Custom API Keys (Bring Your Own Key)">
-        <Row label="TMDB API Key" hint="Custom v3 API key for TMDB requests">
+      <Panel title={translateUi("Custom API Keys (Bring Your Own Key)")}>
+        <Row label={translateUi("TMDB API Key")} hint={translateUi("Custom v3 API key for TMDB requests")}>
           <input
             type="password"
             autoComplete="off"
             className="settings-input"
-            placeholder="System Default Key"
+            placeholder={translateUi("System Default Key")}
             value={settings.customTmdbApiKey || ""}
             onChange={(e) => set({ customTmdbApiKey: e.target.value })}
           />
         </Row>
 
         <Row
-          label="TVDB v4 API Key"
-          hint={tvdbActive ? "Active — TVDB enabled for metadata fallback" : "TVDB is disabled until a custom API key is provided"}
+          label={translateUi("TVDB v4 API Key")}
+          hint={tvdbActive ? translateUi("Active — TVDB enabled for metadata fallback") : translateUi("TVDB is disabled until a custom API key is provided")}
         >
           <input
             type="password"
             autoComplete="off"
             className="settings-input"
-            placeholder="Enter Custom TVDB Key to Enable"
+            placeholder={translateUi("Enter Custom TVDB Key to Enable")}
             value={settings.customTvdbApiKey || ""}
             onChange={(e) => set({ customTvdbApiKey: e.target.value })}
           />
         </Row>
 
-        <Row label="TVDB User PIN" hint="Required if using subscriber user key">
+        <Row label={translateUi("TVDB User PIN")} hint={translateUi("Required if using subscriber user key")}>
           <input
             type="password"
             autoComplete="off"
             className="settings-input"
-            placeholder="Optional User PIN"
+            placeholder={translateUi("Optional User PIN")}
             value={settings.customTvdbUserPin || ""}
             onChange={(e) => set({ customTvdbUserPin: e.target.value })}
           />
         </Row>
       </Panel>
 
-      <Panel title="Metadata Provider Priorities">
-        <Row label="Anime Metadata Priority" hint={`Active chain: ${animeChain}`}>
+      <Panel title={translateUi("Metadata Provider Priorities")}>
+        <Row label={translateUi("Anime Metadata Priority")} hint={translateUi("Active chain: {value0}", {value0: animeChain})}>
           <span className="accent-badge">{animeChain}</span>
         </Row>
 
-        <Row label="TV Shows Metadata Priority" hint={`Active chain: ${tvChain}`}>
+        <Row label={translateUi("TV Shows Metadata Priority")} hint={translateUi("Active chain: {value0}", {value0: tvChain})}>
           <span className="accent-badge">{tvChain}</span>
         </Row>
 
-        <Row label="Movies Metadata Priority" hint={`Active chain: ${movieChain}`}>
+        <Row label={translateUi("Movies Metadata Priority")} hint={translateUi("Active chain: {value0}", {value0: movieChain})}>
           <span className="accent-badge">{movieChain}</span>
         </Row>
       </Panel>
@@ -1211,6 +1202,7 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
 /* ---------- Accounts ---------- */
 
 function AccountsSection() {
+  const translateUi = useTranslation();
   const {
     auth,
     traktConnected,
@@ -1343,50 +1335,50 @@ function AccountsSection() {
   return (
     <>
       <PremiumAccount />
-      <Panel title={config.selfHosted ? "Local Account" : "ARVIO Account"}>
+      <Panel title={config.selfHosted ? translateUi("Local Account") : translateUi("ARVIO Account")}>
         {!cloudConfigured && (
           <p className="empty">
-            {config.selfHosted ? "Profiles and settings are saved in this browser. ARVIO Cloud is not connected." : "ARVIO Cloud backend env is missing. Add backend values in web/.env.local."}
+            {config.selfHosted ? translateUi("Profiles and settings are saved in this browser. ARVIO Cloud is not connected.") : translateUi("ARVIO Cloud backend env is missing. Add backend values in web/.env.local.")}
           </p>
         )}
         <div className="settings-status-grid">
           <div>
-            <span>Cloud</span>
+            <span>{translateUi("Cloud")}</span>
             <strong>
               {auth
-                ? "Connected"
+                ? translateUi("Connected")
                 : cloudConfigured
-                  ? "Ready"
-                  : config.selfHosted ? "Disabled" : "Missing config"}
+                  ? translateUi("Ready")
+                  : config.selfHosted ? translateUi("Disabled") : translateUi("Missing config")}
             </strong>
           </div>
           <div>
-            <span>Trakt</span>
+            <span>{translateUi("Trakt")}</span>
             <strong>
               {traktConnected
-                ? "Connected"
+                ? translateUi("Connected")
                 : hasTraktConfig()
-                  ? "Not linked"
-                  : "Missing config"}
+                  ? translateUi("Not linked")
+                  : translateUi("Missing config")}
             </strong>
           </div>
           <div>
-            <span>Simkl</span>
+            <span>{translateUi("Simkl")}</span>
             <strong>
               {simklConnected
-                ? "Connected"
+                ? translateUi("Connected")
                 : hasSimklConfig()
-                  ? "Not linked"
-                  : "Missing config"}
+                  ? translateUi("Not linked")
+                  : translateUi("Missing config")}
             </strong>
           </div>
           <div>
-            <span>MDBList</span>
-            <strong>{mdblistConnected ? "Connected" : "Not linked"}</strong>
+            <span>{translateUi("MDBList")}</span>
+            <strong>{mdblistConnected ? translateUi("Connected") : translateUi("Not linked")}</strong>
           </div>
           <div>
-            <span>Sync</span>
-            <strong>{!auth ? "Local only" : settingsSyncState === "saved" ? "Settings saved" : settingsSyncState === "error" ? "Save pending - retrying" : "Settings pending"}</strong>
+            <span>{translateUi("Sync")}</span>
+            <strong>{!auth ? translateUi("Local only") : settingsSyncState === "saved" ? translateUi("Settings saved") : settingsSyncState === "error" ? translateUi("Save pending - retrying") : translateUi("Settings pending")}</strong>
           </div>
         </div>
         {auth ? (
@@ -1394,11 +1386,10 @@ function AccountsSection() {
             <UserCircle size={34} />
             <div className="account-copy">
               <strong>{auth.email}</strong>
-              <span title={auth.userId}>ARVIO Cloud account</span>
+              <span title={auth.userId}>{translateUi("ARVIO Cloud account")}</span>
             </div>
             <button type="button" className="secondary" onClick={signOut}>
-              <LogOut size={18} /> Sign out
-            </button>
+              <LogOut size={18} /> {translateUi(" Sign out")}</button>
           </div>
         ) : !config.selfHosted ? (
           <div className="login-form">
@@ -1408,21 +1399,19 @@ function AccountsSection() {
               disabled={!cloudConfigured}
               onClick={redirectToAuthPortal}
             >
-              Sign In with ARVIO Cloud
-            </button>
+              {translateUi("Sign In with ARVIO Cloud")}</button>
           </div>
         ) : null}
       </Panel>
 
-      <Panel title="Trakt">
+      <Panel title={translateUi("Trakt")}>
         {!hasTraktConfig() && (
-          <p className="empty">Trakt client id is missing.</p>
+          <p className="empty">{translateUi("Trakt client id is missing.")}</p>
         )}
-        {traktError && <p className="login-error">{traktError}</p>}
+        {traktError && <p className="login-error">{translateUi(traktError)}</p>}
         {traktConnected ? (
           <button type="button" className="secondary" onClick={disconnectTrakt}>
-            Disconnect Trakt
-          </button>
+            {translateUi("Disconnect Trakt")}</button>
         ) : (
           <>
             <button
@@ -1431,19 +1420,19 @@ function AccountsSection() {
               disabled={traktBusy === "start" || !hasTraktConfig()}
               onClick={() => void startTraktLink()}
             >
-              {traktBusy === "start" ? "Starting..." : "Start device link"}
+              {traktBusy === "start" ? translateUi("Starting...") : translateUi("Start device link")}
             </button>
             {deviceCode && (
               <div className="device-code">
                 <span>{deviceCode.user_code}</span>
-                <p>Open {deviceCode.verification_url}</p>
+                <p>{translateUi("Open ")}{deviceCode.verification_url}</p>
                 <button
                   type="button"
                   className="secondary"
                   disabled={traktBusy === "poll"}
                   onClick={() => void approveTraktLink()}
                 >
-                  {traktBusy === "poll" ? "Checking..." : "I approved it"}
+                  {traktBusy === "poll" ? translateUi("Checking...") : translateUi("I approved it")}
                 </button>
               </div>
             )}
@@ -1451,15 +1440,14 @@ function AccountsSection() {
         )}
       </Panel>
 
-      <Panel title="Simkl">
+      <Panel title={translateUi("Simkl")}>
         {!hasSimklConfig() && (
-          <p className="empty">Simkl client configuration is missing.</p>
+          <p className="empty">{translateUi("Simkl client configuration is missing.")}</p>
         )}
-        {simklError && <p className="login-error">{simklError}</p>}
+        {simklError && <p className="login-error">{translateUi(simklError)}</p>}
         {simklConnected ? (
           <button type="button" className="secondary" onClick={disconnectSimkl}>
-            Disconnect Simkl
-          </button>
+            {translateUi("Disconnect Simkl")}</button>
         ) : (
           <>
             <button
@@ -1468,30 +1456,29 @@ function AccountsSection() {
               disabled={simklBusy === "start" || !hasSimklConfig()}
               onClick={() => void startSimklLink()}
             >
-              {simklBusy === "start" ? "Starting..." : "Start device link"}
+              {simklBusy === "start" ? translateUi("Starting...") : translateUi("Start device link")}
             </button>
             {simklDeviceCode && (
               <div className="device-code">
                 <span>{simklDeviceCode.user_code}</span>
                 <p>
-                  Open{" "}
+                  {translateUi("Open")}{" "}
                   <a
                     href={simklDeviceCode.verification_url || "https://simkl.com/pin"}
                     target="_blank"
                     rel="noreferrer"
                     style={{ color: "var(--accent)", textDecoration: "underline" }}
                   >
-                    {simklDeviceCode.verification_url || "https://simkl.com/pin"}
+                    {simklDeviceCode.verification_url || translateUi("https://simkl.com/pin")}
                   </a>{" "}
-                  and enter the code above
-                </p>
+                  {translateUi("and enter the code above")}</p>
                 <button
                   type="button"
                   className="secondary"
                   disabled={simklBusy === "poll"}
                   onClick={() => void approveSimklLink()}
                 >
-                  {simklBusy === "poll" ? "Checking..." : "I approved it"}
+                  {simklBusy === "poll" ? translateUi("Checking...") : translateUi("I approved it")}
                 </button>
               </div>
             )}
@@ -1500,22 +1487,22 @@ function AccountsSection() {
       </Panel>
 
       {(traktConnected || simklConnected || mdblistConnected) && (
-        <Panel title="Tracking behavior">
-          <Row label="Watchlist source" hint="Choose which connected service fills your watchlist.">
+        <Panel title={translateUi("Tracking behavior")}>
+          <Row label={translateUi("Watchlist source")} hint={translateUi("Choose which connected service fills your watchlist.")}>
             <Select
               value={trackingPreferences.watchlistReadMode}
               options={routingOptions}
               onChange={(watchlistReadMode) => void updateTrackingPreferences({ watchlistReadMode })}
             />
           </Row>
-          <Row label="Continue Watching source" hint="Choose one service or merge progress from both.">
+          <Row label={translateUi("Continue Watching source")} hint={translateUi("Choose one service or merge progress from both.")}>
             <Select
               value={trackingPreferences.continueWatchingReadMode}
               options={routingOptions}
               onChange={(continueWatchingReadMode) => void updateTrackingPreferences({ continueWatchingReadMode })}
             />
           </Row>
-          <Row label="Watched history source" hint="Watched badges merge safely when both is selected.">
+          <Row label={translateUi("Watched history source")} hint={translateUi("Watched badges merge safely when both is selected.")}>
             <Select
               value={trackingPreferences.watchedReadMode}
               options={routingOptions}
@@ -1523,7 +1510,7 @@ function AccountsSection() {
             />
           </Row>
           {traktConnected && (
-            <Row label="Update Trakt while watching">
+            <Row label={translateUi("Update Trakt while watching")}>
               <Toggle
                 value={trackingPreferences.writeToTrakt}
                 onChange={(writeToTrakt) => void updateTrackingPreferences({ writeToTrakt })}
@@ -1531,7 +1518,7 @@ function AccountsSection() {
             </Row>
           )}
           {simklConnected && (
-            <Row label="Update Simkl while watching">
+            <Row label={translateUi("Update Simkl while watching")}>
               <Toggle
                 value={trackingPreferences.writeToSimkl}
                 onChange={(writeToSimkl) => void updateTrackingPreferences({ writeToSimkl })}
@@ -1541,17 +1528,16 @@ function AccountsSection() {
         </Panel>
       )}
 
-      <Panel title="MDBList">
-        {mdblistError && <p className="login-error">{mdblistError}</p>}
+      <Panel title={translateUi("MDBList")}>
+        {mdblistError && <p className="login-error">{translateUi(mdblistError)}</p>}
         {mdblistConnected ? (
           <button type="button" className="secondary" onClick={disconnectMdblist}>
-            Disconnect MDBList
-          </button>
+            {translateUi("Disconnect MDBList")}</button>
         ) : (
           <div className="login-form">
             <input
               type="password"
-              placeholder="MDBList API key"
+              placeholder={translateUi("MDBList API key")}
               value={mdblistKey}
               onChange={(event) => setMdblistKey(event.target.value)}
               autoComplete="off"
@@ -1562,14 +1548,14 @@ function AccountsSection() {
               disabled={mdblistBusy || !mdblistKey.trim()}
               onClick={() => void connectMdblistLink()}
             >
-              {mdblistBusy ? "Connecting..." : "Connect"}
+              {mdblistBusy ? translateUi("Connecting...") : translateUi("Connect")}
             </button>
-            <p className="empty">Get your API key from mdblist.com/preferences</p>
+            <p className="empty">{translateUi("Get your API key from mdblist.com/preferences")}</p>
           </div>
         )}
       </Panel>
 
-      <Panel title="Sync & Updates">
+      <Panel title={translateUi("Sync & Updates")}>
         {!config.selfHosted && <button
           type="button"
           className="secondary text-button"
@@ -1577,14 +1563,12 @@ function AccountsSection() {
           onClick={() => void syncNow()}
         >
           <RefreshCw size={18} />{" "}
-          {syncBusy ? "Syncing..." : "Force cloud sync now"}
+          {syncBusy ? translateUi("Syncing...") : translateUi("Force cloud sync now")}
         </button>}
         <p className="empty">
-          Telegram bot setup is available in the Android app. The web app
-          updates itself when a new version is deployed.
-        </p>
+          {translateUi("Telegram bot setup is available in the Android app. The web app updates itself when a new version is deployed.")}</p>
         <p className="empty">
-          Web build:{" "}
+          {translateUi("Web build:")}{" "}
           {process.env.NEXT_PUBLIC_BUILD_STAMP
             ? new Date(
                 Number(process.env.NEXT_PUBLIC_BUILD_STAMP),
@@ -1594,7 +1578,7 @@ function AccountsSection() {
                 hour: "2-digit",
                 minute: "2-digit",
               })
-            : "unknown"}
+            : translateUi("unknown")}
         </p>
       </Panel>
     </>
@@ -1604,6 +1588,7 @@ function AccountsSection() {
 /* ---------- Home Server ---------- */
 
 function HomeServerSection() {
+  const translateUi = useTranslation();
   const { settings, updateSettings, setToast } = useApp();
   const [type, setType] = useState<HomeServerConfig["type"]>("jellyfin");
   const [name, setName] = useState("");
@@ -1688,13 +1673,9 @@ function HomeServerSection() {
   };
 
   return (
-    <Panel title="Home Server">
+    <Panel title={translateUi("Home Server")}>
       <p className="empty">
-        Connect Plex, Jellyfin, or Emby. Plex requires an access token
-        (X-Plex-Token). Jellyfin/Emby can use an API token or username +
-        password. Matched movies and episodes appear as sources in the player,
-        and cloud-sync with the Android app.
-      </p>
+        {translateUi("Connect Plex, Jellyfin, or Emby. Plex requires an access token (X-Plex-Token). Jellyfin/Emby can use an API token or username + password. Matched movies and episodes appear as sources in the player, and cloud-sync with the Android app.")}</p>
       <div className="inline-form">
         <Select
           value={type}
@@ -1708,32 +1689,32 @@ function HomeServerSection() {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Name"
+          placeholder={translateUi("Name")}
         />
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://server:8096"
+          placeholder={translateUi("https://server:8096")}
         />
         <input
           value={token}
           onChange={(e) => setToken(e.target.value)}
           placeholder={
-            type === "plex" ? "X-Plex-Token (required)" : "API token (optional)"
+            type === "plex" ? translateUi("X-Plex-Token (required)") : translateUi("API token (optional)")
           }
         />
         {type !== "plex" && (
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="Username (optional)"
+            placeholder={translateUi("Username (optional)")}
           />
         )}
         {type !== "plex" && (
           <input
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password"
+            placeholder={translateUi("Password")}
             type="password"
           />
         )}
@@ -1743,7 +1724,7 @@ function HomeServerSection() {
           disabled={testing}
           onClick={() => void testConnection()}
         >
-          {testing ? "Testing…" : "Test"}
+          {testing ? translateUi("Testing…") : translateUi("Test")}
         </button>
         <button
           type="button"
@@ -1751,7 +1732,7 @@ function HomeServerSection() {
           disabled={adding || testing}
           onClick={() => void addConnection()}
         >
-          <Plus size={18} /> {adding ? "Connecting…" : "Add"}
+          <Plus size={18} /> {adding ? translateUi("Connecting…") : translateUi("Add")}
         </button>
       </div>
       <div className="settings-list">
@@ -1773,9 +1754,9 @@ function HomeServerSection() {
             >
               {server.enabled ? <Eye size={18} /> : <EyeOff size={18} />}
             </button>
-            <strong>{server.name || server.type || "Home server"}</strong>
-            <span>{server.type || "server"}</span>
-            <span>{server.url || "No URL"}</span>
+            <strong>{server.name || server.type || translateUi("Home server")}</strong>
+            <span>{server.type || translateUi("server")}</span>
+            <span>{server.url || translateUi("No URL")}</span>
             <button
               type="button"
               className="icon-button danger"
@@ -1786,7 +1767,7 @@ function HomeServerSection() {
           </div>
         ))}
         {servers.length === 0 && (
-          <p className="empty">No home servers configured.</p>
+          <p className="empty">{translateUi("No home servers configured.")}</p>
         )}
       </div>
     </Panel>
@@ -1802,6 +1783,7 @@ type TgModule = typeof import("@/lib/telegram");
 type TgAuthState = import("@/lib/telegram").TgAuthState;
 
 function TelegramSection() {
+  const translateUi = useTranslation();
   const { settings, setToast } = useApp();
   const [mod, setMod] = useState<TgModule | null>(null);
   const [authState, setAuthState] = useState<TgAuthState>({ k: "idle" });
@@ -1856,24 +1838,20 @@ function TelegramSection() {
 
   if (!mod) {
     return (
-      <Panel title="Telegram">
-        <p className="empty">Loading…</p>
+      <Panel title={translateUi("Telegram")}>
+        <p className="empty">{translateUi("Loading…")}</p>
       </Panel>
     );
   }
 
   if (!mod.isTelegramConfigured) {
     return (
-      <Panel title="Telegram">
+      <Panel title={translateUi("Telegram")}>
         <p className="empty">
-          Connect your Telegram account to stream video files from your chats and
-          channels as sources — the same feature as the Android app. Everything
-          runs in your browser; nothing is sent to ARVIO servers.
-        </p>
+          {translateUi("Connect your Telegram account to stream video files from your chats and channels as sources — the same feature as the Android app. Everything runs in your browser; nothing is sent to ARVIO servers.")}</p>
         <div className="tg-center">
           <p className="tg-lead" style={{ color: "var(--color-danger, #ff6b6b)" }}>
-            Telegram integration is not configured in this build. Please configure NEXT_PUBLIC_TELEGRAM_API_ID and NEXT_PUBLIC_TELEGRAM_API_HASH in your environment.
-          </p>
+            {translateUi("Telegram integration is not configured in this build. Please configure NEXT_PUBLIC_TELEGRAM_API_ID and NEXT_PUBLIC_TELEGRAM_API_HASH in your environment.")}</p>
         </div>
       </Panel>
     );
@@ -1893,61 +1871,54 @@ function TelegramSection() {
   };
 
   return (
-    <Panel title="Telegram">
+    <Panel title={translateUi("Telegram")}>
       <p className="empty">
-        Connect your Telegram account to stream video files from your chats and
-        channels as sources — the same feature as the Android app. Everything
-        runs in your browser; nothing is sent to ARVIO servers.
-      </p>
+        {translateUi("Connect your Telegram account to stream video files from your chats and channels as sources — the same feature as the Android app. Everything runs in your browser; nothing is sent to ARVIO servers.")}</p>
 
       {authState.k === "idle" && !usePhone && (
         <div className="tg-center">
-          <p className="tg-lead">Scan a QR code with the Telegram app on your phone to sign in.</p>
+          <p className="tg-lead">{translateUi("Scan a QR code with the Telegram app on your phone to sign in.")}</p>
           <div className="tg-actions">
             <button type="button" className="primary" onClick={connect}>
-              <Send size={18} /> Connect with QR
-            </button>
+              <Send size={18} /> {translateUi(" Connect with QR")}</button>
             <button type="button" className="secondary" onClick={() => setUsePhone(true)}>
-              Use phone number instead
-            </button>
+              {translateUi("Use phone number instead")}</button>
           </div>
         </div>
       )}
 
       {authState.k === "idle" && usePhone && (
         <div className="tg-center">
-          <p className="tg-lead">Enter your phone number in international format.</p>
+          <p className="tg-lead">{translateUi("Enter your phone number in international format.")}</p>
           <div className="inline-form">
             <input
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              placeholder="+1 650 555 1234"
+              placeholder={translateUi("+1 650 555 1234")}
               inputMode="tel"
             />
             <button type="button" className="primary" onClick={connectPhone}>
-              Send code
-            </button>
+              {translateUi("Send code")}</button>
             <button type="button" className="secondary" onClick={() => setUsePhone(false)}>
-              Back to QR
-            </button>
+              {translateUi("Back to QR")}</button>
           </div>
         </div>
       )}
 
-      {authState.k === "initializing" && <p className="empty">Connecting to Telegram…</p>}
+      {authState.k === "initializing" && <p className="empty">{translateUi("Connecting to Telegram…")}</p>}
 
       {authState.k === "waitQr" && (
         <div className="tg-center">
-          <p className="tg-lead">Open Telegram on your phone → Settings → Devices → Link Desktop Device, then scan:</p>
+          <p className="tg-lead">{translateUi("Open Telegram on your phone → Settings → Devices → Link Desktop Device, then scan:")}</p>
           <div className="tg-qr">
             {qrDataUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={qrDataUrl} alt="Telegram login QR code" width={280} height={280} />
             ) : (
-              <p className="empty">Generating QR…</p>
+              <p className="empty">{translateUi("Generating QR…")}</p>
             )}
           </div>
-          <p className="empty tg-fineprint">The code refreshes automatically. Approving it on your phone signs you in here.</p>
+          <p className="empty tg-fineprint">{translateUi("The code refreshes automatically. Approving it on your phone signs you in here.")}</p>
           <button
             type="button"
             className="secondary"
@@ -1956,19 +1927,18 @@ function TelegramSection() {
               setUsePhone(true);
             }}
           >
-            Use phone number instead
-          </button>
+            {translateUi("Use phone number instead")}</button>
         </div>
       )}
 
       {authState.k === "waitCode" && (
         <div className="tg-center">
-          <p className="tg-lead">Enter the {authState.codeLength}-digit code Telegram just sent you.</p>
+          <p className="tg-lead">{translateUi("Enter the ")}{authState.codeLength}{translateUi("-digit code Telegram just sent you.")}</p>
           <div className="inline-form">
             <input
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, authState.codeLength))}
-              placeholder="Login code"
+              placeholder={translateUi("Login code")}
               inputMode="numeric"
             />
             <button
@@ -1978,8 +1948,7 @@ function TelegramSection() {
                 if (code) mod.submitCode(code);
               }}
             >
-              Confirm
-            </button>
+              {translateUi("Confirm")}</button>
           </div>
         </div>
       )}
@@ -1987,14 +1956,13 @@ function TelegramSection() {
       {authState.k === "waitPassword" && (
         <div className="tg-center">
           <p className="tg-lead">
-            Two-step verification is on. Enter your Telegram password
-            {authState.hint ? ` (hint: ${authState.hint})` : ""}.
+            {translateUi("Two-step verification is on. Enter your Telegram password")}{authState.hint ? translateUi(" (hint: {value0})", {value0: authState.hint}) : ""}.
           </p>
           <div className="inline-form">
             <input
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="2FA password"
+              placeholder={translateUi("2FA password")}
               type="password"
             />
             <button
@@ -2005,8 +1973,7 @@ function TelegramSection() {
                 setPassword("");
               }}
             >
-              Confirm
-            </button>
+              {translateUi("Confirm")}</button>
           </div>
         </div>
       )}
@@ -2014,16 +1981,15 @@ function TelegramSection() {
       {authState.k === "ready" && (
         <div className="tg-connected">
           <div className="tg-badge">
-            <strong>Connected</strong>
-            <span>Signed in as {authState.firstName || "your account"}</span>
+            <strong>{translateUi("Connected")}</strong>
+            <span>{translateUi("Signed in as ")}{authState.firstName || translateUi("your account")}</span>
           </div>
           {!confirmDisconnect ? (
             <button type="button" className="secondary" onClick={() => setConfirmDisconnect(true)}>
-              <LogOut size={18} /> Disconnect
-            </button>
+              <LogOut size={18} /> {translateUi(" Disconnect")}</button>
           ) : (
             <div className="tg-actions">
-              <span className="empty">Disconnect and forget this session?</span>
+              <span className="empty">{translateUi("Disconnect and forget this session?")}</span>
               <button
                 type="button"
                 className="danger-button"
@@ -2032,11 +1998,9 @@ function TelegramSection() {
                   void mod.disconnect();
                 }}
               >
-                Disconnect
-              </button>
+                {translateUi("Disconnect")}</button>
               <button type="button" className="secondary" onClick={() => setConfirmDisconnect(false)}>
-                Cancel
-              </button>
+                {translateUi("Cancel")}</button>
             </div>
           )}
         </div>
@@ -2044,10 +2008,9 @@ function TelegramSection() {
 
       {authState.k === "error" && (
         <div className="tg-center">
-          <p className="tg-lead tg-error">Connection failed: {authState.message}</p>
+          <p className="tg-lead tg-error">{translateUi("Connection failed: ")}{authState.message}</p>
           <button type="button" className="primary" onClick={connect}>
-            Try again
-          </button>
+            {translateUi("Try again")}</button>
         </div>
       )}
     </Panel>
@@ -2055,7 +2018,15 @@ function TelegramSection() {
 }
 
 function TvSettingsSection() {
-  const { settings, updateSettings, refreshIptv, setToast, busy } = useApp();
+  const translateUi = useTranslation();
+  const { settings, updateSettings, refreshIptv, setToast, busy, iptvSnapshot, activeProfile, auth } = useApp();
+  const activeProfileId = activeProfile?.id;
+  const groupScope = `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`;
+  const playlistSignature = iptvPlaylistSignature(settings.iptvPlaylists);
+  const groupsLoaded = iptvSnapshot.scopeKey === groupScope && iptvSnapshot.signature === playlistSignature;
+  useEffect(() => {
+    if (!groupsLoaded && settings.iptvPlaylists.length) void refreshIptv();
+  }, [groupScope, playlistSignature, groupsLoaded, refreshIptv, settings.iptvPlaylists.length]);
   const [name, setName] = useState("");
   const [m3uUrl, setM3uUrl] = useState("");
   const [epgUrl, setEpgUrl] = useState("");
@@ -2096,8 +2067,8 @@ function TvSettingsSection() {
   };
 
   return (
-    <Panel title="TV (IPTV)">
-      <Row label="Sort order" hint="Choose how live channels and groups are ordered in the list">
+    <Panel title={translateUi("TV (IPTV)")}>
+      <Row label={translateUi("Sort order")} hint={translateUi("Choose how live channels and groups are ordered in the list")}>
         <Select
           value={settings.iptvSortOrder ?? "provider"}
           onChange={(v) => updateSettings({ iptvSortOrder: v as "provider" | "number" | "name" })}
@@ -2109,28 +2080,25 @@ function TvSettingsSection() {
         />
       </Row>
       <p className="empty">
-        {playlists.length} playlist(s) configured. These are cloud-saved and
-        used by the TV page.
-      </p>
+        {playlists.length} {translateUi(" playlist(s) configured. These are cloud-saved and used by the TV page.")}</p>
       <div className="inline-form wide">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Playlist name"
+          placeholder={translateUi("Playlist name")}
         />
         <input
           value={m3uUrl}
           onChange={(e) => setM3uUrl(e.target.value)}
-          placeholder="M3U playlist URL"
+          placeholder={translateUi("M3U playlist URL")}
         />
         <input
           value={epgUrl}
           onChange={(e) => setEpgUrl(e.target.value)}
-          placeholder="EPG XMLTV URL (optional)"
+          placeholder={translateUi("EPG XMLTV URL (optional)")}
         />
         <button type="button" className="primary" onClick={addPlaylist}>
-          <Plus size={18} /> Add playlist
-        </button>
+          <Plus size={18} /> {translateUi(" Add playlist")}</button>
       </div>
       <div className="settings-list">
         {playlists.map((playlist, index) => (
@@ -2188,7 +2156,7 @@ function TvSettingsSection() {
                   ),
                 )
               }
-              placeholder="EPG URL"
+              placeholder={translateUi("EPG URL")}
             />
             <button
               type="button"
@@ -2204,7 +2172,7 @@ function TvSettingsSection() {
           </div>
         ))}
         {!playlists.length && (
-          <p className="empty">No IPTV playlists configured.</p>
+          <p className="empty">{translateUi("No IPTV playlists configured.")}</p>
         )}
       </div>
       <button
@@ -2214,20 +2182,21 @@ function TvSettingsSection() {
         onClick={() => void refreshIptv()}
       >
         <RefreshCw size={18} />{" "}
-        {isLoadingTv ? "Refreshing..." : "Refresh TV now"}
+        {isLoadingTv ? translateUi("Refreshing...") : translateUi("Refresh TV now")}
       </button>
-      <Row label="Stalker portal URL">
+      <IptvGroupSettings key={groupScope} settings={settings} updateSettings={updateSettings} channels={groupsLoaded ? iptvSnapshot.allChannels ?? iptvSnapshot.channels : []} />
+      <Row label={translateUi("Stalker portal URL")}>
         <input
           value={settings.iptvStalkerUrl}
           onChange={(e) => updateSettings({ iptvStalkerUrl: e.target.value })}
-          placeholder="http://portal.example.com/c/"
+          placeholder={translateUi("http://portal.example.com/c/")}
         />
       </Row>
-      <Row label="Stalker MAC address">
+      <Row label={translateUi("Stalker MAC address")}>
         <input
           value={settings.iptvStalkerMac}
           onChange={(e) => updateSettings({ iptvStalkerMac: e.target.value })}
-          placeholder="00:1A:79:00:00:00"
+          placeholder={translateUi("00:1A:79:00:00:00")}
         />
       </Row>
     </Panel>
@@ -2237,6 +2206,7 @@ function TvSettingsSection() {
 /* ---------- Catalogs ---------- */
 
 function CatalogsSection() {
+  const translateUi = useTranslation();
   const { settings, updateSettings, setToast } = useApp();
   const standardCatalogs = mergeCatalogs(
     safeArray(settings.catalogs),
@@ -2282,12 +2252,12 @@ function CatalogsSection() {
   };
 
   return (
-    <Panel title="Catalogs (Home Rows)">
+    <Panel title={translateUi("Catalogs (Home Rows)")}>
       <div className="inline-form">
         <input
           value={customCatalogUrl}
           onChange={(e) => setCustomCatalogUrl(e.target.value)}
-          placeholder="https://mdblist.com/lists/user/list"
+          placeholder={translateUi("https://mdblist.com/lists/user/list")}
         />
         <button
           type="button"
@@ -2311,15 +2281,13 @@ function CatalogsSection() {
             setCustomCatalogUrl("");
           }}
         >
-          <Plus size={18} /> Add
-        </button>
+          <Plus size={18} /> {translateUi(" Add")}</button>
         <button
           type="button"
           className="secondary text-button"
           onClick={() => updateCatalogs([...homeServerCatalogs, ...defaultCatalogs])}
         >
-          <RotateCcw size={18} /> Reset
-        </button>
+          <RotateCcw size={18} /> {translateUi(" Reset")}</button>
       </div>
       <div className="settings-list">
         {catalogs.map((catalog, index) => (
@@ -2371,7 +2339,7 @@ function CatalogsSection() {
               className="icon-button"
               disabled={index === 0}
               onClick={() => moveCatalog(catalog.id, -1)}
-              aria-label={`Move ${catalog.name} up`}
+              aria-label={translateUi("Move {value0} up", {value0: catalog.name})}
             >
               <ArrowUp size={18} />
             </button>
@@ -2380,7 +2348,7 @@ function CatalogsSection() {
               className="icon-button"
               disabled={index === catalogs.length - 1}
               onClick={() => moveCatalog(catalog.id, 1)}
-              aria-label={`Move ${catalog.name} down`}
+              aria-label={translateUi("Move {value0} down", {value0: catalog.name})}
             >
               <ArrowDown size={18} />
             </button>
@@ -2414,6 +2382,7 @@ function CatalogsSection() {
 /* ---------- Addons ---------- */
 
 function AddonsSection() {
+  const translateUi = useTranslation();
   const { addons, installAddon, removeAddon, setAddonsState, setToast } =
     useApp();
   const [addonUrl, setAddonUrl] = useState("");
@@ -2442,12 +2411,12 @@ function AddonsSection() {
     }
   };
   return (
-    <Panel title="Stremio Addons">
+    <Panel title={translateUi("Stremio Addons")}>
       <div className="inline-form">
         <input
           value={addonUrl}
           onChange={(e) => setAddonUrl(e.target.value)}
-          placeholder="https://addon.example.com/manifest.json"
+          placeholder={translateUi("https://addon.example.com/manifest.json")}
         />
         <button
           type="button"
@@ -2455,7 +2424,7 @@ function AddonsSection() {
           disabled={installing}
           onClick={() => void install()}
         >
-          <Plus size={18} /> {installing ? "Installing..." : "Install"}
+          <Plus size={18} /> {installing ? translateUi("Installing...") : translateUi("Install")}
         </button>
       </div>
       <div className="settings-list">
@@ -2503,7 +2472,7 @@ function AddonsSection() {
                 )}
               </button>
               <div className="addon-main">
-                <strong>{addon.name || "Unnamed addon"}</strong>
+                <strong>{addon.name || translateUi("Unnamed addon")}</strong>
                 <span title={addon.manifestUrl}>{addon.manifestUrl}</span>
               </div>
               <span>{resourceLabel}</span>
@@ -2512,7 +2481,7 @@ function AddonsSection() {
                 type="button"
                 className="icon-button danger"
                 onClick={() => void removeAddon(addon)}
-                aria-label={`Remove ${addon.name || "addon"}`}
+                aria-label={translateUi("Remove {value0}", {value0: addon.name || "addon"})}
               >
                 <Trash2 size={18} />
               </button>
@@ -2521,8 +2490,7 @@ function AddonsSection() {
         })}
         {addons.length === 0 && (
           <p className="empty">
-            Install Stremio-compatible addons by URL above.
-          </p>
+            {translateUi("Install Stremio-compatible addons by URL above.")}</p>
         )}
       </div>
       <button
@@ -2533,8 +2501,7 @@ function AddonsSection() {
           window.location.reload();
         }}
       >
-        <Trash2 size={18} /> Reset all web settings
-      </button>
+        <Trash2 size={18} /> {translateUi(" Reset all web settings")}</button>
     </Panel>
   );
 }
@@ -2542,6 +2509,7 @@ function AddonsSection() {
 /* ---------- VLC Integration ---------- */
 
 function VlcSection() {
+  const translateUi = useTranslation();
   const { setToast } = useApp();
   const [vlcReady, setVlcReady] = useState<boolean>(() => vlcProtocolReady());
   const [checkStatus, setCheckStatus] = useState<
@@ -2621,10 +2589,10 @@ function VlcSection() {
   };
 
   return (
-    <Panel title="VLC Integration">
+    <Panel title={translateUi("VLC Integration")}>
       <Row
-        label="Check VLC Integration"
-        hint="Automatically tests launching VLC via vlc:// and reports if integration is working"
+        label={translateUi("Check VLC Integration")}
+        hint={translateUi("Automatically tests launching VLC via vlc:// and reports if integration is working")}
       >
         <button
           type="button"
@@ -2646,24 +2614,23 @@ function VlcSection() {
             <CheckCircle size={16} />
           )}
           {checkStatus === "testing"
-            ? "Testing VLC Launcher..."
+            ? translateUi("Testing VLC Launcher...")
             : checkStatus === "working"
-              ? "Working (VLC Integration Verified)"
+              ? translateUi("Working (VLC Integration Verified)")
               : checkStatus === "not_installed"
-                ? "Not Working — Run Setup"
-                : "Check Integration"}
+                ? translateUi("Not Working — Run Setup")
+                : translateUi("Check Integration")}
         </button>
       </Row>
 
       <Row
-        label="Protocol Handler Status"
-        hint="When enabled, ARVIO launches streams directly via vlc:// instead of saving .m3u playlist files"
+        label={translateUi("Protocol Handler Status")}
+        hint={translateUi("When enabled, ARVIO launches streams directly via vlc:// instead of saving .m3u playlist files")}
       >
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           {isMac() ? (
             <span className="muted" style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px" }}>
-              <Check size={16} style={{ color: "#4ade80" }} /> Natively Enabled on macOS (no setup script needed)
-            </span>
+              <Check size={16} style={{ color: "#4ade80" }} /> {translateUi(" Natively Enabled on macOS (no setup script needed)")}</span>
           ) : (
             <button
               type="button"
@@ -2671,15 +2638,15 @@ function VlcSection() {
               onClick={handleToggleReady}
             >
               {vlcReady ? <Check size={16} /> : null}
-              {vlcReady ? "Protocol Enabled (vlc://)" : "Mark Protocol Enabled"}
+              {vlcReady ? translateUi("Protocol Enabled (vlc://)") : translateUi("Mark Protocol Enabled")}
             </button>
           )}
         </div>
       </Row>
 
       <Row
-        label="Download Setup Scripts Anytime"
-        hint="Re-download the installer script for your desktop OS"
+        label={translateUi("Download Setup Scripts Anytime")}
+        hint={translateUi("Re-download the installer script for your desktop OS")}
       >
         <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
           <button
@@ -2687,15 +2654,13 @@ function VlcSection() {
             className="secondary text-button"
             onClick={handleDownloadWindows}
           >
-            <Download size={15} /> vlc-setup.bat (Windows)
-          </button>
+            <Download size={15} /> {translateUi(" vlc-setup.bat (Windows)")}</button>
           <button
             type="button"
             className="secondary text-button"
             onClick={handleDownloadLinux}
           >
-            <Download size={15} /> vlc-setup.sh (Linux)
-          </button>
+            <Download size={15} /> {translateUi(" vlc-setup.sh (Linux)")}</button>
         </div>
       </Row>
 
@@ -2720,37 +2685,23 @@ function VlcSection() {
             marginBottom: "8px",
           }}
         >
-          <VlcIcon size={18} /> Platform Integration Guide:
-        </strong>
+          <VlcIcon size={18} /> {translateUi(" Platform Integration Guide:")}</strong>
         <ul style={{ paddingLeft: "20px", margin: 0 }}>
           <li style={{ marginBottom: "6px" }}>
-            <strong style={{ color: "#fff" }}>Windows Desktop:</strong> Run{" "}
-            <code>vlc-setup.bat</code> once to register the <code>vlc://</code>{" "}
-            protocol handler for your user account (no administrator rights
-            needed).
-          </li>
+            <strong style={{ color: "#fff" }}>{translateUi("Windows Desktop:")}</strong> {translateUi(" Run")}{" "}
+            <code>vlc-setup.bat</code> {translateUi(" once to register the ")}<code>vlc://</code>{" "}
+            {translateUi("protocol handler for your user account (no administrator rights needed).")}</li>
           <li style={{ marginBottom: "6px" }}>
-            <strong style={{ color: "#fff" }}>Linux Desktop:</strong> Download{" "}
-            <code>vlc-setup.sh</code> and run <code>bash vlc-setup.sh</code> in
-            your terminal. It creates a <code>.desktop</code> entry and registers{" "}
-            <code>x-scheme-handler/vlc</code> via <code>xdg-mime</code> for
-            GNOME, KDE, XFCE, etc.
-          </li>
+            <strong style={{ color: "#fff" }}>{translateUi("Linux Desktop:")}</strong> {translateUi(" Download")}{" "}
+            <code>vlc-setup.sh</code> {translateUi(" and run ")}<code>bash vlc-setup.sh</code> {translateUi(" in your terminal. It creates a ")}<code>.desktop</code> {translateUi(" entry and registers")}{" "}
+            <code>x-scheme-handler/vlc</code> {translateUi(" via ")}<code>xdg-mime</code> {translateUi(" for GNOME, KDE, XFCE, etc.")}</li>
           <li style={{ marginBottom: "6px" }}>
-            <strong style={{ color: "#fff" }}>macOS Desktop:</strong> VLC
-            automatically self-registers the <code>vlc://</code> protocol
-            handler upon installation. No setup script required.
-          </li>
+            <strong style={{ color: "#fff" }}>{translateUi("macOS Desktop:")}</strong> {translateUi(" VLC automatically self-registers the ")}<code>vlc://</code> {translateUi(" protocol handler upon installation. No setup script required.")}</li>
           <li style={{ marginBottom: "6px" }}>
-            <strong style={{ color: "#fff" }}>Android:</strong> Uses native
-            Android intents to launch VLC directly or prompt with an app chooser
-            (MX Player, Just Player, VLC).
-          </li>
+            <strong style={{ color: "#fff" }}>{translateUi("Android:")}</strong> {translateUi(" Uses native Android intents to launch VLC directly or prompt with an app chooser (MX Player, Just Player, VLC).")}</li>
           <li>
-            <strong style={{ color: "#fff" }}>iOS / iPadOS:</strong> Launches
-            VLC directly using the native <code>vlc-x-callback://</code>{" "}
-            protocol.
-          </li>
+            <strong style={{ color: "#fff" }}>{translateUi("iOS / iPadOS:")}</strong> {translateUi(" Launches VLC directly using the native ")}<code>vlc-x-callback://</code>{" "}
+            {translateUi("protocol.")}</li>
         </ul>
       </div>
     </Panel>
@@ -2758,6 +2709,7 @@ function VlcSection() {
 }
 
 function SubtitlePreview({ settings }: { settings: AppSettings }) {
+  const translateUi = useTranslation();
   const previewClass = `subtitle-preview-text subtitle-style-${settings.subtitleStyle} subtitle-pos-${settings.subtitleOffset}`;
   return (
     <div className="subtitle-preview">
@@ -2769,13 +2721,10 @@ function SubtitlePreview({ settings }: { settings: AppSettings }) {
             fontSize: `${Math.max(60, Math.min(200, settings.subtitleSize))}%`,
           }}
         >
-          This is how subtitles will appear.
-        </span>
+          {translateUi("This is how subtitles will appear.")}</span>
       </div>
       <p>
-        Preview updates instantly and is saved to cloud like Android subtitle
-        settings.
-      </p>
+        {translateUi("Preview updates instantly and is saved to cloud like Android subtitle settings.")}</p>
     </div>
   );
 }

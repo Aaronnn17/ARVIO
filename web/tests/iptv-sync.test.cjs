@@ -13,6 +13,43 @@ const settings = (patch = {}) => ({
 });
 const auth = { session: { userId: 'account', accessToken: 'fixture' }, isNetlifySession: true, accessToken: async () => 'fixture' };
 
+test('Group order round-trips with Android schema, is profile-scoped and can be cleared', async () => {
+  const f = fixture({ iptvByProfile: { arvind: { groupOrder: ['list_1|B', 'list_1|A'], groupOrderSchema: 3 }, child: { groupOrder: ['kids|Cartoons'], groupOrderSchema: 3 } } });
+  const pulled = await f.cloud.pullCloudPayload(auth, 'arvind');
+  assert.deepEqual(Array.from(pulled.settings.groupOrder), ['list_1|B', 'list_1|A']);
+  const baseline = settings({ groupOrder: pulled.settings.groupOrder });
+  const changed = settings({ groupOrder: ['list_1|A', 'list_1|B'] });
+  await f.cloud.saveCloudSettings(auth, changed, [], 'arvind', [], baseline);
+  assert.equal(f.remote.iptvByProfile.arvind.groupOrderSchema, 3);
+  assert.deepEqual(f.remote.iptvByProfile.arvind.groupOrder, changed.groupOrder);
+  assert.deepEqual(f.remote.iptvByProfile.child.groupOrder, ['kids|Cartoons']);
+  await f.cloud.saveCloudSettings(auth, settings(), [], 'arvind', [], changed);
+  assert.deepEqual(f.remote.iptvByProfile.arvind.groupOrder, []);
+  assert.equal(f.remote.iptvByProfile.arvind.groupOrderSchema, 3);
+});
+
+test('First web reorder writes required schema and unrelated saves preserve remote order', async () => {
+  const f = fixture({ iptvByProfile: { arvind: { playlists: [playlist()] } } });
+  const changed = settings({ groupOrder: ['list_1|B', 'list_1|A'] });
+  await f.cloud.saveCloudSettings(auth, changed, [], 'arvind', [], settings());
+  assert.equal(f.remote.iptvByProfile.arvind.groupOrderSchema, 3);
+  f.remote = { iptvByProfile: { arvind: { groupOrder: ['list_1|C', 'list_1|A'], groupOrderSchema: 3 } } };
+  await f.cloud.saveCloudSettings(auth, { ...changed, accentColor: '#000' }, [], 'arvind', [], changed);
+  assert.deepEqual(f.remote.iptvByProfile.arvind.groupOrder, ['list_1|C', 'list_1|A']);
+});
+
+test('Hidden group edits retain additions from another device', async () => {
+  const f = fixture({ iptvByProfile: { arvind: { hiddenGroups: ['list_1|A', 'other|B'] } } });
+  await f.cloud.saveCloudSettings(auth, settings({ hiddenGroupIds: ['list_1|C'] }), [], 'arvind', [], settings({ hiddenGroupIds: ['list_1|A'] }));
+  assert.deepEqual(f.remote.iptvByProfile.arvind.hiddenGroups, ['list_1|C', 'other|B']);
+});
+
+test('Reordering one playlist on web preserves newer remote ordering in another playlist', async () => {
+  const f = fixture({ iptvByProfile: { arvind: { groupOrder: ['p|A','p|B','other|B','other|A'], groupOrderSchema: 3 } } });
+  await f.cloud.saveCloudSettings(auth, settings({ groupOrder: ['p|B','p|A','other|A','other|B'] }), [], 'arvind', [], settings({ groupOrder: ['p|A','p|B','other|A','other|B'] }));
+  assert.deepEqual(f.remote.iptvByProfile.arvind.groupOrder, ['other|B','other|A','p|B','p|A']);
+});
+
 function fixture(initial = {}) {
   let remote = structuredClone(initial);
   let reject = false;

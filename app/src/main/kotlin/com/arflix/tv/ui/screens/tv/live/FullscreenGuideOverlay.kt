@@ -331,7 +331,9 @@ private fun FullscreenGuideContent(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(if (isTouchDevice) 5.dp else 6.dp)) {
-                    GuideChip(stringResource(R.string.live_label_ch, channel.number), LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
+                    if (!isTouchDevice) {
+                        GuideChip(stringResource(R.string.live_label_ch, channel.number), LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
+                    }
                     if (channel.quality != Quality.UNKNOWN) {
                         GuideChip(channel.quality.label, LiveColors.FgDim, Color.White.copy(alpha = 0.08f))
                     }

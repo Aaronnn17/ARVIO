@@ -26,7 +26,7 @@ function extracted(selector, globals = {}) {
   }).outputText;
   const module = { exports: {} };
   vm.runInNewContext(code, {
-    module, exports: module.exports, ...globals,
+    module, exports: module.exports, translateUi: (text, values) => text.replace(/\{(\w+)\}/g, (match, key) => String(values?.[key] ?? match)), ...globals,
     require(name) { assert.equal(name, 'react/jsx-runtime'); return require(name); },
     fetch() { throw new Error('Source rows must not request or probe media'); }
   }, { filename });

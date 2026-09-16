@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { Bookmark, CheckCheck, Clock, ListVideo, LoaderCircle, RefreshCw, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -14,6 +16,7 @@ const builtins = {
 const cache = new Map<string, MediaItem[]>();
 
 export function TrackerLibrary({ provider }: { provider: "trakt" | "simkl" }) {
+  const translateUi = useTranslation();
   const { auth, activeProfile, loadTrackerLibrary, loadTraktLists, settings, openDetails } = useApp();
   const [lists, setLists] = useState(builtins[provider]);
   const [source, setSource] = useState(builtins[provider][0].id);
@@ -49,24 +52,25 @@ export function TrackerLibrary({ provider }: { provider: "trakt" | "simkl" }) {
     return () => { generation.current++; };
   }, [scope, source, provider, retry, loadTrackerLibrary]);
   const visible = useMemo(() => [...items].filter((item) => item.title.toLowerCase().includes(query.toLowerCase())).sort((a, b) => compareLibraryItems(a, b, sort)), [items, query, sort]);
-  const selected = lists.find((list) => list.id === source)?.name ?? "Library";
+  const selectedName = lists.find((list) => list.id === source)?.name ?? "Library";
+  const selected = builtins[provider].some(entry => entry.id === source) ? translateUi(selectedName) : selectedName;
   return (
     <div className="library-workspace has-library-sidebar tracker-workspace">
-      <aside className="library-sidebar" aria-label={`${provider} lists`}><strong className="library-sidebar-server">{provider === "trakt" ? "Trakt" : "Simkl"}</strong><span className="library-sidebar-label">Libraries</span>
-        <div role="tablist" aria-label="Tracker library">{lists.map((list) => <button role="tab" aria-selected={source === list.id} className={source === list.id ? "is-active" : ""} key={list.id} onClick={() => setSource(list.id)}>{list.id === "watching" ? <Clock size={17} /> : list.id === "completed" || list.id === "watched" ? <CheckCheck size={17} /> : <ListVideo size={17} />}<span>{list.name}</span></button>)}</div>
-        {listError && <button className="secondary" onClick={() => setRetry((value) => value + 1)}>Retry lists</button>}
+      <aside className="library-sidebar" aria-label={translateUi("{value0} lists", {value0: provider})}><strong className="library-sidebar-server">{provider === "trakt" ? translateUi("Trakt") : translateUi("Simkl")}</strong><span className="library-sidebar-label">{translateUi("Libraries")}</span>
+        <div role="tablist" aria-label={translateUi("Tracker library")}>{lists.map((list) => <button role="tab" aria-selected={source === list.id} className={source === list.id ? "is-active" : ""} key={list.id} onClick={() => setSource(list.id)}>{list.id === "watching" ? <Clock size={17} /> : list.id === "completed" || list.id === "watched" ? <CheckCheck size={17} /> : <ListVideo size={17} />}<span>{builtins[provider].some(entry => entry.id === list.id) ? translateUi(list.name) : list.name}</span></button>)}</div>
+        {listError && <button className="secondary" onClick={() => setRetry((value) => value + 1)}>{translateUi("Retry lists")}</button>}
       </aside>
       <section className="library-main" aria-label={selected}>
-        <label className="library-mobile-select"><ListVideo size={17} /><select aria-label="Tracker library" value={source} onChange={(event) => setSource(event.target.value)}>{lists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}</select></label>
-        <div className="library-toolbar"><div className="tracker-library-title"><strong>{selected}</strong><span>{visible.length.toLocaleString()} titles</span></div>
-          <label className="library-search"><Search size={17} /><input aria-label="Search library" placeholder="Search library" value={query} onChange={(event) => { setQuery(event.target.value); setCount(60); }} /></label>
-          <select className="watchlist-sort" aria-label="Sort titles" value={sort} onChange={(event) => { setSort(event.target.value as LibrarySort); setCount(60); }}>{LIBRARY_SORT_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}</select>
-          <button className="library-refresh" aria-label="Refresh library" title="Refresh library" disabled={loading} onClick={() => setRetry((value) => value + 1)}><RefreshCw size={17} /></button>
+        <label className="library-mobile-select"><ListVideo size={17} /><select aria-label={translateUi("Tracker library")} value={source} onChange={(event) => setSource(event.target.value)}>{lists.map((list) => <option key={list.id} value={list.id}>{builtins[provider].some(entry => entry.id === list.id) ? translateUi(list.name) : list.name}</option>)}</select></label>
+        <div className="library-toolbar"><div className="tracker-library-title"><strong>{selected}</strong><span>{visible.length.toLocaleString()} {translateUi(" titles")}</span></div>
+          <label className="library-search"><Search size={17} /><input aria-label={translateUi("Search library")} placeholder={translateUi("Search library")} value={query} onChange={(event) => { setQuery(event.target.value); setCount(60); }} /></label>
+          <select className="watchlist-sort" aria-label={translateUi("Sort titles")} value={sort} onChange={(event) => { setSort(event.target.value as LibrarySort); setCount(60); }}>{LIBRARY_SORT_OPTIONS.map(({ value, label }) => <option key={value} value={value}>{translateUi(label)}</option>)}</select>
+          <button className="library-refresh" aria-label={translateUi("Refresh library")} title={translateUi("Refresh library")} disabled={loading} onClick={() => setRetry((value) => value + 1)}><RefreshCw size={17} /></button>
         </div>
-        {error && <div className="library-error" role="alert"><span>{error}</span><button className="secondary" onClick={() => setRetry((value) => value + 1)}>Retry</button></div>}
-        {loading && !items.length ? <div className="library-loading" aria-label="Loading library"><LoaderCircle size={30} /></div> : !visible.length && !error ? <div className="watchlist-empty"><Bookmark size={36} /><p>{query ? "No matching titles" : "Nothing here yet"}</p></div> : <div className="grid-results library-grid">{visible.slice(0, count).map((item) => <MediaCard key={`${item.mediaType}:${item.id}`} item={item} onOpen={openDetails} posterMode={settings.cardLayoutMode === "poster"} />)}</div>}
-        {loading && items.length > 0 && <div className="library-refreshing-indicator" aria-label="Refreshing library"><LoaderCircle size={22} /></div>}
-        {visible.length > count && <button className="secondary library-more" onClick={() => setCount((value) => value + 60)}>Load more</button>}
+        {error && <div className="library-error" role="alert"><span>{translateUi(error ?? "")}</span><button className="secondary" onClick={() => setRetry((value) => value + 1)}>{translateUi("Retry")}</button></div>}
+        {loading && !items.length ? <div className="library-loading" aria-label={translateUi("Loading library")}><LoaderCircle size={30} /></div> : !visible.length && !error ? <div className="watchlist-empty"><Bookmark size={36} /><p>{query ? translateUi("No matching titles") : translateUi("Nothing here yet")}</p></div> : <div className="grid-results library-grid">{visible.slice(0, count).map((item) => <MediaCard key={`${item.mediaType}:${item.id}`} item={item} onOpen={openDetails} posterMode={settings.cardLayoutMode === "poster"} />)}</div>}
+        {loading && items.length > 0 && <div className="library-refreshing-indicator" aria-label={translateUi("Refreshing library")}><LoaderCircle size={22} /></div>}
+        {visible.length > count && <button className="secondary library-more" onClick={() => setCount((value) => value + 60)}>{translateUi("Load more")}</button>}
       </section>
     </div>
   );

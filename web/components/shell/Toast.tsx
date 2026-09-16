@@ -1,9 +1,12 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { useEffect } from "react";
 import { useApp } from "@/lib/store";
 
 export function Toast() {
+  const translateUi = useTranslation();
   const { toast, setToast } = useApp();
   useEffect(() => {
     if (!toast) return undefined;
@@ -14,7 +17,7 @@ export function Toast() {
   if (!toast) return null;
   return (
     <button type="button" className="toast" onClick={() => setToast(null)}>
-      {toast}
+      {translateUi(toast ?? "")}
     </button>
   );
 }

@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { BadgeCheck, Bookmark, CalendarDays, Check, Clapperboard, Copy, Download, ExternalLink, EyeOff, Filter, Info, MapPin, Play, Search, Star, Trash2, TriangleAlert, UserCircle, X } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
@@ -41,6 +43,7 @@ function needsDetailsHydration(item: MediaItem) {
 }
 
 function DetailsView({ item }: { item: MediaItem }) {
+  const translateUi = useTranslation();
   const { streams, selectedEpisode, activeProfile, addons: installedAddons, loadEpisodeStreams, openDetails, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally, toggleWatchlist, mdblistConnected } = useApp();
   const [detailsItem, setDetailsItem] = useState<MediaItem>(item);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -246,7 +249,7 @@ function DetailsView({ item }: { item: MediaItem }) {
                 <b>{detailImdbRating}</b>
               </span>
             ) : null}
-            {detailWatched && <span className="detail-watched-chip"><BadgeCheck size={13} /> Watched</span>}
+            {detailWatched && <span className="detail-watched-chip"><BadgeCheck size={13} /> {translateUi(" Watched")}</span>}
             {(() => {
               const ids = simklClient.findItemIds(displayItem.id, displayItem.mediaType === "movie" ? "movie" : "tv")
                 ?? (displayItem as unknown as { ids?: any })?.ids;
@@ -258,28 +261,28 @@ function DetailsView({ item }: { item: MediaItem }) {
                   target="_blank"
                   rel="noopener noreferrer"
                   className="simkl-lockup text-xs font-semibold px-1.5 py-0.5 rounded bg-surface-sunk hover:underline inline-flex items-center gap-1"
-                  title="View on Simkl"
+                  title={translateUi("View on Simkl")}
                 >
-                  <span>Simkl</span>
+                  <span>{translateUi("Simkl")}</span>
                 </a>
               );
             })()}
             {displayItem.genres?.slice(0, 3).map((genre) => <span key={genre}>{genre}</span>)}
           </div>
           {externalRatings.length ? (
-            <div className="detail-external-ratings" aria-label="MDBList external ratings">
+            <div className="detail-external-ratings" aria-label={translateUi("MDBList external ratings")}>
               {externalRatings.map((rating) => (
-                <span key={rating.source}><small>{rating.label}</small><b>{rating.value}</b></span>
+                <span key={rating.source}><small>{translateUi(rating.label)}</small><b>{rating.value}</b></span>
               ))}
             </div>
           ) : null}
           <div className="chips detail-metadata">
             {detailMeta.map((meta) => <span key={meta}>{meta}</span>)}
-            {streams.length > 0 && <span>{streams.length} sources</span>}
+            {streams.length > 0 && <span>{streams.length} {translateUi(" sources")}</span>}
           </div>
-          <p className="detail-overview">{displayItem.overview || "No overview available."}</p>
+          <p className="detail-overview">{displayItem.overview || translateUi("No overview available.")}</p>
           {serviceLogos.length ? (
-            <div className="detail-service-logos" aria-label="Streaming and network availability">
+            <div className="detail-service-logos" aria-label={translateUi("Streaming and network availability")}>
               {serviceLogos.map((service) => (
                 <span key={service.name} title={service.name}>
                   <img src={service.logo} alt={service.name} />
@@ -289,23 +292,22 @@ function DetailsView({ item }: { item: MediaItem }) {
           ) : null}
           <div className="detail-actions">
             <button type="button" className="primary" onClick={playBest}>
-              <Play size={18} fill="currentColor" /> {continueLabel}
+              <Play size={18} fill="currentColor" /> {translateUi(continueLabel)}
             </button>
             {inWatchlist ? (
-              <button type="button" className="secondary text-button" onClick={() => void toggleWatchlist(displayItem)}><Trash2 size={18} /> Remove</button>
+              <button type="button" className="secondary text-button" onClick={() => void toggleWatchlist(displayItem)}><Trash2 size={18} /> {translateUi(" Remove")}</button>
             ) : (
-              <button type="button" className="secondary text-button" onClick={() => void toggleWatchlist(displayItem)}><Bookmark size={18} /> Watchlist</button>
+              <button type="button" className="secondary text-button" onClick={() => void toggleWatchlist(displayItem)}><Bookmark size={18} /> {translateUi(" Watchlist")}</button>
             )}
-            <button type="button" className={`secondary text-button ${detailWatched ? "is-active" : ""}`} onClick={() => void markWatched()}><BadgeCheck size={18} /> {detailWatched ? "Watched" : "Mark Watched"}</button>
+            <button type="button" className={`secondary text-button ${detailWatched ? "is-active" : ""}`} onClick={() => void markWatched()}><BadgeCheck size={18} /> {detailWatched ? translateUi("Watched") : translateUi("Mark Watched")}</button>
             {displayItem.trailerUrl && (
               <button type="button" className="secondary text-button" onClick={() => void playTrailer(displayItem)}>
-                <Play size={18} fill="currentColor" /> Trailer
-              </button>
+                <Play size={18} fill="currentColor" /> {translateUi(" Trailer")}</button>
             )}
           </div>
           {!canPlayBest && !isTv && (
             <p className="detail-action-hint">
-              {streams.length ? "The installed addons returned sources, but none have a direct browser-playable URL yet." : "Sources will appear here when an installed addon returns results."}
+              {streams.length ? translateUi("The installed addons returned sources, but none have a direct browser-playable URL yet.") : translateUi("Sources will appear here when an installed addon returns results.")}
             </p>
           )}
         </section>
@@ -317,13 +319,13 @@ function DetailsView({ item }: { item: MediaItem }) {
 
           {displayItem.cast?.length ? (
             <section className="detail-section detail-wide">
-              <h3>Cast</h3>
-              <RailScroller className="mini-strip" ariaLabel="cast">
+              <h3>{translateUi("Cast")}</h3>
+              <RailScroller className="mini-strip" ariaLabel={translateUi("cast")}>
                 {displayItem.cast.map((person) => (
                   <button type="button" className="mini-card person cast-card" key={person.id} onClick={() => void openPerson(person)}>
                     {person.image ? <img src={person.image} alt="" /> : <UserCircle size={30} />}
                     <strong>{person.name}</strong>
-                    <span>{person.character || "Cast"}</span>
+                    <span>{person.character || translateUi("Cast")}</span>
                   </button>
                 ))}
               </RailScroller>
@@ -332,7 +334,7 @@ function DetailsView({ item }: { item: MediaItem }) {
 
           {reviews.length > 0 && (
             <section className="detail-section detail-wide">
-              <h3>Reviews</h3>
+              <h3>{translateUi("Reviews")}</h3>
               <div className="review-list">
                 {reviews.map((review) => (
                   <article className="review-card" key={review.id}>
@@ -350,8 +352,8 @@ function DetailsView({ item }: { item: MediaItem }) {
 
           {displayItem.related?.length ? (
             <section className="detail-section related detail-wide">
-              <h3>More Like This</h3>
-              <RailScroller className="rail-strip compact" ariaLabel="more like this">
+              <h3>{translateUi("More Like This")}</h3>
+              <RailScroller className="rail-strip compact" ariaLabel={translateUi("more like this")}>
                 {displayItem.related.map((related) => (
                   <MediaCard
                     key={`related-${related.mediaType}-${related.id}`}
@@ -412,6 +414,7 @@ function SourcePickerModal({
   onToast: (message: string) => void;
   loading: boolean;
 }) {
+  const translateUi = useTranslation();
   const { settings, playStream } = useApp();
   // Recompute visible plans after selected-source failures without probing the result list.
   useSyncExternalStore(subscribePlaybackCompatibility, playbackCompatibilityRevision, () => 0);
@@ -631,43 +634,41 @@ function SourcePickerModal({
 
   if (!visible || typeof document === "undefined") return null;
   return createPortal(
-    <section className="source-modal" role="dialog" aria-modal="true" aria-label="Choose source">
+    <section className="source-modal" role="dialog" aria-modal="true" aria-label={translateUi("Choose source")}>
       <div className="source-modal-bg" onClick={onClose} />
       <div className="source-panel">
         <header className="source-panel-head">
           <div>
-            <p className="eyebrow">sources</p>
+            <p className="eyebrow">{translateUi("sources")}</p>
             <h2>{title}</h2>
             <span>
-              {streams.length} sources — highest quality and largest files first.
-              Choose browser playback or a compatible external player.
-            </span>
+              {streams.length} {translateUi(" sources — highest quality and largest files first. Choose browser playback or a compatible external player.")}</span>
           </div>
-          <button type="button" className="person-close" onClick={onClose} aria-label="Close source picker"><X size={24} /></button>
+          <button type="button" className="person-close" onClick={onClose} aria-label={translateUi("Close source picker")}><X size={24} /></button>
         </header>
 
         {showVlcSetup && (
           <div className="vlc-setup-hint">
-            <span>Windows/desktop: enable one-click "Open in VLC" (no more .m3u download).</span>
-            <button type="button" onClick={enableVlcProtocol}>Set up VLC integration</button>
+            <span>{translateUi("Windows/desktop: enable one-click \"Open in VLC\" (no more .m3u download).")}</span>
+            <button type="button" onClick={enableVlcProtocol}>{translateUi("Set up VLC integration")}</button>
           </div>
         )}
 
         <div className="source-toolbar">
           <label className="source-search">
             <Search size={18} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search quality, release, provider" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={translateUi("Search quality, release, provider")} />
           </label>
           {/* Possible browser routes are not proof of playback; keep every source searchable. */}
-          <div className="source-filter-group" aria-label="Source count">
+          <div className="source-filter-group" aria-label={translateUi("Source count")}>
             <button type="button" className="is-active" disabled>
-              <Filter size={16} /> All sources{streams.length ? ` ${streams.length}` : ""}
+              <Filter size={16} /> {translateUi(" All sources")}{streams.length ? ` ${streams.length}` : ""}
             </button>
           </div>
         </div>
 
         <div className="source-addon-tabs">
-          <button type="button" className={addonFilter === "all" ? "is-active" : ""} onClick={() => setAddonFilter("all")}>All Addons</button>
+          <button type="button" className={addonFilter === "all" ? "is-active" : ""} onClick={() => setAddonFilter("all")}>{translateUi("All Addons")}</button>
           {addons.map((addon) => (
             <button type="button" key={addon.id} className={addonFilter === addon.id ? "is-active" : ""} onClick={() => setAddonFilter(addon.id)}>
               {addon.name}{addon.count > 0 ? ` ${addon.count}` : ""}
@@ -679,10 +680,10 @@ function SourcePickerModal({
           {filtered.length === 0 && (
             <p className="source-empty">
               {loading
-                ? "Searching addons..."
+                ? translateUi("Searching addons...")
                 : addonFilter !== "all"
-                  ? `${addons.find((addon) => addon.id === addonFilter)?.name ?? "This addon"} returned no sources for this title.`
-                  : "No sources match this filter."}
+                  ? translateUi("{value0} returned no sources for this title.", {value0: addons.find((addon) => addon.id === addonFilter)?.name ?? "This addon"})
+                  : translateUi("No sources match this filter.")}
             </p>
           )}
           {filtered.map((stream, index) => {
@@ -700,36 +701,34 @@ function SourcePickerModal({
                   <span className="source-status-line" data-playback-state={playback.state}>
                     <span className={`source-playback-status ${playback.className}`} style={{ maxWidth: "100%", whiteSpace: "normal", overflowWrap: "anywhere", gap: 6, paddingBlock: 4 }}>
                       <StatusIcon size={13} aria-hidden="true" style={{ flexShrink: 0 }} />
-                      <span>{playback.label}</span>
+                      <span>{translateUi(playback.label)}</span>
                     </span>
-                    {playback.detail && <span className="source-warning">{playback.detail}</span>}
+                    {playback.detail && <span className="source-warning">{translateUi(playback.detail)}</span>}
                   </span>
                   <span className="stream-badges">
                     {streamBadges(stream).map((badge) => (
-                      <span key={badge.label} className={`stream-badge ${badge.tone ?? ""}`}>{badge.label}</span>
+                      <span key={badge.label} className={`stream-badge ${badge.tone ?? ""}`}>{translateUi(badge.label)}</span>
                     ))}
                   </span>
                 </span>
                 <span className="source-side">
-                  <b>{stream.quality || "Unknown"}</b>
-                  <small>{locked ? "Needs resolver" : playback.state === "conversion" ? "Conversion required" : playback.state === "blocked" ? "Not browser-playable" : "Unverified"}</small>
+                  <b>{stream.quality || translateUi("Unknown")}</b>
+                  <small>{locked ? translateUi("Needs resolver") : playback.state === "conversion" ? translateUi("Conversion required") : playback.state === "blocked" ? translateUi("Not browser-playable") : translateUi("Unverified")}</small>
                   <span className="source-row-actions">
-                    {playback.canTryBrowser && <button type="button" className="source-action primary-action" aria-label={playback.state === "conversion" ? "Try provider conversion in browser" : "Try browser playback"} title={playback.detail || "Try browser playback"} onClick={() => { playStream(stream, { forceBrowser: true }); onClose(); }}><Play size={13} /> Try</button>}
+                    {playback.canTryBrowser && <button type="button" className="source-action primary-action" aria-label={playback.state === "conversion" ? translateUi("Try provider conversion in browser") : translateUi("Try browser playback")} title={translateUi(playback.detail) || translateUi("Try browser playback")} onClick={() => { playStream(stream, { forceBrowser: true }); onClose(); }}><Play size={13} /> {translateUi(" Try")}</button>}
                     <button
                       type="button"
                       className={`source-action ${locked ? "" : "primary-action"}`}
                       disabled={locked}
                       onClick={() => openExternal("vlc", stream)}
                     >
-                      <ExternalLink size={13} /> VLC
-                    </button>
+                      <ExternalLink size={13} /> {translateUi(" VLC")}</button>
                     <button type="button" className="source-action" disabled={locked} onClick={() => openAnyPlayer(stream)}>
-                      <ExternalLink size={13} /> Player
-                    </button>
-                    <button type="button" className="source-action icon-only" disabled={locked} onClick={() => void downloadSource(stream)} aria-label="Download this source">
+                      <ExternalLink size={13} /> {translateUi(" Player")}</button>
+                    <button type="button" className="source-action icon-only" disabled={locked} onClick={() => void downloadSource(stream)} aria-label={translateUi("Download this source")}>
                       <Download size={13} />
                     </button>
-                    <button type="button" className="source-action icon-only" disabled={locked} onClick={() => void copyUrl(stream)} aria-label="Copy stream URL">
+                    <button type="button" className="source-action icon-only" disabled={locked} onClick={() => void copyUrl(stream)} aria-label={translateUi("Copy stream URL")}>
                       <Copy size={13} />
                     </button>
                   </span>
@@ -759,6 +758,7 @@ function PersonModal({
   onOpenMedia: (item: MediaItem) => void;
   posterMode: boolean;
 }) {
+  const translateUi = useTranslation();
   useEffect(() => {
     if (!visible) return undefined;
     const onKey = (event: KeyboardEvent) => {
@@ -771,12 +771,12 @@ function PersonModal({
   if (!visible) return null;
   if (typeof document === "undefined") return null;
   return createPortal(
-    <section className="person-modal" role="dialog" aria-modal="true" aria-label={person?.name ?? "Cast details"}>
+    <section className="person-modal" role="dialog" aria-modal="true" aria-label={person?.name ?? translateUi("Cast details")}>
       <div className="person-modal-bg" onClick={onClose} />
       <div className="person-panel">
-        <button type="button" className="person-close" onClick={onClose} aria-label="Close cast details"><X size={24} /></button>
+        <button type="button" className="person-close" onClick={onClose} aria-label={translateUi("Close cast details")}><X size={24} /></button>
         {loading ? (
-          <div className="person-loading">Loading cast details...</div>
+          <div className="person-loading">{translateUi("Loading cast details...")}</div>
         ) : person ? (
           <>
             <aside className="person-sidebar">
@@ -792,14 +792,14 @@ function PersonModal({
             <div className="person-content">
               {person.biography ? (
                 <section>
-                  <p className="eyebrow">Biography</p>
+                  <p className="eyebrow">{translateUi("Biography")}</p>
                   <p className="person-bio">{person.biography}</p>
                 </section>
               ) : null}
               {person.knownFor.length ? (
                 <section>
-                  <p className="eyebrow">Known For</p>
-                  <RailScroller className={`person-known-rail ${posterMode ? "is-poster" : ""}`} ariaLabel={`${person.name} known for`}>
+                  <p className="eyebrow">{translateUi("Known For")}</p>
+                  <RailScroller className={`person-known-rail ${posterMode ? "is-poster" : ""}`} ariaLabel={translateUi("{value0} known for", {value0:person.name})}>
                     {person.knownFor.map((item) => (
                       <button type="button" className="person-known-card" key={`${item.mediaType}-${item.id}`} onClick={() => onOpenMedia(item)}>
                         <div>{item.backdrop || item.image ? <img src={item.backdrop || item.image} alt="" /> : <Clapperboard size={32} />}</div>
@@ -903,6 +903,7 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
   isWatched: (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => boolean;
   onPlayEpisode: (season: number, episode: number) => void;
 }) {
+  const translateUi = useTranslation();
   const { openContextMenu, setToast, settings, toggleWatched } = useApp();
   const seasons = item.seasons ?? [];
   const [season, setSeason] = useState(seasons[0]?.seasonNumber ?? 1);
@@ -1011,7 +1012,7 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
 
   return (
     <section className="detail-section episodes-section detail-wide">
-      <h3>Episodes</h3>
+      <h3>{translateUi("Episodes")}</h3>
       <div className="season-tabs">
         {seasons.map((s) => (
           <button
@@ -1021,17 +1022,17 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
             onClick={() => setSeason(s.seasonNumber)}
             onContextMenu={(e) => handleSeasonContextMenu(e, s.seasonNumber, s.name || `Season ${s.seasonNumber}`)}
           >
-            {s.name || `Season ${s.seasonNumber}`}
+            {s.name || translateUi("Season {value0}", {value0: s.seasonNumber})}
           </button>
         ))}
-        {!seasons.length && loadingDetails ? <span className="season-tab is-loading">Loading seasons...</span> : null}
+        {!seasons.length && loadingDetails ? <span className="season-tab is-loading">{translateUi("Loading seasons...")}</span> : null}
       </div>
-      <RailScroller className="episode-list" ariaLabel={`season ${season} episodes`}>
-        {(loading || loadingDetails) && <p className="empty">Loading episodes...</p>}
+      <RailScroller className="episode-list" ariaLabel={translateUi("season {value0} episodes", {value0:season})}>
+        {(loading || loadingDetails) && <p className="empty">{translateUi("Loading episodes...")}</p>}
         {!loading && !loadingDetails && !episodes.length ? (
           <p className="empty">
-            No episodes found.{" "}
-            <button type="button" className="episode-retry" onClick={() => setRetryNonce((n) => n + 1)}>Retry</button>
+            {translateUi("No episodes found.")}{" "}
+            <button type="button" className="episode-retry" onClick={() => setRetryNonce((n) => n + 1)}>{translateUi("Retry")}</button>
           </p>
         ) : null}
         {!loading && episodes.map((episode) => {
@@ -1048,15 +1049,15 @@ function SeasonEpisodes({ item, loadingDetails, selectedEpisode, isWatched, onPl
             >
               <div className="episode-still">
                 {episode.still ? <img src={episode.still} alt="" /> : <Clapperboard size={24} />}
-                <span className="episode-chip episode-chip-left">S{season} E{episode.episodeNumber.toString().padStart(2, "0")}</span>
+                <span className="episode-chip episode-chip-left">{translateUi("S")}{season} {translateUi(" E")}{episode.episodeNumber.toString().padStart(2, "0")}</span>
                 {episode.airDate && <span className="episode-chip episode-chip-center">{episode.airDate}</span>}
-                {watched && <span className="watched-badge episode-watched-badge" aria-label="Watched"><BadgeCheck size={12} /></span>}
+                {watched && <span className="watched-badge episode-watched-badge" aria-label={translateUi("Watched")}><BadgeCheck size={12} /></span>}
                 <span className="episode-play"><Play size={18} fill="currentColor" /></span>
               </div>
               <div className="episode-info">
                 <strong>{episode.name}</strong>
                 <span className="episode-subline">
-                  {episode.runtime ? `${episode.runtime}m` : `Episode ${episode.episodeNumber}`}
+                  {episode.runtime ? translateUi("{value0}m", {value0: episode.runtime}) : translateUi("Episode {value0}", {value0: episode.episodeNumber})}
                   {episodeRating && (
                     <em className="episode-imdb">
                       <img src={IMDB_LOGO} alt="IMDb" loading="lazy" />

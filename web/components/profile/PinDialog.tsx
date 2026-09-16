@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { LockKeyhole, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -6,6 +8,7 @@ import { verifyProfilePin } from "@/lib/profilePin";
 import type { Profile } from "@/lib/types";
 
 export function PinDialog({ profile, onUnlock, onClose }: { profile: Profile; onUnlock: (pin: string) => void; onClose: () => void }) {
+  const translateUi = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
@@ -27,11 +30,11 @@ export function PinDialog({ profile, onUnlock, onClose }: { profile: Profile; on
         if (attempts.current % 5 === 0) retryAfter.current = Date.now() + 30_000;
         setPin(""); setError("Incorrect PIN. Try again.");
       }}>
-        <div className="profile-dialog-head"><h2 id="profile-pin-title"><LockKeyhole size={22} /> {profile.name}</h2><button className="icon-button" type="button" aria-label="Close" onClick={onClose}><X size={20} /></button></div>
-        <label htmlFor="profile-pin">Profile PIN</label>
+        <div className="profile-dialog-head"><h2 id="profile-pin-title"><LockKeyhole size={22} /> {profile.name}</h2><button className="icon-button" type="button" aria-label={translateUi("Close")} onClick={onClose}><X size={20} /></button></div>
+        <label htmlFor="profile-pin">{translateUi("Profile PIN")}</label>
         <input id="profile-pin" autoFocus type="password" inputMode="numeric" autoComplete="off" pattern="[0-9]{4,5}" maxLength={5} required value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))} aria-describedby="profile-pin-error" />
-        <p id="profile-pin-error" role="alert">{error}</p>
-        <button type="submit" className="primary" disabled={checking || pin.length < 4}>{checking ? "Checking..." : "Unlock"}</button>
+        <p id="profile-pin-error" role="alert">{translateUi(error ?? "")}</p>
+        <button type="submit" className="primary" disabled={checking || pin.length < 4}>{checking ? translateUi("Checking...") : translateUi("Unlock")}</button>
       </form>
     </dialog>
   );

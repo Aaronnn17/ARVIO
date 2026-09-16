@@ -1,4 +1,6 @@
 "use client";
+import { useTranslation } from "@/lib/i18n";
+
 
 import { BadgeCheck, Clapperboard } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
@@ -8,12 +10,12 @@ import { useApp } from "@/lib/store";
 import { getCardMeta, getCardProviders, getLogoUrl, prefetchDetails, resolveTmdbId } from "@/lib/tmdb";
 import type { MediaItem } from "@/lib/types";
 
-function formatReleaseDate(raw?: string | null): string {
+function formatReleaseDate(raw?: string | null, language?: string): string {
   if (!raw) return "";
   const date = new Date(`${raw}T00:00:00`);
   if (Number.isNaN(date.getTime())) return raw.slice(0, 4);
   try {
-    return new Intl.DateTimeFormat([], { day: "numeric", month: "short", year: "numeric" }).format(date);
+    return new Intl.DateTimeFormat(language, { day: "numeric", month: "short", year: "numeric" }).format(date);
   } catch {
     return raw;
   }
@@ -42,6 +44,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
   onFocus?: (item: MediaItem) => void;
   posterMode?: boolean;
 }) {
+  const translateUi = useTranslation();
   const { settings, isWatched, openContextMenu } = useApp();
   const effectivePosterMode = posterMode ?? settings.cardLayoutMode === "poster";
   const [logo, setLogo] = useState<string | null>(null);
@@ -197,7 +200,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
     return () => { active = false; };
   }, [item.imdbId, item.mediaType, metadataId, missingArtwork]);
 
-  const dateLabel = formatReleaseDate(item.releaseDate) || item.subtitle || year;
+  const dateLabel = formatReleaseDate(item.releaseDate, settings.language) || item.subtitle || year;
   const runtimeLabel = formatRuntime(item.duration || runtime);
   const episodeLine = formatEpisodeLine(item);
 
@@ -235,7 +238,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
             {serviceBadges.map((badge) => <img key={badge} src={badge} alt="" loading="lazy" />)}
           </span>
         )}
-        {watched && <span className="watched-badge" aria-label="Watched"><BadgeCheck size={13} /></span>}
+        {watched && <span className="watched-badge" aria-label={translateUi("Watched")}><BadgeCheck size={13} /></span>}
         {item.timeRemainingLabel && <span className="cw-badge top-right">{item.timeRemainingLabel}</span>}
         {imdbRating ? (
           <span className="card-imdb">
@@ -252,7 +255,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
       <strong>{item.title}</strong>
       {episodeLine ? (
         <div className="card-episode-line">
-          {isUpNext && <span className="card-upnext">Up next</span>}
+          {isUpNext && <span className="card-upnext">{translateUi("Up next")}</span>}
           <span className="card-episode">{episodeLine}</span>
         </div>
       ) : (

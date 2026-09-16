@@ -49,9 +49,17 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.unit.sp
+import com.arflix.tv.ui.theme.TextPrimary
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -127,6 +135,7 @@ import com.arflix.tv.ui.components.topBarSelectedIndex
 import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.PinUtil
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
@@ -554,6 +563,15 @@ fun LiveTvScreen(
     var selectedCategoryId by rememberSaveable {
         mutableStateOf(state.tvSession.lastGroupName.takeIf { it.isNotBlank() } ?: "all")
     }
+    var currentMode by rememberSaveable {
+        mutableStateOf(
+            if (isTouchDevice && initialChannelId == null && initialStreamUrl == null) {
+                LiveTvStartup.LiveTvMode.GroupHome
+            } else {
+                LiveTvStartup.LiveTvMode.Guide
+            }
+        )
+    }
     var startupCategoryApplied by rememberSaveable { mutableStateOf(false) }
     var selectedProviderId by rememberSaveable { mutableStateOf("all") }
     val categoryScope = "${currentProfile?.id}|$selectedProviderId|$selectedCategoryId"
@@ -899,6 +917,13 @@ fun LiveTvScreen(
             selectedCategoryId = "all"
         }
     }
+    val mobileGroupList = remember(visibleEnrichedState.value.tree, playlistCategorySections) {
+        if (playlistCategorySections.isNotEmpty()) {
+            playlistCategorySections.flatMap { it.categories }
+        } else {
+            visibleEnrichedState.value.tree.global.categories + visibleEnrichedState.value.tree.countries.categories
+        }.filterNot { it.count <= 0 }
+    }
     // Selected category (persist across nav). Defaults to "all".
     val hasProfile = currentProfile != null
     val maxTopBarIndex = topBarMaxIndex(hasProfile)
@@ -1051,8 +1076,10 @@ fun LiveTvScreen(
     val filteredChannelsCollapsedState = remember { mutableStateOf<List<EnrichedChannel>>(emptyList()) }
     val filteredChannelIndexState = remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var displayedChannelsCategoryKey by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(filteredChannelsState.value, filteredChannelsCategoryKey, variantGroups) {
+    var displayedChannelsScopeKey by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(filteredChannelsState.value, filteredChannelsCategoryKey, filteredChannelsScopeKey, variantGroups) {
         val categoryKey = filteredChannelsCategoryKey
+        val scopeKey = filteredChannelsScopeKey
         val source = filteredChannelsState.value
         // No variant groups (large list) → reuse the source list as-is, no extra copy.
         val collapsed = if (variantGroups.isEmpty() || categoryKey == "fav" || categoryKey == "recent") {
@@ -1068,9 +1095,10 @@ fun LiveTvScreen(
         filteredChannelsCollapsedState.value = collapsed
         filteredChannelIndexState.value = index
         displayedChannelsCategoryKey = categoryKey
+        displayedChannelsScopeKey = scopeKey
     }
-    val filteredChannels = if (displayedChannelsCategoryKey == selectedCategoryId) filteredChannelsCollapsedState.value else emptyList()
-    val filteredChannelIndexById = if (displayedChannelsCategoryKey == selectedCategoryId) filteredChannelIndexState.value else emptyMap()
+    val filteredChannels = if (displayedChannelsScopeKey == categoryScope && displayedChannelsCategoryKey == selectedCategoryId) filteredChannelsCollapsedState.value else emptyList()
+    val filteredChannelIndexById = if (displayedChannelsScopeKey == categoryScope && displayedChannelsCategoryKey == selectedCategoryId) filteredChannelIndexState.value else emptyMap()
     val selectedCategoryTotalCount = remember(visibleEnrichedState.value.tree, selectedCategoryId, filteredChannels.size) {
         if (selectedCategoryId == "fav" || selectedCategoryId == "recent") filteredChannels.size
         else visibleEnrichedState.value.tree.countForCategory(selectedCategoryId)
@@ -2151,16 +2179,25 @@ fun LiveTvScreen(
         fullscreenGuideOpen = false
     }
 
-    // Prev/next zapping across the full enriched list (not the filtered
-    // category) per user spec. Wraps around.
+    val channelZapOrder = remember(categoryScope, isFullScreen) { ChannelZapOrder() }
+    val zapChannelIds = remember(filteredChannels) { filteredChannels.map { it.id } }
+    SideEffect { channelZapOrder.update(zapChannelIds) }
+
+    // Use the same category and order as the guide, never the global startup window.
     fun zap(delta: Int) {
-        val all = allDisplayChannels
-        if (all.isEmpty()) return
-        val currentDisplayId = displayChannelIdFor(playingChannelId, visibleEnrichedState.value.index.byId, variantGroups)
-        val currentIdx = currentDisplayId?.let { id -> all.indexOfFirst { channel -> channel.id == id } } ?: -1
-        val start = if (currentIdx >= 0) currentIdx else 0
-        val size = all.size
-        tuneToDisplayChannel(all[((start + delta) % size + size) % size])
+        if (filteredChannels.isEmpty()) return
+        channelZapOrder.update(zapChannelIds)
+        val currentDisplayId = displayChannelIdFor(playingChannelId, visibleChannelsById, variantGroups)
+        val complete = filteredChannelsState.value.size >= selectedCategoryTotalCount
+        val targetId = channelZapOrder.next(playingChannelId, currentDisplayId, delta, complete)
+        if (targetId == null) {
+            if (!complete) requestGuideWindowAfter()
+            return
+        }
+        val index = filteredChannelIndexById[targetId] ?: return
+        val target = filteredChannels.getOrNull(index)?.takeIf { it.id == targetId } ?: return
+        if (!complete && index >= filteredChannels.size - 16) requestGuideWindowAfter()
+        tuneToDisplayChannel(target)
     }
 
     // Jump back to the channel that was playing before this one, so the right
@@ -2168,7 +2205,7 @@ fun LiveTvScreen(
     // previous channel yet or it has dropped out of the visible list.
     fun tunePreviousChannel(): Boolean {
         val target = previousChannelId
-            ?.let { id -> allDisplayChannels.firstOrNull { channel -> channel.id == id } }
+            ?.let { id -> visibleChannelsById[id] ?: allDisplayChannels.firstOrNull { channel -> channel.id == id } }
             ?: return false
         tuneToDisplayChannel(target)
         return true
@@ -2257,6 +2294,7 @@ fun LiveTvScreen(
         focusCommitJob[0]?.cancel()
         focusedChannelObject[0] = null
         selectedCategoryId = categoryId
+        if (isTouchDevice) currentMode = LiveTvStartup.LiveTvMode.Guide
         categoryDrawerOpen = false
         focusGuideAfterDrawerClose = true
         viewModel.rememberTvSession(
@@ -2695,7 +2733,9 @@ fun LiveTvScreen(
             exoPlayer.release()
             playbackConnections.cancelAll()
             iptvHttpClient.dispatcher.cancelAll()
-            iptvHttpClient.connectionPool.evictAll()
+            CoroutineScope(Dispatchers.IO).launch {
+                runCatching { iptvHttpClient.connectionPool.evictAll() }
+            }
         }
     }
 
@@ -2746,7 +2786,9 @@ fun LiveTvScreen(
             pendingPlaybackRetry = null
             playbackConnections.cancelAll()
             iptvHttpClient.dispatcher.cancelAll()
-            iptvHttpClient.connectionPool.evictAll()
+            CoroutineScope(Dispatchers.IO).launch {
+                runCatching { iptvHttpClient.connectionPool.evictAll() }
+            }
         }
     }
     val sportsHiddenPlayback by rememberUpdatedState(sportsSelected && !isFullScreen)
@@ -2910,14 +2952,16 @@ fun LiveTvScreen(
         val maxPosition = if (duration > 1_000L) duration - 1_000L else duration
         val current = (catchupUrlAnchorOffsetMs + exoPlayer.currentPosition.coerceAtLeast(0L))
             .let { if (maxPosition > 0L) it.coerceAtMost(maxPosition) else it }
-        val target = (current + deltaMs)
-            .coerceAtLeast(0L)
-            .let { if (maxPosition > 0L) it.coerceAtMost(maxPosition) else it }
-        if (target == catchupPlaybackOffsetMs) {
+        val source = playingChannel?.source
+        val seekable = exoPlayer.isCurrentMediaItemSeekable
+        val granularity = if (source?.catchupUrlAnchorOffset(59_000L) == 0L) {
+            CatchupUrlAnchorGranularityMs
+        } else 1_000L
+        val target = catchupSeekTarget(current, deltaMs, duration, seekable, granularity)
+        if (target == current) {
             hudPokeSignal++
             return
         }
-        val source = playingChannel?.source
         val targetAnchor = source?.catchupUrlAnchorOffset(target) ?: 0L
         val targetInSegment = source?.catchupInSegmentSeekOffset(target) ?: target
         val sameAnchor = targetAnchor == catchupUrlAnchorOffsetMs
@@ -3293,7 +3337,11 @@ fun LiveTvScreen(
         }
     }
     BackHandler(enabled = !searchOpen && channelMenu == null && variantPickerChannel == null && !isFullScreen) {
-        when (LiveTvStartup.guideBackAction(isTouchDevice, categoryDrawerOpen)) {
+        when (LiveTvStartup.guideBackAction(isTouchDevice, categoryDrawerOpen, currentMode)) {
+            LiveTvStartup.GuideBackAction.OPEN_GROUP_HOME -> {
+                sportsSelected = false
+                currentMode = LiveTvStartup.LiveTvMode.GroupHome
+            }
             LiveTvStartup.GuideBackAction.OPEN_CATEGORIES -> openCategoryDrawer()
             LiveTvStartup.GuideBackAction.EXIT_TV -> onBack()
         }
@@ -3489,13 +3537,144 @@ fun LiveTvScreen(
                 }
             )
         } else {
-            // Keep drawer and guide aligned below the unchanged app navigation.
-            if (useTouchRail) {
+            if (isTouchDevice && currentMode == LiveTvStartup.LiveTvMode.GroupHome) {
+                val mobileAllChannelsCount = remember(
+                    visibleEnrichedState.value.tree,
+                    lastKnownPagedTotal,
+                    visibleEnrichedState.value.all.size
+                ) {
+                    visibleEnrichedState.value.tree.countForCategory("all")
+                        ?.takeIf { it > 0 }
+                        ?: if (lastKnownPagedTotal > 10_000) lastKnownPagedTotal else visibleEnrichedState.value.all.size
+                }
+                val mobileSportsCount = remember(
+                    visibleEnrichedState.value.tree,
+                    mobileGroupList,
+                    sportsDisplayEvents
+                ) {
+                    val treeSports = visibleEnrichedState.value.tree.countForCategory("g-sports")?.takeIf { it > 0 }
+                    if (treeSports != null) {
+                        treeSports
+                    } else {
+                        val groupSportsTotal = mobileGroupList
+                            .filter {
+                                sportsChannelSport(it.label) != null ||
+                                    sportsChannelSport(it.playlistGroupName.orEmpty()) != null ||
+                                    it.label.contains("sport", ignoreCase = true)
+                            }
+                            .sumOf { it.count }
+                        if (groupSportsTotal > 0) {
+                            groupSportsTotal
+                        } else {
+                            val eventChannels = sportsDisplayEvents.flatMap { it.channels + it.possibleChannels }.map { it.id }.distinct().size
+                            if (eventChannels > 0) eventChannels else 0
+                        }
+                    }
+                }
+                LiveTvGroupHome(
+                    exoPlayer = exoPlayer,
+                    currentChannel = playingDisplayChannel ?: playingChannel,
+                    nowNext = currentNowNext,
+                    clockTickMillis = guideClockMillis,
+                    allChannelsCount = mobileAllChannelsCount,
+                    sportsCount = mobileSportsCount,
+                    favoritesCount = state.snapshot.favoriteChannels.size,
+                    recentsCount = recents.value.size,
+                    favoriteSet = favSet,
+                    onToggleFavorite = { viewModel.toggleFavoriteChannel(it) },
+                    onOpenFullscreen = openFullScreenPlayer,
+                    groups = mobileGroupList,
+                    onOpenAllChannels = {
+                        noteGuideUserNavigation()
+                        selectedCategoryId = "all"
+                        sportsSelected = false
+                        currentMode = LiveTvStartup.LiveTvMode.Guide
+                    },
+                    onOpenSports = {
+                        noteGuideUserNavigation()
+                        sportsSelected = true
+                        currentMode = LiveTvStartup.LiveTvMode.Guide
+                    },
+                    onOpenFavorites = {
+                        if (state.snapshot.favoriteChannels.isNotEmpty()) {
+                            noteGuideUserNavigation()
+                            selectedCategoryId = "fav"
+                            sportsSelected = false
+                            currentMode = LiveTvStartup.LiveTvMode.Guide
+                        }
+                    },
+                    onOpenRecents = {
+                        if (recents.value.isNotEmpty()) {
+                            noteGuideUserNavigation()
+                            selectedCategoryId = "recent"
+                            sportsSelected = false
+                            currentMode = LiveTvStartup.LiveTvMode.Guide
+                        }
+                    },
+                    onSelectGroup = { group ->
+                        requestCategorySelection(group.id)
+                    },
+                    onOpenSearch = { searchOpen = true },
+                    providers = providerFilters,
+                    selectedProviderId = selectedProviderId,
+                    onSelectProvider = { id ->
+                        noteGuideUserNavigation()
+                        selectedProviderId = id
+                        selectedCategoryId = "all"
+                        focusedChannelId = null
+                        epgPrefetchAnchorId = null
+                    },
+                    compactLayout = true,
+                    landscapeCompact = landscapeCompactMiniPlayer,
+                    playerActive = miniPlayerActive,
+                    variantCount = playingChannel?.let { variantCountFor(it, variantGroups) } ?: 1,
+                    onOpenVariants = playingChannel?.let { channel -> { openVariantPicker(channel) } },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = contentTopPadding),
+                )
+            } else if (isTouchDevice) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = contentTopPadding),
                 ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.back),
+                            tint = TextPrimary,
+                            modifier = Modifier
+                                .clickable {
+                                    sportsSelected = false
+                                    currentMode = LiveTvStartup.LiveTvMode.GroupHome
+                                }
+                                .padding(end = 16.dp)
+                                .size(28.dp),
+                        )
+                        Text(
+                            text = if (sportsSelected) stringResource(R.string.live_quick_sports)
+                            else (sportsSidebarTree.byId(selectedCategoryId)?.label ?: "All channels"),
+                            style = ArflixTypography.heroTitle.copy(fontSize = 24.sp),
+                            color = TextPrimary,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = stringResource(R.string.search),
+                            tint = TextPrimary,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clickable { searchOpen = true },
+                        )
+                    }
                     if (playlistCategorySections.isEmpty()) {
                         ProviderSelector(
                             providers = providerFilters,
@@ -3527,40 +3706,25 @@ fun LiveTvScreen(
                         playerActive = miniPlayerActive,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (!categoryDrawerOpen && !sportsSelected) Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.TextButton(onClick = { categoryDrawerOpen = true }) {
-                            Text("Categories", color = LiveColors.Fg)
-                        }
-                        Text(sportsSidebarTree.byId(selectedCategoryId)?.label ?: "All channels", color = LiveColors.FgDim,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    AnimatedVisibility(visible = categoryDrawerOpen,
-                        enter = androidx.compose.animation.expandVertically(animationSpec = tween(200)) + fadeIn(tween(150)),
-                        exit = androidx.compose.animation.shrinkVertically(animationSpec = tween(200)) + fadeOut(tween(100))) {
-                    TouchCategoryRail(
-                        tree = sportsSidebarTree,
-                        selectedId = if (sportsSelected) SPORTS_GUIDE_CATEGORY else selectedCategoryId,
-                        playlistSections = playlistCategorySections,
-                        onSelect = { id ->
-                            requestCategorySelection(id)
-                            categoryDrawerOpen = false
-                        },
-                        onOpenSearch = { searchOpen = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    }
                     if (sportsSelected) SportsGuidePane(
                         events = sportsDisplayEvents, now = guideClockMillis, loading = sportsDisplayLoading, clockFormat = sportsClockFormat,
                         failed = sportsError, onRetry = { sportsRefresh++ }, providerNames = sportsProviderNames,
                         focusSignal = sportsFocusSignal,
                         onContentFocused = { focusZone = LiveTvFocusZone.SPORTS },
-                        onOpenCategories = { openCategoryDrawer() },
+                        onOpenCategories = {
+                            sportsSelected = false
+                            currentMode = LiveTvStartup.LiveTvMode.GroupHome
+                        },
                         onPlay = { channel -> playLiveFullscreen(channel.enrich(0)) },
+                        sidebarOpen = false,
+                        showHeader = false,
+                        onOpenSearch = { searchOpen = true },
                         modifier = Modifier.weight(1f),
                     ) else EpgGrid(
                         channels = filteredChannels,
                         playbackQuality = playbackQuality,
                         totalChannelCount = selectedCategoryTotalCount,
+                        categoryTitle = sportsSidebarTree.byId(selectedCategoryId)?.label ?: "All channels",
                         clockTickMillis = guideClockMillis,
                         nowNext = effectiveGuideNowNext,
                         epgLoadingChannelIds = state.epgLoadingChannelIds,
@@ -3593,6 +3757,7 @@ fun LiveTvScreen(
                         favorites = favSet,
                         variantCountFor = { channel -> variantCountFor(channel, variantGroups) },
                         onMoveLeftFromChannels = { focusPlaylistSearch() },
+                        onBackToGroups = null,
                         onEnterEpg = { channel -> focusEpg(channel.id) },
                         onExitEpg = { channel -> focusChannelList(channel?.id ?: focusedChannelId ?: playingChannelId) },
                         onRequestNextChannels = ::requestGuideWindowAfter,
@@ -4211,6 +4376,10 @@ fun LiveTvScreen(
                     focusedChannelId = channel.id
                     epgPrefetchAnchorId = channel.id
                     searchOpen = false
+                    if (isTouchDevice) {
+                        sportsSelected = false
+                        currentMode = LiveTvStartup.LiveTvMode.Guide
+                    }
                     if (!useTouchRail) categoryDrawerOpen = false
                     focusChannelList(channel.id)
                 },

@@ -10,7 +10,9 @@ import com.arflix.tv.data.model.IptvChannel
  */
 object LiveTvStartup {
 
-    enum class GuideBackAction { OPEN_CATEGORIES, EXIT_TV }
+    enum class LiveTvMode { GroupHome, Guide }
+
+    enum class GuideBackAction { OPEN_CATEGORIES, OPEN_GROUP_HOME, EXIT_TV }
 
     /**
      * Which channel Live TV should open on.
@@ -88,8 +90,43 @@ object LiveTvStartup {
             ?: "all"
     }
 
-    fun guideBackAction(isTouchDevice: Boolean, categoryDrawerOpen: Boolean): GuideBackAction =
-        if (!isTouchDevice && !categoryDrawerOpen) GuideBackAction.OPEN_CATEGORIES else GuideBackAction.EXIT_TV
+    fun guideBackAction(
+        isTouchDevice: Boolean,
+        categoryDrawerOpen: Boolean,
+        mode: LiveTvMode = LiveTvMode.Guide,
+    ): GuideBackAction = when {
+        isTouchDevice && mode == LiveTvMode.Guide -> GuideBackAction.OPEN_GROUP_HOME
+        isTouchDevice -> GuideBackAction.EXIT_TV
+        !categoryDrawerOpen -> GuideBackAction.OPEN_CATEGORIES
+        else -> GuideBackAction.EXIT_TV
+    }
+
+    fun initialMode(
+        isTouchDevice: Boolean,
+        initialChannelId: String?,
+        initialStreamUrl: String?,
+    ): LiveTvMode = if (isTouchDevice && initialChannelId == null && initialStreamUrl == null) {
+        LiveTvMode.GroupHome
+    } else {
+        LiveTvMode.Guide
+    }
+
+    sealed interface QuickAccessDestination {
+        data class Category(val categoryId: String) : QuickAccessDestination
+        data object Sports : QuickAccessDestination
+    }
+
+    fun resolveQuickAccessDestination(
+        tile: String,
+        favoritesCount: Int = 1,
+        recentsCount: Int = 1,
+    ): QuickAccessDestination? = when (tile) {
+        "all" -> QuickAccessDestination.Category("all")
+        "sports" -> QuickAccessDestination.Sports
+        "fav" -> if (favoritesCount > 0) QuickAccessDestination.Category("fav") else null
+        "recent" -> if (recentsCount > 0) QuickAccessDestination.Category("recent") else null
+        else -> QuickAccessDestination.Category("all")
+    }
 
     fun anchoredWindowOffset(channelIndex: Int, visibleRowsBeforeAnchor: Int): Int =
         if (channelIndex < 0) 0 else (channelIndex - visibleRowsBeforeAnchor.coerceAtLeast(0)).coerceAtLeast(0)
