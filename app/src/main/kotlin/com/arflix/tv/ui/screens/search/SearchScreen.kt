@@ -11,15 +11,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -136,7 +139,7 @@ private fun localizedDiscoverRowTitle(category: Category): String = when (catego
     else -> category.title
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SearchScreen(
     viewModel: SearchViewModel = hiltViewModel(),
@@ -322,6 +325,22 @@ fun SearchScreen(
         if (isSearchEditing) {
             runCatching { textInputFocusRequester.requestFocus() }
             keyboardController?.show()
+        }
+    }
+    // A keyboard that closes itself takes its BACK press with it, so the screen is never told
+    // it is gone and typing mode outlives it — every direction key then goes to an input that
+    // is no longer there. Follow what the keyboard actually does instead (SearchEditingEntry).
+    val imeVisible = WindowInsets.isImeVisible
+    var keyboardWasSeen by remember { mutableStateOf(false) }
+    LaunchedEffect(isSearchEditing, imeVisible) {
+        if (!isSearchEditing) {
+            keyboardWasSeen = false
+            return@LaunchedEffect
+        }
+        if (imeVisible) keyboardWasSeen = true
+        if (!searchEditingSurvivesKeyboard(imeVisible, keyboardWasSeen)) {
+            isSearchEditing = false
+            runCatching { searchFocusRequester.requestFocus() }
         }
     }
     // Coming back from the background composes nothing anew, so the entry guard above would not

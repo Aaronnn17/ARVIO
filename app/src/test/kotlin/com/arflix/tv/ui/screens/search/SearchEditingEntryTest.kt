@@ -77,3 +77,46 @@ class SearchEditingEntryTest {
         assertTrue(startsSearchEditing(windowEndsMs, windowEndsMs))
     }
 }
+
+/**
+ * Device report 16.09.2026, TCL and phone alike: select opened the keyboard, dismissing the
+ * keyboard left the ring on the search bar — and from there up and down were dead again, until
+ * a SECOND back press. The keyboard had swallowed the first one to close itself, so the screen
+ * still believed it was being typed into.
+ *
+ * The rule has to survive two devices that behave differently, which is what these pin down:
+ * it must not end typing mode while the keyboard is still on its way in, and it must not end
+ * it at all on a device that never reports a keyboard.
+ */
+class SearchEditingKeyboardTest {
+    @Test fun typingSurvivesWhileTheKeyboardIsStillComingUp() {
+        // Between the select press and the keyboard appearing there is no keyboard to see.
+        // Reading that as "gone" would cancel typing mode before it ever started.
+        assertTrue(searchEditingSurvivesKeyboard(imeVisible = false, keyboardWasSeen = false))
+    }
+
+    @Test fun typingSurvivesWhileTheKeyboardIsUp() {
+        assertTrue(searchEditingSurvivesKeyboard(imeVisible = true, keyboardWasSeen = true))
+    }
+
+    @Test fun typingEndsOnceTheKeyboardThatWasThereIsGone() {
+        assertFalse(searchEditingSurvivesKeyboard(imeVisible = false, keyboardWasSeen = true))
+    }
+
+    @Test fun aDeviceThatNeverReportsItsKeyboardIsLeftAlone() {
+        // Android TV keyboards do not all report themselves. On such a device this must degrade
+        // to the old behaviour rather than drop the user out of typing mode mid-word.
+        repeat(5) { assertTrue(searchEditingSurvivesKeyboard(imeVisible = false, keyboardWasSeen = false)) }
+    }
+
+    @Test fun theWholeRoundTripEndsExactlyOnce() {
+        var editing = true
+        var seen = false
+        // select pressed, keyboard on its way, keyboard up, keyboard dismissed
+        for (visible in listOf(false, false, true, true, false)) {
+            if (visible) seen = true
+            if (!searchEditingSurvivesKeyboard(visible, seen)) editing = false
+        }
+        assertFalse("typing mode must be off once the keyboard is gone", editing)
+    }
+}

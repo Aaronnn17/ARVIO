@@ -25,3 +25,20 @@ internal fun startsSearchEditing(nowMs: Long, suppressSelectUntilMs: Long): Bool
  * away does not lose it.
  */
 internal const val SEARCH_SELECT_SUPPRESS_MS = 150L
+
+/**
+ * Whether typing mode should stay on, given what the keyboard is doing.
+ *
+ * The screen cannot see the BACK press that closes the keyboard: the keyboard swallows that
+ * press to dismiss itself. Typing mode then outlives the keyboard, and because every direction
+ * key belongs to the keyboard while typing, the user is left pressing against an input that is
+ * no longer on screen — only a second BACK gets out. Reported from the TCL and from a phone in
+ * the TV preview, 16.09.2026.
+ *
+ * Only a keyboard that HAS been reported visible counts ([keyboardWasSeen]). The moment between
+ * the select press and the keyboard sliding in must not be read as "the keyboard is gone", and
+ * on a device that never reports its keyboard at all nothing fires: typing mode then behaves
+ * exactly as it did before, rather than ending under the user's fingers.
+ */
+internal fun searchEditingSurvivesKeyboard(imeVisible: Boolean, keyboardWasSeen: Boolean): Boolean =
+    imeVisible || !keyboardWasSeen
