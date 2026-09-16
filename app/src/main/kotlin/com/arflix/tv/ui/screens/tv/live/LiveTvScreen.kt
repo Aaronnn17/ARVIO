@@ -1950,7 +1950,11 @@ fun LiveTvScreen(
                 val candidates = viewModel.iptvRepository.pagedChannelVariants(targetId)
                     .mapIndexed { index, source -> source.enrichForFastStartup(index + 1) }
                     .filterNot { isRestrictedPlaylistGroup(it, hiddenGroupSet + restrictedGroupSet) }
-                (listOf(channel) + candidates).distinctBy { it.id }
+                
+                // If the database already returns the channel, we use its natural order.
+                // We'll only force it if, for some strange reason, it doesn't appear in the results.
+                val baseList = if (candidates.any { it.id == channel.id }) candidates else listOf(channel) + candidates
+                baseList.distinctBy { it.id }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
