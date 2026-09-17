@@ -6,5 +6,6 @@
   "Watching": "در حال تماشا",
   "Completed": "تکمیل‌شده",
   "Dropped": "رهاشده",
-  "Mark Season Unwatched": "علامت‌گذاری فصل به‌عنوان تماشانشده"
+  "Mark Season Unwatched": "علامت‌گذاری فصل به‌عنوان تماشانشده",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: از نشانی سازگار با Jellyfin استفاده کنید. نمایهٔ اختیاری: username#ProfileName. نمایهٔ محافظت‌شده: password#PIN."
 }

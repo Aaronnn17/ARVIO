@@ -1676,12 +1676,13 @@ function HomeServerSection() {
     <Panel title={translateUi("Home Server")}>
       <p className="empty">
         {translateUi("Connect Plex, Jellyfin, or Emby. Plex requires an access token (X-Plex-Token). Jellyfin/Emby can use an API token or username + password. Matched movies and episodes appear as sources in the player, and cloud-sync with the Android app.")}</p>
+      {type === "jellyfin" && <p className="empty">{translateUi("Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.")}</p>}
       <div className="inline-form">
         <Select
           value={type}
           onChange={setType}
           options={[
-            ["jellyfin", "Jellyfin"],
+            ["jellyfin", "Jellyfin / Silo"],
             ["emby", "Emby"],
             ["plex", "Plex"],
           ]}

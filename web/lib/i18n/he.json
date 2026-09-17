@@ -4,5 +4,6 @@
   "Collection": "אוסף",
   "Watching": "בצפייה",
   "Completed": "הושלמו",
-  "Dropped": "ננטשו"
+  "Dropped": "ננטשו",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: יש להשתמש בכתובת התואמת ל-Jellyfin. פרופיל אופציונלי: username#ProfileName. פרופיל מוגן: password#PIN."
 }

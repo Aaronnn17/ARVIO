@@ -7,6 +7,7 @@ export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 export const normalize = text => text.trim().toLowerCase().replace(/…/g, '...');
 export const neutral = new Set(['ARVIO','ARVIO Web Premium','Android:','DASH','E','HLS','Infuse','MPEG-TS','S','Simkl','TV (IPTV)','Telegram','TheSportsDB','VLC','VS','iOS / iPadOS:','s','vlc-setup.bat (Windows)','vlc-setup.sh (Linux)','{value0} x {value1}','{value0}m','••••••••','+1 650 555 1234','00:1A:79:00:00:00']);
 export function isNeutral(text) {
+  if (text === 'Jellyfin / Silo') return true;
   return !/[A-Za-z]/.test(text) || neutral.has(text) || /^https?:\/\//.test(text) || /^(?:\d+[KkPp]|[A-Z\d.+-]{2,12})$/.test(text);
 }
 export function androidLanguages() {

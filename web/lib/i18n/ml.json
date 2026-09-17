@@ -7,5 +7,6 @@
   "Collection": "ശേഖരം",
   "Watching": "കാണുന്നു",
   "Completed": "പൂർത്തിയായി",
-  "Dropped": "ഉപേക്ഷിച്ചു"
+  "Dropped": "ഉപേക്ഷിച്ചു",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin-അനുയോജ്യമായ വിലാസം ഉപയോഗിക്കുക. ഐച്ഛിക പ്രൊഫൈൽ: username#ProfileName. സംരക്ഷിത പ്രൊഫൈൽ: password#PIN."
 }

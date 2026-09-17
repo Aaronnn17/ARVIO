@@ -2188,7 +2188,7 @@ fun SettingsScreen(
         if (showHomeServerInput) {
             InputModal(
                 title = stringResource(R.string.settings_home_server),
-                supportingText = stringResource(R.string.settings_home_server_https_note),
+                supportingText = stringResource(R.string.settings_home_server_https_note) + "\n\n" + stringResource(R.string.homeserver_silo_help),
                 fields = listOf(
                     InputField(
                         label = stringResource(R.string.settings_label_server_name),

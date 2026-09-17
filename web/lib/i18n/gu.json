@@ -7,5 +7,6 @@
   "Collection": "સંગ્રહ",
   "Watching": "જોઈ રહ્યા છો",
   "Completed": "પૂર્ણ",
-  "Dropped": "છોડી દીધેલ"
+  "Dropped": "છોડી દીધેલ",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin સાથે સુસંગત સરનામું વાપરો. વૈકલ્પિક પ્રોફાઇલ: username#ProfileName. સુરક્ષિત પ્રોફાઇલ: password#PIN."
 }

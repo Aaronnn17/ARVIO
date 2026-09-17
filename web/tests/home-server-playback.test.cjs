@@ -44,6 +44,50 @@ function harness(respond, capabilities = caps, extra = {}) {
   return { ...playback, homeserver, calls };
 }
 
+test('Silo normal user credentials preserve profile and PIN and need no admin endpoints', async () => {
+  const server = { ...jf, id: 'silo', url: 'https://silo.example/compat', token: undefined, userId: undefined,
+    username: ' member@example.test#Family ', password: 'password#1234' };
+  const h = harness(({url,body}) => {
+    if(url.pathname==='/compat/Users/AuthenticateByName') {
+      assert.deepEqual(body,{Username:'member@example.test#Family',Pw:'password#1234'});
+      return {AccessToken:'member-token',User:{Id:'profile-id',Policy:{IsAdministrator:false}}};
+    }
+    if(url.pathname==='/compat/Users/profile-id/Views') return {Items:[{Id:'movies',Name:'Shared movies',CollectionType:'movies'}]};
+    if(url.pathname==='/compat/System/Info/Public') return {Id:'silo',ServerName:'Shared Silo'};
+    throw new Error(`Unexpected or admin-only endpoint ${url.pathname}`);
+  });
+  for(let i=0;i<2;i++) {
+    const result=await h.homeserver.testHomeServerConnection(server);
+    assert.equal(result.ok,true);
+    assert.equal(result.connection.userId,'profile-id');
+    assert.equal(result.connection.password,undefined);
+    assert.equal(result.libraryCount,1);
+  }
+  assert.equal(h.calls.filter(c=>c.url.pathname.endsWith('AuthenticateByName')).length,2,'Test must not reuse a cached login');
+});
+
+test('Silo login failures distinguish profile, PIN, endpoint and wrong password', async () => {
+  for(const [status,message,expected] of [
+    [401,'username must include a profile suffix like username#profile','Silo needs a profile'],
+    [401,'profile not found: Family','Silo needs a profile'],
+    [401,'profile is PIN protected','Silo needs a valid profile PIN'],
+    [401,'invalid profile PIN','Silo needs a valid profile PIN'],
+    [404,'Not found','Jellyfin-compatible login API'],
+    [401,'Invalid username or password','Authentication failed']
+  ]) {
+    const h=harness(()=>{throw Object.assign(new Error(message),{status});});
+    const result=await h.homeserver.testHomeServerConnection({...jf,token:undefined,userId:undefined,username:'member',password:'secret'});
+    assert.equal(result.ok,false);
+    assert.ok(result.error.includes(expected),result.error);
+    assert.doesNotMatch(result.error,/secret/);
+  }
+});
+
+test('HTTP layer preserves Silo PascalCase Message for login diagnostics', async () => {
+  const http=load('lib/http.ts',{'./config':{config:{}}},{fetch:async()=>new Response(JSON.stringify({Error:'InvalidUsernameOrPassword',Message:'profile is PIN protected'}),{status:401})});
+  await assert.rejects(()=>http.jsonRequest('https://silo.example'),e=>e.status===401&&e.message==='profile is PIN protected');
+});
+
 test('device profile advertises only detected native codecs and a decodable HLS target', () => {
   const h = harness(() => {});
   const profile = plain(h.buildHomeServerDeviceProfile(caps));

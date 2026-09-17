@@ -3,5 +3,6 @@
   "Collection": "Zbirka",
   "Watching": "Gledam",
   "Completed": "Dovršeno",
-  "Dropped": "Odustao"
+  "Dropped": "Odustao",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: koristite adresu kompatibilnu s Jellyfinom. Neobavezan profil: username#ProfileName. Zaštićen profil: password#PIN."
 }

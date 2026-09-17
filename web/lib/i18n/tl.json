@@ -55,5 +55,6 @@
   "Tracker library": "Library ng pagsubaybay",
   "Turkish": "Turko",
   "Web build:": "Bersyon ng web:",
-  "· {value0}d archive": "· {value0} araw na archive"
+  "· {value0}d archive": "· {value0} araw na archive",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: gamitin ang address na tugma sa Jellyfin. Opsyonal na profile: username#ProfileName. Protektadong profile: password#PIN."
 }

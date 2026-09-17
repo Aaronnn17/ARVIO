@@ -3,5 +3,6 @@
   "Collection": "Versameling",
   "Watching": "Besig om te kyk",
   "Completed": "Voltooi",
-  "Dropped": "Laat vaar"
+  "Dropped": "Laat vaar",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: gebruik die Jellyfin-versoenbare adres. Opsionele profiel: username#ProfileName. Beskermde profiel: password#PIN."
 }

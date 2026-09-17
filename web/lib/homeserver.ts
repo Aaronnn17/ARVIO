@@ -246,9 +246,10 @@ async function proxiedPost<T>(url: string, body: unknown, headers?: Record<strin
 
 export { ensureSession as ensureHomeServerSession };
 
-async function ensureSession(server: HomeServerConfig, signal?: AbortSignal): Promise<{ token: string; userId: string } | null> {
+async function ensureSession(server: HomeServerConfig, signal?: AbortSignal, reportLoginFailure = false): Promise<{ token: string; userId: string } | null> {
   signal?.throwIfAborted();
   const cacheKey = JSON.stringify([server.id, server.url, server.token, server.userId, server.username, server.password]);
+  if (reportLoginFailure) sessionCache.delete(cacheKey);
   const cached = sessionCache.get(cacheKey);
   if (cached) return cached;
   const base = trimUrl(server.url);
@@ -299,7 +300,7 @@ async function ensureSession(server: HomeServerConfig, signal?: AbortSignal): Pr
     try {
       const auth = await proxiedPost<{ AccessToken: string; User: { Id: string } }>(
         `${base}/Users/AuthenticateByName`,
-        { Username: server.username, Pw: server.password ?? "" },
+        { Username: server.username.trim(), Pw: server.password ?? "" },
         { "X-Emby-Authorization": AUTH_HEADER },
         signal
       );
@@ -309,12 +310,31 @@ async function ensureSession(server: HomeServerConfig, signal?: AbortSignal): Pr
         sessionCache.set(cacheKey, session);
         return session;
       }
-    } catch {
+    } catch (error) {
       signal?.throwIfAborted();
+      if (reportLoginFailure) throw new Error(homeServerLoginError(error));
       return null;
     }
   }
   return null;
+}
+
+export function homeServerLoginError(error: unknown): string {
+  const failure = error as { message?: string; status?: number; name?: string } | null;
+  const message = (failure?.message ?? "").toLowerCase();
+  if (failure?.status === 404 || failure?.status === 405 || failure?.name === "SyntaxError" || message.includes("html error page")) {
+    return "This address did not provide the Jellyfin-compatible login API. For Silo, ask the server owner for its Jellyfin-compatible address; the website may use a different port or URL.";
+  }
+  if (failure?.status === 401) {
+    if (message.includes("profile pin") || message.includes("profile is pin protected") || message.includes("password#pin")) {
+      return "Silo needs a valid profile PIN. Enter username#ProfileName and use password#PIN in the password field.";
+    }
+    if (message.includes("username#profile") || message.includes("profile not found") || message.includes("profile name is ambiguous")) {
+      return "Silo needs a profile. Enter username#ProfileName (or email#ProfileName), using the exact profile name from Silo.";
+    }
+    return "Authentication failed — check token or username/password";
+  }
+  return "Home Server connection failed";
 }
 
 interface JellyfinItem {
@@ -575,14 +595,13 @@ export async function testHomeServerConnection(
       };
     }
     // Reset any cached (possibly stale) session so the test really re-auths.
-    sessionCache.delete(server.id);
-    const session = await ensureSession(server);
+    const session = await ensureSession(server, undefined, true);
     if (!session) return { ok: false, error: "Authentication failed — check token or username/password" };
     const views = await proxiedGet<{ Items?: Array<{ Id: string; Name: string; CollectionType?: string }> }>(
       `${base}/Users/${session.userId}/Views?api_key=${session.token}`
     ).catch(() => null);
     const info = await proxiedGet<{ Id?: string; ServerName?: string }>(
-      `${base}/System/Info?api_key=${session.token}`
+      `${base}/System/Info/Public`
     ).catch(() => null);
     const libraries = (views?.Items ?? [])
       .filter((view) => isBrowsableLibraryType(view.CollectionType))
