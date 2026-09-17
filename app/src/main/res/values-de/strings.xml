@@ -74,6 +74,15 @@
     <string name="settings_add_stalker_portal">Stalker-Portal hinzufügen</string>
     <string name="settings_stalker_middleware_hint">Stalker / Ministra-Middleware</string>
     <string name="settings_stalker_remove_hint">Zum Entfernen beide Felder leeren und bestätigen.</string>
+    <string name="settings_source_type">Quellentyp</string>
+    <string name="settings_source_m3u">M3U-Playlist</string>
+    <string name="settings_source_xtream">Xtream Codes</string>
+    <string name="settings_source_stalker">Stalker-Portal</string>
+    <string name="settings_stalker_desc">Ministra-/Stalker-Portal mit Anmeldung über die MAC-Adresse.</string>
+    <string name="settings_label_m3u_url">M3U-Playlist-URL</string>
+    <string name="settings_content_to_import">Zu importierende Inhalte</string>
+    <string name="settings_save_playlist">Playlist speichern</string>
+    <string name="settings_save_portal">Portal speichern</string>
     <!-- Player, subtitles, trailer and media detail (de) -->
     <string name="season">Staffel %d</string>
     <string name="episode">Episode %d</string>
@@ -100,6 +109,8 @@
     <string name="trailer_delay_desc">Sekunden, bevor der Trailer startet</string>
     <string name="trailer_in_cards">Trailer in Karten</string>
     <string name="trailer_in_cards_desc">TV: Trailer in der fokussierten Karte abspielen statt im Vollbild</string>
+    <string name="trailers_on_youtube">Trailer auf YouTube</string>
+    <string name="trailer_open_failed">Der Trailer konnte nicht geöffnet werden. Installiere YouTube oder einen Webbrowser und versuche es erneut.</string>
     <string name="subtitle_settings_title">Untertitel-Einstellungen</string>
     <string name="subtitle_delay">Verzögerung</string>
     <string name="subtitle_size_label">Größe</string>
@@ -164,6 +175,7 @@
     <string name="player_subtitle_scanning">Wird durchsucht …</string>
     <string name="player_subtitle_best_match_hint">Am besten synchronisierten Untertitel automatisch wählen</string>
     <string name="player_subtitle_searching_match">Übereinstimmung wird gesucht …</string>
+    <string name="player_subtitle_auto_fixed">korrigiert</string>
     <string name="player_audio_translate">Audio übersetzen</string>
     <string name="player_skip_intro">Vorspann überspringen</string>
     <string name="player_skip_recap">Rückblick überspringen</string>
@@ -716,6 +728,8 @@
     <string name="settings_iptv_favorites_home">Lieblingssender auf der Startseite</string>
     <string name="settings_iptv_favorites_home_desc">Deine markierten IPTV-Kanäle oben auf der Startseite anheften</string>
     <string name="settings_iptv_order_provider">Anbieter-Reihenfolge</string>
+    <string name="settings_iptv_fallback_logos">Ersatz-Kanallogos</string>
+    <string name="settings_iptv_fallback_logos_desc">Alternative Bilder nur verwenden, wenn das Logo des Anbieters fehlt oder nicht geladen werden kann.</string>
     <string name="settings_iptv_order_number">Kanalnummer</string>
     <string name="settings_iptv_order_name">Alphabetisch (A–Z)</string>
     <string name="settings_iptv_categories">IPTV-KATEGORIEN</string>
@@ -759,6 +773,16 @@
     <string name="live_label_search_channels">Kanäle suchen</string>
     <string name="live_cat_favorites">Favoriten</string>
     <string name="live_cat_recently_watched">Zuletzt angesehen</string>
+    <string name="live_groups_title">Gruppen</string>
+    <string name="live_group_back">Gruppen</string>
+    <string name="live_quick_all_channels">Alle Kanäle</string>
+    <string name="live_quick_favourites">Favoriten</string>
+    <string name="live_quick_recent">Zuletzt angesehen</string>
+    <string name="live_quick_sports">Sport</string>
+    <string name="live_channels_count">%1$d Kanäle</string>
+    <string name="live_sports_live_and_upcoming">Live &amp; demnächst</string>
+    <string name="live_sources_empty">Für diesen Kanal wurden keine weiteren Quellen gefunden.</string>
+    <string name="live_sources_failed">Quellen konnten nicht geladen werden. Bitte versuche es erneut.</string>
     <string name="live_cat_adult">Erwachsene</string>
     <string name="live_cat_ungrouped">Ungruppiert</string>
     <string name="live_section_playlist">PLAYLIST</string>
@@ -905,6 +929,9 @@
     <string name="auto_play_next_title">Nächste automatisch abspielen</string>
     <string name="autoplay">Automatische Wiedergabe</string>
     <string name="auto_play_min_quality">Mindestqualität für automatische Wiedergabe</string>
+    <string name="auto_play_max_quality">Maximalqualität für automatische Wiedergabe</string>
+    <string name="auto_play_max_size">Maximale Dateigröße für automatische Wiedergabe</string>
+    <string name="autoplay_unlimited">Unbegrenzt</string>
     <string name="frame_rate">Bildrate anpassen</string>
     <string name="quality_filters">Qualitäts-Regex-Filter</string>
     <string name="card_layout">Kartenlayout</string>
@@ -937,6 +964,10 @@
     <string name="force_cloud_sync">Cloud-Sync erzwingen</string>
     <string name="switch_profile">Profil wechseln</string>
     <string name="app_version">App-Version</string>
+    <string name="about_credits">Über &amp; Danksagungen</string>
+    <string name="about_credits_description">Quellenangaben zu Metadaten und Urheberrechtshinweise</string>
+    <string name="authorized_sources_notice">ARVIO ist ein Medien-Hub für Quellen, die du selbst einrichtest. Ein Katalogeintrag gewährt kein Recht zur Wiedergabe. Verbinde nur Dienste und Medien, zu deren Nutzung du berechtigt bist.</string>
+    <string name="credits_and_copyright">Danksagungen &amp; Urheberrechtsmeldungen</string>
     <string name="app_language_desc">App-Texte, Titel, Beschreibungen und Metadaten</string>
     <string name="audio_desc">Bevorzugte Audiospur</string>
     <string name="auto_play_desc">Nächste Episode automatisch starten</string>
@@ -1062,6 +1093,7 @@
     <string name="telegram_connect_title">Telegram verbinden</string>
     <string name="telegram_connect_desc">Durchsuche deine Kanäle und Gruppen nach Videodateien, sobald du einen Film oder eine Serie öffnest.</string>
     <string name="telegram_disclaimer">Arvio ist nicht für die Inhalte verantwortlich, die über diese Funktion gestreamt werden. Verbinde nur dein eigenes Konto und nutze es fair — respektiere Urheberrecht und geltende Gesetze.</string>
+    <string name="telegram_not_configured">Die Telegram-Anbindung ist in dieser Version nicht eingerichtet.</string>
     <string name="telegram_scan_title">Mit Telegram scannen</string>
     <string name="telegram_scan_instructions">Telegram auf dem Telefon öffnen → Einstellungen → Geräte → Desktop-Gerät verknüpfen</string>
     <string name="telegram_qr_code_desc">Telegram-QR-Code</string>
@@ -1120,6 +1152,7 @@
     <string name="profile_change_pin">PIN ändern</string>
     <string name="profile_remove_pin">PIN entfernen</string>
     <string name="profile_change_photo">Foto ändern</string>
+    <string name="profile_image_picker_unavailable">Auf diesem Gerät ist keine Bildauswahl verfügbar. Wähle stattdessen einen eingebauten Avatar.</string>
     <string name="profile_upload_photo">Foto hochladen</string>
     <string name="profile_remove_photo">Foto entfernen</string>
     <string name="profile_enter_pin">PIN eingeben</string>
@@ -1155,6 +1188,7 @@
     <string name="home_top10_movies_today">Top 10 Filme heute</string>
     <string name="home_top10_shows_today">Top 10 Serien heute</string>
     <string name="home_favorite_tv">Lieblingssender</string>
+    <string name="home_view_all">Alle ansehen</string>
     <string name="home_sports">Sport</string>
     <string name="home_popular_live_sports">Beliebter Live-Sport</string>
     <string name="home_just_added">Neu hinzugefügt</string>
@@ -1208,6 +1242,8 @@
     <string name="search_row_top_rated">Bestbewertet</string>
     <string name="search_row_new_releases">Neuerscheinungen</string>
     <string name="search_row_hidden_gems">Geheimtipps</string>
+    <string name="search_discover_load_failed">Titel konnten nicht geladen werden</string>
+    <string name="search_discover_load_more">Mehr laden</string>
     <string name="epg_watch_live">Live ansehen</string>
     <string name="epg_search_sources">Jetzt streamen</string>
     <string name="person_section_biography">Biografie</string>
@@ -1278,6 +1314,7 @@
     <string name="watchlist_simkl_on_hold">Pausiert</string>
     <string name="watchlist_simkl_dropped">Abgebrochen</string>
     <string name="continue_season_episode">Weiterschauen S%1$dE%2$d</string>
+    <string name="play_season_episode">Abspielen S%1$dE%2$d</string>
     <string name="continue_season_episode_at">Weiterschauen S%1$dE%2$d bei %3$s</string>
     <string name="continue_at">Weiterschauen bei %1$s</string>
     <string name="continue_from">Weiterschauen ab %1$s</string>
@@ -1510,6 +1547,8 @@
     <string name="library_default">Bibliothek</string>
     <string name="nav_library">Bibliothek</string>
     <string name="library_named">Bibliothek %1$s</string>
+    <string name="library_sort_release_newest">Erscheinungsdatum: neueste zuerst</string>
+    <string name="library_sort_release_oldest">Erscheinungsdatum: älteste zuerst</string>
     <string name="program_no_title">Ohne Titel</string>
     <string name="program_unknown">Unbekannte Sendung</string>
     <string name="sync_in_progress">Sync läuft bereits</string>
