@@ -9,6 +9,23 @@ import org.junit.Test
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class IptvGuideRequestBudgetTest {
+    @Test fun visibleBatchHasTimeToFinishUnderTheExistingConnectionLimit() = runTest {
+        val budget = IptvGuideRequestBudget { testScheduler.currentTime }
+        val result = kotlinx.coroutines.withTimeoutOrNull(shortGuideBatchTimeoutMs(8)) {
+            (1..8).map { id -> async {
+                budget.request("https://provider.test/epg?id=$id") { delay(2_000); id }
+            } }.awaitAll()
+        }
+        assertEquals((1..8).toList(), result)
+        assertTrue(testScheduler.currentTime > 2_500L)
+    }
+
+    @Test fun batchDeadlineIsBoundedAndScalesWithQueuedWork() {
+        assertEquals(12_000L, shortGuideBatchTimeoutMs(1))
+        assertTrue(shortGuideBatchTimeoutMs(24) > shortGuideBatchTimeoutMs(8))
+        assertEquals(180_000L, shortGuideBatchTimeoutMs(Int.MAX_VALUE))
+    }
+
     @Test fun repeatedAndCancelledViewportRequestsKeepTheirCooldown() = runTest {
         val budget = IptvGuideRequestBudget { testScheduler.currentTime }
         var calls = 0
