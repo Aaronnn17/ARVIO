@@ -2891,7 +2891,7 @@ private fun DetailsEpisodeRatingsRail(
                         if (safePageIndex > 0) {
                             Icon(
                                 imageVector = Icons.Default.ChevronLeft,
-                                contentDescription = "Previous page",
+                                contentDescription = stringResource(R.string.details_episodes_previous_page),
                                 tint = Color.White,
                                 modifier = Modifier.size(24.dp).offset(x = leftOffset)
                             )
@@ -2967,7 +2967,7 @@ private fun DetailsEpisodeRatingsRail(
                     } else if (safePageIndex < totalPages - 1) {
                         Icon(
                             imageVector = Icons.Default.ChevronRight,
-                            contentDescription = "Next page",
+                            contentDescription = stringResource(R.string.details_episodes_next_page),
                             tint = Color.White,
                             modifier = Modifier.size(24.dp).offset(x = rightOffset)
                         )

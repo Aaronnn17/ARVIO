@@ -3725,7 +3725,7 @@ fun LiveTvScreen(
                         channels = filteredChannels,
                         playbackQuality = playbackQuality,
                         totalChannelCount = selectedCategoryTotalCount,
-                        categoryTitle = sportsSidebarTree.byId(selectedCategoryId)?.label ?: "All channels",
+                        categoryTitle = sportsSidebarTree.byId(selectedCategoryId)?.label ?: "All Channels",
                         clockTickMillis = guideClockMillis,
                         nowNext = effectiveGuideNowNext,
                         epgLoadingChannelIds = state.epgLoadingChannelIds,
@@ -3879,7 +3879,7 @@ fun LiveTvScreen(
                     ) else EpgGrid(
                         channels = filteredChannels,
                         playbackQuality = playbackQuality,
-                        categoryTitle = sportsSidebarTree.byId(selectedCategoryId)?.label ?: "All channels",
+                        categoryTitle = sportsSidebarTree.byId(selectedCategoryId)?.label ?: "All Channels",
                         totalChannelCount = selectedCategoryTotalCount,
                         clockTickMillis = guideClockMillis,
                         nowNext = effectiveGuideNowNext,
