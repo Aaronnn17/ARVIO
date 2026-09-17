@@ -1115,6 +1115,7 @@
     <string name="crash_qr_hint">Scannen, um arvio.tv zu öffnen — ein Tipp kopiert den Bericht und öffnet Discord.</string>
     <string name="crash_details_title">Angaben zum Absturz</string>
     <string name="crash_details_body">ID: %1$s\nZeit: %2$s\nVersion: %3$s\nFehler: %4$s</string>
+    <string name="crash_error_unexpected">Unerwarteter Fehler</string>
     <string name="crash_copied_toast">Absturzdetails kopiert. Discord wird geöffnet …</string>
     <string name="crash_report_discord">Auf Discord melden</string>
     <string name="crash_restart_app">ARVIO neu starten</string>

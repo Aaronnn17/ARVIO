@@ -62,7 +62,10 @@ class CrashReportActivity : ComponentActivity() {
 
         val prefs = getSharedPreferences("arvio_crash_store", Context.MODE_PRIVATE)
         val crashId = intent.getStringExtra(EXTRA_CRASH_ID) ?: prefs.getString("last_crash_id", "N/A") ?: "N/A"
-        val crashMsg = intent.getStringExtra(EXTRA_CRASH_MSG) ?: prefs.getString("last_crash_msg", "Unexpected error") ?: "Unexpected error"
+        // The reported message stays in English so the crash report sent to Discord/Sentry
+        // remains stable and searchable; only the on-screen fallback is localized.
+        val reportedCrashMsg = intent.getStringExtra(EXTRA_CRASH_MSG) ?: prefs.getString("last_crash_msg", null)
+        val crashMsg = reportedCrashMsg ?: "Unexpected error"
         val crashTime = intent.getLongExtra(EXTRA_CRASH_TIME, prefs.getLong("last_crash_time", System.currentTimeMillis()))
         val crashVersion = prefs.getString("last_crash_version", "1.0") ?: "1.0"
 
@@ -71,6 +74,7 @@ class CrashReportActivity : ComponentActivity() {
                 CrashReportScreen(
                     crashId = crashId,
                     crashMsg = crashMsg,
+                    hasReportedCrashMsg = reportedCrashMsg != null,
                     crashTime = crashTime,
                     crashVersion = crashVersion,
                     onRestartApp = {
@@ -98,6 +102,7 @@ class CrashReportActivity : ComponentActivity() {
 fun CrashReportScreen(
     crashId: String,
     crashMsg: String,
+    hasReportedCrashMsg: Boolean,
     crashTime: Long,
     crashVersion: String,
     onRestartApp: () -> Unit,
@@ -105,6 +110,8 @@ fun CrashReportScreen(
 ) {
     val context = LocalContext.current
     val deviceType = detectDeviceType(context)
+    // Shown on screen only; the report sent out keeps the stable English [crashMsg].
+    val displayCrashMsg = if (hasReportedCrashMsg) crashMsg else stringResource(R.string.crash_error_unexpected)
     val hasTouch = deviceHasTouchScreen(context)
     val isTv = deviceType == DeviceType.TV || !hasTouch
 
@@ -223,7 +230,7 @@ fun CrashReportScreen(
                             crashId,
                             timeString,
                             crashVersion,
-                            crashMsg
+                            displayCrashMsg
                         ),
                         color = Color(0xFFD0D5DD),
                         fontSize = 12.sp,
