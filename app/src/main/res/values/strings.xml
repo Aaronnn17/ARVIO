@@ -8,6 +8,7 @@
     <string name="tmdb_attribution" translatable="false">This product uses the TMDB API but is not endorsed or certified by TMDB.</string>
     <string name="authorized_sources_notice">ARVIO is a media hub for sources you configure. A catalog entry does not grant viewing rights. Connect only services and media you are authorized to use.</string>
     <string name="credits_and_copyright">Credits &amp; copyright reports</string>
+    <string name="thesportsdb_attribution">Sports data and artwork provided by TheSportsDB.</string>
     <string name="trailers_on_youtube">Trailers on YouTube</string>
     <string name="trailer_open_failed">Could not open the trailer. Install YouTube or a web browser and try again.</string>
     <string name="now_playing">NOW PLAYING</string>
@@ -322,6 +323,35 @@
     <string name="live_quick_recent">Recently watched</string>
     <string name="live_channels_count">%1$d channels</string>
     <string name="live_sports_live_and_upcoming">Live &amp; upcoming</string>
+    <string name="live_channel_count_one">%1$d channel</string>
+    <string name="live_cat_sports">Sports</string>
+
+    <!-- Extracted from code: Live TV sports guide -->
+    <string name="live_sports_badge_on_air">ON AIR</string>
+    <string name="live_sports_badge_scheduled_now">SCHEDULED NOW</string>
+    <string name="live_sports_reading_schedule">Reading sports schedule</string>
+    <string name="live_sports_schedule_unavailable">Schedule unavailable</string>
+    <string name="live_sports_artwork_unavailable">Event artwork unavailable</string>
+    <string name="live_sports_no_events_matched">No sports events matched to your channels</string>
+    <string name="live_sports_round">Round %1$s</string>
+    <string name="live_sports_show_score">Show score</string>
+    <string name="live_sports_channels">Channels</string>
+    <string name="live_sports_scheduled_channels">Scheduled channels</string>
+    <string name="live_sports_possible_broadcast">Possible broadcast</string>
+    <string name="live_sports_guide_match">Guide match</string>
+    <string name="live_sports_no_matching_channels">No matching channels in your playlists.</string>
+    <string name="live_sports_event_gone">This event is no longer in the available guide.</string>
+
+    <!-- Extracted from code: Live TV programme guide grid -->
+    <string name="live_guide_earlier_programmes">Earlier programmes</string>
+    <string name="live_guide_later_programmes">Later programmes</string>
+    <string name="live_guide_channels_count">%1$s channels</string>
+
+    <!-- Extracted from code: Live TV group home (touch) -->
+    <string name="live_home_all_providers">All providers</string>
+    <string name="live_home_current_playlist">Current playlist: %1$s. Tap to change playlist.</string>
+    <string name="live_home_select_playlist">Select playlist</string>
+    <string name="live_home_playlist_selected">Selected</string>
 
 
     <!-- Extracted from code: Settings screen -->
@@ -943,6 +973,8 @@
     <string name="collection_tab_live_upcoming">Live &amp; Upcoming</string>
 
     <!-- Extracted from code: Details, Home, Search and Player -->
+    <string name="details_episodes_previous_page">Previous page</string>
+    <string name="details_episodes_next_page">Next page</string>
     <string name="details_toast_debrid_downloading">This debrid torrent is still being downloaded. Try another source or wait a bit.</string>
     <string name="details_episode_code_short">S%1$d:E%2$d</string>
     <string name="details_label_tv_series">TV Series</string>

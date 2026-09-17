@@ -391,6 +391,10 @@ private fun PlaylistSubwayTile(
     if (providers.size <= 1) return
     var expanded by remember { mutableStateOf(false) }
     val currentProvider = providers.firstOrNull { it.id == selectedProviderId } ?: providers.firstOrNull()
+    val allProvidersLabel = stringResource(R.string.live_home_all_providers)
+    // Resolved here because semantics {} is not a composable scope.
+    val playlistTileDescription =
+        stringResource(R.string.live_home_current_playlist, currentProvider?.label ?: allProvidersLabel)
 
     Box(
         modifier = modifier
@@ -413,7 +417,7 @@ private fun PlaylistSubwayTile(
                 .clickable { expanded = true }
                 .semantics {
                     role = Role.Button
-                    contentDescription = "Current playlist: ${currentProvider?.label ?: "All providers"}. Tap to change playlist."
+                    contentDescription = playlistTileDescription
                 }
                 .padding(horizontal = 14.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -439,7 +443,7 @@ private fun PlaylistSubwayTile(
                 verticalArrangement = Arrangement.Center,
             ) {
                 Text(
-                    text = currentProvider?.label ?: "All providers",
+                    text = currentProvider?.label ?: allProvidersLabel,
                     style = LiveType.CatLabel.copy(
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -462,7 +466,7 @@ private fun PlaylistSubwayTile(
 
             Icon(
                 imageVector = Icons.Default.KeyboardArrowDown,
-                contentDescription = "Select playlist",
+                contentDescription = stringResource(R.string.live_home_select_playlist),
                 tint = if (expanded) LiveColors.Accent else LiveColors.FgMute,
                 modifier = Modifier.size(20.dp),
             )
@@ -517,7 +521,7 @@ private fun PlaylistSubwayTile(
                         {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.live_home_playlist_selected),
                                 tint = LiveColors.Accent,
                                 modifier = Modifier.size(18.dp),
                             )

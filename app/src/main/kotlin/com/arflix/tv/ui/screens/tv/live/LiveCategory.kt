@@ -368,6 +368,7 @@ fun liveCategoryLabel(raw: String): String = when (raw) {
     "Favorites" -> stringResource(R.string.live_cat_favorites)
     "Recently Watched" -> stringResource(R.string.live_cat_recently_watched)
     "All Channels" -> stringResource(R.string.live_label_all_channels)
+    "Sports" -> stringResource(R.string.live_cat_sports)
     "Adult" -> stringResource(R.string.live_cat_adult)
     "Ungrouped" -> stringResource(R.string.live_cat_ungrouped)
     else -> raw

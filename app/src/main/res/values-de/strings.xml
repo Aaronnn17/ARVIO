@@ -4,6 +4,7 @@
     <string name="search">Suche</string>
     <string name="watchlist">Merkliste</string>
     <string name="settings">Einstellungen</string>
+    <string name="thesportsdb_attribution">Sportdaten und Bilder bereitgestellt von TheSportsDB.</string>
     <string name="general">Allgemein</string>
     <string name="movies">Filme</string>
     <string name="movie">Film</string>
@@ -1073,6 +1074,35 @@
     <string name="plugin_prefix">Plugin:</string>
     <string name="plugins_loading">Plugins: %1$s</string>
     <string name="channel_guide">Kanal-Guide</string>
+    <string name="live_channel_count_one">%1$d Kanal</string>
+    <string name="live_cat_sports">Sport</string>
+
+    <!-- Aus dem Code herausgelöst: Sport-Guide im Live-TV -->
+    <string name="live_sports_badge_on_air">LÄUFT</string>
+    <string name="live_sports_badge_scheduled_now">JETZT GEPLANT</string>
+    <string name="live_sports_reading_schedule">Sportprogramm wird gelesen</string>
+    <string name="live_sports_schedule_unavailable">Programm nicht verfügbar</string>
+    <string name="live_sports_artwork_unavailable">Bild zur Begegnung nicht verfügbar</string>
+    <string name="live_sports_no_events_matched">Keine Sport-Ereignisse zu deinen Kanälen gefunden</string>
+    <string name="live_sports_round">Runde %1$s</string>
+    <string name="live_sports_show_score">Ergebnis anzeigen</string>
+    <string name="live_sports_channels">Kanäle</string>
+    <string name="live_sports_scheduled_channels">Geplante Kanäle</string>
+    <string name="live_sports_possible_broadcast">Mögliche Übertragung</string>
+    <string name="live_sports_guide_match">Treffer im Guide</string>
+    <string name="live_sports_no_matching_channels">Keine passenden Kanäle in deinen Playlisten.</string>
+    <string name="live_sports_event_gone">Diese Begegnung steht nicht mehr im verfügbaren Guide.</string>
+
+    <!-- Aus dem Code herausgelöst: Programmgitter im Live-TV -->
+    <string name="live_guide_earlier_programmes">Frühere Sendungen</string>
+    <string name="live_guide_later_programmes">Spätere Sendungen</string>
+    <string name="live_guide_channels_count">%1$s Kanäle</string>
+
+    <!-- Aus dem Code herausgelöst: Gruppen-Startseite im Live-TV (Touch) -->
+    <string name="live_home_all_providers">Alle Anbieter</string>
+    <string name="live_home_current_playlist">Aktuelle Playlist: %1$s. Zum Wechseln antippen.</string>
+    <string name="live_home_select_playlist">Playlist wählen</string>
+    <string name="live_home_playlist_selected">Ausgewählt</string>
     <string name="mdblist_account">MDBList</string>
     <string name="mdblist_connected">MDBList verbunden</string>
     <string name="mdblist_disconnected">MDBList getrennt</string>
@@ -1176,6 +1206,8 @@
     <string name="login_read_privacy_policy">Datenschutzerklärung lesen</string>
     <string name="collection_empty">Hier gibt es noch nichts zu sehen.</string>
     <string name="collection_tab_live_upcoming">Live &amp; Demnächst</string>
+    <string name="details_episodes_previous_page">Vorherige Seite</string>
+    <string name="details_episodes_next_page">Nächste Seite</string>
     <string name="details_toast_debrid_downloading">Dieser Debrid-Torrent wird noch heruntergeladen. Andere Quelle wählen oder kurz warten.</string>
     <string name="details_label_tv_series">Serie</string>
     <string name="details_btn_mark_watched">Als angesehen markieren</string>

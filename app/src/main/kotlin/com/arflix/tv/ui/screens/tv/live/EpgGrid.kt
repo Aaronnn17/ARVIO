@@ -513,7 +513,7 @@ fun EpgGrid(
                         .size(28.dp),
                 )
                 Text(
-                    text = categoryTitle,
+                    text = liveCategoryLabel(categoryTitle),
                     style = ArflixTypography.heroTitle.copy(fontSize = 24.sp),
                     color = TextPrimary,
                     modifier = Modifier.weight(1f),
@@ -521,7 +521,7 @@ fun EpgGrid(
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (!compact) {
-                    Icon(Icons.Outlined.ChevronLeft, "Earlier programmes", tint = LiveColors.Fg,
+                    Icon(Icons.Outlined.ChevronLeft, stringResource(R.string.live_guide_earlier_programmes), tint = LiveColors.Fg,
                         modifier = Modifier.size(28.dp).clickable { scope.launch { hScroll.animateScrollBy(-with(density) { halfHourWidth.toPx() * 2 }) } }.padding(5.dp))
                     val visibleHour by remember(hScroll, windowStartMillis, density, pxPerMin) { derivedStateOf {
                         val offsetMinutes = hScroll.value / with(density) { pxPerMin.dp.toPx() }
@@ -533,13 +533,13 @@ fun EpgGrid(
                     }
                     Text(visibleDate,
                         color = LiveColors.FgDim, fontSize = 11.sp)
-                    Icon(Icons.Outlined.ChevronRight, "Later programmes", tint = LiveColors.Fg,
+                    Icon(Icons.Outlined.ChevronRight, stringResource(R.string.live_guide_later_programmes), tint = LiveColors.Fg,
                         modifier = Modifier.size(28.dp).clickable { scope.launch { hScroll.animateScrollBy(with(density) { halfHourWidth.toPx() * 2 }) } }.padding(5.dp))
                     Row(Modifier.clickable { scope.launch {
                         hScroll.animateScrollTo(with(density) { (((clockTickMillis - windowStartMillis) / 60_000f * pxPerMin).dp.toPx() - halfHourWidth.toPx()).toInt().coerceAtLeast(0) })
                     } }.padding(4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Icon(Icons.Outlined.Restore, null, tint = LiveColors.Fg, modifier = Modifier.size(19.dp))
-                        Text("Now", color = LiveColors.Fg, fontSize = 11.sp)
+                        Text(stringResource(R.string.now), color = LiveColors.Fg, fontSize = 11.sp)
                     }
                 }
                 if (onOpenSearch != null) {
@@ -556,14 +556,15 @@ fun EpgGrid(
         } else if (!compact) {
             Row(Modifier.fillMaxWidth().height(34.dp).padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Icon(Icons.Outlined.Menu, "Groups", tint = LiveColors.Fg,
+                Icon(Icons.Outlined.Menu, stringResource(R.string.live_groups_title), tint = LiveColors.Fg,
                     modifier = Modifier.size(28.dp).clickable(onClick = onMoveLeftFromChannels).padding(4.dp))
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(categoryTitle, color = LiveColors.Fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    Text(liveCategoryLabel(categoryTitle), color = LiveColors.Fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    Text("${java.text.NumberFormat.getIntegerInstance().format(safeTotalChannelCount)} channels", color = LiveColors.FgDim, fontSize = 10.sp)
+                    Text(stringResource(R.string.live_guide_channels_count,
+                        java.text.NumberFormat.getIntegerInstance().format(safeTotalChannelCount)), color = LiveColors.FgDim, fontSize = 10.sp)
                 }
-                Icon(Icons.Outlined.ChevronLeft, "Earlier programmes", tint = LiveColors.Fg,
+                Icon(Icons.Outlined.ChevronLeft, stringResource(R.string.live_guide_earlier_programmes), tint = LiveColors.Fg,
                     modifier = Modifier.size(28.dp).clickable { scope.launch { hScroll.animateScrollBy(-with(density) { halfHourWidth.toPx() * 2 }) } }.padding(5.dp))
                 val visibleHour by remember(hScroll, windowStartMillis, density, pxPerMin) { derivedStateOf {
                     val offsetMinutes = hScroll.value / with(density) { pxPerMin.dp.toPx() }
@@ -575,13 +576,13 @@ fun EpgGrid(
                 }
                 Text(visibleDate,
                     color = LiveColors.FgDim, fontSize = 11.sp)
-                Icon(Icons.Outlined.ChevronRight, "Later programmes", tint = LiveColors.Fg,
+                Icon(Icons.Outlined.ChevronRight, stringResource(R.string.live_guide_later_programmes), tint = LiveColors.Fg,
                     modifier = Modifier.size(28.dp).clickable { scope.launch { hScroll.animateScrollBy(with(density) { halfHourWidth.toPx() * 2 }) } }.padding(5.dp))
                 Row(Modifier.clickable { scope.launch {
                     hScroll.animateScrollTo(with(density) { (((clockTickMillis - windowStartMillis) / 60_000f * pxPerMin).dp.toPx() - halfHourWidth.toPx()).toInt().coerceAtLeast(0) })
                 } }.padding(4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Icon(Icons.Outlined.Restore, null, tint = LiveColors.Fg, modifier = Modifier.size(19.dp))
-                    Text("Now", color = LiveColors.Fg, fontSize = 11.sp)
+                    Text(stringResource(R.string.now), color = LiveColors.Fg, fontSize = 11.sp)
                 }
             }
         }
