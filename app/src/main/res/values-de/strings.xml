@@ -1176,6 +1176,10 @@
     <string name="search_filter_rating">Bewertung</string>
     <string name="search_filter_year">Jahr</string>
     <string name="search_filter_age">Altersfreigabe</string>
+    <string name="search_filter_language">Sprache</string>
+    <string name="search_filter_language_ja">Japanisch</string>
+    <string name="search_filter_language_ko">Koreanisch</string>
+    <string name="search_filter_language_hi">Hindi</string>
     <string name="search_filter_hide_watched">Gesehene ausblenden</string>
     <string name="search_filter_any">Egal</string>
     <string name="search_filter_match_all">UND</string>
@@ -1188,6 +1192,7 @@
     <string name="search_filter_clear">Filter zurücksetzen</string>
     <string name="search_filter_panel_hint">Das Gitter aktualisiert sich sofort · ZURÜCK schließt die Tafel</string>
     <string name="search_filter_age_movies_only">Nur für Filme — TMDB kennt keinen Altersfilter für Serien</string>
+    <string name="search_filter_language_hint">Die Originalsprache des Titels — nicht die Sprache der App</string>
     <string name="search_filter_votes_hint">Eine hohe Untergrenze blendet Neuerscheinungen aus, deshalb bleibt „Egal“ die Vorgabe</string>
     <string name="search_filter_match_hint">UND: nur Titel mit allen Genres · ODER: Titel mit mindestens einem</string>
     <string name="search_filter_rating_from_short">Ab</string>

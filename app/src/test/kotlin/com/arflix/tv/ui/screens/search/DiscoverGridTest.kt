@@ -300,6 +300,49 @@ class DiscoverGridTest {
         assertNull("and it cannot be set again while series are shown", model.uiState.value.certification)
     }
 
+    /**
+     * T8 in one test: the wanted language has to leave as the title's ORIGINAL language.
+     *
+     * `MediaRepository` calls the parameter `language` and hands it on as
+     * `with_original_language`, while the language the app is read in travels separately. A
+     * filter wired to the wrong one would quietly switch the app's words instead of narrowing
+     * the grid, and nothing on the screen would say so.
+     */
+    @Test fun aChosenLanguageTravelsAsTheTitlesOriginalLanguage() = runBlocking {
+        coEvery {
+            repository.discoverMovies(language = "ja", genres = any(), sortBy = any(), minVoteCount = any(), page = any(), year = any(), keywords = any(), releaseDateLte = any(), releaseDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), certificationCountry = any(), certificationLte = any(), primaryReleaseDateLte = any(), primaryReleaseDateGte = any())
+        } returns listOf(movie(21))
+
+        model.selectLanguage("ja")
+        val state = withTimeout(5_000) { model.uiState.first { it.discoverGridItems.isNotEmpty() } }
+
+        assertEquals(listOf(21), state.discoverGridItems.map { it.id })
+        assertTrue(state.hasDiscoverFilters)
+    }
+
+    /** The series path reaches TMDB through its own wrapper, so it needs its own proof. */
+    @Test fun theLanguageReachesTheSeriesRequestToo() = runBlocking {
+        coEvery {
+            repository.discoverTv(language = "ko", genres = any(), sortBy = any(), minVoteCount = any(), page = any(), year = any(), keywords = any(), airDateLte = any(), airDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), firstAirDateLte = any(), firstAirDateGte = any())
+        } returns listOf(show(22))
+
+        model.selectType(DiscoverType.TV_SHOWS)
+        model.selectLanguage("ko")
+        val state = withTimeout(5_000) { model.uiState.first { it.discoverGridItems.isNotEmpty() } }
+
+        assertEquals(listOf(22), state.discoverGridItems.map { it.id })
+    }
+
+    @Test fun pickingASecondLanguageReplacesTheFirstInsteadOfAddingToIt() = runBlocking {
+        model.selectLanguage("ja")
+        model.selectLanguage("hi")
+        assertEquals("hi", model.uiState.value.language)
+
+        model.selectLanguage(null)
+        assertNull("and \"any\" takes the filter off again", model.uiState.value.language)
+        assertFalse(model.uiState.value.hasDiscoverFilters)
+    }
+
     @Test fun hideWatchedDropsWatchedTitlesAndKeepsPagingUntilSomethingIsLeft() = runBlocking {
         every { trakt.getWatchedMoviesFromCache() } returns setOf(1, 2)
         coEvery {
@@ -318,13 +361,32 @@ class DiscoverGridTest {
         assertFalse(state.gridEndReached)
     }
 
+    @Test fun theResetChipComesWithTheGridAndLeavesWithIt() = runBlocking {
+        // The whole round trip the chip goes through, on the state the row is built from: it is
+        // not in the row while nothing is set, it is there once a filter is, and one press later
+        // both the filter and the chip itself are gone again.
+        assertFalse(showsClearChip(model.uiState.value))
+
+        model.toggleGenre(action)
+        model.setHideWatched(true)
+        withTimeout(5_000) { model.uiState.first { showsClearChip(it) } }
+
+        model.clearDiscoverFilters()
+        val state = withTimeout(5_000) { model.uiState.first { !showsClearChip(it) } }
+
+        assertFalse(state.hasDiscoverFilters)
+        assertTrue(state.selectedGenres.isEmpty())
+        assertFalse(state.hideWatched)
+    }
+
     @Test fun clearingEveryFilterBringsTheRowsBackInOneStep() = runBlocking {
         model.toggleGenre(action)
-        // The decade belongs in here: a filter the reset forgets leaves the screen on the grid
-        // with nothing on it explaining why.
+        // The decade belongs in here, and so does the language: a filter the reset forgets
+        // leaves the screen on the grid with nothing on it explaining why.
         model.selectDecade(Decade(2000, 2009))
         model.selectYear(2001)
         model.setRating(RatingFilter(min = 7.0))
+        model.selectLanguage("ja")
         model.setHideWatched(true)
         withTimeout(5_000) { model.uiState.first { it.hasDiscoverFilters } }
 
@@ -335,6 +397,7 @@ class DiscoverGridTest {
         assertNull(state.decade)
         assertNull(state.year)
         assertFalse(state.rating.isSet)
+        assertNull(state.language)
         assertFalse(state.hideWatched)
         assertTrue(state.discoverGridItems.isEmpty())
     }

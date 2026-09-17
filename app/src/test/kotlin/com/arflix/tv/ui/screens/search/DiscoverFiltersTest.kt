@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.search
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -255,6 +256,58 @@ class DiscoverFiltersTest {
         assertEquals("2020", decadeLabelNumber(2020))
         assertEquals("90", decadeLabelNumber(1990))
         assertEquals("80", decadeLabelNumber(1980))
+    }
+
+    // ── The reset chip: when it is there, and where the frame goes ──────
+
+    @Test fun theResetChipStaysAwayWhileThereIsNothingToReset() {
+        assertFalse(showsClearChip(SearchUiState()))
+    }
+
+    @Test fun theResetChipAppearsAsSoonAsOneFilterIsSet() {
+        assertTrue(showsClearChip(SearchUiState(selectedGenres = listOf(action))))
+        assertTrue(showsClearChip(SearchUiState(decade = Decade(2000, 2009))))
+        assertTrue(showsClearChip(SearchUiState(year = 2001)))
+        assertTrue(showsClearChip(SearchUiState(rating = RatingFilter(min = 7.0))))
+        assertTrue(showsClearChip(SearchUiState(certification = "16")))
+        assertTrue(showsClearChip(SearchUiState(language = "ja")))
+        assertTrue(showsClearChip(SearchUiState(hideWatched = true)))
+    }
+
+    @Test fun theTwoThingsThatAreAlwaysSetDoNotBringTheResetChip() {
+        // The media type and the sort order are never off, so a reset chip next to them would
+        // never leave the row again — and pressing it would change nothing.
+        assertFalse(showsClearChip(SearchUiState(selectedType = DiscoverType.TV_SHOWS)))
+        assertFalse(showsClearChip(SearchUiState(sortOption = SortOption.TOP_RATED)))
+    }
+
+    @Test fun pressingTheResetChipMovesTheFrameOntoTheLastRemainingChip() {
+        // Eight chips, the frame on the eighth: after the press there are seven, so index 6.
+        assertEquals(6, focusAfterClearChip(7))
+    }
+
+    @Test fun theFrameNeverStepsOutOfTheRowToTheLeftEither() {
+        assertEquals(0, focusAfterClearChip(0))
+    }
+
+    // ── The original-language filter ────────────────────────────────────
+
+    @Test fun exactlyTheThreeLanguagesThatUsedToBeInTheRowAreOffered() {
+        assertEquals(listOf("ja", "ko", "hi"), DISCOVER_LANGUAGES)
+    }
+
+    @Test fun everyOfferedLanguageHasATextOfItsOwnRatherThanAnEnglishFallback() {
+        // The English-only table in Constants is the trap here: a language without its own text
+        // would read "Japanese" in the German menu.
+        DISCOVER_LANGUAGES.forEach { code ->
+            assertNotNull("no text for $code", languageNameRes(code))
+        }
+        assertNull("a code nobody offers has no text either", languageNameRes("de"))
+    }
+
+    @Test fun aLanguageSwitchesTheRowsOverToTheGridLikeEveryOtherFilter() {
+        assertTrue(SearchUiState(language = "ko").hasDiscoverFilters)
+        assertFalse(SearchUiState(language = null).hasDiscoverFilters)
     }
 
     // ── The release window behind a decade ──────────────────────────────

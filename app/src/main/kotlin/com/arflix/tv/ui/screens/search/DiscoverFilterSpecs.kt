@@ -3,6 +3,8 @@ package com.arflix.tv.ui.screens.search
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.FilterAltOff
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.StarBorder
@@ -32,7 +34,9 @@ internal data class DiscoverFilterActions(
     val onSelectDecade: (Decade?) -> Unit,
     val onSelectYear: (Int?) -> Unit,
     val onSelectCertification: (String?) -> Unit,
+    val onSelectLanguage: (String?) -> Unit,
     val onToggleHideWatched: () -> Unit,
+    val onClearFilters: () -> Unit,
     val onOpenPanel: (DiscoverFilterId) -> Unit
 )
 
@@ -73,7 +77,11 @@ internal fun SortOption.localizedLabel(): String = stringResource(
 )
 
 /**
- * The seven chips of the approved design, in its order.
+ * The seven chips of the approved design, in its order, plus the reset chip behind them.
+ *
+ * The reset chip is the one entry that comes and goes: it joins the row once a filter is set and
+ * leaves again the moment it has cleared them, which is why it is added last and conditionally
+ * rather than sitting in the fixed list ([showsClearChip]).
  *
  * The draft also shows a shortened row while the user is typing — media type and year, the only
  * two filters TMDB's search endpoints accept. That row is not built here, and the reason is
@@ -87,15 +95,17 @@ internal fun discoverChips(
     state: SearchUiState,
     certifications: List<String>,
     actions: DiscoverFilterActions
-): List<DiscoverChip> = listOf(
-    typeChip(state, actions),
-    genreChip(state, actions),
-    sortChip(state, actions),
-    ratingChip(state, actions),
-    yearChip(state, actions),
-    certificationChip(state, certifications, actions),
-    hideWatchedChip(state, actions)
-)
+): List<DiscoverChip> = buildList {
+    add(typeChip(state, actions))
+    add(genreChip(state, actions))
+    add(sortChip(state, actions))
+    add(ratingChip(state, actions))
+    add(yearChip(state, actions))
+    add(certificationChip(state, certifications, actions))
+    add(languageChip(state, actions))
+    add(hideWatchedChip(state, actions))
+    if (showsClearChip(state)) add(clearChip(actions))
+}
 
 /** The three media types the app knows, in the order the row shows them. */
 private val TYPES = listOf(DiscoverType.MOVIES, DiscoverType.TV_SHOWS, DiscoverType.ANIME)
@@ -220,6 +230,38 @@ private fun certificationChip(
     )
 }
 
+/**
+ * The name of an offered original language, as a text of our own.
+ *
+ * `Constants.getLanguageName` looks like the obvious source and is not usable here: its table is
+ * English only (`"ja" to "Japanese"`), so it would write "Japanese" into the German menu — the
+ * exact kind of leftover the German translation is busy removing. `null` for anything not
+ * offered, which can only happen if [DISCOVER_LANGUAGES] and this list drift apart.
+ */
+internal fun languageNameRes(code: String): Int? = when (code) {
+    "ja" -> R.string.search_filter_language_ja
+    "ko" -> R.string.search_filter_language_ko
+    "hi" -> R.string.search_filter_language_hi
+    else -> null
+}
+
+@Composable
+private fun languageLabel(code: String): String =
+    languageNameRes(code)?.let { stringResource(it) } ?: code
+
+@Composable
+private fun languageChip(state: SearchUiState, actions: DiscoverFilterActions) = DiscoverChip(
+    id = DiscoverFilterId.LANGUAGE,
+    key = "language",
+    label = stringResource(R.string.search_filter_language),
+    // Only once one is chosen: with nothing set the chip would read "Language: Any", which
+    // looks like a filter that is on and says nothing the label does not already say.
+    value = state.language?.let { languageLabel(it) },
+    icon = Icons.Default.Language,
+    isSet = state.language != null,
+    onActivate = { actions.onOpenPanel(DiscoverFilterId.LANGUAGE) }
+)
+
 @Composable
 private fun hideWatchedChip(state: SearchUiState, actions: DiscoverFilterActions) = DiscoverChip(
     id = DiscoverFilterId.HIDE_WATCHED,
@@ -230,6 +272,25 @@ private fun hideWatchedChip(state: SearchUiState, actions: DiscoverFilterActions
     hasPanel = false,
     isSet = state.hideWatched,
     onActivate = actions.onToggleHideWatched
+)
+
+/**
+ * The eighth chip: one press and every filter is off again.
+ *
+ * It is not a filter itself, so it never wears the white "this narrows the list" colour — that
+ * colour has to keep meaning one thing — and it opens nothing, so it carries no chevron either.
+ * The media type survives the press on purpose; it is always set and therefore not a filter
+ * (the reason is written out on [SearchViewModel.clearDiscoverFilters]).
+ */
+@Composable
+private fun clearChip(actions: DiscoverFilterActions) = DiscoverChip(
+    id = DiscoverFilterId.CLEAR,
+    key = "clear",
+    label = stringResource(R.string.search_filter_clear),
+    icon = Icons.Default.FilterAltOff,
+    hasPanel = false,
+    isSet = false,
+    onActivate = actions.onClearFilters
 )
 
 /** The panel that belongs to [id], or `null` for a chip that is a plain switch. */
@@ -247,7 +308,10 @@ internal fun filterPanelSpec(
     DiscoverFilterId.RATING -> ratingPanel(state, actions)
     DiscoverFilterId.YEAR -> yearPanel(state, actions)
     DiscoverFilterId.CERTIFICATION -> certificationPanel(state, certifications, actions)
+    DiscoverFilterId.LANGUAGE -> languagePanel(state, actions)
     DiscoverFilterId.HIDE_WATCHED -> null
+    // The reset chip acts on the press itself; there is nothing to choose behind it.
+    DiscoverFilterId.CLEAR -> null
 }
 
 @Composable
@@ -480,5 +544,40 @@ private fun certificationPanel(
         // The labels are data, not translations: they follow the certification body of the
         // content country, so "12" here is an FSK 12 and a "15" in the UK is a BBFC 15.
         footer = stringResource(R.string.search_filter_age_movies_only)
+    )
+}
+
+/**
+ * "Any" and the three languages, one at a time.
+ *
+ * Built like the age panel because it answers the same shape of question — one value out of a
+ * short fixed list — and a second panel layout for the same question would only be a second
+ * place to keep in step.
+ */
+@Composable
+private fun languagePanel(
+    state: SearchUiState,
+    actions: DiscoverFilterActions
+): FilterPanelSpec {
+    val any = stringResource(R.string.search_filter_any)
+    val options = listOf(
+        PanelOption("lang_any", any, state.language == null) { actions.onSelectLanguage(null) }
+    ) + DISCOVER_LANGUAGES.map { code ->
+        PanelOption(
+            key = "lang_$code",
+            label = languageLabel(code),
+            isSelected = state.language == code,
+            onToggle = { actions.onSelectLanguage(code) }
+        )
+    }
+    return FilterPanelSpec(
+        id = DiscoverFilterId.LANGUAGE,
+        title = stringResource(R.string.search_filter_language),
+        sections = listOf(
+            PanelSection(key = "lang_list", entries = PanelEntries.Tiles(options))
+        ),
+        // Spelled out because the two languages on this screen are easy to mix up: this one
+        // picks which titles show up, the one in the settings picks the words around them.
+        footer = stringResource(R.string.search_filter_language_hint)
     )
 }

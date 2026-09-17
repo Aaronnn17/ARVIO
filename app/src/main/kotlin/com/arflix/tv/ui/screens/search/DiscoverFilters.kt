@@ -2,8 +2,25 @@ package com.arflix.tv.ui.screens.search
 
 import com.arflix.tv.util.ContentRating
 
-/** The seven controls of the discover row, in the order the approved design shows them. */
-enum class DiscoverFilterId { TYPE, GENRE, SORT, RATING, YEAR, CERTIFICATION, HIDE_WATCHED }
+/**
+ * The controls of the discover row, in the order the approved design shows them.
+ *
+ * [CLEAR] is the only one that is not always there: it joins the row once something is set and
+ * leaves it again as soon as it has done its job.
+ */
+enum class DiscoverFilterId {
+    TYPE, GENRE, SORT, RATING, YEAR, CERTIFICATION, LANGUAGE, HIDE_WATCHED, CLEAR
+}
+
+/**
+ * The original languages the row offers, in the order the panel shows them.
+ *
+ * Exactly the three that used to sit in the row as buttons of their own and were lost when the
+ * row was rebuilt. They are deliberately not "every language TMDB knows": the yardstick is what
+ * was there before, so this is a restored control rather than a new one. Anyone widening the
+ * list asks first.
+ */
+val DISCOVER_LANGUAGES: List<String> = listOf("ja", "ko", "hi")
 
 /**
  * Rating range plus the vote floor, the three values that share one panel.
@@ -189,6 +206,29 @@ fun releaseWindowFor(decade: Decade?, year: Int?, today: String): ReleaseWindow 
     if (decade == null) return ReleaseWindow(from = null, to = today)
     return ReleaseWindow(from = "${decade.start}-01-01", to = minOf("${decade.end}-12-31", today))
 }
+
+/**
+ * Whether the row carries the reset chip at all.
+ *
+ * Only once something is actually set. A reset chip with nothing to reset is a dead stop for the
+ * remote — one more press to get past on the way to the grid, and pressing OK on it does nothing
+ * at all, which reads as a broken button rather than as an empty one.
+ *
+ * It asks the same question the grid asks, deliberately: the chip has to appear exactly when the
+ * screen switches over to the filtered grid, so the media type does not count here either
+ * (see [SearchUiState.hasDiscoverFilters]).
+ */
+fun showsClearChip(state: SearchUiState): Boolean = state.hasDiscoverFilters
+
+/**
+ * Where the focus frame goes the moment the reset chip has done its job.
+ *
+ * This chip is the only one in the row that deletes itself, and it is the last one, so the index
+ * that was on it points past the end of the row one recomposition later. Stepping back by one
+ * lands on what is now the last chip — the frame moves one place left instead of disappearing,
+ * which is the only outcome that does not read as the row losing the focus.
+ */
+fun focusAfterClearChip(focusedIndex: Int): Int = (focusedIndex - 1).coerceAtLeast(0)
 
 /**
  * Whether the chip at [itemOffset] lies wholly inside the row's content area.

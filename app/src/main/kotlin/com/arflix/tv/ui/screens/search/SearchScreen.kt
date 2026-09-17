@@ -232,7 +232,9 @@ fun SearchScreen(
             onSelectDecade = viewModel::selectDecade,
             onSelectYear = viewModel::selectYear,
             onSelectCertification = viewModel::selectCertification,
+            onSelectLanguage = viewModel::selectLanguage,
             onToggleHideWatched = { viewModel.setHideWatched(!viewModel.uiState.value.hideWatched) },
+            onClearFilters = viewModel::clearDiscoverFilters,
             onOpenPanel = { id ->
                 openDropdown = null
                 if (openPanel == id) {
@@ -693,7 +695,18 @@ fun SearchScreen(
                             true
                         }
                         FocusZone.FILTERS -> {
-                            quickFilters.getOrNull(focusedFilterIndex)?.onActivate?.invoke()
+                            val chip = quickFilters.getOrNull(focusedFilterIndex)
+                            // The reset chip is the one control that removes itself, so the frame
+                            // is moved off it in the same press rather than afterwards. The
+                            // LaunchedEffect on `quickFilters.size` further up already clamps an
+                            // index that is out of range, but it runs a recomposition later —
+                            // long enough for one frame with no focus ring at all, and a ring
+                            // that blinks out after a press is the kind of thing this row has
+                            // been reported for before.
+                            if (chip?.id == DiscoverFilterId.CLEAR) {
+                                focusedFilterIndex = focusAfterClearChip(focusedFilterIndex)
+                            }
+                            chip?.onActivate?.invoke()
                             runCatching { filtersFocusRequester.requestFocus() }
                             true
                         }
