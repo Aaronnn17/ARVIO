@@ -786,6 +786,12 @@
     <string name="live_sources_failed">Quellen konnten nicht geladen werden. Bitte versuche es erneut.</string>
     <string name="live_cat_adult">Erwachsene</string>
     <string name="live_cat_ungrouped">Ungruppiert</string>
+    <string name="live_cat_global_sports">Sport · weltweit</string>
+    <string name="live_cat_global_movies">Filme · weltweit</string>
+    <string name="live_cat_global_news">Nachrichten · weltweit</string>
+    <string name="live_cat_global_kids">Kinder · weltweit</string>
+    <string name="live_cat_documentary">Dokumentation</string>
+    <string name="live_cat_music">Musik</string>
     <string name="live_section_playlist">PLAYLIST</string>
     <string name="live_section_adult">ERWACHSENE</string>
     <string name="live_section_hidden">AUSGEBLENDET</string>
@@ -1171,6 +1177,7 @@
     <string name="crash_qr_hint">Scannen, um arvio.tv zu öffnen — ein Tipp kopiert den Bericht und öffnet Discord.</string>
     <string name="crash_details_title">Angaben zum Absturz</string>
     <string name="crash_details_body">ID: %1$s\nZeit: %2$s\nVersion: %3$s\nFehler: %4$s</string>
+    <string name="crash_error_unexpected">Unerwarteter Fehler</string>
     <string name="crash_copied_toast">Absturzdetails kopiert. Discord wird geöffnet …</string>
     <string name="crash_report_discord">Auf Discord melden</string>
     <string name="crash_restart_app">ARVIO neu starten</string>

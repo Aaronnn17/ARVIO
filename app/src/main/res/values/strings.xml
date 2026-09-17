@@ -936,6 +936,7 @@
     <string name="crash_qr_hint">Scan to open arvio.tv — 1 tap to copy report &amp; jump into Discord.</string>
     <string name="crash_details_title">Crash Reference Details</string>
     <string name="crash_details_body">ID: %1$s\nTime: %2$s\nVersion: %3$s\nError: %4$s</string>
+    <string name="crash_error_unexpected">Unexpected error</string>
     <string name="crash_copied_toast">Crash details copied! Opening Discord...</string>
     <string name="crash_report_discord">Report on Discord</string>
     <string name="crash_restart_app">Restart ARVIO</string>
@@ -1172,6 +1173,12 @@
     <string name="live_cat_recently_watched">Recently Watched</string>
     <string name="live_cat_adult">Adult</string>
     <string name="live_cat_ungrouped">Ungrouped</string>
+    <string name="live_cat_global_sports">Sports · Global</string>
+    <string name="live_cat_global_movies">Movies · Global</string>
+    <string name="live_cat_global_news">News · Global</string>
+    <string name="live_cat_global_kids">Kids · Global</string>
+    <string name="live_cat_documentary">Documentary</string>
+    <string name="live_cat_music">Music</string>
     <string name="live_section_playlist">PLAYLIST</string>
     <string name="live_section_adult">ADULT</string>
     <string name="live_section_hidden">HIDDEN</string>
