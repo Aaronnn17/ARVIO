@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.settings
 import androidx.compose.material.icons.filled.Storage
 
 import androidx.activity.compose.BackHandler
+import com.arflix.tv.ui.components.LocalBottomBarInset
 import com.arflix.tv.ui.motion.*
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -464,7 +465,8 @@ fun SettingsScreen(
     onNavigateToWatchlist: () -> Unit = {},
     onNavigateToTelegramSettings: () -> Unit = {},
     onSwitchProfile: () -> Unit = {},
-    onBack: () -> Unit = {}
+    onBack: () -> Unit = {},
+    onSubPageChanged: (Boolean) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showCredits by remember { mutableStateOf(false) }
@@ -520,6 +522,14 @@ fun SettingsScreen(
         mutableStateOf(
             if (initialSection == "iptv") "TV" else "MAIN"
         )
+    }
+    LaunchedEffect(mobilePage) {
+        onSubPageChanged(mobilePage != "MAIN")
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            onSubPageChanged(false)
+        }
     }
     var contentFocusIndex by remember { mutableIntStateOf(0) }
     var pluginsMaxIndex by remember { mutableIntStateOf(0) }
@@ -4423,7 +4433,12 @@ private fun MobileSettingsMainPage(
     }
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 8.dp),
+        contentPadding = PaddingValues(
+            start = 24.dp,
+            end = 24.dp,
+            top = 8.dp,
+            bottom = 24.dp + LocalBottomBarInset.current
+        ),
         verticalArrangement = Arrangement.spacedBy(32.dp)
     ) {
         item {
@@ -4647,7 +4662,7 @@ private fun MobileSettingsSubPage(
             onMoveDown = { viewModel.moveIptvGroupDown(categoriesPlaylistId, it) },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 8.dp)
+                .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 8.dp + LocalBottomBarInset.current)
         )
         return
     }
@@ -5142,6 +5157,7 @@ private fun MobileSettingsSubPage(
                 )
             }
         }
+        Spacer(modifier = Modifier.height(LocalBottomBarInset.current))
     }
 
     if (showStalkerRename) {

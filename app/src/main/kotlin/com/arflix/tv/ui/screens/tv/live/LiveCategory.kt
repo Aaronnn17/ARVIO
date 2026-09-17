@@ -419,7 +419,7 @@ data class LiveCategoryTree(
     }
 }
 
-private fun playlistGroupLabel(group: String): String {
+internal fun playlistGroupLabel(group: String): String {
     return group.trim().ifBlank { "Ungrouped" }
 }
 

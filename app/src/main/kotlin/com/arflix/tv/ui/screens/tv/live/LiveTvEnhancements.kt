@@ -89,8 +89,11 @@ fun buildPlaylistCategorySections(
         val providerCategories = categories
             .filter { it.playlistId == playlist.id }
             .filterNot { category ->
-                val groupName = category.playlistGroupName ?: return@filterNot false
-                com.arflix.tv.data.model.PlaylistGroupKey.build(playlist.id, groupName) in hiddenGroups
+                val groupName = category.playlistGroupName ?: category.label
+                val playlistId = category.playlistId ?: playlist.id
+                (playlistId.isNotBlank() && com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupName) in hiddenGroups) ||
+                    groupName in hiddenGroups ||
+                    category.label in hiddenGroups
             }
         providerCategories.takeIf { it.isNotEmpty() }?.let {
             PlaylistCategorySection(
@@ -103,10 +106,18 @@ fun buildPlaylistCategorySections(
     }
     val unmatchedSections = categories
         .filter { category -> category.playlistId.isNullOrBlank() || category.playlistId !in knownPlaylistIds }
+        .filterNot { category ->
+            val groupName = category.playlistGroupName ?: category.label
+            val playlistId = category.playlistId.orEmpty()
+            (playlistId.isNotBlank() && com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupName) in hiddenGroups) ||
+                groupName in hiddenGroups ||
+                category.label in hiddenGroups
+        }
         .groupBy { category -> category.playlistId?.takeIf { it.isNotBlank() } ?: "other" }
         .entries
         .sortedWith(compareBy<Map.Entry<String, List<LiveCategory>>> { if (it.key.startsWith("stalker")) 0 else 1 }.thenBy { it.key })
-        .map { (sourceId, sourceCategories) ->
+        .mapNotNull { (sourceId, sourceCategories) ->
+            if (sourceCategories.isEmpty()) return@mapNotNull null
             // Multi-portal Stalker ids look like "stalker1"/"stalker2" (see
             // StalkerPortalSupport), not the legacy single-portal "stalker" - look
             // up the name the user configured for that portal before falling back
