@@ -4,5 +4,6 @@
   "Watching": "En cours",
   "Completed": "Terminés",
   "Dropped": "Abandonnés",
-  "Channel categories": "Catégories de chaînes"
+  "Channel categories": "Catégories de chaînes",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: utilisez l’adresse compatible avec Jellyfin. Profil facultatif: username#ProfileName. Profil protégé: password#PIN."
 }

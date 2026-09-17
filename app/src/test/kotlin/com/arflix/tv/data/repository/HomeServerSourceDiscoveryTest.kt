@@ -21,6 +21,31 @@ import java.util.UUID
 @Config(sdk = [28], application = Application::class)
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class HomeServerSourceDiscoveryTest {
+    @Test fun `Silo connects a non admin profile through its compatible base path`() = runBlocking {
+        val repository = repository(HomeServerKind.JELLYFIN) { request ->
+            when (request.url.encodedPath) {
+                "/compat/System/Info/Public" -> 200 to """{"ProductName":"Silo","ServerName":"Shared Silo","Id":"silo"}"""
+                "/compat/Users/AuthenticateByName" -> {
+                    val buffer = okio.Buffer()
+                    request.body!!.writeTo(buffer)
+                    val payload = com.google.gson.JsonParser.parseString(buffer.readUtf8()).asJsonObject
+                    assertEquals("member@example.test#Family", payload["Username"].asString)
+                    assertEquals("secret#1234", payload["Pw"].asString)
+                    200 to """{"AccessToken":"member-token","ServerId":"silo","User":{"Id":"profile-id","Name":"Family","Policy":{"IsAdministrator":false}}}"""
+                }
+                "/compat/Users/profile-id/Views" -> {
+                    assertEquals("member-token", request.header("X-Emby-Token"))
+                    200 to """{"Items":[{"Id":"movies","Name":"Shared movies","CollectionType":"movies"}]}"""
+                }
+                else -> error("Unexpected or administrator-only request: ${request.url.encodedPath}")
+            }
+        }
+        val result = repository.connect("https://example.invalid/compat", "member@example.test#Family", "secret#1234").getOrThrow()
+        assertEquals(HomeServerKind.JELLYFIN, result.serverKind)
+        assertEquals("profile-id", result.userId)
+        assertEquals("movies", result.collections.single().id)
+    }
+
     private suspend fun repository(kind: HomeServerKind, response: (Request) -> Pair<Int, String>): HomeServerRepository {
         val profile = "sources-${UUID.randomUUID()}"
         val profiles = mockk<ProfileManager> {

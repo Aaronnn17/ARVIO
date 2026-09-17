@@ -4,5 +4,6 @@
   "Collection": "Συλλογή",
   "Watching": "Παρακολουθώ",
   "Completed": "Ολοκληρωμένα",
-  "Dropped": "Εγκαταλείφθηκαν"
+  "Dropped": "Εγκαταλείφθηκαν",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: χρησιμοποιήστε τη διεύθυνση συμβατή με Jellyfin. Προαιρετικό προφίλ: username#ProfileName. Προστατευμένο προφίλ: password#PIN."
 }

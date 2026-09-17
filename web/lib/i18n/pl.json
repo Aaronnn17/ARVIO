@@ -4,5 +4,6 @@
   "Collection": "Kolekcja",
   "Watching": "W trakcie oglądania",
   "Completed": "Ukończone",
-  "Dropped": "Porzucone"
+  "Dropped": "Porzucone",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: użyj adresu zgodnego z Jellyfin. Profil opcjonalny: username#ProfileName. Profil chroniony: password#PIN."
 }

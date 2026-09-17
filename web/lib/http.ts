@@ -10,7 +10,7 @@ function cleanErrorMessage(status: number, raw: string): string {
     if (rawNested.includes("Cloudflare") || rawNested.includes("trakt.tv")) {
       return "The remote service blocked this browser request. Try again later or use the Android app for this action.";
     }
-    const description = parsed.error_description ?? parsed.msg ?? parsed.message ?? parsed.error;
+    const description = parsed.error_description ?? parsed.msg ?? parsed.message ?? parsed.Message ?? parsed.error;
     if (typeof description === "string" && description.trim()) return description.trim();
   } catch {
     // Plain-text or HTML error bodies are handled below.

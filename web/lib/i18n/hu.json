@@ -4,5 +4,6 @@
   "Collection": "Gyűjtemény",
   "Watching": "Folyamatban",
   "Completed": "Befejezett",
-  "Dropped": "Abbahagyott"
+  "Dropped": "Abbahagyott",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: használd a Jellyfin-kompatibilis címet. Opcionális profil: username#ProfileName. Védett profil: password#PIN."
 }

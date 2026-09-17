@@ -1023,7 +1023,7 @@ class HomeServerRepository @Inject constructor(
         return when {
             "plex" in text -> HomeServerKind.PLEX
             "emby" in text -> HomeServerKind.EMBY
-            "jellyfin" in text -> HomeServerKind.JELLYFIN
+            "jellyfin" in text || productName.equals("Silo", ignoreCase = true) || productName.equals("Silo Server", ignoreCase = true) -> HomeServerKind.JELLYFIN
             else -> HomeServerKind.UNKNOWN
         }
     }
@@ -1168,6 +1168,15 @@ class HomeServerRepository @Inject constructor(
             .build()
         okHttpClient.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
+            if (request.url.encodedPath.endsWith("/Users/AuthenticateByName")) {
+                val message = when (HomeServerLoginFailure.detect(response.code, body)) {
+                    HomeServerLoginFailure.PROFILE -> R.string.homeserver_silo_profile
+                    HomeServerLoginFailure.PIN -> R.string.homeserver_silo_pin
+                    HomeServerLoginFailure.ENDPOINT -> R.string.homeserver_compat_endpoint
+                    null -> null
+                }
+                if (message != null) error(context.getString(message))
+            }
             if (!response.isSuccessful) {
                 error(context.getString(R.string.homeserver_signin_failed_code, response.code))
             }

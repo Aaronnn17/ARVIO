@@ -4,5 +4,6 @@
   "Collection": "مجموعہ",
   "Watching": "دیکھ رہے ہیں",
   "Completed": "مکمل",
-  "Dropped": "چھوڑ دیا"
+  "Dropped": "چھوڑ دیا",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin سے مطابقت رکھنے والا پتہ استعمال کریں. اختیاری پروفائل: username#ProfileName. محفوظ پروفائل: password#PIN."
 }
