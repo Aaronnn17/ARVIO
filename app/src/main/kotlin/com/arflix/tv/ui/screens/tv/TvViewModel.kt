@@ -2530,7 +2530,10 @@ internal fun IptvConfig.syncSignature(): String {
                 portal.name,
                 portal.portalUrl,
                 portal.macAddress,
-                portal.enabled.toString()
+                portal.enabled.toString(),
+                (portal.importLiveTv ?: true).toString(),
+                (portal.importVod ?: true).toString(),
+                (portal.importSeries ?: true).toString()
             ).joinToString("~")
         }
     return listOf(
