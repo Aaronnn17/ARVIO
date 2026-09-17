@@ -151,6 +151,7 @@ fun EpgGrid(
     channelColumnWidthOverride: Dp? = null,
     playbackQuality: LivePlaybackQuality? = null,
     categoryTitle: String = "All channels",
+    sidebarOpen: Boolean = false,
     onBackToGroups: (() -> Unit)? = null,
     onOpenSearch: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -159,7 +160,7 @@ fun EpgGrid(
     val pxPerMin = if (compact) 96f / 30f else LiveDims.EpgPxPerMinute.toFloat()
     val selectedChannelFocusRequester = remember { FocusRequester() }
     val firstChannelFocusRequester = remember { FocusRequester() }
-    val headerHeight = if (compact) 32.dp else LiveDims.EpgHeaderHeight
+    val headerHeight = if (compact) 32.dp else 28.dp
     val channelColumnWidth = channelColumnWidthOverride
         ?: if (compact) 164.dp else LiveDims.EpgChannelColWidth
     val halfHourWidth = (pxPerMin * 30f).dp
@@ -554,15 +555,16 @@ fun EpgGrid(
                 }
             }
         } else if (!compact) {
-            Row(Modifier.fillMaxWidth().height(34.dp).padding(horizontal = 14.dp),
+            Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(Icons.Outlined.Menu, stringResource(R.string.live_groups_title), tint = LiveColors.Fg,
                     modifier = Modifier.size(28.dp).clickable(onClick = onMoveLeftFromChannels).padding(4.dp))
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(liveCategoryLabel(categoryTitle), color = LiveColors.Fg, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    Text(stringResource(R.string.live_guide_channels_count,
-                        java.text.NumberFormat.getIntegerInstance().format(safeTotalChannelCount)), color = LiveColors.FgDim, fontSize = 10.sp)
+                    if (!sidebarOpen) {
+                        Text(liveCategoryLabel(categoryTitle), color = LiveColors.Fg, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false).testTag("iptv-guide-category-title"))
+                    }
                 }
                 Icon(Icons.Outlined.ChevronLeft, stringResource(R.string.live_guide_earlier_programmes), tint = LiveColors.Fg,
                     modifier = Modifier.size(28.dp).clickable { scope.launch { hScroll.animateScrollBy(-with(density) { halfHourWidth.toPx() * 2 }) } }.padding(5.dp))
