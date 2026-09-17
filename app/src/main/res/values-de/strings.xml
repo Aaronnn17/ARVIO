@@ -761,6 +761,12 @@
     <string name="live_cat_recently_watched">Zuletzt angesehen</string>
     <string name="live_cat_adult">Erwachsene</string>
     <string name="live_cat_ungrouped">Ungruppiert</string>
+    <string name="live_cat_global_sports">Sport · weltweit</string>
+    <string name="live_cat_global_movies">Filme · weltweit</string>
+    <string name="live_cat_global_news">Nachrichten · weltweit</string>
+    <string name="live_cat_global_kids">Kinder · weltweit</string>
+    <string name="live_cat_documentary">Dokumentation</string>
+    <string name="live_cat_music">Musik</string>
     <string name="live_section_playlist">PLAYLIST</string>
     <string name="live_section_adult">ERWACHSENE</string>
     <string name="live_section_hidden">AUSGEBLENDET</string>

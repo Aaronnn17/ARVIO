@@ -1131,6 +1131,12 @@
     <string name="live_cat_recently_watched">Recently Watched</string>
     <string name="live_cat_adult">Adult</string>
     <string name="live_cat_ungrouped">Ungrouped</string>
+    <string name="live_cat_global_sports">Sports · Global</string>
+    <string name="live_cat_global_movies">Movies · Global</string>
+    <string name="live_cat_global_news">News · Global</string>
+    <string name="live_cat_global_kids">Kids · Global</string>
+    <string name="live_cat_documentary">Documentary</string>
+    <string name="live_cat_music">Music</string>
     <string name="live_section_playlist">PLAYLIST</string>
     <string name="live_section_adult">ADULT</string>
     <string name="live_section_hidden">HIDDEN</string>
