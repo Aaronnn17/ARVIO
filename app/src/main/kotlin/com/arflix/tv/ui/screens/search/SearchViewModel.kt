@@ -203,6 +203,11 @@ class SearchViewModel @Inject constructor(
 
                 // Each row brings its own sort and vote floor — that is what makes it a row and
                 // not a slice of the grid, so the sort chip deliberately does not reach here.
+                //
+                // The rows stay on the any-release window on purpose (B34): "New Releases" asks
+                // what turned up in the last 90 days, and a film that just landed on a platform
+                // belongs there. Only the grid, where the user compares the year against the
+                // card, moved to the premiere date.
                 fun row(sort: String, minVotes: Int, page: Int = 1, from: String? = null) = DiscoverRequest(
                     type = type, genres = genres, sort = sort, minVotes = minVotes, page = page,
                     releaseDateGte = from, releaseDateLte = today
@@ -287,7 +292,12 @@ class SearchViewModel @Inject constructor(
         val certification: String? = null,
         val certificationCountry: String? = null,
         val releaseDateGte: String? = null,
-        val releaseDateLte: String? = null
+        val releaseDateLte: String? = null,
+        // The same window, but measured on the FIRST release instead of any release. The grid
+        // uses this one because the year on the card is the first release too; the browse rows
+        // above keep the old pair, where "anything out in the last 90 days" is what is meant.
+        val premiereDateGte: String? = null,
+        val premiereDateLte: String? = null
     )
 
     /**
@@ -321,6 +331,8 @@ class SearchViewModel @Inject constructor(
             year = request.year,
             releaseDateLte = request.releaseDateLte,
             releaseDateGte = request.releaseDateGte,
+            primaryReleaseDateLte = request.premiereDateLte,
+            primaryReleaseDateGte = request.premiereDateGte,
             minVoteAverage = request.minRating,
             maxVoteAverage = request.maxRating,
             certificationCountry = request.certification?.let { request.certificationCountry },
@@ -341,6 +353,8 @@ class SearchViewModel @Inject constructor(
             keywords = keywords,
             airDateLte = request.releaseDateLte,
             airDateGte = request.releaseDateGte,
+            firstAirDateLte = request.premiereDateLte,
+            firstAirDateGte = request.premiereDateGte,
             minVoteAverage = request.minRating,
             maxVoteAverage = request.maxRating
         )
@@ -466,6 +480,10 @@ class SearchViewModel @Inject constructor(
         // A release date in the future has no rating and usually no poster either, so the grid
         // stays on what is actually out — except when a year is asked for explicitly. A decade
         // turns that cap into a window; the rule itself lives in releaseWindowFor.
+        //
+        // The window travels as the PREMIERE date (B34): asked by any release, a film from 1994
+        // that came back to cinemas in 2021 answered the 2020s and then printed 1994 on its own
+        // card. The browse rows above are a different question and keep the old pair.
         val window = releaseWindowFor(state.decade, state.year, today)
         return DiscoverRequest(
             type = state.selectedType,
@@ -478,8 +496,8 @@ class SearchViewModel @Inject constructor(
             year = state.year,
             certification = state.certification.takeIf { supportsCertification(state.selectedType) },
             certificationCountry = ContentRating.regionOf(mediaRepository.contentLanguage),
-            releaseDateGte = window.from,
-            releaseDateLte = window.to
+            premiereDateGte = window.from,
+            premiereDateLte = window.to
         )
     }
 
