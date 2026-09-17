@@ -187,4 +187,80 @@ class IptvActivePlaylistsTest {
         assertEquals(listOf(entryWithNullFlags), repository.activeVodPlaylists(config))
         assertEquals(listOf(entryWithNullFlags), repository.activeSeriesPlaylists(config))
     }
+
+    @Test
+    fun `stalker portal switched off for live tv still serves movies and series`() {
+        val repository = newRepository()
+        // The whole point of the third switch: the portal stays a VOD source,
+        // it just stops filling the channel list.
+        val vodOnly = StalkerPortalEntry(
+            id = "stalker1",
+            name = "Portal 1",
+            portalUrl = "http://portal.example/c",
+            macAddress = "00:1A:79:11:11:11",
+            importLiveTv = false
+        )
+        val config = IptvConfig(stalkerPortals = listOf(vodOnly))
+
+        assertTrue(repository.activeStalkerLiveTvPortals(config).isEmpty())
+        assertEquals(listOf(vodOnly), repository.activeStalkerVodPortals(config))
+        assertEquals(listOf(vodOnly), repository.activeStalkerSeriesPortals(config))
+        // A live-disabled portal is still a configured source, exactly as a
+        // live-disabled M3U playlist is.
+        assertTrue(repository.hasAnyConfiguredSource(config))
+    }
+
+    @Test
+    fun `stalker portal switched off for movies still serves series`() {
+        val repository = newRepository()
+        val seriesOnly = StalkerPortalEntry(
+            id = "stalker1",
+            name = "Portal 1",
+            portalUrl = "http://portal.example/c",
+            macAddress = "00:1A:79:11:11:11",
+            importVod = false,
+            importSeries = true
+        )
+        val config = IptvConfig(stalkerPortals = listOf(seriesOnly))
+
+        assertTrue(repository.activeStalkerVodPortals(config).isEmpty())
+        assertEquals(listOf(seriesOnly), repository.activeStalkerSeriesPortals(config))
+    }
+
+    @Test
+    fun `disabled stalker portal is excluded from both vod filters`() {
+        val repository = newRepository()
+        val disabled = StalkerPortalEntry(
+            id = "stalker1",
+            name = "Portal 1",
+            portalUrl = "http://portal.example/c",
+            macAddress = "00:1A:79:11:11:11",
+            enabled = false
+        )
+        val config = IptvConfig(stalkerPortals = listOf(disabled))
+
+        assertTrue(repository.activeStalkerVodPortals(config).isEmpty())
+        assertTrue(repository.activeStalkerSeriesPortals(config).isEmpty())
+        assertTrue(repository.activeStalkerLiveTvPortals(config).isEmpty())
+    }
+
+    @Test
+    fun `stalker portal with null import flags defaults to enabled everywhere`() {
+        val repository = newRepository()
+        // The shape a portal stored before the switches existed decodes into.
+        val legacyPortal = StalkerPortalEntry(
+            id = "stalker1",
+            name = "Portal 1",
+            portalUrl = "http://portal.example/c",
+            macAddress = "00:1A:79:11:11:11",
+            importLiveTv = null,
+            importVod = null,
+            importSeries = null
+        )
+        val config = IptvConfig(stalkerPortals = listOf(legacyPortal))
+
+        assertEquals(listOf(legacyPortal), repository.activeStalkerLiveTvPortals(config))
+        assertEquals(listOf(legacyPortal), repository.activeStalkerVodPortals(config))
+        assertEquals(listOf(legacyPortal), repository.activeStalkerSeriesPortals(config))
+    }
 }

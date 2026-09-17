@@ -2629,9 +2629,17 @@ class SettingsViewModel @Inject constructor(
     /**
      * Add a new Stalker portal at the end of the list (capped at
      * [MAX_STALKER_PORTALS]). Returns false (with a toast) when
-     * the limit is reached or the URL/MAC are blank.
+     * the limit is reached or the URL/MAC are blank. A new portal imports
+     * live TV, movies and series unless the dialog says otherwise.
      */
-    fun onAddStalkerPortal(portalUrl: String, macAddress: String, name: String? = null) {
+    fun onAddStalkerPortal(
+        portalUrl: String,
+        macAddress: String,
+        name: String? = null,
+        importLiveTv: Boolean = true,
+        importVod: Boolean = true,
+        importSeries: Boolean = true
+    ) {
         val trimmedUrl = portalUrl.trim().trimEnd('/')
         val trimmedMac = macAddress.trim().uppercase()
         if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
@@ -2658,16 +2666,30 @@ class SettingsViewModel @Inject constructor(
             id = portalId,
             name = name?.trim()?.ifBlank { null } ?: "Portal $portalNumber",
             portalUrl = trimmedUrl,
-            macAddress = trimmedMac
+            macAddress = trimmedMac,
+            importLiveTv = importLiveTv,
+            importVod = importVod,
+            importSeries = importSeries
         )
         persistStalkerPortals(current + portal)
     }
 
     /**
-     * Update an existing portal's URL/MAC (and optionally its name). The edit
-     * dialog calls this with the portal's id.
+     * Update an existing portal's URL/MAC (and optionally its name and its
+     * live TV / movie / series import switches). The edit dialog calls this with the
+     * portal's id. Omitted optional values keep what the portal already has -
+     * passing `true` as a default here would quietly re-enable switches the
+     * user had turned off.
      */
-    fun onEditStalkerPortal(portalId: String, portalUrl: String, macAddress: String, name: String? = null) {
+    fun onEditStalkerPortal(
+        portalId: String,
+        portalUrl: String,
+        macAddress: String,
+        name: String? = null,
+        importLiveTv: Boolean? = null,
+        importVod: Boolean? = null,
+        importSeries: Boolean? = null
+    ) {
         val trimmedUrl = portalUrl.trim().trimEnd('/')
         val trimmedMac = macAddress.trim().uppercase()
         if (trimmedUrl.isBlank() || trimmedMac.isBlank()) {
@@ -2681,7 +2703,10 @@ class SettingsViewModel @Inject constructor(
             if (portal.id == portalId) portal.copy(
                 portalUrl = trimmedUrl,
                 macAddress = trimmedMac,
-                name = name?.trim()?.ifBlank { portal.name } ?: portal.name
+                name = name?.trim()?.ifBlank { portal.name } ?: portal.name,
+                importLiveTv = importLiveTv ?: portal.importLiveTv,
+                importVod = importVod ?: portal.importVod,
+                importSeries = importSeries ?: portal.importSeries
             ) else portal
         }
         if (updated == _uiState.value.iptvStalkerPortals) return
@@ -4483,7 +4508,7 @@ class SettingsViewModel @Inject constructor(
     }
 }
 
-private fun IptvConfig.syncSignature(): String {
+internal fun IptvConfig.syncSignature(): String {
     val playlistsSignature = playlists
         .joinToString("|") { playlist ->
             listOf(
@@ -4502,7 +4527,10 @@ private fun IptvConfig.syncSignature(): String {
                 portal.name,
                 portal.portalUrl,
                 portal.macAddress,
-                portal.enabled.toString()
+                portal.enabled.toString(),
+                (portal.importLiveTv ?: true).toString(),
+                (portal.importVod ?: true).toString(),
+                (portal.importSeries ?: true).toString()
             ).joinToString("~")
         }
     return listOf(

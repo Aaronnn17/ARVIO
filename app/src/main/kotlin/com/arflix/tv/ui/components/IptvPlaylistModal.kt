@@ -120,7 +120,10 @@ fun IptvPlaylistModal(
     onSaveStalker: (
         name: String,
         portalUrl: String,
-        macAddress: String
+        macAddress: String,
+        importLiveTv: Boolean,
+        importVod: Boolean,
+        importSeries: Boolean
     ) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -228,7 +231,7 @@ fun IptvPlaylistModal(
     fun saveSource() {
         hideKeyboardAll()
         if (sourceType == IptvSourceType.STALKER) {
-            onSaveStalker(stalkerName, stalkerPortalUrl, stalkerMac)
+            onSaveStalker(stalkerName, stalkerPortalUrl, stalkerMac, importLiveTv, importVod, importSeries)
         } else {
             onSaveIptv(
                 playlistName,
@@ -387,7 +390,6 @@ fun IptvPlaylistModal(
                                         // Jump across to Left Pane
                                         activePane = ActivePane.LEFT
                                         leftFocusedIndex = when {
-                                            sourceType == IptvSourceType.STALKER -> 2
                                             rightFocusedRow == 0 -> 2 // Land on Stalker tab, then Left -> Xtream -> M3U
                                             rightFocusedRow == 1 -> 3 // Live toggle
                                             rightFocusedRow == 2 -> 4 // Movies toggle
@@ -461,17 +463,10 @@ fun IptvPlaylistModal(
                                     hideKeyboardAll()
                                 }
                                 if (activePane == ActivePane.LEFT) {
-                                    if (sourceType == IptvSourceType.STALKER) {
-                                        // Stalker has no toggles; jump to Right Pane
-                                        activePane = ActivePane.RIGHT
-                                        rightFocusedRow = 0
-                                        rightFocusedColumn = 0
-                                    } else {
-                                        if (leftFocusedIndex in 0..2) {
-                                            leftFocusedIndex = 3 // Move to Live toggle
-                                        } else if (leftFocusedIndex < 5) {
-                                            leftFocusedIndex++
-                                        }
+                                    if (leftFocusedIndex in 0..2) {
+                                        leftFocusedIndex = 3 // Move to Live toggle
+                                    } else if (leftFocusedIndex < 5) {
+                                        leftFocusedIndex++
                                     }
                                     true
                                 } else {
@@ -595,53 +590,55 @@ fun IptvPlaylistModal(
 
                             Spacer(modifier = Modifier.height(20.dp))
 
-                            if (sourceType != IptvSourceType.STALKER) {
-                                Text(
-                                    text = stringResource(R.string.settings_content_to_import),
-                                    style = ArflixTypography.caption,
-                                    color = TextSecondary,
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                            Text(
+                                text = stringResource(R.string.settings_content_to_import),
+                                style = ArflixTypography.caption,
+                                color = TextSecondary,
+                                fontWeight = FontWeight.SemiBold
+                            )
 
-                                Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                                ToggleRow(
-                                    label = stringResource(R.string.live),
-                                    value = importLiveTv,
-                                    isFocused = activePane == ActivePane.LEFT && leftFocusedIndex == 3,
-                                    onClick = {
-                                        activePane = ActivePane.LEFT
-                                        leftFocusedIndex = 3
-                                        importLiveTv = !importLiveTv
-                                    }
-                                )
+                            ToggleRow(
+                                label = stringResource(R.string.live),
+                                value = importLiveTv,
+                                isFocused = activePane == ActivePane.LEFT && leftFocusedIndex == 3,
+                                onClick = {
+                                    activePane = ActivePane.LEFT
+                                    leftFocusedIndex = 3
+                                    importLiveTv = !importLiveTv
+                                }
+                            )
 
-                                Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                                ToggleRow(
-                                    label = stringResource(R.string.movies),
-                                    value = importVod,
-                                    isFocused = activePane == ActivePane.LEFT && leftFocusedIndex == 4,
-                                    onClick = {
-                                        activePane = ActivePane.LEFT
-                                        leftFocusedIndex = 4
-                                        importVod = !importVod
-                                    }
-                                )
+                            ToggleRow(
+                                label = stringResource(R.string.movies),
+                                value = importVod,
+                                isFocused = activePane == ActivePane.LEFT && leftFocusedIndex == 4,
+                                onClick = {
+                                    activePane = ActivePane.LEFT
+                                    leftFocusedIndex = 4
+                                    importVod = !importVod
+                                }
+                            )
 
-                                Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                                ToggleRow(
-                                    label = stringResource(R.string.series),
-                                    value = importSeries,
-                                    isFocused = activePane == ActivePane.LEFT && leftFocusedIndex == 5,
-                                    onClick = {
-                                        activePane = ActivePane.LEFT
-                                        leftFocusedIndex = 5
-                                        importSeries = !importSeries
-                                    }
-                                )
-                            } else {
+                            ToggleRow(
+                                label = stringResource(R.string.series),
+                                value = importSeries,
+                                isFocused = activePane == ActivePane.LEFT && leftFocusedIndex == 5,
+                                onClick = {
+                                    activePane = ActivePane.LEFT
+                                    leftFocusedIndex = 5
+                                    importSeries = !importSeries
+                                }
+                            )
+
+                            if (sourceType == IptvSourceType.STALKER) {
+                                Spacer(modifier = Modifier.height(16.dp))
+
                                 // Stalker Portal Info Card
                                 Column(
                                     modifier = Modifier
@@ -1374,29 +1371,27 @@ fun IptvPlaylistModal(
                                 }
                             }
 
-                            if (sourceType != IptvSourceType.STALKER) {
-                                Spacer(modifier = Modifier.height(14.dp))
-                                ToggleRow(
-                                    label = stringResource(R.string.live),
-                                    value = importLiveTv,
-                                    isFocused = false,
-                                    onClick = { importLiveTv = !importLiveTv }
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                ToggleRow(
-                                    label = stringResource(R.string.movies),
-                                    value = importVod,
-                                    isFocused = false,
-                                    onClick = { importVod = !importVod }
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                ToggleRow(
-                                    label = stringResource(R.string.series),
-                                    value = importSeries,
-                                    isFocused = false,
-                                    onClick = { importSeries = !importSeries }
-                                )
-                            }
+                            Spacer(modifier = Modifier.height(14.dp))
+                            ToggleRow(
+                                label = stringResource(R.string.live),
+                                value = importLiveTv,
+                                isFocused = false,
+                                onClick = { importLiveTv = !importLiveTv }
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            ToggleRow(
+                                label = stringResource(R.string.movies),
+                                value = importVod,
+                                isFocused = false,
+                                onClick = { importVod = !importVod }
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            ToggleRow(
+                                label = stringResource(R.string.series),
+                                value = importSeries,
+                                isFocused = false,
+                                onClick = { importSeries = !importSeries }
+                            )
                         }
 
                         // Dedicated Full-Width Paste Button (mirroring InputModal)
