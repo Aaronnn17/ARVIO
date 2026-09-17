@@ -4875,7 +4875,7 @@ fun FullscreenSourcesOverlay(
                                         .onFocusChanged { isFocused = it.isFocused }
                                         .then(if (variant.id == targetKey) initialFocus else Modifier)
                                         .clickable { onPick(variant) }
-                                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                                        .padding(horizontal = 16.dp, vertical = 10.dp) // Reduced vertical padding to accommodate two lines
                                 ) {
                                     // Small vertical indicator for the channel that is currently playing
                                     if (isSelected && !isFocused) {
@@ -4888,14 +4888,26 @@ fun FullscreenSourcesOverlay(
                                         Spacer(modifier = Modifier.width(12.dp))
                                     }
 
-                                    androidx.tv.material3.Text(
-                                        text = variant.name,
-                                        color = textColor,
-                                        fontSize = 15.sp,
-                                        fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Column(verticalArrangement = Arrangement.Center) {
+                                        androidx.tv.material3.Text(
+                                            text = variant.name,
+                                            color = textColor,
+                                            fontSize = 15.sp,
+                                            fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        
+                                        // Extract the category/group name
+                                        val groupName = variant.source.group.takeIf { it.isNotBlank() } ?: "Uncategorized"
+                                        androidx.tv.material3.Text(
+                                            text = groupName,
+                                            color = if (isFocused) Color(0xFF616161) else Color(0xFF9E9E9E), // Dark gray if focused, light gray when idle
+                                            fontSize = 12.sp, // Smaller, subtle text
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
