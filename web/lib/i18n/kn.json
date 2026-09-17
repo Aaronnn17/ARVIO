@@ -6,5 +6,6 @@
   "Collection": "ಸಂಗ್ರಹ",
   "Watching": "ನೋಡುತ್ತಿರುವುದು",
   "Completed": "ಪೂರ್ಣಗೊಂಡಿದೆ",
-  "Dropped": "ಕೈಬಿಟ್ಟಿದೆ"
+  "Dropped": "ಕೈಬಿಟ್ಟಿದೆ",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: Jellyfin-ಹೊಂದಾಣಿಕೆಯ ವಿಳಾಸ ಬಳಸಿ. ಐಚ್ಛಿಕ ಪ್ರೊಫೈಲ್: username#ProfileName. ಸಂರಕ್ಷಿತ ಪ್ರೊಫೈಲ್: password#PIN."
 }

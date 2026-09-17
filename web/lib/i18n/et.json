@@ -4,5 +4,6 @@
   "Collection": "Kogu",
   "Watching": "Vaatamisel",
   "Completed": "Lõpetatud",
-  "Dropped": "Pooleli jäetud"
+  "Dropped": "Pooleli jäetud",
+  "Silo: use the Jellyfin-compatible address. Optional profile: username#ProfileName. Protected profile: password#PIN.": "Silo: kasuta Jellyfiniga ühilduvat aadressi. Valikuline profiil: username#ProfileName. Kaitstud profiil: password#PIN."
 }

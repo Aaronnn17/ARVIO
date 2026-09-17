@@ -329,6 +329,10 @@
     <string name="settings_app_version_label">ARVIO V%1$s</string>
     <string name="settings_label_url">URL</string>
     <string name="settings_home_server_https_note">Use HTTPS where possible. HTTP server URLs are allowed for local networks but are not encrypted.</string>
+    <string name="homeserver_silo_help">Silo: use the Jellyfin-compatible server address supplied by the owner. If needed, enter username#ProfileName (or email#ProfileName). For a protected profile, enter password#PIN. An admin account is not required.</string>
+    <string name="homeserver_silo_profile">Silo needs a profile. Enter username#ProfileName (or email#ProfileName), using the exact profile name from Silo.</string>
+    <string name="homeserver_silo_pin">Silo needs a valid profile PIN. Enter username#ProfileName and use password#PIN in the password field.</string>
+    <string name="homeserver_compat_endpoint">This address did not provide the Jellyfin-compatible login API. For Silo, ask the server owner for its Jellyfin-compatible address; the website may use a different port or URL.</string>
     <string name="settings_label_server_name">Server name</string>
     <string name="settings_ph_server_name">Optional, shown in sources</string>
     <string name="settings_label_server_url">Server URL</string>
