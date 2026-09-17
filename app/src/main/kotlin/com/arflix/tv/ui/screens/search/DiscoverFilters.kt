@@ -196,6 +196,10 @@ data class ReleaseWindow(val from: String?, val to: String?)
  *
  * An exact year is the narrower filter and travels as `primary_release_year` instead, so the
  * window steps aside for it — exactly as it did before there were decades.
+ *
+ * The window itself goes out as `primary_release_date` / `first_air_date`, the first release of
+ * a title. Asked by any release it also caught re-runs, so a film could answer the 2020s and
+ * print 1994 on its own card (B34).
  */
 fun releaseWindowFor(decade: Decade?, year: Int?, today: String): ReleaseWindow {
     if (year != null) return ReleaseWindow(from = null, to = null)
