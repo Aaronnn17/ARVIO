@@ -310,7 +310,7 @@ class DiscoverGridTest {
      */
     @Test fun aChosenLanguageTravelsAsTheTitlesOriginalLanguage() = runBlocking {
         coEvery {
-            repository.discoverMovies(language = "ja", genres = any(), sortBy = any(), minVoteCount = any(), page = any(), year = any(), keywords = any(), releaseDateLte = any(), releaseDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), certificationCountry = any(), certificationLte = any())
+            repository.discoverMovies(language = "ja", genres = any(), sortBy = any(), minVoteCount = any(), page = any(), year = any(), keywords = any(), releaseDateLte = any(), releaseDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), certificationCountry = any(), certificationLte = any(), primaryReleaseDateLte = any(), primaryReleaseDateGte = any())
         } returns listOf(movie(21))
 
         model.selectLanguage("ja")
@@ -323,7 +323,7 @@ class DiscoverGridTest {
     /** The series path reaches TMDB through its own wrapper, so it needs its own proof. */
     @Test fun theLanguageReachesTheSeriesRequestToo() = runBlocking {
         coEvery {
-            repository.discoverTv(language = "ko", genres = any(), sortBy = any(), minVoteCount = any(), page = any(), year = any(), keywords = any(), airDateLte = any(), airDateGte = any(), minVoteAverage = any(), maxVoteAverage = any())
+            repository.discoverTv(language = "ko", genres = any(), sortBy = any(), minVoteCount = any(), page = any(), year = any(), keywords = any(), airDateLte = any(), airDateGte = any(), minVoteAverage = any(), maxVoteAverage = any(), firstAirDateLte = any(), firstAirDateGte = any())
         } returns listOf(show(22))
 
         model.selectType(DiscoverType.TV_SHOWS)
