@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.screens.search
 
 import com.arflix.tv.ui.components.LocalBottomBarInset
+import kotlinx.coroutines.CancellationException
 import androidx.activity.compose.BackHandler
 import android.content.res.Configuration
 import android.os.SystemClock
@@ -286,7 +287,11 @@ fun SearchScreen(
             currentRowIndex = 0
             currentItemIndex = 0
             gridFocusIndex = 0
-            runCatching { discoverGridState.scrollToItem(0) }
+            try {
+                discoverGridState.scrollToItem(0)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+            }
         }
     }
 
@@ -320,12 +325,12 @@ fun SearchScreen(
         // the screen is composed then immediately navigated away). Swallow that
         // specific case so it doesn't surface to the user as a crash — TalkBack
         // focus will re-claim on next frame.
-        if (!isTouchDevice && focusZone != FocusZone.RESULTS) runCatching { searchFocusRequester.requestFocus() }
+        if (!isTouchDevice && focusZone != FocusZone.RESULTS) try { searchFocusRequester.requestFocus() } catch (_: Exception) {}
         suppressSelectUntilMs = SystemClock.elapsedRealtime() + SEARCH_SELECT_SUPPRESS_MS
     }
     LaunchedEffect(isSearchEditing, searchEditRequestNonce) {
         if (isSearchEditing) {
-            runCatching { textInputFocusRequester.requestFocus() }
+            try { textInputFocusRequester.requestFocus() } catch (_: Exception) {}
             keyboardController?.show()
         }
     }
@@ -342,7 +347,7 @@ fun SearchScreen(
         if (imeVisible) keyboardWasSeen = true
         if (!searchEditingSurvivesKeyboard(imeVisible, keyboardWasSeen)) {
             isSearchEditing = false
-            runCatching { searchFocusRequester.requestFocus() }
+            try { searchFocusRequester.requestFocus() } catch (_: Exception) {}
         }
     }
     // Coming back from the background composes nothing anew, so the entry guard above would not
@@ -406,7 +411,7 @@ fun SearchScreen(
         if (isSearchEditing) {
             isSearchEditing = false
             keyboardController?.hide()
-            runCatching { searchFocusRequester.requestFocus() }
+            try { searchFocusRequester.requestFocus() } catch (_: Exception) {}
         } else if (openDropdown != null) {
             // The teuerste Falle of this round: BACK closes the LIST first. Closing the whole
             // panel here would throw away the half-made entry the list was opened for.
@@ -423,15 +428,15 @@ fun SearchScreen(
                         focusZone = FocusZone.FILTERS
                         val selectedIdx = quickFilters.indexOfFirst { it.isSet }.coerceAtLeast(0)
                         focusedFilterIndex = if (focusedFilterIndex in quickFilters.indices) focusedFilterIndex else selectedIdx
-                        runCatching { filtersFocusRequester.requestFocus() }
+                        try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
                     } else {
                         focusZone = FocusZone.SEARCH_INPUT
-                        runCatching { searchFocusRequester.requestFocus() }
+                        try { searchFocusRequester.requestFocus() } catch (_: Exception) {}
                     }
                 }
                 FocusZone.FILTERS -> {
                     focusZone = FocusZone.SEARCH_INPUT
-                    runCatching { searchFocusRequester.requestFocus() }
+                    try { searchFocusRequester.requestFocus() } catch (_: Exception) {}
                 }
                 FocusZone.SEARCH_INPUT -> {
                     focusZone = FocusZone.SIDEBAR
@@ -454,7 +459,7 @@ fun SearchScreen(
             if (isSearchEditing && (event.key == Key.Back || event.key == Key.Escape)) {
                 isSearchEditing = false
                 keyboardController?.hide()
-                runCatching { searchFocusRequester.requestFocus() }
+                try { searchFocusRequester.requestFocus() } catch (_: Exception) {}
                 consumedDpadKey = event.key
                 return@onPreviewKeyEvent true
             }
@@ -538,7 +543,7 @@ fun SearchScreen(
                             focusZone = FocusZone.FILTERS
                             val selectedIdx = quickFilters.indexOfFirst { it.isSet }.coerceAtLeast(0)
                             focusedFilterIndex = if (focusedFilterIndex in quickFilters.indices) focusedFilterIndex else selectedIdx
-                            runCatching { filtersFocusRequester.requestFocus() }
+                            try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
                         }
                         else { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus() }
                         true
@@ -578,7 +583,7 @@ fun SearchScreen(
                             focusZone = FocusZone.FILTERS
                             val selectedIdx = quickFilters.indexOfFirst { it.isSet }.coerceAtLeast(0)
                             focusedFilterIndex = if (focusedFilterIndex in quickFilters.indices) focusedFilterIndex else selectedIdx
-                            runCatching { filtersFocusRequester.requestFocus() }
+                            try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
                             true
                         }
                         else { focusZone = FocusZone.SEARCH_INPUT; searchFocusRequester.requestFocus(); true }
@@ -595,7 +600,7 @@ fun SearchScreen(
                             focusZone = FocusZone.FILTERS
                             val selectedIdx = quickFilters.indexOfFirst { it.isSet }.coerceAtLeast(0)
                             focusedFilterIndex = if (selectedIdx in quickFilters.indices) selectedIdx else 0
-                            runCatching { filtersFocusRequester.requestFocus() }
+                            try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
                         }
                         else if (canEnterResults) {
                             resultsLastNavEventTime = SystemClock.elapsedRealtime()
@@ -707,7 +712,7 @@ fun SearchScreen(
                                 focusedFilterIndex = focusAfterClearChip(focusedFilterIndex)
                             }
                             chip?.onActivate?.invoke()
-                            runCatching { filtersFocusRequester.requestFocus() }
+                            try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
                             true
                         }
                         FocusZone.RESULTS -> {
@@ -795,7 +800,7 @@ fun SearchScreen(
                             focusZone = FocusZone.FILTERS
                             val selectedIdx = quickFilters.indexOfFirst { it.isSet }.coerceAtLeast(0)
                             focusedFilterIndex = if (selectedIdx in quickFilters.indices) selectedIdx else 0
-                            runCatching { filtersFocusRequester.requestFocus() }
+                            try { filtersFocusRequester.requestFocus() } catch (_: Exception) {}
                         } else if (canEnterResults) {
                             resultsLastNavEventTime = SystemClock.elapsedRealtime()
                             focusZone = FocusZone.RESULTS

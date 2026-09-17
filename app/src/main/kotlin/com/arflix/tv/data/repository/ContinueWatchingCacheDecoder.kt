@@ -19,9 +19,16 @@ internal fun sanitizeContinueWatchingItems(items: List<ContinueWatchingItem?>?):
 
 internal fun decodeContinueWatchingCache(json: String, gson: Gson): List<ContinueWatchingItem> {
     if (json.isBlank()) return emptyList()
-    val array = runCatching { JsonParser.parseString(json).takeIf { it.isJsonArray }?.asJsonArray }
-        .getOrNull() ?: return emptyList()
-    return sanitizeContinueWatchingItems(array.map { element ->
-        runCatching { gson.fromJson(element, ContinueWatchingItem::class.java) }.getOrNull()
+    val array = try {
+        JsonParser.parseString(json).takeIf { it.isJsonArray }?.asJsonArray
+    } catch (_: Exception) {
+        null
+    } ?: return emptyList()
+    return sanitizeContinueWatchingItems(array.mapNotNull { element ->
+        try {
+            gson.fromJson(element, ContinueWatchingItem::class.java)
+        } catch (_: Exception) {
+            null
+        }
     })
 }

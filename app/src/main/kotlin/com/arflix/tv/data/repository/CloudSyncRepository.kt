@@ -863,9 +863,11 @@ class CloudSyncRepository @Inject constructor(
 
         // Per-field last-writer-wins timestamps (multi-device merge). Diff-stamps any locally
         // changed scalar setting and embeds the map so push/apply can merge field-by-field.
-        val capturedTimestamps = runCatching {
+        val capturedTimestamps = try {
             prefs[cloudSyncFieldTsKey]?.let(::JSONObject) ?: JSONObject()
-        }.getOrDefault(JSONObject())
+        } catch (_: JSONException) {
+            JSONObject()
+        }
         root.put("fieldUpdatedAt", stampAndLoadFieldTs(root, capturedTimestamps))
 
         return root.toString()
