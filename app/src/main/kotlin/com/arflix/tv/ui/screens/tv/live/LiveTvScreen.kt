@@ -2746,7 +2746,7 @@ fun LiveTvScreen(
 
     var playbackQuality by remember(exoPlayer) { mutableStateOf<LivePlaybackQuality?>(null) }
     
-    // --- VARIABLES DE ESTADO PARA EL HUD TÉCNICO ---
+    // --- STATE VARIABLES FOR THE TECHNICAL HUD ---
     var streamResolution by remember { mutableStateOf("") }
     var streamFps by remember { mutableStateOf("") }
     var streamVideoCodec by remember { mutableStateOf("") }
@@ -2761,7 +2761,7 @@ fun LiveTvScreen(
             if (vFormat != null) {
                 if (vFormat.height > 0) streamResolution = "${vFormat.height}p"
                 
-                // Intento primario: Si el manifiesto declara los FPS, genial.
+                // Primary attempt: If the manifest declares the FPS, great.
                 if (vFormat.frameRate > 0f) streamFps = "${Math.round(vFormat.frameRate)} fps"
                 
                 val vMime = vFormat.sampleMimeType.orEmpty()
@@ -2814,12 +2814,12 @@ fun LiveTvScreen(
             }
         }
 
-        // --- EL CONTADOR FÍSICO DE FOTOGRAMAS (INFALIBLE) ---
+        // --- THE PHYSICAL FRAME COUNTER (FAIL-SAFE) ---
         var frameCount = 0
         var lastFpsTime = android.os.SystemClock.elapsedRealtime()
 
         val frameMetadataListener = androidx.media3.exoplayer.video.VideoFrameMetadataListener { _, _, _, mediaFormat ->
-            // Intento secundario: Si Android (MediaCodec) pudo leer el hardware, lo cogemos
+            // Secondary attempt: If Android (MediaCodec) was able to detect the hardware, we'll use it
             if (streamFps.isBlank() && mediaFormat != null && mediaFormat.containsKey(android.media.MediaFormat.KEY_FRAME_RATE)) {
                 try {
                     val hwFps = mediaFormat.getInteger(android.media.MediaFormat.KEY_FRAME_RATE)
@@ -2830,14 +2830,14 @@ fun LiveTvScreen(
                 } catch (e: Exception) {}
             }
 
-            // Plan Z: Contar físicamente las imágenes pintadas por pantalla
+            // Plan Z: Physically count the images painted on the screen
             frameCount++
             val now = android.os.SystemClock.elapsedRealtime()
             val elapsed = now - lastFpsTime
-            if (elapsed >= 2000L) { // Evaluamos cada 2 segundos exactos
+            if (elapsed >= 2000L) { // We evaluate every 2 seconds exactly
                 val realFps = Math.round(frameCount / (elapsed / 1000f))
                 
-                // Evitamos pintar "0 fps" cuando el vídeo hace buffering o da un tirón
+                // We avoid displaying “0 fps” when the video is buffering or stuttering
                 if (realFps in 20..120) { 
                     val newFpsStr = "$realFps fps"
                     if (streamFps != newFpsStr) {
