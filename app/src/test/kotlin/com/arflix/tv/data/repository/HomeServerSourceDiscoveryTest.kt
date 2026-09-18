@@ -2,6 +2,7 @@ package com.arflix.tv.data.repository
 
 import android.app.Application
 import androidx.datastore.preferences.core.stringPreferencesKey
+import com.arflix.tv.testing.IsolatedSettingsStoreRule
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
@@ -10,6 +11,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Rule
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -21,6 +23,8 @@ import java.util.UUID
 @Config(sdk = [28], application = Application::class)
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class HomeServerSourceDiscoveryTest {
+    @get:Rule val settingsStore = IsolatedSettingsStoreRule()
+
     @Test fun `Silo connects a non admin profile through its compatible base path`() = runBlocking {
         val repository = repository(HomeServerKind.JELLYFIN) { request ->
             when (request.url.encodedPath) {
