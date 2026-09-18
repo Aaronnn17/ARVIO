@@ -108,7 +108,7 @@ internal fun appBottomBarSpec(mode: AppBottomBarMode): AppBottomBarSpec = when (
         itemSpacingDp = 1,
         iconHorizontalPaddingDp = 10,
         iconVerticalPaddingDp = 2,
-        iconSizeDp = 22,
+        iconSizeDp = 20,
         indicatorSizeDp = 3,
         labelFontSizeSp = 10,
     )
