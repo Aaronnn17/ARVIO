@@ -42,6 +42,15 @@ class ChannelLogoIndexTest {
         assertEquals(listOf("https://example.invalid/News.my.png"), local.candidates(null, "[MY] News HD"))
         assertTrue(local.candidates(null, "News HD").isEmpty())
     }
+    @Test fun ambiguousRegionsCanOnlyUseTheirSharedArtwork() {
+        val shared = "https://example.invalid/shared.png"
+        val local = ChannelLogoIndex(listOf(
+            entry("Sports.us", "US", "Sports").copy(urls = listOf(shared, "us-only")),
+            entry("Sports.nl", "NL", "Sports").copy(urls = listOf("nl-only", shared)),
+        ))
+        assertEquals(listOf(shared), local.candidates(null, "4K| Sports UHD"))
+        assertEquals(listOf("nl-only", shared), local.candidates(null, "NL| Sports UHD"))
+    }
     @Test fun neverDropChannelNumbersTimeShiftsOrRegions() {
         assertEquals(listOf("https://example.invalid/Channel4Plus1.uk.png"), index.candidates(null, "Channel 4 +1 HD"))
         for (name in listOf("Channel 5", "BBC One +1", "NBC", "NBC Boston", "Unknown", "FR | BBC One")) {

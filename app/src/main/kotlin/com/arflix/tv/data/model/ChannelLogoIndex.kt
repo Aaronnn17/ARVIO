@@ -5,7 +5,7 @@ import java.util.Locale
 
 data class ChannelLogoEntry(val id: String, val country: String, val names: List<String>, val urls: List<String>)
 
-/** Exact identity matching only; unknown and ambiguous names intentionally have no logo. */
+/** Exact identity matching; ambiguous names can only use artwork shared by every match. */
 class ChannelLogoIndex(entries: List<ChannelLogoEntry>) {
     private val byId = entries.associateBy { it.id.lowercase(Locale.ROOT) }
     private val byName = buildMap<String, List<ChannelLogoEntry>> {
@@ -17,9 +17,14 @@ class ChannelLogoIndex(entries: List<ChannelLogoEntry>) {
     fun candidates(epgId: String?, name: String, guideName: String? = null): List<String> {
         byId[epgId?.trim()?.lowercase(Locale.ROOT)]?.let { return it.urls }
         val (country, title) = channelIdentity(name)
-        fun lookup(label: String, region: String?): List<String> = byName[nameKey(label)].orEmpty().filter {
-            region == null || canonicalCountry(it.country) == region
-        }.singleOrNull()?.urls.orEmpty()
+        fun lookup(label: String, region: String?): List<String> {
+            val entries = byName[nameKey(label)].orEmpty().filter {
+                region == null || canonicalCountry(it.country) == region
+            }
+            return entries.firstOrNull()?.urls.orEmpty().filter { url ->
+                entries.all { url in it.urls }
+            }
+        }
         val matches = lookup(title, country)
         if (matches.isNotEmpty() || guideName.isNullOrBlank()) return matches
         val (guideCountry, guideTitle) = channelIdentity(guideName)
