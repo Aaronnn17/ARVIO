@@ -14,27 +14,41 @@ class ChannelLogoIndex(entries: List<ChannelLogoEntry>) {
         } }
     }
 
-    fun candidates(epgId: String?, name: String): List<String> {
+    fun candidates(epgId: String?, name: String, guideName: String? = null): List<String> {
         byId[epgId?.trim()?.lowercase(Locale.ROOT)]?.let { return it.urls }
-        val cleaned = name.trim().replace(qualityPrefix, "")
+        val (country, title) = channelIdentity(name)
+        fun lookup(label: String, region: String?): List<String> = byName[nameKey(label)].orEmpty().filter {
+            region == null || canonicalCountry(it.country) == region
+        }.singleOrNull()?.urls.orEmpty()
+        val matches = lookup(title, country)
+        if (matches.isNotEmpty() || guideName.isNullOrBlank()) return matches
+        val (guideCountry, guideTitle) = channelIdentity(guideName)
+        if (country != null && guideCountry != null && country != guideCountry) return emptyList()
+        return lookup(guideTitle, country ?: guideCountry)
+    }
+
+    private fun channelIdentity(name: String): Pair<String?, String> {
+        val cleaned = qualityPrefix.replace(name.trim(), "")
         val prefix = countryPrefix.find(cleaned)
-        val country = prefix?.groupValues?.get(1)?.uppercase(Locale.ROOT)?.let { countries[it] }
-        val title = if (country != null) cleaned.substring(prefix!!.range.last + 1) else cleaned
-        val matches = byName[nameKey(title)].orEmpty().filter {
-            country == null || (countries[it.country.uppercase(Locale.ROOT)] ?: it.country.uppercase(Locale.ROOT)) == country
-        }
-        return matches.singleOrNull()?.urls.orEmpty()
+        val code = prefix?.groupValues?.drop(1)?.firstOrNull { it.isNotBlank() }
+        val country = code?.let(::canonicalCountry)
+        return country to if (country != null) cleaned.substring(prefix!!.range.last + 1) else cleaned
     }
 
     companion object {
+        private val isoCountries = Locale.getISOCountries().toSet()
+        private fun canonicalCountry(value: String): String? {
+            val code = value.uppercase(Locale.ROOT)
+            return countries[code] ?: code.takeIf { it in isoCountries }
+        }
         private val countries = mapOf("UK" to "GB", "GB" to "GB", "USA" to "US", "US" to "US",
             "NL" to "NL", "NLD" to "NL", "DE" to "DE", "GER" to "DE", "FR" to "FR",
             "ES" to "ES", "IT" to "IT", "CA" to "CA", "AU" to "AU", "PT" to "PT",
             "BR" to "BR", "BE" to "BE", "CH" to "CH", "AT" to "AT", "IE" to "IE",
             "DK" to "DK", "DNK" to "DK", "SE" to "SE", "NO" to "NO", "FI" to "FI",
             "PL" to "PL", "RO" to "RO", "TR" to "TR", "IN" to "IN", "AR" to "AR")
-        private val qualityPrefix = Regex("^(?:4K|8K|UHD|FHD|HD)\\s*[|:]\\s*", RegexOption.IGNORE_CASE)
-        private val countryPrefix = Regex("^([A-Za-z]{2,3})(?:-[A-Za-z0-9]+)?\\s*[|:]\\s*")
+        private val qualityPrefix = Regex("^(?:(?:4K|8K|UHD|FHD|HD)\\s*[|:]\\s*)+", RegexOption.IGNORE_CASE)
+        private val countryPrefix = Regex("^(?:\\[([A-Za-z]{2,3})]|\\(([A-Za-z]{2,3})\\)|([A-Za-z]{2,3})(?:-[A-Za-z0-9]+)?\\s*[|:]|([A-Za-z]{2,3})\\s+)\\s*")
         private val quality = Regex("(?:[\\s|_-]+(?:SD|HD|FHD|UHD|4K|8K|HEVC|H265|H264|RAW|BACKUP|1080P|720P|2160P))+$", RegexOption.IGNORE_CASE)
         private val marks = Regex("\\p{M}+")
         private val punctuation = Regex("[^\\p{L}\\p{N}+]")

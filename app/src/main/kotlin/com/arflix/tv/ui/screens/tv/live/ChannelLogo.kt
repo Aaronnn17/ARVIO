@@ -59,13 +59,13 @@ fun ChannelLogo(
     val providerUrl = remember(channel.logo) { safeChannelLogoUrl(channel.logo) }
     var failed by remember(channel.id, providerUrl, fallbackEnabled) { mutableStateOf(emptySet<String>()) }
     var alternatives by remember(channel.id, providerUrl) { mutableStateOf(emptyList<String>()) }
-    LaunchedEffect(channel.id, channel.source.epgId, channel.name, providerUrl, fallbackEnabled, failed) {
+    LaunchedEffect(channel.id, channel.source.epgId, channel.source.tvgName, channel.name, providerUrl, fallbackEnabled, failed) {
             if (!fallbackEnabled || (providerUrl != null && providerUrl !in failed)) {
                 alternatives = emptyList()
                 return@LaunchedEffect
             }
             alternatives = try {
-                ChannelLogoDirectory.candidates(context, channel.source.epgId, channel.name)
+                ChannelLogoDirectory.candidates(context, channel.source.epgId, channel.name, channel.source.tvgName)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {

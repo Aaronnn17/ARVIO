@@ -47,7 +47,8 @@ class GuideHeaderDeviceTest {
         compose.onNodeWithTag("iptv-guide-category-title").assertTextEquals("Recently Watched").assertIsDisplayed()
         assertEquals(firstRowTop, compose.onNodeWithTag("iptv-channel:header:1").fetchSemanticsNode().boundsInRoot.top, 0.1f)
         screenshot("guide-header-sidebar-closed.png")
-        compose.onNodeWithContentDescription("Groups").performClick()
+        compose.onNodeWithContentDescription("Groups").assertDoesNotExist()
+        compose.runOnIdle { sidebarOpen.value = true }
         compose.onNodeWithTag("iptv-guide-category-title").assertDoesNotExist()
     }
 
