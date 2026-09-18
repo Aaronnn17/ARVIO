@@ -8706,6 +8706,7 @@ class IptvRepository @Inject constructor(
         val gate = Semaphore(xtreamShortEpgConcurrency)
         val listingsResult = ConcurrentLinkedQueue<XtreamEpgListing>()
         val simpleFallbacks = AtomicInteger(0)
+        val processedStreams = ConcurrentHashMap.newKeySet<Int>()
         val completed = withTimeoutOrNull(timeoutMillis) {
             withContext(Dispatchers.IO.limitedParallelism(xtreamShortEpgConcurrency)) {
                 val sampleLogged = AtomicBoolean(false)
@@ -8765,6 +8766,7 @@ class IptvRepository @Inject constructor(
                                     if (error is kotlinx.coroutines.CancellationException) throw error
                                     hadError = true
                                 }
+                                processedStreams.add(sid)
                                 onStreamProcessed(sid, hadError)
                             }
                         }
@@ -8773,6 +8775,8 @@ class IptvRepository @Inject constructor(
             }
         }
         if (completed == null) {
+            // A cancelled batch is not a successful empty provider response.
+            distinctStreamIds.filterNot { it in processedStreams }.forEach { onStreamProcessed(it, true) }
             System.err.println(
                 "[EPG] Xtream short EPG timed out after ${timeoutMillis}ms; " +
                     "keeping ${listingsResult.size} fetched listings"
@@ -8843,14 +8847,7 @@ class IptvRepository @Inject constructor(
     }
 
     private fun xtreamShortEpgTimeout(streamCount: Int): Long =
-        when {
-            streamCount > 4_000 -> 90_000L
-            streamCount > 1_200 -> 45_000L
-            streamCount > 256 -> 18_000L
-            streamCount > 64 -> 8_000L
-            streamCount > 16 -> 5_000L
-            else -> 2_500L
-        }
+        shortGuideBatchTimeoutMs(streamCount)
 
     private fun xtreamFullCatchupEpgTimeout(streamCount: Int): Long =
         when {
@@ -10278,6 +10275,9 @@ class IptvRepository @Inject constructor(
             channel.tvgName?.takeIf { it.isNotBlank() }?.let { tvgName ->
                 candidates += guideKeyCandidates(tvgName)
             }
+            listOf(channel.epgId, channel.name, channel.tvgName).forEach { raw ->
+                GuideChannelIdentity.key(raw)?.let(candidates::add)
+            }
             extractAttr(channel.rawTitle, "tvg-name")?.takeIf { it.isNotBlank() }?.let { tvgName ->
                 candidates += guideKeyCandidates(tvgName)
             }
@@ -10324,6 +10324,7 @@ class IptvRepository @Inject constructor(
                 .forEach { raw ->
                     addNormalized(normalizeChannelKey(raw))
                     addNormalized(normalizeLooseKey(raw))
+                    GuideChannelIdentity.key(raw)?.let(::addNormalized)
                 }
 
             // Numeric API EPG IDs often differ from the XMLTV IDs. Keep the
@@ -10356,27 +10357,45 @@ class IptvRepository @Inject constructor(
     ): List<IptvChannel> {
         val normalized = normalizeChannelKey(xmlChannelKey)
 
+        // Match the country-qualified identity before lossy prefix/domain aliases.
+        // Include quality variants even when only one variant has the provider's XMLTV ID.
+        val regionalKeys = GuideChannelIdentity.key(xmlChannelKey)?.let(::listOf)
+            ?: xmlChannelNameMap[normalized].orEmpty().mapNotNull(GuideChannelIdentity::key)
+        val regional = regionalKeys.flatMap { keyLookup[it].orEmpty() }
+        if (regional.isNotEmpty()) {
+            return (keyLookup[normalized].orEmpty() + regional).distinctBy { it.id }
+        }
+        val regions = regionalKeys.map { it.substringBeforeLast(':') }.toSet()
+        fun compatible(matches: List<IptvChannel>): List<IptvChannel> {
+            if (regions.isEmpty()) return matches
+            return matches.filter { channel ->
+                val identities = listOf(channel.epgId, channel.name, channel.tvgName)
+                    .mapNotNull(GuideChannelIdentity::key)
+                identities.isEmpty() || identities.any { it.substringBeforeLast(':') in regions }
+            }
+        }
+
         val exact = keyLookup[normalized].orEmpty()
         val names = xmlChannelNameMap[normalized].orEmpty()
-        val named = names.flatMap { display ->
+        val named = compatible(names.flatMap { display ->
             keyLookup[normalizeLooseKey(stripQualitySuffixes(display))].orEmpty()
-        }
+        })
         if (exact.isNotEmpty() || named.isNotEmpty()) return (exact + named).distinctBy { it.id }
 
         guideKeyCandidates(xmlChannelKey).forEach { key ->
-            keyLookup[key]?.let { return it }
+            keyLookup[key]?.let(::compatible)?.takeIf { it.isNotEmpty() }?.let { return it }
         }
 
         names.forEach { display ->
             guideKeyCandidates(display).forEach { key ->
-                keyLookup[key]?.let { return it }
+                keyLookup[key]?.let(::compatible)?.takeIf { it.isNotEmpty() }?.let { return it }
             }
         }
         names.forEach { display ->
             // Only unprefixed XMLTV names may use an unambiguous region-stripped alias.
             if (stripGuidePrefix(display) == display.trim()) {
                 val alias = normalizeLooseKey(stripQualitySuffixes(display))
-                keyLookup["guide-fallback:$alias"]?.let { return it }
+                keyLookup["guide-fallback:$alias"]?.let(::compatible)?.takeIf { it.isNotEmpty() }?.let { return it }
             }
         }
         return emptyList()
@@ -10464,6 +10483,7 @@ class IptvRepository @Inject constructor(
             }
             .filter { it.isNotBlank() }
             .toSet()
+            .let { keys -> GuideChannelIdentity.key(raw)?.let { keys + it } ?: keys }
 
         guideKeyCandidatesCache[raw] = result
         return result

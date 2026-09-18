@@ -652,11 +652,7 @@ class TvViewModel @Inject constructor(
     }
 
     private fun hasUsefulVisibleGuideData(item: com.arflix.tv.data.model.IptvNowNext?): Boolean {
-        if (!hasProgramData(item)) return false
-        if (item == null) return false
-        if (item.next != null || item.later != null || item.upcoming.isNotEmpty()) return true
-        val live = item.now ?: return false
-        return live.endUtcMillis - System.currentTimeMillis() > 45L * 60_000L
+        return hasUsefulVisibleGuideData(item, System.currentTimeMillis())
     }
 
     private fun hasRichSelectedGuideData(item: com.arflix.tv.data.model.IptvNowNext?): Boolean {
@@ -1122,11 +1118,11 @@ class TvViewModel @Inject constructor(
             )
             return
         }
-        // Stalker channels never carry epgId/tvgName (M3U/Xtream identity fields) - they're
-        // matched by channel id instead (see StalkerApi.getEpg/IptvRepository), so treat a
-        // Stalker channel id as its own "has identity for guide backfill" signal too.
+        // XMLTV can match display names even when the playlist has no tvg-id/tvg-name.
+        // Stalker uses its own channel IDs instead of M3U/Xtream identity fields.
         if (!force && !largeList && channels.none { channel ->
                 !channel.epgId.isNullOrBlank() || !channel.tvgName.isNullOrBlank() ||
+                    (LiveTvGuideSources.hasXmltvSource(state.config) && channel.name.isNotBlank()) ||
                     StalkerPortalSupport.portalIdFromChannelId(channel.id) != null
             }
         ) {

@@ -726,6 +726,8 @@ fun PlayerScreen(
     val lastRenderedVideoFrameUs = remember {
         java.util.concurrent.atomic.AtomicLong(androidx.media3.common.C.TIME_UNSET)
     }
+    val playbackFrameRate = remember { com.arflix.tv.util.PlaybackFrameRate() }
+    var frameRateSurface by remember { mutableStateOf<android.view.Surface?>(null) }
     var playerReleased by remember { mutableStateOf(false) }
 
     // Picture-in-Picture state
@@ -1146,6 +1148,7 @@ fun PlayerScreen(
             .build()
 
         ExoPlayer.Builder(context)
+            .setVideoChangeFrameRateStrategy(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
             .setMediaSourceFactory(mediaSourceFactory)
             .setRenderersFactory(
                 aiRenderersFactory
@@ -1201,8 +1204,9 @@ fun PlayerScreen(
             .build().apply {
                 // Ensure volume is at maximum
                 volume = 1.0f
-                setVideoFrameMetadataListener { presentationTimeUs, _, _, _ ->
+                setVideoFrameMetadataListener { presentationTimeUs, _, format, _ ->
                     lastRenderedVideoFrameUs.set(presentationTimeUs)
+                    playbackFrameRate.onFrame(presentationTimeUs, format.frameRate)
                 }
 
                 // Add error listener to try next stream on codec errors
@@ -2006,17 +2010,48 @@ fun PlayerScreen(
     }
 
     // Frame rate matching: set ExoPlayer strategy + actual display mode switching
-    val frameRateActivity = context as? android.app.Activity
-    LaunchedEffect(uiState.frameRateMatchingMode) {
+    val frameRateActivity = activity
+    LaunchedEffect(exoPlayer, uiState.frameRateMatchingMode) {
         if (playerReleased) return@LaunchedEffect
-        // We apply display-mode matching explicitly before playback starts.
-        // Keep Media3 runtime switching off to avoid late black-screen switches
-        // once playback has already begun.
-        val effectiveStrategy = resolveFrameRateOffStrategy()
-        runCatching {
-            exoPlayer.javaClass
-                .getMethod("setVideoChangeFrameRateStrategy", Int::class.javaPrimitiveType)
-                .invoke(exoPlayer, effectiveStrategy)
+        val seamless = uiState.frameRateMatchingMode.equals("Seamless only", ignoreCase = true)
+        exoPlayer.setVideoChangeFrameRateStrategy(
+            if (seamless) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS
+            else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
+        )
+        if (!uiState.frameRateMatchingMode.equals("Always", ignoreCase = true)) {
+            frameRateActivity?.let { com.arflix.tv.util.FrameRateUtils.restoreOriginalMode(it) }
+        }
+    }
+
+    LaunchedEffect(exoPlayer, frameRateActivity, frameRateSurface, uiState.frameRateMatchingMode) {
+        if (!uiState.frameRateMatchingMode.equals("Always", ignoreCase = true)) return@LaunchedEffect
+        val targetActivity = frameRateActivity ?: return@LaunchedEffect
+        playbackFrameRate.rate.collect { fps ->
+            if (!playerReleased && fps > 0f) {
+                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    frameRateSurface?.takeIf { it.isValid }?.let { surface ->
+                        runCatching {
+                            surface.setFrameRate(fps, android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                                android.view.Surface.CHANGE_FRAME_RATE_ALWAYS)
+                        }
+                    }
+                }
+                // Older HDMI devices (including Shield) require an explicit display-mode request.
+                com.arflix.tv.util.FrameRateUtils.applyFrameRateMode(targetActivity, fps)
+            }
+        }
+    }
+
+    DisposableEffect(frameRateSurface, uiState.frameRateMatchingMode) {
+        val surface = frameRateSurface
+        val wasAlways = uiState.frameRateMatchingMode.equals("Always", ignoreCase = true)
+        onDispose {
+            if (wasAlways && android.os.Build.VERSION.SDK_INT >= 31 && surface?.isValid == true) {
+                runCatching {
+                    surface.setFrameRate(0f, android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                        android.view.Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS)
+                }
+            }
         }
     }
 
@@ -2081,26 +2116,7 @@ fun PlayerScreen(
                 .orEmpty()
                 .safePlaybackHeaders()
 
-            // Never block first frame on MediaExtractor probing. Use a cached
-            // frame-rate if available and prewarm the cache in the background.
-            frameRateActivity?.let { activity ->
-                val mode = uiState.frameRateMatchingMode
-                if (mode == "Off" || mode.isBlank()) {
-                    com.arflix.tv.util.FrameRateUtils.restoreOriginalMode(activity)
-                } else {
-                    val cachedDetection = com.arflix.tv.util.FrameRateUtils.getCachedFrameRate(url)
-                    if (cachedDetection != null) {
-                        com.arflix.tv.util.FrameRateUtils.applyFrameRateMode(activity, cachedDetection.snapped)
-                    } else {
-                        launch(kotlinx.coroutines.Dispatchers.IO) {
-                            com.arflix.tv.util.FrameRateUtils.detectFrameRateCached(
-                                sourceUrl = url,
-                                headers = baseRequestHeaders + streamHeaders
-                            )
-                        }
-                    }
-                }
-            }
+            playbackFrameRate.reset()
 
             val isNewStartupSource = startupUrlLock != url
             if (isNewStartupSource) {
@@ -3520,6 +3536,19 @@ fun PlayerScreen(
                         useController = false
                         setKeepContentOnPlayerReset(true)
                         resizeMode = playerResizeMode
+                        (videoSurfaceView as? SurfaceView)?.holder?.addCallback(
+                            object : android.view.SurfaceHolder.Callback {
+                                override fun surfaceCreated(holder: android.view.SurfaceHolder) {
+                                    frameRateSurface = holder.surface
+                                }
+                                override fun surfaceChanged(holder: android.view.SurfaceHolder, format: Int, width: Int, height: Int) {
+                                    frameRateSurface = holder.surface
+                                }
+                                override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {
+                                    frameRateSurface = null
+                                }
+                            }
+                        )
 
                         // Enable subtitle view with styling based on user preference
                         subtitleView?.apply {
@@ -6813,15 +6842,6 @@ private fun playbackStartupDiag(message: String) {
     if (PLAYER_SCREEN_DIAGNOSTICS) {
         System.err.println("[PlaybackStartup] $message")
     }
-}
-
-private fun resolveFrameRateOffStrategy(): Int {
-    return readMedia3FrameRateConst("VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF", fallback = 0)
-}
-
-
-private fun readMedia3FrameRateConst(fieldName: String, fallback: Int): Int {
-    return runCatching { C::class.java.getField(fieldName).getInt(null) }.getOrDefault(fallback)
 }
 
 private object PlaybackCacheSingleton {

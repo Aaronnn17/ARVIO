@@ -3877,6 +3877,7 @@ fun LiveTvScreen(
                         modifier = Modifier.weight(1f),
                         sidebarOpen = sidebarExpanded,
                     ) else EpgGrid(
+                        sidebarOpen = sidebarExpanded,
                         channels = filteredChannels,
                         playbackQuality = playbackQuality,
                         categoryTitle = sportsSidebarTree.byId(selectedCategoryId)?.label ?: "All Channels",

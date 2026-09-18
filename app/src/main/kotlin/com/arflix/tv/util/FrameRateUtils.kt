@@ -10,7 +10,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.roundToInt
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -75,27 +74,13 @@ object FrameRateUtils {
         return abs(refreshRate - target) <= tolerance
     }
 
-    private fun pickBestMode(modes: List<Display.Mode>, target: Float): Display.Mode? {
-        if (target <= 0f) return null
-        val closest = modes.minByOrNull { abs(it.refreshRate - target) } ?: return null
-        return if (matchesTarget(closest.refreshRate, target)) closest else null
-    }
-
     private fun chooseBestMode(
         activeMode: Display.Mode,
         modes: List<Display.Mode>,
         fps: Float
     ): Display.Mode {
-        val exact = pickBestMode(modes, fps)
-        val double = pickBestMode(modes, fps * 2f)
-        val pulldown = pickBestMode(modes, fps * 2.5f)
-        val fallback = modes.minByOrNull {
-            val div = it.refreshRate / fps
-            val rounded = div.roundToInt()
-            if (rounded < 1) (fps - it.refreshRate) / fps
-            else abs(div / rounded - 1f)
-        }
-        return exact ?: double ?: pulldown ?: fallback ?: activeMode
+        val index = matchingRefreshRateIndex(modes.map { it.refreshRate }, fps)
+        return index?.let { modes[it] } ?: activeMode
     }
 
     /**
@@ -197,7 +182,7 @@ object FrameRateUtils {
      */
     fun applyFrameRateMode(activity: Activity, frameRate: Float): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
-        if (frameRate <= 0f) return false
+        if (!frameRate.isFinite() || frameRate !in MIN_VALID_FPS..MAX_VALID_FPS) return false
 
         return try {
             val window = activity.window ?: return false
@@ -213,12 +198,13 @@ object FrameRateUtils {
             if (best.modeId == activeMode.modeId) return false
 
             if (originalModeId == null) {
-                originalModeId = activeMode.modeId
+                originalModeId = window.attributes.preferredDisplayModeId
             }
 
             val params = window.attributes
             params.preferredDisplayModeId = best.modeId
             window.attributes = params
+            android.util.Log.i("FrameRateMatch", "Requested ${best.refreshRate}Hz for ${frameRate}fps (was ${activeMode.refreshRate}Hz)")
             true
         } catch (_: Exception) {
             false
@@ -252,7 +238,7 @@ object FrameRateUtils {
 
             // Record original mode for restoration
             if (originalModeId == null) {
-                originalModeId = activeMode.modeId
+                originalModeId = window.attributes.preferredDisplayModeId
             }
 
             val params = window.attributes
