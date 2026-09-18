@@ -89,6 +89,8 @@ fun FullscreenHud(
     pokeSignal: Int,
     streamResolution: String = "",
     streamFps: String = "",
+    streamVideoCodec: String = "",
+    streamAudioInfo: String = "",
     streamBitrate: String = "",
     categoryName: String? = null,
     isCatchupMode: Boolean = false,
@@ -425,6 +427,8 @@ fun FullscreenHud(
                                 StreamTechBadge(
                                     resolution = streamResolution,
                                     fps = streamFps,
+                                    videoCodec = streamVideoCodec,
+                                    audioInfo = streamAudioInfo,
                                     bitrate = streamBitrate
                                 )
                             }
@@ -766,14 +770,20 @@ private fun HudActionButton(
 }
 
 @Composable
-private fun StreamTechBadge(resolution: String, fps: String, bitrate: String) {
-val elements = listOf(resolution, fps, bitrate).filter { it.isNotBlank() }
+private fun StreamTechBadge(
+resolution: String = "",
+fps: String = "",
+videoCodec: String = "",
+audioInfo: String = "",
+bitrate: String = ""
+) {
+val elements = listOf(fps, resolution, videoCodec, audioInfo, bitrate).filter { it.isNotBlank() }
 if (elements.isEmpty()) return
 
 Row(
     modifier = Modifier
         .clip(RoundedCornerShape(4.dp))
-        .background(Color.Black.copy(alpha = 0.4f))
+        .background(Color.Black.copy(alpha = 0.45f))
         .padding(horizontal = 6.dp, vertical = 2.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -781,7 +791,7 @@ Row(
     elements.forEachIndexed { index, text ->
         Text(
             text = text,
-            color = Color.White.copy(alpha = 0.7f),
+            color = Color.White.copy(alpha = 0.75f),
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold
         )
