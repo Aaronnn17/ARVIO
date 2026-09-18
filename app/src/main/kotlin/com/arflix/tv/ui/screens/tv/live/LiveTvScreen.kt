@@ -4768,140 +4768,170 @@ fun FullscreenSourcesOverlay(
     onPick: (EnrichedChannel) -> Unit,
     onDismiss: () -> Unit
 ) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn() + slideInHorizontally { it / 2 },
-        exit = fadeOut() + slideOutHorizontally { it / 2 },
-        modifier = Modifier.fillMaxSize()
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.4f)) // Softly dims the screen
-                .focusable()
-                .clickable { onDismiss() },
-            contentAlignment = Alignment.CenterEnd // Panel anchored on the right
+    val transition = remember { MutableTransitionState(false) }
+    transition.targetState = visible
+    if (!transition.currentState && !transition.targetState) return
+    val touchDevice = LocalDeviceType.current.isTouchDevice()
+    val hasAlternatives = !isLoading && !failed && variants.size > 1
+    val selectedIndex = variants.indexOfFirst { it.id == currentChannel?.id }.coerceAtLeast(0)
+    val targetKey = if (hasAlternatives) variants[selectedIndex].id else "cancel"
+    val firstFocus = remember(targetKey) { FocusRequester() }
+    var targetPlaced by remember(targetKey) { mutableStateOf(false) }
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    
+    LaunchedEffect(targetKey, visible) {
+        if (visible && hasAlternatives) {
+            // Automatic scrolling, skipping 2 positions to provide visual context
+            listState.scrollToItem(maxOf(0, selectedIndex - 2))
+        }
+    }
+    
+    LaunchedEffect(firstFocus, targetPlaced, touchDevice, visible) {
+        if (visible && !touchDevice && targetPlaced) {
+            withFrameNanos { }
+            runCatching { firstFocus.requestFocus() }
+        }
+    }
+    
+    val initialFocus = Modifier.focusRequester(firstFocus)
+        .onGloballyPositioned { if (it.isAttached) targetPlaced = true }
+
+    // Keep the player's remote handlers in a different focus window (D-Pad Case)
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        AnimatedVisibility(
+            visibleState = transition,
+            enter = fadeIn() + slideInHorizontally { it / 2 },
+            exit = fadeOut() + slideOutHorizontally { it / 2 },
+            modifier = Modifier.fillMaxSize()
         ) {
-            Column(
+            Box(
                 modifier = Modifier
-                    .fillMaxHeight()
-                    .width(360.dp)
-                    .background(Color(0xFF141414).copy(alpha = 0.98f)) // Premium Black Background
-                    .padding(horizontal = 24.dp, vertical = 32.dp)
-                    .clickable(enabled = false) {} 
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.CenterEnd 
             ) {
-                androidx.tv.material3.Text(
-                    text = stringResource(R.string.live_label_choose_source),
-                    color = Color.White,
-                    fontSize = 22.sp,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
-
-                androidx.tv.material3.Text(
-                    text = currentChannel?.name ?: "",
-                    color = Color.Gray,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(bottom = 24.dp)
-                )
-
-                if (isLoading) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(100.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(color = Color(0xFF5CE1E6)) 
-                    }
-                } else if (variants.isEmpty() || variants.size == 1) {
+                // Intercept taps outside the panel to close the dialog box on touchscreens
+                Box(Modifier.matchParentSize().pointerInput(onDismiss) { detectTapGestures { onDismiss() } })
+                
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(360.dp)
+                        .background(Color(0xFF141414).copy(alpha = 0.98f))
+                        .padding(horizontal = 24.dp, vertical = 32.dp)
+                        .pointerInput(Unit) { detectTapGestures { } } // Blocks touches that pass through the panel
+                ) {
                     androidx.tv.material3.Text(
-                        text = stringResource(R.string.live_sources_empty),
-                        color = Color.DarkGray,
-                        fontSize = 14.sp
+                        text = stringResource(R.string.live_label_choose_source),
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 6.dp)
                     )
-                } else {
-                    //  1. We add the position “memory” for the list
-                    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-                    
-                    // 2. Automatic scrolling effect when the menu opens
-                    LaunchedEffect(visible, variants) {
-                        if (visible && variants.isNotEmpty()) {
-                            val selectedIndex = variants.indexOfFirst { it.id == currentChannel?.id }
-                            if (selectedIndex >= 0) {
-                                // It scrolls automatically. We subtract 2 so that the channel 
-                                // isn't stuck to the top and has context above it.
-                                listState.scrollToItem(maxOf(0, selectedIndex - 2))
+
+                    androidx.tv.material3.Text(
+                        text = currentChannel?.name ?: "",
+                        color = Color.Gray,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(bottom = 24.dp)
+                    )
+
+                    if (isLoading) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(100.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = Color(0xFF5CE1E6))
+                        }
+                    } else if (failed) {
+                        androidx.tv.material3.Text(stringResource(R.string.live_sources_failed), color = Color.White)
+                    } else if (variants.isEmpty() || variants.size == 1) {
+                        androidx.tv.material3.Text(
+                            text = stringResource(R.string.live_sources_empty),
+                            color = Color.DarkGray,
+                            fontSize = 14.sp
+                        )
+                    } else {
+                        LazyColumn(
+                            state = listState,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth().weight(1f)
+                        ) {
+                            items(variants.size) { index ->
+                                val variant = variants[index]
+                                val isSelected = variant.id == currentChannel?.id
+                                var isFocused by remember { mutableStateOf(false) }
+
+                                val containerBg = when {
+                                    isFocused -> Color.White
+                                    isSelected -> Color(0xFF5CE1E6).copy(alpha = 0.15f)
+                                    else -> Color.Transparent
+                                }
+                                val textColor = when {
+                                    isFocused -> Color.Black
+                                    isSelected -> Color(0xFF5CE1E6)
+                                    else -> Color.White
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(containerBg)
+                                        .onFocusChanged { isFocused = it.isFocused }
+                                        .then(if (variant.id == targetKey) initialFocus else Modifier)
+                                        .clickable { onPick(variant) }
+                                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                                ) {
+                                    if (isSelected && !isFocused) {
+                                        Box(
+                                            modifier = Modifier
+                                                .width(3.dp)
+                                                .height(16.dp)
+                                                .background(Color(0xFF5CE1E6), RoundedCornerShape(50))
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                    }
+
+                                    Column(verticalArrangement = Arrangement.Center) {
+                                        androidx.tv.material3.Text(
+                                            text = variant.name,
+                                            color = textColor,
+                                            fontSize = 15.sp,
+                                            fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        
+                                        val groupName = variant.source.group.takeIf { it.isNotBlank() } ?: "Uncategorized"
+                                        androidx.tv.material3.Text(
+                                            text = groupName,
+                                            color = if (isFocused) Color(0xFF616161) else Color(0xFF9E9E9E),
+                                            fontSize = 12.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
-
-                    LazyColumn(
-                        state = listState, // 3. We'll add the memory to the list
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxSize()
+                    
+                    // Invisible or “Cancel” button to capture focus if the list is empty
+                    androidx.compose.material3.TextButton(
+                        onClick = onDismiss,
+                        modifier = if (!hasAlternatives) initialFocus else Modifier.padding(top = 16.dp),
                     ) {
-                        items(variants.size) { index ->
-                            val variant = variants[index]
-                            val isSelected = variant.id == currentChannel?.id
-                            var isFocused by remember { mutableStateOf(false) }
-
-                            val containerBg = when {
-                                isFocused -> Color.White
-                                isSelected -> Color(0xFF5CE1E6).copy(alpha = 0.15f)
-                                else -> Color.Transparent
-                            }
-                            val textColor = when {
-                                isFocused -> Color.Black
-                                isSelected -> Color(0xFF5CE1E6)
-                                else -> Color.White
-                            }
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(containerBg)
-                                    .onFocusChanged { isFocused = it.isFocused }
-                                    .clickable { onPick(variant) }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp)
-                            ) {
-                                if (isSelected && !isFocused) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(3.dp)
-                                            .height(16.dp)
-                                            .background(Color(0xFF5CE1E6), RoundedCornerShape(50))
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                }
-
-                                Column(verticalArrangement = Arrangement.Center) {
-                                    androidx.tv.material3.Text(
-                                        text = variant.name,
-                                        color = textColor,
-                                        fontSize = 15.sp,
-                                        fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    
-                                    val groupName = variant.source.group.takeIf { it.isNotBlank() } ?: "Uncategorized"
-                                    androidx.tv.material3.Text(
-                                        text = groupName,
-                                        color = if (isFocused) Color(0xFF616161) else Color(0xFF9E9E9E),
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
+                        androidx.tv.material3.Text(
+                            text = stringResource(android.R.string.cancel),
+                            color = Color(0xFF9E9E9E)
+                        )
                     }
                 }
             }
         }
     }
-    BackHandler(enabled = visible) { onDismiss() }
 }
