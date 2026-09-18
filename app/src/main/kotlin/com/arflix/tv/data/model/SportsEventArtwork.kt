@@ -23,6 +23,9 @@ private val versus = Regex("\\b(vs\\.?|versus|v\\.)\\s+")
 private val punctuation = Regex("[^\\p{L}\\p{N}]+")
 private val cosmeticTags = Regex("\\s*[\\[(](?:live|hd|fhd|uhd|4k)[\\])]\\s*", RegexOption.IGNORE_CASE)
 private val matchupSeparator = Regex("\\s+(?:vs?\\.?|versus|at|[-–—])\\s+", RegexOption.IGNORE_CASE)
+private val qualifierRegex = Regex("\\b(women(?:s|'s)?|youth|u\\d{2}|under[ -]?\\d{2})\\b")
+private val womenPrefixRegex = Regex("^women.*")
+private val hyphenSpaceRegex = Regex("[ -]")
 
 fun sportsArtworkKey(title: String): String = Normalizer.normalize(title, Normalizer.Form.NFD)
     .replace(marks, "").lowercase(Locale.ROOT)
@@ -39,12 +42,12 @@ fun sportsEventIdentity(title: String): String {
     return if (sides.size == 2 && sides.all { it.length >= 3 }) sides.sorted().joinToString(" vs ") else normalized
 }
 
-fun sportsQualifierKey(text: String): String = Regex("\\b(women(?:s|'s)?|youth|u\\d{2}|under[ -]?\\d{2})\\b")
-    .findAll(text.lowercase(Locale.ROOT)).map { it.value.replace(Regex("^women.*"), "women").replace("under", "u").replace(Regex("[ -]"), "") }
+fun sportsQualifierKey(text: String): String = qualifierRegex
+    .findAll(text.lowercase(Locale.ROOT)).map { it.value.replace(womenPrefixRegex, "women").replace("under", "u").replace(hyphenSpaceRegex, "") }
     .toSet().sorted().joinToString("|")
 
 fun safeSportsImage(image: String?): String? = image?.takeIf { it.length <= 2048 && !it.contains("_UTC", true) }?.let {
-    val uri = runCatching { URI(it) }.getOrNull()
+    val uri = try { URI(it) } catch (_: Exception) { null }
     it.takeIf { uri?.scheme?.lowercase(Locale.ROOT) in setOf("https", "http") && !uri?.host.isNullOrBlank() }
 }
 
@@ -53,7 +56,7 @@ fun StremioMetaPreview.toSportsEventArtwork(): SportsEventArtwork? {
     if (id?.startsWith("leaf:") == true) return null // Channel-recording covers are not match artwork.
     // Posters may contain UTC times. Backgrounds are the addon's untimed landscape assets.
     val image = background?.takeIf { it.isNotBlank() && !it.contains("_UTC", ignoreCase = true) } ?: return null
-    val uri = runCatching { URI(image) }.getOrNull() ?: return null
+    val uri = try { URI(image) } catch (_: Exception) { null } ?: return null
     if (uri.scheme?.lowercase(Locale.ROOT) !in setOf("https", "http") || uri.host.isNullOrBlank()) return null
-    return SportsEventArtwork(title, image, genres.orEmpty(), released?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() })
+    return SportsEventArtwork(title, image, genres.orEmpty(), released?.let { try { Instant.parse(it).toEpochMilli() } catch (_: Exception) { null } })
 }

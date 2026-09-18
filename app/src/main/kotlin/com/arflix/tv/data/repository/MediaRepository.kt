@@ -463,14 +463,17 @@ class MediaRepository @Inject constructor(
             .header("User-Agent", OkHttpProvider.userAgentOr("Mozilla/5.0 (Android TV; ARVIO)"))
             .build()
 
-        runCatching {
+        try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 val body = response.body?.string().orEmpty()
                 val meta = JSONObject(body).optJSONObject("meta") ?: return@use null
                 parseCinemetaMetaRating(meta)
             }
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            null
+        }
     }
 
     private fun parseCinemetaMetaRating(meta: JSONObject): String? {
@@ -2809,7 +2812,7 @@ class MediaRepository @Inject constructor(
     }
 
     private fun decodeCatalogRefPart(value: String): String {
-        return runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
+        return try { URLDecoder.decode(value, "UTF-8") } catch (_: Exception) { value }
     }
 
     private fun normalizeAddonCatalogType(rawType: String?): String? {
@@ -3897,8 +3900,11 @@ class MediaRepository @Inject constructor(
 
     private fun parseMdblistJson(payload: String): List<Pair<MediaType, Int>> {
         val type = TypeToken.getParameterized(List::class.java, TypeToken.getParameterized(Map::class.java, String::class.java, Any::class.java).type).type
-        val rows = runCatching { gson.fromJson<List<Map<String, Any?>>>(payload, type) }.getOrNull()
-            ?: return emptyList()
+        val rows = try {
+            gson.fromJson<List<Map<String, Any?>>>(payload, type)
+        } catch (_: Exception) {
+            null
+        } ?: return emptyList()
 
         return rows.mapNotNull { row ->
             val tmdbId = sequenceOf("tmdb_id", "tmdb", "tmdbId", "id")
@@ -3924,12 +3930,15 @@ class MediaRepository @Inject constructor(
             .url(url)
             .header("User-Agent", OkHttpProvider.userAgentOr("Mozilla/5.0 (Android TV; ARVIO)"))
             .build()
-        return runCatching {
+        return try {
             okHttpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 response.body?.string()
             }
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            null
+        }
     }
 }
 private fun Any?.toIntSafe(): Int? {
