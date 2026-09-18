@@ -87,6 +87,9 @@ fun FullscreenHud(
     channel: EnrichedChannel?,
     nowNext: IptvNowNext?,
     pokeSignal: Int,
+    streamResolution: String = "",
+    streamFps: String = "",
+    streamBitrate: String = "",
     categoryName: String? = null,
     isCatchupMode: Boolean = false,
     isPlaying: Boolean = true,
@@ -406,7 +409,7 @@ fun FullscreenHud(
                             }
 
                             if (channel != null) {
-                                val isMobile = onBackClick != null || LocalConfiguration.current.screenWidthDp < 600
+                            val isMobile = onBackClick != null || LocalConfiguration.current.screenWidthDp < 600
                                 Text(
                                     text = if (isMobile) channel.name else "${channel.number}  ${channel.name}",
                                     style = LiveType.ChannelName.copy(
@@ -416,6 +419,13 @@ fun FullscreenHud(
                                     ),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                            
+                                StreamTechBadge(
+                                    resolution = streamResolution,
+                                    fps = streamFps,
+                                    bitrate = streamBitrate
                                 )
                             }
                         }
@@ -755,6 +765,37 @@ private fun HudActionButton(
     }
 }
 
+@Composable
+private fun StreamTechBadge(resolution: String, fps: String, bitrate: String) {
+val elements = listOf(resolution, fps, bitrate).filter { it.isNotBlank() }
+if (elements.isEmpty()) return
+
+Row(
+    modifier = Modifier
+        .clip(RoundedCornerShape(4.dp))
+        .background(Color.Black.copy(alpha = 0.4f))
+        .padding(horizontal = 6.dp, vertical = 2.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(6.dp)
+) {
+    elements.forEachIndexed { index, text ->
+        Text(
+            text = text,
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        if (index < elements.size - 1) {
+            Box(
+                modifier = Modifier
+                    .size(3.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.4f))
+            )
+        }
+    }
+}
+}
 // The control row is asked for focus until it answers: on the frame the HUD
 // fades in from nothing the row may not be attached yet. Ten tries 50 ms apart
 // is half a second at the outside, and it stops at the first one that lands.
