@@ -4762,6 +4762,7 @@ internal data class ProgramActionData(
 fun FullscreenSourcesOverlay(
     visible: Boolean,
     isLoading: Boolean,
+    failed: Boolean,
     currentChannel: EnrichedChannel?,
     variants: List<EnrichedChannel>,
     onPick: (EnrichedChannel) -> Unit,
@@ -4776,21 +4777,21 @@ fun FullscreenSourcesOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.4f)) // Atenúa la pantalla suavemente
+                .background(Color.Black.copy(alpha = 0.4f)) // Softly dims the screen
                 .focusable()
                 .clickable { onDismiss() },
-            contentAlignment = Alignment.CenterEnd // Panel anclado a la derecha
+            contentAlignment = Alignment.CenterEnd // Panel anchored on the right
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(360.dp)
-                    .background(Color(0xFF141414).copy(alpha = 0.98f)) // Fondo negro premium
+                    .background(Color(0xFF141414).copy(alpha = 0.98f)) // Premium Black Background
                     .padding(horizontal = 24.dp, vertical = 32.dp)
                     .clickable(enabled = false) {} 
             ) {
                 androidx.tv.material3.Text(
-                    text = "Fuentes disponibles",
+                    text = stringResource(R.string.live_label_choose_source),
                     color = Color.White,
                     fontSize = 22.sp,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
@@ -4815,28 +4816,28 @@ fun FullscreenSourcesOverlay(
                     }
                 } else if (variants.isEmpty() || variants.size == 1) {
                     androidx.tv.material3.Text(
-                        text = "No hay otras calidades u orígenes detectados.",
+                        text = stringResource(R.string.live_sources_empty),
                         color = Color.DarkGray,
                         fontSize = 14.sp
                     )
                 } else {
-                    // 1. Añadimos la "memoria" de posición para la lista
+                    //  1. We add the position “memory” for the list
                     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
                     
-                    // 2. Efecto automático que hace scroll al abrirse el menú
+                    // 2. Automatic scrolling effect when the menu opens
                     LaunchedEffect(visible, variants) {
                         if (visible && variants.isNotEmpty()) {
                             val selectedIndex = variants.indexOfFirst { it.id == currentChannel?.id }
                             if (selectedIndex >= 0) {
-                                // Hace scroll automático. Le restamos 2 para que el canal 
-                                // no quede pegado al techo y tenga contexto por arriba.
+                                // It scrolls automatically. We subtract 2 so that the channel 
+                                // isn't stuck to the top and has context above it.
                                 listState.scrollToItem(maxOf(0, selectedIndex - 2))
                             }
                         }
                     }
 
                     LazyColumn(
-                        state = listState, // 3. Le conectamos la memoria a la lista
+                        state = listState, // 3. We'll add the memory to the list
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
@@ -4886,7 +4887,7 @@ fun FullscreenSourcesOverlay(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     
-                                    val groupName = variant.source.group.takeIf { it.isNotBlank() } ?: "Sin categoría"
+                                    val groupName = variant.source.group.takeIf { it.isNotBlank() } ?: "Uncategorized"
                                     androidx.tv.material3.Text(
                                         text = groupName,
                                         color = if (isFocused) Color(0xFF616161) else Color(0xFF9E9E9E),
