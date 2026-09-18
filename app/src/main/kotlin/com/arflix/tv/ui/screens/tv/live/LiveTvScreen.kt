@@ -2857,129 +2857,35 @@ fun LiveTvScreen(
     }
 
     var playbackQuality by remember(exoPlayer) { mutableStateOf<LivePlaybackQuality?>(null) }
-    
-    // --- STATE VARIABLES FOR THE TECHNICAL HUD ---
-    var streamResolution by remember { mutableStateOf("") }
-    var streamFps by remember { mutableStateOf("") }
-    var streamVideoCodec by remember { mutableStateOf("") }
-    var streamAudioInfo by remember { mutableStateOf("") }
-    var streamBitrate by remember { mutableStateOf("") }
 
+    var streamStats by remember(exoPlayer) { mutableStateOf(LiveStreamTechInfo()) }
     DisposableEffect(exoPlayer) {
-        val qualityListener = LivePlaybackQualityListener(exoPlayer) { playbackQuality = it }
-
-        fun updateFormats() {
-            val vFormat = exoPlayer.videoFormat
-            if (vFormat != null) {
-                if (vFormat.height > 0) streamResolution = "${vFormat.height}p"
-                
-                // Primary attempt: If the manifest declares the FPS, great.
-                if (vFormat.frameRate > 0f) streamFps = "${Math.round(vFormat.frameRate)} fps"
-                
-                val vMime = vFormat.sampleMimeType.orEmpty()
-                streamVideoCodec = when {
-                    vMime.contains("avc", ignoreCase = true) || vMime.contains("h264", ignoreCase = true) -> "h264"
-                    vMime.contains("hevc", ignoreCase = true) || vMime.contains("h265", ignoreCase = true) -> "hevc"
-                    vMime.contains("av01", ignoreCase = true) -> "av1"
-                    vMime.contains("vp9", ignoreCase = true) -> "vp9"
-                    else -> ""
-                }
+        val listener = LivePlaybackQualityListener(exoPlayer) { playbackQuality = it }
+        val resetListener = object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                streamStats = LiveStreamTechInfo()
             }
-
-            val aFormat = exoPlayer.audioFormat
-            if (aFormat != null) {
-                val channels = when (aFormat.channelCount) {
-                    1 -> "1.0"
-                    2 -> "2.0"
-                    6 -> "5.1"
-                    8 -> "7.1"
-                    else -> ""
-                }
-                val aMime = aFormat.sampleMimeType.orEmpty()
-                val codec = when {
-                    aMime.contains("eac3", ignoreCase = true) -> "eac3"
-                    aMime.contains("ac3", ignoreCase = true) -> "ac3"
-                    aMime.contains("mp4a", ignoreCase = true) || aMime.contains("aac", ignoreCase = true) -> "aac"
-                    aMime.contains("mpeg", ignoreCase = true) || aMime.contains("mp3", ignoreCase = true) -> "mp3"
-                    else -> ""
-                }
-                streamAudioInfo = listOf(channels, codec).filter { it.isNotBlank() }.joinToString(" ")
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_IDLE) streamStats = LiveStreamTechInfo()
             }
         }
-
-        val statsListener = object : androidx.media3.common.Player.Listener {
-            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) = updateFormats()
-            override fun onRenderedFirstFrame() = updateFormats()
-            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) = updateFormats()
-        }
-
-        val analyticsListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
-            override fun onBandwidthEstimate(
-                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
-                totalLoadTimeMs: Int,
-                totalBytesLoaded: Long,
-                bitrateEstimate: Long
-            ) {
-                if (bitrateEstimate > 0) {
-                    streamBitrate = java.lang.String.format(java.util.Locale.US, "%.1f Mbps", bitrateEstimate / 1000000f)
-                }
-            }
-        }
-
-        // --- THE PHYSICAL FRAME COUNTER (FAIL-SAFE) ---
-        var frameCount = 0
-        var lastFpsTime = android.os.SystemClock.elapsedRealtime()
-
-        val frameMetadataListener = androidx.media3.exoplayer.video.VideoFrameMetadataListener { _, _, _, mediaFormat ->
-            // Secondary attempt: If Android (MediaCodec) was able to detect the hardware, we'll use it
-            if (streamFps.isBlank() && mediaFormat != null && mediaFormat.containsKey(android.media.MediaFormat.KEY_FRAME_RATE)) {
-                try {
-                    val hwFps = mediaFormat.getInteger(android.media.MediaFormat.KEY_FRAME_RATE)
-                    if (hwFps > 0) {
-                        streamFps = "$hwFps fps"
-                        return@VideoFrameMetadataListener
-                    }
-                } catch (e: Exception) {}
-            }
-
-            // Plan Z: Physically count the images painted on the screen
-            frameCount++
-            val now = android.os.SystemClock.elapsedRealtime()
-            val elapsed = now - lastFpsTime
-            if (elapsed >= 2000L) { // We evaluate every 2 seconds exactly
-                val realFps = Math.round(frameCount / (elapsed / 1000f))
-                
-                // We avoid displaying “0 fps” when the video is buffering or stuttering
-                if (realFps in 20..120) { 
-                    val newFpsStr = "$realFps fps"
-                    if (streamFps != newFpsStr) {
-                        streamFps = newFpsStr
-                    }
-                }
-                frameCount = 0
-                lastFpsTime = now
-            }
-        }
-
-        exoPlayer.addListener(qualityListener)
-        exoPlayer.addListener(statsListener)
-        (exoPlayer as? androidx.media3.exoplayer.ExoPlayer)?.addAnalyticsListener(analyticsListener)
-        (exoPlayer as? androidx.media3.exoplayer.ExoPlayer)?.setVideoFrameMetadataListener(frameMetadataListener)
-
+        exoPlayer.addListener(listener)
+        exoPlayer.addListener(resetListener)
         onDispose {
-            exoPlayer.removeListener(qualityListener)
-            exoPlayer.removeListener(statsListener)
-            (exoPlayer as? androidx.media3.exoplayer.ExoPlayer)?.removeAnalyticsListener(analyticsListener)
-            (exoPlayer as? androidx.media3.exoplayer.ExoPlayer)?.clearVideoFrameMetadataListener(frameMetadataListener)
-
-            streamResolution = ""
-            streamFps = ""
-            streamVideoCodec = ""
-            streamAudioInfo = ""
-            streamBitrate = ""
+            exoPlayer.removeListener(listener)
+            exoPlayer.removeListener(resetListener)
         }
     }
-    
+    // Read current input formats on the player's application thread, including adaptive switches.
+    LaunchedEffect(exoPlayer) {
+        while (true) {
+            streamStats = if (exoPlayer.playbackState == Player.STATE_READY) {
+                liveStreamTechInfo(exoPlayer.videoFormat, exoPlayer.audioFormat)
+            } else LiveStreamTechInfo()
+            delay(1_000L)
+        }
+    }
+
     val playingDisplayChannel = remember(playingChannel, playbackQuality) {
         playingChannel?.let { it.copy(quality = it.displayQuality(playbackQuality)) }
     }
@@ -4366,11 +4272,11 @@ fun LiveTvScreen(
                         channel = playingDisplayChannel,
                         nowNext = currentNowNext,
                         pokeSignal = hudPokeSignal,
-                        streamResolution = streamResolution,
-                        streamFps = streamFps,
-                        streamVideoCodec = streamVideoCodec,
-                        streamAudioInfo = streamAudioInfo,
-                        streamBitrate = streamBitrate,
+                        streamResolution = streamStats.resolution,
+                        streamFps = streamStats.fps,
+                        streamVideoCodec = streamStats.videoCodec,
+                        streamAudioInfo = streamStats.audioInfo,
+                        streamBitrate = streamStats.bitrate,
                         categoryName = categoryTitle,
                         isCatchupMode = playingCatchupProgram != null,
                         isPlaying = if (playingCatchupProgram != null) playerPlayWhenReady else playerIsPlaying,

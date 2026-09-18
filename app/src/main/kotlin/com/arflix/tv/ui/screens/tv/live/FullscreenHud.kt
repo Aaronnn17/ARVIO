@@ -411,7 +411,7 @@ fun FullscreenHud(
                             }
 
                             if (channel != null) {
-                            val isMobile = onBackClick != null || LocalConfiguration.current.screenWidthDp < 600
+                                val isMobile = onBackClick != null || LocalConfiguration.current.screenWidthDp < 600
                                 Text(
                                     text = if (isMobile) channel.name else "${channel.number}  ${channel.name}",
                                     style = LiveType.ChannelName.copy(
@@ -423,16 +423,17 @@ fun FullscreenHud(
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.weight(1f, fill = false)
                                 )
-                            
-                                StreamTechBadge(
-                                    resolution = streamResolution,
-                                    fps = streamFps,
-                                    videoCodec = streamVideoCodec,
-                                    audioInfo = streamAudioInfo,
-                                    bitrate = streamBitrate
-                                )
+
                             }
                         }
+
+                        StreamTechBadge(
+                            resolution = streamResolution,
+                            fps = streamFps,
+                            videoCodec = streamVideoCodec,
+                            audioInfo = streamAudioInfo,
+                            bitrate = streamBitrate
+                        )
 
                         // Next Program Preview
                         if (next != null) {
@@ -769,6 +770,7 @@ private fun HudActionButton(
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun StreamTechBadge(
     resolution: String = "",
@@ -780,12 +782,12 @@ private fun StreamTechBadge(
     val elements = listOf(fps, resolution, videoCodec, audioInfo, bitrate).filter { it.isNotBlank() }
     if (elements.isEmpty()) return
 
-    Row(
+    androidx.compose.foundation.layout.FlowRow(
         modifier = Modifier
             .clip(RoundedCornerShape(4.dp))
             .background(Color.Black.copy(alpha = 0.45f))
             .padding(horizontal = 6.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         elements.forEachIndexed { index, text ->
