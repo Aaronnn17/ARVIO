@@ -2746,62 +2746,99 @@ fun LiveTvScreen(
 
     var playbackQuality by remember(exoPlayer) { mutableStateOf<LivePlaybackQuality?>(null) }
     
-    // --- STATE VARIABLES FOR THE TECHNICAL HUD ---
+    // --- VARIABLES DE ESTADO PARA EL HUD TÉCNICO ---
     var streamResolution by remember { mutableStateOf("") }
     var streamFps by remember { mutableStateOf("") }
+    var streamVideoCodec by remember { mutableStateOf("") }
+    var streamAudioInfo by remember { mutableStateOf("") }
     var streamBitrate by remember { mutableStateOf("") }
 
     DisposableEffect(exoPlayer) {
-        // High-quality original earpiece
         val qualityListener = LivePlaybackQualityListener(exoPlayer) { playbackQuality = it }
-        
-        // New listener for pure streaming metadata
-        val statsListener = object : Player.Listener {
-            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
-                if (videoSize.width > 0 && videoSize.height > 0) {
-                    // Ex: It will extract the actual “1080p” or “720p” resolution by measuring the height of the decoded pixels
-                    streamResolution = "${videoSize.height}p" 
+
+        fun updateFormats() {
+            val vFormat = exoPlayer.videoFormat
+            if (vFormat != null) {
+                if (vFormat.height > 0) {
+                    streamResolution = "${vFormat.height}p"
+                }
+                if (vFormat.frameRate > 0f) {
+                    streamFps = "${vFormat.frameRate.toInt()} fps"
+                }
+                val vMime = vFormat.sampleMimeType.orEmpty()
+                streamVideoCodec = when {
+                    vMime.contains("avc", ignoreCase = true) || vMime.contains("h264", ignoreCase = true) -> "h264"
+                    vMime.contains("hevc", ignoreCase = true) || vMime.contains("h265", ignoreCase = true) -> "hevc"
+                    vMime.contains("av01", ignoreCase = true) -> "av1"
+                    vMime.contains("vp9", ignoreCase = true) -> "vp9"
+                    else -> ""
                 }
             }
 
-            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                // We are looking for the video track that is currently being decoded
-                val videoGroup = tracks.groups.firstOrNull { 
-                    it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO && it.isSelected 
+            val aFormat = exoPlayer.audioFormat
+            if (aFormat != null) {
+                val channels = when (aFormat.channelCount) {
+                    1 -> "1.0"
+                    2 -> "2.0"
+                    6 -> "5.1"
+                    8 -> "7.1"
+                    else -> ""
                 }
-                
-                if (videoGroup != null && videoGroup.length > 0) {
-                    val format = videoGroup.getTrackFormat(0)
-                    
-                    // 1. Actual frame rate (FPS)
-                    streamFps = if (format.frameRate > 0f) {
-                        "${format.frameRate.toInt()} FPS" 
-                    } else {
-                        ""
-                    }
-                    
-                    // 2. Bandwidth (Bitrate in Mbps)
-                    val bitrate = format.bitrate
-                    streamBitrate = if (bitrate > 0) {
-                        java.lang.String.format(java.util.Locale.US, "%.1f Mbps", bitrate / 1000000f)
-                    } else {
-                        ""
-                    }
+                val aMime = aFormat.sampleMimeType.orEmpty()
+                val codec = when {
+                    aMime.contains("eac3", ignoreCase = true) -> "eac3"
+                    aMime.contains("ac3", ignoreCase = true) -> "ac3"
+                    aMime.contains("mp4a", ignoreCase = true) || aMime.contains("aac", ignoreCase = true) -> "aac"
+                    aMime.contains("mpeg", ignoreCase = true) || aMime.contains("mp3", ignoreCase = true) -> "mp3"
+                    else -> ""
+                }
+                streamAudioInfo = listOf(channels, codec).filter { it.isNotBlank() }.joinToString(" ")
+            }
+        }
+
+        val statsListener = object : androidx.media3.common.Player.Listener {
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                updateFormats()
+            }
+
+            override fun onRenderedFirstFrame() {
+                updateFormats()
+            }
+
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                updateFormats()
+            }
+        }
+
+        val analyticsListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onBandwidthEstimate(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                totalLoadTimeMs: Int,
+                totalBytesLoaded: Long,
+                bitrateEstimate: Long
+            ) {
+                if (bitrateEstimate > 0) {
+                    streamBitrate = java.lang.String.format(java.util.Locale.US, "%.1f Mbps", bitrateEstimate / 1000000f)
+                }
+                if (streamFps.isBlank() || streamVideoCodec.isBlank()) {
+                    updateFormats()
                 }
             }
         }
-        
+
         exoPlayer.addListener(qualityListener)
         exoPlayer.addListener(statsListener)
-        
-        onDispose { 
-            // We clean both receivers to prevent any memory leaks
-            exoPlayer.removeListener(qualityListener) 
+        (exoPlayer as? androidx.media3.exoplayer.ExoPlayer)?.addAnalyticsListener(analyticsListener)
+
+        onDispose {
+            exoPlayer.removeListener(qualityListener)
             exoPlayer.removeListener(statsListener)
-            
-            // We reset the values when we exit
+            (exoPlayer as? androidx.media3.exoplayer.ExoPlayer)?.removeAnalyticsListener(analyticsListener)
+
             streamResolution = ""
             streamFps = ""
+            streamVideoCodec = ""
+            streamAudioInfo = ""
             streamBitrate = ""
         }
     }
@@ -4192,6 +4229,8 @@ fun LiveTvScreen(
                         pokeSignal = hudPokeSignal,
                         streamResolution = streamResolution,
                         streamFps = streamFps,
+                        streamVideoCodec = streamVideoCodec,
+                        streamAudioInfo = streamAudioInfo,
                         streamBitrate = streamBitrate,
                         categoryName = categoryTitle,
                         isCatchupMode = playingCatchupProgram != null,
