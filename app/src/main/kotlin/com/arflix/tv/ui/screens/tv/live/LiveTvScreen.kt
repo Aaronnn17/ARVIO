@@ -4777,22 +4777,22 @@ fun FullscreenSourcesOverlay(
     val targetKey = if (hasAlternatives) variants[selectedIndex].id else "cancel"
     val firstFocus = remember(targetKey) { FocusRequester() }
     var targetPlaced by remember(targetKey) { mutableStateOf(false) }
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    
-    LaunchedEffect(targetKey, visible) {
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(targetKey, selectedIndex, visible) {
         if (visible && hasAlternatives) {
-            // Automatic scrolling, skipping 2 positions to provide visual context
-            listState.scrollToItem(maxOf(0, selectedIndex - 2))
+            // Always attach the selected row, even when fewer than three rows fit.
+            listState.scrollToItem(selectedIndex)
         }
     }
-    
+
     LaunchedEffect(firstFocus, targetPlaced, touchDevice, visible) {
         if (visible && !touchDevice && targetPlaced) {
             withFrameNanos { }
             runCatching { firstFocus.requestFocus() }
         }
     }
-    
+
     val initialFocus = Modifier.focusRequester(firstFocus)
         .onGloballyPositioned { if (it.isAttached) targetPlaced = true }
 
@@ -4808,11 +4808,11 @@ fun FullscreenSourcesOverlay(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.4f)),
-                contentAlignment = Alignment.CenterEnd 
+                contentAlignment = Alignment.CenterEnd
             ) {
                 // Intercept taps outside the panel to close the dialog box on touchscreens
                 Box(Modifier.matchParentSize().pointerInput(onDismiss) { detectTapGestures { onDismiss() } })
-                
+
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
@@ -4850,7 +4850,7 @@ fun FullscreenSourcesOverlay(
                     } else if (variants.isEmpty() || variants.size == 1) {
                         androidx.tv.material3.Text(
                             text = stringResource(R.string.live_sources_empty),
-                            color = Color.DarkGray,
+                            color = Color.LightGray,
                             fontSize = 14.sp
                         )
                     } else {
@@ -4859,8 +4859,7 @@ fun FullscreenSourcesOverlay(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth().weight(1f)
                         ) {
-                            items(variants.size) { index ->
-                                val variant = variants[index]
+                            items(variants, key = { it.id }) { variant ->
                                 val isSelected = variant.id == currentChannel?.id
                                 var isFocused by remember { mutableStateOf(false) }
 
@@ -4905,8 +4904,9 @@ fun FullscreenSourcesOverlay(
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
-                                        
-                                        val groupName = variant.source.group.takeIf { it.isNotBlank() } ?: "Uncategorized"
+
+                                        val groupName = variant.source.group.takeIf { it.isNotBlank() }
+                                            ?: stringResource(R.string.live_cat_ungrouped)
                                         androidx.tv.material3.Text(
                                             text = groupName,
                                             color = if (isFocused) Color(0xFF616161) else Color(0xFF9E9E9E),
@@ -4919,7 +4919,7 @@ fun FullscreenSourcesOverlay(
                             }
                         }
                     }
-                    
+
                     // Invisible or “Cancel” button to capture focus if the list is empty
                     androidx.compose.material3.TextButton(
                         onClick = onDismiss,
