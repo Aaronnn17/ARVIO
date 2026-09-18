@@ -2762,9 +2762,12 @@ fun LiveTvScreen(
                 if (vFormat.height > 0) {
                     streamResolution = "${vFormat.height}p"
                 }
-                if (vFormat.frameRate > 0f) {
-                    streamFps = "${vFormat.frameRate.toInt()} fps"
+                
+                // Intento primario de extraer FPS del formato del contenedor
+                if (vFormat.frameRate > 0f && streamFps.isBlank()) {
+                    streamFps = "${Math.round(vFormat.frameRate)} fps"
                 }
+                
                 val vMime = vFormat.sampleMimeType.orEmpty()
                 streamVideoCodec = when {
                     vMime.contains("avc", ignoreCase = true) || vMime.contains("h264", ignoreCase = true) -> "h264"
@@ -2800,17 +2803,15 @@ fun LiveTvScreen(
             override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
                 updateFormats()
             }
-
             override fun onRenderedFirstFrame() {
                 updateFormats()
             }
-
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 updateFormats()
             }
         }
 
-       val analyticsListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+        val analyticsListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
             override fun onBandwidthEstimate(
                 eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
                 totalLoadTimeMs: Int,
@@ -2820,15 +2821,21 @@ fun LiveTvScreen(
                 if (bitrateEstimate > 0) {
                     streamBitrate = java.lang.String.format(java.util.Locale.US, "%.1f Mbps", bitrateEstimate / 1000000f)
                 }
-                
-                // Forzamos la consulta de FPS continuamente hasta que ExoPlayer decodifique el parámetro real SPS
-                if (streamFps.isBlank() || streamFps == "-1 fps" || streamVideoCodec.isBlank()) {
-                    val fallbackFormat = exoPlayer.videoFormat
-                    if (fallbackFormat != null && fallbackFormat.frameRate > 0f) {
-                        // Math.round asegura que 50.0 o 59.94 se pinten limpios
-                        streamFps = "${Math.round(fallbackFormat.frameRate)} fps"
-                    }
+                // Retraso en la obtención de metadatos: si aún no tenemos FPS, insistimos
+                if (streamFps.isBlank() || streamVideoCodec.isBlank()) {
                     updateFormats()
+                }
+            }
+
+            // Escudo final: Si el contenedor HLS/TS no declara los FPS, 
+            // los interceptamos directamente desde el decodificador de hardware al renderizar la imagen
+            override fun onVideoInputFormatChanged(
+                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                format: androidx.media3.common.Format,
+                decoderReused: androidx.media3.exoplayer.DecoderReuseEvaluation?
+            ) {
+                if (format.frameRate > 0f) {
+                    streamFps = "${Math.round(format.frameRate)} fps"
                 }
             }
         }
