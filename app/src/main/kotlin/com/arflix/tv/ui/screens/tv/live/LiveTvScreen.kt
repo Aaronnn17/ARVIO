@@ -2759,14 +2759,10 @@ fun LiveTvScreen(
         fun updateFormats() {
             val vFormat = exoPlayer.videoFormat
             if (vFormat != null) {
-                if (vFormat.height > 0) {
-                    streamResolution = "${vFormat.height}p"
-                }
+                if (vFormat.height > 0) streamResolution = "${vFormat.height}p"
                 
-                // Intento primario de extraer FPS del formato del contenedor
-                if (vFormat.frameRate > 0f && streamFps.isBlank()) {
-                    streamFps = "${Math.round(vFormat.frameRate)} fps"
-                }
+                // Intento primario: Si el manifiesto declara los FPS, genial.
+                if (vFormat.frameRate > 0f) streamFps = "${Math.round(vFormat.frameRate)} fps"
                 
                 val vMime = vFormat.sampleMimeType.orEmpty()
                 streamVideoCodec = when {
@@ -2800,15 +2796,9 @@ fun LiveTvScreen(
         }
 
         val statsListener = object : androidx.media3.common.Player.Listener {
-            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
-                updateFormats()
-            }
-            override fun onRenderedFirstFrame() {
-                updateFormats()
-            }
-            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                updateFormats()
-            }
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) = updateFormats()
+            override fun onRenderedFirstFrame() = updateFormats()
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) = updateFormats()
         }
 
         val analyticsListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
@@ -2821,33 +2811,54 @@ fun LiveTvScreen(
                 if (bitrateEstimate > 0) {
                     streamBitrate = java.lang.String.format(java.util.Locale.US, "%.1f Mbps", bitrateEstimate / 1000000f)
                 }
-                // Retraso en la obtención de metadatos: si aún no tenemos FPS, insistimos
-                if (streamFps.isBlank() || streamVideoCodec.isBlank()) {
-                    updateFormats()
-                }
+            }
+        }
+
+        // --- EL CONTADOR FÍSICO DE FOTOGRAMAS (INFALIBLE) ---
+        var frameCount = 0
+        var lastFpsTime = android.os.SystemClock.elapsedRealtime()
+
+        val frameMetadataListener = androidx.media3.exoplayer.video.VideoFrameMetadataListener { _, _, _, mediaFormat ->
+            // Intento secundario: Si Android (MediaCodec) pudo leer el hardware, lo cogemos
+            if (streamFps.isBlank() && mediaFormat != null && mediaFormat.containsKey(android.media.MediaFormat.KEY_FRAME_RATE)) {
+                try {
+                    val hwFps = mediaFormat.getInteger(android.media.MediaFormat.KEY_FRAME_RATE)
+                    if (hwFps > 0) {
+                        streamFps = "$hwFps fps"
+                        return@VideoFrameMetadataListener
+                    }
+                } catch (e: Exception) {}
             }
 
-            // Escudo final: Si el contenedor HLS/TS no declara los FPS, 
-            // los interceptamos directamente desde el decodificador de hardware al renderizar la imagen
-            override fun onVideoInputFormatChanged(
-                eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
-                format: androidx.media3.common.Format,
-                decoderReused: androidx.media3.exoplayer.DecoderReuseEvaluation?
-            ) {
-                if (format.frameRate > 0f) {
-                    streamFps = "${Math.round(format.frameRate)} fps"
+            // Plan Z: Contar físicamente las imágenes pintadas por pantalla
+            frameCount++
+            val now = android.os.SystemClock.elapsedRealtime()
+            val elapsed = now - lastFpsTime
+            if (elapsed >= 2000L) { // Evaluamos cada 2 segundos exactos
+                val realFps = Math.round(frameCount / (elapsed / 1000f))
+                
+                // Evitamos pintar "0 fps" cuando el vídeo hace buffering o da un tirón
+                if (realFps in 20..120) { 
+                    val newFpsStr = "$realFps fps"
+                    if (streamFps != newFpsStr) {
+                        streamFps = newFpsStr
+                    }
                 }
+                frameCount = 0
+                lastFpsTime = now
             }
         }
 
         exoPlayer.addListener(qualityListener)
         exoPlayer.addListener(statsListener)
         (exoPlayer as? androidx.media3.exoplayer.ExoPlayer)?.addAnalyticsListener(analyticsListener)
+        (exoPlayer as? androidx.media3.exoplayer.ExoPlayer)?.setVideoFrameMetadataListener(frameMetadataListener)
 
         onDispose {
             exoPlayer.removeListener(qualityListener)
             exoPlayer.removeListener(statsListener)
             (exoPlayer as? androidx.media3.exoplayer.ExoPlayer)?.removeAnalyticsListener(analyticsListener)
+            (exoPlayer as? androidx.media3.exoplayer.ExoPlayer)?.clearVideoFrameMetadataListener(frameMetadataListener)
 
             streamResolution = ""
             streamFps = ""
@@ -2856,6 +2867,7 @@ fun LiveTvScreen(
             streamBitrate = ""
         }
     }
+    
     val playingDisplayChannel = remember(playingChannel, playbackQuality) {
         playingChannel?.let { it.copy(quality = it.displayQuality(playbackQuality)) }
     }
