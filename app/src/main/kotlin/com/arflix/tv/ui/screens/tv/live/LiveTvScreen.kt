@@ -4778,18 +4778,25 @@ fun FullscreenSourcesOverlay(
     val firstFocus = remember(targetKey) { FocusRequester() }
     var targetPlaced by remember(targetKey) { mutableStateOf(false) }
     val listState = rememberLazyListState()
-    LaunchedEffect(targetKey, visible) {
-        if (visible && hasAlternatives) listState.scrollToItem(selectedIndex)
+
+    LaunchedEffect(targetKey, selectedIndex, visible) {
+        if (visible && hasAlternatives) {
+            // Always attach the selected row, even when fewer than three rows fit.
+            listState.scrollToItem(selectedIndex)
+        }
     }
+
     LaunchedEffect(firstFocus, targetPlaced, touchDevice, visible) {
         if (visible && !touchDevice && targetPlaced) {
             withFrameNanos { }
             runCatching { firstFocus.requestFocus() }
         }
     }
+
     val initialFocus = Modifier.focusRequester(firstFocus)
         .onGloballyPositioned { if (it.isAttached) targetPlaced = true }
-    // Keep the player's remote handlers in a different focus window.
+
+    // Keep the player's remote handlers in a different focus window (D-Pad Case)
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         AnimatedVisibility(
             visibleState = transition,
@@ -4801,16 +4808,18 @@ fun FullscreenSourcesOverlay(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.4f)),
-                contentAlignment = Alignment.CenterEnd // Panel anchored on the right
+                contentAlignment = Alignment.CenterEnd
             ) {
+                // Intercept taps outside the panel to close the dialog box on touchscreens
                 Box(Modifier.matchParentSize().pointerInput(onDismiss) { detectTapGestures { onDismiss() } })
+
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
                         .width(360.dp)
-                        .background(Color(0xFF141414).copy(alpha = 0.98f)) // Premium, nearly opaque black background
+                        .background(Color(0xFF141414).copy(alpha = 0.98f))
                         .padding(horizontal = 24.dp, vertical = 32.dp)
-                        .pointerInput(Unit) { detectTapGestures { } }
+                        .pointerInput(Unit) { detectTapGestures { } } // Blocks touches that pass through the panel
                 ) {
                     androidx.tv.material3.Text(
                         text = stringResource(R.string.live_label_choose_source),
@@ -4834,11 +4843,10 @@ fun FullscreenSourcesOverlay(
                             modifier = Modifier.fillMaxWidth().height(100.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            // Scroll wheel in the same cyan/mint color as your buttons
                             CircularProgressIndicator(color = Color(0xFF5CE1E6))
                         }
                     } else if (failed) {
-                        Text(stringResource(R.string.live_sources_failed), color = Color.White)
+                        androidx.tv.material3.Text(stringResource(R.string.live_sources_failed), color = Color.White)
                     } else if (variants.isEmpty() || variants.size == 1) {
                         androidx.tv.material3.Text(
                             text = stringResource(R.string.live_sources_empty),
@@ -4855,15 +4863,14 @@ fun FullscreenSourcesOverlay(
                                 val isSelected = variant.id == currentChannel?.id
                                 var isFocused by remember { mutableStateOf(false) }
 
-                                // Dynamic colors based on status (Focused, Selected, or Normal)
                                 val containerBg = when {
                                     isFocused -> Color.White
-                                    isSelected -> Color(0xFF5CE1E6).copy(alpha = 0.15f) // Subtle cyan background
+                                    isSelected -> Color(0xFF5CE1E6).copy(alpha = 0.15f)
                                     else -> Color.Transparent
                                 }
                                 val textColor = when {
                                     isFocused -> Color.Black
-                                    isSelected -> Color(0xFF5CE1E6) // Bright cyan text (just like your buttons)
+                                    isSelected -> Color(0xFF5CE1E6)
                                     else -> Color.White
                                 }
 
@@ -4876,9 +4883,8 @@ fun FullscreenSourcesOverlay(
                                         .onFocusChanged { isFocused = it.isFocused }
                                         .then(if (variant.id == targetKey) initialFocus else Modifier)
                                         .clickable { onPick(variant) }
-                                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                                        .padding(horizontal = 16.dp, vertical = 10.dp)
                                 ) {
-                                    // Small vertical indicator for the channel that is currently playing
                                     if (isSelected && !isFocused) {
                                         Box(
                                             modifier = Modifier
@@ -4889,23 +4895,40 @@ fun FullscreenSourcesOverlay(
                                         Spacer(modifier = Modifier.width(12.dp))
                                     }
 
-                                    androidx.tv.material3.Text(
-                                        text = variant.name,
-                                        color = textColor,
-                                        fontSize = 15.sp,
-                                        fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Column(verticalArrangement = Arrangement.Center) {
+                                        androidx.tv.material3.Text(
+                                            text = variant.name,
+                                            color = textColor,
+                                            fontSize = 15.sp,
+                                            fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+
+                                        val groupName = variant.source.group.takeIf { it.isNotBlank() }
+                                            ?: stringResource(R.string.live_cat_ungrouped)
+                                        androidx.tv.material3.Text(
+                                            text = groupName,
+                                            color = if (isFocused) Color(0xFF616161) else Color(0xFF9E9E9E),
+                                            fontSize = 12.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+
+                    // Invisible or “Cancel” button to capture focus if the list is empty
                     androidx.compose.material3.TextButton(
                         onClick = onDismiss,
-                        modifier = if (!hasAlternatives) initialFocus else Modifier,
+                        modifier = if (!hasAlternatives) initialFocus else Modifier.padding(top = 16.dp),
                     ) {
-                        Text(stringResource(android.R.string.cancel))
+                        androidx.tv.material3.Text(
+                            text = stringResource(android.R.string.cancel),
+                            color = Color(0xFF9E9E9E)
+                        )
                     }
                 }
             }
