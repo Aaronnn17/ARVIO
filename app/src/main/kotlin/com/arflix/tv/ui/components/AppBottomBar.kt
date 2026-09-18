@@ -25,6 +25,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -54,16 +57,19 @@ import androidx.annotation.StringRes
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Icon
-import androidx.tv.material3.Text
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material.ripple.rememberRipple
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.RectangleShape
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.hazeChild
+import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.R
 import com.arflix.tv.navigation.Screen
-import com.arflix.tv.ui.theme.ArflixTypography
-import com.arflix.tv.ui.theme.appBackgroundDark
-import com.arflix.tv.ui.theme.TextPrimary
-import com.arflix.tv.ui.theme.TextSecondary
-import com.arflix.tv.util.LocalDeviceType
+import androidx.compose.material3.Icon
 
 internal enum class AppBottomBarMode {
     STANDARD,
@@ -110,26 +116,41 @@ internal fun appBottomBarSpec(mode: AppBottomBarMode): AppBottomBarSpec = when (
         labelFontSizeSp = 10,
     )
     AppBottomBarMode.STANDARD -> AppBottomBarSpec(
-        itemHeightDp = 56,
-        rowVerticalPaddingDp = 6,
-        itemVerticalPaddingDp = 2,
-        itemSpacingDp = 2,
-        iconHorizontalPaddingDp = 14,
-        iconVerticalPaddingDp = 4,
-        iconSizeDp = 24,
+        itemHeightDp = 52,
+        rowVerticalPaddingDp = 0,
+        itemVerticalPaddingDp = 0,
+        itemSpacingDp = 0,
+        iconHorizontalPaddingDp = 0,
+        iconVerticalPaddingDp = 0,
+        iconSizeDp = 25,
         indicatorSizeDp = 4,
         labelFontSizeSp = 11,
     )
 }
 
+internal fun mobileContentInsets(systemBars: WindowInsets, showBottomBar: Boolean): WindowInsets =
+    if (showBottomBar) systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal) else systemBars
+
 internal fun shouldShowBottomBar(
     isMobile: Boolean,
     currentRoute: String?,
-    isFullscreenRoute: Boolean
+    isFullscreenRoute: Boolean,
+    isSettingsSubPage: Boolean = false,
+    isTvSubScreen: Boolean = false,
 ): Boolean {
     if (!isMobile || currentRoute == null || isFullscreenRoute) return false
-    val isProfileOrLogin = currentRoute == Screen.ProfileSelection.route || currentRoute == Screen.Login.route
-    return !isProfileOrLogin
+    val route = currentRoute.substringBefore('?')
+    if (route == "settings" && isSettingsSubPage || route == "tv" && isTvSubScreen) return false
+
+    // Only main screens show the bottom navigation bar; subscreens (Details, Collection, CategoryViewAll, sub-settings, TV group guide, etc.) do not
+    return when {
+        route == Screen.Home.route -> true
+        route == Screen.Search.route -> true
+        route == Screen.Watchlist.route -> true
+        route == "tv" -> true
+        route == "settings" -> true
+        else -> false
+    }
 }
 
 data class BottomBarItem(
@@ -156,43 +177,85 @@ internal fun currentBottomBarSpec(): AppBottomBarSpec {
         config.smallestScreenWidthDp, config.screenWidthDp, config.screenHeightDp))
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun AppBottomBar(currentRoute: String?, onNavigate: (String) -> Unit, modifier: Modifier = Modifier) {
+fun AppBottomBar(
+    currentRoute: String?,
+    onNavigate: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    hazeState: HazeState? = null,
+) {
     val spec = currentBottomBarSpec()
     val accent = resolveAccentColor(fallback = Color.White)
-    val background = appBackgroundDark()
-    Column(modifier = modifier.fillMaxWidth()
-        .background(Brush.verticalGradient(
-            0f to Color.Transparent, 0.30f to background.copy(alpha = 0.65f),
-            0.75f to background.copy(alpha = 0.92f), 1f to background.copy(alpha = 0.98f)))
-        .navigationBarsPadding().padding(top = 20.dp)) {
-        // Lower the whole touch row while keeping the fade and content clearance stable.
-        Row(modifier = Modifier.fillMaxWidth().offset(y = 6.dp).padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+    val barHeight = (spec.itemHeightDp ?: 52).dp
+
+    val baseModifier = if (hazeState != null) {
+        modifier.hazeChild(
+            state = hazeState,
+            shape = RectangleShape,
+            style = HazeStyle(
+                tint = Color(0xCC000000), // 80% black tint
+                blurRadius = 24.dp,
+                noiseFactor = 0.04f
+            )
+        )
+    } else {
+        modifier.background(Color(0xCC000000))
+    }
+
+    Column(
+        modifier = baseModifier
+            .fillMaxWidth()
+            .drawBehind {
+                // X-style subtle hairline top border
+                val strokeWidth = 0.5.dp.toPx()
+                drawLine(
+                    color = Color.White.copy(alpha = 0.12f),
+                    start = Offset(0f, strokeWidth / 2),
+                    end = Offset(size.width, strokeWidth / 2),
+                    strokeWidth = strokeWidth
+                )
+            }
+            .navigationBarsPadding()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(barHeight),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             bottomBarItems.forEach { item ->
                 val isSelected = currentRoute?.contains(item.route, ignoreCase = true) == true
                 var isFocused by remember { mutableStateOf(false) }
                 val label = stringResource(item.labelRes)
                 val iconColor by animateColorAsState(
-                    if (isSelected || isFocused) accent else Color.White.copy(alpha = 0.62f),
-                    animationSpec = tween(200), label = "navigation_icon")
-                val labelColor by animateColorAsState(
-                    if (isSelected || isFocused) Color.White else Color.White.copy(alpha = 0.62f),
-                    animationSpec = tween(200), label = "navigation_label")
-                Column(modifier = Modifier.weight(1f).heightIn(min = (spec.itemHeightDp ?: 56).dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .then(if (isFocused) Modifier.border(1.dp, accent, RoundedCornerShape(12.dp)) else Modifier)
-                    .onFocusChanged { isFocused = it.isFocused }
-                    .selectable(selected = isSelected, role = Role.Tab, onClick = { onNavigate(item.route) })
-                    .padding(vertical = 4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {
-                    Icon(imageVector = item.icon, contentDescription = null, tint = iconColor,
-                        modifier = Modifier.size(spec.iconSizeDp.dp))
-                    Text(text = label, style = ArflixTypography.caption.copy(fontSize = spec.labelFontSizeSp.sp,
-                        fontWeight = FontWeight.Medium, letterSpacing = 0.sp), color = labelColor,
-                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    targetValue = if (isSelected || isFocused) accent else Color.White.copy(alpha = 0.55f),
+                    animationSpec = tween(180),
+                    label = "navigation_icon_color"
+                )
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(CircleShape)
+                        .selectable(
+                            selected = isSelected,
+                            role = Role.Tab,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = rememberRipple(bounded = false, radius = 24.dp),
+                            onClick = { onNavigate(item.route) }
+                        )
+                        .onFocusChanged { isFocused = it.isFocused }
+                        .then(if (isFocused) Modifier.border(1.dp, accent, CircleShape) else Modifier),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = item.icon,
+                        contentDescription = label,
+                        tint = iconColor,
+                        modifier = Modifier.size(spec.iconSizeDp.dp)
+                    )
                 }
             }
         }

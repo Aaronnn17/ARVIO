@@ -48,7 +48,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -58,6 +60,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import com.arflix.tv.ui.components.LocalBottomBarInset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed as standardItemsIndexed
@@ -1904,7 +1907,7 @@ private fun DetailsContent(
                 }
 
                 // Bottom spacing
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(32.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + LocalBottomBarInset.current))
             }
 
             // Persistent back button for phone users (hidden on tablet/TV).

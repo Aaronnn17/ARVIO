@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -532,6 +533,7 @@ fun LiveTvScreen(
     onNavigateToIptvSettings: (() -> Unit)? = null,
     onNavigateToDetails: (com.arflix.tv.data.model.MediaType, Int) -> Unit = { _, _ -> },
     onSwitchProfile: () -> Unit = {},
+    onSubScreenChanged: (Boolean) -> Unit = {},
     onBack: () -> Unit = {},
 ) {
     // Lifecycle-aware collection so the screen stops draining state updates
@@ -768,7 +770,7 @@ fun LiveTvScreen(
             return@LaunchedEffect
         }
         // Skip re-enrichment if we already have a cache for the same playlist.
-        val signature = "${snapshot.size}:${snapshot.firstOrNull()?.id}:${snapshot.lastOrNull()?.id}"
+        val signature = "${snapshot.size}:${snapshot.firstOrNull()?.id}:${snapshot.lastOrNull()?.id}:${hiddenGroupSet.hashCode()}:${state.snapshot.groupOrder.hashCode()}"
         if (viewModel.cachedChannelsSignature == signature &&
             viewModel.cachedEnrichedChannels is EnrichedChannels
         ) {
@@ -822,8 +824,54 @@ fun LiveTvScreen(
                     else -> category
                 }
             }
-            if (updatedTop != current.tree.top) {
-                val updated = current.copy(tree = current.tree.copy(top = updatedTop))
+            val allExistingGroups = (current.tree.global.categories + current.tree.hidden.categories).distinctBy { it.id }
+            val (nowHidden, nowVisible) = allExistingGroups.partition { category ->
+                val groupName = category.playlistGroupName ?: category.label
+                val playlistId = category.playlistId.orEmpty()
+                val compositeKey = if (playlistId.isNotBlank()) {
+                    com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupName)
+                } else null
+                (compositeKey != null && compositeKey in hiddenGroupSet) ||
+                    groupName in hiddenGroupSet ||
+                    category.label in hiddenGroupSet
+            }
+            val orderMap = if (state.snapshot.groupOrder.isNotEmpty()) {
+                state.snapshot.groupOrder.asSequence()
+                    .flatMap { rawOrder ->
+                        val trimmed = rawOrder.trim()
+                        val gName = com.arflix.tv.data.model.PlaylistGroupKey(trimmed).groupName
+                        sequenceOf(trimmed, playlistGroupLabel(gName))
+                    }
+                    .distinct()
+                    .withIndex()
+                    .associate { (index, key) -> key to index }
+            } else null
+
+            fun sortGroupList(list: List<LiveCategory>): List<LiveCategory> {
+                if (orderMap == null) return list
+                return list.sortedWith(
+                    compareBy { category ->
+                        val groupName = category.playlistGroupName ?: category.label
+                        val playlistId = category.playlistId.orEmpty()
+                        val compositeKey = if (playlistId.isNotBlank()) {
+                            com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupName)
+                        } else null
+                        val label = playlistGroupLabel(groupName)
+                        (compositeKey?.let { orderMap[it] })
+                            ?: orderMap[label]
+                            ?: orderMap[category.label]
+                            ?: Int.MAX_VALUE
+                    }
+                )
+            }
+
+            val updatedTree = current.tree.copy(
+                top = updatedTop,
+                global = LiveSection("playlist", "PLAYLIST", sortGroupList(nowVisible)),
+                hidden = LiveSection("hidden", "HIDDEN", sortGroupList(nowHidden)),
+            )
+            if (updatedTree != current.tree) {
+                val updated = current.copy(tree = updatedTree)
                 enrichedState.value = updated
                 viewModel.cachedEnrichedChannels = updated
             }
@@ -847,8 +895,11 @@ fun LiveTvScreen(
     val playlistCategorySections = remember(state.config, enrichedState.value.tree.global.categories, hiddenGroupSet) {
         buildPlaylistCategorySections(state.config, enrichedState.value.tree.global.categories, hiddenGroupSet)
     }
-    LaunchedEffect(playlistCategorySections, selectedProviderId) {
-        if (playlistCategorySections.isNotEmpty() && selectedProviderId != "all") {
+    LaunchedEffect(playlistCategorySections, selectedProviderId, currentMode) {
+        if (currentMode != LiveTvStartup.LiveTvMode.GroupHome &&
+            playlistCategorySections.isNotEmpty() &&
+            selectedProviderId != "all"
+        ) {
             selectedProviderId = "all"
         }
     }
@@ -922,12 +973,65 @@ fun LiveTvScreen(
             selectedCategoryId = "all"
         }
     }
-    val mobileGroupList = remember(visibleEnrichedState.value.tree, playlistCategorySections) {
-        if (playlistCategorySections.isNotEmpty()) {
-            playlistCategorySections.flatMap { it.categories }
+    val mobileGroupList = remember(
+        visibleEnrichedState.value.tree,
+        playlistCategorySections,
+        hiddenGroupSet,
+        state.snapshot.groupOrder,
+        selectedProviderId,
+    ) {
+        val rawGroups = if (playlistCategorySections.isNotEmpty()) {
+            if (selectedProviderId != "all") {
+                playlistCategorySections
+                    .filter { it.id == selectedProviderId || it.id == "source:$selectedProviderId" }
+                    .flatMap { it.categories }
+            } else {
+                playlistCategorySections.flatMap { it.categories }
+            }
         } else {
-            visibleEnrichedState.value.tree.global.categories + visibleEnrichedState.value.tree.countries.categories
-        }.filterNot { it.count <= 0 }
+            val base = if (selectedProviderId != "all") {
+                visibleEnrichedState.value.tree.global.categories.filter { it.playlistId == selectedProviderId }
+            } else {
+                visibleEnrichedState.value.tree.global.categories.ifEmpty {
+                    visibleEnrichedState.value.tree.countries.categories
+                }
+            }
+            base
+        }
+
+        val hiddenCategoryIds = visibleEnrichedState.value.tree.hidden.categories.mapTo(HashSet()) { it.id }
+
+        val filtered = visibleMobileGroups(rawGroups, hiddenCategoryIds, hiddenGroupSet)
+
+        if (state.snapshot.groupOrder.isEmpty()) {
+            filtered
+        } else {
+            val orderMap = state.snapshot.groupOrder.asSequence()
+                .flatMap { rawOrder ->
+                    val trimmed = rawOrder.trim()
+                    val gName = com.arflix.tv.data.model.PlaylistGroupKey(trimmed).groupName
+                    sequenceOf(trimmed, playlistGroupLabel(gName))
+                }
+                .distinct()
+                .withIndex()
+                .associate { (index, key) -> key to index }
+
+            filtered.sortedWith(
+                compareBy<LiveCategory> { category ->
+                    val groupName = category.playlistGroupName ?: category.label
+                    val playlistId = category.playlistId.orEmpty()
+                    val compositeKey = if (playlistId.isNotBlank()) {
+                        com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupName)
+                    } else null
+
+                    val label = playlistGroupLabel(groupName)
+                    (compositeKey?.let { orderMap[it] })
+                        ?: orderMap[label]
+                        ?: orderMap[category.label]
+                        ?: Int.MAX_VALUE
+                }
+            )
+        }
     }
     // Selected category (persist across nav). Defaults to "all".
     val hasProfile = currentProfile != null
@@ -1646,6 +1750,16 @@ fun LiveTvScreen(
 
     var categoryDrawerOpen by rememberSaveable { mutableStateOf(true) }
     var sportsSelected by rememberSaveable(currentProfile?.id) { mutableStateOf(false) }
+    val currentOnSubScreenChanged by rememberUpdatedState(onSubScreenChanged)
+    val isTvSubScreen = isTouchDevice && (currentMode != LiveTvStartup.LiveTvMode.GroupHome || sportsSelected)
+    LaunchedEffect(isTvSubScreen) {
+        currentOnSubScreenChanged(isTvSubScreen)
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            currentOnSubScreenChanged(false)
+        }
+    }
     val sportsScheduleKey = SportsScheduleKey(currentProfile?.id, selectedProviderId, state.snapshot.loadedAt.toEpochMilli(),
         hiddenGroupSet + restrictedGroupSet, state.epgBackfillInProgress, guideClockMillis / 600_000L,
         state.snapshot.nowNext.size / 64)
@@ -2332,10 +2446,8 @@ fun LiveTvScreen(
         }
         sportsSelected = false
         val category = visibleEnrichedState.value.tree.byId(categoryId)
-        val groupKey = category?.playlistId?.let { playlistId ->
-            category.playlistGroupName?.let { groupName -> PlaylistGroupKey.build(playlistId, groupName) }
-        }
-        if (groupKey != null && groupKey in state.lockedGroups && groupKey !in unlockedGroupKeys) {
+        val groupKey = category?.pendingCategoryUnlock(state.lockedGroups, unlockedGroupKeys)
+        if (groupKey != null) {
             if (currentProfile?.pin.isNullOrBlank()) {
                 showMissingProfilePinDialog = true
             } else {
@@ -3638,7 +3750,8 @@ fun LiveTvScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(top = contentTopPadding),
+                        .padding(top = contentTopPadding)
+                        .navigationBarsPadding(),
                 ) {
                     Row(
                         modifier = Modifier

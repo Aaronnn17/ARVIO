@@ -4,6 +4,14 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 
 class AppBottomBarResponsiveLayoutTest {
+    @Test fun subscreenFlagsOnlyAffectTheirOwnDestination() {
+        assertThat(shouldShowBottomBar(true, "home", false, true, true)).isTrue()
+        assertThat(shouldShowBottomBar(true, "settings", false, true, false)).isFalse()
+        assertThat(shouldShowBottomBar(true, "tv", false, false, true)).isFalse()
+        assertThat(shouldShowBottomBar(true, "details/movie/1", false)).isFalse()
+        assertThat(shouldShowBottomBar(true, "collection/1", false)).isFalse()
+        assertThat(shouldShowBottomBar(true, "settings-other", false)).isFalse()
+    }
 
     @Test
     fun landscapePhoneUsesCompactBottomBar() {

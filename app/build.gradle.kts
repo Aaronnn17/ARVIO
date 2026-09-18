@@ -323,6 +323,7 @@ ksp {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.animation:animation")
+    implementation("dev.chrisbanes.haze:haze:0.7.3")
 
     // Compose for TV - Core TV components
     // tv-foundation stays alpha (no beta/stable releases exist); tv-material bumped to stable
