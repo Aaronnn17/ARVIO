@@ -147,6 +147,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -523,12 +524,13 @@ fun SettingsScreen(
             if (initialSection == "iptv") "TV" else "MAIN"
         )
     }
+    val currentOnSubPageChanged by rememberUpdatedState(onSubPageChanged)
     LaunchedEffect(mobilePage) {
-        onSubPageChanged(mobilePage != "MAIN")
+        currentOnSubPageChanged(mobilePage != "MAIN")
     }
     DisposableEffect(Unit) {
         onDispose {
-            onSubPageChanged(false)
+            currentOnSubPageChanged(false)
         }
     }
     var contentFocusIndex by remember { mutableIntStateOf(0) }

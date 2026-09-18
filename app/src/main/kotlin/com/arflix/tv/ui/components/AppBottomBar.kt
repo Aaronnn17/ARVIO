@@ -25,6 +25,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -125,6 +128,9 @@ internal fun appBottomBarSpec(mode: AppBottomBarMode): AppBottomBarSpec = when (
     )
 }
 
+internal fun mobileContentInsets(systemBars: WindowInsets, showBottomBar: Boolean): WindowInsets =
+    if (showBottomBar) systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal) else systemBars
+
 internal fun shouldShowBottomBar(
     isMobile: Boolean,
     currentRoute: String?,
@@ -133,15 +139,16 @@ internal fun shouldShowBottomBar(
     isTvSubScreen: Boolean = false,
 ): Boolean {
     if (!isMobile || currentRoute == null || isFullscreenRoute) return false
-    if (isSettingsSubPage || isTvSubScreen) return false
+    val route = currentRoute.substringBefore('?')
+    if (route == "settings" && isSettingsSubPage || route == "tv" && isTvSubScreen) return false
 
     // Only main screens show the bottom navigation bar; subscreens (Details, Collection, CategoryViewAll, sub-settings, TV group guide, etc.) do not
     return when {
-        currentRoute == Screen.Home.route -> true
-        currentRoute == Screen.Search.route -> true
-        currentRoute == Screen.Watchlist.route -> true
-        currentRoute.startsWith("tv") -> true
-        currentRoute.startsWith("settings") -> true
+        route == Screen.Home.route -> true
+        route == Screen.Search.route -> true
+        route == Screen.Watchlist.route -> true
+        route == "tv" -> true
+        route == "settings" -> true
         else -> false
     }
 }

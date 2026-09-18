@@ -977,7 +977,6 @@ fun LiveTvScreen(
         visibleEnrichedState.value.tree,
         playlistCategorySections,
         hiddenGroupSet,
-        restrictedGroupSet,
         state.snapshot.groupOrder,
         selectedProviderId,
     ) {
@@ -1002,26 +1001,7 @@ fun LiveTvScreen(
 
         val hiddenCategoryIds = visibleEnrichedState.value.tree.hidden.categories.mapTo(HashSet()) { it.id }
 
-        val filtered = rawGroups.filterNot { category ->
-            if (category.count <= 0) return@filterNot true
-            if (category.id in hiddenCategoryIds) return@filterNot true
-
-            val groupName = category.playlistGroupName ?: category.label
-            val playlistId = category.playlistId.orEmpty()
-            val compositeKey = if (playlistId.isNotBlank()) {
-                com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupName)
-            } else null
-
-            val isHidden = (compositeKey != null && compositeKey in hiddenGroupSet) ||
-                groupName in hiddenGroupSet ||
-                category.label in hiddenGroupSet
-
-            val isRestricted = (compositeKey != null && compositeKey in restrictedGroupSet) ||
-                groupName in restrictedGroupSet ||
-                category.label in restrictedGroupSet
-
-            isHidden || isRestricted
-        }.distinctBy { it.id }
+        val filtered = visibleMobileGroups(rawGroups, hiddenCategoryIds, hiddenGroupSet)
 
         if (state.snapshot.groupOrder.isEmpty()) {
             filtered
@@ -2466,10 +2446,8 @@ fun LiveTvScreen(
         }
         sportsSelected = false
         val category = visibleEnrichedState.value.tree.byId(categoryId)
-        val groupKey = category?.playlistId?.let { playlistId ->
-            category.playlistGroupName?.let { groupName -> PlaylistGroupKey.build(playlistId, groupName) }
-        }
-        if (groupKey != null && groupKey in state.lockedGroups && groupKey !in unlockedGroupKeys) {
+        val groupKey = category?.pendingCategoryUnlock(state.lockedGroups, unlockedGroupKeys)
+        if (groupKey != null) {
             if (currentProfile?.pin.isNullOrBlank()) {
                 showMissingProfilePinDialog = true
             } else {

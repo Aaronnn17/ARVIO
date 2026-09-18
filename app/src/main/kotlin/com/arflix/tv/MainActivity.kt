@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.haze
 import com.arflix.tv.ui.components.LocalBottomBarInset
+import com.arflix.tv.ui.components.mobileContentInsets
 import com.arflix.tv.ui.components.currentBottomBarSpec
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -754,25 +755,7 @@ fun ArflixApp(
                     val newOffset = (bottomBarOffsetPx - delta).coerceIn(0f, maxOffset)
                     bottomBarOffsetPx = newOffset
 
-                    val halfThreshold = maxOffset * 0.5f
-
-                    // If user scrolled down past halfway, complete slide down automatically
-                    if (delta < -3f && newOffset >= halfThreshold && newOffset < maxOffset) {
-                        animateToOffset(maxOffset, 180)
-                    }
-                    // If user scrolled up past halfway, complete slide up automatically
-                    else if (delta > 3f && newOffset <= halfThreshold && newOffset > 0f) {
-                        animateToOffset(0f, 180)
-                    } else {
-                        // Watchdog settle: ensures it never stops in the middle if touch pauses or lifts
-                        settleJob = appCoroutineScope.launch {
-                            kotlinx.coroutines.delay(120)
-                            if (bottomBarOffsetPx > 0f && bottomBarOffsetPx < maxOffset) {
-                                val target = if (bottomBarOffsetPx > halfThreshold) maxOffset else 0f
-                                animateToOffset(target, 200)
-                            }
-                        }
-                    }
+                    // Follow the finger without racing a snap animation during the drag.
                 }
 
                 return Offset.Zero
@@ -818,7 +801,7 @@ fun ArflixApp(
             // transient system bars appear or disappear.
             .then(when {
                 isMobile && !isFullscreenRoute -> Modifier.windowInsetsPadding(
-                    WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+                    mobileContentInsets(WindowInsets.systemBars, showBottomBar)
                 )
                 applySystemBarsPadding -> Modifier.systemBarsPadding()
                 else -> Modifier
