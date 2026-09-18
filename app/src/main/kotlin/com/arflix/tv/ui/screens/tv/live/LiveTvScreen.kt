@@ -2810,7 +2810,7 @@ fun LiveTvScreen(
             }
         }
 
-        val analyticsListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+       val analyticsListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
             override fun onBandwidthEstimate(
                 eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
                 totalLoadTimeMs: Int,
@@ -2820,7 +2820,14 @@ fun LiveTvScreen(
                 if (bitrateEstimate > 0) {
                     streamBitrate = java.lang.String.format(java.util.Locale.US, "%.1f Mbps", bitrateEstimate / 1000000f)
                 }
-                if (streamFps.isBlank() || streamVideoCodec.isBlank()) {
+                
+                // Forzamos la consulta de FPS continuamente hasta que ExoPlayer decodifique el parámetro real SPS
+                if (streamFps.isBlank() || streamFps == "-1 fps" || streamVideoCodec.isBlank()) {
+                    val fallbackFormat = exoPlayer.videoFormat
+                    if (fallbackFormat != null && fallbackFormat.frameRate > 0f) {
+                        // Math.round asegura que 50.0 o 59.94 se pinten limpios
+                        streamFps = "${Math.round(fallbackFormat.frameRate)} fps"
+                    }
                     updateFormats()
                 }
             }
