@@ -4,11 +4,15 @@ import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.repository.HomeServerLibrarySort
 import java.time.LocalDate
 
+private val YEAR_REGEX = Regex("\\d{4}")
+
 private fun MediaItem.libraryReleaseDate(): LocalDate? {
-    val fullDate = releaseDate?.take(10)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+    val fullDate = releaseDate?.take(10)?.let {
+        try { LocalDate.parse(it) } catch (_: Exception) { null }
+    }
     if (fullDate != null && fullDate.year > 0) return fullDate
-    val releaseYear = year.takeIf { it.matches(Regex("\\d{4}")) }?.toIntOrNull()
-        ?: releaseDate?.takeIf { it.matches(Regex("\\d{4}")) }?.toIntOrNull()
+    val releaseYear = year.takeIf { it.matches(YEAR_REGEX) }?.toIntOrNull()
+        ?: releaseDate?.takeIf { it.matches(YEAR_REGEX) }?.toIntOrNull()
     return releaseYear?.takeIf { it > 0 }?.let { LocalDate.of(it, 1, 1) }
 }
 

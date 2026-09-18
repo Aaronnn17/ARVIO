@@ -4747,11 +4747,11 @@ class IptvRepository @Inject constructor(
         private val catalogFormatVersion = 1
 
         private fun readPersistedCatalog(providerKey: String): ResolverPersistedCatalog? {
-            val raw = runCatching { prefs.getString(catalogPrefKey(providerKey), null) }.getOrNull()
+            val raw = try { prefs.getString(catalogPrefKey(providerKey), null) } catch (_: Exception) { null }
             if (raw.isNullOrBlank()) return null
-            val persisted = runCatching {
+            val persisted = try {
                 gson.fromJson(raw, ResolverPersistedCatalog::class.java)
-            }.getOrNull() ?: return null
+            } catch (_: Exception) { null } ?: return null
             if (persisted.formatVersion != catalogFormatVersion) {
                 System.err.println(
                     "[VOD-Resolver] loadCatalog: discarding catalog written in format " +
@@ -4866,9 +4866,9 @@ class IptvRepository @Inject constructor(
                 }
                 if (episodes.isNullOrEmpty()) {
                     val raw = prefs.getString(seriesInfoPrefKey(providerKey, seriesId), null) ?: continue
-                    val persisted = runCatching {
+                    val persisted = try {
                         gson.fromJson(raw, ResolverPersistedSeriesInfo::class.java)
-                    }.getOrNull() ?: continue
+                    } catch (_: Exception) { null } ?: continue
                     if (persisted.episodes.isEmpty()) continue
                     if (now - persisted.savedAtMs > seriesInfoTtlMs) continue
                     synchronized(seriesInfoLock) {
@@ -5441,7 +5441,7 @@ class IptvRepository @Inject constructor(
                 resolvedMemory[key]?.let { return it }
             }
             val raw = prefs.getString(resolvedPrefKey, null) ?: return null
-            val persisted = runCatching { gson.fromJson(raw, ResolverPersistedResolved::class.java) }.getOrNull() ?: return null
+            val persisted = try { gson.fromJson(raw, ResolverPersistedResolved::class.java) } catch (_: Exception) { null } ?: return null
             val hit = persisted.items[key] ?: return null
             if (System.currentTimeMillis() - hit.savedAtMs > resolvedTtlMs) return null
             synchronized(resolvedLock) { resolvedMemory[key] = hit }
@@ -5453,7 +5453,7 @@ class IptvRepository @Inject constructor(
                 resolvedMemory[key] = value
             }
             val existingRaw = prefs.getString(resolvedPrefKey, null)
-            val existing = runCatching { gson.fromJson(existingRaw, ResolverPersistedResolved::class.java) }.getOrNull()
+            val existing = try { gson.fromJson(existingRaw, ResolverPersistedResolved::class.java) } catch (_: Exception) { null }
                 ?: ResolverPersistedResolved()
             val merged = LinkedHashMap(existing.items)
             merged[key] = value
@@ -5496,9 +5496,9 @@ class IptvRepository @Inject constructor(
                 // Read prefs inside the lock: prevents two concurrent IO threads from
                 // racing to populate seriesBindingMemory from the same prefs blob.
                 val raw = prefs.getString(seriesBindingPrefKey, null) ?: return emptyList()
-                val persisted = runCatching {
+                val persisted = try {
                     gson.fromJson(raw, ResolverPersistedSeriesBindings::class.java)
-                }.getOrNull() ?: return emptyList()
+                } catch (_: Exception) { null } ?: return emptyList()
                 keys.forEach { key ->
                     val ids = persisted.items[key].orEmpty()
                     if (ids.isNotEmpty()) {
@@ -5521,9 +5521,9 @@ class IptvRepository @Inject constructor(
                 }
             }
             val existingRaw = prefs.getString(seriesBindingPrefKey, null)
-            val existing = runCatching {
+            val existing = try {
                 gson.fromJson(existingRaw, ResolverPersistedSeriesBindings::class.java)
-            }.getOrNull() ?: ResolverPersistedSeriesBindings()
+            } catch (_: Exception) { null } ?: ResolverPersistedSeriesBindings()
             val persisted = LinkedHashMap(existing.items)
             keys.forEach { key ->
                 val existingIds = persisted[key].orEmpty()
@@ -8115,7 +8115,7 @@ class IptvRepository @Inject constructor(
     }
 
     private fun JsonElement.toXtreamEpgListingOrNull(): XtreamEpgListing? =
-        runCatching { gson.fromJson(this, XtreamEpgListing::class.java) }.getOrNull()
+        try { gson.fromJson(this, XtreamEpgListing::class.java) } catch (_: Exception) { null }
 
     private fun List<XtreamEpgListing>.withRequestedStreamId(streamId: Int): List<XtreamEpgListing> {
         if (isEmpty()) return this
@@ -11448,10 +11448,12 @@ class IptvRepository @Inject constructor(
         if (iptvMovieSourceCacheHydrated) return
         // Deserialize outside the lock so concurrent callers don't queue on the monitor
         // waiting for a potentially large JSON parse.
-        val loaded: Map<String, CachedIptvMovieSources> = runCatching {
+        val loaded: Map<String, CachedIptvMovieSources> = try {
             val raw = iptvMovieSourcePrefs.getString(iptvMovieSourcePrefsKey, null)
             if (!raw.isNullOrBlank()) gson.fromJson(raw, PersistedMovieSourceCache::class.java)?.items else null
-        }.getOrNull().orEmpty()
+        } catch (_: Exception) {
+            null
+        }.orEmpty()
         synchronized(iptvMovieSourceLock) {
             if (iptvMovieSourceCacheHydrated) return
             iptvMovieSourceMemory.putAll(loaded)
@@ -11489,7 +11491,7 @@ class IptvRepository @Inject constructor(
     }
 
     private fun profileIdHash(): String {
-        val raw = runCatching { profileManager.getProfileIdSync() }.getOrDefault("default")
+        val raw = try { profileManager.getProfileIdSync() } catch (_: Exception) { "default" }
         cachedProfileIdHashPair?.let { (cachedRaw, cachedHash) ->
             if (cachedRaw == raw) return cachedHash
         }

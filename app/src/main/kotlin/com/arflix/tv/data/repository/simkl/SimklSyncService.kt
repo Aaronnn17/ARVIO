@@ -951,6 +951,8 @@ class SimklSyncService @Inject constructor(
                 AppLogger.e("SimklSyncService", "Failed adding to watchlist: code=${res.code()} msg=${res.message()}")
                 false
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             AppLogger.e("SimklSyncService", "Error adding to watchlist: ${e.message}")
             false
@@ -1011,6 +1013,8 @@ class SimklSyncService @Inject constructor(
                 AppLogger.e("SimklSyncService", "Failed removing from watchlist: code=${res.code()} msg=${res.message()}")
                 false
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             AppLogger.e("SimklSyncService", "Error removing from watchlist: ${e.message}")
             false
@@ -1055,6 +1059,8 @@ class SimklSyncService @Inject constructor(
                 AppLogger.e("SimklSyncService", "Failed marking watched: code=${res.code()} msg=${res.message()}")
                 false
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             AppLogger.e("SimklSyncService", "Error marking watched: ${e.message}")
             false
@@ -1108,6 +1114,8 @@ class SimklSyncService @Inject constructor(
                 AppLogger.e("SimklSyncService", "Failed marking unwatched: code=${res.code()} msg=${res.message()}")
                 false
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             AppLogger.e("SimklSyncService", "Error marking unwatched: ${e.message}")
             false

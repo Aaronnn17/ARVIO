@@ -317,12 +317,14 @@ fun DetailsScreen(
     // Spoiler blur setting
     var spoilerBlurEnabled by remember { mutableStateOf(false) }
     LaunchedEffect(context, currentProfile) {
-        runCatching {
+        try {
             val prefs = context.settingsDataStore.data.first()
             val profileId = currentProfile?.id
             if (profileId != null) {
                 spoilerBlurEnabled = prefs[booleanPreferencesKey("profile_${profileId}_spoiler_blur")] ?: false
             }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
         }
     }
 
@@ -1048,7 +1050,7 @@ fun DetailsScreen(
             },
             onClose = {
                 showStreamSelector = false
-                runCatching { focusRequester.requestFocus() }
+                try { focusRequester.requestFocus() } catch (_: Exception) {}
             }
         )
 

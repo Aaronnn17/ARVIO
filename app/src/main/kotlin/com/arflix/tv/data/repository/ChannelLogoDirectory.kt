@@ -29,7 +29,7 @@ object ChannelLogoDirectory {
     private val mutex = Mutex()
     @Volatile private var index: ChannelLogoIndex? = null
 
-    suspend fun candidates(context: Context, epgId: String?, name: String): List<String> = withContext(Dispatchers.IO) {
+    suspend fun candidates(context: Context, epgId: String?, name: String, guideName: String? = null): List<String> = withContext(Dispatchers.IO) {
         val directory = index ?: mutex.withLock {
             index ?: run {
                 val entries = mutableListOf<ChannelLogoEntry>()
@@ -56,7 +56,7 @@ object ChannelLogoDirectory {
                 ChannelLogoIndex(entries).also { index = it }
             }
         }
-        directory.candidates(epgId, name)
+        directory.candidates(epgId, name, guideName)
     }
 
     private fun JsonReader.strings(): List<String> {
