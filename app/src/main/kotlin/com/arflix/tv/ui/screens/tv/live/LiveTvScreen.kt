@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -532,6 +533,7 @@ fun LiveTvScreen(
     onNavigateToIptvSettings: (() -> Unit)? = null,
     onNavigateToDetails: (com.arflix.tv.data.model.MediaType, Int) -> Unit = { _, _ -> },
     onSwitchProfile: () -> Unit = {},
+    onSubScreenChanged: (Boolean) -> Unit = {},
     onBack: () -> Unit = {},
 ) {
     // Lifecycle-aware collection so the screen stops draining state updates
@@ -768,7 +770,7 @@ fun LiveTvScreen(
             return@LaunchedEffect
         }
         // Skip re-enrichment if we already have a cache for the same playlist.
-        val signature = "${snapshot.size}:${snapshot.firstOrNull()?.id}:${snapshot.lastOrNull()?.id}"
+        val signature = "${snapshot.size}:${snapshot.firstOrNull()?.id}:${snapshot.lastOrNull()?.id}:${hiddenGroupSet.hashCode()}:${state.snapshot.groupOrder.hashCode()}"
         if (viewModel.cachedChannelsSignature == signature &&
             viewModel.cachedEnrichedChannels is EnrichedChannels
         ) {
@@ -822,8 +824,54 @@ fun LiveTvScreen(
                     else -> category
                 }
             }
-            if (updatedTop != current.tree.top) {
-                val updated = current.copy(tree = current.tree.copy(top = updatedTop))
+            val allExistingGroups = (current.tree.global.categories + current.tree.hidden.categories).distinctBy { it.id }
+            val (nowHidden, nowVisible) = allExistingGroups.partition { category ->
+                val groupName = category.playlistGroupName ?: category.label
+                val playlistId = category.playlistId.orEmpty()
+                val compositeKey = if (playlistId.isNotBlank()) {
+                    com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupName)
+                } else null
+                (compositeKey != null && compositeKey in hiddenGroupSet) ||
+                    groupName in hiddenGroupSet ||
+                    category.label in hiddenGroupSet
+            }
+            val orderMap = if (state.snapshot.groupOrder.isNotEmpty()) {
+                state.snapshot.groupOrder.asSequence()
+                    .flatMap { rawOrder ->
+                        val trimmed = rawOrder.trim()
+                        val gName = com.arflix.tv.data.model.PlaylistGroupKey(trimmed).groupName
+                        sequenceOf(trimmed, playlistGroupLabel(gName))
+                    }
+                    .distinct()
+                    .withIndex()
+                    .associate { (index, key) -> key to index }
+            } else null
+
+            fun sortGroupList(list: List<LiveCategory>): List<LiveCategory> {
+                if (orderMap == null) return list
+                return list.sortedWith(
+                    compareBy { category ->
+                        val groupName = category.playlistGroupName ?: category.label
+                        val playlistId = category.playlistId.orEmpty()
+                        val compositeKey = if (playlistId.isNotBlank()) {
+                            com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupName)
+                        } else null
+                        val label = playlistGroupLabel(groupName)
+                        (compositeKey?.let { orderMap[it] })
+                            ?: orderMap[label]
+                            ?: orderMap[category.label]
+                            ?: Int.MAX_VALUE
+                    }
+                )
+            }
+
+            val updatedTree = current.tree.copy(
+                top = updatedTop,
+                global = LiveSection("playlist", "PLAYLIST", sortGroupList(nowVisible)),
+                hidden = LiveSection("hidden", "HIDDEN", sortGroupList(nowHidden)),
+            )
+            if (updatedTree != current.tree) {
+                val updated = current.copy(tree = updatedTree)
                 enrichedState.value = updated
                 viewModel.cachedEnrichedChannels = updated
             }
@@ -847,8 +895,11 @@ fun LiveTvScreen(
     val playlistCategorySections = remember(state.config, enrichedState.value.tree.global.categories, hiddenGroupSet) {
         buildPlaylistCategorySections(state.config, enrichedState.value.tree.global.categories, hiddenGroupSet)
     }
-    LaunchedEffect(playlistCategorySections, selectedProviderId) {
-        if (playlistCategorySections.isNotEmpty() && selectedProviderId != "all") {
+    LaunchedEffect(playlistCategorySections, selectedProviderId, currentMode) {
+        if (currentMode != LiveTvStartup.LiveTvMode.GroupHome &&
+            playlistCategorySections.isNotEmpty() &&
+            selectedProviderId != "all"
+        ) {
             selectedProviderId = "all"
         }
     }
@@ -922,12 +973,65 @@ fun LiveTvScreen(
             selectedCategoryId = "all"
         }
     }
-    val mobileGroupList = remember(visibleEnrichedState.value.tree, playlistCategorySections) {
-        if (playlistCategorySections.isNotEmpty()) {
-            playlistCategorySections.flatMap { it.categories }
+    val mobileGroupList = remember(
+        visibleEnrichedState.value.tree,
+        playlistCategorySections,
+        hiddenGroupSet,
+        state.snapshot.groupOrder,
+        selectedProviderId,
+    ) {
+        val rawGroups = if (playlistCategorySections.isNotEmpty()) {
+            if (selectedProviderId != "all") {
+                playlistCategorySections
+                    .filter { it.id == selectedProviderId || it.id == "source:$selectedProviderId" }
+                    .flatMap { it.categories }
+            } else {
+                playlistCategorySections.flatMap { it.categories }
+            }
         } else {
-            visibleEnrichedState.value.tree.global.categories + visibleEnrichedState.value.tree.countries.categories
-        }.filterNot { it.count <= 0 }
+            val base = if (selectedProviderId != "all") {
+                visibleEnrichedState.value.tree.global.categories.filter { it.playlistId == selectedProviderId }
+            } else {
+                visibleEnrichedState.value.tree.global.categories.ifEmpty {
+                    visibleEnrichedState.value.tree.countries.categories
+                }
+            }
+            base
+        }
+
+        val hiddenCategoryIds = visibleEnrichedState.value.tree.hidden.categories.mapTo(HashSet()) { it.id }
+
+        val filtered = visibleMobileGroups(rawGroups, hiddenCategoryIds, hiddenGroupSet)
+
+        if (state.snapshot.groupOrder.isEmpty()) {
+            filtered
+        } else {
+            val orderMap = state.snapshot.groupOrder.asSequence()
+                .flatMap { rawOrder ->
+                    val trimmed = rawOrder.trim()
+                    val gName = com.arflix.tv.data.model.PlaylistGroupKey(trimmed).groupName
+                    sequenceOf(trimmed, playlistGroupLabel(gName))
+                }
+                .distinct()
+                .withIndex()
+                .associate { (index, key) -> key to index }
+
+            filtered.sortedWith(
+                compareBy<LiveCategory> { category ->
+                    val groupName = category.playlistGroupName ?: category.label
+                    val playlistId = category.playlistId.orEmpty()
+                    val compositeKey = if (playlistId.isNotBlank()) {
+                        com.arflix.tv.data.model.PlaylistGroupKey.build(playlistId, groupName)
+                    } else null
+
+                    val label = playlistGroupLabel(groupName)
+                    (compositeKey?.let { orderMap[it] })
+                        ?: orderMap[label]
+                        ?: orderMap[category.label]
+                        ?: Int.MAX_VALUE
+                }
+            )
+        }
     }
     // Selected category (persist across nav). Defaults to "all".
     val hasProfile = currentProfile != null
@@ -1646,6 +1750,16 @@ fun LiveTvScreen(
 
     var categoryDrawerOpen by rememberSaveable { mutableStateOf(true) }
     var sportsSelected by rememberSaveable(currentProfile?.id) { mutableStateOf(false) }
+    val currentOnSubScreenChanged by rememberUpdatedState(onSubScreenChanged)
+    val isTvSubScreen = isTouchDevice && (currentMode != LiveTvStartup.LiveTvMode.GroupHome || sportsSelected)
+    LaunchedEffect(isTvSubScreen) {
+        currentOnSubScreenChanged(isTvSubScreen)
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            currentOnSubScreenChanged(false)
+        }
+    }
     val sportsScheduleKey = SportsScheduleKey(currentProfile?.id, selectedProviderId, state.snapshot.loadedAt.toEpochMilli(),
         hiddenGroupSet + restrictedGroupSet, state.epgBackfillInProgress, guideClockMillis / 600_000L,
         state.snapshot.nowNext.size / 64)
@@ -2332,10 +2446,8 @@ fun LiveTvScreen(
         }
         sportsSelected = false
         val category = visibleEnrichedState.value.tree.byId(categoryId)
-        val groupKey = category?.playlistId?.let { playlistId ->
-            category.playlistGroupName?.let { groupName -> PlaylistGroupKey.build(playlistId, groupName) }
-        }
-        if (groupKey != null && groupKey in state.lockedGroups && groupKey !in unlockedGroupKeys) {
+        val groupKey = category?.pendingCategoryUnlock(state.lockedGroups, unlockedGroupKeys)
+        if (groupKey != null) {
             if (currentProfile?.pin.isNullOrBlank()) {
                 showMissingProfilePinDialog = true
             } else {
@@ -3756,7 +3868,8 @@ fun LiveTvScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(top = contentTopPadding),
+                        .padding(top = contentTopPadding)
+                        .navigationBarsPadding(),
                 ) {
                     Row(
                         modifier = Modifier
@@ -4901,18 +5014,25 @@ fun FullscreenSourcesOverlay(
     val firstFocus = remember(targetKey) { FocusRequester() }
     var targetPlaced by remember(targetKey) { mutableStateOf(false) }
     val listState = rememberLazyListState()
-    LaunchedEffect(targetKey, visible) {
-        if (visible && hasAlternatives) listState.scrollToItem(selectedIndex)
+
+    LaunchedEffect(targetKey, selectedIndex, visible) {
+        if (visible && hasAlternatives) {
+            // Always attach the selected row, even when fewer than three rows fit.
+            listState.scrollToItem(selectedIndex)
+        }
     }
+
     LaunchedEffect(firstFocus, targetPlaced, touchDevice, visible) {
         if (visible && !touchDevice && targetPlaced) {
             withFrameNanos { }
             runCatching { firstFocus.requestFocus() }
         }
     }
+
     val initialFocus = Modifier.focusRequester(firstFocus)
         .onGloballyPositioned { if (it.isAttached) targetPlaced = true }
-    // Keep the player's remote handlers in a different focus window.
+
+    // Keep the player's remote handlers in a different focus window (D-Pad Case)
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         AnimatedVisibility(
             visibleState = transition,
@@ -4924,16 +5044,18 @@ fun FullscreenSourcesOverlay(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.4f)),
-                contentAlignment = Alignment.CenterEnd // Panel anchored on the right
+                contentAlignment = Alignment.CenterEnd
             ) {
+                // Intercept taps outside the panel to close the dialog box on touchscreens
                 Box(Modifier.matchParentSize().pointerInput(onDismiss) { detectTapGestures { onDismiss() } })
+
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
                         .width(360.dp)
-                        .background(Color(0xFF141414).copy(alpha = 0.98f)) // Premium, nearly opaque black background
+                        .background(Color(0xFF141414).copy(alpha = 0.98f))
                         .padding(horizontal = 24.dp, vertical = 32.dp)
-                        .pointerInput(Unit) { detectTapGestures { } }
+                        .pointerInput(Unit) { detectTapGestures { } } // Blocks touches that pass through the panel
                 ) {
                     androidx.tv.material3.Text(
                         text = stringResource(R.string.live_label_choose_source),
@@ -4957,11 +5079,10 @@ fun FullscreenSourcesOverlay(
                             modifier = Modifier.fillMaxWidth().height(100.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            // Scroll wheel in the same cyan/mint color as your buttons
                             CircularProgressIndicator(color = Color(0xFF5CE1E6))
                         }
                     } else if (failed) {
-                        Text(stringResource(R.string.live_sources_failed), color = Color.White)
+                        androidx.tv.material3.Text(stringResource(R.string.live_sources_failed), color = Color.White)
                     } else if (variants.isEmpty() || variants.size == 1) {
                         androidx.tv.material3.Text(
                             text = stringResource(R.string.live_sources_empty),
@@ -4978,15 +5099,14 @@ fun FullscreenSourcesOverlay(
                                 val isSelected = variant.id == currentChannel?.id
                                 var isFocused by remember { mutableStateOf(false) }
 
-                                // Dynamic colors based on status (Focused, Selected, or Normal)
                                 val containerBg = when {
                                     isFocused -> Color.White
-                                    isSelected -> Color(0xFF5CE1E6).copy(alpha = 0.15f) // Subtle cyan background
+                                    isSelected -> Color(0xFF5CE1E6).copy(alpha = 0.15f)
                                     else -> Color.Transparent
                                 }
                                 val textColor = when {
                                     isFocused -> Color.Black
-                                    isSelected -> Color(0xFF5CE1E6) // Bright cyan text (just like your buttons)
+                                    isSelected -> Color(0xFF5CE1E6)
                                     else -> Color.White
                                 }
 
@@ -4999,9 +5119,8 @@ fun FullscreenSourcesOverlay(
                                         .onFocusChanged { isFocused = it.isFocused }
                                         .then(if (variant.id == targetKey) initialFocus else Modifier)
                                         .clickable { onPick(variant) }
-                                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                                        .padding(horizontal = 16.dp, vertical = 10.dp)
                                 ) {
-                                    // Small vertical indicator for the channel that is currently playing
                                     if (isSelected && !isFocused) {
                                         Box(
                                             modifier = Modifier
@@ -5012,23 +5131,40 @@ fun FullscreenSourcesOverlay(
                                         Spacer(modifier = Modifier.width(12.dp))
                                     }
 
-                                    androidx.tv.material3.Text(
-                                        text = variant.name,
-                                        color = textColor,
-                                        fontSize = 15.sp,
-                                        fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                                    Column(verticalArrangement = Arrangement.Center) {
+                                        androidx.tv.material3.Text(
+                                            text = variant.name,
+                                            color = textColor,
+                                            fontSize = 15.sp,
+                                            fontWeight = if (isSelected || isFocused) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+
+                                        val groupName = variant.source.group.takeIf { it.isNotBlank() }
+                                            ?: stringResource(R.string.live_cat_ungrouped)
+                                        androidx.tv.material3.Text(
+                                            text = groupName,
+                                            color = if (isFocused) Color(0xFF616161) else Color(0xFF9E9E9E),
+                                            fontSize = 12.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+
+                    // Invisible or “Cancel” button to capture focus if the list is empty
                     androidx.compose.material3.TextButton(
                         onClick = onDismiss,
-                        modifier = if (!hasAlternatives) initialFocus else Modifier,
+                        modifier = if (!hasAlternatives) initialFocus else Modifier.padding(top = 16.dp),
                     ) {
-                        Text(stringResource(android.R.string.cancel))
+                        androidx.tv.material3.Text(
+                            text = stringResource(android.R.string.cancel),
+                            color = Color(0xFF9E9E9E)
+                        )
                     }
                 }
             }

@@ -40,31 +40,34 @@ class BottomBarAppearanceDeviceTest {
             }
         }
         val originalBounds = bottomBarItems.map {
-            compose.onNodeWithText(compose.activity.getString(it.labelRes)).fetchSemanticsNode().boundsInRoot
+            compose.onNodeWithContentDescription(compose.activity.getString(it.labelRes)).fetchSemanticsNode().boundsInRoot
         }
         bottomBarItems.forEach { item ->
-            val tab = compose.onNodeWithText(compose.activity.getString(item.labelRes))
+            val tab = compose.onNodeWithContentDescription(compose.activity.getString(item.labelRes))
             tab.performClick().assertIsSelected().assertHeightIsAtLeast(48.dp)
             compose.runOnIdle { assertEquals(item.route, route.value) }
             assertEquals(originalBounds, bottomBarItems.map {
-                compose.onNodeWithText(compose.activity.getString(it.labelRes)).fetchSemanticsNode().boundsInRoot
+                compose.onNodeWithContentDescription(compose.activity.getString(it.labelRes)).fetchSemanticsNode().boundsInRoot
             })
         }
         for (name in listOf("White", "Red", "Orange", "Yellow", "Green", "Blue", "Indigo", "Violet")) {
             val expected = accentColorFromName(name)
             compose.runOnIdle { accent.value = expected }
-            compose.waitForIdle()
-            val pixels = compose.onNodeWithTag("bar").captureToImage().toPixelMap()
-            var matching = 0
-            for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
-                val pixel = pixels[x, y]
-                if (abs(pixel.red - expected.red) < .03f && abs(pixel.green - expected.green) < .03f &&
-                    abs(pixel.blue - expected.blue) < .03f) matching++
+            // PixelCopy can see the previous frame while the icon colour/ripple finishes drawing.
+            compose.waitUntil(timeoutMillis = 5000) {
+                val pixels = compose.onNodeWithTag("bar").captureToImage().toPixelMap()
+                var matching = 0
+                for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                    val pixel = pixels[x, y]
+                    if (abs(pixel.red - expected.red) < .03f && abs(pixel.green - expected.green) < .03f &&
+                        abs(pixel.blue - expected.blue) < .03f) matching++
+                }
+                matching > 20
             }
-            assertTrue("Active icon must render $name from Settings", matching > 20)
+            val pixels = compose.onNodeWithTag("bar").captureToImage().toPixelMap()
             // The top of the bar must reveal the page, rather than paint an opaque strip.
             val top = pixels[pixels.width / 2, 0]
-            assertTrue("Content is visible through the fade", top.green > .35f)
+            assertTrue("Content is visible through the dark tint", top.green > .01f && top.green < .35f)
         }
     }
 }

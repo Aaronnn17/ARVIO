@@ -1,6 +1,7 @@
 package com.arflix.tv
 
 import android.content.Context
+import com.arflix.tv.util.AppLogger
 import android.content.res.Configuration
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
@@ -37,7 +38,15 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.runtime.mutableFloatStateOf
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.haze
 import com.arflix.tv.ui.components.LocalBottomBarInset
+import com.arflix.tv.ui.components.mobileContentInsets
 import com.arflix.tv.ui.components.currentBottomBarSpec
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -271,7 +280,12 @@ class MainActivity : ComponentActivity() {
         }
 
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { iptvRepository.get().warmupFromCacheOnly() }
+            try {
+                iptvRepository.get().warmupFromCacheOnly()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLogger.recordException(e)
+            }
         }
 
         setContent {
@@ -401,9 +415,19 @@ class MainActivity : ComponentActivity() {
             ArflixApplication.instance.scheduleTraktSyncIfNeeded()
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 val repo = iptvRepository.get()
-                runCatching { repo.warmupFromCacheOnly() }
+                try {
+                    repo.warmupFromCacheOnly()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    AppLogger.recordException(e)
+                }
                 kotlinx.coroutines.delay(60_000L)
-                runCatching { repo.prefetchFreshStartupData() }
+                try {
+                    repo.prefetchFreshStartupData()
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    AppLogger.recordException(e)
+                }
             }
         }
     }
@@ -636,20 +660,27 @@ fun ArflixApp(
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentBackStackEntry?.destination?.route
     var iptvFullscreen by remember { mutableStateOf(false) }
+    var isSettingsSubPage by remember { mutableStateOf(false) }
+    var isTvSubScreen by remember { mutableStateOf(false) }
     LaunchedEffect(currentRoute) {
         if (currentRoute?.startsWith("tv") != true) {
             iptvFullscreen = false
+            isTvSubScreen = false
+        }
+        if (currentRoute?.startsWith("settings") != true) {
+            isSettingsSubPage = false
         }
     }
-    // Hide bottom bar on player, profile selection, and login screens.
-    // TV route shows the bottom bar on mobile (touch devices) for easy navigation;
-    // the fullscreen IPTV player uses BackHandler to return to the guide.
+    // Hide bottom bar on player, profile selection, login, and all subscreens.
+    // Bottom bar is only shown on main screens: Home, Search, Watchlist, TV guide, and main Settings.
     val isPlayerScreen = currentRoute?.startsWith("player") == true
     val isFullscreenRoute = isPlayerScreen || iptvFullscreen
     val showBottomBar = shouldShowBottomBar(
         isMobile = isMobile,
         currentRoute = currentRoute,
-        isFullscreenRoute = isFullscreenRoute
+        isFullscreenRoute = isFullscreenRoute,
+        isSettingsSubPage = isSettingsSubPage,
+        isTvSubScreen = isTvSubScreen
     )
     val applySystemBarsPadding = isMobile && !isFullscreenRoute
 
@@ -676,10 +707,77 @@ fun ArflixApp(
     val barSpec = currentBottomBarSpec()
     val navigationInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
     var measuredBarHeight by remember(barSpec, density.fontScale) { mutableStateOf(0.dp) }
+    var measuredBarHeightPx by remember { mutableFloatStateOf(0f) }
+    var bottomBarOffsetPx by remember { mutableFloatStateOf(0f) }
+    var settleJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val hazeState = remember { HazeState() }
+
+    LaunchedEffect(currentBackStackEntry, isSettingsSubPage, isTvSubScreen) {
+        settleJob?.cancel()
+        settleJob = null
+        if (showBottomBar && bottomBarOffsetPx > 0f) {
+            bottomBarOffsetPx = 0f
+        }
+    }
+
     val barInset = if (showBottomBar) {
-        maxOf(measuredBarHeight, (28 + (barSpec.itemHeightDp ?: 56)).dp + navigationInset)
+        maxOf(measuredBarHeight, (barSpec.itemHeightDp ?: 52).dp + navigationInset)
     } else 0.dp
-    val contentBehindBar = showBottomBar && currentRoute?.substringBefore('?') in setOf("home", "search", "watchlist")
+
+    val nestedScrollConnection = remember(measuredBarHeightPx) {
+        object : NestedScrollConnection {
+            private fun animateToOffset(target: Float, durationMs: Int = 220) {
+                settleJob?.cancel()
+                settleJob = appCoroutineScope.launch {
+                    androidx.compose.animation.core.animate(
+                        initialValue = bottomBarOffsetPx,
+                        targetValue = target,
+                        animationSpec = androidx.compose.animation.core.tween(
+                            durationMillis = durationMs,
+                            easing = androidx.compose.animation.core.FastOutSlowInEasing
+                        )
+                    ) { value, _ ->
+                        bottomBarOffsetPx = value
+                    }
+                }
+            }
+
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val maxOffset = measuredBarHeightPx
+                if (maxOffset <= 0f) return Offset.Zero
+
+                val delta = available.y
+
+                if (source == NestedScrollSource.Drag) {
+                    settleJob?.cancel()
+                    settleJob = null
+
+                    val newOffset = (bottomBarOffsetPx - delta).coerceIn(0f, maxOffset)
+                    bottomBarOffsetPx = newOffset
+
+                    // Follow the finger without racing a snap animation during the drag.
+                }
+
+                return Offset.Zero
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                val maxOffset = measuredBarHeightPx
+                if (maxOffset <= 0f) return Velocity.Zero
+
+                val halfThreshold = maxOffset * 0.5f
+                val targetOffset = when {
+                    available.y < -150f -> maxOffset
+                    available.y > 150f -> 0f
+                    bottomBarOffsetPx > halfThreshold -> maxOffset
+                    else -> 0f
+                }
+
+                animateToOffset(targetOffset, 200)
+                return Velocity.Zero
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -702,13 +800,20 @@ fun ArflixApp(
             // Player screens remain completely stable edge-to-edge without jumping when
             // transient system bars appear or disappear.
             .then(when {
-                showBottomBar -> Modifier.windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                isMobile && !isFullscreenRoute -> Modifier.windowInsetsPadding(
+                    mobileContentInsets(WindowInsets.systemBars, showBottomBar)
+                )
                 applySystemBarsPadding -> Modifier.systemBarsPadding()
                 else -> Modifier
             })
     ) {
-        CompositionLocalProvider(LocalBottomBarInset provides if (contentBehindBar) barInset else 0.dp) {
-            Box(modifier = Modifier.fillMaxSize().padding(bottom = if (contentBehindBar) 0.dp else barInset)) {
+        CompositionLocalProvider(LocalBottomBarInset provides if (showBottomBar) barInset else 0.dp) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(if (isMobile) Modifier.haze(hazeState) else Modifier)
+                    .then(if (showBottomBar) Modifier.nestedScroll(nestedScrollConnection) else Modifier)
+            ) {
                 AppNavigation(
                     navController = navController,
                     startDestination = startDestination,
@@ -732,34 +837,45 @@ fun ArflixApp(
                     onTvFullscreenChanged = { fullscreen ->
                         iptvFullscreen = fullscreen
                     },
+                    onTvSubScreenChanged = { isSubScreen ->
+                        isTvSubScreen = isSubScreen
+                    },
+                    onSettingsSubPageChanged = { isSubPage ->
+                        isSettingsSubPage = isSubPage
+                    },
                     onExitApp = onExitApp
                 )
             }
 
         }
 
-        if (showBottomBar) {
-            val bottomBarAlpha by androidx.compose.animation.core.animateFloatAsState(
-                targetValue = if (showBottomBar) 1f else 0f,
-                animationSpec = androidx.compose.animation.core.tween(250),
-                label = "bottom_bar_alpha"
-            )
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showBottomBar,
+            enter = androidx.compose.animation.slideInVertically(
+                animationSpec = androidx.compose.animation.core.tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+            ) { it },
+            exit = androidx.compose.animation.slideOutVertically(
+                animationSpec = androidx.compose.animation.core.tween(220, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+            ) { it },
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
             AppBottomBar(
                 currentRoute = currentRoute,
                 onNavigate = { route ->
-                    if (showBottomBar) {
-                        navController.navigate(route) {
-                            popUpTo("home") { inclusive = false }
-                            launchSingleTop = true
-                        }
+                    navController.navigate(route) {
+                        popUpTo("home") { inclusive = false }
+                        launchSingleTop = true
                     }
                 },
+                hazeState = hazeState,
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .onSizeChanged { measuredBarHeight = with(density) { it.height.toDp() } }
+                    .onSizeChanged {
+                        measuredBarHeight = with(density) { it.height.toDp() }
+                        measuredBarHeightPx = it.height.toFloat()
+                    }
                     .graphicsLayer {
-                        alpha = bottomBarAlpha
+                        translationY = bottomBarOffsetPx
                     }
             )
         }

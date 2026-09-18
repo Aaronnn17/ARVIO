@@ -74,6 +74,7 @@ import com.arflix.tv.data.repository.CatalogRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.SportsRepository
 import com.arflix.tv.ui.components.CardLayoutMode
+import com.arflix.tv.ui.components.LocalBottomBarInset
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.focus.arvioDpadFocusGroup
@@ -921,7 +922,7 @@ private fun CollectionItemsGrid(
             start = 42.dp,
             top = topContentPadding,
             end = 42.dp,
-            bottom = 48.dp + focusBleedPadding
+            bottom = 48.dp + focusBleedPadding + LocalBottomBarInset.current
         ),
         verticalArrangement = Arrangement.spacedBy(if (usePosterCards) 18.dp else 14.dp),
         horizontalArrangement = Arrangement.spacedBy(if (usePosterCards) 18.dp else 14.dp)

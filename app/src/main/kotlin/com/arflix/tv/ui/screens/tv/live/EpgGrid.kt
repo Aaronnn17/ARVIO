@@ -557,8 +557,6 @@ fun EpgGrid(
         } else if (!compact) {
             Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Icon(Icons.Outlined.Menu, stringResource(R.string.live_groups_title), tint = LiveColors.Fg,
-                    modifier = Modifier.size(28.dp).clickable(onClick = onMoveLeftFromChannels).padding(4.dp))
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (!sidebarOpen) {
                         Text(liveCategoryLabel(categoryTitle), color = LiveColors.Fg, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,

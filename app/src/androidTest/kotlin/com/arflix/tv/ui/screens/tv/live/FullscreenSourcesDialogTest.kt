@@ -129,6 +129,22 @@ class FullscreenSourcesDialogTest {
             assertEquals(0, playerKeys)
         }
     }
+
+    @Test fun touchShowsSelectedSourceInMiddleOfLongListAndItsCategory() {
+        val alternatives = (1..40).map { index ->
+            IptvChannel(id = "p:$index", name = "Source $index", group = "Group $index",
+                streamUrl = "https://example.invalid/$index").enrichForFastStartup(index)
+        }
+        var selected: String? = null
+        compose.setContent {
+            CompositionLocalProvider(LocalDeviceType provides DeviceType.PHONE) {
+                SourcesPanel(alternatives[19], alternatives, false, false, {}, { selected = it.id })
+            }
+        }
+        compose.onNode(hasText("Source 20") and hasClickAction()).assertIsDisplayed().performClick()
+        compose.onNodeWithText("Group 20").assertIsDisplayed()
+        compose.runOnIdle { assertEquals("p:20", selected) }
+    }
 }
 
 @Composable
