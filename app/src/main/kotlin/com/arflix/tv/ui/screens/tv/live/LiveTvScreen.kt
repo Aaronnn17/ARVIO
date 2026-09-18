@@ -2745,10 +2745,65 @@ fun LiveTvScreen(
     }
 
     var playbackQuality by remember(exoPlayer) { mutableStateOf<LivePlaybackQuality?>(null) }
+    
+    // --- STATE VARIABLES FOR THE TECHNICAL HUD ---
+    var streamResolution by remember { mutableStateOf("") }
+    var streamFps by remember { mutableStateOf("") }
+    var streamBitrate by remember { mutableStateOf("") }
+
     DisposableEffect(exoPlayer) {
-        val listener = LivePlaybackQualityListener(exoPlayer) { playbackQuality = it }
-        exoPlayer.addListener(listener)
-        onDispose { exoPlayer.removeListener(listener) }
+        // High-quality original earpiece
+        val qualityListener = LivePlaybackQualityListener(exoPlayer) { playbackQuality = it }
+        
+        // New listener for pure streaming metadata
+        val statsListener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    // Ex: It will extract the actual “1080p” or “720p” resolution by measuring the height of the decoded pixels
+                    streamResolution = "${videoSize.height}p" 
+                }
+            }
+
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                // We are looking for the video track that is currently being decoded
+                val videoGroup = tracks.groups.firstOrNull { 
+                    it.type == androidx.media3.common.C.TRACK_TYPE_VIDEO && it.isSelected 
+                }
+                
+                if (videoGroup != null && videoGroup.length > 0) {
+                    val format = videoGroup.getTrackFormat(0)
+                    
+                    // 1. Actual frame rate (FPS)
+                    streamFps = if (format.frameRate > 0f) {
+                        "${format.frameRate.toInt()} FPS" 
+                    } else {
+                        ""
+                    }
+                    
+                    // 2. Bandwidth (Bitrate in Mbps)
+                    val bitrate = format.bitrate
+                    streamBitrate = if (bitrate > 0) {
+                        java.lang.String.format(java.util.Locale.US, "%.1f Mbps", bitrate / 1000000f)
+                    } else {
+                        ""
+                    }
+                }
+            }
+        }
+        
+        exoPlayer.addListener(qualityListener)
+        exoPlayer.addListener(statsListener)
+        
+        onDispose { 
+            // We clean both receivers to prevent any memory leaks
+            exoPlayer.removeListener(qualityListener) 
+            exoPlayer.removeListener(statsListener)
+            
+            // We reset the values when we exit
+            streamResolution = ""
+            streamFps = ""
+            streamBitrate = ""
+        }
     }
     val playingDisplayChannel = remember(playingChannel, playbackQuality) {
         playingChannel?.let { it.copy(quality = it.displayQuality(playbackQuality)) }
