@@ -53,15 +53,18 @@ class BottomBarAppearanceDeviceTest {
         for (name in listOf("White", "Red", "Orange", "Yellow", "Green", "Blue", "Indigo", "Violet")) {
             val expected = accentColorFromName(name)
             compose.runOnIdle { accent.value = expected }
-            compose.waitForIdle()
-            val pixels = compose.onNodeWithTag("bar").captureToImage().toPixelMap()
-            var matching = 0
-            for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
-                val pixel = pixels[x, y]
-                if (abs(pixel.red - expected.red) < .03f && abs(pixel.green - expected.green) < .03f &&
-                    abs(pixel.blue - expected.blue) < .03f) matching++
+            // PixelCopy can see the previous frame while the icon colour/ripple finishes drawing.
+            compose.waitUntil(timeoutMillis = 5000) {
+                val pixels = compose.onNodeWithTag("bar").captureToImage().toPixelMap()
+                var matching = 0
+                for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+                    val pixel = pixels[x, y]
+                    if (abs(pixel.red - expected.red) < .03f && abs(pixel.green - expected.green) < .03f &&
+                        abs(pixel.blue - expected.blue) < .03f) matching++
+                }
+                matching > 20
             }
-            assertTrue("Active icon must render $name from Settings", matching > 20)
+            val pixels = compose.onNodeWithTag("bar").captureToImage().toPixelMap()
             // The top of the bar must reveal the page, rather than paint an opaque strip.
             val top = pixels[pixels.width / 2, 0]
             assertTrue("Content is visible through the dark tint", top.green > .01f && top.green < .35f)
