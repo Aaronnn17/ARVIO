@@ -4776,21 +4776,21 @@ fun FullscreenSourcesOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.4f)) // Smooth screen dimming
+                .background(Color.Black.copy(alpha = 0.4f)) // Atenúa la pantalla suavemente
                 .focusable()
                 .clickable { onDismiss() },
-            contentAlignment = Alignment.CenterEnd // Panel anchored on the right
+            contentAlignment = Alignment.CenterEnd // Panel anclado a la derecha
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(360.dp)
-                    .background(Color(0xFF141414).copy(alpha = 0.98f)) // Premium, nearly opaque black background
+                    .background(Color(0xFF141414).copy(alpha = 0.98f)) // Fondo negro premium
                     .padding(horizontal = 24.dp, vertical = 32.dp)
-                    .clickable(enabled = false) {}
+                    .clickable(enabled = false) {} 
             ) {
                 androidx.tv.material3.Text(
-                    text = stringResource(R.string.live_label_choose_source),
+                    text = "Fuentes disponibles",
                     color = Color.White,
                     fontSize = 22.sp,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
@@ -4811,32 +4811,32 @@ fun FullscreenSourcesOverlay(
                         modifier = Modifier.fillMaxWidth().height(100.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        // Scroll wheel in the same cyan/mint color as the main player buttons
-                        CircularProgressIndicator(color = Color(0xFF5CE1E6))
+                        CircularProgressIndicator(color = Color(0xFF5CE1E6)) 
                     }
                 } else if (variants.isEmpty() || variants.size == 1) {
                     androidx.tv.material3.Text(
-                        text = stringResource(R.string.live_sources_empty),
+                        text = "No hay otras calidades u orígenes detectados.",
                         color = Color.DarkGray,
                         fontSize = 14.sp
                     )
                 } else {
-                    // 1. Position memory for the list
+                    // 1. Añadimos la "memoria" de posición para la lista
                     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-
-                    // 2. Auto-scroll effect when opening the menu
+                    
+                    // 2. Efecto automático que hace scroll al abrirse el menú
                     LaunchedEffect(visible, variants) {
                         if (visible && variants.isNotEmpty()) {
                             val selectedIndex = variants.indexOfFirst { it.id == currentChannel?.id }
                             if (selectedIndex >= 0) {
-                                // Auto-scroll. Subtract 2 so the active channel isn't glued to the top edge
+                                // Hace scroll automático. Le restamos 2 para que el canal 
+                                // no quede pegado al techo y tenga contexto por arriba.
                                 listState.scrollToItem(maxOf(0, selectedIndex - 2))
                             }
                         }
                     }
 
                     LazyColumn(
-                        state = listState,
+                        state = listState, // 3. Le conectamos la memoria a la lista
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
@@ -4845,15 +4845,14 @@ fun FullscreenSourcesOverlay(
                             val isSelected = variant.id == currentChannel?.id
                             var isFocused by remember { mutableStateOf(false) }
 
-                            // Dynamic colors based on status (Focused, Selected, or Normal)
                             val containerBg = when {
                                 isFocused -> Color.White
-                                isSelected -> Color(0xFF5CE1E6).copy(alpha = 0.15f) // Subtle cyan background
+                                isSelected -> Color(0xFF5CE1E6).copy(alpha = 0.15f)
                                 else -> Color.Transparent
                             }
                             val textColor = when {
                                 isFocused -> Color.Black
-                                isSelected -> Color(0xFF5CE1E6) // Bright cyan text
+                                isSelected -> Color(0xFF5CE1E6)
                                 else -> Color.White
                             }
 
@@ -4867,7 +4866,6 @@ fun FullscreenSourcesOverlay(
                                     .clickable { onPick(variant) }
                                     .padding(horizontal = 16.dp, vertical = 10.dp)
                             ) {
-                                // Small vertical indicator for the currently playing channel
                                 if (isSelected && !isFocused) {
                                     Box(
                                         modifier = Modifier
@@ -4887,12 +4885,11 @@ fun FullscreenSourcesOverlay(
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-
-                                    // Extract the category/group name
-                                    val groupName = variant.source.group.takeIf { it.isNotBlank() } ?: "Uncategorized"
+                                    
+                                    val groupName = variant.source.group.takeIf { it.isNotBlank() } ?: "Sin categoría"
                                     androidx.tv.material3.Text(
                                         text = groupName,
-                                        color = if (isFocused) Color(0xFF616161) else Color(0xFF9E9E9E), // Dark gray if focused, light gray when idle
+                                        color = if (isFocused) Color(0xFF616161) else Color(0xFF9E9E9E),
                                         fontSize = 12.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
