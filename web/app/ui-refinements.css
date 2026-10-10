@@ -23,7 +23,7 @@
 
 .episodes-section.detail-wide .episode-art-card:is(:hover, :focus-visible) {
   outline: none;
-  box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 5px #000;
+  box-shadow: inset 0 0 0 3px #fff;
 }
 
 .episodes-section.detail-wide .episode-art-card::after {
@@ -40,7 +40,7 @@
 }
 
 .episodes-section.detail-wide .episode-art-card:is(:hover, :focus-visible)::after {
-  box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 5px #000;
+  box-shadow: inset 0 0 0 3px #fff;
 }
 
 .episodes-section.detail-wide .episode-art-card .episode-still {

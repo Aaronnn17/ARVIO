@@ -4040,8 +4040,7 @@ internal fun EpisodeCard(
         modifier = Modifier
             .width(cardWidth)
             .aspectRatio(aspectRatio)
-            .testTag("episode_${episode.seasonNumber}_${episode.episodeNumber}")
-            .then(if (isFocused) Modifier.border(5.dp, Color.Black, shape) else Modifier),
+            .testTag("episode_${episode.seasonNumber}_${episode.episodeNumber}"),
         shape = shape,
         backgroundColor = ArvioSkin.colors.surface,
         outlineColor = Color.White,

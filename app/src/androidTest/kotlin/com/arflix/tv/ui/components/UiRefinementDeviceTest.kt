@@ -13,6 +13,8 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -215,9 +217,18 @@ class UiRefinementDeviceTest {
         }
         val card = compose.onNodeWithTag("episode_1_1")
         val before = card.fetchSemanticsNode().boundsInRoot
+        val beforePixels = card.captureToImage().toPixelMap()
+        val innerEdgeY = (4f * before.width / if (deviceType == DeviceType.TV) 300f else 328f).toInt()
+        val middleX = beforePixels.width / 2
+        val beforeInnerEdge = beforePixels[middleX, innerEdgeY].luminance()
+        assertTrue("The inner-edge sample must contain visible artwork/surface", beforeInnerEdge > 0f)
         compose.onAllNodesWithText("7.8").assertCountEquals(0)
         compose.runOnIdle { focused.value = true; rating.value = "7.8" }
         assertEquals(before, card.fetchSemanticsNode().boundsInRoot)
+        val focusedPixels = card.captureToImage().toPixelMap()
+        assertTrue("Focusing must not add a black inner border",
+            focusedPixels[middleX, innerEdgeY].luminance() >= beforeInnerEdge - 0.0001f)
+        assertTrue("The white focus outline must remain", focusedPixels[middleX, 0].luminance() > 0.9f)
         compose.onAllNodesWithText("7.8").assertCountEquals(1)
         compose.onAllNodesWithText("6 Oct 2012 · 24m", useUnmergedTree = true).onFirst().assertIsDisplayed()
         val synopsis = compose.onAllNodesWithText(first.overview, useUnmergedTree = true).onFirst().fetchSemanticsNode().boundsInRoot

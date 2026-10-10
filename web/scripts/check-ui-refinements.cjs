@@ -151,7 +151,8 @@ async function main() {
       assert.match(await cards.first().innerText(),/S2 E01/);
       await page.keyboard.press('Tab');
       await cards.nth(1).focus();
-      assert.match(await cards.nth(1).evaluate(node=>getComputedStyle(node,'::after').boxShadow),/255, 255, 255/,'Focus visible even on white art');
+      assert.equal(await cards.nth(1).evaluate(node=>getComputedStyle(node,'::after').boxShadow),
+        'rgb(255, 255, 255) 0px 0px 0px 3px inset','Episode focus has only a white outline, with no black inner border');
       await page.mouse.move(width-5,height-5);
       await page.waitForTimeout(160);
       await page.screenshot({path:path.join(evidence,`${name}-episodes.png`)});
