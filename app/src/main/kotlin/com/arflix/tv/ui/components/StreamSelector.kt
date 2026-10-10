@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalDensity
 import com.arflix.tv.ui.theme.appBackgroundDark
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -75,6 +76,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -117,6 +120,8 @@ import com.arflix.tv.ui.theme.TextSecondary
 import androidx.compose.ui.res.stringResource
 import com.arflix.tv.R
 import java.util.Locale
+import java.security.MessageDigest
+import kotlinx.coroutines.flow.first
 
 // OLED source picker colors. Keep these deliberately monochrome so the sheet
 // feels like the rest of ARVIO instead of a separate dashboard.
@@ -188,37 +193,64 @@ internal fun buildSourceAddonTabs(
 internal fun sourceAddonTabKeys(tabs: List<SourceAddonTab>): List<String> =
     listOf("source_addon:all") + tabs.map { tab -> "source_addon:id:${tab.id}" }
 
-internal fun sourceStreamRowKey(stream: StreamSource, index: Int): String =
-    "source_stream:${sourceTabId(stream)}:$index"
+internal fun sourceStreamRowKey(stream: StreamSource, occurrence: Int): String {
+    val identity = listOf(sourceTabId(stream), stream.url.orEmpty(), stream.infoHash.orEmpty(),
+        stream.fileIdx?.toString().orEmpty(), stream.source)
+        .joinToString("") { "${it.length}:$it" }
+    val digest = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
+    val hex = buildString(digest.size * 2) {
+        val digits = "0123456789abcdef"
+        digest.forEach { byte ->
+            val value = byte.toInt() and 0xff
+            append(digits[value ushr 4])
+            append(digits[value and 0xf])
+        }
+    }
+    return "source_stream:$hex:$occurrence"
+}
+
+internal fun sourceStreamRowKeys(streams: List<StreamSource>): List<String> {
+    val occurrences = mutableMapOf<String, Int>()
+    return streams.map { stream ->
+        val identity = sourceStreamRowKey(stream, 0)
+        val occurrence = occurrences.getOrDefault(identity, 0)
+        occurrences[identity] = occurrence + 1
+        if (occurrence == 0) identity else "${identity.removeSuffix(":0")}:$occurrence"
+    }
+}
+
+internal fun sourceFocusScrollDelta(
+    offset: Int, size: Int, viewportStart: Int, viewportEnd: Int, edgePadding: Int
+): Int {
+    val top = viewportStart + edgePadding
+    val bottom = viewportEnd - edgePadding
+    if (bottom <= top) return 0
+    return when {
+        size > bottom - top -> offset - top
+        offset < top -> offset - top
+        offset + size > bottom -> offset + size - bottom
+        else -> 0
+    }
+}
 
 /**
- * Scrolls a TvLazyColumn so the focused item stays visible, leaving a one-item
- * buffer on the approaching edge so its focus border isn't clipped by the
- * viewport or a scroll-indicator overlay.
+ * Follow measured row bounds, not a guessed number of rows. Release names and
+ * badges wrap, so whole-item jumps skip unequal distances and flash on repeats.
  */
-private suspend fun TvLazyListState.scrollToKeepFocusVisible(focusedIndex: Int, itemCount: Int) {
+private suspend fun TvLazyListState.scrollToKeepFocusVisible(focusedIndex: Int, itemCount: Int, edgePadding: Int) {
     if (itemCount == 0) return
     val target = focusedIndex.coerceIn(0, itemCount - 1)
-    val visibleItems = layoutInfo.visibleItemsInfo
-    if (visibleItems.isEmpty()) {
-        scrollToItem(target)
-        return
+    val layout = snapshotFlow { layoutInfo }.first {
+        it.totalItemsCount == itemCount && it.visibleItemsInfo.isNotEmpty()
     }
-    val firstVisible = visibleItems.first().index
-    val lastVisible = visibleItems.last().index
-    val visibleCount = (lastVisible - firstVisible + 1).coerceAtLeast(1)
-    when {
-        target <= firstVisible -> {
-            val dest = (target - 1).coerceAtLeast(0)
-            if (dest != firstVisible) {
-                scrollToItem(dest)
-            }
-        }
-        target >= lastVisible -> {
-            val dest = (target - visibleCount + 2).coerceIn(0, target)
-            if (dest != firstVisible) {
-                scrollToItem(dest)
-            }
+    val item = layout.visibleItemsInfo.firstOrNull { it.index == target }
+    if (item == null) {
+        animateScrollToItem(target, -edgePadding)
+    } else {
+        val delta = sourceFocusScrollDelta(item.offset, item.size,
+            layout.viewportStartOffset, layout.viewportEndOffset, edgePadding)
+        if (delta != 0) {
+            animateScrollBy(delta.toFloat(), tween(120, easing = FastOutSlowInEasing))
         }
     }
 }
@@ -342,7 +374,12 @@ fun StreamSelector(
         }
     }
 
-    var focusedIndex by remember { mutableIntStateOf(0) }
+    var fallbackFocusedIndex by remember { mutableIntStateOf(0) }
+    var focusedStreamKey by remember { mutableStateOf<String?>(null) }
+    fun resetStreamFocus() {
+        fallbackFocusedIndex = 0
+        focusedStreamKey = null
+    }
     var focusedTabIndex by remember { mutableIntStateOf(0) }
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     var focusedFilterIndex by remember { mutableIntStateOf(0) }
@@ -367,7 +404,7 @@ fun StreamSelector(
     // Request focus when visible
     LaunchedEffect(isVisible) {
         if (isVisible) {
-            focusedIndex = 0
+            resetStreamFocus()
             focusedTabIndex = 0
             selectedTabIndex = 0
             focusedFilterIndex = 0
@@ -485,21 +522,44 @@ fun StreamSelector(
 
     // Flatten for navigation
     val flatPresentations = filteredPresentations
-    val flatStreams = flatPresentations.map { it.stream }
+    val flatStreams = remember(flatPresentations) { flatPresentations.map { it.stream } }
+    val streamKeys = remember(flatStreams) { sourceStreamRowKeys(flatStreams) }
+    fun currentStreamFocusIndex(): Int =
+        focusedStreamKey?.let { streamKeys.indexOf(it).takeIf { index -> index >= 0 } }
+            ?: fallbackFocusedIndex.coerceIn(0, (flatStreams.size - 1).coerceAtLeast(0))
+    val focusedIndex = currentStreamFocusIndex()
+    fun focusStream(index: Int) {
+        fallbackFocusedIndex = index
+        focusedStreamKey = streamKeys.getOrNull(index)
+    }
+    val edgePadding = with(density) { 22.dp.roundToPx() }
 
     // Keep D-pad movement calm: only scroll when focus moves past the visible buffer.
-    LaunchedEffect(focusedIndex, flatStreams.size) {
-        listState.scrollToKeepFocusVisible(focusedIndex, flatStreams.size)
+    LaunchedEffect(isVisible, focusedIndex, streamKeys, selectedTabIndex) {
+        if (isVisible && !isMobile) {
+            listState.scrollToKeepFocusVisible(focusedIndex, flatStreams.size, edgePadding)
+        }
     }
 
     // Same buffered-scroll behavior for the addon rail's focus highlight.
-    LaunchedEffect(focusedTabIndex, tabLabels.size) {
-        addonListState.scrollToKeepFocusVisible(focusedTabIndex, tabLabels.size)
+    LaunchedEffect(isVisible, focusedTabIndex, tabKeys) {
+        if (isVisible && !isMobile) {
+            addonListState.scrollToKeepFocusVisible(focusedTabIndex, tabLabels.size, edgePadding)
+        }
     }
 
-    LaunchedEffect(isVisible, focusZone, focusedIndex, flatStreams) {
-        if (isVisible && focusZone == "streams") {
-            flatStreams.getOrNull(focusedIndex)?.let(onFocusedStream)
+    val focusedStream = flatStreams.getOrNull(focusedIndex)
+    val renderedTabIndex = selectedTabIndex
+    val focusedCallback by rememberUpdatedState(onFocusedStream)
+    LaunchedEffect(isVisible, focusZone, focusedStream, renderedTabIndex) {
+        if (isVisible && focusZone == "streams" && selectedTabIndex == renderedTabIndex &&
+            currentStreamFocusIndex() == focusedIndex) {
+            focusedStream?.let {
+                if (focusedStreamKey !in streamKeys) {
+                    focusedStreamKey = streamKeys[focusedIndex]
+                }
+                focusedCallback(it)
+            }
         }
     }
 
@@ -598,6 +658,9 @@ fun StreamSelector(
                                 else -> actualKey
                             }
                         } else actualKey
+                        // Repeated key events can arrive before recomposition. Read the
+                        // current focus state, not the previous frame's derived index.
+                        val navigationIndex = currentStreamFocusIndex()
 
                         when (logicalKey) {
                             Key.Back, Key.Escape -> {
@@ -609,11 +672,11 @@ fun StreamSelector(
                                     if (focusedTabIndex > 0) {
                                         focusedTabIndex--
                                         selectedTabIndex = focusedTabIndex  // Immediately filter on focus
-                                        focusedIndex = 0  // Reset stream selection
+                                        resetStreamFocus()
                                     }
                                 } else {
-                                    if (focusedIndex > 0) {
-                                        focusedIndex--
+                                    if (navigationIndex > 0) {
+                                        focusStream(navigationIndex - 1)
                                     }
                                 }
                                 true
@@ -623,10 +686,10 @@ fun StreamSelector(
                                     if (focusedTabIndex < tabLabels.size - 1) {
                                         focusedTabIndex++
                                         selectedTabIndex = focusedTabIndex  // Immediately filter on focus
-                                        focusedIndex = 0  // Reset stream selection
+                                        resetStreamFocus()
                                     }
                                 } else {
-                                    if (focusedIndex < flatStreams.size - 1) focusedIndex++
+                                    if (navigationIndex < flatStreams.size - 1) focusStream(navigationIndex + 1)
                                 }
                                 true
                             }
@@ -634,7 +697,7 @@ fun StreamSelector(
                                 when {
                                     focusZone == "addons" -> {
                                         focusZone = "streams"
-                                        focusedIndex = focusedIndex.coerceAtMost((flatStreams.size - 1).coerceAtLeast(0))
+                                        focusStream(navigationIndex)
                                     }
                                 }
                                 true
@@ -652,9 +715,9 @@ fun StreamSelector(
                                 if (focusZone == "addons") {
                                     // Tab already selected on focus, just move to streams
                                     focusZone = "streams"
-                                    focusedIndex = 0
+                                    resetStreamFocus()
                                 } else {
-                                    flatStreams.getOrNull(focusedIndex)?.let { stream ->
+                                    flatStreams.getOrNull(navigationIndex)?.let { stream ->
                                         onSelect(stream)
                                     }
                                 }
@@ -672,6 +735,7 @@ fun StreamSelector(
                     subtitle = subtitle,
                     streams = streams,
                     flatPresentations = flatPresentations,
+                    streamKeys = streamKeys,
                     selectedStream = selectedStream,
                     recentStream = recentStream,
                     sourceFilters = sourceFilters.map { it.label },
@@ -699,12 +763,12 @@ fun StreamSelector(
                     onFilterSelected = { index ->
                         selectedFilterIndex = index
                         focusedFilterIndex = index
-                        focusedIndex = 0
+                        resetStreamFocus()
                     },
                     onAddonSelected = { index ->
                         selectedTabIndex = index
                         focusedTabIndex = index
-                        focusedIndex = 0
+                        resetStreamFocus()
                     },
                     onSelect = onSelect
                 )
@@ -782,7 +846,7 @@ fun StreamSelector(
                                         )
                                         .clickable {
                                             selectedTabIndex = index
-                                            focusedIndex = 0
+                                            resetStreamFocus()
                                         }
                                         .padding(horizontal = 14.dp, vertical = 6.dp)
                                 ) {
@@ -880,7 +944,8 @@ fun StreamSelector(
                                 .weight(1f)
                                 .arvioDpadFocusGroup()
                         ) {
-                            items(flatPresentations) { presentation ->
+                            items(flatPresentations.size, key = { streamKeys[it] }) { index ->
+                                val presentation = flatPresentations[index]
                                 MobileStreamCard(
                                     presentation = presentation,
                                     isSelected = isSelectedSource(presentation.stream, selectedStream),
@@ -904,6 +969,7 @@ private fun OledSourceSelectorTv(
     subtitle: String,
     streams: List<StreamSource>,
     flatPresentations: List<SourcePresentation>,
+    streamKeys: List<String>,
     selectedStream: StreamSource?,
     recentStream: StreamSource?,
     sourceFilters: List<String>,
@@ -1067,7 +1133,7 @@ private fun OledSourceSelectorTv(
                             .arvioDpadFocusGroup()
                     ) {
                         flatPresentations.forEachIndexed { index, presentation ->
-                            item(key = sourceStreamRowKey(presentation.stream, index)) {
+                            item(key = streamKeys[index]) {
                                 OledSourceRow(
                                     presentation = presentation,
                                     isFocused = streamsFocused && index == focusedIndex,
@@ -2148,25 +2214,28 @@ private fun OledSourceRow(
                         style = ArflixTypography.body.copy(
                             fontSize = 13.sp,
                             lineHeight = 17.sp,
-                            fontWeight = if (isFocused) FontWeight.Bold else FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold
                         ),
                         color = if (isFocused) Color.Black else TextPrimary,
                         modifier = Modifier.weight(1f)
                     )
-                    if (isSelected) {
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(22.dp)
-                                .background(if (isFocused) Color.Black.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.14f), CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = stringResource(R.string.selected),
-                                tint = if (isFocused) Color.Black else Color.White,
-                                modifier = Modifier.size(15.dp)
-                            )
+                    // Selection must not take width away from a wrapped release name.
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Box(Modifier.size(22.dp)) {
+                        if (isSelected) {
+                            Box(
+                                modifier = Modifier
+                                    .size(22.dp)
+                                    .background(if (isFocused) Color.Black.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.14f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = stringResource(R.string.selected),
+                                    tint = if (isFocused) Color.Black else Color.White,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
                         }
                     }
                 }
