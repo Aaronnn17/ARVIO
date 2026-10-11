@@ -124,6 +124,35 @@ export class TraktClient {
     });
   }
 
+  async calendarWatchingShows() {
+    const token = await this.refreshIfNeeded();
+    if (!token) return [];
+    const readShows = async (path: string) => {
+      const all: Array<{ show?: { ids?: { trakt?: number } } }> = [];
+      const seen = new Set<number>();
+      for (let page = 1; ; page++) {
+        // Identity-only responses avoid downloading watched episode histories.
+        const rows = await this.trakt<Array<{ show?: { ids?: { trakt?: number } } }>>(`${path}${path.includes("?") ? "&" : "?"}page=${page}&limit=100`, {
+          headers: { "x-user-token": token.access_token }
+        });
+        const fresh = rows.filter(row => {
+          const id = row.show?.ids?.trakt;
+          if (typeof id !== "number" || seen.has(id)) return false;
+          seen.add(id); return true;
+        });
+        all.push(...fresh);
+        if (rows.length < 100 || !fresh.length) return all;
+      }
+    };
+    const [all, hidden, resetHidden] = await Promise.all([
+      readShows("/sync/watched/shows"),
+      readShows("/users/hidden/progress_watched?type=show"),
+      readShows("/users/hidden/progress_watched_reset?type=show")
+    ]);
+    const excluded = new Set([...hidden, ...resetHidden].map(row => row.show!.ids!.trakt!));
+    return all.filter(row => !excluded.has(row.show!.ids!.trakt!)).map(row => ({ ...row, type: "show" }));
+  }
+
   // The user's personal collection (owned/available items).
   async collection(type: "movies" | "shows") {
     const token = await this.refreshIfNeeded();

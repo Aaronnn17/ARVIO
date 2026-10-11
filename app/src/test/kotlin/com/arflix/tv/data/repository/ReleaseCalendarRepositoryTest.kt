@@ -62,6 +62,7 @@ class ReleaseCalendarRepositoryTest {
         every { Constants.TRAKT_CLIENT_ID } returns ""
         every { profiles.getProfileIdSync() } returns "fixture-profile"
         every { trakt.isAuthenticated } returns flowOf(false)
+        coEvery { trakt.getCalendarWatchingShows() } returns emptyList()
         coEvery { own.getLocalWatchlistItems() } returns listOf(MediaItem(1, "Own movie"))
         coEvery { simklAuth.isConnected() } returns false
         coEvery { mdb.getWatchlist() } returns RemoteWatchlistResult(false, null, 0)
@@ -75,6 +76,42 @@ class ReleaseCalendarRepositoryTest {
     }
 
     @After fun tearDown() = unmockkAll()
+
+    @Test fun `retry only refetches failed titles and bypasses their negative cache`() = runTest {
+        val lists = CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to listOf(MediaItem(1, "Good"), MediaItem(2, "Recovering"))))
+        coEvery { tmdb.getMovieDetails(1, any(), any(), any()) } returns TmdbMovieDetails(1, "Good", releaseDate = "2026-10-04")
+        coEvery { tmdb.getMovieDetails(2, any(), any(), any()) } throws HttpException(Response.error<Any>(404, "Missing".toResponseBody()))
+        val first = repository.loadMonth(lists, month, ZoneId.of("UTC"), "US")
+        assertEquals(setOf(MediaType.MOVIE to 2), first.failedTitles)
+        coEvery { tmdb.getMovieDetails(2, any(), any(), any()) } returns TmdbMovieDetails(2, "Recovered", releaseDate = "2026-10-04")
+        val recovered = repository.loadMonth(lists, month, ZoneId.of("UTC"), "US", retryTitles = first.failedTitles)
+        assertEquals(2, recovered.entries.size)
+        assertTrue(recovered.failedTitles.isEmpty())
+        coVerify(exactly = 1) { tmdb.getMovieDetails(1, any(), any(), any()) }
+        coVerify(exactly = 2) { tmdb.getMovieDetails(2, any(), any(), any()) }
+    }
+
+    @Test fun `retry reuses successful source membership`() = runTest {
+        every { trakt.isAuthenticated } returns flowOf(true)
+        coEvery { trakt.getWatchlistSyncResultWithAuthState() } throws IOException("Outage")
+        val first = repository.loadWatchlists("fixture-profile")
+        coEvery { trakt.getWatchlistSyncResultWithAuthState() } returns (true to TraktRepository.WatchlistSyncResult(listOf(MediaItem(2, "Trakt")), 1))
+        val recovered = repository.loadWatchlists("fixture-profile", reuseWatchlists = first)
+        assertTrue(recovered.failedSources.isEmpty())
+        coVerify(exactly = 1) { own.getLocalWatchlistItems() }
+        coVerify(exactly = 2) { trakt.getWatchlistSyncResultWithAuthState() }
+    }
+
+    @Test fun `watching shows join Trakt planned titles without duplicates`() = runTest {
+        every { trakt.isAuthenticated } returns flowOf(true)
+        val planned = MediaItem(2, "Planned", mediaType = MediaType.TV)
+        coEvery { trakt.getWatchlistSyncResultWithAuthState() } returns (true to TraktRepository.WatchlistSyncResult(listOf(planned), 1))
+        coEvery { trakt.getCalendarWatchingShows() } returns listOf(planned, MediaItem(3, "Watching", mediaType = MediaType.TV))
+        val stages = mutableListOf<CalendarWatchlists>()
+        val result = repository.loadWatchlists("fixture-profile", onProgress = { stages += it })
+        assertEquals(setOf(2, 3), result.items[ReleaseCalendarSource.TRAKT]!!.map { it.id }.toSet())
+        assertTrue(stages.any { it.items[ReleaseCalendarSource.TRAKT]?.size == 1 })
+    }
 
     @Test fun `own cloud mirrored watchlist works with no external account`() = runTest {
         coEvery { tmdb.getMovieDetails(1, any(), any(), any()) } returns TmdbMovieDetails(1, "Own movie", releaseDate = "2026-10-04")
@@ -113,6 +150,11 @@ class ReleaseCalendarRepositoryTest {
         val lists = repository.loadWatchlists("fixture-profile")
         assertEquals(setOf(8, 9), lists.items[ReleaseCalendarSource.SIMKL].orEmpty().map { it.id }.toSet())
         assertTrue(lists.warnings.any { it.contains("SIMKL") })
+        coEvery { simkl.syncIfNeeded(any()) } returns true
+        val retry = repository.loadWatchlists("fixture-profile", reuseWatchlists = lists)
+        assertTrue(retry.warnings.isEmpty())
+        coVerify(exactly = 2) { simkl.syncIfNeeded(any()) }
+        coVerify(exactly = 1) { own.getLocalWatchlistItems() }
     }
 
     @Test fun `profile change rejects private watchlist result`() = runTest {

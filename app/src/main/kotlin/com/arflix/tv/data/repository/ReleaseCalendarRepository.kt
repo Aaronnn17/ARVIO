@@ -11,6 +11,7 @@ import com.arflix.tv.data.model.CalendarRelease
 import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.ReleaseCalendarSource
+import com.arflix.tv.data.model.calendarReleaseOrder
 import com.arflix.tv.data.repository.simkl.SimklAuthManager
 import com.arflix.tv.data.repository.simkl.SimklSyncService
 import com.arflix.tv.util.Constants
@@ -52,7 +53,8 @@ internal data class CalendarWatchlists(
 internal data class CalendarMonthResult(
     val entries: List<CalendarRelease>,
     val warnings: List<String>,
-    val completedTitles: Set<Pair<MediaType, Int>> = emptySet()
+    val completedTitles: Set<Pair<MediaType, Int>> = emptySet(),
+    val failedTitles: Set<Pair<MediaType, Int>> = emptySet()
 )
 
 internal data class CalendarLoadProgress(
@@ -83,7 +85,7 @@ internal fun mergeCalendarPreview(preview: List<CalendarRelease>, progress: Cale
     val refreshed = progress.month.entries.map { entry -> entry.copy(sourceIds = entry.sourceIds +
         unresolvedSources(cachedMemberships[entry.media.mediaType to entry.media.id].orEmpty())) }
     return (retained + refreshed).associateBy { it.id }.values
-        .sortedWith(compareBy<CalendarRelease> { it.date }.thenBy { it.releaseInstant }.thenBy { it.media.title })
+        .sortedWith(calendarReleaseOrder)
 }
 
 /** Read-only metadata with disposable public caches; private month previews are profile-scoped. */
@@ -115,7 +117,7 @@ class ReleaseCalendarRepository @Inject constructor(
     private val missingMetadata = linkedMapOf<String, Long>()
     internal var clock: () -> Long = System::currentTimeMillis
 
-    private class TitleRead(val cacheOnly: Boolean) : AbstractCoroutineContextElement(Key) {
+    private class TitleRead(val cacheOnly: Boolean, val forceRefresh: Boolean = false) : AbstractCoroutineContextElement(Key) {
         companion object Key : CoroutineContext.Key<TitleRead>
         val expiresAt = AtomicLong(Long.MAX_VALUE)
         fun include(expiry: Long) { expiresAt.updateAndGet { minOf(it, expiry) } }
@@ -128,6 +130,7 @@ class ReleaseCalendarRepository @Inject constructor(
     internal suspend fun loadWatchlists(
         profileId: String,
         forceRefresh: Boolean = false,
+        reuseWatchlists: CalendarWatchlists? = null,
         onProgress: suspend (CalendarWatchlists) -> Unit = {}
     ): CalendarWatchlists = coroutineScope {
         ensureProfile(profileId)
@@ -143,13 +146,22 @@ class ReleaseCalendarRepository @Inject constructor(
         )
         providers.map { source -> async {
             val result = try {
-                withTimeoutOrNull(45_000) {
+                if (reuseWatchlists?.profileId == profileId && reuseWatchlists.items.containsKey(source) && source !in reuseWatchlists.failedSources &&
+                    reuseWatchlists.warnings.none { it.startsWith(source.label) }) {
+                    SourceRead(reuseWatchlists.items[source], reuseWatchlists.warnings.firstOrNull { it.startsWith(source.label) })
+                } else withTimeoutOrNull(45_000) {
                     var warning: String? = null
                     when (source) {
                         ReleaseCalendarSource.ARVIO -> watchlistRepository.getLocalWatchlistItems()
                         ReleaseCalendarSource.TRAKT -> if (traktRepository.isAuthenticated.first()) {
-                            traktRepository.getWatchlistSyncResultWithAuthState().second?.items
+                            val planned = traktRepository.getWatchlistSyncResultWithAuthState().second?.items
                                 ?: throw IOException("Trakt watchlist unavailable")
+                            progressMutex.withLock {
+                                ensureProfile(profileId)
+                                completed[source] = SourceRead(planned)
+                                onProgress(snapshot())
+                            }
+                            (planned + traktRepository.getCalendarWatchingShows()).distinctBy { it.mediaType to it.id }
                         } else null
                         ReleaseCalendarSource.SIMKL -> if (simklAuthManager.isConnected()) {
                             val refreshed = simklSyncService.syncIfNeeded(forceRefresh)
@@ -168,7 +180,7 @@ class ReleaseCalendarRepository @Inject constructor(
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                SourceRead(emptyList(), "${source.label} could not be refreshed.", failed = true)
+                SourceRead(completed[source]?.items.orEmpty(), "${source.label} could not be refreshed.", failed = true)
             }
             progressMutex.withLock {
                 ensureProfile(profileId)
@@ -190,6 +202,8 @@ class ReleaseCalendarRepository @Inject constructor(
         region: String,
         language: String = "en-US",
         forceRefresh: Boolean = false,
+        retryTitles: Set<Pair<MediaType, Int>> = emptySet(),
+        reuseWatchlists: CalendarWatchlists? = null,
         onProgress: suspend (CalendarLoadProgress) -> Unit = {}
     ): CalendarMonthResult = coroutineScope {
         ensureProfile(profileId)
@@ -207,7 +221,7 @@ class ReleaseCalendarRepository @Inject constructor(
             ensureProfile(profileId)
             onProgress(CalendarLoadProgress(watchlists, currentResult(), watchlistsComplete, completedTitles.toSet()))
         }
-        loadWatchlists(profileId, forceRefresh) { snapshot ->
+        loadWatchlists(profileId, forceRefresh, reuseWatchlists) { snapshot ->
             progressMutex.withLock {
                 ensureProfile(profileId)
                 watchlists = snapshot
@@ -216,13 +230,14 @@ class ReleaseCalendarRepository @Inject constructor(
                     val isNew = key !in titles
                     titles[key] = title
                     if (isNew) jobs += launch {
-                        val result = prioritizedTitleReleases(title, month, timezone, region, language) { result ->
+                        val result = withContext(TitleRead(false, key in retryTitles)) { prioritizedTitleReleases(title, month, timezone, region, language) { result ->
                             progressMutex.withLock {
                                 results[key] = result
                                 publish()
                             }
-                        }
+                        } }
                         progressMutex.withLock {
+                            results[key] = result
                             if (result.warnings.isEmpty()) completedTitles += key
                             publish()
                         }
@@ -248,6 +263,7 @@ class ReleaseCalendarRepository @Inject constructor(
         region: String,
         language: String = "en-US",
         cacheOnly: Boolean = false,
+        retryTitles: Set<Pair<MediaType, Int>> = emptySet(),
         onProgress: suspend (CalendarMonthResult) -> Unit = {}
     ): CalendarMonthResult = coroutineScope {
         ensureProfile(watchlists.profileId)
@@ -261,7 +277,7 @@ class ReleaseCalendarRepository @Inject constructor(
             }
         }
         val results = prioritizeTitles(mergeCalendarWatchlists(watchlists.items), month).map { title -> async {
-            val result = withContext(TitleRead(cacheOnly)) {
+            val result = withContext(TitleRead(cacheOnly, (title.media.mediaType to title.media.id) in retryTitles)) {
                 prioritizedTitleReleases(title, month, timezone, region, language) { publish(title, it) }
             }
             result.copy(completedTitles = if (result.warnings.isEmpty()) setOf(title.media.mediaType to title.media.id) else emptySet())
@@ -290,15 +306,18 @@ class ReleaseCalendarRepository @Inject constructor(
     ): CalendarMonthResult {
         val key = "${profileManager.getProfileIdSync()}|${title.media.mediaType}:${title.media.id}|$month|${timezone.id}|$region|$language|${title.media.traktId}"
         val generation = cacheGeneration.get()
-        val saved = synchronized(titleCache) { titleCache[key]?.takeIf { clock() < it.expiresAt } }
-            ?: diskCache.readTitle(key)?.also { rememberTitle(key, it) }
+        val forceRefresh = coroutineContext[TitleRead]?.forceRefresh == true
+        val saved = if (forceRefresh) null else (synchronized(titleCache) { titleCache[key]?.takeIf { clock() < it.expiresAt } }
+            ?: diskCache.readTitle(key)?.also { rememberTitle(key, it) })
         if (saved != null) {
             return CalendarMonthResult(saved.entries.map { it.copy(sourceIds = title.sourceIds) }, emptyList())
                 .also { onProgress(it) }
         }
         val read = coroutineContext[TitleRead] ?: TitleRead(cacheOnly = false)
         return withContext(read) {
-            val result = fetchTitleReleases(title, month, timezone, region, language, onProgress)
+            val fetched = fetchTitleReleases(title, month, timezone, region, language, onProgress)
+            val result = fetched.copy(failedTitles = if (fetched.warnings.isEmpty()) emptySet() else setOf(title.media.mediaType to title.media.id))
+            onProgress(result)
             // Empty, successfully verified months are reusable too. Errors are never
             // recorded as empty schedules, and source membership always comes from today's lists.
             if (!read.cacheOnly && result.warnings.isEmpty() && read.expiresAt.get() > clock() && read.expiresAt.get() != Long.MAX_VALUE &&
@@ -371,10 +390,10 @@ class ReleaseCalendarRepository @Inject constructor(
 
     private fun combineResults(results: Collection<CalendarMonthResult>, warnings: List<String>) = CalendarMonthResult(
             entries = results.flatMap { it.entries }.distinctBy { it.id }
-                .sortedWith(compareBy<CalendarRelease> { it.date }.thenBy { it.releaseInstant }.thenBy { it.media.title }
-                    .thenBy { it.seasonNumber }.thenBy { it.episodeNumber }),
+                .sortedWith(calendarReleaseOrder),
             warnings = warnings + results.flatMap { it.warnings },
-            completedTitles = results.flatMap { it.completedTitles }.toSet()
+            completedTitles = results.flatMap { it.completedTitles }.toSet(),
+            failedTitles = results.flatMap { it.failedTitles }.toSet()
         )
 
     private suspend fun televisionReleases(
@@ -576,6 +595,7 @@ class ReleaseCalendarRepository @Inject constructor(
 
     @Suppress("UNCHECKED_CAST")
     private suspend inline fun <reified T : Any> cachedValue(key: String): T? {
+        if (coroutineContext[TitleRead]?.forceRefresh == true) return null
         val memory = synchronized(metadataCache) {
             metadataCache[key]?.takeIf { clock() - it.at in 0 until calendarMetadataTtl(it.value, clock()) }
         }
@@ -592,10 +612,11 @@ class ReleaseCalendarRepository @Inject constructor(
 
     @Suppress("UNCHECKED_CAST")
     private suspend inline fun <reified T : Any> cached(key: String, requestPermits: Semaphore = permits, crossinline block: suspend () -> T): T {
+        val forceRefresh = coroutineContext[TitleRead]?.forceRefresh == true
         val memory = synchronized(metadataCache) {
             metadataCache[key]?.takeIf { clock() - it.at in 0 until calendarMetadataTtl(it.value, clock()) }
         }
-        if (memory != null) {
+        if (memory != null && !forceRefresh) {
             includeMetadata(memory.value, memory.at)
             return memory.value as T
         }
@@ -606,7 +627,7 @@ class ReleaseCalendarRepository @Inject constructor(
         }
         return metadataLocks[lockPool][(key.hashCode() and Int.MAX_VALUE) % metadataLocks[lockPool].size].withLock {
             synchronized(metadataCache) {
-                if (missingMetadata[key]?.let { clock() - it in 0 until 15 * 60_000L } == true) {
+                if (!forceRefresh && missingMetadata[key]?.let { clock() - it in 0 until 15 * 60_000L } == true) {
                     throw IOException("Metadata not found")
                 }
             }

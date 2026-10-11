@@ -2,6 +2,7 @@ import { config } from "./config";
 import { tmdb, mapTmdbItem, resolveTmdbId } from "./tmdb";
 import { authoritativeEpisodeTime, mergeCalendarTitles, parseCalendarDate, sortCalendarReleases, type CalendarRelease, type CalendarSource, type CalendarTitle, type ReleaseKind } from "./calendar";
 import type { MediaItem } from "./types";
+import { persistCalendarTitles, readCalendarTitle, rememberCalendarTitle } from "./calendarTitleCache";
 
 interface Episode { season_number: number; episode_number: number; air_date?: string; name?: string; still_path?: string }
 interface Season { id: number; season_number: number; air_date?: string; episode_count?: number }
@@ -12,7 +13,7 @@ interface Details {
   release_dates?: { results?: Array<{ iso_3166_1: string; release_dates: ReleaseDate[] }> };
 }
 export interface CalendarResult { releases: CalendarRelease[]; failedSources: CalendarSource[]; pendingSources: CalendarSource[]; failedTitles: number; failedTitleKeys?: string[]; titleCount: number; sourceTitleCounts: Partial<Record<CalendarSource, number>>; sourceTitleIds?: Partial<Record<CalendarSource, string[]>> }
-export interface CalendarRead { source: CalendarSource; read: () => Promise<MediaItem[]> }
+export interface CalendarRead { source: CalendarSource; read: (onItems?: (items: MediaItem[]) => void) => Promise<MediaItem[]> }
 export interface CalendarLoadOptions {
   sources: CalendarRead[]; start: string; end: string; language: string; region: string; customApiKey?: string; signal?: AbortSignal;
   episodeTime?: (item: MediaItem, season: number, episode: number) => Promise<string | null | undefined>;
@@ -21,8 +22,15 @@ export interface CalendarLoadOptions {
   timeoutMs?: number;
   /** A title's optional air-time budget includes time spent waiting in the queue. */
   enrichmentTimeoutMs?: number;
+  cacheScope?: string;
+  retryTitleKeys?: string[];
+  refreshMetadata?: boolean;
 }
 const cache = new Map<string, { at: number; value: unknown }>();
+function cacheMetadata(key: string, value: unknown) {
+  cache.delete(key); cache.set(key, { at: Date.now(), value });
+  while (cache.size > 600) cache.delete(cache.keys().next().value!);
+}
 function bounded<T>(read: () => Promise<T>, options: CalendarLoadOptions): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => finish(new Error("Calendar request cancelled"));
@@ -48,12 +56,11 @@ function queue(concurrency: number) {
 }
 async function metadata<T>(path: string, options: CalendarLoadOptions, extra: Record<string, string> = {}): Promise<T> {
   if (options.signal?.aborted) throw new Error("Calendar request cancelled");
-  const key = `${options.language}:${path}:${JSON.stringify(extra)}`;
+  const key = `${options.language}:${options.customApiKey || "default"}:${path}:${JSON.stringify(extra)}`;
   const cached = cache.get(key);
-  if (cached && Date.now() - cached.at < 10 * 60_000) return cached.value as T;
+  if (!options.refreshMetadata && cached && Date.now() - cached.at < 30 * 60_000) return cached.value as T;
   const value = await bounded(() => tmdb<T>(path, { language: options.language, ...extra }, options.customApiKey), options);
-  cache.set(key, { at: Date.now(), value });
-  if (cache.size > 600) cache.delete(cache.keys().next().value!);
+  cacheMetadata(key, value);
   return value;
 }
 
@@ -61,7 +68,7 @@ async function metadata<T>(path: string, options: CalendarLoadOptions, extra: Re
 export function movieCalendarReleases(title: CalendarTitle, details: Details, region: string): CalendarRelease[] {
   const regions = details.release_dates?.results ?? [];
   // Use the requested country, then US; a global primary date is the fallback.
-  const selected = regions.find(row => row.iso_3166_1 === region) ?? regions.find(row => row.iso_3166_1 === "US");
+  const selected = regions.find(row => row.iso_3166_1.toUpperCase() === region.toUpperCase() && row.release_dates.length) ?? regions.find(row => row.iso_3166_1 === "US" && row.release_dates.length);
   const kinds: Record<number, ReleaseKind> = { 2: "cinema", 3: "cinema", 4: "digital", 5: "physical", 6: "tv" };
   const releases = new Map<string, CalendarRelease>();
   for (const row of selected?.release_dates ?? []) {
@@ -100,11 +107,30 @@ async function titleReleases(title: CalendarTitle, options: CalendarLoadOptions,
   // A known next episode is useful even while an old season or exact-time service is slow.
   for (const episode of [details.last_episode_to_air, details.next_episode_to_air]) if (episode) publishEpisode(episode);
   let failed = false;
-  for (const season of calendarSeasonCandidates(details.seasons ?? [], options.start, options.end)) {
-    try {
-      const data = await readMetadata(() => metadata<{ episodes?: Episode[] }>(`tv/${item.id}/season/${season.season_number}`, options));
-      for (const episode of data.episodes ?? []) publishEpisode(episode);
-    } catch (error) { if (options.signal?.aborted) throw error; failed = true; }
+  const candidates = calendarSeasonCandidates(details.seasons ?? [], options.start, options.end);
+  const missing = candidates.filter(season => {
+    const saved = cache.get(`${options.language}:${options.customApiKey || "default"}:tv/${item.id}/season/${season.season_number}:{}`);
+    if (options.refreshMetadata || !saved || Date.now() - saved.at >= 30 * 60_000) return true;
+    for (const episode of (saved.value as { episodes?: Episode[] }).episodes ?? []) publishEpisode(episode);
+    return false;
+  });
+  for (let index = 0; index < missing.length; index += 20) {
+    const batch = missing.slice(index, index + 20);
+    let appended: Record<string, { season_number?: number; episodes?: Episode[] }> = {};
+    if (batch.length > 1) {
+      try { appended = await readMetadata(() => metadata(`tv/${item.id}`, options, { append_to_response: batch.map(row => `season/${row.season_number}`).join(",") })); }
+      catch (error) { if (options.signal?.aborted) throw error; }
+    }
+    await Promise.all(batch.map(async season => {
+      const path = `tv/${item.id}/season/${season.season_number}`;
+      try {
+        let data = appended[`season/${season.season_number}`];
+        if (data?.season_number === season.season_number && Array.isArray(data.episodes)) {
+          cacheMetadata(`${options.language}:${options.customApiKey || "default"}:${path}:{}`, data);
+        } else data = await readMetadata(() => metadata<{ episodes?: Episode[] }>(path, options));
+        for (const episode of data.episodes ?? []) publishEpisode(episode);
+      } catch (error) { if (options.signal?.aborted) throw error; failed = true; }
+    }));
   }
   return { failed };
 }
@@ -169,8 +195,12 @@ export async function loadCalendar(options: CalendarLoadOptions): Promise<Calend
   // Each provider schedules its titles independently; a stalled tracker cannot hold ARVIO dates back.
   await Promise.all(options.sources.map(async ({ source, read }) => {
     try {
-      const items = (await bounded(read, options)).filter(item => !item.isHomeServer).map(item => ({ ...item }));
-      sourceTitleCounts[source] = items.length; sourceTitleIds[source] = []; publish();
+      const sourceItems = new Map<string, MediaItem>();
+      const ingest = async (incoming: MediaItem[]) => {
+      if (options.signal?.aborted) return;
+      const items = incoming.filter(item => !item.isHomeServer).map(item => ({ ...item }));
+      for (const item of items) sourceItems.set(`${item.mediaType}:${item.id}:${item.imdbId || ""}`, item);
+      sourceTitleCounts[source] = sourceItems.size; sourceTitleIds[source] ??= []; publish();
       await Promise.all(items.map(async (item, index) => {
         if (item.id <= 0) {
           const id = await readIdentity(() => bounded(() => resolveTmdbId(item), options)).catch(() => null);
@@ -179,7 +209,7 @@ export async function loadCalendar(options: CalendarLoadOptions): Promise<Calend
         if (options.signal?.aborted) return;
         if (item.id <= 0) { failedTitles.add(`${source}:${index}`); return; }
         const key = `${item.mediaType}:${item.id}`;
-        sourceTitleIds[source]!.push(key);
+        if (!sourceTitleIds[source]!.includes(key)) sourceTitleIds[source]!.push(key);
         const previous = titles.get(key);
         if (previous) {
           if (!previous.sources.includes(source)) previous.sources.push(source);
@@ -189,18 +219,34 @@ export async function loadCalendar(options: CalendarLoadOptions): Promise<Calend
           const title: CalendarTitle = { item, sources: [source] }; titles.set(key, title);
           titleJobs.set(key, (async () => {
             if (options.signal?.aborted) return;
-            try { if ((await titleReleases(title, options, publishRelease, readMetadata)).failed) failedTitles.add(key); }
+            const projectionKey = options.cacheScope ? `v2:${options.cacheScope}:${options.language}:${options.region}:${options.start}:${options.end}:${key}:${item.traktId || ""}` : undefined;
+            const refreshMetadata = Boolean(options.refreshMetadata || options.retryTitleKeys?.includes(key));
+            const saved = projectionKey && !refreshMetadata ? readCalendarTitle(projectionKey) : undefined;
+            try {
+              if (saved) saved.forEach(row => publishRelease({ ...row, sources: title.sources }));
+              else if ((await titleReleases(title, { ...options, refreshMetadata }, publishRelease, readMetadata)).failed) failedTitles.add(key);
+            }
             catch { if (!options.signal?.aborted) failedTitles.add(key); }
+            if (projectionKey && !saved && !failedTitles.has(key) && !options.signal?.aborted) {
+              rememberCalendarTitle(projectionKey, [...releases.values()].filter(row => `${row.item.mediaType}:${row.item.id}` === key), 30 * 60_000);
+            }
             publish();
           })());
         }
         await titleJobs.get(key);
       }));
+      };
+      const partials: Promise<void>[] = [];
+      try {
+        const items = await bounded(() => read(items => { partials.push(ingest(items)); }), options);
+        await ingest(items);
+      } finally { await Promise.all(partials); }
     } catch { if (!options.signal?.aborted) failedSources.add(source); }
     finally { pendingSources.delete(source); publish(); }
   }));
   await Promise.all(timeJobs);
   publish(true);
   cancelPublication(); options.signal?.removeEventListener("abort", cancelPublication);
+  if (!options.signal?.aborted && options.cacheScope) persistCalendarTitles();
   return snapshot();
 }

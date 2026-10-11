@@ -3486,6 +3486,30 @@ class TraktRepository @Inject constructor(
         return getWatchlistWithAuthState().second
     }
 
+    /** Calendar membership needs identities, not per-show progress or artwork hydration. */
+    internal suspend fun getCalendarWatchingShows(): List<MediaItem> = coroutineScope {
+        val auth = getAuthHeader() ?: return@coroutineScope emptyList()
+        val hidden = async { (getAllHiddenProgressShows(auth) + getAllHiddenProgressResetShows(auth))
+            .mapNotNull { it.show?.ids?.trakt }.toSet() }
+        val shows = mutableListOf<TraktWatchedShow>()
+        val seen = mutableSetOf<Int>()
+        var page = 1
+        while (true) {
+            val rows = traktApi.getWatchedShows(auth, clientId, page = page, limit = 100)
+            val fresh = rows.filter { it.show.ids.trakt?.let(seen::add) == true }
+            shows += fresh
+            if (rows.size < 100 || fresh.isEmpty()) break
+            page++
+        }
+        val excluded = hidden.await()
+        shows.mapNotNull { row ->
+            val show = row.show
+            val id = show.ids.tmdb?.takeIf { it > 0 } ?: return@mapNotNull null
+            if (show.ids.trakt in excluded) null else MediaItem(id = id, title = show.title,
+                mediaType = MediaType.TV, traktId = show.ids.trakt)
+        }
+    }
+
     suspend fun getWatchlistWithAuthState(): Pair<Boolean, List<MediaItem>> {
         val result = getWatchlistSyncResultWithAuthState()
         return result.first to result.second?.items.orEmpty()

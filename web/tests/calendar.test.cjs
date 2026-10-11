@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { load } = require('./load.cjs');
+const { load, storage } = require('./load.cjs');
 const calendar = load('lib/calendar.ts');
 const movie = { id: 1, mediaType: 'movie', title: 'Saved movie' };
 const show = { id: 2, mediaType: 'tv', title: 'Saved series' };
@@ -8,8 +8,116 @@ const options = { start: '2026-10-01', end: '2026-10-31', language: 'en', region
 const json = value => JSON.parse(JSON.stringify(value));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 function loader(tmdb = async () => ({}), resolveTmdbId = async () => null) {
-  return load('lib/calendarLoader.ts', { './calendar': calendar, './tmdb': { tmdb, resolveTmdbId, mapTmdbItem: (details, mediaType) => ({ id: details.id, title: details.title || details.name, mediaType }) } });
+  return load('lib/calendarLoader.ts', { './calendar': calendar, './calendarTitleCache': load('lib/calendarTitleCache.ts', { './storage': storage() }), './tmdb': { tmdb, resolveTmdbId, mapTmdbItem: (details, mediaType) => ({ id: details.id, title: details.title || details.name, mediaType }) } });
 }
+
+test('region, TV release type, stable order and distinct day previews agree with Android', () => {
+  assert.equal(calendar.calendarRegion('nl-NL'), 'NL');
+  assert.equal(calendar.calendarRegion('en'), 'US');
+  const rows = loader().movieCalendarReleases({ item: movie, sources: ['arvio'] }, { release_dates: { results: [
+    { iso_3166_1: 'NL', release_dates: [] },
+    { iso_3166_1: 'US', release_dates: [{ type: 6, release_date: '2026-10-16' }] }
+  ] } }, 'nl');
+  assert.equal(rows[0].kind, 'tv'); assert.equal(rows[0].region, 'US');
+  const unknown = { ...rows[0], item: show, id: 'unknown', kind: 'episode', episode: 1 };
+  const timed = { ...unknown, id: 'timed', episode: 2, timestamp: '2026-10-16T19:00:00Z' };
+  assert.deepEqual(json(calendar.sortCalendarReleases([unknown, timed]).map(row => row.id)), ['timed', 'unknown']);
+  assert.equal(calendar.calendarPreviewTitles([unknown, timed]).length, 1);
+});
+
+test('25 unknown seasons load in two batches without losing any episodes', async () => {
+  const calls = [];
+  const module = loader(async (path, params) => {
+    calls.push([path, params.append_to_response]);
+    if (!params.append_to_response) return { id: 2, name: show.title, seasons: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, season_number: i + 1 })) };
+    return Object.fromEntries(params.append_to_response.split(',').map(key => {
+      const number = Number(key.split('/')[1]);
+      return [key, { season_number: number, episodes: [{ season_number: number, episode_number: 1, air_date: '2026-10-16' }] }];
+    }));
+  });
+  const result = await module.loadCalendar({ ...options, sources: [{ source: 'arvio', read: async () => [show] }] });
+  assert.equal(result.releases.length, 25); assert.equal(result.failedTitles, 0);
+  assert.equal(calls.length, 3, 'One details request plus two batches, not 25 season requests');
+  assert.ok(calls.every(([path]) => path === 'tv/2'));
+});
+
+test('missing appended season falls back individually without refetching successful blocks', async () => {
+  const calls = [];
+  const episode = number => ({ season_number: number, episode_number: 1, air_date: '2026-10-16' });
+  const module = loader(async (path, params) => {
+    calls.push(path);
+    if (params.append_to_response) return { 'season/2': { season_number: 2, episodes: [episode(2)] } };
+    if (path === 'tv/2/season/1') return { episodes: [episode(1)] };
+    return { id: 2, name: show.title, seasons: [1, 2].map(season_number => ({ id: season_number, season_number })) };
+  });
+  const result = await module.loadCalendar({ ...options, sources: [{ source: 'arvio', read: async () => [show] }] });
+  assert.equal(result.releases.length, 2); assert.equal(result.failedTitles, 0);
+  assert.deepEqual(calls, ['tv/2', 'tv/2', 'tv/2/season/1']);
+});
+
+test('verified empty title projections survive reloads while failed titles alone bypass metadata cache', async () => {
+  const calls = []; let offline = true;
+  const module = loader(async path => {
+    calls.push(path);
+    if (path === 'movie/3' && offline) throw Error('temporary failure');
+    return { id: Number(path.split('/')[1]), title: movie.title, release_date: path === 'movie/2' ? '2026-11-16' : '2026-10-16' };
+  });
+  const base = { ...options, cacheScope: 'profile-a', sources: [{ source: 'arvio', read: async () => [1, 2, 3].map(id => ({ ...movie, id })) }] };
+  const first = await module.loadCalendar(base);
+  assert.deepEqual(json(first.failedTitleKeys), ['movie:3']);
+  offline = false;
+  const second = await module.loadCalendar({ ...base, retryTitleKeys: first.failedTitleKeys });
+  assert.equal(second.failedTitles, 0); assert.equal(second.releases.length, 2);
+  assert.equal(calls.filter(path => path === 'movie/1').length, 1);
+  assert.equal(calls.filter(path => path === 'movie/2').length, 1, 'Confirmed empty month is cached too');
+  assert.equal(calls.filter(path => path === 'movie/3').length, 2);
+  const filtered = await module.loadCalendar({ ...base, sources: [{ source: 'trakt', read: async () => [movie] }] });
+  assert.deepEqual(json(filtered.releases[0].sources), ['trakt'], 'Cache cannot resurrect removed memberships');
+});
+
+test('title caches persist empty months, isolate profiles and expire without extending on reads', () => {
+  const store = storage();
+  const cached = load('lib/calendarTitleCache.ts', { './storage': store });
+  const now = Date.now; let clock = now(); Date.now = () => clock;
+  try {
+    cached.rememberCalendarTitle('profile-a:title', [], 100);
+    cached.persistCalendarTitles();
+    const reopened = load('lib/calendarTitleCache.ts', { './storage': store });
+    assert.deepEqual(json(reopened.readCalendarTitle('profile-a:title')), []);
+    assert.equal(reopened.readCalendarTitle('profile-b:title'), undefined);
+    clock += 99; assert.ok(reopened.readCalendarTitle('profile-a:title'));
+    clock += 2; assert.equal(reopened.readCalendarTitle('profile-a:title'), undefined);
+  } finally { Date.now = now; }
+});
+
+test('planned titles publish while the same tracker is still reading watching shows', async () => {
+  const watching = deferred(), painted = deferred();
+  const module = loader(async path => ({ id: Number(path.split('/')[1]), title: movie.title, release_date: '2026-10-16' }));
+  const request = module.loadCalendar({ ...options, sources: [{ source: 'trakt', read: async publish => {
+    publish([movie]); await watching.promise; return [movie, { ...movie, id: 3 }];
+  } }], onProgress: value => { if (value.releases.length) painted.resolve(value); } });
+  assert.equal((await painted.promise).releases.length, 1);
+  watching.resolve(); const final = await request;
+  assert.equal(final.releases.length, 2); assert.equal(final.titleCount, 2);
+});
+
+test('calendar watching identities paginate past 500, exclude all hidden pages and avoid episode history', async () => {
+  const { TraktClient } = load('lib/trakt.ts', { './config': { config: {} }, './http': {} });
+  const client = new TraktClient(); client.refreshIfNeeded = async () => ({ access_token: 'fixture' });
+  const paths = [];
+  client.trakt = async path => {
+    paths.push(path);
+    const page = Number(new URL(`https://fixture${path}`).searchParams.get('page'));
+    const total = path.startsWith('/sync') ? 602 : path.includes('reset') ? 0 : 101;
+    return Array.from({ length: Math.max(0, Math.min(100, total - (page - 1) * 100)) }, (_, i) => ({ show: { ids: { trakt: (page - 1) * 100 + i + 1 } } }));
+  };
+  const rows = await client.calendarWatchingShows();
+  assert.equal(rows.length, 501); assert.equal(rows[0].show.ids.trakt, 102);
+  assert.ok(rows.every(row => row.type === 'show'));
+  assert.ok(paths.every(path => !path.includes('extended=')));
+  client.trakt = async () => { throw Error('offline'); };
+  await assert.rejects(client.calendarWatchingShows(), /offline/);
+});
 
 test('month grid starts Monday, contains today and has five or six full weeks across leap years', () => {
   for (const [year, month, size] of [[2026, 9, 35], [2026, 2, 42], [2024, 1, 35]]) {
