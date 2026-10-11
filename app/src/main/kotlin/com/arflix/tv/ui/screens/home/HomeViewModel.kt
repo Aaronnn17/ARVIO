@@ -1214,7 +1214,8 @@ class HomeViewModel @Inject constructor(
 
     /**
      * Refresh the Favorite TV category's EPG data (Now/Next display).
-     * @param networkFetch If true, also fetch fresh EPG from the Xtream short EPG API.
+     * @param networkFetch If true, the network is asked when the saved guide has no current
+     *                     programme for a favorite channel (at most every [EPG_NETWORK_RETRY_MS]).
      *                     If false, only re-derive from cached program data (free, no network).
      */
     private fun refreshFavoriteTvEpg(networkFetch: Boolean = false) {
@@ -1230,17 +1231,17 @@ class HomeViewModel @Inject constructor(
                 val channelIds = currentFavTv.items.mapNotNull { getIptvChannelId(it) }.toSet()
                 if (channelIds.isEmpty()) return@launch
 
-                // Optionally do network refresh first
-                if (networkFetch) {
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastEpgNetworkRefreshMs >= EPG_NETWORK_REFRESH_MS) {
-                        lastEpgNetworkRefreshMs = now
-                        runCatching { iptvRepository.refreshEpgForChannels(channelIds) }
-                    }
+                // The saved guide usually covers days ahead, so now/next comes from it. An XMLTV
+                // source has no per-channel request: a "refresh" downloads the whole guide.
+                val derived = iptvRepository.reDeriveCachedNowNext(channelIds)
+                val now = SystemClock.elapsedRealtime()
+                if (networkFetch && favoriteTvGuideNeedsNetwork(
+                        channelIds, derived, lastEpgNetworkRefreshMs, now, EPG_NETWORK_RETRY_MS)
+                ) {
+                    lastEpgNetworkRefreshMs = now
+                    runCatching { iptvRepository.refreshEpgForChannels(channelIds) }
+                    iptvRepository.reDeriveCachedNowNext(channelIds)
                 }
-
-                // Re-derive now/next from (possibly updated) cached data
-                iptvRepository.reDeriveCachedNowNext(channelIds)
 
                 // Rebuild the category with updated EPG text
                 val freshCategory = withContext(Dispatchers.IO) {
@@ -1276,23 +1277,16 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    /** Start periodic EPG refresh for the Favorite TV home row. */
-    private fun startEpgRefreshTimer() {
-        epgRefreshJob?.cancel()
-        activeEpgRefreshJob?.cancel()
-        epgRefreshJob = viewModelScope.launch {
-            // Initial delay — let home data + IPTV warmup finish first
-            delay(if (isLowRamDevice) 10_000L else 5_000L)
-            var tickCount = 0L
-            while (true) {
-                tickCount++
-                // Every tick (60s): local re-derive
-                // Every 5th tick (5 min): also do network refresh
-                val doNetwork = tickCount % ((EPG_NETWORK_REFRESH_MS / EPG_LOCAL_REFRESH_MS).coerceAtLeast(1)) == 0L
-                refreshFavoriteTvEpg(networkFetch = doNetwork)
-                delay(EPG_LOCAL_REFRESH_MS)
-            }
-        }
+    /**
+     * The Favorite TV row's now/next only shows on a focused card, so it is brought up to date
+     * when focus reaches the row, not on a timer. A Home screen left open used to download the
+     * whole guide every five minutes for text nobody was looking at.
+     */
+    private fun refreshFavoriteTvGuideOnFocus() {
+        val now = SystemClock.elapsedRealtime()
+        if (!favoriteTvFocusRefreshDue(lastFavoriteTvFocusRefreshMs, now, EPG_FOCUS_REFRESH_MS)) return
+        lastFavoriteTvFocusRefreshMs = now
+        refreshFavoriteTvEpg(networkFetch = true)
     }
 
     private val isTvDevice = detectDeviceType(context) == DeviceType.TV
@@ -1473,14 +1467,14 @@ class HomeViewModel @Inject constructor(
     @Volatile private var lastWatchedBadgesLookup: Pair<Set<Int>, Set<Int>>? = null
     private val HOME_PLACEHOLDER_ITEM_COUNT = 8
 
-    // EPG refresh intervals for Favorite TV row
-    /** Local re-derive: shift now/next from cached programs when a program ends. */
-    private val EPG_LOCAL_REFRESH_MS = 60_000L
-    /** Network refresh: fetch fresh short EPG for favorite channels (Xtream only). */
-    private val EPG_NETWORK_REFRESH_MS = 5 * 60_000L
-    private var epgRefreshJob: Job? = null
+    // EPG refresh for the Favorite TV row, driven by focus (see refreshFavoriteTvGuideOnFocus)
+    /** Moving between cards re-derives now/next from the saved guide at most this often. */
+    private val EPG_FOCUS_REFRESH_MS = 60_000L
+    /** How often the network may be asked while the saved guide lacks a current programme. */
+    private val EPG_NETWORK_RETRY_MS = 30 * 60_000L
     private var activeEpgRefreshJob: Job? = null
     private var lastEpgNetworkRefreshMs: Long = 0L
+    private var lastFavoriteTvFocusRefreshMs: Long = 0L
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
@@ -1695,8 +1689,8 @@ class HomeViewModel @Inject constructor(
         preloadCategoryJobs.clear()
         startupCatalogWarmupJob?.cancel()
         customCatalogsJob?.cancel()
-        epgRefreshJob?.cancel()
         activeEpgRefreshJob?.cancel()
+        lastFavoriteTvFocusRefreshMs = 0L
         lastContinueWatchingItems = emptyList()
         lastContinueWatchingUpdateMs = 0L
         // The next profile's rows arrive unmarked; its first tick pass must not wait out the
@@ -1939,7 +1933,6 @@ class HomeViewModel @Inject constructor(
                         resetProfileRuntimeState(profileId)
                         loadHomeData()
                         launchContinueWatchingFetch()
-                        startEpgRefreshTimer()
                     }
                 }
         }
@@ -2323,11 +2316,6 @@ class HomeViewModel @Inject constructor(
                     } catch (e: Exception) {
                 if (e is CancellationException) throw e
             }
-        }
-        // Periodically refresh EPG data for Favorite TV row after Home settles.
-        viewModelScope.launch {
-            delay(if (isLowRamDevice) 8 * 60_000L else 6 * 60_000L)
-            startEpgRefreshTimer()
         }
         viewModelScope.launch {
             catalogRepository.observeCatalogs()
@@ -5056,6 +5044,9 @@ class HomeViewModel @Inject constructor(
         currentRowIndex = rowIndex
         currentItemIndex = itemIndex
         lastFocusChangeTime = System.currentTimeMillis()
+        if (_uiState.value.categories.getOrNull(rowIndex)?.id == FAVORITE_TV_CATEGORY_ID) {
+            refreshFavoriteTvGuideOnFocus()
+        }
         if (!shouldPrefetch) {
             prefetchJob?.cancel()
             return
