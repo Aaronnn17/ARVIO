@@ -556,23 +556,23 @@ export class SimklClient implements SyncClient {
     }
   }
 
-  async watchlist(statuses: Array<"plantowatch" | "watching"> = ["plantowatch"], options: { throwOnError?: boolean } = {}): Promise<unknown[]> {
+  async watchlist(statuses: Array<"plantowatch" | "watching"> = ["plantowatch"], options: { throwOnError?: boolean; resolveIds?: boolean } = {}): Promise<unknown[]> {
     const snapshot = await this.loadSnapshot();
     if (options.throwOnError && !snapshot.complete) throw new Error("SIMKL watchlist is unavailable");
     const movies = (await Promise.all(snapshot.movies
       .filter((item) => statuses.includes(item.status as "plantowatch" | "watching"))
       .map(async (item) => ({
         type: "movie",
-        movie: await this.resolveMedia(item.movie, "movie"),
+        movie: options.resolveIds === false ? item.movie : await this.resolveMedia(item.movie, "movie"),
         listed_at: item.last_watched_at
-      })))).filter((item) => item.movie?.ids?.tmdb != null);
+      })))).filter((item) => item.movie && (options.resolveIds === false || item.movie.ids?.tmdb != null));
     const shows = (await Promise.all([...snapshot.shows, ...snapshot.anime]
       .filter((item) => statuses.includes(item.status as "plantowatch" | "watching"))
       .map(async (item) => ({
         type: "show",
-        show: await this.resolveMedia(item.show, "tv"),
+        show: options.resolveIds === false ? item.show : await this.resolveMedia(item.show, "tv"),
         listed_at: item.last_watched_at
-      })))).filter((item) => item.show?.ids?.tmdb != null);
+      })))).filter((item) => item.show && (options.resolveIds === false || item.show.ids?.tmdb != null));
     return [...movies, ...shows];
   }
 

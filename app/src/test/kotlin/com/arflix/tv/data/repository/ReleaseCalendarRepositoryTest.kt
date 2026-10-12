@@ -77,6 +77,52 @@ class ReleaseCalendarRepositoryTest {
 
     @After fun tearDown() = unmockkAll()
 
+    @Test fun `historical season cache pressure cannot evict an ended show summary`() = runTest {
+        val lists = CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to listOf(MediaItem(5, "Ended show", mediaType = MediaType.TV))))
+        coEvery { tmdb.getTvDetails(5, any(), any(), any()) } returns TmdbTvDetails(5, "Ended show", status = "Ended",
+            lastEpisodeToAir = TmdbEpisode(seasonNumber = 1, episodeNumber = 1, airDate = "2025-01-01"))
+        repository.loadMonth(lists, month, ZoneId.of("UTC"), "US")
+        val raw = ReleaseCalendarRepository::class.java.getDeclaredField("metadataCache").apply { isAccessible = true }
+        (raw.get(repository) as MutableMap<*, *>).clear()
+        repository.loadMonth(lists, month.plusMonths(1), ZoneId.of("UTC"), "US")
+        coVerify(exactly = 1) { tmdb.getTvDetails(5, any(), any(), any()) }
+    }
+
+    @Test fun `verified schedules avoid repeating season walks for new months and expire normally`() = runTest {
+        var now = System.currentTimeMillis()
+        repository.clock = { now }
+        val show = MediaItem(5, "Anime", mediaType = MediaType.TV)
+        val lists = CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to listOf(show)))
+        coEvery { tmdb.getTvDetails(5, any(), any(), any()) } returns TmdbTvDetails(5, "Anime",
+            seasons = listOf(TmdbTvSeason(seasonNumber = 1, airDate = "2026-10-01")))
+        coEvery { tmdb.getTvSeason(5, 1, any(), any()) } returns TmdbSeasonDetails(seasonNumber = 1,
+            episodes = listOf(TmdbEpisode(seasonNumber = 1, episodeNumber = 1, airDate = "2026-10-04"),
+                TmdbEpisode(seasonNumber = 1, episodeNumber = 2, airDate = "2026-11-04")))
+        assertEquals(1, repository.loadMonth(lists, month, ZoneId.of("UTC"), "US").entries.size)
+        assertEquals(2, repository.loadMonth(lists, month.plusMonths(1), ZoneId.of("UTC"), "US").entries.single().episodeNumber)
+        coVerify(exactly = 1) { tmdb.getTvSeason(5, 1, any(), any()) }
+        coVerify(exactly = 1) { tmdb.getTvDetails(5, any(), any(), any()) }
+        now += CALENDAR_ACTIVE_TTL + 1
+        repository.loadMonth(lists, month, ZoneId.of("UTC"), "US")
+        coVerify(exactly = 2) { tmdb.getTvSeason(5, 1, any(), any()) }
+    }
+
+    @Test fun `ended anime announced future season is not suppressed by cached old schedule`() = runTest {
+        val show = MediaItem(5, "Anime", mediaType = MediaType.TV)
+        val lists = CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to listOf(show)))
+        coEvery { tmdb.getTvDetails(5, any(), any(), any()) } returns TmdbTvDetails(5, "Anime", status = "Ended",
+            lastEpisodeToAir = TmdbEpisode(seasonNumber = 1, episodeNumber = 1, airDate = "2026-10-04"),
+            seasons = listOf(TmdbTvSeason(seasonNumber = 1, airDate = "2026-10-01"), TmdbTvSeason(seasonNumber = 2, airDate = "2026-11-01")))
+        coEvery { tmdb.getTvSeason(5, any(), any(), any()) } answers {
+            val season = secondArg<Int>()
+            TmdbSeasonDetails(seasonNumber = season, episodes = listOf(TmdbEpisode(seasonNumber = season, episodeNumber = 1,
+                airDate = if (season == 1) "2026-10-04" else "2026-11-04")))
+        }
+        repository.loadMonth(lists, month, ZoneId.of("UTC"), "US")
+        assertEquals(2, repository.loadMonth(lists, month.plusMonths(1), ZoneId.of("UTC"), "US").entries.single().seasonNumber)
+        coVerify(exactly = 1) { tmdb.getTvSeason(5, 2, any(), any()) }
+    }
+
     @Test fun `retry only refetches failed titles and bypasses their negative cache`() = runTest {
         val lists = CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to listOf(MediaItem(1, "Good"), MediaItem(2, "Recovering"))))
         coEvery { tmdb.getMovieDetails(1, any(), any(), any()) } returns TmdbMovieDetails(1, "Good", releaseDate = "2026-10-04")
@@ -375,6 +421,46 @@ class ReleaseCalendarRepositoryTest {
         assertTrue(progress.last().watchlistsComplete)
         coVerify(exactly = 1) { tmdb.getMovieDetails(1, any(), any(), any()) }
         coVerify(exactly = 1) { tmdb.getMovieDetails(2, any(), any(), any()) }
+    }
+
+    @Test fun `healthy queued seasons retain exact times even after waiting longer than the network budget`() = runTest {
+        every { Constants.TRAKT_CLIENT_ID } returns "fixture-client"
+        val shows = (1..12).map { MediaItem(it, "Show $it", mediaType = MediaType.TV, traktId = it * 10) }
+        coEvery { tmdb.getTvDetails(any(), any(), any(), any()) } answers {
+            TmdbTvDetails(firstArg(), "Show", seasons = listOf(TmdbTvSeason(seasonNumber = 1)))
+        }
+        coEvery { tmdb.getTvSeason(any(), 1, any(), any()) } returns TmdbSeasonDetails(
+            episodes = listOf(TmdbEpisode(seasonNumber = 1, episodeNumber = 1, airDate = "2026-10-04")))
+        coEvery { traktApi.getCalendarSeasonEpisodes(any(), any(), 1, any(), any()) } coAnswers {
+            delay(800)
+            listOf(TraktCalendarEpisode(1, 1, firstAired = "2026-10-04T23:30:00Z"))
+        }
+        val result = repository.loadMonth(CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to shows)),
+            month, ZoneId.of("Europe/Amsterdam"), "NL")
+        assertEquals(12, result.entries.size)
+        assertTrue(result.entries.all { it.releaseInstant != null && it.date.toString() == "2026-10-05" })
+        assertEquals(4_800L, currentTime)
+        coVerify(exactly = 12) { traktApi.getCalendarSeasonEpisodes(any(), any(), 1, any(), any()) }
+    }
+
+    @Test fun `unavailable timing service does not repeat the timeout for every queued show`() = runTest {
+        every { Constants.TRAKT_CLIENT_ID } returns "fixture-client"
+        val shows = (1..12).map { MediaItem(it, "Show $it", mediaType = MediaType.TV, traktId = it * 10) }
+        coEvery { tmdb.getTvDetails(any(), any(), any(), any()) } answers {
+            TmdbTvDetails(firstArg(), "Show", seasons = listOf(TmdbTvSeason(seasonNumber = 1)))
+        }
+        coEvery { tmdb.getTvSeason(any(), 1, any(), any()) } returns TmdbSeasonDetails(
+            episodes = listOf(TmdbEpisode(seasonNumber = 1, episodeNumber = 1, airDate = "2026-10-04")))
+        coEvery { traktApi.getCalendarSeasonEpisodes(any(), any(), 1, any(), any()) } coAnswers {
+            delay(20_000)
+            emptyList()
+        }
+        val result = repository.loadMonth(CalendarWatchlists("fixture-profile", mapOf(ReleaseCalendarSource.ARVIO to shows)),
+            month, ZoneId.of("UTC"), "US")
+        assertEquals(12, result.entries.size)
+        assertTrue(result.entries.all { it.releaseInstant == null })
+        assertEquals(4_000L, currentTime)
+        coVerify(exactly = 2) { traktApi.getCalendarSeasonEpisodes(any(), any(), 1, any(), any()) }
     }
 
     @Test fun `confirmed episode dates render immediately while exact time request is bounded`() = runTest {

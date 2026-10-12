@@ -11,6 +11,138 @@ function loader(tmdb = async () => ({}), resolveTmdbId = async () => null) {
   return load('lib/calendarLoader.ts', { './calendar': calendar, './calendarTitleCache': load('lib/calendarTitleCache.ts', { './storage': storage() }), './tmdb': { tmdb, resolveTmdbId, mapTmdbItem: (details, mediaType) => ({ id: details.id, title: details.title || details.name, mediaType }) } });
 }
 
+test('season time enrichment keeps every verified episode after waiting for other seasons', async () => {
+  const calls = [];
+  const module = loader(async path => path.includes('/season/') ? {
+    episodes: Array.from({ length: 20 }, (_, i) => ({ season_number: 1, episode_number: i + 1, air_date: '2026-10-16' }))
+  } : { id: Number(path.split('/')[1]), name: show.title, seasons: [{ season_number: 1 }] });
+  const result = await module.loadCalendar({ ...options, enrichmentTimeoutMs: 50,
+    sources: [{ source: 'arvio', read: async () => Array.from({ length: 12 }, (_, i) => ({ ...show, id: i + 1 })) }],
+    episodeSeason: async (item, season) => {
+      calls.push(`${item.id}:${season}`);
+      await new Promise(resolve => setTimeout(resolve, 30));
+      return Array.from({ length: 21 }, (_, i) => ({ season, number: i + 1, first_aired: '2026-10-16T23:30:00Z' }));
+    }
+  });
+  assert.equal(calls.length, 12, 'Only one request per season, including work queued longer than the request budget');
+  assert.equal(result.releases.length, 240, 'Time service cannot invent its extra episode 21');
+  assert.ok(result.releases.every(row => row.timestamp === '2026-10-16T23:30:00Z'));
+  assert.ok(result.releases.every(row => row.date === calendar.authoritativeEpisodeTime(row.timestamp).date));
+});
+
+test('one slow season does not suppress healthy queued season timestamps', async () => {
+  const module = loader(async path => path.includes('/season/') ? {
+    episodes: [{ season_number: 1, episode_number: 1, air_date: '2026-10-16' }]
+  } : { id: Number(path.split('/')[1]), name: show.title, seasons: [{ season_number: 1 }] });
+  let calls = 0;
+  const result = await module.loadCalendar({ ...options, enrichmentTimeoutMs: 40,
+    sources: [{ source: 'arvio', read: async () => Array.from({ length: 12 }, (_, i) => ({ ...show, id: i + 1 })) }],
+    episodeSeason: async item => {
+      calls++;
+      if (item.id === 1) return new Promise(() => {});
+      await new Promise(resolve => setTimeout(resolve, 15));
+      return [{ season: 1, number: 1, first_aired: '2026-10-16T23:30:00Z' }];
+    }
+  });
+  assert.equal(calls, 12);
+  assert.equal(result.releases.filter(row => row.timestamp).length, 11);
+});
+
+test('calendar metadata uses a separate half-hour cache while ordinary details retain their cache', async () => {
+  const calls = [];
+  const route = load('app/api/tmdb/[...path]/route.ts', { 'next/server': { NextResponse: Response } }, {
+    process: { env: { APP_ANON_KEY: 'fixture-public-key'.repeat(4), TMDB_API_KEY: 'fixture-key' } },
+    fetch: async (url, init) => { calls.push({ url: new URL(url), init }); return new Response('{}'); }
+  });
+  const context = { params: Promise.resolve({ path: ['tv', '2', 'season', '1'] }) };
+  const response = await route.GET(new Request('https://web.example/api/tmdb/tv/2/season/1?arvio_calendar=1&language=en'), context);
+  assert.equal(calls[0].init.next.revalidate, 1800);
+  assert.equal(calls[0].url.searchParams.get('cv'), 'calendar-3');
+  assert.equal(calls[0].url.searchParams.has('arvio_calendar'), false);
+  assert.equal(calls[0].url.searchParams.get('language'), 'en');
+  assert.match(response.headers.get('netlify-cdn-cache-control'), /max-age=1800/);
+  assert.doesNotMatch(response.headers.get('cache-control'), /stale-while-revalidate/);
+  const ordinary = await route.GET(new Request('https://web.example/api/tmdb/tv/2/season/1?language=en'), context);
+  assert.equal(calls[1].init.next.revalidate, 86400);
+  assert.equal(calls[1].url.searchParams.get('cv'), '2');
+  assert.match(ordinary.headers.get('cache-control'), /s-maxage=21600/);
+});
+
+test('season times apply to episodes verified later and an outage keeps dates without a long queue', async () => {
+  const season = deferred(), timeDone = deferred();
+  const module = loader(async path => path.includes('/season/') ? season.promise : {
+    id: 2, name: show.title, seasons: [{ season_number: 1 }], next_episode_to_air: { season_number: 1, episode_number: 1, air_date: '2026-10-16' }
+  });
+  const request = module.loadCalendar({ ...options, sources: [{ source: 'arvio', read: async () => [show] }],
+    episodeSeason: async () => { timeDone.resolve(); return [1, 2].map(number => ({ season: 1, number, first_aired: '2026-10-16T19:30:00Z' })); } });
+  await timeDone.promise;
+  season.resolve({ episodes: [1, 2].map(episode_number => ({ season_number: 1, episode_number, air_date: '2026-10-16' })) });
+  const result = await request;
+  assert.equal(result.releases.length, 2);
+  assert.ok(result.releases.every(row => row.timestamp === '2026-10-16T19:30:00Z'));
+  let calls = 0;
+  const unavailable = loader(async path => path.includes('/season/') ? { episodes: [{ season_number: 1, episode_number: 1, air_date: '2026-10-16' }] }
+    : { id: Number(path.split('/')[1]), name: show.title, seasons: [{ season_number: 1 }] });
+  const fallback = await unavailable.loadCalendar({ ...options, enrichmentTimeoutMs: 10,
+    sources: [{ source: 'arvio', read: async () => Array.from({ length: 12 }, (_, i) => ({ ...show, id: i + 1 })) }],
+    episodeSeason: async () => { calls++; return new Promise(() => {}); } });
+  assert.equal(fallback.releases.length, 12);
+  assert.equal(fallback.failedTitles, 0);
+  assert.equal(calls, 4, 'A timed-out service does not hold up every queued season');
+});
+
+test('verified show schedules survive raw season eviction without dropping adjacent month episodes', async () => {
+  let calls = 0;
+  const module = loader(async (path, params) => {
+    calls++;
+    if (path === 'tv/999') return { id: 999, name: 'Completed series', status: 'Ended', last_episode_to_air: { air_date: '2020-01-01' }, seasons: [{ season_number: 1 }] };
+    if (params.append_to_response) return Object.fromEntries(params.append_to_response.split(',').map(key => [key, {
+      season_number: Number(key.split('/')[1]), episodes: ['2026-10-16', '2026-11-16'].map((air_date, i) => ({ season_number: Number(key.split('/')[1]), episode_number: i + 1, air_date }))
+    }]));
+    return { id: Number(path.split('/')[1]), name: show.title, seasons: Array.from({ length: 24 }, (_, i) => ({ season_number: i + 1 })) };
+  });
+  const sources = [{ source: 'arvio', read: async () => [{ ...show, id: 999 }, ...Array.from({ length: 90 }, (_, i) => ({ ...show, id: i + 1 }))] }];
+  const october = await module.loadCalendar({ ...options, sources });
+  const before = calls;
+  const november = await module.loadCalendar({ ...options, start: '2026-11-01', end: '2026-11-30', sources });
+  assert.equal(october.releases.length, 2160);
+  assert.equal(november.releases.length, 2160);
+  assert.equal(november.failedTitles, 0);
+  assert.equal(calls, before, 'Whole schedules and completed-show summaries survive raw season eviction');
+});
+
+test('future seasons of ended anime remain discoverable and incomplete schedules stay retryable', async () => {
+  let offline = true;
+  const calls = [];
+  const module = loader(async path => {
+    calls.push(path);
+    if (path === 'tv/2') return { id: 2, name: show.title, status: 'Ended', last_episode_to_air: { season_number: 1, episode_number: 1, air_date: '2026-10-16' }, seasons: [{ season_number: 1, air_date: '2026-10-01' }, { season_number: 2, air_date: '2026-11-01' }] };
+    if (offline) throw Error('temporary outage');
+    return { episodes: [{ season_number: Number(path.split('/').at(-1)), episode_number: 1, air_date: '2026-11-16' }] };
+  });
+  const sources = [{ source: 'arvio', read: async () => [show] }];
+  const first = await module.loadCalendar({ ...options, sources });
+  assert.equal(first.failedTitles, 1);
+  offline = false;
+  const next = await module.loadCalendar({ ...options, start: '2026-11-01', end: '2026-11-30', sources });
+  assert.equal(next.failedTitles, 0);
+  assert.ok(next.releases.some(row => row.season === 2));
+  assert.ok(calls.includes('tv/2/season/2'));
+});
+
+test('confirmed missing metadata backs off but explicit retry and refresh bypass it', async () => {
+  let calls = 0;
+  const module = loader(async () => { calls++; throw Object.assign(Error('missing'), { status: 404 }); });
+  const sources = [{ source: 'arvio', read: async () => [movie] }];
+  await module.loadCalendar({ ...options, sources });
+  await module.loadCalendar({ ...options, start: '2026-11-01', end: '2026-11-30', sources });
+  assert.equal(calls, 1);
+  await module.loadCalendar({ ...options, sources, retryTitleKeys: ['movie:1'] });
+  assert.equal(calls, 2);
+  await module.loadCalendar({ ...options, sources, refreshMetadata: true });
+  assert.equal(calls, 3);
+});
+
 test('region, TV release type, stable order and distinct day previews agree with Android', () => {
   assert.equal(calendar.calendarRegion('nl-NL'), 'NL');
   assert.equal(calendar.calendarRegion('en'), 'US');
@@ -117,6 +249,66 @@ test('calendar watching identities paginate past 500, exclude all hidden pages a
   assert.ok(paths.every(path => !path.includes('extended=')));
   client.trakt = async () => { throw Error('offline'); };
   await assert.rejects(client.calendarWatchingShows(), /offline/);
+});
+
+test('planned Trakt watchlists paginate fully and stop if a provider repeats a page', async () => {
+  const { TraktClient } = load('lib/trakt.ts', { './config': { config: {} }, './http': {} });
+  const client = new TraktClient(); client.refreshIfNeeded = async () => ({ access_token: 'fixture' });
+  const paths = [];
+  client.trakt = async path => {
+    paths.push(path);
+    const page = Number(new URL(`https://fixture${path}`).searchParams.get('page'));
+    return Array.from({ length: Math.min(100, 242 - (page - 1) * 100) }, (_, i) => ({ type: 'show', show: { ids: { trakt: (page - 1) * 100 + i, tmdb: (page - 1) * 100 + i } } }));
+  };
+  assert.equal((await client.watchlist()).length, 242);
+  assert.equal(paths.length, 3);
+  const repeated = Array.from({ length: 100 }, (_, i) => ({ type: 'show', show: { ids: { trakt: i } } }));
+  client.trakt = async () => repeated;
+  assert.equal((await client.watchlist()).length, 100);
+});
+
+test('public calendar metadata uses direct CORS without an account and reuses seasons across months', async () => {
+  const calls = [];
+  const { TraktClient } = load('lib/trakt.ts', { './config': { config: { traktClientId: 'public-app-id' } }, './http': {}, './storage': storage() }, {
+    window: { location: { origin: 'https://web.arvio.tv' } },
+    fetch: async (url, init) => {
+      calls.push(url);
+      assert.equal(new Headers(init.headers).has('Authorization'), false);
+      return new Response(JSON.stringify(url.includes('/search/') ? [{ show: { ids: { tmdb: 2, trakt: 44 } } }] : [{ season: 1, number: 8, first_aired: '2026-10-16T19:00:00Z' }]));
+    }
+  });
+  const client = new TraktClient();
+  const [first, second] = await Promise.all([client.calendarSeason(2, 1), client.calendarSeason(2, 1)]);
+  assert.equal(first[0].first_aired, second[0].first_aired);
+  await client.calendarSeason(2, 1);
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(url => url.startsWith('https://api.trakt.tv/')));
+  assert.equal(client.canUseDirectFallback('/oauth/token', {}), false);
+  assert.equal(client.canUseDirectFallback('/sync/watchlist', {}), false);
+  assert.equal(client.canUseDirectFallback('/shows/44/seasons/1', { method: 'POST' }), false);
+});
+
+test('a large library does not evict its details between adjacent months', async () => {
+  let calls = 0;
+  const module = loader(async path => { calls++; return { id: Number(path.split('/')[1]), title: 'Movie', release_date: '2026-11-16' }; });
+  const sources = [{ source: 'arvio', read: async () => Array.from({ length: 800 }, (_, id) => ({ ...movie, id: id + 1 })) }];
+  const october = await module.loadCalendar({ ...options, sources });
+  assert.equal(october.releases.length, 0);
+  const november = await module.loadCalendar({ ...options, start: '2026-11-01', end: '2026-11-30', sources });
+  assert.equal(november.releases.length, 800);
+  assert.equal(calls, 800, 'All existing metadata is reused, not downloaded a second time');
+});
+
+test('public Trakt missing metadata and throttling never retry through a blocked proxy', async () => {
+  class HttpError extends Error { constructor(status) { super('fixture'); this.status = status; } }
+  for (const status of [404, 429]) {
+    let direct = 0, proxy = 0;
+    const { TraktClient } = load('lib/trakt.ts', { './config': { config: { traktClientId: 'public-app-id' } }, './http': {
+      HttpError, jsonRequest: async () => { proxy++; throw Error('blocked proxy'); }
+    }, './storage': storage() }, { window: { location: { origin: 'https://web.arvio.tv' } }, fetch: async () => { direct++; return new Response('', { status }); } });
+    await assert.rejects(new TraktClient().calendarSeason(2, 1), error => error.status === status);
+    assert.equal(direct, 1); assert.equal(proxy, 0);
+  }
 });
 
 test('month grid starts Monday, contains today and has five or six full weeks across leap years', () => {
@@ -244,6 +436,20 @@ test('public Trakt episode timestamps work without a connected account or OAuth 
   assert.equal(client.isConnected, false);
   assert.deepEqual(paths, ['/search/tmdb/2?type=show', '/shows/44/seasons/1?extended=full']);
   assert.equal(episodes[0].first_aired, '2026-10-16T19:00:00Z');
+});
+
+test('Calendar retries a temporary list outage once without treating it as an empty watchlist', async () => {
+  const { TraktClient } = load('lib/trakt.ts', { './config': { config: { traktClientId: 'public-app-id' } }, './http': {} });
+  const client = new TraktClient();
+  client.refreshIfNeeded = async () => ({ access_token: 'fixture-token' });
+  let calls = 0;
+  client.trakt = async () => { if (++calls === 1) throw Object.assign(Error('temporary outage'), { status: 503 }); return [{ type: 'show', show: { ids: { trakt: 2 } } }]; };
+  assert.equal((await client.watchlist()).length, 1);
+  assert.equal(calls, 2);
+  calls = 0;
+  client.trakt = async () => { calls++; throw Object.assign(Error('rate limited'), { status: 429 }); };
+  await assert.rejects(client.watchlist(), error => error.status === 429);
+  assert.equal(calls, 1, 'Do not amplify rate limiting');
 });
 
 test('ARVIO dates publish before a delayed source, then merge late provenance without duplicate metadata or mutating snapshots', async () => {

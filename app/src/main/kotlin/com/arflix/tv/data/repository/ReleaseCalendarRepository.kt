@@ -20,6 +20,7 @@ import com.google.gson.reflect.TypeToken
 import java.io.IOException
 import java.time.YearMonth
 import java.time.ZoneId
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
@@ -55,6 +56,13 @@ internal data class CalendarMonthResult(
     val warnings: List<String>,
     val completedTitles: Set<Pair<MediaType, Int>> = emptySet(),
     val failedTitles: Set<Pair<MediaType, Int>> = emptySet()
+)
+
+internal data class CalendarTvSchedule(
+    val details: TmdbTvDetails,
+    val episodes: List<TmdbEpisode>,
+    val seasonNumbers: Set<Int>,
+    val expiresAt: Long
 )
 
 internal data class CalendarLoadProgress(
@@ -112,12 +120,20 @@ class ReleaseCalendarRepository @Inject constructor(
     private val artworkPermits = Semaphore(2)
     private data class Cached(val value: Any, val at: Long)
     private val metadataCache = linkedMapOf<String, Cached>()
+    private val detailCache = linkedMapOf<String, Cached>()
     private val titleCache = linkedMapOf<String, CalendarTitleProjection>()
+    private val schedules = linkedMapOf<String, CalendarTvSchedule>()
     private val cacheGeneration = AtomicLong()
     private val missingMetadata = linkedMapOf<String, Long>()
     internal var clock: () -> Long = System::currentTimeMillis
 
-    private class TitleRead(val cacheOnly: Boolean, val forceRefresh: Boolean = false) : AbstractCoroutineContextElement(Key) {
+    private class TimeServiceHealth {
+        val succeeded = AtomicBoolean()
+        val timedOut = AtomicBoolean()
+    }
+
+    private class TitleRead(val cacheOnly: Boolean, val forceRefresh: Boolean = false,
+        val timeHealth: TimeServiceHealth = TimeServiceHealth()) : AbstractCoroutineContextElement(Key) {
         companion object Key : CoroutineContext.Key<TitleRead>
         val expiresAt = AtomicLong(Long.MAX_VALUE)
         fun include(expiry: Long) { expiresAt.updateAndGet { minOf(it, expiry) } }
@@ -214,6 +230,7 @@ class ReleaseCalendarRepository @Inject constructor(
         val results = linkedMapOf<Pair<MediaType, Int>, CalendarMonthResult>()
         val completedTitles = mutableSetOf<Pair<MediaType, Int>>()
         val jobs = mutableListOf<Job>()
+        val timeHealth = TimeServiceHealth()
         fun currentResult() = combineResults(results.map { (key, result) ->
             result.copy(entries = result.entries.map { it.copy(sourceIds = titles.getValue(key).sourceIds) })
         }, watchlists.warnings)
@@ -230,7 +247,7 @@ class ReleaseCalendarRepository @Inject constructor(
                     val isNew = key !in titles
                     titles[key] = title
                     if (isNew) jobs += launch {
-                        val result = withContext(TitleRead(false, key in retryTitles)) { prioritizedTitleReleases(title, month, timezone, region, language) { result ->
+                        val result = withContext(TitleRead(false, key in retryTitles, timeHealth)) { prioritizedTitleReleases(title, month, timezone, region, language) { result ->
                             progressMutex.withLock {
                                 results[key] = result
                                 publish()
@@ -269,6 +286,7 @@ class ReleaseCalendarRepository @Inject constructor(
         ensureProfile(watchlists.profileId)
         val progressMutex = Mutex()
         val partial = linkedMapOf<Pair<MediaType, Int>, CalendarMonthResult>()
+        val timeHealth = TimeServiceHealth()
         suspend fun publish(title: CalendarWatchlistTitle, result: CalendarMonthResult) {
             progressMutex.withLock {
                 ensureProfile(watchlists.profileId)
@@ -277,7 +295,7 @@ class ReleaseCalendarRepository @Inject constructor(
             }
         }
         val results = prioritizeTitles(mergeCalendarWatchlists(watchlists.items), month).map { title -> async {
-            val result = withContext(TitleRead(cacheOnly, (title.media.mediaType to title.media.id) in retryTitles)) {
+            val result = withContext(TitleRead(cacheOnly, (title.media.mediaType to title.media.id) in retryTitles, timeHealth)) {
                 prioritizedTitleReleases(title, month, timezone, region, language) { publish(title, it) }
             }
             result.copy(completedTitles = if (result.warnings.isEmpty()) setOf(title.media.mediaType to title.media.id) else emptySet())
@@ -403,14 +421,24 @@ class ReleaseCalendarRepository @Inject constructor(
         language: String,
         onProgress: suspend (CalendarMonthResult) -> Unit
     ): CalendarMonthResult = coroutineScope {
-        val details = cached<TmdbTvDetails>("tv:${original.media.id}:$language") {
+        val generation = cacheGeneration.get()
+        val scheduleKey = "tv-schedule:${original.media.id}:$language"
+        val refresh = coroutineContext[TitleRead]?.forceRefresh == true
+        val savedSchedule = if (refresh) null else (synchronized(schedules) { schedules[scheduleKey] }
+            ?: diskCache.readMetadata<CalendarTvSchedule>(scheduleKey, CalendarTvSchedule::class.java)?.value)
+            ?.takeIf { clock() < it.expiresAt }
+        savedSchedule?.let { rememberSchedule(scheduleKey, it) }
+        savedSchedule?.let { coroutineContext[TitleRead]?.include(it.expiresAt) }
+        val details = savedSchedule?.details ?: cached<TmdbTvDetails>("tv:${original.media.id}:$language") {
             tmdbApi.getTvDetails(original.media.id, Constants.TMDB_API_KEY, language = language)
         }
         val first = month.atDay(1).minusDays(1)
         val last = month.atEndOfMonth().plusDays(1)
         val ended = details.status in setOf("Ended", "Canceled")
         val lastAired = calendarDate(details.lastEpisodeToAir?.airDate)
-        if (ended && lastAired != null && lastAired < first) {
+        val announcedRelease = calendarDate(details.nextEpisodeToAir?.airDate)?.let { it >= first } == true ||
+            details.seasons.any { calendarDate(it.airDate)?.let { date -> date >= first && date <= last } == true }
+        if (ended && lastAired != null && lastAired < first && !announcedRelease) {
             return@coroutineScope CalendarMonthResult(emptyList(), emptyList())
         }
         val title = original.copy(media = enrich(original.media, details.name, details.posterPath, details.backdropPath))
@@ -430,11 +458,23 @@ class ReleaseCalendarRepository @Inject constructor(
         }
         // TV details can already contain the next release; render it while seasons fill in.
         publishDates()
-        readSeasons(title.media.id, seasons.map { it.seasonNumber }, language) { data ->
-            episodeMutex.withLock {
-                data?.episodes.orEmpty().forEach { knownEpisodes[it.seasonNumber to it.episodeNumber] = it }
-                incompleteSeasons = incompleteSeasons || data == null
-                publishDates()
+        val schedule = savedSchedule?.takeIf { seasons.all { season -> season.seasonNumber in it.seasonNumbers } }
+        if (schedule != null) {
+            coroutineContext[TitleRead]?.include(schedule.expiresAt)
+            schedule.episodes.forEach { knownEpisodes[it.seasonNumber to it.episodeNumber] = it }
+        } else {
+            readSeasons(title.media.id, seasons.map { it.seasonNumber }, language) { data ->
+                episodeMutex.withLock {
+                    data?.episodes.orEmpty().forEach { knownEpisodes[it.seasonNumber to it.episodeNumber] = it }
+                    incompleteSeasons = incompleteSeasons || data == null
+                    publishDates()
+                }
+            }
+            if (!incompleteSeasons && coroutineContext[TitleRead]?.cacheOnly != true && generation == cacheGeneration.get()) {
+                val expiry = coroutineContext[TitleRead]?.expiresAt?.get() ?: clock() + CALENDAR_ACTIVE_TTL
+                val verified = CalendarTvSchedule(details, knownEpisodes.values.map { it.copy(overview = null) }, seasons.map { it.seasonNumber }.toSet(), expiry)
+                rememberSchedule(scheduleKey, verified)
+                diskCache.writeValue(scheduleKey, verified)
             }
         }
         val episodes = knownEpisodes.values.toList()
@@ -445,6 +485,15 @@ class ReleaseCalendarRepository @Inject constructor(
             calendarEpisodeReleases(title, episodes, timed, month, timezone),
             warnings()
         )
+    }
+
+    private fun rememberSchedule(key: String, schedule: CalendarTvSchedule) = synchronized(schedules) {
+        schedules.remove(key)
+        schedules[key] = schedule
+        var episodes = schedules.values.sumOf { it.episodes.size }
+        while (schedules.size > 1024 || episodes > 40_000) {
+            episodes -= schedules.remove(schedules.keys.first())!!.episodes.size
+        }
     }
 
     /** Append up to twenty seasons per HTTP request, without excluding old seasons or specials. */
@@ -521,32 +570,32 @@ class ReleaseCalendarRepository @Inject constructor(
     private suspend fun authoritativeTimes(media: MediaItem, seasons: List<Int>): List<TraktCalendarEpisode> = coroutineScope {
         if (seasons.isEmpty() || Constants.TRAKT_CLIENT_ID.isBlank()) return@coroutineScope emptyList()
         val found = mutableListOf<TraktCalendarEpisode>()
-        // This is a total enrichment budget, including mapping, queueing and all seasons.
-        // Date-only releases have already been published and do not wait for this work.
-        withTimeoutOrNull(4_000) {
-            try {
-                val traktId = media.traktId ?: cached<Int>("trakt-id:${media.id}", timePermits) {
-                    traktApi.searchByTmdb(Constants.TRAKT_CLIENT_ID, media.id, "show")
-                        .firstOrNull { it.show?.ids?.tmdb == media.id }?.show?.ids?.trakt
-                        ?: throw IOException("No Trakt mapping")
-                }
-                seasons.map { season -> async {
-                    try {
-                        val episodes = cached<List<TraktCalendarEpisode>>("trakt-season:$traktId:$season", timePermits) {
-                            traktApi.getCalendarSeasonEpisodes(Constants.TRAKT_CLIENT_ID, traktId, season)
-                        }
-                        synchronized(found) { found.addAll(episodes) }
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (_: Exception) {
-                        // Other completed seasons can still contribute authoritative times.
-                    }
-                } }.awaitAll()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                // Public Trakt metadata is optional, including when no account is connected.
+        // Queueing is not a network failure. Start each optional request's budget
+        // only after it acquires a permit, as with the web Calendar season reader.
+        try {
+            val traktId = media.traktId ?: cached<Int>("trakt-id:${media.id}", timePermits, 4_000) {
+                traktApi.searchByTmdb(Constants.TRAKT_CLIENT_ID, media.id, "show")
+                    .firstOrNull { it.show?.ids?.tmdb == media.id }?.show?.ids?.trakt
+                    ?: throw IOException("No Trakt mapping")
             }
+            seasons.map { season -> async {
+                try {
+                    val episodes = cached<List<TraktCalendarEpisode>>("trakt-season:$traktId:$season", timePermits, 4_000) {
+                        traktApi.getCalendarSeasonEpisodes(Constants.TRAKT_CLIENT_ID, traktId, season)
+                    }
+                    synchronized(found) { found.addAll(episodes) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    // Other completed seasons can still contribute authoritative times.
+                    coroutineContext[TitleRead]?.include(clock() + 2 * 60_000L)
+                }
+            } }.awaitAll()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            // Public Trakt metadata is optional, including when no account is connected.
+            coroutineContext[TitleRead]?.include(clock() + 2 * 60_000L)
         }
         synchronized(found) { found.toList() }
     }
@@ -577,15 +626,20 @@ class ReleaseCalendarRepository @Inject constructor(
 
     internal suspend fun invalidateMetadata() {
         cacheGeneration.incrementAndGet()
-        synchronized(metadataCache) { metadataCache.clear(); missingMetadata.clear() }
+        synchronized(metadataCache) { metadataCache.clear(); detailCache.clear(); missingMetadata.clear() }
         synchronized(titleCache) { titleCache.clear() }
+        synchronized(schedules) { schedules.clear() }
         diskCache.clearMetadata()
     }
 
     private fun rememberMetadata(key: String, value: Any, writtenAt: Long = clock()) {
         synchronized(metadataCache) {
-            metadataCache[key] = Cached(value, writtenAt)
-            while (metadataCache.size > 2048) metadataCache.remove(metadataCache.keys.first())
+            // Historical seasons must not evict summaries for the whole watchlist.
+            val target = if (value is TmdbTvDetails || value is TmdbMovieDetails) detailCache else metadataCache
+            target.remove(key)
+            target[key] = Cached(value, writtenAt)
+            val limit = if (target === detailCache) 1024 else 2048
+            while (target.size > limit) target.remove(target.keys.first())
         }
     }
 
@@ -597,7 +651,7 @@ class ReleaseCalendarRepository @Inject constructor(
     private suspend inline fun <reified T : Any> cachedValue(key: String): T? {
         if (coroutineContext[TitleRead]?.forceRefresh == true) return null
         val memory = synchronized(metadataCache) {
-            metadataCache[key]?.takeIf { clock() - it.at in 0 until calendarMetadataTtl(it.value, clock()) }
+            (detailCache[key] ?: metadataCache[key])?.takeIf { clock() - it.at in 0 until calendarMetadataTtl(it.value, clock()) }
         }
         if (memory != null) {
             includeMetadata(memory.value, memory.at)
@@ -611,10 +665,10 @@ class ReleaseCalendarRepository @Inject constructor(
     }
 
     @Suppress("UNCHECKED_CAST")
-    private suspend inline fun <reified T : Any> cached(key: String, requestPermits: Semaphore = permits, crossinline block: suspend () -> T): T {
+    private suspend inline fun <reified T : Any> cached(key: String, requestPermits: Semaphore = permits, requestTimeoutMs: Long = 20_000, crossinline block: suspend () -> T): T {
         val forceRefresh = coroutineContext[TitleRead]?.forceRefresh == true
         val memory = synchronized(metadataCache) {
-            metadataCache[key]?.takeIf { clock() - it.at in 0 until calendarMetadataTtl(it.value, clock()) }
+            (detailCache[key] ?: metadataCache[key])?.takeIf { clock() - it.at in 0 until calendarMetadataTtl(it.value, clock()) }
         }
         if (memory != null && !forceRefresh) {
             includeMetadata(memory.value, memory.at)
@@ -634,8 +688,18 @@ class ReleaseCalendarRepository @Inject constructor(
             cachedValue<T>(key)?.let { return@withLock it }
             if (coroutineContext[TitleRead]?.cacheOnly == true) throw IOException("Metadata not cached")
             val value = requestPermits.withPermit {
+                val health = coroutineContext[TitleRead]?.timeHealth?.takeIf { key.startsWith("trakt-") }
+                // A whole-service outage must not cost four seconds for every
+                // queued season. One slow season cannot disable a healthy service.
+                if (health?.timedOut?.get() == true && !health.succeeded.get()) throw IOException("Trakt timing unavailable")
                 try {
-                    withTimeoutOrNull(20_000) { block() } ?: throw IOException("Metadata request timed out")
+                    val response = withTimeoutOrNull(requestTimeoutMs) { block() }
+                    if (response == null) {
+                        health?.timedOut?.set(true)
+                        throw IOException("Metadata request timed out")
+                    }
+                    health?.succeeded?.set(true)
+                    response
                 } catch (error: HttpException) {
                     // A confirmed 404 should not trigger another network request on
                     // every date/month/tab change. Explicit Retry clears this cache.

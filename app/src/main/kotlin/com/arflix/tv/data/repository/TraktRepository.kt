@@ -3502,12 +3502,15 @@ class TraktRepository @Inject constructor(
             page++
         }
         val excluded = hidden.await()
-        shows.mapNotNull { row ->
+        val identityPermits = kotlinx.coroutines.sync.Semaphore(4)
+        shows.filter { it.show.ids.trakt !in excluded }.map { row -> async {
             val show = row.show
-            val id = show.ids.tmdb?.takeIf { it > 0 } ?: return@mapNotNull null
-            if (show.ids.trakt in excluded) null else MediaItem(id = id, title = show.title,
-                mediaType = MediaType.TV, traktId = show.ids.trakt)
-        }
+            val id = show.ids.tmdb?.takeIf { it > 0 } ?: identityPermits.withPermit {
+                resolveWatchlistShowTmdbId(show)
+            }
+            id?.let { MediaItem(id = it, title = show.title, mediaType = MediaType.TV,
+                traktId = show.ids.trakt) }
+        } }.awaitAll().filterNotNull()
     }
 
     suspend fun getWatchlistWithAuthState(): Pair<Boolean, List<MediaItem>> {

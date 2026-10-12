@@ -91,7 +91,8 @@ fun LibraryCalendarPane(
     onOpenRelease: ((CalendarRelease) -> Unit)? = null
 ) {
     val touch = LocalDeviceType.current.isTouchDevice()
-    val locale = appLocale(LocalAppLanguage.current)
+    val language = LocalAppLanguage.current
+    val locale = remember(language) { appLocale(language) }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val dates = remember(state.month) { calendarMonthDays(state.month) }
     val requesters = remember(dates) { dates.associateWith { FocusRequester() } }
@@ -107,15 +108,16 @@ fun LibraryCalendarPane(
     val nextReleaseDate = releasesByDate.keys.filter { it > state.selectedDate && YearMonth.from(it) == state.month }.minOrNull()
     val today = LocalDate.now(state.timezone)
     val hasProblem = state.selectedIncomplete
+    val selectedDate = rememberUpdatedState(state.selectedDate)
+    val selectDate = rememberUpdatedState(onSelectDate)
+    val currentMonth = rememberUpdatedState(state.month)
 
     LaunchedEffect(state.selectedDate, state.selectedSourceId) { releaseRail.scrollToItem(0) }
-    fun openDay() {
+    val openSelectedDay = rememberUpdatedState<() -> Unit> {
         if (selectedReleases.isEmpty()) {
             if (nextReleaseDate != null) emptyAction.requestFocus()
             else if (hasProblem) retryAction.requestFocus()
-            return
-        }
-        focusScope.launch {
+        } else focusScope.launch {
             // The first card may have been recycled after scrolling to later releases.
             releaseRail.scrollToItem(0)
             withFrameNanos { }
@@ -124,13 +126,13 @@ fun LibraryCalendarPane(
     }
 
     LaunchedEffect(Unit) { if (!touch) requesters[state.selectedDate]?.requestFocus() }
-    fun selectAndFocus(date: LocalDate) {
+    val selectAndFocus = remember(touch, requesters) { { date: LocalDate ->
         // Keep remote movement on this month's stable nodes. A spillover cell
         // must not replace the grid while a repeated key is still being handled.
-        if (YearMonth.from(date) != state.month) return
-        if (!touch) requesters[date]?.requestFocus()
-        onSelectDate(date)
-    }
+        if (YearMonth.from(date) == currentMonth.value) {
+            if (!touch) requesters[date]?.requestFocus() else selectDate.value(date)
+        }
+    } }
     val retryModifier = Modifier.testTag("calendar-retry").focusRequester(retryAction)
         .onPreviewKeyEvent { event ->
             if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
@@ -162,36 +164,36 @@ fun LibraryCalendarPane(
                 dates.chunked(7).forEach { week ->
                     Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 4.dp)) {
                         week.forEach { date ->
-                            CalendarDay(date, state.month, releasesByDate[date].orEmpty(), date == state.selectedDate,
+                            CalendarDay(date, state.month, releasesByDate[date].orEmpty(), selectedDate,
                                 state.timezone, locale, compact, date == today,
-                                modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(requesters.getValue(date))
-                                    .focusProperties { canFocus = YearMonth.from(date) == state.month }
+                                modifier = remember(date, requesters, isRtl) { Modifier.weight(1f).fillMaxHeight().focusRequester(requesters.getValue(date))
+                                    .focusProperties { canFocus = YearMonth.from(date) == currentMonth.value }
                                     .onPreviewKeyEvent { event ->
                                         val key = event.key.mirrorHorizontalForRtl(isRtl)
                                         if (key == Key.Enter || key == Key.DirectionCenter || key == Key.NumPadEnter) {
                                             // Keep both halves of OK on the day. Moving focus on key-down
                                             // lets the destination's clickable consume key-up as a click.
-                                            if (event.type == KeyEventType.KeyUp) openDay()
+                                            if (event.type == KeyEventType.KeyUp) openSelectedDay.value()
                                             true
                                         } else if (event.type != KeyEventType.KeyDown) false else when (key) {
                                             Key.DirectionLeft -> { selectAndFocus(date.minusDays(1)); true }
                                             Key.DirectionRight -> { selectAndFocus(date.plusDays(1)); true }
                                             Key.DirectionUp -> {
                                                 val target = date.minusWeeks(1)
-                                                if (YearMonth.from(target) != state.month) monthButton.requestFocus() else selectAndFocus(target)
+                                                if (YearMonth.from(target) != currentMonth.value) monthButton.requestFocus() else selectAndFocus(target)
                                                 true
                                             }
                                             Key.DirectionDown -> {
-                                                if (YearMonth.from(date.plusWeeks(1)) != state.month) {
-                                                    openDay()
+                                                if (YearMonth.from(date.plusWeeks(1)) != currentMonth.value) {
+                                                    openSelectedDay.value()
                                                 } else selectAndFocus(date.plusWeeks(1))
                                                 true
                                             }
                                             else -> false
                                         }
-                                    },
-                                onFocused = { if (!touch && YearMonth.from(date) == state.month && date != state.selectedDate) onSelectDate(date) },
-                                onClick = { onSelectDate(date) })
+                                    } },
+                                onFocused = remember(date, touch) { { if (!touch && YearMonth.from(date) == currentMonth.value && date != selectedDate.value) selectDate.value(date) } },
+                                onClick = remember(date) { { selectDate.value(date) } })
                         }
                     }
                 }
@@ -368,13 +370,15 @@ private fun CalendarSourceRow(source: ReleaseCalendarSource, selected: Boolean, 
 }
 
 @Composable
-private fun CalendarDay(date: LocalDate, month: YearMonth, releases: List<CalendarRelease>, selected: Boolean,
+private fun CalendarDay(date: LocalDate, month: YearMonth, releases: List<CalendarRelease>, selectedDate: State<LocalDate>,
     timezone: ZoneId, locale: Locale, compact: Boolean, today: Boolean, modifier: Modifier, onFocused: () -> Unit, onClick: () -> Unit) {
+    // Only the previous/new day observe a changed value, not every artwork cell.
+    val selected by remember(date, selectedDate) { derivedStateOf { selectedDate.value == date } }
     val titleColor = if (selected) Color.Black else Color.White
     val secondary = if (selected) Color(0xFF24313A) else CalendarSecondary
     val background by animateColorAsState(if (selected) Color.White else Color.Transparent, tween(100), label = "calendar-day")
     val first = releases.firstOrNull()
-    val previewTitles = calendarPreviewTitles(releases)
+    val previewTitles = remember(releases) { calendarPreviewTitles(releases) }
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val accessibility = date.format(DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", locale)) +
         (if (today) ", " + tr("Today") else "") +

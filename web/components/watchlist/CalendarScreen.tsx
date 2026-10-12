@@ -51,7 +51,7 @@ function CalendarContent() {
   const [loading, setLoading] = useState(true);
   const [retry, setRetry] = useState(0);
   const retryResult = useRef<CalendarResult | null>(null);
-  const sourceItems = useRef(new Map<CalendarSource, MediaItem[]>());
+  const sourceItems = useRef(new Map<CalendarSource, { scope: string; at: number; items: MediaItem[] }>());
   const grid = useRef<HTMLDivElement>(null);
   const cards = useRef<HTMLDivElement>(null);
   const retryButton = useRef<HTMLButtonElement>(null);
@@ -66,7 +66,8 @@ function CalendarContent() {
   const watchlistSignature = watchlist.map(item => `${item.mediaType}:${item.id}:${item.imdbId ?? ""}`).sort().join(",");
   const connections = calendarConnectionFingerprint([traktConnected ? traktClient.token?.access_token : null, simklConnected ? simklClient.token?.access_token : null, mdblistConnected ? mdblistClient.token?.accessToken || mdblistClient.key : null]);
   const cacheScope = `${scope}:${connections}:${calendarConnectionFingerprint([settings.customTmdbApiKey])}:${zone}`;
-  const snapshotKey = `v2:${scope}:${connections}:${firstDay}:${lastDay}:${locale}:${region}:${zone}:${sources.join(",")}:${watchlistSignature}`;
+  const sourceScope = `${cacheScope}:${watchlistSignature}:${sources.join(",")}`;
+  const snapshotKey = `v4:${sourceScope}:${firstDay}:${lastDay}:${locale}:${region}`;
   const cached = useMemo(() => readCalendarSnapshot(snapshotKey), [snapshotKey]);
   const [loaded, setLoaded] = useState<{ key: string; value: CalendarResult | null }>(() => ({ key: snapshotKey, value: cached }));
   const result = loaded.key === snapshotKey ? loaded.value : cached;
@@ -84,30 +85,24 @@ function CalendarContent() {
       publish?.(planned);
       return [...planned, ...(await traktClient.calendarWatchingShows()).map(traktItemToMedia)];
     } });
-    if (simklConnected) sourceReads.push({ source: "simkl", read: async () => (await simklClient.watchlist(["plantowatch", "watching"], { throwOnError: true })).map(traktItemToMedia) });
+    if (simklConnected) sourceReads.push({ source: "simkl", read: async () => (await simklClient.watchlist(["plantowatch", "watching"], { throwOnError: true, resolveIds: false })).map(traktItemToMedia) });
     if (mdblistConnected) sourceReads.push({ source: "mdblist", read: async () => (await mdblistClient.watchlist({ throwOnError: true })).map(traktItemToMedia) });
     const requestedRetry = retryResult.current;
     const reads = sourceReads.map(({ source, read }) => ({ source, read: async (publish?: (items: MediaItem[]) => void) => {
       const saved = sourceItems.current.get(source);
-      if (requestedRetry && !requestedRetry.failedSources.includes(source) && saved) return saved;
+      if (saved?.scope === sourceScope && (requestedRetry ? !requestedRetry.failedSources.includes(source) : Date.now() - saved.at < 2 * 60_000)) return saved.items;
       const items = await read(publish);
-      if (!controller.signal.aborted) sourceItems.current.set(source, items);
+      if (!controller.signal.aborted) sourceItems.current.set(source, { scope: sourceScope, at: Date.now(), items });
       return items;
     } }));
     retryResult.current = null;
-    const seasonTimes = new Map<string, ReturnType<typeof traktClient.calendarSeason>>();
     // Fetch a complete season once, retaining only its published first_aired values.
-    const episodeTime = async (item: MediaItem, season: number, episode: number) => {
-      if (controller.signal.aborted) return null;
-      const key = `${item.id}:${season}`;
-      let request = seasonTimes.get(key);
-      if (!request) { request = traktClient.calendarSeason(item.id, season, item.traktId); seasonTimes.set(key, request); }
-      return (await request).find(row => row.season === season && row.number === episode)?.first_aired;
-    };
+    const episodeSeason = (item: MediaItem, season: number) => controller.signal.aborted
+      ? Promise.resolve([]) : traktClient.calendarSeason(item.id, season, item.traktId);
     // Padding handles UTC air times that land on a neighbouring local day.
     const start = parseCalendarDate(firstDay)!; start.setDate(start.getDate() - 1);
     const end = parseCalendarDate(lastDay)!; end.setDate(end.getDate() + 1);
-    void loadCalendar({ sources: reads, start: calendarDate(start), end: calendarDate(end), language: locale, region, customApiKey: settings.customTmdbApiKey, signal: controller.signal, episodeTime, cacheScope,
+    void loadCalendar({ sources: reads, start: calendarDate(start), end: calendarDate(end), language: locale, region, customApiKey: settings.customTmdbApiKey, signal: controller.signal, episodeSeason, cacheScope,
       retryTitleKeys: requestedRetry?.failedTitleKeys, onProgress: value => { if (!controller.signal.aborted) setLoaded({ key: snapshotKey, value: mergeCalendarRefresh(initial, value) }); } })
       .then(value => { if (!controller.signal.aborted) { setLoaded({ key: snapshotKey, value: mergeCalendarRefresh(initial, value) }); saveCalendarSnapshot(snapshotKey, value); } })
       .catch(() => { if (!controller.signal.aborted) setLoaded({ key: snapshotKey, value: mergeCalendarRefresh(initial, { releases: [], failedSources: sources, pendingSources: [], failedTitles: 0, titleCount: 0, sourceTitleCounts: {} }) }); })
@@ -159,7 +154,7 @@ function CalendarContent() {
   const returnToDay = (event: KeyboardEvent) => {
     if (event.key === "Escape" || event.key === "ArrowUp") { event.preventDefault(); event.stopPropagation(); grid.current?.querySelector<HTMLButtonElement>(`[data-calendar-date="${selected}"]`)?.focus(); }
   };
-  return <section className="library-calendar" style={{ "--calendar-weeks": days.length / 7 } as CSSProperties} aria-label={translateUi("Release calendar")}>
+  return <section className="library-calendar" style={{ "--calendar-weeks": days.length / 7 } as CSSProperties} aria-label={translateUi("Release calendar")} aria-busy={loading}>
     <div className="calendar-toolbar">
       <div className="calendar-month-controls"><button aria-label={translateUi("Previous month")} onClick={() => moveMonth(-1)}><ChevronLeft /></button><h1>{month.toLocaleDateString(locale, { month: "long", year: "numeric" })}</h1><button aria-label={translateUi("Next month")} onClick={() => moveMonth(1)}><ChevronRight /></button></div>
       <CalendarSourceMenu value={source} sources={sources} counts={{ ...result?.sourceTitleCounts, ...(result ? { all: result.titleCount } : {}) }} onChange={setSource} />
