@@ -63,6 +63,12 @@ type SimklPlaybackRow = {
   anime?: { title?: string; year?: number; ids?: SimklIds };
   episode?: { season?: number; number?: number; episode?: number; title?: string };
 };
+type SimklPlaybackSnapshot = {
+  scope: string;
+  activity: string | null;
+  markers: Record<string, string | null>;
+  rows: SimklPlaybackRow[];
+};
 type SimklSnapshot = {
   scope: string;
   activity: string | null;
@@ -70,6 +76,8 @@ type SimklSnapshot = {
   complete: boolean;
   initialized?: boolean;
   removals?: Partial<Record<"movies" | "shows" | "anime", string>>;
+  playbackMarkers?: Record<string, string | null>;
+  playback?: SimklPlaybackSnapshot;
   movies: SimklMovieRow[];
   shows: SimklShowRow[];
   anime: SimklShowRow[];
@@ -188,6 +196,16 @@ function removalMarkers(value: unknown): NonNullable<SimklSnapshot["removals"]> 
   return result;
 }
 
+function playbackMarkers(value: unknown): Record<string, string | null> {
+  const root = (value ?? {}) as Record<string, { playback?: string } | undefined>;
+  const markers = {
+    movies: root.movies?.playback ?? null,
+    shows: (root.tv_shows ?? root.shows)?.playback ?? null,
+    anime: root.anime?.playback ?? null
+  };
+  return Object.values(markers).some(Boolean) ? markers : { all: activityMarker(value) };
+}
+
 function parseNextToWatch(value?: string | null): NonNullable<SimklShowRow["next_to_watch_info"]> | null {
   const match = /^(?:S(\d+))?E(\d+)$/i.exec(value?.trim() ?? "");
   if (!match) return null;
@@ -207,6 +225,9 @@ export class SimklClient implements SyncClient {
   private snapshot: SimklSnapshot | null = null;
   private recentCompletions = new Map<string, number>();
   private snapshotPromise: Promise<SimklSnapshot> | null = null;
+  private playbackSnapshot: SimklPlaybackSnapshot | null = null;
+  private playbackPromise: Promise<SimklPlaybackRow[]> | null = null;
+  private lastPlaybackFailureAt = 0;
   private lastSnapshotFailureAt = 0;
   private lastScrobbleWriteAt = 0;
   private pendingScrobbles: PendingScrobble[] = [];
@@ -288,6 +309,9 @@ export class SimklClient implements SyncClient {
     this.profileId = normalized;
     this.snapshot = null;
     this.snapshotPromise = null;
+    this.playbackSnapshot = null;
+    this.playbackPromise = null;
+    this.lastPlaybackFailureAt = 0;
     this.lastSnapshotFailureAt = 0;
     if (!normalized) {
       this.token = null;
@@ -322,6 +346,9 @@ export class SimklClient implements SyncClient {
       if (this.profileId) removeStored(this.snapshotKey(this.profileId));
       this.snapshot = null;
       this.snapshotPromise = null;
+      this.playbackSnapshot = null;
+      this.playbackPromise = null;
+      this.lastPlaybackFailureAt = 0;
       this.lastSnapshotFailureAt = 0;
     }
     this.token = next;
@@ -421,13 +448,14 @@ export class SimklClient implements SyncClient {
     if (this.snapshotPromise) return this.snapshotPromise;
 
     const request = (async () => {
-      const activities = await this.simkl<unknown>("/sync/activities", {}, accessToken).catch(() => null);
+      const activities = await this.simkl<unknown>("/sync/activities", {}, accessToken);
       const marker = activityMarker(activities);
       const removals = removalMarkers(activities);
+      const currentPlaybackMarkers = playbackMarkers(activities);
       const removedTypes = (["movies", "shows", "anime"] as const)
         .filter(type => removals[type] && removals[type] !== cached?.removals?.[type]);
       if (cached?.complete && marker && marker === cached.activity && !removedTypes.length) {
-        return { ...cached, checkedAt: Date.now() };
+        return { ...cached, checkedAt: Date.now(), playbackMarkers: currentPlaybackMarkers };
       }
 
       let moviesResult: SimklMovieRow[] = [];
@@ -491,6 +519,8 @@ export class SimklClient implements SyncClient {
         activity: complete ? marker : cached?.activity ?? null,
         initialized: complete || cached?.initialized || false,
         removals: complete ? removals : cached?.removals,
+        playbackMarkers: currentPlaybackMarkers,
+        playback: this.playbackSnapshot ?? cached?.playback,
         checkedAt: Date.now(),
         complete,
         movies: complete ? moviesResult : cached?.movies ?? [],
@@ -507,8 +537,57 @@ export class SimklClient implements SyncClient {
         if (result.complete) this.persistSnapshot(result);
       }
       return result;
+    } catch (error) {
+      if (scope === this.scope()) this.lastSnapshotFailureAt = Date.now();
+      throw error;
     } finally {
       if (this.snapshotPromise === request) this.snapshotPromise = null;
+    }
+  }
+
+  private async loadPlayback(snapshot: SimklSnapshot): Promise<SimklPlaybackRow[]> {
+    const scope = this.scope();
+    const cached = this.playbackSnapshot?.scope === scope ? this.playbackSnapshot
+      : snapshot.playback?.scope === scope ? snapshot.playback : null;
+    const markers = snapshot.playbackMarkers ?? { all: snapshot.activity ?? null };
+    if (cached && snapshot.activity && JSON.stringify(cached.markers) === JSON.stringify(markers)) {
+      return cached.rows;
+    }
+    if (this.playbackPromise) return this.playbackPromise;
+    if (Date.now() - this.lastPlaybackFailureAt < FAILED_SNAPSHOT_RETRY_MS) {
+      throw new Error("SIMKL playback sync will retry shortly");
+    }
+    const request = (async () => {
+      let rows: SimklPlaybackRow[];
+      if (!cached?.activity) {
+        rows = await this.simkl<SimklPlaybackRow[]>("/sync/playback");
+      } else {
+        const from = encodeURIComponent(cached.activity);
+        const delta = await this.simkl<SimklPlaybackRow[]>(`/sync/playback?date_from=${from}`);
+        // No deletion tombstones: check the older partition only after activity changes.
+        const older = cached.rows.length || snapshot.activity !== cached.activity
+          ? await this.simkl<SimklPlaybackRow[]>(`/sync/playback?date_to=${from}`) : [];
+        if (!Array.isArray(delta) || !Array.isArray(older)) throw new Error("Unexpected SIMKL playback response");
+        rows = [...older, ...delta];
+      }
+      if (!Array.isArray(rows)) throw new Error("Unexpected SIMKL playback response");
+      if (scope !== this.scope()) throw new Error("SIMKL profile changed during playback sync");
+      this.playbackSnapshot = { scope, activity: snapshot.activity ?? null, markers, rows };
+      if (this.snapshot?.scope === scope) {
+        this.snapshot.playback = this.playbackSnapshot;
+        this.persistSnapshot(this.snapshot);
+      }
+      this.lastPlaybackFailureAt = 0;
+      return rows;
+    })();
+    this.playbackPromise = request;
+    try {
+      return await request;
+    } catch (error) {
+      if (scope === this.scope()) this.lastPlaybackFailureAt = Date.now();
+      throw error;
+    } finally {
+      if (this.playbackPromise === request) this.playbackPromise = null;
     }
   }
 
@@ -592,7 +671,7 @@ export class SimklClient implements SyncClient {
     const snapshot = await this.loadSnapshot();
     if (!snapshot.complete) throw new Error("SIMKL Continue Watching is unavailable");
     let playbackFailure: unknown;
-    const playback = await this.simkl<SimklPlaybackRow[]>("/sync/playback").catch(error => { playbackFailure = error; return []; });
+    const playback = await this.loadPlayback(snapshot).catch(error => { playbackFailure = error; return []; });
     const shows = await Promise.all([...snapshot.shows, ...snapshot.anime].map(async row => ({ ...row, show: await this.resolveMedia(row.show, "tv") })));
     const watched = new Map<string, number>();
     const completedShows = new Map<number, number>();

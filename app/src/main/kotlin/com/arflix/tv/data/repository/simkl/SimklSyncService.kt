@@ -66,7 +66,9 @@ class SimklSyncService @Inject constructor(
         val movies: SimklAllItemsResponse?,
         val shows: SimklAllItemsResponse?,
         val anime: SimklAllItemsResponse?,
-        val playback: List<com.arflix.tv.data.api.SimklPlaybackItem>?
+        val playback: List<com.arflix.tv.data.api.SimklPlaybackItem>?,
+        val playbackWatermark: String? = null,
+        val playbackMarkers: Map<String, String?>? = null
     )
 
     private val clientId: String get() = authManager.effectiveClientId
@@ -83,7 +85,8 @@ class SimklSyncService @Inject constructor(
     private var lastRemovalTimestamps: Map<String, String?> = emptyMap()
     private var lastActivityTimestamp: String? = null
     private var lastActivityCheckTime: Long = 0L
-    private var lastPlaybackCheckTime: Long = 0L
+    private var lastPlaybackWatermark: String? = null
+    private var lastPlaybackMarkers: Map<String, String?>? = null
     private var lastSyncAttemptTime: Long = 0L
 
     private var snapshotMovies: SimklAllItemsResponse? = null
@@ -120,7 +123,9 @@ class SimklSyncService @Inject constructor(
                 movies = snapshotMovies,
                 shows = snapshotShows,
                 anime = snapshotAnime,
-                playback = snapshotPlayback
+                playback = snapshotPlayback,
+                playbackWatermark = lastPlaybackWatermark,
+                playbackMarkers = lastPlaybackMarkers
             )
             val parent = file.parentFile
             if (parent != null && !parent.exists()) {
@@ -206,6 +211,8 @@ class SimklSyncService @Inject constructor(
                 snapshotComplete = true
                 playbackComplete = persisted.playback != null
                 lastActivityTimestamp = persisted.watermark
+                lastPlaybackWatermark = persisted.playbackWatermark
+                lastPlaybackMarkers = persisted.playbackMarkers
                 lastRemovalTimestamps = persisted.removalTimestamps.orEmpty()
                 resolvedExternalIds.putAll(persisted.resolvedIds.orEmpty())
                 val stagedMovies = snapshotMovies ?: SimklAllItemsResponse()
@@ -244,17 +251,25 @@ class SimklSyncService @Inject constructor(
 
             val libraryChanged = currentActivityDate != lastActivityTimestamp || removedTypes.isNotEmpty()
             val libraryNeedsRefresh = !snapshotComplete || libraryChanged
-            val playbackNeedsRefresh = !playbackComplete || force || (now - lastPlaybackCheckTime >= SNAPSHOT_TTL_MS)
+            val playbackMarkers = mapOf(
+                "movies" to activities.movies?.playback,
+                "shows" to activities.shows?.playback,
+                "anime" to activities.anime?.playback
+            ).filterValues { it != null }.let { markers ->
+                if (markers.isNotEmpty()) markers else mapOf("all" to currentActivityDate)
+            }
+            val playbackNeedsRefresh = !playbackComplete || lastPlaybackMarkers == null ||
+                playbackMarkers != lastPlaybackMarkers || currentActivityDate == null
 
             if (libraryNeedsRefresh || playbackNeedsRefresh) {
                 AppLogger.d("SimklSyncService", "Refreshing Simkl snapshot (hasInitial=$hasInitialSnapshot, current=$currentActivityDate, last=$lastActivityTimestamp, libNeeds=$libraryNeedsRefresh, pbNeeds=$playbackNeedsRefresh)")
-                val outcome = refreshSnapshot(authHeader, removedTypes, refreshLibrary = libraryNeedsRefresh)
+                val outcome = refreshSnapshot(authHeader, removedTypes,
+                    refreshLibrary = libraryNeedsRefresh, refreshPlayback = playbackNeedsRefresh)
                 hasInitialSnapshot = outcome.hasUsableSnapshot
                 if (outcome.libraryComplete) {
                     snapshotComplete = true
                     lastActivityTimestamp = currentActivityDate
                     lastRemovalTimestamps = removalTimestamps
-                    persistSnapshot(currentActivityDate)
                     syncProviderStore.setSimklWatermark(currentActivityDate)
                     lastActivityCheckTime = now
                 } else if (libraryNeedsRefresh) {
@@ -264,14 +279,14 @@ class SimklSyncService @Inject constructor(
 
                 if (outcome.playbackComplete) {
                     playbackComplete = true
-                    lastPlaybackCheckTime = now
-                    if (!libraryNeedsRefresh && snapshotComplete) {
-                        persistSnapshot(lastActivityTimestamp)
+                    if (playbackNeedsRefresh) {
+                        lastPlaybackWatermark = currentActivityDate
+                        lastPlaybackMarkers = playbackMarkers
                     }
                 } else {
                     playbackComplete = false
-                    lastPlaybackCheckTime = 0L
                 }
+                if (outcome.libraryComplete || outcome.playbackComplete) persistSnapshot(lastActivityTimestamp)
 
                 outcome.libraryComplete && outcome.playbackComplete
             } else {
@@ -306,17 +321,38 @@ class SimklSyncService @Inject constructor(
         }
     }
 
+    private suspend fun fetchPlaybackSnapshot(
+        authHeader: String,
+        refresh: Boolean,
+        refreshLibrary: Boolean
+    ): SnapshotFetch<List<com.arflix.tv.data.api.SimklPlaybackItem>> {
+        if (!refresh) return SnapshotFetch(snapshotPlayback.orEmpty(), true)
+        return fetchSnapshotPart("Playback") {
+            val from = lastPlaybackWatermark
+            if (snapshotPlayback == null || from.isNullOrBlank()) {
+                simklApi.getPlayback(authHeader, clientId)
+            } else {
+                val delta = simklApi.getPlaybackDelta(authHeader, clientId, from)
+                // Playback deltas have no tombstones. Reconcile the older partition only
+                // when activity changed, so cleared/resumed sessions cannot linger locally.
+                val older = if (snapshotPlayback.orEmpty().isNotEmpty() || refreshLibrary) {
+                    simklApi.getPlaybackBefore(authHeader, clientId, from)
+                } else emptyList()
+                older + delta
+            }
+        }
+    }
+
     private suspend fun refreshSnapshot(
         authHeader: String,
         removedTypes: Set<String>,
-        refreshLibrary: Boolean = true
+        refreshLibrary: Boolean = true,
+        refreshPlayback: Boolean = true
     ): SnapshotRefreshOutcome = coroutineScope {
         // If library doesn't need refresh, only refresh playback
         if (!refreshLibrary && hasInitialSnapshot && snapshotComplete) {
             AppLogger.d("SimklSyncService", "Retrying Simkl playback without re-fetching library snapshot")
-            val playbackFetch = fetchSnapshotPart("Playback") {
-                simklApi.getPlayback(authHeader, clientId)
-            }
+            val playbackFetch = fetchPlaybackSnapshot(authHeader, refreshPlayback, refreshLibrary)
             if (playbackFetch.succeeded) {
                 snapshotPlayback = playbackFetch.value
                 val stagedMovies = snapshotMovies ?: SimklAllItemsResponse()
@@ -355,9 +391,7 @@ class SimklSyncService @Inject constructor(
                     }.toSet()
                 }
                 if (!ids.succeeded) {
-                    val playbackFetch = fetchSnapshotPart("Playback") {
-                        simklApi.getPlayback(authHeader, clientId)
-                    }
+                    val playbackFetch = fetchPlaybackSnapshot(authHeader, refreshPlayback, refreshLibrary)
                     if (playbackFetch.succeeded) {
                         snapshotPlayback = playbackFetch.value
                     }
@@ -369,9 +403,7 @@ class SimklSyncService @Inject constructor(
                 }
                 removedIds[type] = ids.value.orEmpty()
             }
-            val playbackFetch = fetchSnapshotPart("Playback") {
-                simklApi.getPlayback(authHeader, clientId)
-            }
+            val playbackFetch = fetchPlaybackSnapshot(authHeader, refreshPlayback, refreshLibrary)
             if (deltaFetch.succeeded && deltaFetch.value != null) {
                 val delta = deltaFetch.value
                 val mergedMovies = mergeMovieRows(snapshotMovies?.movies.orEmpty(), delta.movies.orEmpty())
@@ -425,9 +457,7 @@ class SimklSyncService @Inject constructor(
         val anime = fetchSnapshotPart("Anime") {
             decodeAllItems("anime", simklApi.getAllItems(authHeader, clientId, "anime", extended = "full_anime_seasons"))
         }
-        val playback = fetchSnapshotPart("Playback") {
-            simklApi.getPlayback(authHeader, clientId)
-        }
+        val playback = fetchPlaybackSnapshot(authHeader, refreshPlayback, refreshLibrary)
 
         if (movies.succeeded) snapshotMovies = movies.value
         if (shows.succeeded) snapshotShows = shows.value
@@ -561,7 +591,8 @@ class SimklSyncService @Inject constructor(
         lastRemovalTimestamps = emptyMap()
         lastActivityTimestamp = null
         lastActivityCheckTime = 0L
-        lastPlaybackCheckTime = 0L
+        lastPlaybackWatermark = null
+        lastPlaybackMarkers = null
         lastSyncAttemptTime = 0L
         snapshotMovies = null
         snapshotShows = null

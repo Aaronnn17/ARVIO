@@ -4,6 +4,9 @@ import android.content.Context
 import com.arflix.tv.data.api.SimklActivitiesResponse
 import com.arflix.tv.data.api.SimklActivityGroup
 import com.arflix.tv.data.api.SimklApi
+import com.arflix.tv.data.api.SimklIds
+import com.arflix.tv.data.api.SimklMovieRef
+import com.arflix.tv.data.api.SimklPlaybackItem
 import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.api.TmdbListResponse
 import com.arflix.tv.data.api.TmdbMediaItem
@@ -44,6 +47,8 @@ class SimklSnapshotRegressionTest {
         )
         coEvery { api.getAllItemsDelta(any(), any(), any(), any(), any(), any(), any()) } returns json("{}")
         coEvery { api.getPlayback(any(), any()) } returns emptyList()
+        coEvery { api.getPlaybackDelta(any(), any(), any()) } returns emptyList()
+        coEvery { api.getPlaybackBefore(any(), any(), any()) } returns emptyList()
     }
 
     @Test fun omittedSeasonsRetainHistoryButEmptySeasonsClearIt() = runBlocking {
@@ -103,13 +108,14 @@ class SimklSnapshotRegressionTest {
         val sync = service()
         assertTrue(sync.syncIfNeeded(force = true))
         coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(all = second)
-        coEvery { api.getPlayback(any(), any()) } throws IOException("temporary playback outage")
+        coEvery { api.getPlaybackDelta(any(), any(), any()) } throws IOException("temporary playback outage")
         assertFalse(sync.syncIfNeeded(force = true))
         coVerify(exactly = 1) { store.setSimklWatermark(second) }
-        coEvery { api.getPlayback(any(), any()) } returns emptyList()
+        coEvery { api.getPlaybackDelta(any(), any(), any()) } returns emptyList()
         assertTrue(sync.syncIfNeeded(force = true))
         coVerify(exactly = 1) { api.getAllItemsDelta(any(), any(), any(), any(), any(), any(), any()) }
-        coVerify(exactly = 3) { api.getPlayback(any(), any()) }
+        coVerify(exactly = 1) { api.getPlayback(any(), any()) }
+        coVerify(exactly = 2) { api.getPlaybackDelta(any(), any(), first) }
     }
 
     @Test fun failedBootstrapPlaybackDoesNotFailLibraryBootstrap() = runBlocking {
@@ -145,6 +151,110 @@ class SimklSnapshotRegressionTest {
         val otherAccount = service(context)
         assertFalse(otherAccount.syncIfNeeded(force = true))
         assertTrue(otherAccount.getWatchlistItems().isEmpty())
+    }
+
+    private fun pause(id: Int, at: String = first) = SimklPlaybackItem(
+        id = id.toLong(), progress = 40f, pausedAt = at,
+        movie = SimklMovieRef(title = "Movie $id", ids = SimklIds(tmdb = id))
+    )
+
+    @Test fun unchangedActivitiesSkipPlaybackEvenOnForcedOrExpiredRefresh() = runBlocking {
+        val sync = service()
+        assertTrue(sync.syncIfNeeded(force = true))
+        assertTrue(sync.syncIfNeeded(force = true))
+        val field = SimklSyncService::class.java.getDeclaredField("lastActivityCheckTime")
+        field.isAccessible = true
+        field.setLong(sync, 0L)
+        SimklSyncService::class.java.getDeclaredField("lastSyncAttemptTime").also {
+            it.isAccessible = true; it.setLong(sync, 0L)
+        }
+        assertTrue(sync.syncIfNeeded())
+        coVerify(exactly = 3) { api.getActivities(any(), any()) }
+        coVerify(exactly = 1) { api.getPlayback(any(), any()) }
+        coVerify(exactly = 0) { api.getPlaybackDelta(any(), any(), any()) }
+        coVerify(exactly = 0) { api.getPlaybackBefore(any(), any(), any()) }
+    }
+
+    @Test fun unrelatedLibraryChangesDoNotDownloadPlayback() = runBlocking {
+        coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(
+            all = first, movies = SimklActivityGroup(playback = first)
+        )
+        val sync = service()
+        assertTrue(sync.syncIfNeeded(force = true))
+        coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(
+            all = second, movies = SimklActivityGroup(playback = first)
+        )
+        assertTrue(sync.syncIfNeeded(force = true))
+        coVerify(exactly = 1) { api.getAllItemsDelta(any(), any(), first, any(), any(), any(), any()) }
+        coVerify(exactly = 1) { api.getPlayback(any(), any()) }
+        coVerify(exactly = 0) { api.getPlaybackDelta(any(), any(), any()) }
+    }
+
+    @Test fun playbackDeltaPreservesOlderSessionsButRemovesRemoteDeletions() = runBlocking {
+        coEvery { api.getPlayback(any(), any()) } returns listOf(pause(201), pause(202))
+        val sync = service()
+        assertTrue(sync.syncIfNeeded(force = true))
+        coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(all = second)
+        coEvery { api.getPlaybackDelta(any(), any(), first) } returns listOf(pause(203, second))
+        coEvery { api.getPlaybackBefore(any(), any(), first) } returns listOf(pause(201))
+        assertTrue(sync.syncIfNeeded(force = true))
+        assertEquals(setOf(201, 203), sync.getContinueWatching().map { it.id }.toSet())
+        coVerify(exactly = 1) { api.getPlayback(any(), any()) }
+        coVerify(exactly = 1) { api.getPlaybackDelta(any(), any(), first) }
+        coVerify(exactly = 1) { api.getPlaybackBefore(any(), any(), first) }
+    }
+
+    @Test fun failedOlderReconciliationRetainsPlaybackAndItsCheckpointAcrossRestart() = runBlocking {
+        coEvery { api.getPlayback(any(), any()) } returns listOf(pause(201))
+        val context = diskContext()
+        val sync = service(context)
+        assertTrue(sync.syncIfNeeded(force = true))
+        coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(all = second)
+        coEvery { api.getPlaybackDelta(any(), any(), first) } returns listOf(pause(203, second))
+        coEvery { api.getPlaybackBefore(any(), any(), first) } throws IOException("offline")
+        assertFalse(sync.syncIfNeeded(force = true))
+        assertEquals(listOf(201), sync.getContinueWatching().map { it.id })
+        coEvery { api.getPlaybackBefore(any(), any(), first) } returns emptyList()
+        val restarted = service(context)
+        assertTrue(restarted.syncIfNeeded(force = true))
+        assertEquals(listOf(203), restarted.getContinueWatching().map { it.id })
+        coVerify(exactly = 2) { api.getPlaybackDelta(any(), any(), first) }
+        coVerify(exactly = 1) { api.getPlayback(any(), any()) }
+    }
+
+    @Test fun emptyDeltaCanClearAllSavedSessions() = runBlocking {
+        coEvery { api.getPlayback(any(), any()) } returns listOf(pause(201))
+        val sync = service()
+        assertTrue(sync.syncIfNeeded(force = true))
+        coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(all = second)
+        assertTrue(sync.syncIfNeeded(force = true))
+        assertTrue(sync.getContinueWatching().isEmpty())
+    }
+
+    @Test fun restartDoesNotRedownloadUnchangedPlayback() = runBlocking {
+        coEvery { api.getActivities(any(), any()) } returns SimklActivitiesResponse(
+            all = first, movies = SimklActivityGroup(playback = first)
+        )
+        val context = diskContext()
+        assertTrue(service(context).syncIfNeeded(force = true))
+        assertTrue(service(context).syncIfNeeded(force = true))
+        coVerify(exactly = 1) { api.getPlayback(any(), any()) }
+        coVerify(exactly = 0) { api.getPlaybackDelta(any(), any(), any()) }
+    }
+
+    @Test fun legacySnapshotGetsOneFullPlaybackRefreshBeforeUsingDeltas() = runBlocking {
+        val context = diskContext()
+        assertTrue(service(context).syncIfNeeded(force = true))
+        val file = File(temporaryFolder.root, "simkl_snapshot_cache.json")
+        val old = json(file.readText()).asJsonObject
+        old.remove("playbackWatermark")
+        old.remove("playbackMarkers")
+        file.writeText(old.toString())
+        val restarted = service(context)
+        assertTrue(restarted.syncIfNeeded(force = true))
+        assertTrue(restarted.syncIfNeeded(force = true))
+        coVerify(exactly = 2) { api.getPlayback(any(), any()) }
+        coVerify(exactly = 0) { api.getPlaybackDelta(any(), any(), any()) }
     }
 
     @Test fun restartRetainsResolvedAnimeIdsWithoutRepeatingMetadataLookups() = runBlocking {
