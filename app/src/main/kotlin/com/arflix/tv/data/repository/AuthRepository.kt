@@ -17,7 +17,10 @@ import com.arflix.tv.util.AppLogger
 import com.arflix.tv.util.Constants
 import com.arflix.tv.util.AuthEmailValidator
 import com.arflix.tv.util.authDataStore
+import com.arflix.tv.util.profilesDataStore
 import com.arflix.tv.util.settingsDataStore
+import com.arflix.tv.util.telegramDataStore
+import com.arflix.tv.util.traktDataStore
 import com.arflix.tv.util.hash
 import com.arflix.tv.util.sanitizeEmail
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
@@ -373,7 +376,11 @@ class AuthRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val okHttpClient: OkHttpClient,
     private val traktRepositoryProvider: Provider<TraktRepository>,
-    private val cloudSyncRepositoryProvider: Provider<CloudSyncRepository>
+    private val cloudSyncRepositoryProvider: Provider<CloudSyncRepository>,
+    private val telegramRepositoryProvider: Provider<com.arflix.tv.data.telegram.TelegramRepository>,
+    private val launcherContinueWatchingProvider: Provider<LauncherContinueWatchingRepository>,
+    private val traktOutboxProvider: Provider<TraktOutboxRepository>,
+    private val pluginDataStoreProvider: Provider<com.arflix.tv.data.local.PluginDataStore>
 ) {
     private val TAG = "AuthRepository"
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -906,6 +913,22 @@ class AuthRepository @Inject constructor(
         // Clear ALL local data (auth + settings + user preferences)
         runCatching { context.authDataStore.edit { prefs -> prefs.clear() } }
         runCatching { context.settingsDataStore.edit { prefs -> prefs.clear() } }
+
+        // Everything else the account left on this device. Addons especially: a later sign-in
+        // merges local addons into the new account's list, so an old account's addresses (with
+        // their debrid keys) would move into the next account and sync to its other devices.
+        listOf(
+            context.streamDataStore,
+            context.traktDataStore,
+            context.profilesDataStore,
+            context.telegramDataStore
+        ).forEach { store -> runCatching { store.edit { prefs -> prefs.clear() } } }
+        runCatching { traktOutboxProvider.get().clearAll() }
+        runCatching { pluginDataStoreProvider.get().clearAll() }
+        runCatching { telegramRepositoryProvider.get().disconnect() }
+        runCatching { launcherContinueWatchingProvider.get().clearPublishedPrograms() }
+        runCatching { com.arflix.tv.network.OkHttpProvider.clearHttpCache() }
+        runCatching { withContext(Dispatchers.IO) { deleteAccountLocalFiles(context) } }
 
         _userProfile.value = null
         _authState.value = AuthState.NotAuthenticated
