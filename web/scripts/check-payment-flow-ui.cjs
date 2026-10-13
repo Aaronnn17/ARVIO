@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 (async () => {
-  const browser = await chromium.launch({ channel: 'msedge', headless: true });
+  const browser = await chromium.launch({ ...(process.platform === 'win32' ? { channel: 'msedge' } : {}), headless: true });
   try {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await context.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
@@ -30,7 +30,9 @@ const assert = require('node:assert/strict');
     await page.bringToFront();
     // Local fixture simulates returning from an external tab; no Ko-fi request
     // is permitted by the test context's network allowlist.
-    await page.evaluate(() => { window.dispatchEvent(new Event('blur')); window.dispatchEvent(new Event('focus')); });
+    // Focus can leave before React installs the recovery effect. A return must
+    // work even when that first blur was not observed by the listener.
+    await page.evaluate(() => { window.dispatchEvent(new Event('focus')); });
     await page.getByText('Membership active', { exact: true }).waitFor({ timeout: 20000 });
     assert.equal(await page.getByRole('link', { name: /Continue to Ko-fi/ }).count(), 0);
     await page.goto('http://127.0.0.1:3098/');

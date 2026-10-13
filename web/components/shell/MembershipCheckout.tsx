@@ -57,7 +57,8 @@ export function MembershipCheckout({ children, className, entry, title, onEntitl
   useEffect(() => {
     if (!open || !waiting || !accountId) return;
     let returned = false;
-    let hasLeft = false;
+    // The native external link can move focus before this effect is installed.
+    let hasLeft = document.visibilityState === "hidden" || !document.hasFocus();
     const controller = createPaymentRecovery({
       check: () => fetchEntitlement(authClient),
       isCurrent: () => authClient.session?.userId === accountId,
@@ -76,12 +77,13 @@ export function MembershipCheckout({ children, className, entry, title, onEntitl
       void controller.resume();
     };
     const onLeave = () => { hasLeft = true; };
-    window.addEventListener("focus", onReturn);
+    const onFocus = () => { hasLeft = true; onReturn(); };
+    window.addEventListener("focus", onFocus);
     window.addEventListener("blur", onLeave);
     document.addEventListener("visibilitychange", onReturn);
     return () => {
       controller.stop(); recovery.current = null;
-      window.removeEventListener("focus", onReturn);
+      window.removeEventListener("focus", onFocus);
       window.removeEventListener("blur", onLeave);
       document.removeEventListener("visibilitychange", onReturn);
     };
