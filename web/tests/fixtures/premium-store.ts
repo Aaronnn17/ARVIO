@@ -4,4 +4,4 @@ export const authClient = {
   accessToken: async () => 'fixture',
   refresh: async () => undefined
 };
-export const useApp = () => ({ auth: authClient.session, signOut: () => { location.href = '/?case=signedout'; }, goToLogin: () => { location.href = '/?case=login'; } });
+export const useApp = () => ({ auth: authClient.session, addons: [], addonsReady: true, settings: { homeServers: [], iptvPlaylists: [] }, setSection: () => {}, signOut: () => { location.href = '/?case=signedout'; }, goToLogin: () => { location.href = '/?case=login'; } });

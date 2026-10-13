@@ -11,6 +11,8 @@ const PREMIUM_EVENTS = new Set([
   "trial_started",
   "trial_start_failed",
   "checkout_opened",
+  "checkout_returned",
+  "payment_status_checked",
   "membership_link_started",
   "membership_linked",
   "billing_email_verified",
@@ -34,7 +36,7 @@ const CLIENT_PREMIUM_EVENTS = new Set([
   "journey_connected", "web_opened", "sources_configured", "sources_missing",
   "playback_requested", "playback_started", "playback_failed",
   "paywall_view", "account_connected", "trial_requested", "trial_start_failed",
-  "checkout_opened", "membership_link_started", "membership_linked", "membership_link_failed", "first_playback", "external_playback_requested",
+  "checkout_opened", "checkout_returned", "payment_status_checked", "membership_link_started", "membership_linked", "membership_link_failed", "first_playback", "external_playback_requested",
   "download_requested", "download_handoff", "download_failed"
 ]);
 
@@ -168,15 +170,30 @@ async function premiumFunnelReport(event, days = 30, endDate) {
     }
     return records;
   };
-  const journeyKeys = (await listKeys(store, "journeys/date/")).filter(key => dateSet.has(key.split("/")[2]));
-  const detailedEvents = new Set(["_journey", "trial_started", "subscription_started", "paid_access_observed", "checkout_opened", "playback_failed"]);
+  // A payment in a short report can belong to a visit before the report start.
+  // Reuse retained, authenticated links; never guess ownership from a click.
+  const contextStart = new Date(Date.parse(`${dates[0]}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
+  const inContext = key => key.split("/")[2] >= contextStart && key.split("/")[2] < dates[0];
+  const allJourneyKeys = await listKeys(store, "journeys/date/");
+  const journeyKeys = allJourneyKeys.filter(key => dateSet.has(key.split("/")[2]));
+  const detailedEvents = new Set(["_journey", "trial_started", "subscription_started", "paid_access_observed", "checkout_opened", "checkout_returned", "payment_status_checked", "playback_failed"]);
   const detailKeys = keys.filter(key => detailedEvents.has(key.split("/")[5]?.replace(/\.json$/, "")));
-  const [records, journeys] = await Promise.all([readMany(detailKeys), readMany(journeyKeys)]);
+  // Look back only for actual new payers, not every historic visitor or trial.
+  // This avoids turning a small period report into thousands of extra reads.
+  const accountKeys = new Set(keys.filter(key => key.endsWith("/subscription_started.json")).map(key => key.split("/")[4]));
+  for (const { billingKey, accountKey } of verifiedLinks) if (accountKeys.has(billingKey)) accountKeys.add(accountKey);
+  const contextLinkKeys = allKeys.filter(key => inContext(key) && key.endsWith("/_journey.json") && accountKeys.has(key.split("/")[4]));
+  const [records, journeys, contextRecords] = await Promise.all([
+    readMany(detailKeys), readMany(journeyKeys), readMany(contextLinkKeys)
+  ]);
+  const contextJourneyIds = new Set(contextRecords.map(record => record.metadata?.journey_key).filter(Boolean));
+  const contextJourneys = await readMany(allJourneyKeys.filter(key => inContext(key) && contextJourneyIds.has(key.split("/")[3])));
   const generatedAt = new Date().toISOString();
   const observationEnd = endDate && endDate < today ? new Date(Date.parse(endDate) + 86400000).toISOString() : generatedAt;
   const summary = summarizePremiumKeys(keys, dates, observationEnd, verifiedLinks);
   return { ...summary, generatedAt, periodStart: dates[0], periodEnd: dates.at(-1),
-    ...summarizeMeasurements(records, journeys, verifiedLinks) };
+    ...summarizeMeasurements(records, journeys, verifiedLinks, { contextRecords, contextJourneys }),
+    attributionLookback: { days: 30, contextStart, note: "Earlier retained journeys can explain payments in this period; they do not increase period visit counts. Expired or unlinked journeys remain unattributed." } };
 
 }
 
@@ -254,6 +271,14 @@ function summarizePremiumKeys(keys, dates, generatedAt = new Date().toISOString(
       browserPlaybackFailed: trialUsage("playback_failed"),
       externalPlayerRequested: trialUsage("external_playback_requested"),
       checkoutOpened: trialUsage("checkout_opened")
+    },
+    trialDropoff: {
+      unit: "accounts with trials started in this report; stages can overlap",
+      trials,
+      withoutRecordedSourceSetup: trials - trialUsage("sources_configured"),
+      withoutRecordedBrowserPlayback: trials - trialUsage("playback_started"),
+      withoutRecordedMembershipClick: trials - trialUsage("checkout_opened"),
+      note: "Missing diagnostics do not prove failure. This is not a sequential funnel or a mature payment-conversion cohort."
     },
     measurementNotes: [
       "Conversion matches anonymized account identities inside this window, with day-level ordering; it is not a lifetime cohort.",

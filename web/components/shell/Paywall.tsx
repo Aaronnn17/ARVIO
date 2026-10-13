@@ -9,7 +9,6 @@ import { HttpError } from "@/lib/http";
 import {
   cachedEntitlement,
   fetchEntitlement,
-  kofiSubscribeUrl,
   startTrial,
   type EntitlementState
 } from "@/lib/entitlement";
@@ -19,6 +18,7 @@ import { currentEntitlement, entitlementCheckDelay } from "@/lib/entitlementPoli
 import { EntitlementContext } from "@/lib/entitlementContext";
 import { BillingEmailForm } from "./BillingEmailForm";
 import { ENTITLEMENT_REFRESH_EVENT } from "@/lib/entitlement";
+import { MembershipCheckout } from "./MembershipCheckout";
 
 // Three-day free trial: enabled — enough time to use ARVIO Web on normal days,
 // blind $2.99 ask. One trial per account (trialUsed is stamped server-side).
@@ -267,21 +267,20 @@ export function PaywallScreen({
             {isSignedIn ? translateUi("Start {value0}-day free trial", {value0: trialDays}) : translateUi("Connect to Cloud for {value0}-day trial", {value0: trialDays})}
           </button>
         )}
+        {SHOW_TRIAL && trialAvailable && !expired && <p className="paywall-disclaimer">{translateUi("Your trial ends automatically. You will not be charged unless you subscribe on Ko-fi.")}</p>}
 
         <div className="paywall-price">
           <span className="paywall-amount">$2.99</span>
           <span className="paywall-period">{translateUi("/ month")}</span>
         </div>
 
-        <a
+        <MembershipCheckout
           className={SHOW_TRIAL && trialAvailable && !expired ? "paywall-trial" : "paywall-primary"}
-          href={kofiSubscribeUrl()}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={() => { void trackPremiumEvent(authClient, "checkout_opened"); }}
+          entry="paywall"
+          onEntitled={onEntitled}
         >
           <BadgeCheck size={18} /> {translateUi(" Subscribe on Ko-fi ")}<ExternalLink size={15} />
-        </a>
+        </MembershipCheckout>
         {isSignedIn && accountEmail && <p className="paywall-account-email">{translateUi("ARVIO Cloud account")}<strong>{accountEmail}</strong></p>}
         <p className="paywall-disclaimer">{translateUi("Use the email on your ARVIO Cloud account at checkout, or link your billing email below. Membership does not include media or subscriptions to other services.")}</p>
 
