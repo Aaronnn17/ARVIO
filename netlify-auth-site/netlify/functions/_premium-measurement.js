@@ -73,7 +73,7 @@ async function recordJourneyEvent(store, event, body, now = new Date()) {
   return { status: 200 };
 }
 
-function summarizeMeasurements(records, journeys, verifiedLinks = []) {
+function summarizeMeasurements(records, journeys, verifiedLinks = [], { contextRecords = [], contextJourneys = [] } = {}) {
   const owners = new Map();
   for (const { billingKey, accountKey } of verifiedLinks) {
     const previous = owners.get(billingKey);
@@ -82,7 +82,19 @@ function summarizeMeasurements(records, journeys, verifiedLinks = []) {
   const accounts = new Map();
   const journeyOwners = new Map();
   const journeyConnections = new Map();
+  const currentConnections = new Set();
   const diagnostics = { failureKind: {}, transport: {}, phase: {} };
+  const connectJourney = (record, id, time) => {
+    const journey = record.metadata?.journey_key;
+    if (!id || !/^[a-f0-9]{64}$/.test(journey || "")) return;
+    const previous = journeyOwners.get(journey);
+    journeyOwners.set(journey, previous === undefined || previous === id ? id : null);
+    const connection = journeyConnections.get(journey);
+    if (!connection || time < connection) journeyConnections.set(journey, time);
+  };
+  for (const record of contextRecords) {
+    if (record.eventName === "journey_connected") connectJourney(record, record.accountKey, record.firstAt);
+  }
   for (const record of records) {
     let id = record.accountKey;
     if (["subscription_started", "subscription_renewed"].includes(record.eventName)) id = owners.get(id) || id;
@@ -93,13 +105,8 @@ function summarizeMeasurements(records, journeys, verifiedLinks = []) {
     (account.times ||= {});
     (account.times[record.eventName] ||= []).push(time);
     accounts.set(id, account);
-    const journey = record.metadata?.journey_key;
-    if (/^[a-f0-9]{64}$/.test(journey || "")) {
-      const previous = journeyOwners.get(journey);
-      journeyOwners.set(journey, previous === undefined || previous === id ? id : null);
-      const connection = journeyConnections.get(journey);
-      if (!connection || time < connection) journeyConnections.set(journey, time);
-    }
+    connectJourney(record, id, time);
+    if (/^[a-f0-9]{64}$/.test(record.metadata?.journey_key || "")) currentConnections.add(id);
     if (record.eventName === "playback_failed") {
       for (const [field, input, allowed] of [["failureKind", "failure_kind", FAILURE_KINDS], ["transport", "transport", TRANSPORTS], ["phase", "phase", PHASES]]) {
         const value = allowed.has(record.metadata?.[input]) ? record.metadata[input] : "unclassified";
@@ -108,10 +115,12 @@ function summarizeMeasurements(records, journeys, verifiedLinks = []) {
     }
   }
   const grouped = new Map();
-  for (const record of journeys) {
+  const currentRecords = new Set(journeys);
+  for (const record of [...contextJourneys, ...journeys]) {
     if (!JOURNEY_EVENTS.has(record.eventName) || !record.journeyKey) continue;
-    const journey = grouped.get(record.journeyKey) || { events: new Set(), firstAt: record.firstAt, metadata: record.metadata || {} };
+    const journey = grouped.get(record.journeyKey) || { events: new Set(), currentEvents: new Set(), firstAt: record.firstAt, metadata: record.metadata || {} };
     journey.events.add(record.eventName);
+    if (currentRecords.has(record)) journey.currentEvents.add(record.eventName);
     if (record.firstAt < journey.firstAt) { journey.firstAt = record.firstAt; journey.metadata = record.metadata || {}; }
     grouped.set(record.journeyKey, journey);
   }
@@ -122,6 +131,7 @@ function summarizeMeasurements(records, journeys, verifiedLinks = []) {
   const matched = new Set();
   const paid = new Set();
   for (const [key, journey] of grouped) {
+    if (!journey.currentEvents.size && !accounts.has(journeyOwners.get(key))) continue;
     const source = marketingMetadata(journey.metadata).source || "unattributed";
     const row = sources.get(source) || empty();
     const landing = marketingMetadata(journey.metadata).page || "unattributed";
@@ -133,12 +143,12 @@ function summarizeMeasurements(records, journeys, verifiedLinks = []) {
     journey.connectedAt = journeyConnections.get(key);
     journey.source = source;
     journey.landing = landing;
-    for (const target of [total, row, landingRow]) {
+    for (const target of journey.currentEvents.size ? [total, row, landingRow] : []) {
       target.journeys++;
-      if (journey.events.has("guide_page_view")) target.guidePageViews++;
-      if (journey.events.has("premium_page_view")) target.premiumPageViews++;
-      if (journey.events.has("membership_clicked")) target.membershipClicks++;
-      if (journey.events.has("web_clicked")) target.webClicks++;
+      if (journey.currentEvents.has("guide_page_view")) target.guidePageViews++;
+      if (journey.currentEvents.has("premium_page_view")) target.premiumPageViews++;
+      if (journey.currentEvents.has("membership_clicked")) target.membershipClicks++;
+      if (journey.currentEvents.has("web_clicked")) target.webClicks++;
     }
     sources.set(source, row);
     landings.set(landing, landingRow);
@@ -149,24 +159,39 @@ function summarizeMeasurements(records, journeys, verifiedLinks = []) {
     matched.add(id);
     const account = accounts.get(id) || {};
     const row = sources.get(journey.source);
+    if (!row) continue;
     const observed = event => (account.times?.[event] || []).some(time => time >= journey.firstAt);
     for (const target of [total, row, landings.get(journey.landing)]) {
-      if (journey.connectedAt >= journey.firstAt) target.connectedAccounts++;
+      if (currentConnections.has(id) && journey.connectedAt >= journey.firstAt) target.connectedAccounts++;
       if (observed("trial_started")) target.trialsStarted++;
       if (observed("subscription_started")) { target.confirmedNewMemberships++; paid.add(id); }
       if (observed("paid_access_observed")) target.paidAccessObserved++;
     }
   }
   let payments = 0, activated = 0, paymentAfterMembershipClick = 0;
-  for (const account of accounts.values()) {
+  const attributionDiagnostics = { unmatchedPayments: 0, unmatchedWithMembershipClickInWindow: 0, unmatchedWithPaidAccessInWindow: 0 };
+  const recovery = { accountsWithMembershipClick: 0, returnedAfterClick: 0, checkedStatusAfterReturn: 0, confirmedPaymentAfterClick: 0 };
+  for (const [id, account] of accounts) {
+    const follows = (before, after) => Boolean(account[before] && (account.times?.[after] || []).some(time => time >= account[before]));
+    if (account.checkout_opened) recovery.accountsWithMembershipClick++;
+    if (follows("checkout_opened", "checkout_returned")) recovery.returnedAfterClick++;
+    if (follows("checkout_returned", "payment_status_checked")) recovery.checkedStatusAfterReturn++;
+    if (follows("checkout_opened", "subscription_started")) recovery.confirmedPaymentAfterClick++;
     if (!account.subscription_started) continue;
     payments++;
+    if (!paid.has(id)) {
+      attributionDiagnostics.unmatchedPayments++;
+      if (follows("checkout_opened", "subscription_started")) attributionDiagnostics.unmatchedWithMembershipClickInWindow++;
+      if (follows("subscription_started", "paid_access_observed")) attributionDiagnostics.unmatchedWithPaidAccessInWindow++;
+    }
     if ((account.times?.paid_access_observed || []).some(time => time >= account.subscription_started)) activated++;
     if (account.checkout_opened && account.checkout_opened <= account.subscription_started) paymentAfterMembershipClick++;
   }
   return {
     journeys: { ...total, bySource: Object.fromEntries([...sources].sort(([a], [b]) => a.localeCompare(b))), byLandingPage: Object.fromEntries([...landings].sort(([a], [b]) => a.localeCompare(b))), confirmedPaymentsNotMatchedToJourney: Math.max(0, payments - paid.size) },
     paymentActivation: { confirmedNewMemberships: payments, paidAccessObservedAfterPayment: activated, accessNotYetObservedInWindow: payments - activated, paymentAfterMembershipPageClick: paymentAfterMembershipClick },
+    checkoutRecovery: { ...recovery, note: "Membership clicks and returns are browser diagnostics, not Ko-fi checkout attempts. Paid counts require server payment events. Return/status diagnostics begin with this release." },
+    attributionDiagnostics: { ...attributionDiagnostics, note: "These are overlapping diagnostic counts, not inferred traffic sources. Different billing emails require verified linking; direct anonymous Ko-fi purchases can remain unattributed." },
     playbackDiagnostics: { unit: "account-event-day", classification: "first recorded failure of each account per UTC day", ...diagnostics }
   };
 }

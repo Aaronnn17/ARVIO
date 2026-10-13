@@ -15,6 +15,8 @@ export type PremiumFunnelEvent =
   | "trial_requested"
   | "trial_start_failed"
   | "checkout_opened"
+  | "checkout_returned"
+  | "payment_status_checked"
   | "membership_link_started"
   | "membership_linked"
   | "membership_link_failed"

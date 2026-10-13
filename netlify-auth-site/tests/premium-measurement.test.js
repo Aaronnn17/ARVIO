@@ -21,6 +21,60 @@ test('guide funnel reports use bounded landing labels and never treat a click as
   assert.deepEqual(measurement.marketingMetadata({ page: '/private/path?email=user@example.test' }), {});
 });
 
+test('a retained earlier authenticated journey explains a later payment without increasing period visits', () => {
+  const contextJourneys = [{ journeyKey, eventName: 'premium_page_view', firstAt: '2026-10-01T10:00:00Z', metadata: { source: 'google', page: 'premium' } }];
+  const contextRecords = [{ accountKey: 'buyer', eventName: 'journey_connected', firstAt: '2026-10-01T11:00:00Z', metadata: { journey_key: journeyKey } }];
+  const records = [{ accountKey: 'buyer', eventName: 'subscription_started', firstAt: '2026-10-10T12:00:00Z' }];
+  const result = measurement.summarizeMeasurements(records, [], [], { contextRecords, contextJourneys });
+  assert.equal(result.journeys.journeys, 0);
+  assert.equal(result.journeys.premiumPageViews, 0);
+  assert.equal(result.journeys.connectedAccounts, 0);
+  assert.equal(result.journeys.confirmedNewMemberships, 1);
+  assert.equal(result.journeys.bySource.google.confirmedNewMemberships, 1);
+  assert.equal(result.paymentActivation.confirmedNewMemberships, 1);
+});
+
+test('earlier clicks cannot inflate period events, attribute anonymous sales, or override an ambiguous owner', () => {
+  const earlier = { journeyKey, eventName: 'membership_clicked', firstAt: '2026-10-01T10:00:00Z', metadata: { source: 'google' } };
+  const contextRecords = ['buyer', 'other'].map(accountKey => ({ accountKey, eventName: 'journey_connected', firstAt: '2026-10-01T11:00:00Z', metadata: { journey_key: journeyKey } }));
+  const sale = { accountKey: 'buyer', eventName: 'subscription_started', firstAt: '2026-10-10T12:00:00Z' };
+  const current = { ...earlier, eventName: 'premium_page_view', firstAt: '2026-10-10T10:00:00Z' };
+  const result = measurement.summarizeMeasurements([sale], [current], [], { contextRecords, contextJourneys: [earlier] });
+  assert.equal(result.journeys.membershipClicks, 0);
+  assert.equal(result.journeys.premiumPageViews, 1);
+  assert.equal(result.journeys.confirmedNewMemberships, 0);
+  assert.equal(result.journeys.confirmedPaymentsNotMatchedToJourney, 1);
+});
+
+test('short reports read only bounded past attribution context and never count future sales', async () => {
+  const store = memoryStore();
+  const put = (date, accountKey, eventName, metadata = {}) => store.data.set(`events/date/${date}/account/${accountKey}/${eventName}.json`, { date, accountKey, eventName: eventName === '_journey' ? 'journey_connected' : eventName, metadata, firstAt: `${date}T12:00:00Z` });
+  const visit = (date, key) => store.data.set(`journeys/date/${date}/${key}/premium_page_view.json`, { date, journeyKey: key, eventName: 'premium_page_view', firstAt: `${date}T10:00:00Z`, metadata: { source: 'google' } });
+  put('2026-10-01', 'buyer', '_journey', { journey_key: journeyKey }); visit('2026-10-01', journeyKey);
+  put('2026-10-10', 'buyer', 'subscription_started'); put('2026-10-13', 'future', 'subscription_started');
+  const oldKey = 'f'.repeat(64);
+  put('2026-08-01', 'old', '_journey', { journey_key: oldKey }); visit('2026-08-01', oldKey); put('2026-10-10', 'old', 'subscription_started');
+  const module = fixtureModule('_premium-funnel', { '@netlify/blobs': { connectLambda() {}, getStore: () => store }, './_backend': { privacyHash: (_namespace, value) => value }, './_premium-measurement': measurement });
+  const report = await module.premiumFunnelReport({}, 5, '2026-10-12');
+  assert.equal(report.paymentActivation.confirmedNewMemberships, 2);
+  assert.equal(report.journeys.confirmedNewMemberships, 1);
+  assert.equal(report.journeys.premiumPageViews, 0);
+  assert.equal(report.journeys.confirmedPaymentsNotMatchedToJourney, 1);
+  assert.equal(report.attributionLookback.contextStart, '2026-09-08');
+});
+
+test('checkout recovery separates returns, checks, and server payments', () => {
+  const record = (eventName, time) => ({ accountKey: 'buyer', eventName, firstAt: `2026-10-10T${time}:00Z` });
+  const report = measurement.summarizeMeasurements([
+    record('checkout_opened', '10:00'), record('checkout_returned', '10:01'), record('payment_status_checked', '10:02')
+  ], []);
+  assert.equal(report.checkoutRecovery.returnedAfterClick, 1);
+  assert.equal(report.checkoutRecovery.checkedStatusAfterReturn, 1);
+  assert.equal(report.checkoutRecovery.confirmedPaymentAfterClick, 0);
+  assert.equal(report.paymentActivation.confirmedNewMemberships, 0);
+  assert.equal(funnel.CLIENT_PREMIUM_EVENTS.has('subscription_started'), false);
+});
+
 test('guide events retain existing deduplication and write ceilings', async () => {
   const store = memoryStore();
   const now = new Date('2026-10-08T12:00:00Z');

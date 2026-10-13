@@ -1,6 +1,6 @@
 // Run locally after installing web and netlify-auth-site dependencies.
 // npm's production build never includes this fixture server.
-const { build } = require('../../netlify-auth-site/node_modules/esbuild');
+const { build } = require('esbuild');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
