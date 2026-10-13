@@ -1888,5 +1888,8 @@
     <string name="settings_simkl_lists_connect">Connect SIMKL</string>
     <string name="settings_simkl_lists_connected">SIMKL connected</string>
     <string name="settings_simkl_open">Open SIMKL</string>
+    <string name="live_subtitles">Subtitles</string>
+    <string name="live_subtitles_off">Off</string>
+    <string name="live_audio">Audio</string>
 </resources>
 

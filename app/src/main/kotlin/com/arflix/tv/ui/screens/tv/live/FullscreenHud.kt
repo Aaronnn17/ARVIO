@@ -109,6 +109,8 @@ fun FullscreenHud(
     onBackClick: (() -> Unit)? = null,
     onGuideClick: (() -> Unit)? = null,
     onOpenVariants: (() -> Unit)? = null,
+    onSubtitlesClick: (() -> Unit)? = null,
+    onAudioClick: (() -> Unit)? = null,
     onPlayPauseClick: (() -> Unit)? = null,
     onRewindClick: (() -> Unit)? = null,
     onFastForwardClick: (() -> Unit)? = null,
@@ -604,6 +606,18 @@ fun FullscreenHud(
                                 )
                             }
 
+                            if (onAudioClick != null) {
+                                HudActionButton(
+                                    label = stringResource(R.string.live_audio),
+                                    onClick = onAudioClick,
+                                )
+                            }
+                            if (onSubtitlesClick != null) {
+                                HudActionButton(
+                                    label = stringResource(R.string.live_subtitles),
+                                    onClick = onSubtitlesClick,
+                                )
+                            }
                             // Guide button at far right
                             if (onOpenVariants != null) {
                                 HudActionButton(

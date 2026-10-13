@@ -126,6 +126,22 @@ class TvViewModel @Inject constructor(
 ) : ViewModel() {
 
     suspend fun loadSportsGuideArtwork() = sportsRepository.loadGuideArtwork()
+
+    /** The profile's "Default audio language" setting for live channels, or null for "Auto". */
+    suspend fun preferredAudioLanguage(): String? = runCatching {
+        val prefs = context.settingsDataStore.data.first()
+        com.arflix.tv.ui.screens.tv.live.audioPreferenceLanguage(
+            prefs[profileManager.profileStringKey("default_audio_language")]
+        )
+    }.getOrNull()
+
+    /** The profile's "Default subtitle" setting as a language for live channels, or null when off. */
+    suspend fun preferredSubtitleLanguage(): String? = runCatching {
+        val prefs = context.settingsDataStore.data.first()
+        com.arflix.tv.ui.screens.tv.live.subtitlePreferenceLanguage(
+            prefs[profileManager.profileStringKey("default_subtitle")]
+        )
+    }.getOrNull()
     suspend fun cachedSportsMetadata() = sportsRepository.cachedMetadata()
     internal var cachedSportsSchedule: com.arflix.tv.ui.screens.tv.live.SportsScheduleSnapshot? = null
     private var sportsBroadcasterIndexLoad: Pair<SportsBroadcasterIndexKey, Deferred<SportsBroadcasterIndex>>? = null

@@ -61,6 +61,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.layout.size
@@ -78,6 +80,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -2257,6 +2260,12 @@ fun LiveTvScreen(
     var quickZapOpen by remember { mutableStateOf(false) }
     var variantPickerChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
     var sourcesChannel by remember { mutableStateOf<EnrichedChannel?>(null) }
+    // Subtitle choices made on a channel this session, by channel id ("off" or a language).
+    val liveSubtitleChoices = remember { mutableStateMapOf<String, String>() }
+    var subtitlePickerOpen by remember { mutableStateOf(false) }
+    // Audio choices made on a channel this session, by channel id (a language or track key).
+    val liveAudioChoices = remember { mutableStateMapOf<String, String>() }
+    var audioPickerOpen by remember { mutableStateOf(false) }
     var sourcesLoading by remember { mutableStateOf(false) }
     var sourcesFailed by remember { mutableStateOf(false) }
     var sourcesVariants by remember { mutableStateOf<List<EnrichedChannel>>(emptyList()) }
@@ -3086,6 +3095,46 @@ fun LiveTvScreen(
     }
 
     var playbackQuality by remember(exoPlayer) { mutableStateOf<LivePlaybackQuality?>(null) }
+
+    // Subtitles: start every channel on the profile's default subtitle language; a choice made in
+    // the subtitle list overrides that for its channel. Without this the player only turned
+    // subtitles on when the device's system captions matched, so they showed on some TVs only.
+    var liveTracks by remember(exoPlayer) { mutableStateOf(exoPlayer.currentTracks) }
+    var preferredSubtitleLanguage by remember { mutableStateOf<String?>(null) }
+    var preferredAudioLanguage by remember { mutableStateOf<String?>(null) }
+    val latestPlayingChannelId by rememberUpdatedState(playingChannelId)
+    LaunchedEffect(exoPlayer) {
+        preferredSubtitleLanguage = viewModel.preferredSubtitleLanguage()
+        resetLiveSubtitleChoice(exoPlayer, preferredSubtitleLanguage)
+        preferredAudioLanguage = viewModel.preferredAudioLanguage()
+        resetLiveAudioChoice(exoPlayer, preferredAudioLanguage)
+    }
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                if (latestPlayingChannelId?.let { liveSubtitleChoices[it] } == null) {
+                    resetLiveSubtitleChoice(exoPlayer, preferredSubtitleLanguage)
+                }
+                if (latestPlayingChannelId?.let { liveAudioChoices[it] } == null) {
+                    resetLiveAudioChoice(exoPlayer, preferredAudioLanguage)
+                }
+            }
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                liveTracks = tracks
+                val channelId = latestPlayingChannelId ?: return
+                liveAudioChoices[channelId]?.let { wanted ->
+                    val current = liveAudioOptions(tracks).firstOrNull { it.selected }?.key
+                    if (current != wanted) applyLiveAudioChoice(exoPlayer, wanted)
+                }
+                liveSubtitleChoices[channelId]?.let { wanted ->
+                    val current = liveSubtitleOptions(tracks, "").firstOrNull { it.selected }?.key
+                    if (current != wanted) applyLiveSubtitleChoice(exoPlayer, wanted)
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
+    }
 
     var streamStats by remember(exoPlayer) { mutableStateOf(LiveStreamTechInfo()) }
     DisposableEffect(exoPlayer) {
@@ -4583,6 +4632,10 @@ fun LiveTvScreen(
                             null
                         },
                         onGuideClick = { openFullscreenGuide() },
+                        onSubtitlesClick = { subtitlePickerOpen = true }
+                            .takeIf { liveSubtitleOptions(liveTracks, "").size > 1 },
+                        onAudioClick = { audioPickerOpen = true }
+                            .takeIf { liveAudioOptions(liveTracks).size > 1 },
                         onOpenVariants = playingChannel?.takeIf { playingCatchupProgram == null }?.let { channel ->
                             {
                                 sourcesLoading = true
@@ -4742,8 +4795,8 @@ fun LiveTvScreen(
             }
         }
 
-            LaunchedEffect(isFullScreen, fullscreenGuideOpen, quickZapOpen, playingCatchupProgram) {
-                if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
+            LaunchedEffect(isFullScreen, fullscreenGuideOpen, quickZapOpen, playingCatchupProgram, subtitlePickerOpen, audioPickerOpen) {
+                if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen && !subtitlePickerOpen && !audioPickerOpen) {
                     delay(50L)
                     runCatching { fsFocus.requestFocus() }
                 }
@@ -4811,6 +4864,40 @@ fun LiveTvScreen(
                     }
                     if (!useTouchRail) categoryDrawerOpen = false
                     focusChannelList(channel.id)
+                },
+            )
+        }
+
+        if (!searchOpen && isFullScreen && subtitlePickerOpen) {
+            LiveTrackPickerOverlay(
+                title = stringResource(R.string.live_subtitles),
+                icon = Icons.Filled.Subtitles,
+                channelName = playingChannel?.name.orEmpty(),
+                options = liveSubtitleOptions(liveTracks, stringResource(R.string.live_subtitles_off)),
+                onDismiss = {
+                    subtitlePickerOpen = false
+                    hudPokeSignal++
+                },
+                onPick = { key ->
+                    playingChannelId?.let { liveSubtitleChoices[it] = key }
+                    applyLiveSubtitleChoice(exoPlayer, key)
+                },
+            )
+        }
+
+        if (!searchOpen && isFullScreen && audioPickerOpen) {
+            LiveTrackPickerOverlay(
+                title = stringResource(R.string.live_audio),
+                icon = Icons.Filled.Audiotrack,
+                channelName = playingChannel?.name.orEmpty(),
+                options = liveAudioOptions(liveTracks),
+                onDismiss = {
+                    audioPickerOpen = false
+                    hudPokeSignal++
+                },
+                onPick = { key ->
+                    playingChannelId?.let { liveAudioChoices[it] = key }
+                    applyLiveAudioChoice(exoPlayer, key)
                 },
             )
         }
