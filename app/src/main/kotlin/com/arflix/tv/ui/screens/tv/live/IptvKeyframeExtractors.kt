@@ -13,6 +13,15 @@ import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
  * start on any I-frame, which is why the same channels play there.
  */
 
+/**
+ * IPTV HLS is prepared from its first segment, not from the playlist alone. "Chunkless"
+ * preparation builds the track list from the playlist's CODECS attribute, which names only video
+ * and audio, so subtitles muxed into the segments (DVB subtitles on re-broadcast channels) never
+ * appear. Media3 already falls back to reading a segment when a variant lists two audio codecs,
+ * which is why some channels of one provider had subtitles and others did not.
+ */
+internal const val IPTV_HLS_CHUNKLESS_PREPARATION = false
+
 /** HLS extractors for IPTV that also start video on a non-IDR I-frame. */
 internal fun iptvHlsExtractorFactory(): HlsExtractorFactory =
     DefaultHlsExtractorFactory(

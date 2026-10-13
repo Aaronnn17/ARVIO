@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -52,7 +51,7 @@ internal fun LiveTrackPickerOverlay(
     title: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     channelName: String,
-    options: List<LiveSubtitleOption>,
+    options: List<LiveTrackOption>,
     onDismiss: () -> Unit,
     onPick: (String) -> Unit,
 ) {
@@ -112,7 +111,7 @@ internal fun LiveTrackPickerOverlay(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 itemsIndexed(options, key = { _, option -> option.key }) { index, option ->
-                    SubtitleRow(
+                    TrackRow(
                         option = option,
                         modifier = if (index == selectedIndex) Modifier.focusRequester(firstFocus) else Modifier,
                         onPick = {
@@ -128,8 +127,8 @@ internal fun LiveTrackPickerOverlay(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SubtitleRow(
-    option: LiveSubtitleOption,
+private fun TrackRow(
+    option: LiveTrackOption,
     onPick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {

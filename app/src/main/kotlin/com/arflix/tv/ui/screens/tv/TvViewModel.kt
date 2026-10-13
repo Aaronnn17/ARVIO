@@ -142,6 +142,7 @@ class TvViewModel @Inject constructor(
             prefs[profileManager.profileStringKey("default_subtitle")]
         )
     }.getOrNull()
+
     suspend fun cachedSportsMetadata() = sportsRepository.cachedMetadata()
     internal var cachedSportsSchedule: com.arflix.tv.ui.screens.tv.live.SportsScheduleSnapshot? = null
     private var sportsBroadcasterIndexLoad: Pair<SportsBroadcasterIndexKey, Deferred<SportsBroadcasterIndex>>? = null

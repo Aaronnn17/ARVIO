@@ -2363,10 +2363,20 @@ fun LiveTvScreen(
     // Bumped to dismiss the HUD from outside, so Back can close it without
     // leaving fullscreen.
     var hudHideSignal by remember { mutableStateOf(0) }
+    // Bumped when the subtitle or audio list closes, so focus returns to the HUD button row.
+    var hudRefocusSignal by remember { mutableStateOf(0) }
     // The HUD shows itself for a few seconds after a zap, but only OK hands it
     // the focus. While it is not engaged the arrow keys stay with playback.
     var hudEngaged by remember { mutableStateOf(false) }
     var lastZapAtMs by remember { mutableLongStateOf(0L) }
+
+    // A subtitle or audio list is opened from the engaged controls; closing it goes back to
+    // them, with focus on the button that opened it, even if the HUD timed out meanwhile.
+    fun returnToHudControls() {
+        hudEngaged = true
+        hudPokeSignal++
+        hudRefocusSignal++
+    }
 
     // Dismissing the controls takes the focused button out of composition, so
     // hand the focus back to the playback surface — otherwise the next key
@@ -3081,6 +3091,9 @@ fun LiveTvScreen(
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
+            // A live stream whose buffer stops moving while buffering raises an error after
+            // this long, which the retry below recovers, instead of a spinner for ten minutes.
+            .setStuckBufferingDetectionTimeoutMs(LIVE_STUCK_BUFFERING_TIMEOUT_MS)
             .build().apply {
                 playWhenReady = true
                 videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
@@ -3320,6 +3333,7 @@ fun LiveTvScreen(
         // and channels without IDR frames need iptvHlsExtractorFactory() to show video.
         val source = if (isHls) {
             HlsMediaSource.Factory(sourceDataFactory)
+                .setAllowChunklessPreparation(IPTV_HLS_CHUNKLESS_PREPARATION)
                 .setExtractorFactory(iptvHlsExtractorFactory())
                 .setLoadErrorHandlingPolicy(IptvLoadErrorHandlingPolicy())
                 .createMediaSource(mediaItem)
@@ -3548,6 +3562,7 @@ fun LiveTvScreen(
     ) {
         var retryJob: Job? = null
         val liveWindowRecovery = LiveWindowRecovery(android.os.SystemClock::elapsedRealtime)
+        val stallRecovery = LiveWindowRecovery(android.os.SystemClock::elapsedRealtime)
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 playerIsBuffering = (playbackState == Player.STATE_BUFFERING)
@@ -3591,6 +3606,17 @@ fun LiveTvScreen(
                     exoPlayer.prepare()
                     exoPlayer.playWhenReady = true
                     System.err.println("[IPTV] Recovered expired live window at default live position")
+                    return
+                }
+                if (error.isStuckBuffering() && stallRecovery.claim(isCatchup = playingCatchupProgram != null)) {
+                    // A stalled live stream (buffer full, playback never resuming) gets a fresh
+                    // start at the live edge, at most once a minute and outside the retry budget,
+                    // so a long session can recover from more than three stalls.
+                    retryJob?.cancel()
+                    System.err.println("[IPTV] Live playback stalled; restarting the stream")
+                    prepareStream(prepared, isHls = lastPreparedIsHls, headers = lastPreparedHeaders, resetRetry = false,
+                        drmInfo = playingChannel?.source?.drmInfo, forcePrepare = true,
+                        resolvedMimeType = lastPreparedMimeType)
                     return
                 }
                 val preparedIsHls = lastPreparedIsHls
@@ -4715,6 +4741,7 @@ fun LiveTvScreen(
                             if (!visible) hudEngaged = false
                         },
                         hideSignal = hudHideSignal,
+                        refocusSignal = hudRefocusSignal,
                         // On a remote the controls wait for OK; on a touch device
                         // a tap is the only way to reach them, so they stay part
                         // of what a tap brings up, exactly as before.
@@ -4798,7 +4825,10 @@ fun LiveTvScreen(
             LaunchedEffect(isFullScreen, fullscreenGuideOpen, quickZapOpen, playingCatchupProgram, subtitlePickerOpen, audioPickerOpen) {
                 if (isFullScreen && !fullscreenGuideOpen && !quickZapOpen && !subtitlePickerOpen && !audioPickerOpen) {
                     delay(50L)
-                    runCatching { fsFocus.requestFocus() }
+                    // With the controls engaged the HUD places focus in its button row (it sits
+                    // inside this box, so the keys above still reach it); taking focus back here
+                    // left the row on screen but unreachable with left/right.
+                    if (!hudEngaged || isTouchDevice) runCatching { fsFocus.requestFocus() }
                 }
             }
         }
@@ -4876,7 +4906,7 @@ fun LiveTvScreen(
                 options = liveSubtitleOptions(liveTracks, stringResource(R.string.live_subtitles_off)),
                 onDismiss = {
                     subtitlePickerOpen = false
-                    hudPokeSignal++
+                    returnToHudControls()
                 },
                 onPick = { key ->
                     playingChannelId?.let { liveSubtitleChoices[it] = key }
@@ -4893,7 +4923,7 @@ fun LiveTvScreen(
                 options = liveAudioOptions(liveTracks),
                 onDismiss = {
                     audioPickerOpen = false
-                    hudPokeSignal++
+                    returnToHudControls()
                 },
                 onPick = { key ->
                     playingChannelId?.let { liveAudioChoices[it] = key }

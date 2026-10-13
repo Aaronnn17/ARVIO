@@ -1036,6 +1036,14 @@ class HomeViewModel @Inject constructor(
             .getOrNull()
     }
 
+    /** The profile's "Default subtitle" setting as a language for channel previews, or null when off. */
+    internal suspend fun previewSubtitleLanguage(): String? = runCatching {
+        val prefs = context.settingsDataStore.data.first()
+        com.arflix.tv.ui.screens.tv.live.subtitlePreferenceLanguage(
+            prefs[profileManager.profileStringKey("default_subtitle")]
+        )
+    }.onFailure { if (it is CancellationException) throw it }.getOrNull()
+
     /**
      * Looks up the channels behind IPTV cards this view model didn't build itself. Rows
      * preloaded at startup carry the cards but not their channels, and the full home load

@@ -17,7 +17,7 @@ import java.util.Locale
 /** "off" (subtitles only), or a track's normalized language (or its position when it has none). */
 internal const val LIVE_SUBTITLES_OFF = "off"
 
-internal data class LiveSubtitleOption(
+internal data class LiveTrackOption(
     val key: String,
     val label: String,
     val selected: Boolean,
@@ -75,15 +75,15 @@ internal fun resetLiveAudioChoice(player: Player, preferredLanguage: String?) {
         .build()
 }
 
-private fun liveTrackOptions(tracks: Tracks, type: Int, offLabel: String?, displayLocale: Locale): List<LiveSubtitleOption> {
+private fun liveTrackOptions(tracks: Tracks, type: Int, offLabel: String?, displayLocale: Locale): List<LiveTrackOption> {
     val list = typedTracks(tracks, type)
     if (list.isEmpty()) return emptyList()
-    val options = mutableListOf<LiveSubtitleOption>()
+    val options = mutableListOf<LiveTrackOption>()
     if (offLabel != null) {
-        options += LiveSubtitleOption(LIVE_SUBTITLES_OFF, offLabel, selected = list.none { it.selected })
+        options += LiveTrackOption(LIVE_SUBTITLES_OFF, offLabel, selected = list.none { it.selected })
     }
     list.distinctBy { it.key }.forEach { track ->
-        options += LiveSubtitleOption(track.key, track.label(displayLocale), selected = list.any { it.key == track.key && it.selected })
+        options += LiveTrackOption(track.key, track.label(displayLocale), selected = list.any { it.key == track.key && it.selected })
     }
     return options
 }

@@ -63,6 +63,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -123,6 +124,8 @@ fun FullscreenHud(
     onVisibilityChanged: ((Boolean) -> Unit)? = null,
     hideSignal: Int = 0,
     showControls: Boolean = true,
+    /** Bumped when a list opened from the controls (subtitles, audio) closes: focus returns to its button. */
+    refocusSignal: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     var visible by remember { mutableStateOf(true) }
@@ -166,6 +169,10 @@ fun FullscreenHud(
     var localIsPlaying by remember(isPlaying) { mutableStateOf(isPlaying) }
 
     val playPauseFocusRequester = remember { FocusRequester() }
+    val subtitlesFocusRequester = remember { FocusRequester() }
+    val audioFocusRequester = remember { FocusRequester() }
+    // The button whose list is open, so closing the list lands back on it.
+    var focusReturnTarget by remember { mutableStateOf<FocusRequester?>(null) }
     var initialFocusApplied by remember { mutableStateOf(false) }
 
     // Dismiss on request (Back), without leaving fullscreen.
@@ -194,17 +201,26 @@ fun FullscreenHud(
     //    set and swallowed the second open the same way.
     // Retrying costs nothing once focus has landed, and covers the row simply
     // not being attached yet on the frame the HUD fades in.
-    LaunchedEffect(visible, showControls) {
+    //
+    // Closing a list opened from the row (subtitles, audio) bumps `refocusSignal`: focus left
+    // the row for the list, so it is placed again, on the button that opened it.
+    LaunchedEffect(visible, showControls, refocusSignal) {
         if (touchControls) return@LaunchedEffect
         if (!visible || !showControls) {
             initialFocusApplied = false
         } else {
+            val returnTarget = focusReturnTarget
+            if (returnTarget != null) initialFocusApplied = false
             var attempts = 0
             while (!initialFocusApplied && attempts < ControlFocusAttempts) {
                 attempts++
                 delay(ControlFocusRetryMs)
-                if (runCatching { playPauseFocusRequester.requestFocus() }.isSuccess) {
+                // The last attempt falls back to play/pause, in case the button that opened the
+                // list is gone (its tracks changed while the list was open).
+                val target = returnTarget?.takeIf { attempts < ControlFocusAttempts } ?: playPauseFocusRequester
+                if (runCatching { target.requestFocus() }.isSuccess) {
                     initialFocusApplied = true
+                    focusReturnTarget = null
                 }
             }
         }
@@ -519,15 +535,12 @@ fun FullscreenHud(
                     )
 
                     // --- Row 3: Bottom Control Bar (Exact Centering & Time on Left) ---
-                    Box(
+                    HudControlBar(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(56.dp),
-                    ) {
-                        // Left Side: Time Text below Seek Bar
-                        Box(
-                            modifier = Modifier.align(Alignment.CenterStart),
-                        ) {
+                        start = {
+                            // Left Side: Time Text below Seek Bar
                             Text(
                                 text = positionText,
                                 style = LiveType.TimeMono.copy(
@@ -536,107 +549,166 @@ fun FullscreenHud(
                                     fontWeight = FontWeight.Medium,
                                 ),
                             )
-                        }
+                        },
+                        center = {
+                            // Centered Playback Controls Bar
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(if (touchControls) 12.dp else 16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                // Previous channel (|<)
+                                HudIconButton(
+                                    icon = Icons.Filled.SkipPrevious,
+                                    contentDescription = stringResource(R.string.live_cd_previous_channel),
+                                    onClick = { onPreviousCatchupClick?.invoke() },
+                                )
 
-                        // EXACT CENTER: Playback Controls Bar
-                        Row(
-                            modifier = Modifier.align(Alignment.Center),
-                            horizontalArrangement = Arrangement.spacedBy(if (touchControls) 12.dp else 16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            // Previous channel (|<)
-                            HudIconButton(
-                                icon = Icons.Filled.SkipPrevious,
-                                contentDescription = stringResource(R.string.live_cd_previous_channel),
-                                onClick = { onPreviousCatchupClick?.invoke() },
-                            )
+                                // Rewind (<<)
+                                HudIconButton(
+                                    icon = Icons.Filled.FastRewind,
+                                    contentDescription = stringResource(R.string.live_cd_rewind),
+                                    onClick = { onRewindClick?.invoke() },
+                                )
 
-                            // Rewind (<<)
-                            HudIconButton(
-                                icon = Icons.Filled.FastRewind,
-                                contentDescription = stringResource(R.string.live_cd_rewind),
-                                onClick = { onRewindClick?.invoke() },
-                            )
+                                // Central Play/Pause button
+                                HudIconButton(
+                                    icon = if (localIsPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                    contentDescription = stringResource(if (localIsPlaying) R.string.live_cd_pause else R.string.play),
+                                    emphasis = true,
+                                    focusRequester = playPauseFocusRequester,
+                                    onClick = {
+                                        localIsPlaying = !localIsPlaying
+                                        onPlayPauseClick?.invoke()
+                                    },
+                                )
 
-                            // Central Play/Pause button
-                            HudIconButton(
-                                icon = if (localIsPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                contentDescription = stringResource(if (localIsPlaying) R.string.live_cd_pause else R.string.play),
-                                emphasis = true,
-                                focusRequester = playPauseFocusRequester,
-                                onClick = {
-                                    localIsPlaying = !localIsPlaying
-                                    onPlayPauseClick?.invoke()
-                                },
-                            )
+                                // Fast Forward (>>)
+                                HudIconButton(
+                                    icon = Icons.Filled.FastForward,
+                                    contentDescription = stringResource(R.string.live_cd_fast_forward),
+                                    onClick = { onFastForwardClick?.invoke() },
+                                )
 
-                            // Fast Forward (>>)
-                            HudIconButton(
-                                icon = Icons.Filled.FastForward,
-                                contentDescription = stringResource(R.string.live_cd_fast_forward),
-                                onClick = { onFastForwardClick?.invoke() },
-                            )
-
-                            // Next channel (>|)
-                            HudIconButton(
-                                icon = Icons.Filled.SkipNext,
-                                contentDescription = stringResource(R.string.live_cd_next_channel),
-                                onClick = { onNextCatchupClick?.invoke() },
-                            )
-                        }
-
-                        // Right Side: Replay, LIVE, GUIDE
-                        Row(
-                            modifier = Modifier.align(Alignment.CenterEnd),
-                            horizontalArrangement = Arrangement.spacedBy(if (touchControls) 8.dp else 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            // Replay / Restart
-                            HudIconButton(
-                                icon = Icons.Filled.Replay,
-                                contentDescription = stringResource(R.string.live_cd_replay),
-                                onClick = { onReplayClick?.invoke() },
-                            )
-
-                            // LIVE button
-                            if (isCatchupMode) {
-                                HudActionButton(
-                                    label = stringResource(R.string.live_badge_live),
-                                    onClick = { onGoLiveClick?.invoke() },
+                                // Next channel (>|)
+                                HudIconButton(
+                                    icon = Icons.Filled.SkipNext,
+                                    contentDescription = stringResource(R.string.live_cd_next_channel),
+                                    onClick = { onNextCatchupClick?.invoke() },
                                 )
                             }
+                        },
+                        end = {
+                            // Right Side: Replay, LIVE, GUIDE
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(if (touchControls) 8.dp else 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                // Replay / Restart
+                                HudIconButton(
+                                    icon = Icons.Filled.Replay,
+                                    contentDescription = stringResource(R.string.live_cd_replay),
+                                    onClick = { onReplayClick?.invoke() },
+                                )
 
-                            if (onAudioClick != null) {
-                                HudActionButton(
-                                    label = stringResource(R.string.live_audio),
-                                    onClick = onAudioClick,
-                                )
+                                // LIVE button
+                                if (isCatchupMode) {
+                                    HudActionButton(
+                                        label = stringResource(R.string.live_badge_live),
+                                        onClick = { onGoLiveClick?.invoke() },
+                                    )
+                                }
+
+                                if (onAudioClick != null) {
+                                    HudActionButton(
+                                        label = stringResource(R.string.live_audio),
+                                        focusRequester = audioFocusRequester,
+                                        onClick = {
+                                            focusReturnTarget = audioFocusRequester
+                                            onAudioClick()
+                                        },
+                                    )
+                                }
+                                if (onSubtitlesClick != null) {
+                                    HudActionButton(
+                                        label = stringResource(R.string.live_subtitles),
+                                        focusRequester = subtitlesFocusRequester,
+                                        onClick = {
+                                            focusReturnTarget = subtitlesFocusRequester
+                                            onSubtitlesClick()
+                                        },
+                                    )
+                                }
+                                // Guide button at far right
+                                if (onOpenVariants != null) {
+                                    HudActionButton(
+                                        label = stringResource(R.string.live_label_choose_source),
+                                        onClick = onOpenVariants,
+                                    )
+                                }
+                                if (onGuideClick != null) {
+                                    HudActionButton(
+                                        label = stringResource(R.string.live_btn_guide),
+                                        onClick = onGuideClick,
+                                    )
+                                }
                             }
-                            if (onSubtitlesClick != null) {
-                                HudActionButton(
-                                    label = stringResource(R.string.live_subtitles),
-                                    onClick = onSubtitlesClick,
-                                )
-                            }
-                            // Guide button at far right
-                            if (onOpenVariants != null) {
-                                HudActionButton(
-                                    label = stringResource(R.string.live_label_choose_source),
-                                    onClick = onOpenVariants,
-                                )
-                            }
-                            if (onGuideClick != null) {
-                                HudActionButton(
-                                    label = stringResource(R.string.live_btn_guide),
-                                    onClick = onGuideClick,
-                                )
-                            }
-                        }
-                    }
+                        },
+                    )
                 }
             }
         }
     }
+}
+
+/**
+ * The bottom button row: time at the start, playback controls centred, actions at the end.
+ * The controls stay exactly centred while there is room; when the actions grow wide enough to
+ * reach them (subtitle and audio buttons, the catch-up LIVE button) they slide aside instead
+ * of being drawn on top of each other.
+ */
+@Composable
+private fun HudControlBar(
+    modifier: Modifier,
+    start: @Composable () -> Unit,
+    center: @Composable () -> Unit,
+    end: @Composable () -> Unit,
+) {
+    Layout(
+        modifier = modifier,
+        content = {
+            Box { start() }
+            Box { center() }
+            Box { end() }
+        },
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val startPlaceable = measurables[0].measure(loose)
+        val centerPlaceable = measurables[1].measure(loose)
+        val endPlaceable = measurables[2].measure(loose)
+        val width = constraints.maxWidth
+        val height = constraints.maxHeight
+        val gap = 16.dp.roundToPx()
+        val centerX = hudCenterGroupX(
+            width = width,
+            startWidth = startPlaceable.width,
+            centerWidth = centerPlaceable.width,
+            endWidth = endPlaceable.width,
+            gap = gap,
+        )
+        layout(width, height) {
+            startPlaceable.placeRelative(0, (height - startPlaceable.height) / 2)
+            centerPlaceable.placeRelative(centerX, (height - centerPlaceable.height) / 2)
+            endPlaceable.placeRelative(width - endPlaceable.width, (height - endPlaceable.height) / 2)
+        }
+    }
+}
+
+/** Where the centred group starts: the exact centre, moved only as far as needed to clear both sides. */
+internal fun hudCenterGroupX(width: Int, startWidth: Int, centerWidth: Int, endWidth: Int, gap: Int): Int {
+    val centered = (width - centerWidth) / 2
+    val maxX = width - endWidth - gap - centerWidth
+    val minX = startWidth + gap
+    return if (maxX < minX) minX else centered.coerceIn(minX, maxX)
 }
 
 @Composable
@@ -826,11 +898,13 @@ private fun formatPlaybackDuration(ms: Long): String {
 private fun HudActionButton(
     label: String,
     onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
 ) {
     var isFocused by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .clip(RoundedCornerShape(999.dp))
             .onFocusChanged { isFocused = it.isFocused }
             .background(if (isFocused) Color.White else liveAccent())

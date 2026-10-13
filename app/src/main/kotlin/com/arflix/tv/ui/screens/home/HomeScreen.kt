@@ -549,7 +549,7 @@ private fun createHomeHeroPlaybackHandles(context: Context): HomeHeroPlaybackHan
     // The hero previews favorite IPTV channels, so it needs the same non-IDR keyframe
     // extractors as the TV screens or those channels stall on the home screen.
     val heroHlsFactory = HlsMediaSource.Factory(heroDataSourceFactory)
-        .setAllowChunklessPreparation(true)
+        .setAllowChunklessPreparation(com.arflix.tv.ui.screens.tv.live.IPTV_HLS_CHUNKLESS_PREPARATION)
         .setExtractorFactory(com.arflix.tv.ui.screens.tv.live.iptvHlsExtractorFactory())
     val heroDefaultFactory = DefaultMediaSourceFactory(context, com.arflix.tv.ui.screens.tv.live.iptvExtractorsFactory())
         .setDataSourceFactory(heroDataSourceFactory)
@@ -1161,8 +1161,16 @@ fun HomeScreen(
                 val iptvTarget = displayHeroItem
                     ?.takeIf { isHeroIptv }
                     ?.let { viewModel.resolveIptvPreviewTarget(it.id) }
+                // Channel previews show the profile's default subtitle language, as the Live TV
+                // screen does; trailers and other previews keep the player's no-subtitle default.
+                val subtitleLanguage = if (isHeroIptv) viewModel.previewSubtitleLanguage() else null
                 player?.stop()
                 player?.clearMediaItems()
+                player?.let { p ->
+                    p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                        .setPreferredTextLanguages(*listOfNotNull(subtitleLanguage).toTypedArray())
+                        .build()
+                }
                 val useHls = homeHeroUsesHls(heroVideoUrl, iptvTarget?.isHls == true)
                 val mi = androidx.media3.common.MediaItem.Builder()
                     .setUri(iptvTarget?.url ?: heroVideoUrl)
