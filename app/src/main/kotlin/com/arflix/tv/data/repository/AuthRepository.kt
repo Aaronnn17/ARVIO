@@ -925,10 +925,14 @@ class AuthRepository @Inject constructor(
         ).forEach { store -> runCatching { store.edit { prefs -> prefs.clear() } } }
         runCatching { traktOutboxProvider.get().clearAll() }
         runCatching { pluginDataStoreProvider.get().clearAll() }
-        runCatching { telegramRepositoryProvider.get().disconnect() }
         runCatching { launcherContinueWatchingProvider.get().clearPublishedPrograms() }
-        runCatching { com.arflix.tv.network.OkHttpProvider.clearHttpCache() }
-        runCatching { withContext(Dispatchers.IO) { deleteAccountLocalFiles(context) } }
+        // Deleting the Telegram files and the HTTP cache walks large directories: keep it off the
+        // main thread, where sign-out is started, and finish it before the app restarts.
+        withContext(Dispatchers.IO) {
+            runCatching { telegramRepositoryProvider.get().disconnect() }
+            runCatching { com.arflix.tv.network.OkHttpProvider.clearHttpCache() }
+            runCatching { deleteAccountLocalFiles(context) }
+        }
 
         _userProfile.value = null
         _authState.value = AuthState.NotAuthenticated

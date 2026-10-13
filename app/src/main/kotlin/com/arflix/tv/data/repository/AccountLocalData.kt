@@ -16,12 +16,17 @@ internal object AccountLocalData {
     const val CONTINUE_WATCHING_PREFIX = "home_continue_watching_"
     const val HOME_ROWS_PREFIX = "home_categories_cache_"
 
-    /** IPTV resolver and guide caches built from the account's playlists. */
+    /**
+     * IPTV resolver and guide caches built from the account's playlists, the Discord login (it
+     * reconnects by itself after the restart) and the SIMKL V2 grants of every profile.
+     */
     val accountSharedPrefs = listOf(
         "arvio_iptv_prefs",
         "iptv_movie_source_cache_v1",
         "iptv_series_resolver_cache_v1",
-        "arvio_epg_http_cache"
+        "arvio_epg_http_cache",
+        "discord_rpc_prefs",
+        "simkl_lists_v2"
     )
 
     /** The account's IPTV channel list and guide index. */

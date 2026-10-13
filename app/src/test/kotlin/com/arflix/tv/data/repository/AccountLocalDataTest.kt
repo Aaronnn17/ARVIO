@@ -36,6 +36,10 @@ class AccountLocalDataTest {
             file(cache, "release-calendar-v1/week.json")
         )
         context.getSharedPreferences("arvio_iptv_prefs", Context.MODE_PRIVATE).edit().putString("k", "v").commit()
+        context.getSharedPreferences("discord_rpc_prefs", Context.MODE_PRIVATE).edit()
+            .putString("access_token", "token").putString("refresh_token", "refresh").commit()
+        context.getSharedPreferences("simkl_lists_v2", Context.MODE_PRIVATE).edit()
+            .putString("grant_p1", "encrypted").putString("grant_p2", "encrypted").commit()
         context.getSharedPreferences("app_locale", Context.MODE_PRIVATE).edit().putString("locale_tag", "he").commit()
         context.openOrCreateDatabase("arvio_iptv_channels.db", Context.MODE_PRIVATE, null).close()
 
@@ -44,6 +48,10 @@ class AccountLocalDataTest {
         account.forEach { assertFalse("${it.name} should be gone", it.exists()) }
         device.forEach { assertTrue("${it.name} should stay", it.exists()) }
         assertNull(context.getSharedPreferences("arvio_iptv_prefs", Context.MODE_PRIVATE).getString("k", null))
+        assertTrue("the Discord login must not survive sign-out",
+            context.getSharedPreferences("discord_rpc_prefs", Context.MODE_PRIVATE).all.isEmpty())
+        assertTrue("no profile's SIMKL V2 grant may survive sign-out",
+            context.getSharedPreferences("simkl_lists_v2", Context.MODE_PRIVATE).all.isEmpty())
         assertEquals("he", context.getSharedPreferences("app_locale", Context.MODE_PRIVATE).getString("locale_tag", null))
         assertFalse(context.getDatabasePath("arvio_iptv_channels.db").exists())
     }
