@@ -5395,6 +5395,9 @@ class SettingsViewModel @Inject constructor(
                 toastMessage = SettingsMessage.Res(R.string.settings_signed_out),
                 toastType = ToastType.SUCCESS
             )
+            // Repositories still hold the signed-out account in memory (addons, IPTV, rows).
+            // A fresh process is the one state that cannot leak any of it into the next sign-in.
+            com.arflix.tv.util.restartApp(context)
         }
     }
 
