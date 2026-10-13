@@ -32,6 +32,14 @@ test('campaign navigation links to an account using expiring session storage and
   assert.equal(f.values.has('arvio.premium.attribution.v1'), false);
 });
 
+test('membership entry placement does not overwrite the original campaign source', async () => {
+  const f = fixture();
+  await f.module.trackPremiumEvent(f.auth, 'checkout_opened', { entry: 'trial_nav' });
+  assert.equal(f.requests[0].metadata.source, 'discord');
+  assert.equal(f.requests[0].metadata.entry, 'trial_nav');
+  assert.equal(f.requests[0].journey_id, id);
+});
+
 test('a new signed-in account and expired sessions cannot inherit the previous campaign', async () => {
   const f = fixture();
   await f.module.trackPremiumEvent(f.auth, 'paywall_view');
