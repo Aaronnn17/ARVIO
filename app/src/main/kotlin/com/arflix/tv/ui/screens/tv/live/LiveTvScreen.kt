@@ -2380,9 +2380,12 @@ fun LiveTvScreen(
 
     // Dismissing the controls takes the focused button out of composition, so
     // hand the focus back to the playback surface — otherwise the next key
-    // press lands nowhere and the remote looks dead.
+    // press lands nowhere and the remote looks dead. An open subtitle or audio list keeps the
+    // focus: the HUD timing out behind it must not hand the arrows back to channel zapping.
     LaunchedEffect(isHudVisible) {
-        if (!isHudVisible && isFullScreen && !fullscreenGuideOpen && !quickZapOpen) {
+        if (!isHudVisible && isFullScreen && !fullscreenGuideOpen && !quickZapOpen &&
+            !subtitlePickerOpen && !audioPickerOpen
+        ) {
             runCatching { fsFocus.requestFocus() }
         }
     }
