@@ -1,6 +1,5 @@
 package com.arflix.tv.ui.screens.tv.live
 
-import androidx.media3.exoplayer.hls.DefaultHlsExtractorFactory
 import androidx.media3.exoplayer.hls.HlsExtractorFactory
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ExtractorsFactory
@@ -22,11 +21,14 @@ import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
  */
 internal const val IPTV_HLS_CHUNKLESS_PREPARATION = false
 
-/** HLS extractors for IPTV that also start video on a non-IDR I-frame. */
+/**
+ * HLS extractors for IPTV that also start video on a non-IDR I-frame, and that keep every DVB
+ * subtitle language of a channel ([IptvHlsExtractorFactory]).
+ */
 internal fun iptvHlsExtractorFactory(): HlsExtractorFactory =
-    DefaultHlsExtractorFactory(
+    IptvHlsExtractorFactory(
         DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES,
-        /* exposeCea608WhenMissingDeclarations= */ true
+        exposeCea608WhenMissingDeclarations = true,
     )
 
 /** Progressive (raw MPEG-TS) extractors for IPTV that also start video on a non-IDR I-frame. */
