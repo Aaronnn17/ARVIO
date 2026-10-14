@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated: September 22, 2026**
+**Last updated: October 14, 2026**
 
 ## 1. Scope And Controller
 
@@ -30,17 +30,21 @@ The legal basis for account authentication and requested cloud sync is performan
 
 ## 4. Diagnostics And Usage Measurement
 
-Release builds can send limited diagnostics and usage information when **Share diagnostics and usage** is enabled in Settings. This is a device-local choice and is not cloud-synced.
+Release builds have two independent, device-local choices in Settings: **Share crash diagnostics** and **Share usage statistics**. Neither choice is cloud-synced. Usage statistics are off by default. Existing crash-reporting preferences are preserved.
 
 ### Crash diagnostics
 
-ARVIO can send crash stack traces, exception details, app version and build, device model, Android version, and limited diagnostic breadcrumbs to Sentry. A build configured for Firebase may use Firebase Crashlytics as a fallback. ARVIO disables default PII collection, screenshots, view hierarchy, network breadcrumbs, and user-interaction breadcrumbs. App-provided diagnostic logs are sanitized to remove URLs, email addresses, tokens, and IP addresses. Exception text and infrastructure transport can still contain personal data such as an IP address, so ARVIO does not describe crash reports as anonymous.
+ARVIO can send Java/Kotlin and native crash stack traces, exception details, app version and build, device model, Android version, and limited diagnostic breadcrumbs to Firebase Crashlytics. Older Android devices can send a bounded non-fatal report when the foreground UI freezes. No screenshots or session recordings are collected. App-provided diagnostic logs are sanitized to remove URLs, email addresses, tokens, and IP addresses. Exception text and infrastructure transport can still contain personal data such as an IP address, so ARVIO does not describe crash reports as anonymous. New builds no longer contain the Sentry SDK; older installed builds can continue reporting to Sentry until updated.
+
+### Optional usage statistics
+
+When you enable **Share usage statistics**, Firebase Analytics measures sessions, fixed screen names, playback startup time, playback error codes, and a bounded buffering sample. It uses an app-instance identifier and device/app information. ARVIO does not send watched titles, searches, provider URLs, account identifiers or email addresses to Firebase Analytics. Advertising identifiers, ad storage, advertising personalization and automatic screen reporting are disabled. Disabling usage statistics stops collection and resets the local Analytics state. These optional statistics use your consent; declining them does not affect playback or cloud sync.
 
 ### App-open measurement
 
 At most once per 24 hours, ARVIO can send an `app_open` event containing a random install identifier, app version, Android API level, device type, distribution type, and account/profile identifiers when signed in. The backend converts direct identifiers into keyed pseudonymous values before storing the event. This measurement is used only to estimate daily and weekly active use and release adoption; it is not used for advertising or user profiling.
 
-These activities are based on ARVIO's legitimate interests in finding crashes, measuring release health, and maintaining a reliable service (Article 6(1)(f)). You can object at any time by turning **Share diagnostics and usage** off in Settings. Turning it off does not affect playback, accounts, or cloud sync.
+Crash diagnostics are based on ARVIO's legitimate interests in finding crashes and maintaining a reliable service (Article 6(1)(f)); you can object by turning **Share crash diagnostics** off. The app-open measurement above runs only with the separate usage-statistics opt-in. Turning either choice off does not affect playback, accounts, or cloud sync.
 
 ### Website analytics and the ARVIO Premium funnel
 
@@ -64,8 +68,7 @@ Data is also sent to services you deliberately use or connect:
 | --- | --- | --- |
 | Netlify infrastructure | ARVIO websites, account functions, cloud sync, and storage | [netlify.com/privacy](https://www.netlify.com/privacy/) |
 | Resend | Account verification and password-reset email delivery | [resend.com/legal/privacy-policy](https://resend.com/legal/privacy-policy) |
-| Sentry | Crash reporting and diagnostics when enabled | [sentry.io/privacy](https://sentry.io/privacy/) |
-| Firebase Crashlytics | Crash-reporting fallback in configured builds | [firebase.google.com/support/privacy](https://firebase.google.com/support/privacy) |
+| Firebase Crashlytics and Google Analytics for Firebase | Optional crash diagnostics and separately opted-in usage statistics | [firebase.google.com/support/privacy](https://firebase.google.com/support/privacy) |
 | TMDB | Movie and TV metadata and images | [themoviedb.org/privacy-policy](https://www.themoviedb.org/privacy-policy) |
 | Trakt.tv | Optional watch history, progress, ratings, and watchlist sync | [trakt.tv/privacy](https://trakt.tv/privacy) |
 | Discord | Optional Rich Presence login and the title/playback status you choose to display | [discord.com/privacy](https://discord.com/privacy) |
@@ -83,7 +86,7 @@ ARVIO sends only the data needed for the requested integration. Third-party serv
 - Public Premium navigation events are removed after a 30-day calendar window, and measurement rate-limit records after two days. Cleanup runs periodically.
 - Completed Premium trial email jobs are removed within 14 days. Pending jobs contain an encrypted email address only until delivery finishes or retries end.
 - Password-reset and device-pairing codes expire after a short operational period.
-- Crash diagnostics follow the configured Sentry or Firebase retention period and are kept only as long as needed to investigate app stability.
+- Crash diagnostics follow Firebase retention; historical Sentry reports remain subject to its retention. Analytics follows the configured Google Analytics retention. Data is kept only as long as needed to investigate stability and service usage.
 - Infrastructure security logs follow the hosting provider's operational retention schedule.
 
 ARVIO may keep data longer where required by law, to resolve a dispute, or to prevent abuse, and will keep only what is necessary for that purpose.

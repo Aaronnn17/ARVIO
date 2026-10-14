@@ -763,7 +763,7 @@ fun SettingsScreen(
             "catalogs" -> uiState.catalogs.size + 2 // Add + Import + Built-in collections toggle + catalogs
             "stremio" -> stremioAddons.size + 2 // rows + refresh + community + add button
             "plugins" -> pluginsMaxIndex
-            "accounts" -> 16 // Includes About & Credits.
+            "accounts" -> 17 // Includes About & Credits and device-local usage opt-in.
             else -> 0
         }
     }
@@ -1824,6 +1824,7 @@ fun SettingsScreen(
                                                 14 -> openExternalUrl(context, PRIVACY_POLICY_URL)
                                                 15 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
                                                 16 -> showCredits = true
+                                                17 -> viewModel.setUsageStatisticsEnabled(!uiState.usageStatisticsEnabled)
                                             }
                                         }
                                         "plugins" -> {
@@ -2453,6 +2454,7 @@ fun SettingsScreen(
                             isForceCloudSyncing = uiState.isForceCloudSyncing,
                             lastCloudSyncStatus = uiState.lastCloudSyncStatus?.localizedText(),
                             diagnosticsSharingEnabled = uiState.diagnosticsSharingEnabled,
+                            usageStatisticsEnabled = uiState.usageStatisticsEnabled,
                             isSelfUpdateSupported = uiState.isSelfUpdateSupported,
                             updateStatus = uiState.updateStatus,
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
@@ -2483,6 +2485,7 @@ fun SettingsScreen(
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
                             onInstallUpdate = { viewModel.installAppUpdateOrRequestPermission() },
                             onDiagnosticsSharingToggle = viewModel::setDiagnosticsSharingEnabled,
+                            onUsageStatisticsToggle = viewModel::setUsageStatisticsEnabled,
                             onOpenPrivacy = { openExternalUrl(context, PRIVACY_POLICY_URL) },
                             onOpenCredits = { showCredits = true },
                             onOpenDataDeletion = { openExternalUrl(context, ACCOUNT_DELETION_URL) },
@@ -6259,6 +6262,15 @@ private fun MobilePrivacySubPage(
 ) {
     val context = LocalContext.current
     MobileSettingsCategory(title = stringResource(R.string.settings_diagnostics_sharing).uppercase()) {
+        MobileSettingsRow(
+            icon = Icons.Default.Settings,
+            title = stringResource(R.string.settings_usage_statistics),
+            subtitle = stringResource(R.string.settings_usage_statistics_desc),
+            value = stringResource(if (uiState.usageStatisticsEnabled) R.string.on else R.string.off),
+            toggleChecked = uiState.usageStatisticsEnabled,
+            isFocused = false,
+            onClick = { viewModel.setUsageStatisticsEnabled(!uiState.usageStatisticsEnabled) }
+        )
         MobileSettingsRow(
             icon = Icons.Default.Settings,
             title = stringResource(R.string.settings_diagnostics_sharing),
@@ -10502,6 +10514,7 @@ private fun AccountsSettings(
     isForceCloudSyncing: Boolean,
     lastCloudSyncStatus: String?,
     diagnosticsSharingEnabled: Boolean,
+    usageStatisticsEnabled: Boolean,
     isSelfUpdateSupported: Boolean,
     updateStatus: com.arflix.tv.updater.UpdateStatus,
     focusedIndex: Int,
@@ -10515,6 +10528,7 @@ private fun AccountsSettings(
     onCheckUpdates: () -> Unit,
     onInstallUpdate: () -> Unit,
     onDiagnosticsSharingToggle: (Boolean) -> Unit,
+    onUsageStatisticsToggle: (Boolean) -> Unit,
     onOpenPrivacy: () -> Unit,
     onOpenDataDeletion: () -> Unit,
     onOpenCredits: () -> Unit,
@@ -10791,6 +10805,15 @@ private fun AccountsSettings(
             isFocused = focusedIndex == 16,
             onClick = onOpenCredits,
             modifier = Modifier.settingsFocusSlot(16)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        SettingsToggleRow(
+            title = stringResource(R.string.settings_usage_statistics),
+            subtitle = stringResource(R.string.settings_usage_statistics_desc),
+            isEnabled = usageStatisticsEnabled,
+            isFocused = focusedIndex == 17,
+            onToggle = onUsageStatisticsToggle,
+            modifier = Modifier.settingsFocusSlot(17)
         )
     }
 }
