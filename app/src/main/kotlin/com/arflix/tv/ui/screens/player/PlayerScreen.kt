@@ -1257,6 +1257,7 @@ fun PlayerScreen(
                 })
 
                 // Add error listener to try next stream on codec errors
+                addListener(com.arflix.tv.util.UsageAnalytics.playbackListener(live = false))
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         currentPlaybackState = playbackState

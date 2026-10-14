@@ -245,6 +245,7 @@ data class SettingsUiState(
     val volumeBoostDb: Int = 0,
     val showLoadingStats: Boolean = true,
     val diagnosticsSharingEnabled: Boolean = true,
+    val usageStatisticsEnabled: Boolean = false,
     val includeSpecials: Boolean = false,
     val isLoggedIn: Boolean = false,
     val accountEmail: String? = null,
@@ -594,7 +595,8 @@ class SettingsViewModel @Inject constructor(
 
     init {
         _uiState.value = _uiState.value.copy(
-            diagnosticsSharingEnabled = DiagnosticsManager.isReportingEnabled(context)
+            diagnosticsSharingEnabled = DiagnosticsManager.isReportingEnabled(context),
+            usageStatisticsEnabled = DiagnosticsManager.isUsageEnabled(context)
         )
         loadSettings()
         observeProfileChanges()
@@ -673,6 +675,11 @@ class SettingsViewModel @Inject constructor(
     fun setDiagnosticsSharingEnabled(enabled: Boolean) {
         DiagnosticsManager.setReportingEnabled(context, enabled)
         _uiState.value = _uiState.value.copy(diagnosticsSharingEnabled = enabled)
+    }
+
+    fun setUsageStatisticsEnabled(enabled: Boolean) {
+        DiagnosticsManager.setUsageEnabled(context, enabled)
+        _uiState.value = _uiState.value.copy(usageStatisticsEnabled = enabled)
     }
 
     private fun loadSettings() {

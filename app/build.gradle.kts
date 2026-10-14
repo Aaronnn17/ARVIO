@@ -3,6 +3,7 @@ import java.net.URI
 import java.security.MessageDigest
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import com.google.firebase.crashlytics.buildtools.gradle.CrashlyticsExtension
 
 plugins {
     id("com.android.application")
@@ -17,9 +18,8 @@ plugins {
     id("com.google.android.libraries.mapsplatform.secrets-gradle-plugin")
     id("io.gitlab.arturbosch.detekt")
     kotlin("plugin.serialization")
-    // Firebase Crashlytics - uncomment after adding google-services.json
-    // id("com.google.gms.google-services")
-    // id("com.google.firebase.crashlytics")
+    id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 // On-device speech recognition for sync by hearing (sherpa-onnx, Apache-2.0). The AAR is ~50 MB, so it is downloaded once into libs/ (git-ignored)
@@ -201,6 +201,9 @@ android {
 
             // Build config fields for release
             buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "true")
+            configure<CrashlyticsExtension> {
+                nativeSymbolUploadEnabled = true
+            }
         }
 
         debug {
@@ -211,6 +214,15 @@ android {
 
             // Build config fields for debug
             buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "false")
+        }
+
+        // Isolated telemetry verification; test controls never enter a release APK.
+        create("diagnostics") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".beta"
+            versionNameSuffix = "-diagnostics"
+            matchingFallbacks += "debug"
+            buildConfigField("Boolean", "ENABLE_CRASH_REPORTING", "true")
         }
 
         // Beta build: release-grade optimizations in a separate package so it
@@ -324,8 +336,9 @@ ksp {
     configurations.all {
         resolutionStrategy {
             force("org.jetbrains.kotlin:kotlin-metadata-jvm:2.3.0")
-            force("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
-            force("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+            force("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+            force("org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2")
+            force("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
         }
     }
 
@@ -434,7 +447,7 @@ ksp {
     implementation("org.jsoup:jsoup:1.17.2")
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     // Image loading - Coil
     implementation("io.coil-kt:coil-compose:2.5.0")
@@ -445,12 +458,15 @@ ksp {
     // Supabase (optional - for cloud sync)
     implementation("io.github.jan-tennert.supabase:postgrest-kt:2.0.4")
     implementation("io.github.jan-tennert.supabase:gotrue-kt:2.0.4")
-    implementation("io.ktor:ktor-client-android:2.3.7")
+    // Ktor 2.3.12+ removes an internal-coroutines ABI dependency that crashes
+    // the Telegram proxy with the coroutines version required by Firebase Sessions.
+    implementation(platform("io.ktor:ktor-bom:2.3.13"))
+    implementation("io.ktor:ktor-client-android:2.3.13")
     // Ktor server modules used by Telegram streaming proxy
-    implementation("io.ktor:ktor-server-core:2.3.7")
-    implementation("io.ktor:ktor-server-cio:2.3.7")
-    implementation("io.ktor:ktor-server-call-logging:2.3.7")
-    implementation("io.ktor:ktor-server-host-common:2.3.7")
+    implementation("io.ktor:ktor-server-core:2.3.13")
+    implementation("io.ktor:ktor-server-cio:2.3.13")
+    implementation("io.ktor:ktor-server-call-logging:2.3.13")
+    implementation("io.ktor:ktor-server-host-common:2.3.13")
 
     // DataStore for preferences
     implementation("androidx.datastore:datastore-preferences:1.0.0")
@@ -479,12 +495,11 @@ ksp {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Firebase Crashlytics - optional, works when google-services.json is present
-    implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
-    implementation("com.google.firebase:firebase-crashlytics-ktx")
-
-    // Sentry crash reporting. Runtime initialization is gated by BuildConfig.ENABLE_CRASH_REPORTING
-    // and SENTRY_DSN from secrets.properties/secrets.defaults.properties.
-    implementation("io.sentry:sentry-android:8.40.0")
+    // BoM 35 raises minSdk to 24; retain support for existing API 23 sideload devices.
+    implementation(platform("com.google.firebase:firebase-bom:34.14.1"))
+    implementation("com.google.firebase:firebase-crashlytics")
+    implementation("com.google.firebase:firebase-crashlytics-ndk")
+    implementation("com.google.firebase:firebase-analytics")
 
     baselineProfile(project(":benchmark"))
 
@@ -513,7 +528,7 @@ ksp {
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     add("testSideloadImplementation", "com.squareup.okhttp3:mockwebserver:5.3.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("io.mockk:mockk:1.13.8")
     testImplementation("app.cash.turbine:turbine:1.0.0")  // Flow testing
     testImplementation("com.google.truth:truth:1.1.5")    // Better assertions
@@ -528,7 +543,7 @@ ksp {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.2.0")
     androidTestImplementation("io.mockk:mockk-android:1.13.8")
-    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
 }
 
 secrets {
@@ -542,6 +557,7 @@ secrets {
     ignoreList.add("sdk.*")
     ignoreList.add("APP_ANON_KEY")
     ignoreList.add("SIMKL_CLIENT_SECRET")
+    ignoreList.add("SENTRY_DSN")
     ignoreList.add("TELEGRAM_API_ID")
     ignoreList.add("TELEGRAM_API_HASH")
 }

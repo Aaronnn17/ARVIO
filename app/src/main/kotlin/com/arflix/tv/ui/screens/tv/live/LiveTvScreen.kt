@@ -3566,6 +3566,8 @@ fun LiveTvScreen(
         var retryJob: Job? = null
         val liveWindowRecovery = LiveWindowRecovery(android.os.SystemClock::elapsedRealtime)
         val stallRecovery = LiveWindowRecovery(android.os.SystemClock::elapsedRealtime)
+        val usageListener = com.arflix.tv.util.UsageAnalytics.playbackListener(live = true)
+        exoPlayer.addListener(usageListener)
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 playerIsBuffering = (playbackState == Player.STATE_BUFFERING)
@@ -3723,6 +3725,7 @@ fun LiveTvScreen(
         onDispose {
             retryJob?.cancel()
             exoPlayer.removeListener(listener)
+            exoPlayer.removeListener(usageListener)
         }
     }
 
