@@ -2,6 +2,7 @@
 
 package com.arflix.tv.ui.screens.home
 
+import com.arflix.tv.ui.screens.tv.live.withLiveSubtitleDefault
 import com.arflix.tv.ui.components.LocalBottomBarInset
 import com.arflix.tv.ui.components.LocalBottomBarHeight
 import androidx.activity.compose.BackHandler
@@ -549,7 +550,7 @@ private fun createHomeHeroPlaybackHandles(context: Context): HomeHeroPlaybackHan
     // The hero previews favorite IPTV channels, so it needs the same non-IDR keyframe
     // extractors as the TV screens or those channels stall on the home screen.
     val heroHlsFactory = HlsMediaSource.Factory(heroDataSourceFactory)
-        .setAllowChunklessPreparation(true)
+        .setAllowChunklessPreparation(com.arflix.tv.ui.screens.tv.live.IPTV_HLS_CHUNKLESS_PREPARATION)
         .setExtractorFactory(com.arflix.tv.ui.screens.tv.live.iptvHlsExtractorFactory())
     val heroDefaultFactory = DefaultMediaSourceFactory(context, com.arflix.tv.ui.screens.tv.live.iptvExtractorsFactory())
         .setDataSourceFactory(heroDataSourceFactory)
@@ -1161,8 +1162,17 @@ fun HomeScreen(
                 val iptvTarget = displayHeroItem
                     ?.takeIf { isHeroIptv }
                     ?.let { viewModel.resolveIptvPreviewTarget(it.id) }
+                // Channel previews follow the profile's default subtitle setting, as the Live TV
+                // screen does. Trailers and other previews share this player, so they get the
+                // player's own defaults back rather than whatever the last channel set.
+                val subtitleDefault = if (isHeroIptv) viewModel.previewSubtitleDefault() else null
                 player?.stop()
                 player?.clearMediaItems()
+                player?.let { p ->
+                    p.trackSelectionParameters = subtitleDefault
+                        ?.let { p.trackSelectionParameters.withLiveSubtitleDefault(it) }
+                        ?: androidx.media3.common.TrackSelectionParameters.Builder(context).build()
+                }
                 val useHls = homeHeroUsesHls(heroVideoUrl, iptvTarget?.isHls == true)
                 val mi = androidx.media3.common.MediaItem.Builder()
                     .setUri(iptvTarget?.url ?: heroVideoUrl)

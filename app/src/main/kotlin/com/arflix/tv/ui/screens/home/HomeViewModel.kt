@@ -1036,6 +1036,15 @@ class HomeViewModel @Inject constructor(
             .getOrNull()
     }
 
+    /** The profile's "Default subtitle" setting for channel previews (off when it cannot be read). */
+    internal suspend fun previewSubtitleDefault(): com.arflix.tv.ui.screens.tv.live.LiveSubtitleDefault = runCatching {
+        val prefs = context.settingsDataStore.data.first()
+        com.arflix.tv.ui.screens.tv.live.liveSubtitleDefault(
+            prefs[profileManager.profileStringKey("default_subtitle")]
+        )
+    }.onFailure { if (it is CancellationException) throw it }
+        .getOrDefault(com.arflix.tv.ui.screens.tv.live.LiveSubtitleDefault.Off)
+
     /**
      * Looks up the channels behind IPTV cards this view model didn't build itself. Rows
      * preloaded at startup carry the cards but not their channels, and the full home load
@@ -1316,6 +1325,45 @@ class HomeViewModel @Inject constructor(
     }
 
     /**
+     * After the active IPTV sources change, the home load finds the new channel list still loading,
+     * reports the Favorite TV row as unavailable and keeps it — with the old sources' channels,
+     * until a restart. Rebuild it once the new list can be read: replace it, or remove it when the
+     * new sources have no favourites. If the list never becomes readable, the stale row goes too.
+     */
+    private suspend fun rebuildFavoriteTvAfterSourceChange() {
+        repeat(FAVORITE_TV_SOURCE_CHANGE_ATTEMPTS) { attempt ->
+            delay(if (attempt == 0) 500L else FAVORITE_TV_SOURCE_CHANGE_RETRY_MS)
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching { buildFavoriteTvOutcome() }.getOrDefault(FavoriteTvOutcome.Unavailable)
+            }
+            when (outcome) {
+                is FavoriteTvOutcome.Available -> {
+                    val cfg = savedCatalogById[FAVORITE_TV_CATEGORY_ID]
+                    val titled = if (cfg != null && cfg.title.isNotBlank()) {
+                        outcome.category.copy(title = cfg.title)
+                    } else {
+                        outcome.category
+                    }
+                    updateMobileCategoryRow(FAVORITE_TV_CATEGORY_ID, titled)
+                    return
+                }
+                FavoriteTvOutcome.Empty -> {
+                    removeFavoriteTvRow()
+                    return
+                }
+                FavoriteTvOutcome.Unavailable -> Unit
+            }
+        }
+        removeFavoriteTvRow()
+    }
+
+    private fun removeFavoriteTvRow() {
+        val categories = _uiState.value.categories
+        if (categories.none { it.id == FAVORITE_TV_CATEGORY_ID }) return
+        _uiState.value = _uiState.value.copy(categories = categories.filterNot { it.id == FAVORITE_TV_CATEGORY_ID })
+    }
+
+    /**
      * The Favorite TV row's now/next only shows on a focused card, so it is brought up to date
      * when focus reaches the row, not on a timer. A Home screen left open used to download the
      * whole guide every five minutes for text nobody was looking at.
@@ -1508,6 +1556,9 @@ class HomeViewModel @Inject constructor(
     // EPG refresh for the Favorite TV row, driven by focus (see refreshFavoriteTvGuideOnFocus)
     /** Moving between cards re-derives now/next from the saved guide at most this often. */
     private val EPG_FOCUS_REFRESH_MS = 60_000L
+    /** After an IPTV source change, how long the Favorite TV row waits for the new channel list. */
+    private val FAVORITE_TV_SOURCE_CHANGE_ATTEMPTS = 30
+    private val FAVORITE_TV_SOURCE_CHANGE_RETRY_MS = 2_000L
     /** How often the network may be asked while the saved guide lacks a current programme. */
     private val EPG_NETWORK_RETRY_MS = 30 * 60_000L
     private var activeEpgRefreshJob: Job? = null
@@ -1973,6 +2024,15 @@ class HomeViewModel @Inject constructor(
                         launchContinueWatchingFetch()
                     }
                 }
+        }
+
+        // Switching IPTV playlists or portals on or off must rebuild the Favorite TV row.
+        viewModelScope.launch {
+            iptvRepository.observeConfig()
+                .map(::iptvFavoriteSourceKey)
+                .distinctUntilChanged()
+                .drop(1)
+                .collectLatest { rebuildFavoriteTvAfterSourceChange() }
         }
 
         // Keep Home preferences bound to the active profile. Cloud restore and profile
