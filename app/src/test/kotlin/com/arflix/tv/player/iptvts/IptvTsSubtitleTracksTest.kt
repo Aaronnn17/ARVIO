@@ -42,6 +42,40 @@ class IptvTsSubtitleTracksTest {
         assertEquals(listOf("he"), languages)
     }
 
+    @Test fun `a subtitle service keeps its track id in a rendition that carries it on another PID`() {
+        // HLS keeps the text track ids announced first and discards samples for unknown ids, so a
+        // quality switch to a rendition with different subtitle PIDs must yield the same ids.
+        val first = textTrackIds(subtitles = listOf("heb" to 0x401, "rus" to 0x402))
+        val second = textTrackIds(subtitles = listOf("rus" to 0x511, "heb" to 0x512))
+
+        assertEquals(setOf("he", "ru"), first.keys)
+        assertEquals(first, second)
+    }
+
+    @Test fun `a repeated program table does not add tracks`() {
+        val extractorTracks = textTrackIds(subtitles = listOf("heb" to 0x401, "rus" to 0x402), pmtRepeats = 3)
+
+        assertEquals(setOf("he", "ru"), extractorTracks.keys)
+    }
+
+    /** Language -> track id of the text tracks an HLS-mode ARVIO extractor announces. */
+    private fun textTrackIds(subtitles: List<Pair<String, Int>>, pmtRepeats: Int = 1): Map<String?, Int> {
+        val extractor = TsExtractor(
+            TsExtractor.MODE_HLS, TsExtractor.FLAG_EMIT_RAW_SUBTITLE_DATA, SubtitleParser.Factory.UNSUPPORTED,
+            TimestampAdjuster(0), DefaultTsPayloadReaderFactory(0, emptyList()), TsExtractor.DEFAULT_TIMESTAMP_SEARCH_BYTES,
+        )
+        val output = RecordingOutput()
+        extractor.init(output)
+        var stream = patPacket()
+        repeat(pmtRepeats) { stream += pmtPacket(subtitles) }
+        val input = DefaultExtractorInput(ByteArrayReader(stream), 0, stream.size.toLong())
+        val position = PositionHolder()
+        while (extractor.read(input, position) == Extractor.RESULT_CONTINUE) Unit
+        val text = output.tracks.filter { it.type == C.TRACK_TYPE_TEXT }
+        assertEquals("duplicate text tracks", text.size, text.map { it.id }.toSet().size)
+        return text.associate { it.format?.language to it.id }
+    }
+
     private enum class IptvTsExtractorUnderTest { ARVIO, MEDIA3 }
 
     private fun textTrackLanguages(which: IptvTsExtractorUnderTest): List<String?> {
@@ -79,14 +113,14 @@ class IptvTsSubtitleTracksTest {
         ),
     )
 
-    private fun pmtPacket(): ByteArray {
+    private fun pmtPacket(subtitles: List<Pair<String, Int>> = listOf("heb" to 0x401, "rus" to 0x402)): ByteArray {
         val video = esEntry(streamType = 0x1B, pid = 0x100, esInfo = byteArrayOf())
-        val hebrew = esEntry(0x06, 0x401, dvbSubtitleDescriptor("heb"))
-        val russian = esEntry(0x06, 0x402, dvbSubtitleDescriptor("rus"))
         val body = byteArrayOf(
             (0xE0 or (0x100 shr 8)).toByte(), 0x00, // PCR PID
             0xF0.toByte(), 0x00, // program_info_length = 0
-        ) + video + hebrew + russian
+        ) + video + subtitles.fold(byteArrayOf()) { acc, (language, pid) ->
+            acc + esEntry(0x06, pid, dvbSubtitleDescriptor(language))
+        }
         return tsPacket(pid = PMT_PID, section = section(tableId = 0x02, idField = 1, body = body))
     }
 
@@ -132,12 +166,13 @@ class IptvTsSubtitleTracksTest {
 
     private class RecordingOutput : ExtractorOutput {
         val tracks = mutableListOf<RecordingTrack>()
-        override fun track(id: Int, type: Int): TrackOutput = RecordingTrack(type).also { tracks += it }
+        override fun track(id: Int, type: Int): TrackOutput =
+            tracks.firstOrNull { it.id == id } ?: RecordingTrack(id, type).also { tracks += it }
         override fun endTracks() = Unit
         override fun seekMap(seekMap: SeekMap) = Unit
     }
 
-    private class RecordingTrack(val type: Int) : TrackOutput {
+    private class RecordingTrack(val id: Int, val type: Int) : TrackOutput {
         var format: Format? = null
         override fun format(format: Format) { this.format = format }
         override fun sampleData(input: DataReader, length: Int, allowEndOfInput: Boolean, sampleDataPart: Int): Int =

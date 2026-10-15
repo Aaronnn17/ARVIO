@@ -15,11 +15,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -64,6 +66,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -90,7 +94,7 @@ import java.util.Locale
  * its own after a channel zap is then pure information with nothing focusable in it. With it on the
  * controls are drawn and focused in the same breath, so anything visible is always operable.
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun FullscreenHud(
     channel: EnrichedChannel?,
@@ -538,7 +542,7 @@ fun FullscreenHud(
                     HudControlBar(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp),
+                            .heightIn(min = 56.dp),
                         start = {
                             // Left Side: Time Text below Seek Bar
                             Text(
@@ -598,13 +602,18 @@ fun FullscreenHud(
                             }
                         },
                         end = {
-                            // Right Side: Replay, LIVE, GUIDE
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(if (touchControls) 8.dp else 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
+                            // Right Side: Replay, LIVE, GUIDE. Wraps onto further lines when even
+                            // a line of its own is too narrow (phones in portrait).
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(
+                                    if (touchControls) 8.dp else 12.dp,
+                                    Alignment.End,
+                                ),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 // Replay / Restart
                                 HudIconButton(
+                                    modifier = Modifier.align(Alignment.CenterVertically),
                                     icon = Icons.Filled.Replay,
                                     contentDescription = stringResource(R.string.live_cd_replay),
                                     onClick = { onReplayClick?.invoke() },
@@ -613,6 +622,7 @@ fun FullscreenHud(
                                 // LIVE button
                                 if (isCatchupMode) {
                                     HudActionButton(
+                                        modifier = Modifier.align(Alignment.CenterVertically),
                                         label = stringResource(R.string.live_badge_live),
                                         onClick = { onGoLiveClick?.invoke() },
                                     )
@@ -620,6 +630,7 @@ fun FullscreenHud(
 
                                 if (onAudioClick != null) {
                                     HudActionButton(
+                                        modifier = Modifier.align(Alignment.CenterVertically),
                                         label = stringResource(R.string.live_audio),
                                         focusRequester = audioFocusRequester,
                                         onClick = {
@@ -630,6 +641,7 @@ fun FullscreenHud(
                                 }
                                 if (onSubtitlesClick != null) {
                                     HudActionButton(
+                                        modifier = Modifier.align(Alignment.CenterVertically),
                                         label = stringResource(R.string.live_subtitles),
                                         focusRequester = subtitlesFocusRequester,
                                         onClick = {
@@ -641,12 +653,14 @@ fun FullscreenHud(
                                 // Guide button at far right
                                 if (onOpenVariants != null) {
                                     HudActionButton(
+                                        modifier = Modifier.align(Alignment.CenterVertically),
                                         label = stringResource(R.string.live_label_choose_source),
                                         onClick = onOpenVariants,
                                     )
                                 }
                                 if (onGuideClick != null) {
                                     HudActionButton(
+                                        modifier = Modifier.align(Alignment.CenterVertically),
                                         label = stringResource(R.string.live_btn_guide),
                                         onClick = onGuideClick,
                                     )
@@ -662,9 +676,9 @@ fun FullscreenHud(
 
 /**
  * The bottom button row: time at the start, playback controls centred, actions at the end.
- * The controls stay exactly centred while there is room; when the actions grow wide enough to
- * reach them (subtitle and audio buttons, the catch-up LIVE button) they slide aside instead
- * of being drawn on top of each other.
+ * The controls stay exactly centred while there is room and slide aside when the actions reach
+ * them. When start, controls and actions cannot share one line at all, the actions take a line
+ * of their own above the controls (see [hudControlBarPlacement]).
  */
 @Composable
 private fun HudControlBar(
@@ -681,34 +695,80 @@ private fun HudControlBar(
             Box { end() }
         },
     ) { measurables, constraints ->
-        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val width = constraints.maxWidth
+        val loose = constraints.copy(minWidth = 0, minHeight = 0, maxHeight = Constraints.Infinity)
         val startPlaceable = measurables[0].measure(loose)
         val centerPlaceable = measurables[1].measure(loose)
         val endPlaceable = measurables[2].measure(loose)
-        val width = constraints.maxWidth
-        val height = constraints.maxHeight
-        val gap = 16.dp.roundToPx()
-        val centerX = hudCenterGroupX(
+        val placement = hudControlBarPlacement(
             width = width,
-            startWidth = startPlaceable.width,
-            centerWidth = centerPlaceable.width,
-            endWidth = endPlaceable.width,
-            gap = gap,
+            minHeight = constraints.minHeight,
+            startWidth = startPlaceable.width, startHeight = startPlaceable.height,
+            centerWidth = centerPlaceable.width, centerHeight = centerPlaceable.height,
+            endWidth = endPlaceable.width, endHeight = endPlaceable.height,
+            gap = 16.dp.roundToPx(),
+            lineGap = 8.dp.roundToPx(),
         )
-        layout(width, height) {
-            startPlaceable.placeRelative(0, (height - startPlaceable.height) / 2)
-            centerPlaceable.placeRelative(centerX, (height - centerPlaceable.height) / 2)
-            endPlaceable.placeRelative(width - endPlaceable.width, (height - endPlaceable.height) / 2)
+        layout(width, constraints.constrainHeight(placement.height)) {
+            startPlaceable.placeRelative(0, placement.startY)
+            centerPlaceable.placeRelative(placement.centerX, placement.centerY)
+            endPlaceable.placeRelative(width - endPlaceable.width, placement.endY)
         }
     }
 }
 
-/** Where the centred group starts: the exact centre, moved only as far as needed to clear both sides. */
-internal fun hudCenterGroupX(width: Int, startWidth: Int, centerWidth: Int, endWidth: Int, gap: Int): Int {
+/** Where [HudControlBar] puts its three groups (x for the centred group, y for each). */
+internal data class HudBarPlacement(
+    val oneLine: Boolean,
+    val height: Int,
+    val startY: Int,
+    val centerX: Int,
+    val centerY: Int,
+    val endY: Int,
+)
+
+/**
+ * One line when time, controls and actions fit side by side with [gap] between them: controls
+ * centred, moved only as far as needed to clear both sides. Otherwise the actions go on a line of
+ * their own at the top and time and controls share the line below, so nothing is drawn over
+ * anything else.
+ */
+internal fun hudControlBarPlacement(
+    width: Int,
+    minHeight: Int,
+    startWidth: Int,
+    startHeight: Int,
+    centerWidth: Int,
+    centerHeight: Int,
+    endWidth: Int,
+    endHeight: Int,
+    gap: Int,
+    lineGap: Int,
+): HudBarPlacement {
     val centered = (width - centerWidth) / 2
-    val maxX = width - endWidth - gap - centerWidth
+    if (startWidth + gap + centerWidth + gap + endWidth <= width) {
+        val height = maxOf(minHeight, startHeight, centerHeight, endHeight)
+        return HudBarPlacement(
+            oneLine = true,
+            height = height,
+            startY = (height - startHeight) / 2,
+            centerX = centered.coerceIn(startWidth + gap, width - endWidth - gap - centerWidth),
+            centerY = (height - centerHeight) / 2,
+            endY = (height - endHeight) / 2,
+        )
+    }
+    val lowerTop = endHeight + lineGap
+    val lowerHeight = maxOf(startHeight, centerHeight)
     val minX = startWidth + gap
-    return if (maxX < minX) minX else centered.coerceIn(minX, maxX)
+    val maxX = (width - centerWidth).coerceAtLeast(minX)
+    return HudBarPlacement(
+        oneLine = false,
+        height = maxOf(minHeight, lowerTop + lowerHeight),
+        startY = lowerTop + (lowerHeight - startHeight) / 2,
+        centerX = centered.coerceIn(minX, maxX),
+        centerY = lowerTop + (lowerHeight - centerHeight) / 2,
+        endY = 0,
+    )
 }
 
 @Composable
@@ -899,11 +959,12 @@ private fun HudActionButton(
     label: String,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    modifier: Modifier = Modifier,
 ) {
     var isFocused by remember { mutableStateOf(false) }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .clip(RoundedCornerShape(999.dp))
             .onFocusChanged { isFocused = it.isFocused }

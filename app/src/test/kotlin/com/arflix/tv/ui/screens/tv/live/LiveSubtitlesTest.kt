@@ -4,6 +4,7 @@ import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import org.junit.Assert.*
 import org.junit.Test
@@ -27,13 +28,62 @@ class LiveSubtitlesTest {
     })
 
     @Test fun preferenceNamesBecomePlayerLanguages() {
-        assertEquals("he", subtitlePreferenceLanguage("Hebrew"))
-        assertEquals("en", subtitlePreferenceLanguage("English"))
-        assertEquals("he", subtitlePreferenceLanguage("heb"))
-        assertEquals("ru", subtitlePreferenceLanguage("ru"))
-        assertNull(subtitlePreferenceLanguage("Off"))
-        assertNull(subtitlePreferenceLanguage(""))
-        assertNull(subtitlePreferenceLanguage(null))
+        assertEquals(LiveSubtitleDefault.Language("he"), liveSubtitleDefault("Hebrew"))
+        assertEquals(LiveSubtitleDefault.Language("en"), liveSubtitleDefault("English"))
+        assertEquals(LiveSubtitleDefault.Language("he"), liveSubtitleDefault("heb"))
+        assertEquals(LiveSubtitleDefault.Language("ru"), liveSubtitleDefault("ru"))
+    }
+
+    @Test fun regionalLanguagesUseTheAppMapping() {
+        assertEquals(LiveSubtitleDefault.Language("pt-br"), liveSubtitleDefault("Portuguese (Brazil)"))
+        assertEquals(LiveSubtitleDefault.Language("pt-br"), liveSubtitleDefault("pt-BR"))
+        assertEquals(LiveSubtitleDefault.Language("pt"), liveSubtitleDefault("Portuguese"))
+        assertEquals(LiveSubtitleDefault.Language("es-419"), liveSubtitleDefault("es-419"))
+        // Names the shared mapping does not list come from the platform's language names.
+        assertEquals(LiveSubtitleDefault.Language("ta"), liveSubtitleDefault("Tamil"))
+        assertEquals("pt-br", audioPreferenceLanguage("Portuguese (Brazil)"))
+    }
+
+    @Test fun offForcedAndUnsetAreDistinguished() {
+        assertEquals(LiveSubtitleDefault.Off, liveSubtitleDefault("Off"))
+        assertEquals(LiveSubtitleDefault.Off, liveSubtitleDefault(""))
+        assertEquals(LiveSubtitleDefault.Off, liveSubtitleDefault(null))
+        assertEquals(LiveSubtitleDefault.Off, liveSubtitleDefault("Not a language"))
+        assertEquals(LiveSubtitleDefault.ForcedOnly, liveSubtitleDefault("Forced"))
+    }
+
+    /** Parameters as a device with system captions on (English, caption role) would start with. */
+    private fun captioningParameters() = TrackSelectionParameters.Builder()
+        .setPreferredTextLanguages("en")
+        .setPreferredTextRoleFlags(C.ROLE_FLAG_CAPTION)
+        .setSelectUndeterminedTextLanguage(true)
+        .build()
+
+    @Test fun offTurnsSubtitlesOffWhateverTheDeviceCaptionSettings() {
+        val params = captioningParameters().withLiveSubtitleDefault(LiveSubtitleDefault.Off)
+
+        assertTrue(C.TRACK_TYPE_TEXT in params.disabledTrackTypes)
+        assertTrue(params.preferredTextLanguages.isEmpty())
+        assertEquals(0, params.preferredTextRoleFlags)
+    }
+
+    @Test fun forcedPicksOnlyForcedTracks() {
+        val params = captioningParameters().withLiveSubtitleDefault(LiveSubtitleDefault.ForcedOnly)
+
+        assertFalse(C.TRACK_TYPE_TEXT in params.disabledTrackTypes)
+        assertTrue(params.preferredTextLanguages.isEmpty())
+        assertEquals(0, params.preferredTextRoleFlags)
+        assertFalse(params.selectUndeterminedTextLanguage)
+        assertEquals(C.SELECTION_FLAG_DEFAULT, params.ignoredTextSelectionFlags)
+    }
+
+    @Test fun aLanguageReplacesTheDeviceCaptionLanguage() {
+        val params = captioningParameters().withLiveSubtitleDefault(LiveSubtitleDefault.Language("pt-br"))
+
+        assertFalse(C.TRACK_TYPE_TEXT in params.disabledTrackTypes)
+        assertEquals(listOf("pt-br"), params.preferredTextLanguages)
+        assertEquals(0, params.preferredTextRoleFlags)
+        assertEquals(0, params.ignoredTextSelectionFlags)
     }
 
     @Test fun optionsListOffThenEachLanguageWithTheSelectionMarked() {

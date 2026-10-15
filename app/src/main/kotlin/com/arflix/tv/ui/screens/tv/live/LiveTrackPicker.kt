@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -26,6 +27,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,7 +62,16 @@ internal fun LiveTrackPickerOverlay(
     if (options.isEmpty()) return
     val selectedIndex = options.indexOfFirst { it.selected }.coerceAtLeast(0)
     val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    // A lazy list only attaches the rows it places, so the selected row is scrolled into view
+    // first and focused once it has been laid out. Requesting focus on a row further down than the
+    // first screen used to fail silently and left focus behind the overlay.
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedIndex)
+    LaunchedEffect(Unit) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.any { it.index == selectedIndex } }
+            .first { it }
+        withFrameNanos { }
+        runCatching { firstFocus.requestFocus() }
+    }
     BackHandler { onDismiss() }
 
     Box(
@@ -105,6 +118,7 @@ internal fun LiveTrackPickerOverlay(
                 }
             }
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 320.dp),

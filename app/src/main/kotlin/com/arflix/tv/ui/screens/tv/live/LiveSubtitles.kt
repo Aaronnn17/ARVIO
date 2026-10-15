@@ -3,7 +3,9 @@ package com.arflix.tv.ui.screens.tv.live
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
+import com.arflix.tv.util.normalizeLanguageCode
 import java.util.Locale
 
 /**
@@ -23,14 +25,31 @@ internal data class LiveTrackOption(
     val selected: Boolean,
 )
 
+/** What a channel starts with, from the profile's "Default subtitle" setting. */
+internal sealed interface LiveSubtitleDefault {
+    /** "Off", or nothing set: no subtitles until the viewer picks one. */
+    data object Off : LiveSubtitleDefault
+
+    /** "Forced": only tracks the stream marks as forced (foreign-language parts). */
+    data object ForcedOnly : LiveSubtitleDefault
+
+    /** A language: its track when the channel carries one. */
+    data class Language(val code: String) : LiveSubtitleDefault
+}
+
 /**
- * The profile's "Default subtitle" setting as a language for the player ("Hebrew" -> "he"),
- * or null when subtitles are switched off there.
+ * The profile's "Default subtitle" setting for live channels. Blank and "Off" both mean off, as in
+ * the VOD player; a language the app cannot place is treated as off too, rather than letting the
+ * player pick whatever the device's caption settings would.
  */
-internal fun subtitlePreferenceLanguage(preference: String?): String? {
+internal fun liveSubtitleDefault(preference: String?): LiveSubtitleDefault {
     val value = preference?.trim().orEmpty()
-    if (value.isBlank() || value.lowercase(Locale.ROOT) in DISABLED_PREFERENCES) return null
-    return languageFromPreference(value)
+    val lower = value.lowercase(Locale.ROOT)
+    return when {
+        value.isBlank() || lower in DISABLED_PREFERENCES -> LiveSubtitleDefault.Off
+        lower == "forced" -> LiveSubtitleDefault.ForcedOnly
+        else -> languageFromPreference(value)?.let { LiveSubtitleDefault.Language(it) } ?: LiveSubtitleDefault.Off
+    }
 }
 
 /** The profile's "Default audio language" setting, or null for "Auto (Original)". */
@@ -58,14 +77,37 @@ internal fun applyLiveSubtitleChoice(player: Player, key: String): Boolean =
 internal fun applyLiveAudioChoice(player: Player, key: String): Boolean =
     applyLiveTrackChoice(player, C.TRACK_TYPE_AUDIO, key)
 
-/** Back to automatic subtitle selection: the preferred language, if the profile has one. */
-internal fun resetLiveSubtitleChoice(player: Player, preferredLanguage: String?) {
-    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-        .apply { if (preferredLanguage != null) setPreferredTextLanguages(preferredLanguage) }
-        .build()
+/** Back to the profile's default subtitle choice, dropping any choice made on the previous channel. */
+internal fun resetLiveSubtitleChoice(player: Player, default: LiveSubtitleDefault) {
+    player.trackSelectionParameters = player.trackSelectionParameters.withLiveSubtitleDefault(default)
 }
+
+/**
+ * Text-track parameters for [default]. Every case sets the text preferences explicitly: the
+ * player starts from the device's caption settings (their language and caption roles), which
+ * would otherwise turn subtitles on with the profile set to Off, or pick a language it did not ask for.
+ */
+internal fun TrackSelectionParameters.withLiveSubtitleDefault(default: LiveSubtitleDefault): TrackSelectionParameters =
+    buildUpon()
+        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+        .setPreferredTextRoleFlags(0)
+        .setSelectUndeterminedTextLanguage(false)
+        .apply {
+            when (default) {
+                LiveSubtitleDefault.Off -> setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .setPreferredTextLanguages()
+                    .setIgnoredTextSelectionFlags(0)
+                // Without a preferred language only forced and default-flagged tracks are picked;
+                // ignoring the default flag leaves the forced ones.
+                LiveSubtitleDefault.ForcedOnly -> setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    .setPreferredTextLanguages()
+                    .setIgnoredTextSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                is LiveSubtitleDefault.Language -> setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    .setPreferredTextLanguages(default.code)
+                    .setIgnoredTextSelectionFlags(0)
+            }
+        }
+        .build()
 
 /** Back to automatic audio selection: the preferred language, if the profile has one. */
 internal fun resetLiveAudioChoice(player: Player, preferredLanguage: String?) {
@@ -136,22 +178,36 @@ private fun typedTracks(tracks: Tracks, type: Int): List<LiveTrack> = buildList 
     }
 }
 
+/**
+ * A settings value ("Hebrew", "Portuguese (Brazil)", "pt-BR", "heb") as a player language code,
+ * using the app's shared mapping ([normalizeLanguageCode], as the VOD player does) and the
+ * platform's language names for the rest. Null when it is not a language.
+ */
 private fun languageFromPreference(value: String): String? {
-    if (value.length in 2..3 && value.all(Char::isLetter)) return normalizeLanguage(value)
+    val mapped = normalizeLanguageCode(value)
+    if (LANGUAGE_TAG.matches(mapped)) return normalizeLanguage(mapped)
     val byName = Locale.getAvailableLocales().firstOrNull {
         it.getDisplayLanguage(Locale.ENGLISH).equals(value, ignoreCase = true)
     } ?: return null
     return normalizeLanguage(byName.language)
 }
 
-/** ISO 639-2 and legacy codes to the two-letter form the player uses ("heb", "iw" -> "he"). */
+/**
+ * Track language codes in the form [liveSubtitleOptions] keys them by: ISO 639-2 and legacy codes
+ * to two letters ("heb", "iw" -> "he"), regional tags kept ("pt-BR" -> "pt-br").
+ */
 private fun normalizeLanguage(code: String): String {
-    val lower = code.lowercase(Locale.ROOT)
-    if (lower == "iw" || lower == "heb") return "he"
-    if (lower.length == 3) {
-        Locale.getISOLanguages().firstOrNull { Locale(it).isO3Language == lower }?.let { return it }
+    val lower = code.lowercase(Locale.ROOT).replace('_', '-')
+    val primary = lower.substringBefore('-')
+    val region = lower.substringAfter('-', missingDelimiterValue = "")
+    val twoLetter = when {
+        primary == "iw" || primary == "heb" -> "he"
+        primary.length == 3 -> Locale.getISOLanguages().firstOrNull { Locale(it).isO3Language == primary } ?: primary
+        else -> primary
     }
-    return lower
+    return if (region.isEmpty()) twoLetter else "$twoLetter-$region"
 }
+
+private val LANGUAGE_TAG = Regex("[a-z]{2,3}(-[a-z0-9]{2,8})*")
 
 private val DISABLED_PREFERENCES = setOf("off", "none", "no subtitles", "disabled")

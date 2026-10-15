@@ -3116,12 +3116,12 @@ fun LiveTvScreen(
     // the subtitle list overrides that for its channel. Without this the player only turned
     // subtitles on when the device's system captions matched, so they showed on some TVs only.
     var liveTracks by remember(exoPlayer) { mutableStateOf(exoPlayer.currentTracks) }
-    var preferredSubtitleLanguage by remember { mutableStateOf<String?>(null) }
+    var subtitleDefault by remember { mutableStateOf<LiveSubtitleDefault>(LiveSubtitleDefault.Off) }
     var preferredAudioLanguage by remember { mutableStateOf<String?>(null) }
     val latestPlayingChannelId by rememberUpdatedState(playingChannelId)
     LaunchedEffect(exoPlayer) {
-        preferredSubtitleLanguage = viewModel.preferredSubtitleLanguage()
-        resetLiveSubtitleChoice(exoPlayer, preferredSubtitleLanguage)
+        subtitleDefault = viewModel.liveSubtitleDefault()
+        resetLiveSubtitleChoice(exoPlayer, subtitleDefault)
         preferredAudioLanguage = viewModel.preferredAudioLanguage()
         resetLiveAudioChoice(exoPlayer, preferredAudioLanguage)
     }
@@ -3129,7 +3129,7 @@ fun LiveTvScreen(
         val listener = object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                 if (latestPlayingChannelId?.let { liveSubtitleChoices[it] } == null) {
-                    resetLiveSubtitleChoice(exoPlayer, preferredSubtitleLanguage)
+                    resetLiveSubtitleChoice(exoPlayer, subtitleDefault)
                 }
                 if (latestPlayingChannelId?.let { liveAudioChoices[it] } == null) {
                     resetLiveAudioChoice(exoPlayer, preferredAudioLanguage)

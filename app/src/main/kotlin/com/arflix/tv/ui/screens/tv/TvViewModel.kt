@@ -135,13 +135,13 @@ class TvViewModel @Inject constructor(
         )
     }.getOrNull()
 
-    /** The profile's "Default subtitle" setting as a language for live channels, or null when off. */
-    suspend fun preferredSubtitleLanguage(): String? = runCatching {
+    /** The profile's "Default subtitle" setting for live channels (off when it cannot be read). */
+    internal suspend fun liveSubtitleDefault(): com.arflix.tv.ui.screens.tv.live.LiveSubtitleDefault = runCatching {
         val prefs = context.settingsDataStore.data.first()
-        com.arflix.tv.ui.screens.tv.live.subtitlePreferenceLanguage(
+        com.arflix.tv.ui.screens.tv.live.liveSubtitleDefault(
             prefs[profileManager.profileStringKey("default_subtitle")]
         )
-    }.getOrNull()
+    }.getOrDefault(com.arflix.tv.ui.screens.tv.live.LiveSubtitleDefault.Off)
 
     suspend fun cachedSportsMetadata() = sportsRepository.cachedMetadata()
     internal var cachedSportsSchedule: com.arflix.tv.ui.screens.tv.live.SportsScheduleSnapshot? = null

@@ -148,10 +148,13 @@ public final class TsExtractor implements Extractor {
   public static final int TS_STREAM_TYPE_DVBSUBS = 0x59;
 
   /**
-   * ARVIO: HLS-mode track ids of DVB subtitle streams are this plus the PID, above every stream
-   * type (which is what other HLS tracks use as their id), so each subtitle PID gets its own track.
+   * ARVIO: HLS-mode track ids of DVB subtitle services lie in [BASE, BASE + RANGE): above every
+   * stream type (which is what other HLS tracks use as their id) and below MAX_PID_PLUS_ONE, the
+   * step TrackIdGenerator adds for a second service carried on the same PID.
    */
   private static final int HLS_DVB_SUBTITLE_TRACK_ID_BASE = 0x100;
+
+  private static final int HLS_DVB_SUBTITLE_TRACK_ID_RANGE = 0x1000;
   public static final int TS_STREAM_TYPE_DTS_HD = 0x88; // As per ATSC Code Point Registry
   public static final int TS_STREAM_TYPE_DTS_UHD = 0x8B;
 
@@ -788,6 +791,7 @@ public final class TsExtractor implements Extractor {
 
       trackIdToReaderScratch.clear();
       trackIdToPidScratch.clear();
+      int dvbSubtitleOrdinal = 0; // ARVIO: position among this PMT's DVB subtitle streams.
       int remainingEntriesLength = sectionData.bytesLeft();
       while (remainingEntriesLength > 0) {
         sectionData.readBytes(pmtScratch, 5);
@@ -802,15 +806,16 @@ public final class TsExtractor implements Extractor {
         }
         remainingEntriesLength -= esInfoLength + 5;
 
-        // ARVIO: in HLS mode every DVB subtitle stream keeps its own track. Upstream keys HLS tracks
+        // ARVIO: in HLS mode every DVB subtitle service keeps its own track. Upstream keys HLS tracks
         // by stream type and keeps only the lowest PID of each, so a broadcast carrying Hebrew and
         // Russian subtitles exposed only one of them. HLS maps text tracks by id (unlike audio and
-        // video, which it maps by type), so the extra subtitle tracks reach the player.
+        // video, which it maps by type), so the extra subtitle tracks reach the player. The id comes
+        // from the service's descriptor, not its PID, so it stays the same in every rendition.
         int trackId =
             mode != MODE_HLS
                 ? elementaryPid
                 : streamType == TS_STREAM_TYPE_DVBSUBS
-                    ? HLS_DVB_SUBTITLE_TRACK_ID_BASE + elementaryPid
+                    ? hlsDvbSubtitleTrackId(esInfo, dvbSubtitleOrdinal++)
                     : streamType;
         if (trackIds.get(trackId)) {
           continue;
@@ -870,6 +875,41 @@ public final class TsExtractor implements Extractor {
      * @param length The length of descriptors to read from the current position in {@code data}.
      * @return The stream info read from the available descriptors.
      */
+    /**
+     * ARVIO: an HLS track id for a DVB subtitle service that is the same in every rendition and
+     * after every discontinuity. HLS discards text samples whose track id it has not seen when the
+     * tracks were first announced, so an id built from the PID made subtitles stop after a switch
+     * to a rendition carrying the same service on another PID. The id is derived from what the
+     * service is (language, subtitling type, composition and ancillary page ids from its
+     * descriptor), or from its position among the program's subtitle streams when it has no
+     * descriptor. Two services with the same identity in one program take consecutive ids.
+     */
+    private int hlsDvbSubtitleTrackId(EsInfo esInfo, int ordinal) {
+      StringBuilder identity = new StringBuilder();
+      for (DvbSubtitleInfo info : esInfo.dvbSubtitleInfos) {
+        identity.append(info.language).append('|').append(info.type).append('|');
+        for (byte value : info.initializationData) {
+          identity.append(value & 0xFF).append(',');
+        }
+        identity.append(';');
+      }
+      if (identity.length() == 0) {
+        identity.append("ordinal:").append(ordinal);
+      }
+      int offset = identity.toString().hashCode() % HLS_DVB_SUBTITLE_TRACK_ID_RANGE;
+      if (offset < 0) {
+        offset += HLS_DVB_SUBTITLE_TRACK_ID_RANGE;
+      }
+      for (int attempt = 0; attempt < HLS_DVB_SUBTITLE_TRACK_ID_RANGE; attempt++) {
+        int id = HLS_DVB_SUBTITLE_TRACK_ID_BASE + offset;
+        if (trackIdToPidScratch.indexOfKey(id) < 0) {
+          return id;
+        }
+        offset = (offset + 1) % HLS_DVB_SUBTITLE_TRACK_ID_RANGE;
+      }
+      return HLS_DVB_SUBTITLE_TRACK_ID_BASE + offset;
+    }
+
     private EsInfo readEsInfo(ParsableByteArray data, int length) {
       int descriptorsStartPosition = data.getPosition();
       int descriptorsEndPosition = descriptorsStartPosition + length;
