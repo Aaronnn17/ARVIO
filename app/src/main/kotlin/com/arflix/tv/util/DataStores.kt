@@ -13,6 +13,7 @@ val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(na
  * name lives here rather than being retyped in each. Defaults to true.
  */
 const val IPTV_FAVORITES_ON_HOME = "iptv_favorites_on_home"
+const val WATCHLIST_ON_HOME = "watchlist_on_home"
 val Context.traktDataStore: DataStore<Preferences> by preferencesDataStore(name = "trakt_prefs")
 val Context.profilesDataStore: DataStore<Preferences> by preferencesDataStore(name = "profiles_prefs")
 val Context.authDataStore: DataStore<Preferences> by preferencesDataStore(name = "auth_prefs")

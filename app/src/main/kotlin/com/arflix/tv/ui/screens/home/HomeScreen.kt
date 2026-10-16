@@ -81,6 +81,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import android.os.SystemClock
@@ -206,6 +207,7 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
@@ -262,6 +264,7 @@ internal class HomeFocusState(
     var currentItemIndex by mutableIntStateOf(initialItemIndex)
     var lastNavEventTime by mutableLongStateOf(0L)
     var userHasNavigated by mutableStateOf(false)
+    var scrollResetRequest by mutableIntStateOf(0)
     var preferredCategoryId: String? = null
     private var reconciledCategories: List<Category>? = null
     // Per-row item indices — when pressing D-pad Down, we save the current item
@@ -274,6 +277,21 @@ internal class HomeFocusState(
     // insert or reorder items, so the numeric index alone is not a stable anchor.
     val rowItemKeysByCategoryId = mutableMapOf<String, String>()
     private var categoryHasMoreMap: Map<String, Boolean> = emptyMap()
+
+    fun returnToStart(categories: List<Category>, now: Long, billboard: Boolean = false) {
+        rowItemIndicesByCategoryId.clear()
+        rowItemKeysByCategoryId.clear()
+        currentRowIndex = 0
+        currentItemIndex = 0
+        preferredCategoryId = categories.firstOrNull()?.id
+        isSidebarFocused = false
+        isHeroFocused = billboard
+        heroButtonIndex = 0
+        userHasNavigated = true
+        lastNavEventTime = now
+        scrollResetRequest++
+        recordSelection(categories)
+    }
 
     private fun selectionKeys(category: Category): List<String> {
         val keys = stableHomeRowItemKeys(category.id, navigableHomeItems(category.items))
@@ -338,7 +356,8 @@ internal class HomeFocusState(
                         HashMap(it.rowItemIndicesByCategoryId),
                         HashMap(it.rowItemKeysByCategoryId),
                         it.isSidebarFocused,
-                        it.isHeroFocused
+                        it.isHeroFocused,
+                        it.scrollResetRequest
                     )
                 },
                 restore = {
@@ -353,6 +372,7 @@ internal class HomeFocusState(
                         }
                         isSidebarFocused = it.getOrNull(7) as? Boolean ?: false
                         isHeroFocused = it.getOrNull(8) as? Boolean ?: false
+                        scrollResetRequest = it.getOrNull(9) as? Int ?: 0
                     }
                 }
             )
@@ -362,6 +382,7 @@ internal class HomeFocusState(
 @Composable
 internal fun localizedCategoryTitle(category: Category): String = when (category.id) {
     "continue_watching"        -> stringResource(R.string.continue_watching)
+    HOME_WATCHLIST_ROW_ID       -> stringResource(R.string.watchlist)
     "trending_movies"          -> stringResource(R.string.trending_movies)
     "trending_series"          -> stringResource(R.string.trending_series)
     "trending_tv"              -> stringResource(R.string.trending_in_shows)
@@ -789,6 +810,7 @@ fun HomeScreen(
     // ViewModel's TMDB/Trakt refresh pushes don't drive recompositions behind
     // an invisible UI.
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val homeWatchlistItems by viewModel.homeWatchlistItems.collectAsStateWithLifecycle()
     // Per-card logo reads now come from a stable snapshotStateMap so a single
     // logo arriving no longer recomposes the full home surface.
     val cardLogoUrls = viewModel.cardLogoUrls
@@ -802,6 +824,7 @@ fun HomeScreen(
         val matchingItem = uiState.categories.asSequence()
             .flatMap { it.items.asSequence() }
             .firstOrNull { it.id == mediaId && it.mediaType == mediaType }
+            ?: homeWatchlistItems.firstOrNull { it.id == mediaId && it.mediaType == mediaType }
             ?: uiState.heroItem?.takeIf { it.id == mediaId && it.mediaType == mediaType }
         if (matchingItem != null) {
             viewModel.cacheItem(matchingItem)
@@ -828,6 +851,7 @@ fun HomeScreen(
                 // Returning from the background is handled by AppForegroundSignals,
                 // which fires whatever screen the app resumes onto.
                 viewModel.refreshContinueWatchingOnly(force = false)
+                viewModel.refreshHomeWatchlist()
                 // A title marked watched in Details should show its tick once Home is back.
                 viewModel.refreshWatchedBadgesOnResume()
                 // Catalog rows: no-op unless they have gone stale (6h). Home now survives
@@ -857,8 +881,8 @@ fun HomeScreen(
     val rawDisplayCategories = remember(rawDisplayCategoriesBase, sportsHomeRows) {
         viewModel.withSportsHomeRows(rawDisplayCategoriesBase, sportsHomeRows)
     }
-    val displayCategories = remember(rawDisplayCategories) {
-        deduplicateHomeCategories(rawDisplayCategories)
+    val displayCategories = remember(rawDisplayCategories, homeWatchlistItems) {
+        withHomeWatchlistRow(deduplicateHomeCategories(rawDisplayCategories), homeWatchlistItems, enabled = true)
     }
     val displayHeroItem = uiState.heroItem ?: preloadedHeroItem
         ?: if (uiState.categories.isEmpty()) {
@@ -1053,10 +1077,12 @@ fun HomeScreen(
                 }
                 if (focusState.currentRowIndex != rowIndex) return@collectLatest
                 if (focusState.currentItemIndex != itemIndex) return@collectLatest
-                viewModel.onFocusChanged(rowIndex, itemIndex, shouldPrefetch = true)
-                viewModel.preloadLogosForCategory(rowIndex, prioritizeVisible = true)
-                viewModel.preloadLogosForCategory(rowIndex + 1, prioritizeVisible = false)
-                viewModel.preloadLogosForCategory(rowIndex + 2, prioritizeVisible = false)
+                val visibleRows = latestDisplayCategories
+                viewModel.onFocusChanged(rowIndex, itemIndex, shouldPrefetch = true, visibleCategory = visibleRows.getOrNull(rowIndex))
+                for (index in rowIndex..rowIndex + 2) {
+                    val category = visibleRows.getOrNull(index) ?: continue
+                    viewModel.preloadLogosForCategory(index, prioritizeVisible = index == rowIndex, visibleCategory = category)
+                }
             }
     }
 
@@ -1112,7 +1138,10 @@ fun HomeScreen(
                 if (homeRowItemKey(latestFocusedItem) != focusSnapshot.focusedItemKey) {
                     return@collectLatest
                 }
-                viewModel.onFocusChanged(focusSnapshot.rowIndex, focusSnapshot.itemIndex, shouldPrefetch = true)
+                viewModel.onFocusChanged(
+                    focusSnapshot.rowIndex, focusSnapshot.itemIndex, shouldPrefetch = true,
+                    visibleCategory = latestDisplayCategories.getOrNull(focusSnapshot.rowIndex)
+                )
                 viewModel.updateHeroItem(latestFocusedItem)
             }
     }
@@ -2716,6 +2745,50 @@ internal fun HomeInputLayer(
     var selectPressedInHome by remember { mutableStateOf(false) }
     var selectDownAtMs by remember { mutableLongStateOf(0L) }
     var rootHasFocus by remember { mutableStateOf(false) }
+    val backPress = remember { HomeBackPress() }
+    val backScope = rememberCoroutineScope()
+    var backHoldJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var suppressNativeBackUntil by remember { mutableLongStateOf(0L) }
+    val returnHomeToStart by rememberUpdatedState {
+        selectPressedInHome = false
+        selectDownAtMs = 0L
+        focusState.returnToStart(categories, SystemClock.elapsedRealtime(), netflix?.billboardItem != null)
+    }
+
+    fun shortBack() {
+        selectPressedInHome = false
+        selectDownAtMs = 0L
+        if (focusState.isSidebarFocused) {
+            onExitApp()
+        } else {
+            focusState.recordSelection(categories)
+            if (netflix?.billboardItem != null && !focusState.isHeroFocused) {
+                focusState.isHeroFocused = true
+                focusState.heroButtonIndex = 0
+            } else focusState.isSidebarFocused = true
+        }
+    }
+
+    fun finishBackPress() {
+        backHoldJob?.cancel()
+        backHoldJob = null
+        when (backPress.up(SystemClock.elapsedRealtime())) {
+            HomeBackAction.RETURN_TO_START -> returnHomeToStart()
+            HomeBackAction.BACK -> shortBack()
+            HomeBackAction.NONE -> Unit
+        }
+        suppressNativeBackUntil = SystemClock.elapsedRealtime() + 200L
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { backHoldJob?.cancel(); backPress.cancel() }
+    }
+    LaunchedEffect(isContextMenuOpen, isMobile) {
+        if (isContextMenuOpen || isMobile) {
+            backHoldJob?.cancel()
+            backPress.cancel()
+        }
+    }
     val focusRecoveryDelayMs = 180L
     val dpadRepeatGate = rememberArvioDpadRepeatGate(
         horizontalMinRepeatIntervalMs = 80L,
@@ -2759,26 +2832,15 @@ internal fun HomeInputLayer(
         focusState.reconcile(categories, categoryHasMoreMap)
     }
 
-    BackHandler {
+    BackHandler(enabled = !isContextMenuOpen) {
         selectPressedInHome = false
         selectDownAtMs = 0L
         val embeddedFocus = homeView.findFocus() as? android.webkit.WebView
         if (embeddedFocus != null) {
             embeddedFocus.clearFocus()
             focusRequester.requestFocus()
-        } else if (focusState.isSidebarFocused) {
-            onExitApp()
-        } else {
-            categories.getOrNull(focusState.currentRowIndex)?.id?.let { categoryId ->
-                focusState.rowItemIndicesByCategoryId[categoryId] = focusState.currentItemIndex
-            }
-            if (netflix?.billboardItem != null && !focusState.isHeroFocused) {
-                focusState.isHeroFocused = true
-                focusState.heroButtonIndex = 0
-            } else {
-                focusState.isSidebarFocused = true
-            }
-        }
+        } else if (backPress.isPressed) finishBackPress()
+        else if (SystemClock.elapsedRealtime() >= suppressNativeBackUntil) shortBack()
     }
 
     val keyEventModifier = if (isMobile) {
@@ -2787,6 +2849,21 @@ internal fun HomeInputLayer(
         Modifier.onPreviewKeyEvent { event ->
             if (isContextMenuOpen || homeView.findFocus() is android.webkit.WebView) {
                 return@onPreviewKeyEvent false
+            }
+            if (event.key == Key.Back) {
+                if (event.type == KeyEventType.KeyDown) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (backPress.down(now)) {
+                        backHoldJob = backScope.launch {
+                            delay(HOME_BACK_HOLD_MS)
+                            if (backPress.hold(SystemClock.elapsedRealtime())) returnHomeToStart()
+                        }
+                    } else if (backPress.hold(now)) returnHomeToStart()
+                } else if (event.type == KeyEventType.KeyUp) {
+                    if (event.nativeKeyEvent.isCanceled) backPress.cancel()
+                    finishBackPress()
+                }
+                return@onPreviewKeyEvent true
             }
             if (event.type == KeyEventType.KeyUp && isArvioDpadNavigationKey(event.key)) {
                 dpadRepeatGate.reset()
@@ -2972,7 +3049,7 @@ internal fun HomeInputLayer(
                             true
                         }
                     }
-                        Key.Back, Key.Escape -> {
+                        Key.Escape -> {
                             selectPressedInHome = false
                             selectDownAtMs = 0L
                             if (focusState.isSidebarFocused) {
@@ -3073,6 +3150,8 @@ internal fun HomeInputLayer(
                 if (!it.hasFocus) {
                     selectPressedInHome = false
                     selectDownAtMs = 0L
+                    backHoldJob?.cancel()
+                    backPress.cancel()
                 }
             }
             .focusable()
@@ -3615,14 +3694,16 @@ private fun TvHomeRowsLayer(
         val normalRowsHeight = if (maxHeight < 600.dp) 238.dp else (maxHeight * 0.35f).coerceIn(260.dp, 340.dp)
         val rowsViewportHeight = if (reserveTrailerSpace) maxOf(284.dp, normalRowsHeight) else normalRowsHeight
         val listState = rememberLazyListState()
+        var appliedScrollReset by rememberSaveable { mutableIntStateOf(0) }
         var lastAppliedTargetIndex by remember { mutableIntStateOf(-1) }
         val targetIndex = localCurrentRowIndex.coerceIn(0, (renderedCategories.size - 1).coerceAtLeast(0))
-        LaunchedEffect(targetIndex) {
+        LaunchedEffect(targetIndex, focusState.scrollResetRequest) {
             val currentIndex = listState.firstVisibleItemIndex
             val currentOffset = listState.firstVisibleItemScrollOffset
             val initialPlacement = lastAppliedTargetIndex < 0
             if (currentIndex == targetIndex && currentOffset <= 2) {
                 lastAppliedTargetIndex = targetIndex
+                appliedScrollReset = focusState.scrollResetRequest
                 return@LaunchedEffect
             }
 
@@ -3631,7 +3712,7 @@ private fun TvHomeRowsLayer(
             if (!initialPlacement && !recentUserNav) return@LaunchedEffect
 
             val jumpDistance = abs(targetIndex - currentIndex)
-            if (initialPlacement || jumpDistance > 7) {
+            if (initialPlacement || jumpDistance > 7 || appliedScrollReset != focusState.scrollResetRequest) {
                 listState.scrollToItem(index = targetIndex, scrollOffset = 0)
             } else {
                 if (smoothScrolling) {
@@ -3650,6 +3731,7 @@ private fun TvHomeRowsLayer(
                 }
             }
             lastAppliedTargetIndex = targetIndex
+            appliedScrollReset = focusState.scrollResetRequest
         }
         // Keep rows in the lower portion of the screen so hero metadata has dedicated space,
         // matching the separation used on Details.
@@ -3715,6 +3797,7 @@ private fun TvHomeRowsLayer(
                     ) {
                         ContentRow(
                             category = category,
+                            scrollResetRequest = focusState.scrollResetRequest,
                             cardLogoUrls = cardLogoUrls,
                             isCurrentRow = rowIsFocused,
                             isRanked = category.title.contains("Top 10", ignoreCase = true),
@@ -3947,6 +4030,7 @@ private fun ImdbBadge(rating: String) {
 @Composable
 internal fun ContentRow(
     category: Category,
+    scrollResetRequest: Int = 0,
     cardLogoUrls: Map<String, String>,
     isCurrentRow: Boolean,
     isRanked: Boolean = false,
@@ -4056,6 +4140,15 @@ internal fun ContentRow(
     // Use smooth scroll (animated) for D-pad moves to avoid abrupt jumps.
     var lastScrollIndex by remember { mutableIntStateOf(-1) }
     var lastScrollOffset by remember { mutableIntStateOf(-1) }
+    var appliedScrollReset by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(scrollResetRequest) {
+        if (appliedScrollReset != scrollResetRequest) {
+            rowState.scrollToItem(0)
+            lastScrollIndex = -1
+            lastScrollOffset = -1
+            appliedScrollReset = scrollResetRequest
+        }
+    }
     LaunchedEffect(isCurrentRow, category.id) {
         lastScrollIndex = -1
         lastScrollOffset = -1
@@ -4162,7 +4255,8 @@ internal fun ContentRow(
         ) {
             LazyRow(
                 state = rowState,
-                modifier = Modifier.arvioDpadFocusGroup(enableFocusRestorer = false),
+                modifier = Modifier.testTag("home_rail_${category.id}")
+                    .arvioDpadFocusGroup(enableFocusRestorer = false),
                 contentPadding = PaddingValues(
                     start = startPadding,
                     end = railEndPadding,

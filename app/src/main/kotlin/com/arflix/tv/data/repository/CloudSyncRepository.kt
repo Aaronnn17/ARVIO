@@ -309,6 +309,7 @@ class CloudSyncRepository @Inject constructor(
         val trailerInCards: Boolean = true,
         // Null from older clients: keep the local preference.
         val netflixHomeStyle: Boolean? = null,
+        val watchlistOnHome: Boolean? = null,
         val clockFormat: String = "24h",
         val guideRowCount: Int? = null,
         val showBudget: Boolean = true,
@@ -349,6 +350,8 @@ class CloudSyncRepository @Inject constructor(
         profileManager.profileBooleanKeyFor(profileId, "trailer_in_cards")
     private fun netflixHomeStyleKeyFor(profileId: String) =
         profileManager.profileBooleanKeyFor(profileId, com.arflix.tv.ui.screens.home.NETFLIX_HOME_STYLE_KEY)
+    private fun watchlistOnHomeKeyFor(profileId: String) =
+        profileManager.profileBooleanKeyFor(profileId, com.arflix.tv.util.WATCHLIST_ON_HOME)
     private fun trailerDelayKeyFor(profileId: String) =
         profileManager.profileStringKeyFor(profileId, "trailer_delay_seconds")
     private fun clockFormatKeyFor(profileId: String) =
@@ -693,6 +696,7 @@ class CloudSyncRepository @Inject constructor(
                         trailerDelaySeconds = prefs[trailerDelayKeyFor(profile.id)]?.toIntOrNull() ?: 1,
                         trailerInCards = prefs[trailerInCardsKeyFor(profile.id)] ?: true,
                         netflixHomeStyle = prefs[netflixHomeStyleKeyFor(profile.id)] ?: true,
+                        watchlistOnHome = prefs[watchlistOnHomeKeyFor(profile.id)] ?: false,
                         clockFormat = prefs[clockFormatKeyFor(profile.id)] ?: "24h",
                         guideRowCount = prefs[guideRowCountKeyFor(profile.id)]?.toIntOrNull()
                             ?.takeIf { it in 6..10 } ?: 0,
@@ -1627,6 +1631,7 @@ class CloudSyncRepository @Inject constructor(
                         prefs[trailerDelayKeyFor(profileId)] = state.trailerDelaySeconds.toString()
                         prefs[trailerInCardsKeyFor(profileId)] = state.trailerInCards
                         state.netflixHomeStyle?.let { prefs[netflixHomeStyleKeyFor(profileId)] = it }
+                        state.watchlistOnHome?.let { prefs[watchlistOnHomeKeyFor(profileId)] = it }
                         prefs[clockFormatKeyFor(profileId)] = state.clockFormat
                         // Older clients omit this field; keep the local preference in that case.
                         state.guideRowCount?.let { count ->

@@ -86,6 +86,7 @@ import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
@@ -328,7 +329,7 @@ private fun tvGeneralRowsForSection(section: String): List<Int> {
             listOf(39, 9, 45)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
         "playback" -> listOf(10, 11, 12, 43, 44, 13, 14, 34, 37, 16, 15, 40, 27)
-        "appearance" -> listOf(17, 49, 18, 20, 21, 24, 23, 22, 41, 46, 36, 47)
+        "appearance" -> listOf(17, 49, 50, 18, 20, 21, 24, 23, 22, 41, 46, 36, 47)
         "profiles" -> listOf(19)
         "network" -> listOf(25, 26, 35)
         else -> emptyList()
@@ -1467,6 +1468,7 @@ fun SettingsScreen(
                                                 47 -> viewModel.cycleGuideRowCount()
                                                 37 -> viewModel.setTrailerInCards(!uiState.trailerInCards)
                                                 49 -> viewModel.setNetflixHomeStyle(!uiState.netflixHomeStyle)
+                                                50 -> viewModel.setWatchlistOnHome(!uiState.watchlistOnHome)
                                             }
                                         }
                                         "iptv" -> {
@@ -2088,6 +2090,8 @@ fun SettingsScreen(
                             onTrailerInCardsToggle = { viewModel.setTrailerInCards(it) },
                             netflixHomeStyle = uiState.netflixHomeStyle,
                             onNetflixHomeStyleToggle = { viewModel.setNetflixHomeStyle(it) },
+                            watchlistOnHome = uiState.watchlistOnHome,
+                            onWatchlistOnHomeToggle = viewModel::setWatchlistOnHome,
                             trailerDelaySeconds = uiState.trailerDelaySeconds,
                             onTrailerDelayClick = { viewModel.cycleTrailerDelay() },
                             guideRowCount = uiState.guideRowCount,
@@ -5980,6 +5984,15 @@ private fun MobileSettingsSubPage(
             "Appearance" -> {
                 MobileSettingsCategory(title = stringResource(R.string.settings_section_appearance)) {
                     MobileSettingsRow(
+                        icon = Icons.Default.Bookmark,
+                        title = stringResource(R.string.watchlist_on_home),
+                        subtitle = stringResource(R.string.watchlist_on_home_desc),
+                        value = stringResource(if (uiState.watchlistOnHome) R.string.on else R.string.off),
+                        toggleChecked = uiState.watchlistOnHome,
+                        isFocused = false,
+                        onClick = { viewModel.setWatchlistOnHome(!uiState.watchlistOnHome) }
+                    )
+                    MobileSettingsRow(
                         icon = Icons.Default.Palette,
                         title = stringResource(R.string.ui_mode),
                         value = uiState.deviceModeOverride.replaceFirstChar { it.uppercase() },
@@ -7204,6 +7217,8 @@ private fun TvGeneralSettingsRows(
     onTrailerInCardsToggle: (Boolean) -> Unit = {},
     netflixHomeStyle: Boolean = true,
     onNetflixHomeStyleToggle: (Boolean) -> Unit = {},
+    watchlistOnHome: Boolean = false,
+    onWatchlistOnHomeToggle: (Boolean) -> Unit = {},
     trailerDelaySeconds: Int = 1,
     onTrailerDelayClick: () -> Unit = {},
     guideRowCount: Int = 0,
@@ -7365,6 +7380,7 @@ private fun TvGeneralSettingsRows(
                 35 -> SettingsRow(Icons.Default.Language, stringResource(R.string.custom_user_agent), stringResource(R.string.custom_user_agent_desc), formatUserAgentPreview(customUserAgent, 30), focusedIndex == localIndex, onCustomUserAgentClick, Modifier.settingsFocusSlot(localIndex))
                 37 -> SettingsToggleRow(stringResource(R.string.trailer_in_cards), stringResource(R.string.trailer_in_cards_desc), trailerInCards, focusedIndex == localIndex, onTrailerInCardsToggle, Modifier.settingsFocusSlot(localIndex))
                 49 -> SettingsToggleRow(stringResource(R.string.netflix_home_style), stringResource(R.string.netflix_home_style_desc), netflixHomeStyle, focusedIndex == localIndex, onNetflixHomeStyleToggle, Modifier.settingsFocusSlot(localIndex))
+                50 -> SettingsToggleRow(stringResource(R.string.watchlist_on_home), stringResource(R.string.watchlist_on_home_desc), watchlistOnHome, focusedIndex == localIndex, onWatchlistOnHomeToggle, Modifier.settingsFocusSlot(localIndex))
             }
         }
     }

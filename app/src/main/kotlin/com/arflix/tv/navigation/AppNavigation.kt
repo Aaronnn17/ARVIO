@@ -261,7 +261,14 @@ fun AppNavigation(
                     navController.navigate(Screen.CollectionDetails.createRoute(catalogId))
                 },
                 onNavigateToCategory = { categoryId ->
-                    navController.navigate(Screen.CategoryViewAll.createRoute(categoryId))
+                    if (categoryId == com.arflix.tv.ui.screens.home.HOME_WATCHLIST_ROW_ID) {
+                        // "View all" means this watchlist, not a previously restored server/calendar tab.
+                        navController.navigate(Screen.Watchlist.route) {
+                            popUpTo(Screen.Home.route) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = false
+                        }
+                    } else navController.navigate(Screen.CategoryViewAll.createRoute(categoryId))
                 },
                 onNavigateToSearch = {
                     navigateTopLevel(Screen.Search.route)
