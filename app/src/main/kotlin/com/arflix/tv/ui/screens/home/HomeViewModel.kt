@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import com.arflix.tv.util.settingsDataStore
 import com.arflix.tv.util.IPTV_FAVORITES_ON_HOME
+import com.arflix.tv.util.WATCHLIST_ON_HOME
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -68,6 +69,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -77,12 +79,15 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.cancelAndJoin
 import kotlin.math.roundToInt
 import java.util.Collections
@@ -387,6 +392,59 @@ class HomeViewModel @Inject constructor(
     private val youTubeExtractor: com.arflix.tv.data.api.InAppYouTubeExtractor,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+    private val _homeWatchlistItems = MutableStateFlow<List<MediaItem>>(emptyList())
+    val homeWatchlistItems: StateFlow<List<MediaItem>> = _homeWatchlistItems.asStateFlow()
+    private val homeWatchlistRefreshes = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    @Volatile private var homeWatchlistProfileId: String? = null
+
+    fun refreshHomeWatchlist() {
+        homeWatchlistRefreshes.tryEmit(Unit)
+    }
+
+    private fun observeHomeWatchlist() {
+        viewModelScope.launch(Dispatchers.IO) {
+            profileManager.activeProfileId.combine(context.settingsDataStore.data) { profileId, prefs ->
+                profileId to (prefs[booleanPreferencesKey("profile_${profileId}_$WATCHLIST_ON_HOME")] ?: false)
+            }.distinctUntilChanged().onEach { (profileId, enabled) ->
+                homeWatchlistProfileId = profileId.takeIf { enabled }
+                _homeWatchlistItems.value = emptyList()
+            }.collectLatest { (profileId, enabled) ->
+                if (!enabled) return@collectLatest
+                coroutineScope {
+                    launch {
+                        watchlistRepository.watchlistItems.collect {
+                            if (homeWatchlistProfileId == profileId && profileManager.getProfileIdSync() == profileId) {
+                                _homeWatchlistItems.value = homeWatchlistDisplayItems(watchlistRepository.getCachedItems())
+                            }
+                        }
+                    }
+                    var lastRemoteRefresh = 0L
+                    homeWatchlistRefreshes.onStart { emit(Unit) }.collect {
+                        try {
+                            watchlistRepository.getLocalWatchlistItems()
+                            if (profileManager.getProfileIdSync() != profileId) return@collect
+                            val now = SystemClock.elapsedRealtime()
+                            if (lastRemoteRefresh != 0L && now - lastRemoteRefresh < 60_000L) return@collect
+                            lastRemoteRefresh = now
+                            withTimeoutOrNull(12_000L) {
+                                val remote = remoteSyncManager.getWatchlist()
+                                if (homeWatchlistProfileId == profileId && profileManager.getProfileIdSync() == profileId &&
+                                    remote?.connected == true && !remote.items.isNullOrEmpty()
+                                ) {
+                                    watchlistRepository.syncFromTraktOrder(remote.items, profileId)
+                                }
+                            }
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Exception) {
+                            AppLogger.e("HomeVM", "Home watchlist refresh failed", error)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private val imageLoader: ImageLoader by lazy(LazyThreadSafetyMode.NONE) {
         context.imageLoader
     }
@@ -1770,6 +1828,7 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun resetProfileRuntimeState(profileId: String) {
+        _homeWatchlistItems.value = emptyList()
         loadHomeJob?.cancel()
         refreshContinueWatchingJob?.cancel()
         cwFetchJob?.cancel()
@@ -1992,6 +2051,7 @@ class HomeViewModel @Inject constructor(
     }
 
     init {
+        observeHomeWatchlist()
         // Rows are published from many places (startup cache, catalog load, next pages, cloud
         // reloads), always with unmarked cards. Once a pass has run, new rows take over what it
         // found at once, so the ticks do not blink off while a catalog load lands; before that,
@@ -5151,11 +5211,11 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun onFocusChanged(rowIndex: Int, itemIndex: Int, shouldPrefetch: Boolean = true) {
+    fun onFocusChanged(rowIndex: Int, itemIndex: Int, shouldPrefetch: Boolean = true, visibleCategory: Category? = null) {
         currentRowIndex = rowIndex
         currentItemIndex = itemIndex
         lastFocusChangeTime = System.currentTimeMillis()
-        if (_uiState.value.categories.getOrNull(rowIndex)?.id == FAVORITE_TV_CATEGORY_ID) {
+        if ((visibleCategory ?: _uiState.value.categories.getOrNull(rowIndex))?.id == FAVORITE_TV_CATEGORY_ID) {
             refreshFavoriteTvGuideOnFocus()
         }
         if (!shouldPrefetch) {
@@ -5167,10 +5227,7 @@ class HomeViewModel @Inject constructor(
         prefetchJob = viewModelScope.launch(networkDispatcher) {
             delay(FOCUS_PREFETCH_COALESCE_MS)
 
-            val categories = _uiState.value.categories
-            if (rowIndex < 0 || rowIndex >= categories.size) return@launch
-
-            val category = categories[rowIndex]
+            val category = visibleCategory ?: _uiState.value.categories.getOrNull(rowIndex) ?: return@launch
 
             if (category.items.isEmpty()) return@launch
             if (category.id.startsWith("collection_row_")) return@launch
@@ -5237,7 +5294,7 @@ class HomeViewModel @Inject constructor(
     /**
      * Phase 1.1: Preload logos for category + next 2 categories
      */
-    fun preloadLogosForCategory(categoryIndex: Int, prioritizeVisible: Boolean = false) {
+    fun preloadLogosForCategory(categoryIndex: Int, prioritizeVisible: Boolean = false, visibleCategory: Category? = null) {
         if (prioritizeVisible) {
             preloadCategoryPriorityJob?.cancel()
         } else {
@@ -5252,9 +5309,7 @@ class HomeViewModel @Inject constructor(
                         if (isLowRamDevice) 200L else 100L
                     }
                 )
-                val categories = _uiState.value.categories
-                if (categoryIndex < 0 || categoryIndex >= categories.size) return@launch
-                val category = categories[categoryIndex]
+                val category = visibleCategory ?: _uiState.value.categories.getOrNull(categoryIndex) ?: return@launch
                 if (category.id.startsWith("collection_row_")) return@launch
                 val maxLogoItems = if (prioritizeVisible) prioritizedLogoPrefetchItems else incrementalLogoPrefetchItems
 

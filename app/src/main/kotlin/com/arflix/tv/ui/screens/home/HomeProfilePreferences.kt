@@ -4,6 +4,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.arflix.tv.util.IPTV_FAVORITES_ON_HOME
+import com.arflix.tv.util.WATCHLIST_ON_HOME
 import com.arflix.tv.util.resolveAppLanguage
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -20,6 +21,7 @@ internal data class HomeProfilePreferences(
     val netflixHomeStyle: Boolean,
     val showBudget: Boolean,
     val iptvFavoritesOnHome: Boolean,
+    val watchlistOnHome: Boolean,
     val clockFormat: String,
     val smoothScrolling: Boolean,
     val contentLanguage: String
@@ -42,6 +44,7 @@ internal fun readHomeProfilePreferences(
         iptvFavoritesOnHome = preferences[
             booleanPreferencesKey("$prefix$IPTV_FAVORITES_ON_HOME")
         ] ?: true,
+        watchlistOnHome = preferences[booleanPreferencesKey("$prefix$WATCHLIST_ON_HOME")] ?: false,
         clockFormat = preferences[stringPreferencesKey("${prefix}clock_format")] ?: "24h",
         smoothScrolling = preferences[booleanPreferencesKey("${prefix}smooth_scrolling")] ?: false,
         contentLanguage = contentLang

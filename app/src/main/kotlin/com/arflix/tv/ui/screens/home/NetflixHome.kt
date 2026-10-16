@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -270,13 +271,16 @@ internal fun NetflixTvHomeRowsLayer(
         val targetIndex = if (focusState.isHeroFocused) 0 else focusState.currentRowIndex + 1
         val focusedRowId = if (focusState.isHeroFocused) null else categories.getOrNull(focusState.currentRowIndex)?.id
         var appliedTarget by remember { mutableIntStateOf(-1) }
-        LaunchedEffect(targetIndex, focusedRowId) {
-            if (appliedTarget < 0 || abs(targetIndex - listState.firstVisibleItemIndex) > 4) {
+        var appliedScrollReset by rememberSaveable { mutableIntStateOf(0) }
+        LaunchedEffect(targetIndex, focusedRowId, focusState.scrollResetRequest) {
+            if (appliedTarget < 0 || abs(targetIndex - listState.firstVisibleItemIndex) > 4 ||
+                appliedScrollReset != focusState.scrollResetRequest) {
                 listState.scrollToItem(targetIndex)
             } else {
                 listState.animateScrollToItem(targetIndex)
             }
             appliedTarget = targetIndex
+            appliedScrollReset = focusState.scrollResetRequest
         }
         // Rows inserted or removed above the focused one (late catalog / channel loads)
         // shift the list under a keyed LazyColumn: re-anchor to the focused row.
@@ -364,6 +368,7 @@ internal fun NetflixTvHomeRowsLayer(
                         ) {
                             ContentRow(
                                 category = category,
+                                scrollResetRequest = focusState.scrollResetRequest,
                                 cardLogoUrls = cardLogoUrls,
                                 isCurrentRow = rowIsFocused,
                                 usePosterCards = rowUsePosterCards,
@@ -382,6 +387,7 @@ internal fun NetflixTvHomeRowsLayer(
                     } else {
                         NetflixContentRow(
                             category = category,
+                            scrollResetRequest = focusState.scrollResetRequest,
                             cardLogoUrls = cardLogoUrls,
                             isCurrentRow = rowIsFocused,
                             focusedItemIndex = focusedItemIndex,
@@ -693,6 +699,7 @@ private fun NetflixMetaLine(item: MediaItem, fontSize: Int) {
 @Composable
 private fun NetflixContentRow(
     category: Category,
+    scrollResetRequest: Int,
     cardLogoUrls: Map<String, String>,
     isCurrentRow: Boolean,
     focusedItemIndex: Int,
@@ -734,13 +741,17 @@ private fun NetflixContentRow(
     val anchorIndex = (if (isCurrentRow) focusedItemIndex else restingItemIndex)
         .coerceIn(0, (items.size - 1 + if (hasViewAllCard) 1 else 0).coerceAtLeast(0))
     var lastAnchor by remember { mutableIntStateOf(-1) }
-    LaunchedEffect(anchorIndex, isCurrentRow) {
-        if (isCurrentRow && lastAnchor >= 0 && abs(anchorIndex - lastAnchor) <= 3) {
+    var appliedScrollReset by rememberSaveable { mutableIntStateOf(0) }
+    LaunchedEffect(anchorIndex, isCurrentRow, scrollResetRequest) {
+        if (appliedScrollReset != scrollResetRequest) {
+            rowState.scrollToItem(0)
+        } else if (isCurrentRow && lastAnchor >= 0 && abs(anchorIndex - lastAnchor) <= 3) {
             rowState.animateScrollToItem(anchorIndex)
         } else {
             rowState.scrollToItem(anchorIndex)
         }
         lastAnchor = anchorIndex
+        appliedScrollReset = scrollResetRequest
     }
     val latestOnItemClick by rememberUpdatedState(onItemClick)
 
@@ -757,6 +768,7 @@ private fun NetflixContentRow(
         )
         LazyRow(
             state = rowState,
+            modifier = Modifier.testTag("home_rail_${category.id}"),
             userScrollEnabled = false,
             contentPadding = PaddingValues(start = startPadding, end = bigCardWidth),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
