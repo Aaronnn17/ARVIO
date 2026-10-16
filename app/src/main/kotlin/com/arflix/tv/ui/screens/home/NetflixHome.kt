@@ -4,6 +4,7 @@ import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,6 +52,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -70,6 +72,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
+import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.arflix.tv.R
@@ -148,6 +152,10 @@ internal fun netflixBillboardCandidates(
         .firstOrNull { it.isNotEmpty() }
         .orEmpty()
 }
+
+internal fun stableNetflixBillboard(previous: MediaItem?, candidates: List<MediaItem>, pick: (List<MediaItem>) -> MediaItem): MediaItem? =
+    previous?.let { selected -> candidates.firstOrNull { homeRowItemKey(it) == homeRowItemKey(selected) } ?: selected }
+        ?: candidates.takeIf { it.isNotEmpty() }?.let(pick)
 
 /**
  * D-pad handling the Netflix layout adds on top of the classic Home: the billboard is a
@@ -284,7 +292,8 @@ internal fun NetflixTvHomeRowsLayer(
         }
         // Rows inserted or removed above the focused one (late catalog / channel loads)
         // shift the list under a keyed LazyColumn: re-anchor to the focused row.
-        LaunchedEffect(categories) {
+        val rowIds = remember(categories) { categories.map { it.id } }
+        LaunchedEffect(rowIds) {
             if (appliedTarget >= 0 && !listState.isScrollInProgress &&
                 listState.firstVisibleItemIndex != targetIndex
             ) {
@@ -777,19 +786,19 @@ private fun NetflixContentRow(
             itemsIndexed(
                 items = items,
                 key = { index, _ -> itemKeys[index] },
-                contentType = { index, item ->
-                    when {
-                        item.isPlaceholder -> "placeholder_card"
-                        isCurrentRow && index == focusedItemIndex -> "netflix_featured_card"
-                        isCurrentRow -> "netflix_poster_card"
-                        else -> "netflix_resting_card"
-                    }
+                contentType = { _, item ->
+                    if (item.isPlaceholder) "placeholder_card" else "netflix_media_card"
                 }
             ) { index, item ->
                 if (!item.isPlaceholder && categoryHasMore && index >= items.size - 5) {
                     LaunchedEffect(items.size) { onLoadMore() }
                 }
                 val onClick = remember(item) { { latestOnItemClick(item) } }
+                val featured = isCurrentRow && index == focusedItemIndex && !item.isPlaceholder
+                val landscape = featured || (!isCurrentRow && !restingPoster)
+                val cardWidth = if (featured) bigCardWidth else if (isCurrentRow) focusedPosterWidth else restingWidth
+                val artwork = if (item.isPlaceholder) null else rememberNetflixArtwork(
+                    item, landscape, cardWidth, if (isCurrentRow) bigCardHeight else cardWidth / (if (landscape) (16f / 9f) else (2f / 3f)), isContinueWatching)
                 Box {
                     when {
                         isCurrentRow && index == focusedItemIndex && !item.isPlaceholder -> NetflixFeaturedCard(
@@ -801,7 +810,8 @@ private fun NetflixContentRow(
                             trailerKey = trailerKey,
                             trailerDelayMs = trailerDelayMs,
                             trailerVolume = trailerVolume,
-                            onChannelCardPlaced = onChannelCardPlaced
+                            onChannelCardPlaced = onChannelCardPlaced,
+                            artworkPainter = artwork
                         )
                         isCurrentRow -> MediaCard(
                             item = item,
@@ -814,6 +824,7 @@ private fun NetflixContentRow(
                             focusedScale = 1f,
                             animateFocus = false,
                             enableSystemFocus = false,
+                            artworkPainter = artwork,
                             onClick = onClick
                         )
                         else -> MediaCard(
@@ -828,6 +839,7 @@ private fun NetflixContentRow(
                             focusedScale = 1f,
                             animateFocus = false,
                             enableSystemFocus = false,
+                            artworkPainter = artwork,
                             onClick = onClick
                         )
                     }
@@ -895,6 +907,36 @@ private fun NetflixCardDescription(
     }
 }
 
+/** Keep this title's loaded image while its poster/backdrop request changes with focus. */
+@Composable
+internal fun rememberNetflixArtwork(
+    item: MediaItem, landscape: Boolean, width: Dp, height: Dp, watching: Boolean,
+    imageLoader: coil.ImageLoader = LocalContext.current.imageLoader
+): Painter {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val raw = if (landscape) item.episodeStill?.takeIf { watching && it.isNotBlank() }
+        ?: item.backdrop?.takeIf(String::isNotBlank) ?: item.image else item.image
+    var loaded by remember(homeRowItemKey(item)) { mutableStateOf<Painter?>(null) }
+    if (raw.isBlank()) {
+        return loaded ?: remember { androidx.compose.ui.graphics.painter.ColorPainter(Color.Transparent) }
+    }
+    val request = remember(raw, width, height, density, context, landscape) {
+        val widthPx = with(density) { width.roundToPx() }.coerceAtLeast(1)
+        val heightPx = with(density) { height.roundToPx() }.coerceAtLeast(1)
+        val url = TmdbImageSizing.forSlot(raw, widthPx, heightPx,
+            TmdbImageSizing.cardArtworkKind(raw, item.backdrop, landscape))
+        val cacheKey = "$url|${widthPx}x$heightPx"
+        ImageRequest.Builder(context).data(url.takeIf(String::isNotBlank))
+            .size(widthPx, heightPx).precision(Precision.INEXACT)
+            .memoryCacheKey(cacheKey).placeholderMemoryCacheKey(cacheKey).crossfade(false).build()
+    }
+    val painter = rememberAsyncImagePainter(request, imageLoader = imageLoader, onState = { state ->
+        if (state is AsyncImagePainter.State.Success) loaded = state.painter
+    })
+    return loaded ?: painter
+}
+
 @Composable
 private fun NetflixFeaturedCard(
     item: MediaItem,
@@ -905,7 +947,8 @@ private fun NetflixFeaturedCard(
     trailerKey: String?,
     trailerDelayMs: Long,
     trailerVolume: Float,
-    onChannelCardPlaced: (LayoutCoordinates) -> Unit = {}
+    onChannelCardPlaced: (LayoutCoordinates) -> Unit = {},
+    artworkPainter: Painter? = null
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -914,7 +957,8 @@ private fun NetflixFeaturedCard(
         return
     }
     val focusedAtMs = remember(item.id, item.mediaType) { SystemClock.elapsedRealtime() }
-    val imageRequest = remember(item.backdrop, item.image, width, height) {
+    val imageRequest = remember(item.backdrop, item.image, width, height, artworkPainter != null) {
+        if (artworkPainter != null) return@remember null
         (item.backdrop ?: item.image).takeIf { it.isNotBlank() }?.let { url ->
             val widthPx = with(density) { width.roundToPx() }.coerceAtLeast(1)
             val heightPx = with(density) { height.roundToPx() }.coerceAtLeast(1)
@@ -942,7 +986,9 @@ private fun NetflixFeaturedCard(
         }
         Box(Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize()) {
-                if (imageRequest != null) {
+                if (artworkPainter != null) {
+                    Image(artworkPainter, item.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else if (imageRequest != null) {
                     AsyncImage(
                         model = imageRequest,
                         contentDescription = item.title,

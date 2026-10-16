@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.components
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -99,6 +101,7 @@ fun MediaCard(
     onClick: () -> Unit = {},
     onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    artworkPainter: Painter? = null,
 ) {
     // If this is a placeholder card, show skeleton only
     if (item.isPlaceholder) {
@@ -160,8 +163,8 @@ fun MediaCard(
     val context = LocalContext.current
     val density = LocalDensity.current
     val overlayBrush: Brush? = null  // Gradient removed per user feedback
-    val imageRequest = remember(rawImageUrl, item.backdrop, width, aspectRatio, isMobile, isChannelLogo, isCollectionTile) {
-        if (rawImageUrl == null) return@remember null
+    val imageRequest = remember(rawImageUrl, item.backdrop, width, aspectRatio, isMobile, isChannelLogo, isCollectionTile, artworkPainter != null) {
+        if (rawImageUrl == null || artworkPainter != null) return@remember null
         val widthPx = with(density) { width.roundToPx() }
         val heightPx = (widthPx / aspectRatio).toInt().coerceAtLeast(1)
         // Collection tiles and channel logos keep their own artwork rules.
@@ -239,7 +242,7 @@ fun MediaCard(
         ) { _ ->
             Box(modifier = Modifier.fillMaxSize()) {
                 // Channel logos can be transparent: never leave placeholder text behind them.
-                if (!artworkIsOpaque) Box(
+                if (!artworkIsOpaque && artworkPainter == null) Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .then(if (isChannelLogo) Modifier.background(ArvioSkin.colors.surface)
@@ -258,7 +261,9 @@ fun MediaCard(
                         )
                     }
                 }
-                if (imageRequest != null) {
+                if (artworkPainter != null) {
+                    Image(artworkPainter, item.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else if (imageRequest != null) {
                     AsyncImage(
                         model = imageRequest,
                         contentDescription = item.title,

@@ -8,6 +8,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NetflixHomeTest {
+    @Test fun asyncCatalogRefreshCannotRepickTheBillboardMidVisit() {
+        var picks = 0
+        val first = stableNetflixBillboard(null, listOf(item(1), item(2))) { picks++; it.first() }!!
+        assertEquals(first, stableNetflixBillboard(first, listOf(item(3), item(4))) { picks++; it.last() })
+        val enriched = first.copy(overview = "Loaded details")
+        assertEquals(enriched, stableNetflixBillboard(first, listOf(enriched)) { picks++; it.first() })
+        assertEquals(1, picks)
+    }
     @Test fun billboardPrefersTodaysTopTenRows() {
         val rows = listOf(
             row("continue_watching", 1),

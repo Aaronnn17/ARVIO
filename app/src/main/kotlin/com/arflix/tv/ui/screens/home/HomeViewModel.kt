@@ -3,6 +3,7 @@ package com.arflix.tv.ui.screens.home
 import android.app.ActivityManager
 import android.content.Context
 import com.arflix.tv.util.settingsDataStore
+import com.arflix.tv.util.traktDataStore
 import com.arflix.tv.util.IPTV_FAVORITES_ON_HOME
 import com.arflix.tv.util.WATCHLIST_ON_HOME
 import androidx.compose.runtime.mutableStateMapOf
@@ -84,6 +85,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -977,7 +979,9 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private suspend fun sanitizeContinueWatchingItems(items: List<ContinueWatchingItem>): List<ContinueWatchingItem> {
+    private suspend fun sanitizeContinueWatchingItems(
+        items: List<ContinueWatchingItem>, cacheOnly: Boolean = false
+    ): List<ContinueWatchingItem> = coroutineScope {
         val installedAddons = streamRepository.installedAddons.first()
         val nonLiveItems = items.filterNot { item ->
             SportsAddonCapabilities.isLiveStreamOrSportsItem(
@@ -991,11 +995,12 @@ class HomeViewModel @Inject constructor(
                 isAddonNative = !item.addonNativeId.isNullOrBlank()
             )
         }
-        if (nonLiveItems.isEmpty()) return emptyList()
-
-        val seasonEpisodesCache = HashMap<Pair<Int, Int>, List<com.arflix.tv.data.model.Episode>?>()
-
-        return nonLiveItems.mapNotNull { item ->
+        if (nonLiveItems.isEmpty()) return@coroutineScope emptyList()
+        val seasons = withContext(networkDispatcher) {
+            loadContinueWatchingSeasons(nonLiveItems, cacheOnly,
+                mediaRepository::peekCachedSeasonEpisodes, mediaRepository::getSeasonEpisodes)
+        }
+        nonLiveItems.mapNotNull { item ->
             if (!item.addonNativeId.isNullOrBlank()) mediaRepository.cacheItem(item.toMediaItem())
             if (item.mediaType != MediaType.TV) {
 
@@ -1020,46 +1025,7 @@ class HomeViewModel @Inject constructor(
 
             val cacheKey = item.id to season
             if (!item.addonNativeId.isNullOrBlank()) return@mapNotNull item
-            val seasonEpisodes = if (seasonEpisodesCache.containsKey(cacheKey)) {
-                seasonEpisodesCache[cacheKey]
-            } else {
-                val fetched = runCatching {
-                    mediaRepository.getSeasonEpisodes(item.id, season)
-                }.getOrNull()
-                seasonEpisodesCache[cacheKey] = fetched
-                fetched
-            }
-
-            // If TMDB fetch failed, keep the item rather than silently dropping it.
-            if (seasonEpisodes == null) {
-                return@mapNotNull item
-            }
-
-            // If TMDB doesn't have episodes for this season yet (e.g., a brand-new
-            // season premiere that Trakt knows about but TMDB hasn't indexed), keep
-            // the item. Trakt's progress API is authoritative for "what to watch next."
-            // The previous code dropped these items, causing shows with new season
-            // premieres to silently disappear from Continue Watching.
-            if (seasonEpisodes.isEmpty()) {
-                return@mapNotNull item // Keep — TMDB may not have the season data yet
-            }
-
-            val matchedEpisode = seasonEpisodes.firstOrNull { it.episodeNumber == episode }
-            if (matchedEpisode == null) {
-                return@mapNotNull item // Keep — episode may not be on TMDB yet
-            }
-
-            if (!EpisodeAvailability.hasAired(
-                    matchedEpisode.airDate,
-                    unknownIsAired = !item.isUpNext,
-                )
-            ) {
-                return@mapNotNull null
-            }
-
-            item.copy(
-                episodeTitle = item.episodeTitle ?: matchedEpisode.name
-            )
+            validatedContinueWatchingEpisode(item, seasons[cacheKey])
         }
     }
 
@@ -1644,6 +1610,9 @@ class HomeViewModel @Inject constructor(
     private var customCatalogsJob: Job? = null
     private var loadHomeJob: Job? = null
     private var refreshContinueWatchingJob: Job? = null
+    private val continueWatchingRequests = ContinueWatchingRefreshRequests()
+    private var cwFetchJob: Job? = null
+    @Volatile private var homeTrackingRevision = 0L
     private var watchedBadgesJob: Job? = null
     private var loadHomeRequestId: Long = 0L
     private var activeRuntimeProfileId: String? = null
@@ -1829,6 +1798,7 @@ class HomeViewModel @Inject constructor(
 
     private fun resetProfileRuntimeState(profileId: String) {
         _homeWatchlistItems.value = emptyList()
+        continueWatchingRequests.reset()
         loadHomeJob?.cancel()
         refreshContinueWatchingJob?.cancel()
         cwFetchJob?.cancel()
@@ -2366,7 +2336,7 @@ class HomeViewModel @Inject constructor(
                     dismissedKeys.contains("${item.mediaType.name}:${item.id}")
                 }
                 if (cached.isNotEmpty()) {
-                    val merged = mergeContinueWatchingResumeData(cached)
+                    val merged = cached
                     val cwCategory = Category(
                         id = "continue_watching",
                         title = "Continue Watching",
@@ -2431,16 +2401,12 @@ class HomeViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            try {
-                // Start CW fetch as soon as Trakt auth is available. This no longer
-                // blocks on base catalog loading because the CW fetch runs in its own
-                // coroutine and updates the row independently when ready.
-                traktRepository.isAuthenticated.filter { it }.first()
-                launchContinueWatchingFetch()
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                AppLogger.e("HomeVM", "auth observer CW refresh failed: ${e.message}", e)
-            }
+            observeHomeTrackingState(profileManager.activeProfileId,
+                context.settingsDataStore.data, context.traktDataStore.data)
+                .drop(1).collect {
+                    homeTrackingRevision += 1L
+                    refreshContinueWatchingOnly(force = true)
+                }
         }
         viewModelScope.launch {
             traktSyncService.syncEvents.collect { status ->
@@ -2558,33 +2524,7 @@ class HomeViewModel @Inject constructor(
         putCachedLogos(logoCache)
         resolveIptvChannels(categories.flatMap { it.items })
 
-        // Filter out any existing continue_watching from preloaded data
-        val filteredCategories = categories.filter { it.id != "continue_watching" }.toMutableList()
-
-        // Preserve real CW data if we already have it (from disk cache preload in init).
-        // Only show placeholders if we have NO real CW items yet.
-        val existingCW = _uiState.value.categories.firstOrNull {
-            it.id == "continue_watching" && it.items.isNotEmpty() &&
-                it.items.none { item -> item.isPlaceholder }
-        }
-        if (existingCW != null) {
-            filteredCategories.add(0, existingCW)
-        } else {
-            val placeholderItems = (1..5).map { index ->
-                MediaItem(
-                    id = -index, // Negative IDs for placeholders
-                    title = "",
-                    mediaType = MediaType.MOVIE,
-                    isPlaceholder = true
-                )
-            }
-            val placeholderContinueWatching = Category(
-                id = "continue_watching",
-                title = "Continue Watching",
-                items = placeholderItems
-            )
-            filteredCategories.add(0, placeholderContinueWatching)
-        }
+        val filteredCategories = preloadedHomeCategories(categories, _uiState.value.categories)
 
         // Adjust hero item if it was from continue watching
         val adjustedHeroItem = if (heroItem != null &&
@@ -2625,7 +2565,6 @@ class HomeViewModel @Inject constructor(
         refreshWatchedBadges()
     }
 
-    private var cwFetchJob: Job? = null
     private val prefetchedDetailsKeys = Collections.synchronizedSet(mutableSetOf<String>())
     private val collectionCatalogByMediaId = ConcurrentHashMap<Int, CatalogConfig>()
 
@@ -2714,10 +2653,11 @@ class HomeViewModel @Inject constructor(
      * restarts and updates the CW row independently when the data arrives.
      */
     private fun launchContinueWatchingFetch() {
-        // Don't restart if already running
-        if (cwFetchJob?.isActive == true) return
+        val ticket = continueWatchingRequests.claim(force = false) ?: return
         cwFetchJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
             val localUpdateRevision = continueWatchingUpdates.revision
+            val trackingRevision = homeTrackingRevision
             val cached = try {
                 preloadStartupContinueWatchingItems()
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -2732,7 +2672,8 @@ class HomeViewModel @Inject constructor(
                 )
                 emptyList()
             }
-            if (cached.isNotEmpty() && continueWatchingUpdates.revision == localUpdateRevision) {
+            if (cached.isNotEmpty() && continueWatchingUpdates.revision == localUpdateRevision &&
+                trackingRevision == homeTrackingRevision) {
                 publishContinueWatching(cached)
             }
 
@@ -2754,7 +2695,8 @@ class HomeViewModel @Inject constructor(
                 )
                 null
             }
-            if (instant != null && continueWatchingUpdates.revision == localUpdateRevision) {
+            if (instant != null && continueWatchingUpdates.revision == localUpdateRevision &&
+                trackingRevision == homeTrackingRevision) {
                 publishContinueWatching(instant)
             }
 
@@ -2778,7 +2720,7 @@ class HomeViewModel @Inject constructor(
             if (
                 fresh != null &&
                 fresh != instant &&
-                continueWatchingUpdates.revision == localUpdateRevision
+                continueWatchingUpdates.revision == localUpdateRevision && trackingRevision == homeTrackingRevision
             ) {
                 publishContinueWatching(fresh)
             }
@@ -2796,13 +2738,12 @@ class HomeViewModel @Inject constructor(
                     severity = "warning"
                 )
             }
+            } finally {
+                if (continueWatchingRequests.finish(ticket) && isActive) {
+                    withContext(Dispatchers.Main.immediate) { refreshContinueWatchingOnly(force = true) }
+                }
+            }
         }
-    }
-
-    private fun restartContinueWatchingFetch() {
-        cwFetchJob?.cancel()
-        cwFetchJob = null
-        launchContinueWatchingFetch()
     }
 
     private suspend fun publishContinueWatching(items: List<ContinueWatchingItem>) {
@@ -3525,42 +3466,7 @@ class HomeViewModel @Inject constructor(
                     if (requestId != loadHomeRequestId) return@cw
                     delay(if (isLowRamDevice) 2_200L else 1_200L)
                     if (requestId != loadHomeRequestId) return@cw
-                    val localUpdateRevision = continueWatchingUpdates.revision
-                    val freshContinueWatching = try {
-                        resolveContinueWatchingItemsStable(forceFresh = true)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (error: Exception) {
-                        AppLogger.e("HomeVM", "Background Continue Watching refresh failed", error)
-                        return@cw
-                    }
-                    if (requestId != loadHomeRequestId) return@cw
-                    if (continueWatchingUpdates.revision != localUpdateRevision) return@cw
-
-                    if (freshContinueWatching.isNotEmpty()) {
-                        withContext(Dispatchers.IO) {
-                            persistContinueWatchingCache(freshContinueWatching)
-                        }
-                        val mergedContinueWatching = mergeContinueWatchingResumeData(freshContinueWatching)
-                        val continueWatchingCategory = Category(
-                            id = "continue_watching",
-                            title = "Continue Watching",
-                            items = mergedContinueWatching.map { it.toMediaItem() }
-                        )
-                        continueWatchingCategory.items.forEach { mediaRepository.cacheItem(it) }
-                        lastContinueWatchingItems = continueWatchingCategory.items
-                        lastContinueWatchingUpdateMs = SystemClock.elapsedRealtime()
-                        val updated = _uiState.value.categories.toMutableList()
-                        val index = updated.indexOfFirst { it.id == "continue_watching" }
-                        if (index >= 0) {
-                            updated[index] = continueWatchingCategory
-                        } else {
-                            updated.add(0, continueWatchingCategory)
-                        }
-                        _uiState.value = _uiState.value.copy(categories = updated)
-                    } else {
-                        publishContinueWatching(emptyList())
-                    }
+                    refreshContinueWatchingOnly(force = true)
                 }
               } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -4494,7 +4400,6 @@ class HomeViewModel @Inject constructor(
                     // immediately without waiting for the observeCatalogs flow.
                     loadHomeData()
                     refreshContinueWatchingOnly(force = true)
-                    restartContinueWatchingFetch()
                 }
             }.onFailure {
                 if (it is CancellationException) throw it
@@ -4504,14 +4409,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun refreshContinueWatchingOnly(force: Boolean = false) {
-        // Don't cancel an in-progress Trakt fetch - restarting a fetch that takes
-        // 10+ seconds (424 watched shows, 41 filtered, 50 progress API calls) wastes
-        // time and causes Continue Watching to never appear. Multiple callers
-        // (ON_RESUME, isAuthenticated observer, sync completion) would keep cancelling
-        // each other's fetches. The throttle mechanism prevents redundant fetches.
-        if (refreshContinueWatchingJob?.isActive == true) {
-            if (force) refreshContinueWatchingJob?.cancel() else return
-        }
+        val ticket = continueWatchingRequests.claim(force) ?: return
         refreshContinueWatchingJob = viewModelScope.launch {
             try {
                 val now = SystemClock.elapsedRealtime()
@@ -4526,8 +4424,9 @@ class HomeViewModel @Inject constructor(
                 }
 
                 val localUpdateRevision = continueWatchingUpdates.revision
+                val trackingRevision = homeTrackingRevision
                 val resolvedContinueWatching = resolveContinueWatchingItemsStable(forceFresh = force)
-                if (continueWatchingUpdates.revision != localUpdateRevision) return@launch
+                if (continueWatchingUpdates.revision != localUpdateRevision || trackingRevision != homeTrackingRevision) return@launch
 
                 if (resolvedContinueWatching.isNotEmpty()) {
                     withContext(Dispatchers.IO) {
@@ -4608,6 +4507,10 @@ class HomeViewModel @Inject constructor(
 
                 // Silently fail - don't clear existing data on error
                 AppLogger.e("HomeVM", "launchContinueWatchingFetch failed", e)
+            } finally {
+                if (continueWatchingRequests.finish(ticket) && isActive) {
+                    refreshContinueWatchingOnly(force = true)
+                }
             }
         }
     }
@@ -4756,17 +4659,12 @@ class HomeViewModel @Inject constructor(
             if (traktCache.isNotEmpty()) {
                 traktCache
             } else {
-                val historyItems = loadContinueWatchingFromHistoryStable()
-                if (historyItems.isNotEmpty()) {
-                    historyItems
-                } else {
-                    localItems
-                }
+                localItems
             }
         }
 
-        val repairedItems = repairContinueWatchingMetadataIfNeeded(ContinueWatchingMerge.merge(items, localItems))
-        return applyContinueWatchingDismissals(sanitizeContinueWatchingItems(repairedItems))
+        val cachedItems = ContinueWatchingMerge.merge(items, localItems)
+        return applyContinueWatchingDismissals(sanitizeContinueWatchingItems(cachedItems, cacheOnly = true))
             .filter { item ->
                 item.progress in 0..99 || item.resumePositionSeconds > 0L
             }

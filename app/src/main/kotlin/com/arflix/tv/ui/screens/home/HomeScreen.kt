@@ -949,16 +949,10 @@ fun HomeScreen(
             viewModel.isIptvItem(item) || viewModel.isCollectionItem(item) || viewModel.isSportsHomeItem(item)
         }
         if (candidates.isEmpty()) return@LaunchedEffect
-        val current = billboardKey?.let { key -> candidates.firstOrNull { homeRowItemKey(it) == key } }
-        if (current != null) {
-            billboardItem = current
-        } else if (billboardItem == null || !focusState.userHasNavigated) {
-            // Before the first key press a better source (Top 10 loading after
-            // Trending) may still replace the pick.
-            val picked = candidates.random()
-            billboardKey = homeRowItemKey(picked)
-            billboardItem = picked
-        }
+        val restored = billboardItem ?: billboardKey?.let { key -> candidates.firstOrNull { homeRowItemKey(it) == key } }
+        val selected = stableNetflixBillboard(restored, candidates) { it.random() }
+        billboardItem = selected
+        billboardKey = selected?.let(::homeRowItemKey)
     }
     // While the billboard is focused it is the ViewModel's hero, which loads its
     // details, logo and trailer exactly as for a focused card.
