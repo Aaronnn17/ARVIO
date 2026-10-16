@@ -67,6 +67,7 @@ class OledLibraryDeviceTest {
         }
         if(compose.activity.resources.configuration.screenWidthDp >= 600) compose.onNodeWithTag("library-source-my_watchlist").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus)
         capture("watchlists-horizontal")
+        assertBackdropFadesToBlack()
         compose.onNodeWithText("Filters").performClick()
         compose.onNodeWithText("Title A-Z").assertIsDisplayed().performClick()
         capture("filters-right")
@@ -173,6 +174,24 @@ class OledLibraryDeviceTest {
         compose.waitForIdle()
     }
     private fun card(index: Int) = compose.onAllNodes(hasAnyAncestor(hasTestTag("library-card-$index")) and hasClickAction()).onFirst()
+    private fun assertBackdropFadesToBlack() {
+        val bounds = compose.onNodeWithTag("collection_backdrop").fetchSemanticsNode().boundsInRoot
+        val root = compose.onNodeWithTag("oled-library").fetchSemanticsNode().boundsInRoot
+        val bitmap = compose.onNodeWithTag("oled-library").captureToImage().asAndroidBitmap()
+        val left = (bounds.left - root.left).toInt()
+        val top = (bounds.top - root.top).toInt()
+        val right = (bounds.right - root.left).toInt() - 1
+        val bottom = (bounds.bottom - root.top).toInt().coerceAtMost(bitmap.height) - 1
+        val points = listOf(left to (top + (bottom - top) / 2),
+            right to (top + (bottom - top) / 10),
+            (left + (right - left) * 4 / 5) to top, left to bottom)
+        points.forEach { (x, y) ->
+            val pixel = bitmap.getPixel(x, y)
+            assertTrue("Backdrop edge must blend into pure black at $x,$y: $pixel",
+                android.graphics.Color.red(pixel) <= 6 && android.graphics.Color.green(pixel) <= 6 &&
+                    android.graphics.Color.blue(pixel) <= 6)
+        }
+    }
     private fun capture(name: String) {
         Thread.sleep(1200)
         compose.waitForIdle()

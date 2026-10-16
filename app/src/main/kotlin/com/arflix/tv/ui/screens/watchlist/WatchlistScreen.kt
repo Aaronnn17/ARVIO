@@ -307,12 +307,13 @@ fun WatchlistScreen(
                     val compactSpotlight = compact || maxHeight < 440.dp
                     val showSpotlight = !collections && items.isNotEmpty()
                     if (showSpotlight) CollectionBackdrop(previewCatalog, spotlightItem, touch,
-                        collectionSpotlightHeight(touch, compactSpotlight) + 150.dp)
+                        collectionSpotlightHeight(touch, compactSpotlight) + 150.dp,
+                        background = Color.Black)
                     Column(Modifier.fillMaxSize()) {
                     if (showSpotlight) CollectionSpotlight(previewCatalog, spotlightItem, touch, compactSpotlight, {},
                         providerLogoUrl = enrichedPreview?.providerLogoUrl ?: spotlightItem?.primaryNetworkLogo,
                         clearLogoUrl = previewItem?.let { logos[watchlistLogoKey(it)] },
-                        horizontalInset = 6.dp, showBackButton = false)
+                        horizontalInset = 6.dp, showBackButton = false, topInset = 16.dp)
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                     // TV reveals the entire padded card, including its caption, once.
                     CompositionLocalProvider(LocalBringIntoViewSpec provides
