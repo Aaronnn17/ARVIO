@@ -53,7 +53,7 @@ class SimklSyncService @Inject constructor(
 ) {
     companion object {
         private const val SNAPSHOT_TTL_MS = 15 * 60 * 1000L
-        private const val FAILED_SYNC_BACKOFF_MS = 60 * 1000L
+        internal const val MIN_ACTIVITY_CHECK_INTERVAL_MS = 60 * 1000L
         private val DIACRITICS_REGEX = Regex("\\p{M}+")
         private val NON_ALPHA_NUM_REGEX = Regex("[^a-z0-9]+")
     }
@@ -87,7 +87,8 @@ class SimklSyncService @Inject constructor(
     private var lastActivityCheckTime: Long = 0L
     private var lastPlaybackWatermark: String? = null
     private var lastPlaybackMarkers: Map<String, String?>? = null
-    private var lastSyncAttemptTime: Long = 0L
+    private var lastSyncAttemptTime: Long = Long.MIN_VALUE
+    internal var elapsedRealtimeMs: () -> Long = { android.os.SystemClock.elapsedRealtime() }
 
     private var snapshotMovies: SimklAllItemsResponse? = null
     private var snapshotShows: SimklAllItemsResponse? = null
@@ -182,7 +183,8 @@ class SimklSyncService @Inject constructor(
      * Follows official Simkl sync guidelines:
      * Phase 1: Fetch libraries separately without date_from on initial load (sequentially).
      * Phase 2: Check /sync/activities first. If timestamp changed, fetch delta using /sync/all-items/?date_from=...
-     * Throttles background checks to once every 15 minutes unless forced.
+     * Background checks use a 15-minute cache. Forced refreshes still share a
+     * one-minute cooldown, including failed/cancelled attempts and local writes.
      */
     suspend fun syncIfNeeded(force: Boolean = false): Boolean = syncMutex.withLock {
         val token = authManager.getAccessToken()
@@ -224,11 +226,14 @@ class SimklSyncService @Inject constructor(
             }
         }
 
-        val now = System.currentTimeMillis()
-        if (!force && snapshotComplete && playbackComplete && now - lastActivityCheckTime < SNAPSHOT_TTL_MS) {
+        val now = elapsedRealtimeMs()
+        if (!force && snapshotComplete && playbackComplete && lastActivityCheckTime != 0L &&
+            now - lastActivityCheckTime < SNAPSHOT_TTL_MS) {
             return@withLock true
         }
-        if (!force && now - lastSyncAttemptTime < FAILED_SYNC_BACKOFF_MS) {
+        // Home, Calendar, Library and foreground sync can all request a forced
+        // refresh. Serializing them is not enough: queued callers must reuse it.
+        if (lastSyncAttemptTime != Long.MIN_VALUE && now - lastSyncAttemptTime < MIN_ACTIVITY_CHECK_INTERVAL_MS) {
             return@withLock (snapshotComplete && playbackComplete)
         }
         lastSyncAttemptTime = now
@@ -299,6 +304,8 @@ class SimklSyncService @Inject constructor(
         } catch (e: Exception) {
             AppLogger.e("SimklSyncService", "Error during Simkl sync: ${e.message}")
             false
+        } finally {
+            lastSyncAttemptTime = elapsedRealtimeMs()
         }
     }
 
@@ -593,7 +600,7 @@ class SimklSyncService @Inject constructor(
         lastActivityCheckTime = 0L
         lastPlaybackWatermark = null
         lastPlaybackMarkers = null
-        lastSyncAttemptTime = 0L
+        lastSyncAttemptTime = Long.MIN_VALUE
         snapshotMovies = null
         snapshotShows = null
         snapshotAnime = null

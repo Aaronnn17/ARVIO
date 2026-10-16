@@ -15,6 +15,7 @@ class SimklContinueWatchingTest {
     private val store = mockk<SyncProviderStore>(relaxed = true)
     private val tmdb = mockk<TmdbApi>(relaxed = true)
     private val sync = SimklSyncService(api, SimklAuthManager(api, store), tmdb, store)
+        .apply { elapsedRealtimeMs = { 1_000_000L } }
     private val watchedAt = "2026-09-01T12:00:00Z"
 
     @Before fun prepare() {
