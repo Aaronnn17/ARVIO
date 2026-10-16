@@ -389,6 +389,7 @@ class HomeViewModel @Inject constructor(
     private val apkDownloader: com.arflix.tv.updater.ApkDownloader,
     private val updatePreferences: com.arflix.tv.updater.UpdatePreferences,
     private val updateStatusManager: com.arflix.tv.updater.UpdateStatusManager,
+    private val youTubeExtractor: com.arflix.tv.data.api.InAppYouTubeExtractor,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     private val _homeWatchlistItems = MutableStateFlow<List<MediaItem>>(emptyList())
@@ -5070,6 +5071,7 @@ class HomeViewModel @Inject constructor(
             // for the rest of the app session. Successful keys stay in the LRU.
             if (cached.key != null || SystemClock.elapsedRealtime() - cached.cachedAt < 60_000L) {
                 _uiState.value = _uiState.value.copy(heroTrailerKey = cached.key)
+                cached.key?.let(::prefetchTrailerUrl)
                 return
             }
         }
@@ -5087,6 +5089,7 @@ class HomeViewModel @Inject constructor(
                 mediaRepository.contentLanguage == language && heroTrailerRequestKey == requestKey
             ) {
                 _uiState.value = current.copy(heroTrailerKey = trailerKey)
+                trailerKey?.let(::prefetchTrailerUrl)
             }
         }
     }
@@ -5122,6 +5125,14 @@ class HomeViewModel @Inject constructor(
 
                     } catch (e: Exception) {
                 if (e is CancellationException) throw e
+            }
+        }
+    }
+
+    private fun prefetchTrailerUrl(trailerKey: String) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                youTubeExtractor.extractPlaybackSource("https://www.youtube.com/watch?v=$trailerKey")
             }
         }
     }

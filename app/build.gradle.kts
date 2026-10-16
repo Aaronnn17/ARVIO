@@ -503,7 +503,7 @@ ksp {
 
     baselineProfile(project(":benchmark"))
 
-    // YouTube player for trailers (official IFrame API wrapper)
+    // YouTube player for the Home billboard trailer (official IFrame API wrapper)
     implementation("com.pierfrancescosoffritti.androidyoutubeplayer:core:13.0.0") {
         exclude(group = "androidx.lifecycle")
     }

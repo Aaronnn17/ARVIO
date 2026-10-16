@@ -5754,6 +5754,14 @@ private fun MobileSettingsSubPage(
                         onClick = { viewModel.cycleTrailerDelay() }
                     )
                     MobileSettingsRow(
+                        icon = Icons.Default.Movie,
+                        title = stringResource(R.string.trailer_in_cards),
+                        value = stringResource(if (uiState.trailerInCards) R.string.on else R.string.off),
+                        toggleChecked = uiState.trailerInCards,
+                        isFocused = false,
+                        onClick = { viewModel.setTrailerInCards(!uiState.trailerInCards) }
+                    )
+                    MobileSettingsRow(
                         icon = Icons.Default.Settings,
                         title = stringResource(R.string.frame_rate),
                         value = uiState.frameRateMatchingMode,
@@ -7609,6 +7617,24 @@ private fun GeneralSettings(
             isFocused = focusedIndex == 12,
             onClick = onAutoPlayMinQualityClick,
             modifier = Modifier.settingsFocusSlot(12)
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        SettingsToggleRow(
+            title = stringResource(R.string.trailer_auto_play),
+            subtitle = stringResource(R.string.trailer_desc),
+            isEnabled = trailerAutoPlay,
+            isFocused = focusedIndex == 13,
+            onToggle = onTrailerAutoPlayToggle,
+            modifier = Modifier.settingsFocusSlot(13)
+        )
+        Spacer(modifier = Modifier.height(10.dp))
+        SettingsToggleRow(
+            title = stringResource(R.string.trailer_sound),
+            subtitle = stringResource(R.string.trailer_sound_desc),
+            isEnabled = trailerSoundEnabled,
+            isFocused = focusedIndex == 14,
+            onToggle = onTrailerSoundEnabledToggle,
+            modifier = Modifier.settingsFocusSlot(14)
         )
         Spacer(modifier = Modifier.height(10.dp))
         SettingsRow(
