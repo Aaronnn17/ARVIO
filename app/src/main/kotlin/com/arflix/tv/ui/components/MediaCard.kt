@@ -784,26 +784,65 @@ fun FeaturedMediaCard(
         }
     }
 
-    Column(Modifier.width(width).testTag("home_trailer_card_${item.mediaType}_${item.id}")) {
-        HomeTrailerPreview(
-            youtubeKey = trailerKey,
-            // A spring can briefly cross its target before overshooting. Wait
-            // for a stable size so that crossing cannot create/release WebViews.
-            delayMs = trailerDelayMs,
-            autoplayNotBeforeMs = autoplayNotBeforeMs,
-            volume = trailerVolume,
-            // The player is mounted only once expansion has reached its final size.
-            enabled = kotlin.math.abs(width.value - artworkWidth.value) < 0.5f,
-            modifier = Modifier.fillMaxWidth().height(height).background(Color.Black)
-        ) {
-            if (imageUrl != null) {
-                AsyncImage(
-                    model = imageUrl,
-                    contentDescription = item.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().clickable(onClick = onClick)
-                )
-            }
+    val shape = rememberArvioCardShape(ArvioSkin.radius.md)
+    // Remaining focus delay, fixed when the card opens so recompositions don't restart it.
+    val startDelayMs = remember(item.id, item.mediaType, trailerKey) {
+        autoplayNotBeforeMs?.let { (it - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0L) }
+            ?: trailerDelayMs
+    }
+    // The player is mounted only once expansion has reached its final size.
+    val expanded = kotlin.math.abs(width.value - artworkWidth.value) < 0.5f
+
+    ArvioFocusableSurface(
+        modifier = Modifier.size(width, height).testTag("home_trailer_card_${item.mediaType}_${item.id}"),
+        shape = shape,
+        backgroundColor = Color(0xFF1A1A1A),
+        outlineColor = ArvioSkin.colors.focusOutline,
+        outlineWidth = 2.5.dp,
+        focusedScale = 1f,
+        pressedScale = 0.97f,
+        animateFocus = false,
+        enableSystemFocus = false,
+        isFocusedOverride = true,
+        onClick = onClick,
+    ) { _ ->
+        if (imageUrl != null) {
+            AsyncImage(
+                model = imageUrl,
+                contentDescription = item.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
         }
+        if (trailerKey != null && expanded) {
+            TrailerPlayer(
+                youtubeKey = trailerKey,
+                delayMs = startDelayMs,
+                volume = trailerVolume,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        // Bottom gradient so title text is readable over the backdrop/trailer
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.55f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.85f)
+                    )
+                )
+        )
+        Text(
+            text = item.title,
+            style = ArvioSkin.typography.cardTitle,
+            color = Color.White,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+        )
     }
 }

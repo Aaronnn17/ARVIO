@@ -149,6 +149,7 @@ import com.arflix.tv.ui.components.FeaturedMediaCard
 import com.arflix.tv.ui.components.movieGenreNameRes
 import com.arflix.tv.ui.components.tvGenreNameRes
 import com.arflix.tv.ui.components.MediaCard as ArvioMediaCard
+import com.arflix.tv.ui.components.TrailerPlayer
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.AppTopBar
 import com.arflix.tv.ui.components.AppTopBarContentTopInset
@@ -158,7 +159,6 @@ import com.arflix.tv.ui.components.SkeletonPosterCard
 import com.arflix.tv.ui.components.SkeletonMediaCard
 import androidx.compose.material3.TextButton
 import com.arflix.tv.ui.components.MobileHeroBanner
-import com.arflix.tv.ui.components.HomeTrailerPreview
 import com.arflix.tv.ui.components.MobileHeroLayoutSpec
 import com.arflix.tv.ui.components.resolveMobileHeroLayout
 import com.arflix.tv.ui.components.ProfileAvatarVisual
@@ -212,6 +212,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import dagger.hilt.android.EntryPointAccessors
+import com.arflix.tv.ui.components.TrailerPlayerEntryPoint
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.abs
@@ -1025,9 +1026,6 @@ fun HomeScreen(
 
     val focusedCategory = displayCategories.getOrNull(focusState.currentRowIndex)
     val focusedHomeItem = focusedCategory?.items?.getOrNull(focusState.currentItemIndex)
-    val focusedTrailerAtMs = remember(focusedCategory?.id, focusedHomeItem?.let { homeRowItemKey(it) }, focusState.isSidebarFocused, showContextMenu) {
-        SystemClock.elapsedRealtime()
-    }
     // Reserve space before metadata arrives, keeping the rail still while a trailer loads.
     val reserveTrailerSpace = !isMobile && uiState.trailerAutoPlay && uiState.trailerInCards &&
         focusedCategory?.id != "continue_watching" && focusedHomeItem != null &&
@@ -1215,6 +1213,15 @@ fun HomeScreen(
         if (viewModel.getIptvStreamUrl(item.id) == null) viewModel.resolveIptvChannels(listOf(item))
     }
 
+    var isTrailerPlaying by remember { mutableStateOf(false) }
+    var trailerSuppressed by remember { mutableStateOf(false) }
+    LaunchedEffect(displayHeroItem?.id) { trailerSuppressed = false }
+    val heroRowIsContinueWatching = latestDisplayCategories
+        .getOrNull(focusState.currentRowIndex)?.id == "continue_watching"
+    // Vertical (poster) rows have no in-card trailer, so the hero plays it for them.
+    val heroRowIsPoster = latestDisplayCategories
+        .getOrNull(focusState.currentRowIndex)?.isPortrait(usePosterCards) == true
+
     var heroPlaybackHandles by remember { mutableStateOf<HomeHeroPlaybackHandles?>(null) }
     var preparedHeroVideoUrl by remember { mutableStateOf<String?>(null) }
     val heroExoPlayer = heroPlaybackHandles?.player
@@ -1381,6 +1388,17 @@ fun HomeScreen(
                     )
                 }
 
+                // YouTube trailer auto-play — on TV, trailer plays inside the focused card instead
+                if ((isMobile || !uiState.trailerInCards || heroRowIsPoster) && heroVideoUrl == null && uiState.trailerAutoPlay && uiState.heroTrailerKey != null && !trailerSuppressed && !heroRowIsContinueWatching) {
+                    TrailerPlayer(
+                        youtubeKey = uiState.heroTrailerKey!!,
+                        delayMs = uiState.trailerDelaySeconds * 1000L,
+                        volume = if (uiState.trailerSoundEnabled) 1f else 0f,
+                        onPlayingChanged = { playing -> isTrailerPlaying = playing },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
                 // === SCRIM SYSTEM ===
                 Box(
                     modifier = Modifier
@@ -1489,6 +1507,8 @@ fun HomeScreen(
             fastScrollThresholdMs = fastScrollThresholdMs,
             usePosterCards = usePosterCards,
             isContextMenuOpen = showContextMenu,
+            trailerIsPlaying = isTrailerPlaying,
+            onTrailerStop = { trailerSuppressed = true },
             isMobile = isMobile,
             heroItem = displayHeroItem,
             heroOverviewOverride = displayHeroOverview,
@@ -1598,35 +1618,6 @@ fun HomeScreen(
                 getIptvChannelId = { item -> viewModel.getIptvChannelId(item) }
             )
             } // end trailer-dim wrapper
-        }
-
-        // A clean 16:9 hero slot, beside the metadata and above the rails.
-        // The official player cannot sit behind our gradients, logos or cards.
-        if (!netflixHome && !uiState.trailerInCards && focusedHomeTrailerKey != null && heroVideoUrl == null) {
-            val rowsHeight = if (configuration.screenHeightDp < 600) 238.dp else
-                (configuration.screenHeightDp.dp * 0.35f).coerceIn(260.dp, 340.dp)
-            // Leave room above the rail without landing exactly on the 200dp
-            // player minimum: rounding to physical pixels can make 200dp
-            // slightly smaller on 720p TVs (e.g. 266px at 213dpi).
-            val availableHeight = configuration.screenHeightDp.dp - rowsHeight - AppTopBarContentTopInset - 2.dp
-            val previewWidth = minOf(380.dp, availableHeight * (16f / 9f), configuration.screenWidthDp.dp * 0.4f)
-            if (previewWidth * (9f / 16f) >= 200.dp) {
-                HomeTrailerPreview(
-                    youtubeKey = focusedHomeTrailerKey,
-                    delayMs = uiState.trailerDelaySeconds * 1000L,
-                    autoplayNotBeforeMs = focusedTrailerAtMs + uiState.trailerDelaySeconds * 1000L,
-                    volume = if (uiState.trailerSoundEnabled) 1f else 0f,
-                    modifier = Modifier.align(Alignment.TopEnd)
-                        .padding(top = AppTopBarContentTopInset, end = contentStartPadding)
-                        .width(previewWidth).height(previewWidth * (9f / 16f))
-                        .testTag("home_hero_trailer")
-                ) {
-                    // The existing hero backdrop already supplies artwork while
-                    // preparing, or when an embed is unavailable. Keep it intact
-                    // instead of repeating it inside a floating thumbnail.
-                    Box(Modifier.fillMaxSize())
-                }
-            }
         }
 
         // Error state - show message when loading failed and no content
@@ -2703,6 +2694,8 @@ internal fun HomeInputLayer(
     fastScrollThresholdMs: Long,
     usePosterCards: Boolean,
     isContextMenuOpen: Boolean,
+    trailerIsPlaying: Boolean = false,
+    onTrailerStop: () -> Unit = {},
     isMobile: Boolean = false,
     heroItem: MediaItem? = null,
     heroOverviewOverride: String? = null,
@@ -2849,6 +2842,12 @@ internal fun HomeInputLayer(
         Modifier.onPreviewKeyEvent { event ->
             if (isContextMenuOpen || homeView.findFocus() is android.webkit.WebView) {
                 return@onPreviewKeyEvent false
+            }
+            if (trailerIsPlaying && event.type == KeyEventType.KeyDown &&
+                (isArvioDpadNavigationKey(event.key) || event.key == Key.Enter || event.key == Key.DirectionCenter || event.key == Key.Back)
+            ) {
+                onTrailerStop()
+                return@onPreviewKeyEvent true
             }
             if (event.key == Key.Back) {
                 if (event.type == KeyEventType.KeyDown) {

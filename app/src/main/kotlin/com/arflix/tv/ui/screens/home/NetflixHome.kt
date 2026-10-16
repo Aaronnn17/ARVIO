@@ -70,7 +70,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
-import com.pierfrancescosoffritti.androidyoutubeplayer.core.player.PlayerConstants
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.arflix.tv.R
@@ -81,6 +80,7 @@ import com.arflix.tv.data.model.isPortrait
 import com.arflix.tv.ui.components.AppTopBarHeight
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.HomeTrailerPreview
+import com.arflix.tv.ui.components.TrailerPlayer
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.theme.ArflixTypography
@@ -481,6 +481,8 @@ private fun NetflixBillboard(
                         .build()
                 }
             }
+            // The billboard uses YouTube's own player: the in-app player only gets 360p from
+            // YouTube, which shows at this size. The backdrop stays until the trailer plays.
             HomeTrailerPreview(
                 youtubeKey = trailerKey,
                 delayMs = 0L,
@@ -788,8 +790,6 @@ private fun NetflixContentRow(
                     LaunchedEffect(items.size) { onLoadMore() }
                 }
                 val onClick = remember(item) { { latestOnItemClick(item) } }
-                // The rank ribbon would cover the card's trailer, so it hides while one plays.
-                var cardTrailerPlaying by remember(itemKeys[index]) { mutableStateOf(false) }
                 Box {
                     when {
                         isCurrentRow && index == focusedItemIndex && !item.isPlaceholder -> NetflixFeaturedCard(
@@ -801,7 +801,6 @@ private fun NetflixContentRow(
                             trailerKey = trailerKey,
                             trailerDelayMs = trailerDelayMs,
                             trailerVolume = trailerVolume,
-                            onTrailerPlaying = { cardTrailerPlaying = it },
                             onChannelCardPlaced = onChannelCardPlaced
                         )
                         isCurrentRow -> MediaCard(
@@ -832,8 +831,7 @@ private fun NetflixContentRow(
                             onClick = onClick
                         )
                     }
-                    val trailerCovering = cardTrailerPlaying && isCurrentRow && index == focusedItemIndex
-                    if (isRanked && index < 10 && !item.isPlaceholder && !trailerCovering) {
+                    if (isRanked && index < 10 && !item.isPlaceholder) {
                         TopRankRibbon(
                             rank = index + 1,
                             isFocused = isCurrentRow && index == focusedItemIndex,
@@ -907,7 +905,6 @@ private fun NetflixFeaturedCard(
     trailerKey: String?,
     trailerDelayMs: Long,
     trailerVolume: Float,
-    onTrailerPlaying: (Boolean) -> Unit = {},
     onChannelCardPlaced: (LayoutCoordinates) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -939,20 +936,25 @@ private fun NetflixFeaturedCard(
             .background(Color.Black)
             .testTag("netflix_card_${item.mediaType}_${item.id}")
     ) {
-        HomeTrailerPreview(
-            youtubeKey = trailerKey,
-            delayMs = trailerDelayMs,
-            autoplayNotBeforeMs = focusedAtMs + trailerDelayMs.coerceAtLeast(500L),
-            volume = trailerVolume,
-            onStateChange = { state -> onTrailerPlaying(state.coversTrailer()) },
-            modifier = Modifier.fillMaxSize()
-        ) {
+        // Remaining focus delay, fixed when the card opens so recompositions don't restart it.
+        val startDelayMs = remember(item.id, item.mediaType, trailerKey) {
+            (focusedAtMs + trailerDelayMs.coerceAtLeast(500L) - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+        }
+        Box(Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize()) {
                 if (imageRequest != null) {
                     AsyncImage(
                         model = imageRequest,
                         contentDescription = item.title,
                         contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                if (trailerKey != null) {
+                    TrailerPlayer(
+                        youtubeKey = trailerKey,
+                        delayMs = startDelayMs,
+                        volume = trailerVolume,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -1128,10 +1130,3 @@ private fun NetflixChannelPreview(
     }
 }
 
-/** Whether the official player is on screen (started and not finished). */
-private fun PlayerConstants.PlayerState.coversTrailer(): Boolean = when (this) {
-    PlayerConstants.PlayerState.PLAYING,
-    PlayerConstants.PlayerState.BUFFERING,
-    PlayerConstants.PlayerState.PAUSED -> true
-    else -> false
-}
