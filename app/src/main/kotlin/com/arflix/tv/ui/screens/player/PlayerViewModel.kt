@@ -8020,6 +8020,24 @@ class PlayerViewModel @Inject constructor(
         return job
     }
 
+    /**
+     * The player found the stream is live. Addons don't always label their channels as live
+     * (some list them as movies), so the stream decides: from here on it gets no progress,
+     * scrobbles or Continue Watching entry, and one saved before this fix is removed.
+     */
+    fun onLivePlaybackDetected() {
+        if (currentIsLiveStreamPlayback) return
+        currentIsLiveStreamPlayback = true
+        val mediaType = currentMediaType
+        val mediaId = currentMediaId
+        viewModelScope.launch {
+            runCatching { watchHistoryRepository.removeFromHistory(mediaId, null, null) }
+            runCatching { traktRepository.removeFromContinueWatchingCache(mediaId, null, null, mediaType) }
+            runCatching { cloudSyncRepository.pushToCloud() }
+            runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
+        }
+    }
+
     suspend fun saveProgressAndWait(
         position: Long,
         duration: Long,

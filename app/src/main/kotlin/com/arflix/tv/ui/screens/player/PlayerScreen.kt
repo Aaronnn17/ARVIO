@@ -3011,6 +3011,9 @@ fun PlayerScreen(
                 )
             }
 
+            // Checked before any progress is saved: a live stream's window looks like a duration.
+            if (exoPlayer.isCurrentMediaItemLive) viewModel.onLivePlaybackDetected()
+
             if (currentPosition > 0 && duration > 0) {
                 val currentSecond = (currentPosition / 1000L).coerceAtLeast(0L)
                 val shouldReport =
@@ -3045,6 +3048,7 @@ fun PlayerScreen(
             playerReleased = true
             if (!nextEpisodeTransitionInProgress) {
                 runCatching {
+                    if (exoPlayer.isCurrentMediaItemLive) viewModel.onLivePlaybackDetected()
                     val safeDuration = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
                     val safeProgressPercent = if (safeDuration > 0L) {
                         ((exoPlayer.currentPosition.toDouble() / safeDuration.toDouble()) * 100.0)
