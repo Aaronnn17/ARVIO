@@ -91,6 +91,7 @@ class HomeProfilePreferencesTest {
         assertThat(settings.trailerSoundEnabled).isFalse()
         assertThat(settings.trailerDelaySeconds).isEqualTo(1)
         assertThat(settings.trailerInCards).isTrue()
+        assertThat(settings.netflixHomeStyle).isTrue()
         assertThat(settings.showBudget).isTrue()
         assertThat(settings.iptvFavoritesOnHome).isTrue()
         assertThat(settings.clockFormat).isEqualTo("24h")
