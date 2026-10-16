@@ -235,6 +235,7 @@ data class SettingsUiState(
     /** 0 keeps the fixed row height; 6..10 divides the TV guide into that many rows. */
     val guideRowCount: Int = 0,
     val trailerInCards: Boolean = true,
+    val netflixHomeStyle: Boolean = true,
     val showBudget: Boolean = true,
     val showEpisodeRatings: Boolean = false,
     val animeStructuringStyle: AnimeStructuringStyle = AnimeStructuringStyle.BROADCAST,
@@ -483,6 +484,7 @@ class SettingsViewModel @Inject constructor(
     private fun trailerDelayKey() = profileManager.profileStringKey("trailer_delay_seconds")
     private fun guideRowCountKey() = profileManager.profileStringKey("guide_row_count")
     private fun trailerInCardsKey() = profileManager.profileBooleanKey("trailer_in_cards")
+    private fun netflixHomeStyleKey() = profileManager.profileBooleanKey(com.arflix.tv.ui.screens.home.NETFLIX_HOME_STYLE_KEY)
     private fun showBudgetKey() = profileManager.profileBooleanKey("show_budget_on_home")
     private fun showEpisodeRatingsKey() = profileManager.profileBooleanKey("show_episode_ratings")
     private fun animeStructuringStyleKey() = profileManager.profileStringKey(AnimeStructuringStyle.PREFERENCE_KEY)
@@ -719,6 +721,7 @@ class SettingsViewModel @Inject constructor(
             val guideRowCount = prefs[guideRowCountKey()]?.toIntOrNull()
                 ?.takeIf { it in 6..10 } ?: 0
             val trailerInCards = prefs[trailerInCardsKey()] ?: true
+            val netflixHomeStyle = prefs[netflixHomeStyleKey()] ?: true
             val spoilerBlurEnabled = prefs[spoilerBlurKey()] ?: false
             val showBudget = prefs[showBudgetKey()] ?: true
             val showEpisodeRatings = prefs[showEpisodeRatingsKey()] ?: false
@@ -838,6 +841,7 @@ class SettingsViewModel @Inject constructor(
                 trailerDelaySeconds = trailerDelaySeconds,
                 guideRowCount = guideRowCount,
                 trailerInCards = trailerInCards,
+                netflixHomeStyle = netflixHomeStyle,
                 showBudget = showBudget,
                 showEpisodeRatings = showEpisodeRatings,
                 animeStructuringStyle = animeStructuringStyle,
@@ -1884,6 +1888,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setTrailerInCards(enabled: Boolean) {
         viewModelScope.launch { context.settingsDataStore.edit { it[trailerInCardsKey()] = enabled }; _uiState.value = _uiState.value.copy(trailerInCards = enabled); syncLocalStateToCloud(silent = true) }
+    }
+
+    fun setNetflixHomeStyle(enabled: Boolean) {
+        viewModelScope.launch { context.settingsDataStore.edit { it[netflixHomeStyleKey()] = enabled }; _uiState.value = _uiState.value.copy(netflixHomeStyle = enabled); syncLocalStateToCloud(silent = true) }
     }
 
     fun cycleGuideRowCount() {

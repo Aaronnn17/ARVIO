@@ -328,7 +328,7 @@ private fun tvGeneralRowsForSection(section: String): List<Int> {
             listOf(39, 9, 45)
         "ai_subtitles" -> listOf(28, 29, 30, 31, 32, 33)
         "playback" -> listOf(10, 11, 12, 43, 44, 13, 14, 34, 37, 16, 15, 40, 27)
-        "appearance" -> listOf(17, 18, 20, 21, 24, 23, 22, 41, 46, 36, 47)
+        "appearance" -> listOf(17, 49, 18, 20, 21, 24, 23, 22, 41, 46, 36, 47)
         "profiles" -> listOf(19)
         "network" -> listOf(25, 26, 35)
         else -> emptyList()
@@ -1466,6 +1466,7 @@ fun SettingsScreen(
                                                 34 -> viewModel.cycleTrailerDelay()
                                                 47 -> viewModel.cycleGuideRowCount()
                                                 37 -> viewModel.setTrailerInCards(!uiState.trailerInCards)
+                                                49 -> viewModel.setNetflixHomeStyle(!uiState.netflixHomeStyle)
                                             }
                                         }
                                         "iptv" -> {
@@ -2085,6 +2086,8 @@ fun SettingsScreen(
                             onTrailerSoundEnabledToggle = { viewModel.setTrailerSoundEnabled(it) },
                             trailerInCards = uiState.trailerInCards,
                             onTrailerInCardsToggle = { viewModel.setTrailerInCards(it) },
+                            netflixHomeStyle = uiState.netflixHomeStyle,
+                            onNetflixHomeStyleToggle = { viewModel.setNetflixHomeStyle(it) },
                             trailerDelaySeconds = uiState.trailerDelaySeconds,
                             onTrailerDelayClick = { viewModel.cycleTrailerDelay() },
                             guideRowCount = uiState.guideRowCount,
@@ -7199,6 +7202,8 @@ private fun TvGeneralSettingsRows(
     onTrailerSoundEnabledToggle: (Boolean) -> Unit = {},
     trailerInCards: Boolean = true,
     onTrailerInCardsToggle: (Boolean) -> Unit = {},
+    netflixHomeStyle: Boolean = true,
+    onNetflixHomeStyleToggle: (Boolean) -> Unit = {},
     trailerDelaySeconds: Int = 1,
     onTrailerDelayClick: () -> Unit = {},
     guideRowCount: Int = 0,
@@ -7359,6 +7364,7 @@ private fun TvGeneralSettingsRows(
                 47 -> SettingsRow(Icons.Default.TableRows, stringResource(R.string.guide_rows), stringResource(R.string.guide_rows_desc), if (guideRowCount == 0) stringResource(R.string.auto) else "$guideRowCount", focusedIndex == localIndex, onGuideRowCountClick, Modifier.settingsFocusSlot(localIndex))
                 35 -> SettingsRow(Icons.Default.Language, stringResource(R.string.custom_user_agent), stringResource(R.string.custom_user_agent_desc), formatUserAgentPreview(customUserAgent, 30), focusedIndex == localIndex, onCustomUserAgentClick, Modifier.settingsFocusSlot(localIndex))
                 37 -> SettingsToggleRow(stringResource(R.string.trailer_in_cards), stringResource(R.string.trailer_in_cards_desc), trailerInCards, focusedIndex == localIndex, onTrailerInCardsToggle, Modifier.settingsFocusSlot(localIndex))
+                49 -> SettingsToggleRow(stringResource(R.string.netflix_home_style), stringResource(R.string.netflix_home_style_desc), netflixHomeStyle, focusedIndex == localIndex, onNetflixHomeStyleToggle, Modifier.settingsFocusSlot(localIndex))
             }
         }
     }

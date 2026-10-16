@@ -228,7 +228,7 @@ private object HomeRegexes {
     val WHITESPACE = Regex("\\s+")
 }
 
-private fun Context.cleanOverviewText(value: String): String {
+internal fun Context.cleanOverviewText(value: String): String {
     return value
         .replace(HomeRegexes.HTML_TAG, " ")
         .replace(HomeRegexes.NON_BREAKING_SPACE, " ")
@@ -240,7 +240,7 @@ private fun Context.cleanOverviewText(value: String): String {
 
 // Genre ID to display name (TMDB standard). The numeric id stays the key;
 // only the rendered label is localized — see `TmdbGenreNames.kt`.
-private fun Context.genreNames(mediaType: MediaType, genreIds: List<Int>): List<String> =
+internal fun Context.genreNames(mediaType: MediaType, genreIds: List<Int>): List<String> =
     genreIds.mapNotNull { id ->
         val res = if (mediaType == MediaType.TV) tvGenreNameRes(id) else movieGenreNameRes(id)
         res?.let { getString(it) }
@@ -253,6 +253,10 @@ internal class HomeFocusState(
     initialSidebarIndex: Int = 1
 ) {
     var isSidebarFocused by mutableStateOf(false)
+    // Netflix-style Home: the billboard holds focus. It stays set while the top bar is
+    // focused from the billboard, so Down returns there instead of to a row.
+    var isHeroFocused by mutableStateOf(false)
+    var heroButtonIndex by mutableIntStateOf(0)
     var sidebarFocusIndex by mutableIntStateOf(initialSidebarIndex)
     var currentRowIndex by mutableIntStateOf(initialRowIndex)
     var currentItemIndex by mutableIntStateOf(initialItemIndex)
@@ -333,7 +337,8 @@ internal class HomeFocusState(
                         it.preferredCategoryId.orEmpty(),
                         HashMap(it.rowItemIndicesByCategoryId),
                         HashMap(it.rowItemKeysByCategoryId),
-                        it.isSidebarFocused
+                        it.isSidebarFocused,
+                        it.isHeroFocused
                     )
                 },
                 restore = {
@@ -347,6 +352,7 @@ internal class HomeFocusState(
                             if (key is String && value is String) rowItemKeysByCategoryId[key] = value
                         }
                         isSidebarFocused = it.getOrNull(7) as? Boolean ?: false
+                        isHeroFocused = it.getOrNull(8) as? Boolean ?: false
                     }
                 }
             )
@@ -414,7 +420,7 @@ private fun getFocusedItem(categories: List<Category>, rowIndex: Int, itemIndex:
 internal fun navigableHomeItems(items: List<MediaItem>): List<MediaItem> =
     if (items.any { it.isPlaceholder } && items.any { !it.isPlaceholder }) items.filterNot { it.isPlaceholder } else items
 
-private fun homeRowItemKey(item: MediaItem): String {
+internal fun homeRowItemKey(item: MediaItem): String {
     val episodeSuffix = item.nextEpisode?.let { "_S${it.seasonNumber}E${it.episodeNumber}" }.orEmpty()
     return "${item.mediaType.name}-${item.id}$episodeSuffix"
 }
@@ -498,6 +504,7 @@ internal fun homeRowViewAllIndex(category: Category, hasMore: Boolean): Int =
 
 @androidx.compose.runtime.Immutable
 private data class HomeFocusedHeroSnapshot(
+    val heroFocused: Boolean,
     val rowIndex: Int,
     val itemIndex: Int,
     val focusedItemKey: String,
@@ -516,7 +523,7 @@ private fun preferredHomeStartRowIndex(categories: List<Category>): Int {
     return 0
 }
 
-private fun isActionableHomeItem(item: MediaItem?): Boolean {
+internal fun isActionableHomeItem(item: MediaItem?): Boolean {
     return item != null && item.hasOpenableId && !item.isPlaceholder
 }
 
@@ -602,6 +609,34 @@ private suspend fun androidx.compose.foundation.lazy.LazyListState.animateHomeSc
 }
 
 
+
+/** The hero preview player (channels, service videos): no controls, never focusable. */
+@Composable
+internal fun HomeHeroVideoSurface(player: ExoPlayer, modifier: Modifier = Modifier) {
+    AndroidView(
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                useController = false
+                setControllerAutoShow(false)
+                hideController()
+                isFocusable = false
+                isFocusableInTouchMode = false
+                descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                setKeepContentOnPlayerReset(true)
+                this.player = player
+            }
+        },
+        update = { pv ->
+            pv.useController = false
+            pv.setControllerAutoShow(false)
+            pv.hideController()
+            pv.player = player
+        },
+        modifier = modifier
+    )
+}
 
 @Composable
 private fun HomeBackdropCrossfade(
@@ -869,6 +904,46 @@ fun HomeScreen(
 
     // Use rememberSaveable to persist focus position across navigation (back from details page)
     val focusState = rememberSaveable(currentProfile?.id, saver = HomeFocusState.Saver) { HomeFocusState() }
+    // Netflix-style Home (TV only): a billboard above the rows, and the focused card
+    // of the focused row expands with its description below it.
+    val netflixHome = !isMobile && uiState.netflixHomeStyle
+    LaunchedEffect(netflixHome) {
+        if (!netflixHome) {
+            focusState.isHeroFocused = false
+        } else if (!focusState.userHasNavigated) {
+            focusState.isHeroFocused = true
+            focusState.heroButtonIndex = 0
+        }
+    }
+    // A random title per Home visit; saved so returning from Details keeps it.
+    var billboardKey by rememberSaveable(currentProfile?.id) { mutableStateOf<String?>(null) }
+    var billboardItem by remember(currentProfile?.id) { mutableStateOf<MediaItem?>(null) }
+    LaunchedEffect(netflixHome, displayCategories) {
+        if (!netflixHome) return@LaunchedEffect
+        val candidates = netflixBillboardCandidates(displayCategories) { item ->
+            viewModel.isIptvItem(item) || viewModel.isCollectionItem(item) || viewModel.isSportsHomeItem(item)
+        }
+        if (candidates.isEmpty()) return@LaunchedEffect
+        val current = billboardKey?.let { key -> candidates.firstOrNull { homeRowItemKey(it) == key } }
+        if (current != null) {
+            billboardItem = current
+        } else if (billboardItem == null || !focusState.userHasNavigated) {
+            // Before the first key press a better source (Top 10 loading after
+            // Trending) may still replace the pick.
+            val picked = candidates.random()
+            billboardKey = homeRowItemKey(picked)
+            billboardItem = picked
+        }
+    }
+    // While the billboard is focused it is the ViewModel's hero, which loads its
+    // details, logo and trailer exactly as for a focused card.
+    val vmHeroKey = uiState.heroItem?.let { homeRowItemKey(it) }
+    LaunchedEffect(netflixHome, focusState.isHeroFocused, billboardKey, billboardItem != null, vmHeroKey) {
+        val item = billboardItem ?: return@LaunchedEffect
+        if (netflixHome && focusState.isHeroFocused && !uiState.heroItem.isSameHomeHero(item)) {
+            viewModel.updateHeroItem(item)
+        }
+    }
     val fastScrollThresholdMs = 650L
     // How long the D-pad must sit still before the hero starts a live IPTV preview.
     // This gates only the IPTV branch of heroVideoUrl (collection MP4s skip it), so it is
@@ -936,10 +1011,17 @@ fun HomeScreen(
         !viewModel.isSportsHomeItem(focusedHomeItem)
     val focusedHomeTrailerKey = uiState.heroTrailerKey.takeIf {
         !isMobile && uiState.trailerAutoPlay && !showContextMenu && !focusState.isSidebarFocused &&
+            !focusState.isHeroFocused &&
             focusedCategory?.id != "continue_watching" && focusedHomeItem != null &&
             uiState.heroItem.isSameHomeHero(focusedHomeItem) && displayHeroItem.isSameHomeHero(focusedHomeItem) &&
             !viewModel.isIptvItem(focusedHomeItem) && !viewModel.isCollectionItem(focusedHomeItem) &&
             !viewModel.isSportsHomeItem(focusedHomeItem)
+    }
+
+    val billboardTrailerKey = uiState.heroTrailerKey.takeIf {
+        // Only while the billboard itself has focus: the top bar above it stops the trailer.
+        netflixHome && uiState.trailerAutoPlay && !showContextMenu && focusState.isHeroFocused &&
+            !focusState.isSidebarFocused && billboardItem != null && uiState.heroItem.isSameHomeHero(billboardItem)
     }
 
     BackHandler(enabled = showContextMenu) {
@@ -987,6 +1069,7 @@ fun HomeScreen(
                 ?.items
                 ?.getOrNull(focusState.currentItemIndex)
             HomeFocusedHeroSnapshot(
+                heroFocused = focusState.isHeroFocused,
                 rowIndex = focusState.currentRowIndex,
                 itemIndex = focusState.currentItemIndex,
                 // Include the exact focused item key so async row updates, especially
@@ -1000,7 +1083,7 @@ fun HomeScreen(
             .distinctUntilChanged()
             .collectLatest { focusSnapshot ->
                 val categoriesSnapshot = latestDisplayCategories
-                if (categoriesSnapshot.isEmpty() || focusState.isSidebarFocused) return@collectLatest
+                if (categoriesSnapshot.isEmpty() || focusState.isSidebarFocused || focusSnapshot.heroFocused) return@collectLatest
                 if (focusSnapshot.focusedItemKey.isBlank()) return@collectLatest
                 if (focusSnapshot.focusedItemKey == focusSnapshot.heroItemKey) return@collectLatest
                 categoriesSnapshot.getOrNull(focusSnapshot.rowIndex)
@@ -1015,7 +1098,8 @@ fun HomeScreen(
                     if (
                         focusState.currentRowIndex != focusSnapshot.rowIndex ||
                         focusState.currentItemIndex != focusSnapshot.itemIndex ||
-                        focusState.isSidebarFocused
+                        focusState.isSidebarFocused ||
+                        focusState.isHeroFocused
                     ) {
                         return@collectLatest
                     }
@@ -1083,6 +1167,7 @@ fun HomeScreen(
         ?.takeIf { heroVideoAllowed && isHeroCollection && collectionVideoFinishedId != it.id }
         ?.let { viewModel.getCollectionHeroVideoUrl(it) }
     val heroVideoUrl = when {
+        netflixHome && focusState.isHeroFocused -> null
         !isMobile && !focusState.userHasNavigated -> null
         !heroVideoAllowed -> null
         !isHomeStarted -> null
@@ -1237,7 +1322,7 @@ fun HomeScreen(
         }
         // On mobile, the hero backdrop is rendered inline inside MobileHomeRowsLayer — skip the fixed backdrop.
         // On TV, fill the entire screen with the backdrop.
-        if (!isMobile) {
+        if (!isMobile && !netflixHome) {
             val backdropModifier = Modifier.fillMaxSize()
             Box(modifier = backdropModifier) {
                 if (!showCinematicHomeLayer || settledBackdrop == null) {
@@ -1259,27 +1344,8 @@ fun HomeScreen(
                 }
 
                 if (heroExoPlayer != null && (heroVideoUrl != null || heroVideoAlpha > 0.01f)) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                useController = false
-                                setControllerAutoShow(false)
-                                hideController()
-                                isFocusable = false
-                                isFocusableInTouchMode = false
-                                descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                                setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                                setKeepContentOnPlayerReset(true)
-                                player = heroExoPlayer
-                            }
-                        },
-                        update = { pv ->
-                            pv.useController = false
-                            pv.setControllerAutoShow(false)
-                            pv.hideController()
-                            pv.player = heroExoPlayer
-                        },
+                    HomeHeroVideoSurface(
+                        player = heroExoPlayer,
                         modifier = Modifier
                             .fillMaxSize()
                             .graphicsLayer { alpha = heroVideoAlpha }
@@ -1357,6 +1423,30 @@ fun HomeScreen(
             }
         } // end if (!isMobile) backdrop
 
+        // Netflix mode has no backdrop, but a focused service card still previews behind
+        // the rows, as on the classic Home. Channels preview inside their expanded card.
+        if (netflixHome && !isHeroIptv && heroExoPlayer != null && (heroVideoUrl != null || heroVideoAlpha > 0.01f)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = heroVideoAlpha }
+            ) {
+                HomeHeroVideoSurface(player = heroExoPlayer, modifier = Modifier.fillMaxSize())
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Black.copy(alpha = 0.75f),
+                                0.35f to Color.Black.copy(alpha = 0.35f),
+                                0.7f to Color.Black.copy(alpha = 0.55f),
+                                1f to Color.Black.copy(alpha = 0.9f)
+                            )
+                        )
+                )
+            }
+        }
+
         Box(modifier = Modifier.fillMaxSize()) {
         HomeInputLayer(
             categories = displayCategories,
@@ -1425,6 +1515,33 @@ fun HomeScreen(
             onSwitchProfile = onSwitchProfile,
             onExitApp = onExitApp,
             featuredTrailerKey = if (uiState.trailerInCards) focusedHomeTrailerKey else null,
+            netflix = if (netflixHome) {
+                val billboard = billboardItem?.let { item ->
+                    uiState.heroItem?.takeIf { it.isSameHomeHero(item) } ?: item
+                }
+                NetflixHomeContent(
+                    billboardItem = billboard,
+                    billboardLogoUrl = billboard?.let { item ->
+                        uiState.heroLogoUrl?.takeIf { uiState.heroItem.isSameHomeHero(item) }
+                            ?: cardLogoUrls["${item.mediaType}_${item.id}"]
+                    },
+                    billboardTrailerKey = billboardTrailerKey,
+                    featuredItem = uiState.heroItem,
+                    cardTrailerKey = focusedHomeTrailerKey,
+                    cardTrailerDelayMs = uiState.trailerDelaySeconds * 1000L,
+                    trailerVolume = if (uiState.trailerSoundEnabled) 1f else 0f,
+                    featuredOverview = displayHeroOverview,
+                    channelPreviewPlayer = heroExoPlayer?.takeIf { isHeroIptv },
+                    channelPreviewItem = displayHeroItem?.takeIf { isHeroIptv }
+                )
+            } else null,
+            onBillboardOpen = { item, play ->
+                navigateToDetailsWithCache(
+                    item.mediaType, item.id,
+                    item.nextEpisode?.seasonNumber.takeIf { play },
+                    item.nextEpisode?.episodeNumber.takeIf { play }
+                )
+            },
             reserveTrailerSpace = reserveTrailerSpace,
             featuredTrailerDelayMs = uiState.trailerDelaySeconds * 1000L,
             featuredTrailerVolume = if (uiState.trailerSoundEnabled) 1f else 0f,
@@ -1436,7 +1553,7 @@ fun HomeScreen(
         )
         } // end trailer-dim wrapper
 
-        if (showCinematicHomeLayer) {
+        if (showCinematicHomeLayer && !netflixHome) {
             Box(modifier = Modifier.fillMaxSize()) {
             HomeHeroLayer(
                 heroItem = displayHeroItem,
@@ -1456,7 +1573,7 @@ fun HomeScreen(
 
         // A clean 16:9 hero slot, beside the metadata and above the rails.
         // The official player cannot sit behind our gradients, logos or cards.
-        if (!uiState.trailerInCards && focusedHomeTrailerKey != null && heroVideoUrl == null) {
+        if (!netflixHome && !uiState.trailerInCards && focusedHomeTrailerKey != null && heroVideoUrl == null) {
             val rowsHeight = if (configuration.screenHeightDp < 600) 238.dp else
                 (configuration.screenHeightDp.dp * 0.35f).coerceIn(260.dp, 340.dp)
             // Leave room above the rail without landing exactly on the 200dp
@@ -1980,7 +2097,7 @@ private fun imdbRatingFor(item: MediaItem): String {
 }
 
 @Composable
-private fun TopRankRibbon(
+internal fun TopRankRibbon(
     rank: Int,
     isFocused: Boolean,
     compact: Boolean,
@@ -2589,6 +2706,8 @@ internal fun HomeInputLayer(
     reserveTrailerSpace: Boolean = featuredTrailerKey != null,
     featuredTrailerDelayMs: Long = 0L,
     featuredTrailerVolume: Float = 0f,
+    netflix: NetflixHomeContent? = null,
+    onBillboardOpen: (item: MediaItem, play: Boolean) -> Unit = { _, _ -> },
     onOpenContextMenu: (MediaItem, Boolean) -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
@@ -2653,7 +2772,12 @@ internal fun HomeInputLayer(
             categories.getOrNull(focusState.currentRowIndex)?.id?.let { categoryId ->
                 focusState.rowItemIndicesByCategoryId[categoryId] = focusState.currentItemIndex
             }
-            focusState.isSidebarFocused = true
+            if (netflix?.billboardItem != null && !focusState.isHeroFocused) {
+                focusState.isHeroFocused = true
+                focusState.heroButtonIndex = 0
+            } else {
+                focusState.isSidebarFocused = true
+            }
         }
     }
 
@@ -2728,6 +2852,21 @@ internal fun HomeInputLayer(
             // Reconcile against this render's data before applying new input, not in
             // an asynchronous effect after a background update and key press race.
             focusState.reconcile(categories, categoryHasMoreMap)
+            if (netflix != null) {
+                handleNetflixHomeKey(
+                    event = event,
+                    netflix = netflix,
+                    focusState = focusState,
+                    categories = categories,
+                    isRtl = isRtl,
+                    onBillboardOpen = onBillboardOpen,
+                    onOpenContextMenu = onOpenContextMenu
+                )?.let { netflixHandled ->
+                    selectPressedInHome = false
+                    selectDownAtMs = 0L
+                    return@onPreviewKeyEvent netflixHandled
+                }
+            }
             val handled = when (event.type) {
                 KeyEventType.KeyDown -> when (event.key) {
                     Key.Enter, Key.DirectionCenter -> {
@@ -2982,6 +3121,11 @@ internal fun HomeInputLayer(
             reserveTrailerSpace = reserveTrailerSpace,
             featuredTrailerDelayMs = featuredTrailerDelayMs,
             featuredTrailerVolume = featuredTrailerVolume,
+            netflix = netflix,
+            // Channels expand like titles (their live preview plays in the card).
+            isSpecialItem = { item ->
+                isSportsHomeItem(item) || item.status?.startsWith("collection:") == true
+            },
             onItemClick = { item ->
                 if (!isActionableHomeItem(item)) {
                     return@HomeRowsLayer
@@ -3049,10 +3193,26 @@ private fun HomeRowsLayer(
     reserveTrailerSpace: Boolean = featuredTrailerKey != null,
     featuredTrailerDelayMs: Long = 0L,
     featuredTrailerVolume: Float = 0f,
+    netflix: NetflixHomeContent? = null,
+    isSpecialItem: (MediaItem) -> Boolean = { false },
     onItemClick: (MediaItem) -> Unit,
     onItemLongClick: ((MediaItem, Boolean) -> Unit)? = null
 ) {
-    if (isMobile) {
+    if (!isMobile && netflix != null) {
+        NetflixTvHomeRowsLayer(
+            categories = categories,
+            cardLogoUrls = cardLogoUrls,
+            focusState = focusState,
+            contentStartPadding = contentStartPadding,
+            categoryHasMoreMap = categoryHasMoreMap,
+            smoothScrolling = smoothScrolling,
+            onLoadMoreCategory = onLoadMoreCategory,
+            onViewAllCategory = onViewAllCategory,
+            netflix = netflix,
+            isSpecialItem = isSpecialItem,
+            onItemClick = onItemClick
+        )
+    } else if (isMobile) {
         MobileHomeRowsLayer(
             categories = categories,
             cardLogoUrls = cardLogoUrls,
@@ -3590,7 +3750,7 @@ private fun TvHomeRowsLayer(
 
 /** Trailing card of a home row that opens the row's full grid ("View all"). */
 @Composable
-private fun HomeViewAllCard(
+internal fun HomeViewAllCard(
     width: Dp,
     isLandscape: Boolean,
     isFocused: Boolean,
@@ -3785,7 +3945,7 @@ private fun ImdbBadge(rating: String) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun ContentRow(
+internal fun ContentRow(
     category: Category,
     cardLogoUrls: Map<String, String>,
     isCurrentRow: Boolean,

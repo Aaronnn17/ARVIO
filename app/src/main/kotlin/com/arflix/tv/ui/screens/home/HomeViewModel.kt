@@ -105,6 +105,7 @@ data class HomeUiState(
     val trailerSoundEnabled: Boolean = false,
     val trailerDelaySeconds: Int = 1,
     val trailerInCards: Boolean = true,
+    val netflixHomeStyle: Boolean = true,
     // Home hero metadata visibility toggles (issue #72)
     val showBudget: Boolean = true,
     val heroOverviewOverride: String? = null,
@@ -2059,6 +2060,7 @@ class HomeViewModel @Inject constructor(
                         trailerSoundEnabled = preferences.trailerSoundEnabled,
                         trailerDelaySeconds = preferences.trailerDelaySeconds,
                         trailerInCards = preferences.trailerInCards,
+                        netflixHomeStyle = preferences.netflixHomeStyle,
                         showBudget = preferences.showBudget,
                         clockFormat = preferences.clockFormat,
                         smoothScrolling = preferences.smoothScrolling

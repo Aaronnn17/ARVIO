@@ -9,11 +9,15 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 
+/** Per-profile toggle for the Netflix-style TV Home (billboard + expanding row cards). */
+internal const val NETFLIX_HOME_STYLE_KEY = "netflix_home_style"
+
 internal data class HomeProfilePreferences(
     val trailerAutoPlay: Boolean,
     val trailerSoundEnabled: Boolean,
     val trailerDelaySeconds: Int,
     val trailerInCards: Boolean,
+    val netflixHomeStyle: Boolean,
     val showBudget: Boolean,
     val iptvFavoritesOnHome: Boolean,
     val clockFormat: String,
@@ -33,6 +37,7 @@ internal fun readHomeProfilePreferences(
         trailerDelaySeconds = preferences[stringPreferencesKey("${prefix}trailer_delay_seconds")]
             ?.toIntOrNull() ?: 1,
         trailerInCards = preferences[booleanPreferencesKey("${prefix}trailer_in_cards")] ?: true,
+        netflixHomeStyle = preferences[booleanPreferencesKey("$prefix$NETFLIX_HOME_STYLE_KEY")] ?: true,
         showBudget = preferences[booleanPreferencesKey("${prefix}show_budget_on_home")] ?: true,
         iptvFavoritesOnHome = preferences[
             booleanPreferencesKey("$prefix$IPTV_FAVORITES_ON_HOME")

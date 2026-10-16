@@ -203,6 +203,9 @@
     <string name="guide_rows_desc">Channel rows shown in the TV guide</string>
     <string name="trailer_in_cards">Trailers In Cards</string>
     <string name="trailer_in_cards_desc">TV: preview trailers in the expanded card instead of the hero</string>
+    <string name="netflix_home_style">Netflix-Style Home</string>
+    <string name="netflix_home_style_desc">TV: large featured billboard with trailer, focused card expands with its description</string>
+    <string name="home_more_info">More Info</string>
     <string name="frame_rate_desc">Off, Seamless, or Always</string>
     <string name="quality_filters_desc">Exclude quality tiers on this device</string>
     <string name="card_layout_desc">Landscape or poster cards</string>
