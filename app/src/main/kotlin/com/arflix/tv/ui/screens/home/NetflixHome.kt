@@ -84,6 +84,9 @@ import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.util.TmdbImageSizing
+import com.arflix.tv.util.parseRatingValue
+import com.arflix.tv.ui.components.ImdbSvgRatingBadge
+import coil.imageLoader
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.absoluteOffset
@@ -642,17 +645,42 @@ private fun NetflixMetaLine(item: MediaItem, fontSize: Int) {
             item.contentRating?.takeIf { it.isNotBlank() }?.let(::add)
         }
     }
-    Text(
-        text = parts.joinToString("  •  "),
-        style = ArflixTypography.caption.copy(
-            fontSize = fontSize.sp,
-            fontWeight = FontWeight.Bold,
-            shadow = NetflixTextShadow
-        ),
-        color = Color.White.copy(alpha = 0.92f),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
-    )
+    // The IMDb rating comes with the title's details, which can land after the card. It is
+    // never waited for: it joins the end of the line when it arrives, so nothing else moves.
+    // Kept per title, so it doesn't flicker away when a later copy of the item lacks it.
+    var imdbRating by remember(item.id, item.mediaType) { mutableStateOf("") }
+    LaunchedEffect(item.imdbRating) {
+        if (parseRatingValue(item.imdbRating) > 0f) imdbRating = item.imdbRating
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = parts.joinToString("  •  "),
+            style = ArflixTypography.caption.copy(
+                fontSize = fontSize.sp,
+                fontWeight = FontWeight.Bold,
+                shadow = NetflixTextShadow
+            ),
+            color = Color.White.copy(alpha = 0.92f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        if (imdbRating.isNotEmpty()) {
+            Text(
+                text = "  •  ",
+                style = ArflixTypography.caption.copy(fontSize = fontSize.sp, fontWeight = FontWeight.Bold),
+                color = Color.White.copy(alpha = 0.92f)
+            )
+            ImdbSvgRatingBadge(
+                rating = imdbRating,
+                imageLoader = context.imageLoader,
+                ratingFontSize = fontSize,
+                logoWidth = (fontSize * 2.2f).dp,
+                logoHeight = (fontSize * 1.1f).dp,
+                textShadow = NetflixTextShadow
+            )
+        }
+    }
 }
 
 /**
