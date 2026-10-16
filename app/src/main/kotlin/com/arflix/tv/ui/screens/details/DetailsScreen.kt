@@ -183,7 +183,7 @@ import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.SkeletonDetailsPage
 import com.arflix.tv.ui.components.SkeletonEpisodeCard
 import com.arflix.tv.ui.components.StreamSelector
-import com.arflix.tv.ui.components.TrailerPlayer
+import com.arflix.tv.ui.components.YouTubeTrailerModal
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -968,49 +968,15 @@ fun DetailsScreen(
             }
         )
 
-        // In-app Trailer Player (fullscreen overlay)
         if (showTrailerPlayer && uiState.trailerKey != null) {
-            val closeTrailer = {
-                showTrailerPlayer = false
-                runCatching { focusRequester.requestFocus() }
-            }
-            BackHandler { closeTrailer() }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black)
-                    .zIndex(50f)
-                    .clickable { closeTrailer() }
-            ) {
-                TrailerPlayer(
-                    youtubeKey = uiState.trailerKey!!,
-                    modifier = Modifier.fillMaxSize(),
-                    delayMs = 0L,
-                    volume = 1f
-                )
-                // Close button for touch devices
-                if (isMobile) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 48.dp, end = 16.dp)
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.6f))
-                            .clickable { closeTrailer() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = stringResource(R.string.close),
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
+            YouTubeTrailerModal(
+                youtubeKey = uiState.trailerKey!!,
+                onClose = {
+                    showTrailerPlayer = false
+                    runCatching { focusRequester.requestFocus() }
                 }
-            }
+            )
         }
-
         // Stream Selector Modal
         // With "only search Telegram when clicking", Telegram is offered as a row the user selects
         // (see TelegramSearchRow). It is added here, for display only: autoplay, pre-warming and

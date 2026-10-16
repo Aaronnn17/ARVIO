@@ -503,6 +503,11 @@ ksp {
 
     baselineProfile(project(":benchmark"))
 
+    // YouTube player for the Home billboard trailer (official IFrame API wrapper)
+    implementation("com.pierfrancescosoffritti.androidyoutubeplayer:core:13.0.0") {
+        exclude(group = "androidx.lifecycle")
+    }
+
     // NanoHTTPD – lightweight HTTP server for QR-based AI key setup
     implementation("org.nanohttpd:nanohttpd:2.3.1")
 

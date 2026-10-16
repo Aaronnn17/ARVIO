@@ -78,6 +78,7 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.isPortrait
 import com.arflix.tv.ui.components.AppTopBarHeight
 import com.arflix.tv.ui.components.CardLayoutMode
+import com.arflix.tv.ui.components.HomeTrailerPreview
 import com.arflix.tv.ui.components.TrailerPlayer
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
@@ -474,19 +475,19 @@ private fun NetflixBillboard(
                         .build()
                 }
             }
-            Box(modifier = Modifier.requiredSize(mediaWidth, mediaHeight)) {
+            // The billboard uses YouTube's own player: the in-app player only gets 360p from
+            // YouTube, which shows at this size. The backdrop stays until the trailer plays.
+            HomeTrailerPreview(
+                youtubeKey = trailerKey,
+                delayMs = 0L,
+                volume = trailerVolume,
+                modifier = Modifier.requiredSize(mediaWidth, mediaHeight)
+            ) {
                 if (backdropRequest != null) {
                     AsyncImage(
                         model = backdropRequest,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-                if (trailerKey != null) {
-                    TrailerPlayer(
-                        youtubeKey = trailerKey,
-                        volume = trailerVolume,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
