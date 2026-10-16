@@ -49,9 +49,19 @@ class OledLibraryDeviceTest {
         show(false)
         compose.onNodeWithTag("library-card-0").assertIsDisplayed()
         val first = compose.onNodeWithTag("library-card-0").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("collection_spotlight").assertIsDisplayed()
         if(compose.activity.resources.configuration.screenWidthDp >= 600) {
             card(0).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus)
+            compose.mainClock.advanceTimeBy(400)
+            compose.waitForIdle()
+            val firstDescription = compose.onNodeWithTag("collection_spotlight_overview").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.Text].single().text
             compose.onNodeWithTag("oled-library").performKeyInput { pressKey(Key.DirectionRight) }
+            compose.mainClock.advanceTimeBy(400)
+            compose.waitForIdle()
+            val nextDescription = compose.onNodeWithTag("collection_spotlight_overview").fetchSemanticsNode()
+                .config[androidx.compose.ui.semantics.SemanticsProperties.Text].single().text
+            assertNotEquals("Description must follow the focused title", firstDescription, nextDescription)
             val after = compose.onNodeWithTag("library-card-0").fetchSemanticsNode().boundsInRoot
             assertEquals(first.top, after.top, 2f)
         }
@@ -80,11 +90,27 @@ class OledLibraryDeviceTest {
         show(true)
         compose.onNodeWithTag("library-grid").performScrollToIndex(55)
         compose.onNodeWithTag("library-card-55").assertIsDisplayed()
+        compose.onNodeWithTag("collection_spotlight").assertIsDisplayed()
         compose.onNodeWithTag("library-grid").performScrollToIndex(0)
         capture("watchlists-poster")
     }
     @Test fun landscapeFocusedCardsRemainFullyVisibleWhileScrolling() = verifyFocusedScroll(false)
     @Test fun posterFocusedCardsRemainFullyVisibleWhileScrolling() = verifyFocusedScroll(true)
+
+    @Test fun touchScrollUpdatesPersistentDescription() {
+        show(false)
+        if(compose.activity.resources.configuration.screenWidthDp >= 600) return
+        compose.mainClock.advanceTimeBy(400)
+        val before = compose.onNodeWithTag("collection_spotlight_overview").fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.Text].single().text
+        compose.onNodeWithTag("library-grid").performScrollToIndex(12)
+        compose.mainClock.advanceTimeBy(400)
+        val after = compose.onNodeWithTag("collection_spotlight_overview").fetchSemanticsNode()
+            .config[androidx.compose.ui.semantics.SemanticsProperties.Text].single().text
+        assertNotEquals(before, after)
+        compose.onNodeWithTag("collection_spotlight").assertIsDisplayed()
+        capture("phone-description-scrolled")
+    }
 
     private fun verifyFocusedScroll(poster: Boolean) {
         show(poster)
@@ -129,6 +155,7 @@ class OledLibraryDeviceTest {
             isLoading=false, movies=titles.filter { it.mediaType == MediaType.MOVIE }, series=titles.filter { it.mediaType == MediaType.TV }))
         library = MutableStateFlow(HomeLibraryUiState(providers=listOf(HomeServerKind.JELLYFIN),libraries=listOf(server)))
         every { model.uiState } returns ui; every { model.libraryState } returns library; every { model.logoUrls } returns MutableStateFlow(logos)
+        coEvery { model.loadLibraryPreview(any()) } answers { LibraryPreview(firstArg<MediaItem>().copy(overview = "A detailed description of ${firstArg<MediaItem>().title}.")) }
         every { model.selectSource(any()) } answers { ui.value=ui.value.copy(selectedSourceId=firstArg()) }
         every { model.selectLibraryProvider(any()) } answers { library.value=library.value.copy(selectedProvider=firstArg(),selectedSourceRef=server.sourceRef,items=titles) }
         every { model.selectLibrary(any()) } answers { library.value=library.value.copy(selectedSourceRef=firstArg(),items=titles) }

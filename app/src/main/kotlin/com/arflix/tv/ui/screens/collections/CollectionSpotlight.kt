@@ -129,7 +129,8 @@ internal fun CollectionSpotlight(
     onBack: () -> Unit,
     providerLogoUrl: String? = item?.primaryNetworkLogo,
     clearLogoUrl: String? = null,
-    horizontalInset: Dp = if (isMobile) 20.dp else 42.dp
+    horizontalInset: Dp = if (isMobile) 20.dp else 42.dp,
+    showBackButton: Boolean = isMobile
 ) {
     val context = LocalContext.current
     val inset = horizontalInset
@@ -140,7 +141,7 @@ internal fun CollectionSpotlight(
             verticalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 7.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (isMobile) {
+                if (showBackButton) {
                     IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back), tint = Color.White)
                     }

@@ -991,6 +991,33 @@ class WatchlistViewModel @Inject constructor(
 
     fun ensureLogo(item: MediaItem) = prefetchLogos(listOf(item))
 
+    private val libraryPreviews = linkedMapOf<String, LibraryPreview>()
+
+    internal suspend fun loadLibraryPreview(item: MediaItem): LibraryPreview {
+        val profile = profileManager.getProfileIdSync()
+        val key = "$profile:${libraryPreviewKey(item)}"
+        libraryPreviews[key]?.let { return it.copy(item = mergeLibraryPreview(item, it.item)) }
+        val details = if (item.id > 0 && !item.isHomeServer) try {
+            when (item.mediaType) {
+                MOVIE -> mediaRepository.getMovieDetails(item.id)
+                TV -> mediaRepository.getTvDetails(item.id)
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { null } else null
+        val preview = mergeLibraryPreview(item, details)
+        val provider = if (item.id > 0 && !item.isHomeServer) try {
+            mediaRepository.getStreamingServices(item.mediaType, item.id,
+                preferredRegion = java.util.Locale.getDefault().country)?.services?.firstOrNull()?.logoUrl
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { null } else item.primaryNetworkLogo
+        val result = LibraryPreview(preview, provider)
+        if (profileManager.getProfileIdSync() == profile && (details != null || item.isHomeServer || item.id <= 0)) {
+            if (libraryPreviews.size >= 80) libraryPreviews.remove(libraryPreviews.keys.first())
+            libraryPreviews[key] = result
+        }
+        return result
+    }
+
     private val previewPermits = Semaphore(2)
 
     /** A visible collection requests one cover without changing the active list. */

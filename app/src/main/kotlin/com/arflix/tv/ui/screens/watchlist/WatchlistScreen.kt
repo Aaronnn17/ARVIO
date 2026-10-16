@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.*
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.animateScrollBy
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -54,10 +56,18 @@ import com.arflix.tv.ui.skin.resolveAccentColor
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.tr
 import com.arflix.tv.ui.screens.watchlist.calendar.*
+import com.arflix.tv.ui.screens.collections.CollectionBackdrop
+import com.arflix.tv.ui.screens.collections.CollectionSpotlight
+import com.arflix.tv.ui.screens.collections.collectionSpotlightHeight
+import kotlinx.coroutines.delay
 import java.time.LocalDate
 
 internal enum class LibrarySection(val label: String) { WATCHLISTS("Watchlists"), LISTS("My lists"), SERVERS("Homeserver"), CALENDAR("Calendar") }
 internal val LibraryTabsTopInset = AppTopBarHeight - 8.dp
+@OptIn(ExperimentalFoundationApi::class)
+private object LibraryTvBringIntoViewSpec : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = 0f
+}
 internal fun libraryColumns(width: Int, poster: Boolean, collections: Boolean = false): Int =
     if (collections) (width / 270).coerceIn(1, 3) else if (poster) (width / 115).coerceIn(2, 8) else (width / 180).coerceIn(2, 4)
 internal fun WatchlistSourceItem.isPersonalCollection(): Boolean = this is WatchlistSourceItem.Catalog ||
@@ -131,6 +141,41 @@ fun WatchlistScreen(
         restore = { saved -> saved.mapValues { (_, value) -> val position = value as List<*>; LazyGridState(position[0] as Int, position[1] as Int) }.toMutableMap() }
     )) { mutableMapOf<String, LazyGridState>() }
     val grid = remember(sourceKey) { viewports.getOrPut(sourceKey) { LazyGridState() } }
+    var revealJob by remember(grid) { mutableStateOf<Job?>(null) }
+    fun revealCard(index: Int) {
+        if (touch) return
+        revealJob?.cancel()
+        revealJob = scrollScope.launch {
+            withFrameNanos { }
+            val layout = grid.layoutInfo
+            val card = layout.visibleItemsInfo.firstOrNull { it.index == index }
+            if (card == null) grid.scrollToItem(index) else {
+                val delta = libraryRevealScrollDelta(card.offset.y, card.size.height,
+                    layout.viewportStartOffset + layout.beforeContentPadding,
+                    layout.viewportEndOffset - layout.afterContentPadding)
+                if (delta != 0) grid.animateScrollBy(delta.toFloat(), tween(140))
+            }
+        }
+    }
+    var focusedPreviewKey by rememberSaveable(currentProfile?.id, sourceKey) { mutableStateOf<String?>(null) }
+    val touchPreviewIndex by remember(grid) { derivedStateOf { grid.firstVisibleItemIndex } }
+    val previewCandidate = if (touch) items.getOrNull(touchPreviewIndex.coerceAtMost(items.lastIndex.coerceAtLeast(0)))
+        else items.firstOrNull { libraryPreviewKey(it) == focusedPreviewKey } ?: items.firstOrNull()
+    var previewItem by remember(currentProfile?.id, sourceKey) { mutableStateOf(previewCandidate) }
+    LaunchedEffect(currentProfile?.id, sourceKey, previewCandidate?.let(::libraryPreviewKey)) {
+        if (previewCandidate != null) delay(100)
+        previewItem = previewCandidate
+    }
+    val previewKey = previewItem?.let(::libraryPreviewKey)
+    var enrichedPreview by remember(currentProfile?.id, sourceKey, previewKey) { mutableStateOf<LibraryPreview?>(null) }
+    LaunchedEffect(currentProfile?.id, sourceKey, previewKey, calendarMode, collections) {
+        if (!calendarMode && !collections && previewItem != null) {
+            delay(160)
+            val item = previewItem ?: return@LaunchedEffect
+            viewModel.ensureLogo(item)
+            enrichedPreview = viewModel.loadLibraryPreview(item)
+        }
+    }
     fun selectSource(source: WatchlistSourceItem) {
         if (source is WatchlistSourceItem.HomeServer) {
             viewModel.selectLibraryProvider(source.candidate.serverKind)
@@ -254,6 +299,24 @@ fun WatchlistScreen(
                 BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
                     val columns = libraryColumns(maxWidth.value.toInt(), poster, collections)
                     val width = (maxWidth - 12.dp * (columns - 1)) / columns
+                    val previewCatalog = remember(sourceKey, state.selectedSource.title, scopeSources, selectedId) {
+                        CatalogConfig(sourceKey, scopeSources.firstOrNull { it.id == selectedId }?.title
+                            ?: state.selectedSource.title, CatalogSourceType.PREINSTALLED)
+                    }
+                    val spotlightItem = enrichedPreview?.item ?: previewItem
+                    val compactSpotlight = compact || maxHeight < 440.dp
+                    val showSpotlight = !collections && items.isNotEmpty()
+                    if (showSpotlight) CollectionBackdrop(previewCatalog, spotlightItem, touch,
+                        collectionSpotlightHeight(touch, compactSpotlight) + 150.dp)
+                    Column(Modifier.fillMaxSize()) {
+                    if (showSpotlight) CollectionSpotlight(previewCatalog, spotlightItem, touch, compactSpotlight, {},
+                        providerLogoUrl = enrichedPreview?.providerLogoUrl ?: spotlightItem?.primaryNetworkLogo,
+                        clearLogoUrl = previewItem?.let { logos[watchlistLogoKey(it)] },
+                        horizontalInset = 6.dp, showBackButton = false)
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                    // TV reveals the entire padded card, including its caption, once.
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides
+                        if (touch || collections) LocalBringIntoViewSpec.current else LibraryTvBringIntoViewSpec) {
                     if (collections) {
                         val lists = scopeSources.filter { it.title.contains(query, true) }
                         if(lists.isEmpty()) OledMessage(tr("No lists yet"), tr("Your custom catalogs and personal lists appear here."))
@@ -277,13 +340,12 @@ fun WatchlistScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(18.dp),
                         contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp + LocalBottomBarInset.current)) {
                         itemsIndexed(items, key = { index, item -> watchlistItemKey(item, index) }) { index, item ->
-                            val reveal = remember { BringIntoViewRequester() }
                             LaunchedEffect(watchlistLogoKey(item), poster) { if(!poster) viewModel.ensureLogo(item) }
-                            Box(Modifier.bringIntoViewRequester(reveal).padding(6.dp).testTag("library-card-frame-$index")) {
+                            Box(Modifier.padding(6.dp).testTag("library-card-frame-$index")) {
                             MediaCard(item, width = width - 12.dp, isLandscape = !poster, logoImageUrl = logos[watchlistLogoKey(item)],
                                 focusedScale = 1.025f, titleMaxLines = 1, showTitle = true,
                                 modifier = Modifier.testTag("library-card-$index"),
-                                onFocused = { viewModel.saveFocusState(0, index); if(!touch) scrollScope.launch { reveal.bringIntoView() } },
+                                onFocused = { focusedPreviewKey = libraryPreviewKey(item); viewModel.saveFocusState(0, index); revealCard(index) },
                                 onClick = { onNavigateToDetails(item.mediaType, item.id) },
                                 onLongClick = if(state.selectedSourceId == WatchlistSourceItem.MyWatchlist.id && !serverMode) ({ viewModel.removeFromWatchlist(item) }) else null)
                             }
@@ -296,6 +358,9 @@ fun WatchlistScreen(
                         if(error != null) item("retry-page", span = { GridItemSpan(maxLineSpan) }) {
                             OledControl(tr("Could not update this source. Retry"), onClick = { if(serverMode) viewModel.refreshLibrary() else viewModel.refresh() })
                         }
+                    }
+                    }
+                    }
                     }
                 }
             }
