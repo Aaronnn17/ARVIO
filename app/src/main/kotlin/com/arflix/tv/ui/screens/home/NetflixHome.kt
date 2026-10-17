@@ -591,7 +591,9 @@ private fun NetflixBillboardInfo(
             )
         }
         NetflixMetaLine(item = item, fontSize = 15)
-        val overview = remember(item.overview, context) { context.cleanOverviewText(item.overview) }
+        val overview = remember(item.overview, context) {
+            netflixShortOverview(context.cleanOverviewText(item.overview))
+        }
         Text(
             text = overview,
             style = ArflixTypography.body.copy(
@@ -893,7 +895,9 @@ private fun NetflixCardDescription(
 ) {
     val context = LocalContext.current
     val overview = remember(overviewOverride, item.overview, context) {
-        context.cleanOverviewText(overviewOverride ?: item.overview)
+        val text = context.cleanOverviewText(overviewOverride ?: item.overview)
+        // A channel's text is the programme on air; it is kept as the guide wrote it.
+        if (item.isIptvChannel()) text else netflixShortOverview(text)
     }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (item.isIptvChannel()) NetflixLiveLine(item) else NetflixMetaLine(item = item, fontSize = 13)
@@ -1176,3 +1180,23 @@ private fun NetflixChannelPreview(
     }
 }
 
+
+private val SENTENCE_END = Regex("""[.!?…]+["'”’)]?(?=\s)""")
+private val ABBREVIATION = Regex("""(?:^|\s)(?:[A-Z]|Mr|Mrs|Ms|Dr|St|Jr|Sr|Vs|vs|No|U\.S|U\.K)\.$""")
+private const val SHORT_OVERVIEW_MIN_CHARS = 40
+
+/**
+ * Home shows a short synopsis, as Netflix does: the overview's first sentence. A very short
+ * first sentence takes the next one too, and abbreviations ("Dr.", "U.S.") don't end one.
+ */
+internal fun netflixShortOverview(overview: String): String {
+    val text = overview.trim()
+    for (match in SENTENCE_END.findAll(text)) {
+        val end = match.range.last + 1
+        val candidate = text.substring(0, end)
+        if (ABBREVIATION.containsMatchIn(candidate)) continue
+        if (candidate.length < SHORT_OVERVIEW_MIN_CHARS) continue
+        return candidate
+    }
+    return text
+}
