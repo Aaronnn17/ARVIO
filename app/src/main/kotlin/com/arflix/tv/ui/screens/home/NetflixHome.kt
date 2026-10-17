@@ -1,6 +1,9 @@
 package com.arflix.tv.ui.screens.home
 
 import android.os.SystemClock
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -33,6 +36,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -49,10 +53,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -797,15 +805,21 @@ private fun NetflixContentRow(
                 val featured = isCurrentRow && index == focusedItemIndex && !item.isPlaceholder
                 val landscape = featured || (!isCurrentRow && !restingPoster)
                 val cardWidth = if (featured) bigCardWidth else if (isCurrentRow) focusedPosterWidth else restingWidth
+                val cardHeight = if (isCurrentRow) bigCardHeight else cardWidth / (if (landscape) (16f / 9f) else (2f / 3f))
+                val animatedWidth by animateDpAsState(cardWidth,
+                    tween(180, easing = FastOutSlowInEasing), label = "netflixCardWidth")
+                val animatedHeight by animateDpAsState(cardHeight,
+                    tween(180, easing = FastOutSlowInEasing), label = "netflixCardHeight")
+                // Decode once for the target geometry, never once per animation frame.
                 val artwork = if (item.isPlaceholder) null else rememberNetflixArtwork(
-                    item, landscape, cardWidth, if (isCurrentRow) bigCardHeight else cardWidth / (if (landscape) (16f / 9f) else (2f / 3f)), isContinueWatching)
-                Box {
+                    item, landscape, cardWidth, cardHeight, isContinueWatching)
+                Box(Modifier.testTag("netflix_morph_${item.mediaType}_${item.id}")) {
                     when {
                         isCurrentRow && index == focusedItemIndex && !item.isPlaceholder -> NetflixFeaturedCard(
                             item = item,
                             logoUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
-                            width = bigCardWidth,
-                            height = bigCardHeight,
+                            width = animatedWidth,
+                            height = animatedHeight,
                             showProgress = isContinueWatching,
                             trailerKey = trailerKey,
                             trailerDelayMs = trailerDelayMs,
@@ -815,7 +829,7 @@ private fun NetflixContentRow(
                         )
                         isCurrentRow -> MediaCard(
                             item = item,
-                            width = focusedPosterWidth,
+                            width = animatedWidth,
                             isLandscape = false,
                             showLogoImage = false,
                             raiseOnFocus = false,
@@ -825,11 +839,12 @@ private fun NetflixContentRow(
                             animateFocus = false,
                             enableSystemFocus = false,
                             artworkPainter = artwork,
+                            artworkHeight = animatedHeight,
                             onClick = onClick
                         )
                         else -> MediaCard(
                             item = item,
-                            width = restingWidth,
+                            width = animatedWidth,
                             isLandscape = !restingPoster,
                             logoImageUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
                             showLogoImage = true,
@@ -840,6 +855,7 @@ private fun NetflixContentRow(
                             animateFocus = false,
                             enableSystemFocus = false,
                             artworkPainter = artwork,
+                            artworkHeight = animatedHeight,
                             onClick = onClick
                         )
                     }
@@ -907,7 +923,34 @@ private fun NetflixCardDescription(
     }
 }
 
-/** Keep this title's loaded image while its poster/backdrop request changes with focus. */
+/** Keeps each source's crop independent while blending; a portrait must not suddenly use the backdrop's crop. */
+private class NetflixArtworkBlendPainter(
+    private val poster: Painter?, private val backdrop: Painter?, private val progress: State<Float>
+) : Painter() {
+    override val intrinsicSize: Size = Size.Unspecified
+
+    override fun DrawScope.onDraw() {
+        val fraction = progress.value
+        if (backdrop == null || (poster != null && fraction < 1f)) poster?.let { drawCropped(it, 1f) }
+        backdrop?.let { drawCropped(it, if (poster == null) 1f else fraction) }
+    }
+
+    private fun DrawScope.drawCropped(painter: Painter, alpha: Float) {
+        if (alpha <= 0f || size.width <= 0f || size.height <= 0f) return
+        val source = painter.intrinsicSize.let {
+            if (it.width.isFinite() && it.height.isFinite() && it.width > 0f && it.height > 0f) it else size
+        }
+        val scale = ContentScale.Crop.computeScaleFactor(source, size)
+        val drawn = Size(source.width * scale.scaleX, source.height * scale.scaleY)
+        clipRect {
+            translate((size.width - drawn.width) / 2f, (size.height - drawn.height) / 2f) {
+                with(painter) { draw(drawn, alpha) }
+            }
+        }
+    }
+}
+
+/** Keep the current image while loading, then blend the ready poster/backdrop without a blank frame. */
 @Composable
 internal fun rememberNetflixArtwork(
     item: MediaItem, landscape: Boolean, width: Dp, height: Dp, watching: Boolean,
@@ -917,9 +960,10 @@ internal fun rememberNetflixArtwork(
     val density = LocalDensity.current
     val raw = if (landscape) item.episodeStill?.takeIf { watching && it.isNotBlank() }
         ?: item.backdrop?.takeIf(String::isNotBlank) ?: item.image else item.image
-    var loaded by remember(homeRowItemKey(item)) { mutableStateOf<Painter?>(null) }
+    var poster by remember(homeRowItemKey(item)) { mutableStateOf<Painter?>(null) }
+    var backdrop by remember(homeRowItemKey(item)) { mutableStateOf<Painter?>(null) }
     if (raw.isBlank()) {
-        return loaded ?: remember { androidx.compose.ui.graphics.painter.ColorPainter(Color.Transparent) }
+        return poster ?: backdrop ?: remember { androidx.compose.ui.graphics.painter.ColorPainter(Color.Transparent) }
     }
     val request = remember(raw, width, height, density, context, landscape) {
         val widthPx = with(density) { width.roundToPx() }.coerceAtLeast(1)
@@ -932,9 +976,24 @@ internal fun rememberNetflixArtwork(
             .memoryCacheKey(cacheKey).placeholderMemoryCacheKey(cacheKey).crossfade(false).build()
     }
     val painter = rememberAsyncImagePainter(request, imageLoader = imageLoader, onState = { state ->
-        if (state is AsyncImagePainter.State.Success) loaded = state.painter
+        if (state is AsyncImagePainter.State.Success && state.result.request.memoryCacheKey == request.memoryCacheKey) {
+            if (landscape) backdrop = state.painter else poster = state.painter
+        }
     })
-    return loaded ?: painter
+    val fade = remember(homeRowItemKey(item)) { Animatable(if (landscape) 1f else 0f) }
+    val target = when {
+        landscape && backdrop != null -> 1f
+        !landscape && poster != null -> 0f
+        poster != null -> 0f
+        backdrop != null -> 1f
+        landscape -> 1f
+        else -> 0f
+    }
+    // Keep the loaded source until the requested one is ready. Rapid reversals retarget
+    // the same animation from its current value rather than flashing either endpoint.
+    LaunchedEffect(target) { fade.animateTo(target, tween(140)) }
+    if (poster == null && backdrop == null) return painter
+    return remember(poster, backdrop, fade) { NetflixArtworkBlendPainter(poster, backdrop, fade.asState()) }
 }
 
 @Composable
@@ -974,9 +1033,7 @@ private fun NetflixFeaturedCard(
             .width(width)
             .height(height)
             .border(2.5.dp, Color.White, RoundedCornerShape(10.dp))
-            // Keeps the focus outline off the trailer.
-            .padding(4.dp)
-            .clip(RoundedCornerShape(7.dp))
+            .clip(RoundedCornerShape(10.dp))
             .background(Color.Black)
             .testTag("netflix_card_${item.mediaType}_${item.id}")
     ) {

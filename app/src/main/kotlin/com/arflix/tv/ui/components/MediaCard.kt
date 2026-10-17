@@ -102,6 +102,7 @@ fun MediaCard(
     onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     artworkPainter: Painter? = null,
+    artworkHeight: Dp? = null,
 ) {
     // If this is a placeholder card, show skeleton only
     if (item.isPlaceholder) {
@@ -221,7 +222,7 @@ fun MediaCard(
         ArvioFocusableSurface(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(aspectRatio),
+                .then(if (artworkHeight != null) Modifier.height(artworkHeight) else Modifier.aspectRatio(aspectRatio)),
             shape = shape,
             backgroundColor = ArvioSkin.colors.surface,
             outlineColor = ArvioSkin.colors.focusOutline,
