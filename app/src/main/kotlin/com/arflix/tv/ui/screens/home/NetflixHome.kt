@@ -6,6 +6,12 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
@@ -20,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
@@ -91,7 +98,6 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.isPortrait
 import com.arflix.tv.ui.components.AppTopBarHeight
 import com.arflix.tv.ui.components.CardLayoutMode
-import com.arflix.tv.ui.components.HomeTrailerPreview
 import com.arflix.tv.ui.components.TrailerPlayer
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
@@ -290,21 +296,42 @@ internal fun NetflixTvHomeRowsLayer(
         val focusedRowId = if (focusState.isHeroFocused) null else categories.getOrNull(focusState.currentRowIndex)?.id
         var appliedTarget by remember { mutableIntStateOf(-1) }
         var appliedScrollReset by rememberSaveable { mutableIntStateOf(0) }
+        val verticalOffset = remember { Animatable(0f) }
+        var verticalAnimating by remember { mutableStateOf(false) }
         LaunchedEffect(targetIndex, focusedRowId, focusState.scrollResetRequest) {
-            if (appliedTarget < 0 || abs(targetIndex - listState.firstVisibleItemIndex) > 4 ||
-                appliedScrollReset != focusState.scrollResetRequest) {
-                listState.scrollToItem(targetIndex)
-            } else {
-                listState.animateScrollToItem(targetIndex)
-            }
+            val previousTarget = appliedTarget
+            val reset = appliedScrollReset != focusState.scrollResetRequest
             appliedTarget = targetIndex
             appliedScrollReset = focusState.scrollResetRequest
+            var target = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
+            if (!reset && previousTarget >= 0 && target == null &&
+                targetIndex == listState.firstVisibleItemIndex - 1 && listState.firstVisibleItemScrollOffset <= 1
+            ) {
+                // Reveal the row just above the viewport before measuring it. This also
+                // keeps returning from the first rail to the billboard animated.
+                listState.scrollBy(-1f)
+                target = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIndex }
+            }
+            if (!reset && previousTarget >= 0 && target != null && abs(targetIndex - previousTarget) <= 4) {
+                verticalAnimating = true
+                try {
+                    verticalOffset.snapTo(target.offset.toFloat())
+                    listState.requestScrollToItem(targetIndex, -verticalOffset.value.roundToInt())
+                    verticalOffset.animateTo(0f, tween(NETFLIX_RAIL_MORPH_MS, easing = FastOutSlowInEasing)) {
+                        listState.requestScrollToItem(targetIndex, -value.roundToInt())
+                    }
+                } finally {
+                    verticalAnimating = false
+                }
+            } else {
+                listState.scrollToItem(targetIndex)
+            }
         }
         // Rows inserted or removed above the focused one (late catalog / channel loads)
         // shift the list under a keyed LazyColumn: re-anchor to the focused row.
         val rowIds = remember(categories) { categories.map { it.id } }
         LaunchedEffect(rowIds) {
-            if (appliedTarget >= 0 && !listState.isScrollInProgress &&
+            if (appliedTarget >= 0 && !verticalAnimating && !listState.isScrollInProgress &&
                 listState.firstVisibleItemIndex != targetIndex
             ) {
                 listState.scrollToItem(targetIndex)
@@ -337,7 +364,7 @@ internal fun NetflixTvHomeRowsLayer(
                 userScrollEnabled = false,
                 // Lets the last row scroll up to the top like every other row.
                 contentPadding = PaddingValues(bottom = screenHeight),
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().testTag("netflix_vertical_rails")
             ) {
                 item(key = "netflix_billboard", contentType = "netflix_billboard") {
                     NetflixBillboard(
@@ -345,6 +372,7 @@ internal fun NetflixTvHomeRowsLayer(
                         logoUrl = netflix.billboardLogoUrl,
                         trailerKey = netflix.billboardTrailerKey,
                         trailerVolume = netflix.trailerVolume,
+                        autoplayEnabled = focusState.isHeroFocused,
                         isFocused = focusState.isHeroFocused && !focusState.isSidebarFocused,
                         focusedButton = focusState.heroButtonIndex,
                         horizontalPadding = contentStartPadding,
@@ -460,6 +488,7 @@ private fun NetflixBillboard(
     logoUrl: String?,
     trailerKey: String?,
     trailerVolume: Float,
+    autoplayEnabled: Boolean,
     isFocused: Boolean,
     focusedButton: Int,
     horizontalPadding: Dp,
@@ -500,22 +529,21 @@ private fun NetflixBillboard(
                         .build()
                 }
             }
-            // The billboard uses YouTube's own player: the in-app player only gets 360p from
-            // YouTube, which shows at this size. The backdrop stays until the trailer plays.
-            HomeTrailerPreview(
-                youtubeKey = trailerKey,
-                delayMs = 0L,
-                volume = trailerVolume,
-                modifier = Modifier.requiredSize(mediaWidth, mediaHeight)
-            ) {
-                if (backdropRequest != null) {
-                    AsyncImage(
-                        model = backdropRequest,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+            if (backdropRequest != null) {
+                AsyncImage(
+                    model = backdropRequest,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            if (autoplayEnabled && trailerKey != null) {
+                TrailerPlayer(
+                    youtubeKey = trailerKey,
+                    delayMs = NETFLIX_RAIL_MORPH_MS.toLong(),
+                    volume = trailerVolume,
+                    modifier = Modifier.requiredSize(mediaWidth, mediaHeight)
+                )
             }
 
             if (item != null) {
@@ -784,11 +812,15 @@ private fun NetflixContentRow(
     }
     val latestOnItemClick by rememberUpdatedState(onItemClick)
 
-    Column(modifier = Modifier.padding(bottom = if (isCurrentRow) 20.dp else 10.dp)) {
+    val bottomPadding by animateDpAsState(if (isCurrentRow) 20.dp else 10.dp,
+        tween(NETFLIX_RAIL_MORPH_MS), label = "netflixRowSpacing")
+    val headingSize by animateFloatAsState(if (isCurrentRow) 20f else 17f,
+        tween(NETFLIX_RAIL_MORPH_MS), label = "netflixRowHeading")
+    Column(modifier = Modifier.padding(bottom = bottomPadding).testTag("netflix_row_${category.id}")) {
         Text(
             text = localizedCategoryTitle(category),
             style = ArflixTypography.sectionTitle.copy(
-                fontSize = if (isCurrentRow) 20.sp else 17.sp,
+                fontSize = headingSize.sp,
                 fontWeight = FontWeight.Bold,
                 shadow = NetflixTextShadow
             ),
@@ -895,10 +927,16 @@ private fun NetflixContentRow(
                 }
             }
         }
-        if (focusedItem != null) {
+        val descriptionItem = focusedItem ?: items.getOrNull(restingItemIndex)?.takeUnless { it.isPlaceholder }
+        AnimatedVisibility(
+            visible = focusedItem != null,
+            enter = expandVertically(tween(NETFLIX_RAIL_MORPH_MS)) + fadeIn(tween(140)),
+            exit = shrinkVertically(tween(NETFLIX_RAIL_MORPH_MS)) + fadeOut(tween(140))
+        ) {
+            if (descriptionItem == null) return@AnimatedVisibility
             // The ViewModel hero carries the loaded details once it is this title.
-            val isFeatured = featuredItem.isSameHomeHero(focusedItem)
-            val details = featuredItem?.takeIf { isFeatured } ?: focusedItem
+            val isFeatured = featuredItem.isSameHomeHero(descriptionItem)
+            val details = featuredItem?.takeIf { isFeatured } ?: descriptionItem
             NetflixCardDescription(
                 item = details,
                 overviewOverride = featuredOverview?.takeIf { isFeatured },
@@ -924,12 +962,15 @@ private fun NetflixCardDescription(
         context.cleanOverviewText(overviewOverride ?: item.overview)
     }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (item.isIptvChannel()) NetflixLiveLine(item) else NetflixMetaLine(item = item, fontSize = 13)
+        Box(Modifier.heightIn(min = 18.dp)) {
+            if (item.isIptvChannel()) NetflixLiveLine(item) else NetflixMetaLine(item = item, fontSize = 13)
+        }
         Text(
             text = overview,
             style = ArflixTypography.body.copy(fontSize = 14.sp, lineHeight = 19.sp),
             color = Color.White.copy(alpha = 0.9f),
             maxLines = 2,
+            minLines = 2,
             overflow = TextOverflow.Ellipsis
         )
     }

@@ -13,6 +13,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import dagger.hilt.android.EntryPointAccessors
@@ -37,30 +38,44 @@ class NativeTrailerQualityDeviceTest {
             .inAppYouTubeExtractor()
         val source = runBlocking { extractor.extractPlaybackSource("https://www.youtube.com/watch?v=$key") }
         assertTrue("YouTube returned no playable source", source != null)
-        Log.i("TrailerQualityTest", "Source prepared; separate audio=${source?.audioUrl != null}")
+        Log.i("TrailerQualityTest", "Source maximum=${source?.maxVideoHeight}p; separate audio=${source?.audioUrl != null}")
+        if (minimumHeight >= 720) {
+            assumeTrue("YouTube only exposed ${source?.maxVideoHeight}p for this video", (source?.maxVideoHeight ?: 0) >= minimumHeight)
+        }
         // Use the real frame clock: polling a Compose-test activity without pumping
         // its virtual clock never starts AnimatedVisibility after the IO result arrives.
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             lateinit var host: ComponentActivity
+            var rendered = false
             scenario.onActivity {
                 host = it
-                it.setContent { TrailerPlayer(key, Modifier.size(400.dp, 225.dp), volume = 0f) }
+                it.setContent { TrailerPlayer(key, Modifier.size(400.dp, 225.dp), volume = 0f,
+                    onPlayingChanged = { playing -> rendered = playing }) }
             }
             var width = 0
             var height = 0
+            var ready = false
             val deadline = System.currentTimeMillis() + 60_000L
-            while (height < minimumHeight && System.currentTimeMillis() < deadline) {
+            while (!ready && System.currentTimeMillis() < deadline) {
                 instrumentation.runOnMainSync {
                     findPlayer(host.window.decorView)?.player?.let {
                         if (it.isPlaying) {
                             width = it.videoSize.width
                             height = it.videoSize.height
+                            ready = rendered && height >= minimumHeight
                         }
                     }
                 }
                 Thread.sleep(200)
             }
             Log.i("TrailerQualityTest", "Actual decoded preview: ${width}x$height")
+            scenario.onActivity {
+                val view = findPlayer(it.window.decorView)!!
+                assertTrue("Autoplay must render a frame before replacing the artwork", rendered)
+                assertFalse("Autoplay must not show playback controls", view.useController)
+                assertTrue("Muted autoplay must stay muted", view.player!!.volume == 0f)
+            }
+            Thread.sleep(650)
             val image = java.io.File(host.getExternalFilesDir(null), "native-hd-trailer.png")
             UiDevice.getInstance(instrumentation).takeScreenshot(image)
             assertTrue("Expected at least ${minimumHeight}p, actual decoded resolution ${width}x$height", height >= minimumHeight)

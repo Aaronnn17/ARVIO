@@ -38,6 +38,39 @@ class TrailerSelectionTest {
         assertFalse(parameters.forceLowestBitrate)
     }
 
+    @Test fun probesFullHdFromEveryClientBeforeFallingBackTo720p() {
+        val options = listOf(candidate("vr", "vr-high", 1080, score = 9.0),
+            candidate("vr", "vr-other", 1080, score = 8.0), candidate("android", "android", 1080),
+            candidate("ios", "ios", 1080), candidate("vr", "hd", 720))
+        val order = trailerVideoProbeOrder(options, 361)
+        assertEquals(listOf("vr", "android", "ios", "vr"), order.map { it.client })
+        assertEquals(listOf(1080, 1080, 1080, 720), order.map { it.height })
+        assertEquals(4, order.size)
+    }
+
+    @Test fun aWorking720pManifestDoesNotBlockTryingFullHd() {
+        val order = trailerVideoProbeOrder(listOf(candidate("vr", "full-hd", 1080),
+            candidate("vr", "hd", 720)), minimumHeight = 721)
+        assertEquals(listOf("full-hd"), order.map { it.url })
+    }
+
+    @Test fun avoidsThrottledAndLessCompatibleVariantsWithinTheSameClientAndResolution() {
+        val order = trailerVideoProbeOrder(listOf(candidate("vr", "throttled", 1080).copy(hasN = true, score = 99.0),
+            candidate("vr", "av1", 1080).copy(mimeType = "video/mp4; codecs=av01"),
+            candidate("vr", "avc", 1080)), 720)
+        assertEquals(listOf("avc"), order.map { it.url })
+    }
+
+    @Test fun doesNotProbeDuplicateUrlsSdOrFourKForAFullHdPreview() {
+        val hd = candidate("vr", "same", 1080)
+        assertEquals(listOf(hd), trailerVideoProbeOrder(listOf(hd, hd.copy(client = "ios"),
+            candidate("vr", "sd", 360), candidate("vr", "4k", 2160)), 720))
+    }
+
+    private fun candidate(client: String, url: String, height: Int, score: Double = 1.0) = StreamCandidate(
+        client, 0, url, score, false, "", height, 30, "mp4", "video/mp4; codecs=avc1"
+    )
+
     private fun video(key: String, height: Int) =
         TmdbVideo(key = key, site = "YouTube", type = "Trailer", official = true, size = height)
 }

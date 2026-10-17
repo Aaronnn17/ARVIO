@@ -32,7 +32,6 @@ private const val FALLBACK_INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11q
 internal const val YOUTUBE_TRAILER_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 12; Android TV) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
-private const val PREFERRED_SEPARATE_CLIENT = "android_vr"
 
 
 
@@ -53,7 +52,7 @@ private data class WatchConfig(
     val visitorData: String?
 )
 
-private data class StreamCandidate(
+internal data class StreamCandidate(
     val client: String,
     val priority: Int,
     val url: String,
@@ -62,8 +61,22 @@ private data class StreamCandidate(
     val itag: String,
     val height: Int,
     val fps: Int,
-    val ext: String
+    val ext: String,
+    val mimeType: String = ""
 )
+
+/** Try Full HD across clients before settling for HD, without repeating the same URL. */
+internal fun trailerVideoProbeOrder(candidates: List<StreamCandidate>, minimumHeight: Int): List<StreamCandidate> {
+    val sorted = candidates.filter { it.height in maxOf(720, minimumHeight)..1080 && it.ext == "mp4" }
+        .distinctBy { it.url }
+        .sortedWith(compareByDescending<StreamCandidate> { it.height }
+            .thenBy { it.hasN }
+            .thenBy { if (it.mimeType.contains("avc1")) 0 else 1 }
+            .thenByDescending { it.fps }
+            .thenByDescending { it.score }
+            .thenBy { it.priority })
+    return sorted.distinctBy { it.client to it.height }
+}
 
 private data class ManifestBestVariant(
     val url: String,
@@ -196,7 +209,7 @@ class InAppYouTubeExtractor @Inject constructor() {
         source
     }
 
-    private suspend fun extractPlaybackSourceInternal(videoId: String): TrailerPlaybackSource? {
+    private suspend fun extractPlaybackSourceInternal(videoId: String, allowKeyRefresh: Boolean = true): TrailerPlaybackSource? {
         val watchConfig = getWatchConfig()
         val apiKey = watchConfig.apiKey
             ?: throw IllegalStateException("Unable to extract INNERTUBE_API_KEY")
@@ -252,7 +265,7 @@ class InAppYouTubeExtractor @Inject constructor() {
                             client = client.key, priority = client.priority, url = url,
                             score = videoScore(height, fps, bitrate), hasN = hasNParam(url),
                             itag = format.stringValue("itag").orEmpty(), height = height, fps = fps,
-                            ext = if (mimeType.contains("webm")) "webm" else "mp4"
+                            ext = if (mimeType.contains("webm")) "webm" else "mp4", mimeType = mimeType
                         )
                     }
                 }
@@ -270,7 +283,7 @@ class InAppYouTubeExtractor @Inject constructor() {
                                 client = client.key, priority = client.priority, url = url,
                                 score = videoScore(height, fps, bitrate), hasN = hasNParam(url),
                                 itag = format.stringValue("itag").orEmpty(), height = height, fps = fps,
-                                ext = if (mimeType.contains("webm")) "webm" else "mp4"
+                                ext = if (mimeType.contains("webm")) "webm" else "mp4", mimeType = mimeType
                             )
                         }
                     } else if (mimeType.contains("audio/") || mimeType.startsWith("audio/")) {
@@ -291,10 +304,10 @@ class InAppYouTubeExtractor @Inject constructor() {
 
         // If hardcoded key was rejected and we got nothing, scrape a fresh key and retry once
         val noStreams = manifestUrls.isEmpty() && progressive.isEmpty() && adaptiveVideo.isEmpty()
-        if (noStreams && keyRejected) {
+        if (noStreams && keyRejected && allowKeyRefresh) {
             Log.w(TAG, "[$videoId] hardcoded key rejected with no streams — retrying with scraped key")
             refreshWatchConfigFromPage(videoId)
-            return extractPlaybackSourceInternal(videoId)
+            return extractPlaybackSourceInternal(videoId, allowKeyRefresh = false)
         }
 
         if (manifestUrls.isEmpty() && progressive.isEmpty() && adaptiveVideo.isEmpty() && adaptiveAudio.isEmpty()) {
@@ -330,44 +343,52 @@ class InAppYouTubeExtractor @Inject constructor() {
 
         val bestProgressive = sortCandidates(progressive.filter { it.height <= 1080 }).firstOrNull()
             ?: sortCandidates(progressive).lastOrNull()
-        // Prefer adaptive HLS where it includes HD. Keep its master playlist so audio
+        // Prefer adaptive HLS where it includes Full HD. Keep its master playlist so audio
         // renditions and lower-bandwidth fallback remain available to the player.
         val manifest = bestManifest
-        if (manifest != null && manifest.height >= 720) {
-            return TrailerPlaybackSource(manifest.manifestUrl, fallbackVideoUrl = bestProgressive?.url)
+        if (manifest != null && manifest.height >= 1080) {
+            return TrailerPlaybackSource(manifest.manifestUrl, fallbackVideoUrl = bestProgressive?.url,
+                maxVideoHeight = manifest.height)
         }
+        if (bestProgressive != null && bestProgressive.height >= 1080) {
+            return TrailerPlaybackSource(bestProgressive.url, fallbackVideoUrl = manifest?.manifestUrl,
+                maxVideoHeight = bestProgressive.height)
+        }
+
+        val fallback = if (manifest != null && manifest.height >= (bestProgressive?.height ?: 0)) {
+            TrailerPlaybackSource(manifest.manifestUrl, fallbackVideoUrl = bestProgressive?.url,
+                maxVideoHeight = manifest.height)
+        } else bestProgressive?.let { TrailerPlaybackSource(it.url, maxVideoHeight = it.height) }
 
         // Combined streams are often only 360p. Use separate HD only after both URLs
         // actually return media bytes; rejected URLs must not replace a working preview.
-        val hdVideos = sortCandidates(adaptiveVideo.filter { it.height in 720..1080 && it.ext == "mp4" })
-        for (video in hdVideos.take(2)) {
+        val hdVideos = trailerVideoProbeOrder(adaptiveVideo, (fallback?.maxVideoHeight ?: 0) + 1)
+        val videosToProbe = if (fallback == null) {
+            hdVideos + sortCandidates(adaptiveVideo.filter { it.height in 1..719 && it.ext == "mp4" })
+                .distinctBy { it.client }.take(2)
+        } else hdVideos
+        val probeDeadline = android.os.SystemClock.elapsedRealtime() + 3500L
+        val probeResults = mutableMapOf<String, Boolean>()
+        fun playable(url: String): Boolean = probeResults.getOrPut(url) {
+            val remaining = probeDeadline - android.os.SystemClock.elapsedRealtime()
+            remaining > 0 && isPlayableMediaUrl(url, remaining.coerceAtMost(1200L).toInt())
+        }
+        for (video in videosToProbe.take(8)) {
+            if (android.os.SystemClock.elapsedRealtime() >= probeDeadline) break
             val audio = sortCandidates(adaptiveAudio.filter { it.client == video.client && it.ext == "m4a" }).firstOrNull()
                 ?: continue
-            if (isPlayableMediaUrl(video.url) && isPlayableMediaUrl(audio.url)) {
-                return TrailerPlaybackSource(video.url, audio.url, bestManifest?.manifestUrl ?: bestProgressive?.url)
+            if (playable(video.url) && playable(audio.url)) {
+                return TrailerPlaybackSource(video.url, audio.url, fallback?.videoUrl, video.height)
             }
         }
-        if (bestManifest != null) {
-            return TrailerPlaybackSource(videoUrl = bestManifest.manifestUrl, audioUrl = null)
-        }
-
-        // Fall back to progressive (combined video+audio, also not n-param throttled at lower quality)
-        if (bestProgressive != null) {
-            return TrailerPlaybackSource(videoUrl = bestProgressive.url, audioUrl = null)
-        }
-
-        // Last resort: adaptive streams (may 403 without n-param decryption)
-        val bestVideo = pickBestForClient(adaptiveVideo, PREFERRED_SEPARATE_CLIENT)
-        val bestAudio = pickBestForClient(adaptiveAudio, PREFERRED_SEPARATE_CLIENT)
-        val videoUrl = bestVideo?.url ?: return null
-        return TrailerPlaybackSource(videoUrl = videoUrl, audioUrl = bestAudio?.url)
+        return fallback
     }
 
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-    private fun isPlayableMediaUrl(url: String): Boolean = try {
+    private fun isPlayableMediaUrl(url: String, timeoutMs: Int): Boolean = try {
         // Use exactly the player's chunk size, request headers and range handling.
         // A one-byte HTTP Range can succeed even when the actual stream returns 403.
-        val source = YoutubeChunkedDataSourceFactory(timeoutMs = 1500).createDataSource()
+        val source = YoutubeChunkedDataSourceFactory(timeoutMs = timeoutMs.coerceAtLeast(1)).createDataSource()
         try {
             source.open(androidx.media3.datasource.DataSpec(Uri.parse(url)))
             source.read(ByteArray(1), 0, 1) == 1
@@ -575,11 +596,6 @@ class InAppYouTubeExtractor @Inject constructor() {
 
     private fun containerPreference(ext: String) = when (ext.lowercase()) {
         "mp4", "m4a" -> 0; "webm" -> 1; else -> 2
-    }
-
-    private fun pickBestForClient(items: List<StreamCandidate>, clientKey: String): StreamCandidate? {
-        val sameClient = items.filter { it.client == clientKey }
-        return sortCandidates(if (sameClient.isNotEmpty()) sameClient else items).firstOrNull()
     }
 
     private fun absolutizeUrl(baseUrl: String, maybeRelative: String): String =
