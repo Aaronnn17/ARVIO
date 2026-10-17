@@ -2797,10 +2797,7 @@ class MediaRepository @Inject constructor(
             ) {
                 results = tmdbApi.getVideos(type, mediaId, apiKey, language = "en-US").results
             }
-            val trailer = results.find { it.type == "Trailer" && it.site == "YouTube" && it.official }
-                ?: results.find { it.type == "Trailer" && it.site == "YouTube" }
-                ?: results.find { it.type == "Teaser" && it.site == "YouTube" }
-                ?: results.find { it.site == "YouTube" }
+            val trailer = com.arflix.tv.data.api.preferredTrailer(results)
             trailer?.key
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e

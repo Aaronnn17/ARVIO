@@ -144,6 +144,68 @@ class HomeArtworkStabilityDeviceTest {
         }
     }
 
+    @Test fun rightwardAndLeftwardMorphsHaveNoBacktrackingOrLargePositionSteps() {
+        val focus = HomeFocusState(0, 0).apply { userHasNavigated = true }
+        val rows = listOf(Category("morph", "Movies", (1..12).map { MediaItem(it, "Title $it") }))
+        compose.setContent {
+            CompositionLocalProvider(LocalDeviceType provides DeviceType.TV) {
+                HomeInputLayer(
+                    categories = rows, cardLogoUrls = emptyMap(), focusState = focus,
+                    limitRowsDuringStartup = false, suppressSelectUntilMs = 0L,
+                    contentStartPadding = 24.dp, fastScrollThresholdMs = 80L,
+                    usePosterCards = true, isContextMenuOpen = false, currentProfile = null,
+                    onNavigateToDetails = { _, _, _, _ -> }, onNavigateToCollection = {},
+                    onNavigateToSearch = {}, onNavigateToWatchlist = {}, onNavigateToTv = { _, _ -> },
+                    onNavigateToSettings = {}, onSwitchProfile = {}, onExitApp = {},
+                    onOpenContextMenu = { _, _ -> },
+                    netflix = NetflixHomeContent(null, null, null, null, null, 0, 0f)
+                )
+            }
+        }
+        compose.waitForIdle()
+        fun left(id: Int) = compose.onNodeWithTag("netflix_morph_MOVIE_$id", useUnmergedTree = true)
+            .fetchSemanticsNode().positionInRoot.x
+        val anchor = left(1)
+        compose.mainClock.autoAdvance = false
+        try {
+            fun move(key: Key, id: Int) {
+                val start = left(id)
+                compose.onRoot().performKeyInput { pressKey(key) }
+                val samples = mutableListOf(start)
+                repeat(20) {
+                    compose.mainClock.advanceTimeByFrame()
+                    samples += left(id)
+                }
+                val distance = kotlin.math.abs(start - anchor)
+                android.util.Log.i("NetflixMorphTest", "Card $id positions: $samples")
+                samples.zipWithNext().forEach { (before, after) ->
+                    val delta = after - before
+                    assertTrue("Card $id reversed direction: $samples",
+                        if (start > anchor) delta <= 2f else delta >= -2f)
+                    assertTrue("Card $id jumped instead of moving smoothly: $samples",
+                        kotlin.math.abs(delta) < distance * 0.24f + 4f)
+                }
+                assertEquals("Card $id must settle exactly on the rail anchor", anchor, samples.last(), 2f)
+            }
+            (2..6).forEach { move(Key.DirectionRight, it) }
+            (5 downTo 1).forEach { move(Key.DirectionLeft, it) }
+            // Retarget before either the rail or card width has settled.
+            compose.onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+            compose.mainClock.advanceTimeBy(80)
+            val before = left(1)
+            compose.onRoot().performKeyInput { pressKey(Key.DirectionLeft) }
+            compose.mainClock.advanceTimeByFrame()
+            // One frame can still advance the previous trajectory while Compose applies
+            // the new key. It must not snap to the old or new endpoint on that frame.
+            assertEquals("A rapid reversal must continue from the visible position", before, left(1),
+                kotlin.math.abs(anchor - before) * 0.24f + 4f)
+            compose.mainClock.advanceTimeBy(400)
+            assertEquals(anchor, left(1), 2f)
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
     private fun fixtureLoader(requested: AtomicBoolean, requests: AtomicInteger = AtomicInteger()): ImageLoader {
         val factory = object : Fetcher.Factory<android.net.Uri> {
             override fun create(data: android.net.Uri, options: Options, imageLoader: ImageLoader): Fetcher? {

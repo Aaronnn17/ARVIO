@@ -441,7 +441,19 @@ data class TmdbCrewMember(val id: Int = 0, val name: String = "", val job: Strin
 data class TmdbImagesResponse(val id: Int = 0, val logos: List<TmdbImage> = emptyList(), val backdrops: List<TmdbImage> = emptyList())
 data class TmdbImage(@SerializedName("file_path") val filePath: String? = null, @SerializedName("iso_639_1") val iso6391: String? = null, val width: Int = 0, val height: Int = 0, @SerializedName("vote_average") val voteAverage: Float = 0f, @SerializedName("vote_count") val voteCount: Int = 0)
 data class TmdbVideosResponse(val id: Int = 0, val results: List<TmdbVideo> = emptyList())
-data class TmdbVideo(val id: String = "", val key: String = "", val name: String = "", val site: String = "", val type: String = "", val official: Boolean = false)
+data class TmdbVideo(val id: String = "", val key: String = "", val name: String = "", val site: String = "", val type: String = "", val official: Boolean = false, val size: Int = 0)
+
+internal fun preferredTrailer(videos: List<TmdbVideo>): TmdbVideo? = videos.asSequence()
+    .filter { it.site == "YouTube" && it.key.isNotBlank() }
+    .sortedWith(compareByDescending<TmdbVideo> {
+        when {
+            it.type == "Trailer" && it.official -> 3
+            it.type == "Trailer" -> 2
+            it.type == "Teaser" -> 1
+            else -> 0
+        }
+    }.thenByDescending { it.size.coerceAtMost(1080) })
+    .firstOrNull()
 data class TmdbExternalIds(@SerializedName("imdb_id") val imdbId: String? = null, @SerializedName("tvdb_id") val tvdbId: Int? = null)
 data class TmdbWatchProvidersResponse(val id: Int = 0, val results: Map<String, TmdbWatchProviderRegion> = emptyMap())
 data class TmdbWatchProviderRegion(val link: String? = null, val flatrate: List<TmdbWatchProvider> = emptyList(), val free: List<TmdbWatchProvider> = emptyList(), val ads: List<TmdbWatchProvider> = emptyList(), val rent: List<TmdbWatchProvider> = emptyList(), val buy: List<TmdbWatchProvider> = emptyList())

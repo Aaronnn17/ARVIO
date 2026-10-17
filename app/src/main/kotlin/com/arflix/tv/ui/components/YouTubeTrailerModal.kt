@@ -217,6 +217,13 @@ internal fun TrailerPlayerSurface(
                             onSecondCb(second)
                         }
 
+                        override fun onPlaybackQualityChange(
+                            youTubePlayer: YouTubePlayer,
+                            playbackQuality: PlayerConstants.PlaybackQuality
+                        ) {
+                            android.util.Log.i("TrailerQuality", "YouTube embed $playbackQuality")
+                        }
+
                         override fun onVideoDuration(
                             youTubePlayer: YouTubePlayer,
                             duration: Float

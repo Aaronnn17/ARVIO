@@ -108,6 +108,8 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.LayoutCoordinates
 
+private const val NETFLIX_RAIL_MORPH_MS = 220
+
 /** What the Netflix-style TV Home draws beyond the classic rows. Null selects the classic Home. */
 @Immutable
 internal data class NetflixHomeContent(
@@ -759,16 +761,26 @@ private fun NetflixContentRow(
         .coerceIn(0, (items.size - 1 + if (hasViewAllCard) 1 else 0).coerceAtLeast(0))
     var lastAnchor by remember { mutableIntStateOf(-1) }
     var appliedScrollReset by rememberSaveable { mutableIntStateOf(0) }
+    val railOffset = remember { Animatable(0f) }
     LaunchedEffect(anchorIndex, isCurrentRow, scrollResetRequest) {
-        if (appliedScrollReset != scrollResetRequest) {
-            rowState.scrollToItem(0)
-        } else if (isCurrentRow && lastAnchor >= 0 && abs(anchorIndex - lastAnchor) <= 3) {
-            rowState.animateScrollToItem(anchorIndex)
-        } else {
-            rowState.scrollToItem(anchorIndex)
-        }
+        val previousAnchor = lastAnchor
+        val reset = appliedScrollReset != scrollResetRequest
+        val visibleAnchor = rowState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == anchorIndex }
         lastAnchor = anchorIndex
         appliedScrollReset = scrollResetRequest
+        if (!reset && isCurrentRow && previousAnchor >= 0 &&
+            abs(anchorIndex - previousAnchor) <= 3 && visibleAnchor != null
+        ) {
+            // Anchor the incoming card, not the outgoing item's changing width. A stock
+            // scroll animation chases a moving destination while the old card shrinks.
+            railOffset.snapTo(visibleAnchor.offset.toFloat())
+            rowState.requestScrollToItem(anchorIndex, -railOffset.value.roundToInt())
+            railOffset.animateTo(0f, tween(NETFLIX_RAIL_MORPH_MS, easing = FastOutSlowInEasing)) {
+                rowState.requestScrollToItem(anchorIndex, -value.roundToInt())
+            }
+        } else {
+            rowState.scrollToItem(if (reset) 0 else anchorIndex)
+        }
     }
     val latestOnItemClick by rememberUpdatedState(onItemClick)
 
@@ -807,9 +819,9 @@ private fun NetflixContentRow(
                 val cardWidth = if (featured) bigCardWidth else if (isCurrentRow) focusedPosterWidth else restingWidth
                 val cardHeight = if (isCurrentRow) bigCardHeight else cardWidth / (if (landscape) (16f / 9f) else (2f / 3f))
                 val animatedWidth by animateDpAsState(cardWidth,
-                    tween(180, easing = FastOutSlowInEasing), label = "netflixCardWidth")
+                    tween(NETFLIX_RAIL_MORPH_MS, easing = FastOutSlowInEasing), label = "netflixCardWidth")
                 val animatedHeight by animateDpAsState(cardHeight,
-                    tween(180, easing = FastOutSlowInEasing), label = "netflixCardHeight")
+                    tween(NETFLIX_RAIL_MORPH_MS, easing = FastOutSlowInEasing), label = "netflixCardHeight")
                 // Decode once for the target geometry, never once per animation frame.
                 val artwork = if (item.isPlaceholder) null else rememberNetflixArtwork(
                     item, landscape, cardWidth, cardHeight, isContinueWatching)

@@ -1,6 +1,7 @@
 package com.arflix.tv.ui.components
 
 import android.view.LayoutInflater
+import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -24,6 +25,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -31,6 +33,7 @@ import androidx.media3.ui.PlayerView
 import com.arflix.tv.R
 import com.arflix.tv.data.api.InAppYouTubeExtractor
 import com.arflix.tv.data.api.YoutubeChunkedDataSourceFactory
+import com.arflix.tv.data.api.YOUTUBE_TRAILER_USER_AGENT
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -66,6 +69,7 @@ fun TrailerPlayer(
     var shouldPlay by remember { mutableStateOf(false) }
     var videoUrl by remember { mutableStateOf<String?>(null) }
     var audioUrl by remember { mutableStateOf<String?>(null) }
+    var fallbackVideoUrl by remember { mutableStateOf<String?>(null) }
 
     val entryPoint = remember {
         EntryPointAccessors.fromApplication(context, TrailerPlayerEntryPoint::class.java)
@@ -76,6 +80,7 @@ fun TrailerPlayer(
         shouldPlay = false
         videoUrl = null
         audioUrl = null
+        fallbackVideoUrl = null
         delay(delayMs)
         withContext(Dispatchers.IO) {
             try {
@@ -83,8 +88,12 @@ fun TrailerPlayer(
                 if (source != null) {
                     videoUrl = source.videoUrl
                     audioUrl = source.audioUrl
+                    fallbackVideoUrl = source.fallbackVideoUrl
                 }
-            } catch (_: Exception) {}
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                Log.w("TrailerQuality", "Trailer preparation failed (${error.javaClass.simpleName})")
+            }
         }
         if (videoUrl != null) {
             shouldPlay = true
@@ -103,7 +112,11 @@ fun TrailerPlayer(
         modifier = modifier
     ) {
         val player = remember(youtubeKey) {
-            ExoPlayer.Builder(context).build().apply {
+            ExoPlayer.Builder(context)
+                .setBandwidthMeter(DefaultBandwidthMeter.Builder(context)
+                    .setInitialBitrateEstimate(8_000_000L).build())
+                .build().apply {
+                trackSelectionParameters = trackSelectionParameters.forFullHdTrailer()
                 repeatMode = Player.REPEAT_MODE_OFF
                 playWhenReady = true
             }
@@ -121,7 +134,11 @@ fun TrailerPlayer(
                 val audioSource = factory.createMediaSource(MediaItem.fromUri(audioUrl!!))
                 player.setMediaSource(MergingMediaSource(videoSource, audioSource))
             } else {
-                player.setMediaItem(MediaItem.fromUri(vUrl))
+                val factory = DefaultMediaSourceFactory(
+                    androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                        .setUserAgent(YOUTUBE_TRAILER_USER_AGENT)
+                )
+                player.setMediaSource(factory.createMediaSource(MediaItem.fromUri(vUrl)))
             }
             player.prepare()
         }
@@ -131,6 +148,18 @@ fun TrailerPlayer(
             val listener = object : Player.Listener {
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                     extractor.evictCache(youtubeKey)
+                    val fallback = fallbackVideoUrl
+                    if (fallback != null) {
+                        fallbackVideoUrl = null
+                        audioUrl = null
+                        videoUrl = fallback
+                    } else {
+                        shouldPlay = false
+                        currentOnPlayingChanged(false)
+                    }
+                }
+                override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                    Log.i("TrailerQuality", "Native trailer ${videoSize.width}x${videoSize.height}")
                 }
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     if (playbackState == Player.STATE_ENDED) {

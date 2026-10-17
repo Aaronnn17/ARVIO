@@ -29,7 +29,7 @@ private const val WATCH_CONFIG_TTL_MS = 24 * 60 * 60_000L  // 24h — key rarely
 // Known stable InnerTube API key for Android clients. Used as primary to skip the watch page
 // GET (which can take 3-5s). Falls back to scraping the watch page if this ever gets rejected.
 private const val FALLBACK_INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
-private const val DEFAULT_USER_AGENT =
+internal const val YOUTUBE_TRAILER_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 12; Android TV) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
 private const val PREFERRED_SEPARATE_CLIENT = "android_vr"
@@ -83,7 +83,7 @@ private data class ManifestCandidate(
 
 private val DEFAULT_HEADERS = mapOf(
     "accept-language" to "en-US,en;q=0.9",
-    "user-agent" to DEFAULT_USER_AGENT
+    "user-agent" to YOUTUBE_TRAILER_USER_AGENT
 )
 
 private val CLIENTS = listOf(
@@ -328,14 +328,30 @@ class InAppYouTubeExtractor @Inject constructor() {
             }
         }
 
-        // Prefer HLS manifest — ExoPlayer handles it natively (adaptive bitrate, no n-param 403).
-        // Direct adaptive stream URLs require n-param decryption which we don't do, so they 403.
+        val bestProgressive = sortCandidates(progressive.filter { it.height <= 1080 }).firstOrNull()
+            ?: sortCandidates(progressive).lastOrNull()
+        // Prefer adaptive HLS where it includes HD. Keep its master playlist so audio
+        // renditions and lower-bandwidth fallback remain available to the player.
+        val manifest = bestManifest
+        if (manifest != null && manifest.height >= 720) {
+            return TrailerPlaybackSource(manifest.manifestUrl, fallbackVideoUrl = bestProgressive?.url)
+        }
+
+        // Combined streams are often only 360p. Use separate HD only after both URLs
+        // actually return media bytes; rejected URLs must not replace a working preview.
+        val hdVideos = sortCandidates(adaptiveVideo.filter { it.height in 720..1080 && it.ext == "mp4" })
+        for (video in hdVideos.take(2)) {
+            val audio = sortCandidates(adaptiveAudio.filter { it.client == video.client && it.ext == "m4a" }).firstOrNull()
+                ?: continue
+            if (isPlayableMediaUrl(video.url) && isPlayableMediaUrl(audio.url)) {
+                return TrailerPlaybackSource(video.url, audio.url, bestManifest?.manifestUrl ?: bestProgressive?.url)
+            }
+        }
         if (bestManifest != null) {
             return TrailerPlaybackSource(videoUrl = bestManifest.manifestUrl, audioUrl = null)
         }
 
         // Fall back to progressive (combined video+audio, also not n-param throttled at lower quality)
-        val bestProgressive = sortCandidates(progressive).firstOrNull()
         if (bestProgressive != null) {
             return TrailerPlaybackSource(videoUrl = bestProgressive.url, audioUrl = null)
         }
@@ -345,6 +361,22 @@ class InAppYouTubeExtractor @Inject constructor() {
         val bestAudio = pickBestForClient(adaptiveAudio, PREFERRED_SEPARATE_CLIENT)
         val videoUrl = bestVideo?.url ?: return null
         return TrailerPlaybackSource(videoUrl = videoUrl, audioUrl = bestAudio?.url)
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun isPlayableMediaUrl(url: String): Boolean = try {
+        // Use exactly the player's chunk size, request headers and range handling.
+        // A one-byte HTTP Range can succeed even when the actual stream returns 403.
+        val source = YoutubeChunkedDataSourceFactory(timeoutMs = 1500).createDataSource()
+        try {
+            source.open(androidx.media3.datasource.DataSpec(Uri.parse(url)))
+            source.read(ByteArray(1), 0, 1) == 1
+        } finally {
+            source.close()
+        }
+    } catch (error: Exception) {
+        if (error is kotlinx.coroutines.CancellationException) throw error
+        false
     }
 
     private suspend fun getWatchConfig(): WatchConfig {
@@ -576,7 +608,7 @@ class InAppYouTubeExtractor @Inject constructor() {
             if (!name.equals("Accept-Encoding", ignoreCase = true)) headers.add(name, value)
         }
         if (source.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
-            headers.add("User-Agent", DEFAULT_USER_AGENT)
+            headers.add("User-Agent", YOUTUBE_TRAILER_USER_AGENT)
         }
         return headers.build()
     }
