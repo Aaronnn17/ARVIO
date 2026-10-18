@@ -2094,7 +2094,7 @@ private fun DetailsContent(
                 val hasSecondaryMetadata = primaryNetworkLogo != null ||
                     hasRatingMetadata ||
                     hasBudgetMetadata
-                val overviewMaxHeight = if (isCompactHeight) 58.dp else 68.dp
+                val overviewMaxHeight = if (isCompactHeight) 78.dp else 88.dp
 
                 val separatorStyle = ArflixTypography.caption.copy(
                     fontSize = 13.sp,
@@ -2242,9 +2242,11 @@ private fun DetailsContent(
 
                 val displayOverview = item.overview
 
+                // Wider than the metadata column: the overview has the space to its side, and the
+                // extra width shows far more of it in the same three lines.
                 Box(
                     modifier = Modifier
-                        .width(420.dp)
+                        .width(minOf(820.dp, configuration.screenWidthDp.dp * 0.66f).coerceAtLeast(420.dp))
                         .heightIn(max = overviewMaxHeight)
                 ) {
                     Text(
@@ -2256,8 +2258,8 @@ private fun DetailsContent(
                             shadow = textShadow
                         ),
                         color = Color.White,
-                        // Larger text, one line fewer: still fits overviewMaxHeight.
-                        maxLines = 3,
+                        // Four lines at this width; still fits overviewMaxHeight.
+                        maxLines = 4,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

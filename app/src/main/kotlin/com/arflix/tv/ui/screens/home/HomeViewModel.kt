@@ -833,7 +833,10 @@ class HomeViewModel @Inject constructor(
         } catch (e: Exception) {
             emptyList()
         }
+        // Only the same title: a name search also returns other titles with that name
+        // (a 1955 film, a 1981 miniseries), whose longer overview is not this title's.
         val bestMatch = searchMatches
+            .filter { match -> match.id == item.id && match.mediaType == item.mediaType }
             .filter { match -> match.overview.isNotBlank() }
             .maxByOrNull { match ->
                 val titleBonus = if (match.title.equals(item.title, ignoreCase = true)) 1_000 else 0
