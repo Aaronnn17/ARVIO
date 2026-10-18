@@ -93,8 +93,8 @@ sealed class Screen(val route: String) {
     data object Tv : Screen("tv?channelId={channelId}&streamUrl={streamUrl}") {
         fun createRoute(channelId: String? = null, streamUrl: String? = null): String {
             if (channelId == null) return "tv"
-            val enc = java.net.URLEncoder.encode(channelId, "UTF-8")
-            val streamEnc = streamUrl?.let { java.net.URLEncoder.encode(it, "UTF-8") }
+            val enc = android.net.Uri.encode(channelId)
+            val streamEnc = streamUrl?.let { android.net.Uri.encode(it) }
             return if (streamEnc != null) "tv?channelId=$enc&streamUrl=$streamEnc" else "tv?channelId=$enc"
         }
     }
@@ -151,11 +151,11 @@ sealed class Screen(val route: String) {
             tmdbEpisodeNumber?.let { params.add("tmdbEpisodeNumber=$it") }
             kitsuId?.let { params.add("kitsuId=$it") }
             kitsuEpisodeNumber?.let { params.add("kitsuEpisodeNumber=$it") }
-            imdbId?.let { params.add("imdbId=${java.net.URLEncoder.encode(it, "UTF-8")}") }
-            streamUrl?.let { params.add("streamUrl=${java.net.URLEncoder.encode(it, "UTF-8")}") }
-            preferredAddonId?.let { params.add("preferredAddonId=${java.net.URLEncoder.encode(it, "UTF-8")}") }
-            preferredSourceName?.let { params.add("preferredSourceName=${java.net.URLEncoder.encode(it, "UTF-8")}") }
-            preferredBingeGroup?.let { params.add("preferredBingeGroup=${java.net.URLEncoder.encode(it, "UTF-8")}") }
+            imdbId?.let { params.add("imdbId=${android.net.Uri.encode(it)}") }
+            streamUrl?.let { params.add("streamUrl=${android.net.Uri.encode(it)}") }
+            preferredAddonId?.let { params.add("preferredAddonId=${android.net.Uri.encode(it)}") }
+            preferredSourceName?.let { params.add("preferredSourceName=${android.net.Uri.encode(it)}") }
+            preferredBingeGroup?.let { params.add("preferredBingeGroup=${android.net.Uri.encode(it)}") }
             startPositionMs?.let { params.add("startPositionMs=$it") }
             if (isLiveStream) params.add("isLiveStream=true")
             return if (params.isNotEmpty()) "$base?${params.joinToString("&")}" else base
