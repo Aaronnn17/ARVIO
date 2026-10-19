@@ -86,6 +86,58 @@ const assert = require('node:assert/strict');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${name}: no page overflow`);
       for (const dialog of await page.getByRole('dialog').all()) assert.equal(await dialog.evaluate(element => element.scrollWidth > element.clientWidth), false, `${name}: no dialog overflow`);
     };
+    const focusOrderScenario = async () => {
+      await go('checkout');
+      // Some browsers deliver visibilitychange before the newly visible page
+      // actually receives focus. This event must not consume the return.
+      await page.evaluate(() => { Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false }); });
+      await handoff(page.getByRole('link', { name: /Keep Premium/ }), 'control');
+      await page.evaluate(() => { document.dispatchEvent(new Event('visibilitychange')); });
+      assert.equal(await page.evaluate(() => window.__premiumFixture.statusRequests), 0, 'visible-but-unfocused tabs do not poll');
+      assert.equal((await events('checkout_returned')).length, 0, 'visibility without focus does not prematurely count a return');
+      await page.evaluate(() => {
+        window.__premiumFixture.markPaid();
+        Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true });
+        window.dispatchEvent(new Event('focus'));
+      });
+      await page.getByTestId('activation-result').filter({ hasText: /^Paid activation/ }).waitFor();
+      await waitEvent('checkout_returned');
+      await waitEvent('payment_status_checked');
+      assert.equal(await page.evaluate(() => window.__premiumFixture.statusRequests), 1, 'later real focus checks and activates exactly once');
+      passed++;
+    };
+    const exhaustedCycleScenario = async () => {
+      // A late payment must recover after bounded polling has exhausted, both
+      // through manual reopen and through another genuine return from Ko-fi.
+      await go('checkout');
+      await page.evaluate(() => { Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false }); });
+      await handoff(page.getByRole('link', { name: /Keep Premium/ }), 'control');
+      await page.evaluate(() => {
+        Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => true });
+        window.dispatchEvent(new Event('focus'));
+      });
+      await page.waitForFunction(() => window.__premiumFixture.statusRequests === 4, null, { timeout: 35000 });
+      assert.match(await page.getByTestId('activation-result').innerText(), /No paid/);
+      await page.keyboard.press('Escape');
+      await page.getByRole('button', { name: 'Already paid? Check access', exact: true }).click();
+      await page.waitForFunction(() => window.__premiumFixture.statusRequests === 5);
+      assert.match(await page.getByTestId('activation-result').innerText(), /No paid/, 'manual recovery cannot turn trial access into paid access');
+      await page.waitForFunction(() => window.__premiumFixture.statusRequests === 8, null, { timeout: 35000 });
+      await page.evaluate(() => { window.__premiumFixture.markPaid(); });
+      await returnToApp();
+      await page.getByTestId('activation-result').filter({ hasText: /^Paid activation/ }).waitFor();
+      assert.equal(await page.evaluate(() => window.__premiumFixture.statusRequests), 9, 'manual reopen and new return restart exhausted four-check cycles; paid access stops checking');
+      passed++;
+    };
+    // A bounded subset is useful while reviewing recovery-only changes. The
+    // default command always exercises the complete UI suite below.
+    if (process.env.PAYMENT_UI_ONLY === 'focus-order' || process.env.PAYMENT_UI_ONLY === 'recovery-regressions') {
+      await focusOrderScenario();
+      if (process.env.PAYMENT_UI_ONLY === 'recovery-regressions') await exhaustedCycleScenario();
+      assert.deepEqual(errors, []);
+      console.log(`Payment recovery UI passed ${passed} targeted scenarios (${process.env.PAYMENT_UI_ONLY}); external network, emails and real payments blocked.`);
+      return;
+    }
     for (const [name, width, height] of [['small-phone', 320, 720], ['mobile', 390, 844], ['desktop', 1440, 900]]) {
       await page.setViewportSize({ width, height });
       await go('checkout');
@@ -163,10 +215,14 @@ const assert = require('node:assert/strict');
     await handoff(page.getByRole('link', { name: /Keep Premium/ }));
     await returnToApp();
     await page.getByText('Membership active', { exact: true }).waitFor({ timeout: 20000 });
-    await waitEvent('checkout_returned');
-    await waitEvent('payment_status_checked');
+    // EntitlementGate also refreshes on focus and may activate/unmount the
+    // checkout before its own return listener. Assert the user outcome here;
+    // the isolated focus-order scenario asserts checkout-specific telemetry.
     assert.equal((await events('checkout_opened')).length, 1);
     passed++;
+
+    await focusOrderScenario();
+    await exhaustedCycleScenario();
 
     // The recovery path still requires proof of ownership, not just knowing a
     // billing address. All requests remain in the fixture transport.

@@ -15,6 +15,7 @@ export const fixture = {
   analyticsMode: 'ready',
   deferNextStatus: false,
   deferNextLink: false,
+  markPaid: () => { state = paid; },
   completeStatusAsPaid: () => { completeStatus?.(paid); completeStatus = undefined; },
   completeLinkAsPaid: () => { completeLink?.(paid); completeLink = undefined; },
 };
