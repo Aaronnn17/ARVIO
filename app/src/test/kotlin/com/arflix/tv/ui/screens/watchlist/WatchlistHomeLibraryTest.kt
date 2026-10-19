@@ -231,6 +231,30 @@ class WatchlistHomeLibraryTest {
         assertTrue(model.logoUrls.value.containsKey(watchlistLogoKey(slow)))
     }
 
+    @Test fun serverPreviewDoesNotWaitForRatingAndCachesTheRealImdbResult() = runBlocking {
+        val item = MediaItem(42, "Movie", overview = "Server description", isHomeServer = true,
+            homeServerSourceRef = "jellyfin", homeServerItemId = "native-42", tmdbRating = "7.4")
+        coEvery { media.getImdbRating(any<MediaItem>()) } returns "8.1"
+        val preview = model.loadLibraryPreview(item)
+        assertEquals("Server description", preview.item.overview)
+        assertEquals("", preview.item.imdbRating)
+        coVerify(exactly = 0) { media.getImdbRating(any<MediaItem>()) }
+        assertEquals("8.1", model.loadLibraryImdbRating(item))
+        val enriched = model.loadLibraryPreview(item)
+        assertEquals("8.1", enriched.item.imdbRating)
+        assertEquals("native-42", enriched.item.homeServerItemId)
+        assertEquals("Server description", enriched.item.overview)
+    }
+
+    @Test fun missingImdbRatingDoesNotOverwriteTheProviderPreview() = runBlocking {
+        val item = MediaItem(-42, "Movie", overview = "Server description", isHomeServer = true,
+            homeServerSourceRef = "emby", homeServerItemId = "native-42")
+        coEvery { media.getImdbRating(any<MediaItem>()) } returns null
+        model.loadLibraryPreview(item)
+        assertNull(model.loadLibraryImdbRating(item))
+        assertEquals(item, model.loadLibraryPreview(item).item)
+    }
+
     @Test fun trackerShowsAllItemsBeforeSlowArtworkHydration() {
         coEvery { trakt.getPersonalLists() } returns emptyList()
         coEvery { trakt.getWatchlist() } returns (1..605).map { MediaItem(id = it, title = "Movie $it") }

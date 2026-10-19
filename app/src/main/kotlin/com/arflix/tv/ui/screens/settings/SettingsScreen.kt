@@ -170,6 +170,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -211,6 +212,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.arflix.tv.ui.components.SettingsRow
 import com.arflix.tv.ui.components.SettingsToggleRow
+import com.arflix.tv.ui.components.settingsFocusOutline
 import com.arflix.tv.ui.components.localizeSettingValue
 import androidx.core.widget.doAfterTextChanged
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -299,7 +301,7 @@ private const val PRIVACY_POLICY_URL = "https://arvio.tv/privacy"
 
 private fun isRepeatedSettingsSelect(event: androidx.compose.ui.input.key.KeyEvent): Boolean =
     event.type == KeyEventType.KeyDown &&
-        (event.key == Key.Enter || event.key == Key.DirectionCenter) &&
+        (event.key == Key.Enter || event.key == Key.DirectionCenter || event.key == Key.NumPadEnter) &&
         event.nativeKeyEvent.repeatCount > 0
 
 /**
@@ -770,7 +772,7 @@ fun SettingsScreen(
     }
 
     val focusRequester = remember { FocusRequester() }
-    val scrollState = rememberScrollState()
+    val scrollState = key(sectionIndex, showIptvCategoriesSettings) { rememberScrollState() }
     val sectionScrollState = rememberScrollState()
     val focusTracker = remember(sectionIndex, showIptvCategoriesSettings) { SettingsFocusTracker() }
     val sectionFocusTracker = remember { SettingsFocusTracker() }
@@ -823,10 +825,6 @@ fun SettingsScreen(
         showUiModeWarningDialog = true
     }
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
     LaunchedEffect(sections.size) {
         if (sectionIndex > sections.lastIndex) {
             sectionIndex = sections.lastIndex.coerceAtLeast(0)
@@ -874,12 +872,6 @@ fun SettingsScreen(
     LaunchedEffect(sectionIndex, uiState.catalogs.size) {
         if (sections[sectionIndex] == "catalogs") {
             contentFocusIndex = contentFocusIndex.coerceAtMost(uiState.catalogs.size + 2)
-        }
-    }
-
-    LaunchedEffect(sectionIndex) {
-        if (scrollState.value != 0) {
-            scrollState.scrollTo(0)
         }
     }
 
@@ -987,7 +979,7 @@ fun SettingsScreen(
         }
     }
 
-    val hasBlockingModal =
+    val hasBlockingModal by remember { derivedStateOf {
         showCustomAddonInput ||
         showCommunityAddons ||
         showIptvInput ||
@@ -1003,6 +995,10 @@ fun SettingsScreen(
         showDnsProviderPicker ||
         showContentLanguagePicker ||
         showUiModeWarningDialog ||
+        showQualityFiltersModal ||
+        showQualityFilterEditor ||
+        showCredits ||
+        addonConfigureTarget != null ||
         showAiModelDialog ||
         showAiApiKeyDialog ||
         showCustomUserAgentDialog ||
@@ -1025,6 +1021,9 @@ fun SettingsScreen(
         uiState.packError != null ||
         uiState.pendingPackManifest != null ||
         pluginsModalOpen
+    } }
+
+    val inputFocusModifier = rememberSettingsInputFocusModifier(focusRequester, !isTouchDevice, hasBlockingModal)
 
     // Same D-pad repeat throttle as Home and Details, so holding a direction
     // key walks the settings lists at a readable pace instead of blurring.
@@ -1079,6 +1078,7 @@ fun SettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(appBackgroundDark())
+            .then(inputFocusModifier)
             .focusRequester(focusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
@@ -1087,6 +1087,10 @@ fun SettingsScreen(
 
                 // One physical OK press is one action, even when a remote repeats it.
                 if (isRepeatedSettingsSelect(event)) return@onPreviewKeyEvent true
+                if (event.type == KeyEventType.KeyUp &&
+                    (event.key == Key.Enter || event.key == Key.DirectionCenter || event.key == Key.NumPadEnter)) {
+                    return@onPreviewKeyEvent true
+                }
 
                 if (event.type == KeyEventType.KeyUp && isArvioDpadNavigationKey(event.key)) {
                     dpadRepeatGate.reset()
@@ -1397,7 +1401,7 @@ fun SettingsScreen(
                             }
                             true
                         }
-                        Key.Enter, Key.DirectionCenter -> {
+                        Key.Enter, Key.DirectionCenter, Key.NumPadEnter -> {
                             when (activeZone) {
                                 Zone.SIDEBAR -> {
                                     if (hasProfile && sidebarFocusIndex == 0) {
@@ -3406,7 +3410,6 @@ private fun QualityFiltersModal(
     }
 
     LaunchedEffect(hasFilters) {
-        modalFocusRequester.requestFocus()
         if (!hasFilters) {
             isFooterFocused = true
             selectedFilterIndex = -1
@@ -3432,6 +3435,7 @@ private fun QualityFiltersModal(
         ModalScrim(onDismiss = onDismiss) {
             Column(
                 modifier = Modifier
+                    .then(rememberSettingsInputFocusModifier(modalFocusRequester, enabled = true, blocked = false))
                     .width(760.dp)
                     .heightIn(max = 760.dp)
                     .background(BackgroundElevated, RoundedCornerShape(16.dp))
@@ -6670,13 +6674,10 @@ private fun SettingsSectionItem(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .graphicsLayer()
             .clickable { onClick() }
             .background(bgColor, RoundedCornerShape(12.dp))
-            .border(
-                width = if (isFocused) 1.dp else 0.dp,
-                color = if (isFocused) accentColor else Color.Transparent,
-                shape = RoundedCornerShape(12.dp)
-            )
+            .settingsFocusOutline(isFocused, cornerRadius = 12.dp)
             .padding(horizontal = 9.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

@@ -29,13 +29,16 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.LayoutDirection
 import com.arflix.tv.ui.focus.mirrorHorizontalForRtl
+import com.arflix.tv.ui.focus.arvioDpadFocusGroup
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
@@ -142,18 +145,26 @@ fun WatchlistScreen(
     )) { mutableMapOf<String, LazyGridState>() }
     val grid = remember(sourceKey) { viewports.getOrPut(sourceKey) { LazyGridState() } }
     var revealJob by remember(grid) { mutableStateOf<Job?>(null) }
-    fun revealCard(index: Int) {
+    var focusedGridRow by remember(grid) { mutableStateOf<Pair<Int, Int>?>(null) }
+    DisposableEffect(grid) {
+        onDispose { revealJob?.cancel() }
+    }
+    fun revealCard(index: Int, columns: Int) {
         if (touch) return
+        val row = columns to index / columns
+        // Sideways focus must not cancel or restart the current row's reveal.
+        if (focusedGridRow == row) return
+        focusedGridRow = row
         revealJob?.cancel()
         revealJob = scrollScope.launch {
             withFrameNanos { }
             val layout = grid.layoutInfo
             val card = layout.visibleItemsInfo.firstOrNull { it.index == index }
-            if (card == null) grid.scrollToItem(index) else {
-                val delta = libraryRevealScrollDelta(card.offset.y, card.size.height,
+            if (card == null) grid.animateScrollToItem(index / columns * columns) else {
+                val delta = libraryRowAnchorScrollDelta(card.offset.y, card.size.height,
                     layout.viewportStartOffset + layout.beforeContentPadding,
                     layout.viewportEndOffset - layout.afterContentPadding)
-                if (delta != 0) grid.animateScrollBy(delta.toFloat(), tween(140))
+                if (delta != 0) grid.animateScrollBy(delta.toFloat(), tween(160))
             }
         }
     }
@@ -161,19 +172,26 @@ fun WatchlistScreen(
     val touchPreviewIndex by remember(grid) { derivedStateOf { grid.firstVisibleItemIndex } }
     val previewCandidate = if (touch) items.getOrNull(touchPreviewIndex.coerceAtMost(items.lastIndex.coerceAtLeast(0)))
         else items.firstOrNull { libraryPreviewKey(it) == focusedPreviewKey } ?: items.firstOrNull()
-    var previewItem by remember(currentProfile?.id, sourceKey) { mutableStateOf(previewCandidate) }
-    LaunchedEffect(currentProfile?.id, sourceKey, previewCandidate?.let(::libraryPreviewKey)) {
-        if (previewCandidate != null) delay(100)
-        previewItem = previewCandidate
-    }
-    val previewKey = previewItem?.let(::libraryPreviewKey)
-    var enrichedPreview by remember(currentProfile?.id, sourceKey, previewKey) { mutableStateOf<LibraryPreview?>(null) }
-    LaunchedEffect(currentProfile?.id, sourceKey, previewKey, calendarMode, collections) {
-        if (!calendarMode && !collections && previewItem != null) {
-            delay(160)
-            val item = previewItem ?: return@LaunchedEffect
+    var readyPreview by remember(currentProfile?.id, sourceKey) { mutableStateOf<LibraryPreview?>(null) }
+    val activePreview = readyPreview ?: previewCandidate?.let { LibraryPreview(it) }
+    val previewItem = activePreview?.item
+    LaunchedEffect(currentProfile?.id, sourceKey, previewCandidate?.let(::libraryPreviewKey), calendarMode, collections) {
+        if (!calendarMode && !collections) {
+            val item = previewCandidate
+            if (item == null) {
+                readyPreview = null
+                return@LaunchedEffect
+            }
+            delay(100)
             viewModel.ensureLogo(item)
-            enrichedPreview = viewModel.loadLibraryPreview(item)
+            // Swap complete previews together; never clear the description between cards.
+            val preview = viewModel.loadLibraryPreview(item)
+            readyPreview = preview
+            if (item.isHomeServer) {
+                viewModel.loadLibraryImdbRating(item)?.let { rating ->
+                    readyPreview = preview.copy(item = preview.item.copy(imdbRating = rating))
+                }
+            }
         }
     }
     fun selectSource(source: WatchlistSourceItem) {
@@ -299,11 +317,12 @@ fun WatchlistScreen(
                 BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
                     val columns = libraryColumns(maxWidth.value.toInt(), poster, collections)
                     val width = (maxWidth - 12.dp * (columns - 1)) / columns
+                    if (serverMode) LibraryArtworkPrefetch(grid, items, width - 12.dp, columns, poster)
                     val previewCatalog = remember(sourceKey, state.selectedSource.title, scopeSources, selectedId) {
                         CatalogConfig(sourceKey, scopeSources.firstOrNull { it.id == selectedId }?.title
                             ?: state.selectedSource.title, CatalogSourceType.PREINSTALLED)
                     }
-                    val spotlightItem = enrichedPreview?.item ?: previewItem
+                    val spotlightItem = previewItem
                     val compactSpotlight = compact || maxHeight < 440.dp
                     val showSpotlight = !collections && items.isNotEmpty()
                     if (showSpotlight) CollectionBackdrop(previewCatalog, spotlightItem, touch,
@@ -311,11 +330,20 @@ fun WatchlistScreen(
                         background = Color.Black)
                     Column(Modifier.fillMaxSize()) {
                     if (showSpotlight) CollectionSpotlight(previewCatalog, spotlightItem, touch, compactSpotlight, {},
-                        providerLogoUrl = enrichedPreview?.providerLogoUrl ?: spotlightItem?.primaryNetworkLogo,
+                        providerLogoUrl = activePreview?.providerLogoUrl ?: spotlightItem?.primaryNetworkLogo,
                         clearLogoUrl = previewItem?.let { logos[watchlistLogoKey(it)] },
                         horizontalInset = 6.dp, showBackButton = false, topInset = 16.dp)
-                    Box(Modifier.weight(1f).fillMaxWidth()) {
-                    // TV reveals the entire padded card, including its caption, once.
+                    // Row anchoring keeps the previous row entirely outside this viewport.
+                    BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
+                    val rowHeight by remember(grid) { derivedStateOf {
+                        grid.layoutInfo.visibleItemsInfo.maxOfOrNull { it.size.height } ?: 0
+                    } }
+                    val minimumBottomPadding = 16.dp + LocalBottomBarInset.current
+                    val bottomPadding = if (touch || collections) minimumBottomPadding else with(LocalDensity.current) {
+                        libraryGridBottomPadding(maxHeight.roundToPx(), rowHeight,
+                            8.dp.roundToPx(), minimumBottomPadding.roundToPx()).toDp()
+                    }
+                    // Touch keeps native scrolling; TV moves once per row, never per column.
                     CompositionLocalProvider(LocalBringIntoViewSpec provides
                         if (touch || collections) LocalBringIntoViewSpec.current else LibraryTvBringIntoViewSpec) {
                     if (collections) {
@@ -337,16 +365,18 @@ fun WatchlistScreen(
                             OledMessage(if(error != null) tr("Library unavailable") else tr("No titles found"), error ?: tr("Choose a source or add titles to your watchlist."))
                             if(error != null) OledControl(tr("Retry"), onClick = { if(serverMode) viewModel.refreshLibrary() else viewModel.refresh() })
                         }
-                    } else LazyVerticalGrid(GridCells.Fixed(columns), state = grid, modifier = Modifier.fillMaxSize().testTag("library-grid"),
+                    } else LazyVerticalGrid(GridCells.Fixed(columns), state = grid,
+                        modifier = Modifier.fillMaxSize().arvioDpadFocusGroup(enableFocusRestorer = false)
+                            .clipToBounds().testTag("library-grid"),
                         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(18.dp),
-                        contentPadding = PaddingValues(top = 8.dp, bottom = 16.dp + LocalBottomBarInset.current)) {
+                        contentPadding = PaddingValues(top = 8.dp, bottom = bottomPadding)) {
                         itemsIndexed(items, key = { index, item -> watchlistItemKey(item, index) }) { index, item ->
                             LaunchedEffect(watchlistLogoKey(item), poster) { if(!poster) viewModel.ensureLogo(item) }
                             Box(Modifier.padding(6.dp).testTag("library-card-frame-$index")) {
                             MediaCard(item, width = width - 12.dp, isLandscape = !poster, logoImageUrl = logos[watchlistLogoKey(item)],
                                 focusedScale = 1.025f, titleMaxLines = 1, showTitle = true,
                                 modifier = Modifier.testTag("library-card-$index"),
-                                onFocused = { focusedPreviewKey = libraryPreviewKey(item); viewModel.saveFocusState(0, index); revealCard(index) },
+                                onFocused = { focusedPreviewKey = libraryPreviewKey(item); viewModel.saveFocusState(0, index); revealCard(index, columns) },
                                 onClick = { onNavigateToDetails(item.mediaType, item.id) },
                                 onLongClick = if(state.selectedSourceId == WatchlistSourceItem.MyWatchlist.id && !serverMode) ({ viewModel.removeFromWatchlist(item) }) else null)
                             }

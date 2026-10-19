@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.unit.dp
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -97,6 +98,54 @@ class OledLibraryDeviceTest {
     }
     @Test fun landscapeFocusedCardsRemainFullyVisibleWhileScrolling() = verifyFocusedScroll(false)
     @Test fun posterFocusedCardsRemainFullyVisibleWhileScrolling() = verifyFocusedScroll(true)
+    @Test fun homeServerLandscapeRowsDoNotStopBehindThePreview() = verifyFocusedScroll(false, server = true)
+    @Test fun homeServerPosterRowsDoNotStopBehindThePreview() = verifyFocusedScroll(true, server = true)
+    @Test fun landscapeScrollNeverPaintsOverPreview() = verifyPreviewClip(false)
+    @Test fun posterScrollNeverPaintsOverPreview() = verifyPreviewClip(true)
+
+    private fun verifyPreviewClip(poster: Boolean) {
+        show(poster, fixedPreview = true)
+        card(0).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus)
+        compose.mainClock.advanceTimeBy(500)
+        Thread.sleep(1200)
+        compose.waitForIdle()
+        val previewBounds = compose.onNodeWithTag("collection_spotlight").fetchSemanticsNode().boundsInRoot
+        val gridBounds = compose.onNodeWithTag("library-grid").fetchSemanticsNode().boundsInRoot
+        val reference = compose.onNodeWithTag("oled-library").captureToImage().asAndroidBitmap()
+        compose.mainClock.autoAdvance = false
+        try {
+            repeat(6) {
+                compose.onNodeWithTag("oled-library").performKeyInput { pressKey(Key.DirectionDown) }
+                repeat(4) {
+                    compose.mainClock.advanceTimeBy(40)
+                    compose.waitForIdle()
+                    val current = compose.onNodeWithTag("oled-library").captureToImage().asAndroidBitmap()
+                    var changed = 0
+                    var samples = 0
+                    for (y in previewBounds.top.toInt() until gridBounds.top.toInt() step 4) {
+                        for (x in gridBounds.left.toInt() until gridBounds.right.toInt() step 4) {
+                            val before = reference.getPixel(x, y)
+                            val after = current.getPixel(x, y)
+                            val delta = maxOf(
+                                kotlin.math.abs(android.graphics.Color.red(before) - android.graphics.Color.red(after)),
+                                kotlin.math.abs(android.graphics.Color.green(before) - android.graphics.Color.green(after)),
+                                kotlin.math.abs(android.graphics.Color.blue(before) - android.graphics.Color.blue(after))
+                            )
+                            if (delta > 16) changed++
+                            samples++
+                        }
+                    }
+                    assertTrue("Scrolling cards painted over the fixed preview: $changed/$samples pixels",
+                        changed <= samples / 1000)
+                    assertEquals(previewBounds, compose.onNodeWithTag("collection_spotlight").fetchSemanticsNode().boundsInRoot)
+                }
+                compose.mainClock.advanceTimeBy(200)
+            }
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+        capture(if (poster) "poster-preview-protected" else "horizontal-preview-protected")
+    }
 
     @Test fun touchScrollUpdatesPersistentDescription() {
         show(false)
@@ -113,9 +162,12 @@ class OledLibraryDeviceTest {
         capture("phone-description-scrolled")
     }
 
-    private fun verifyFocusedScroll(poster: Boolean) {
+    private fun verifyFocusedScroll(poster: Boolean, server: Boolean = false) {
         show(poster)
+        if (server) compose.onNodeWithText("Homeserver").performClick()
         card(0).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        val anchor = compose.onNodeWithTag("library-card-frame-0").getUnclippedBoundsInRoot().top
         repeat(14) {
             compose.onNodeWithTag("oled-library").performKeyInput { pressKey(Key.DirectionDown) }
             compose.waitForIdle()
@@ -129,12 +181,48 @@ class OledLibraryDeviceTest {
             val bounds = compose.onNodeWithTag(tag).getUnclippedBoundsInRoot()
             assertTrue("Focused card clipped above: $bounds in $grid", bounds.top >= grid.top)
             assertTrue("Focused card title clipped below: $bounds in $grid", bounds.bottom <= grid.bottom)
+            assertEquals("Each focused row must reach the same anchor", anchor.value, bounds.top.value, 1f)
+            assertNoCroppedPreviousRow()
+            if (it == 0) {
+                for (key in listOf(Key.DirectionRight, Key.DirectionLeft)) {
+                    compose.onNodeWithTag("oled-library").performKeyInput { pressKey(key) }
+                    compose.waitForIdle()
+                    assertEquals(anchor.value, compose.onNodeWithTag(tag).getUnclippedBoundsInRoot().top.value, 1f)
+                    assertNoCroppedPreviousRow()
+                }
+            }
         }
         capture(if(poster) "poster-scrolled-focus" else "horizontal-scrolled-focus")
-        repeat(14) { compose.onNodeWithTag("oled-library").performKeyInput { pressKey(Key.DirectionUp) }; compose.waitForIdle() }
+        repeat(14) {
+            compose.onNodeWithTag("oled-library").performKeyInput { pressKey(Key.DirectionUp) }
+            compose.waitForIdle()
+            assertNoCroppedPreviousRow()
+        }
         capture(if(poster) "poster-top-focus" else "horizontal-top-focus")
+        val last = if (server) library.value.items.lastIndex else ui.value.movies.size + ui.value.series.size - 1
+        compose.onNodeWithTag("library-grid").performScrollToIndex(last)
+        card(last).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        assertEquals("Last row must not be clamped beneath a cropped previous row", anchor.value,
+            compose.onNodeWithTag("library-card-frame-$last").getUnclippedBoundsInRoot().top.value, 1f)
+        assertNoCroppedPreviousRow()
+        capture("${if (server) "server" else "watchlist"}-${if (poster) "poster" else "horizontal"}-last-row")
     }
-    private fun show(poster: Boolean) {
+    private fun assertNoCroppedPreviousRow() {
+        val grid = compose.onNodeWithTag("library-grid").getUnclippedBoundsInRoot()
+        val frames = compose.onAllNodes(SemanticsMatcher("Library card frame") {
+            it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.TestTag) &&
+                it.config[androidx.compose.ui.semantics.SemanticsProperties.TestTag].startsWith("library-card-frame-")
+        }).fetchSemanticsNodes()
+        frames.forEach { frame ->
+            val tag = frame.config[androidx.compose.ui.semantics.SemanticsProperties.TestTag]
+            val bounds = compose.onNodeWithTag(tag).getUnclippedBoundsInRoot()
+            if (bounds.bottom > grid.top + 1.dp && bounds.top < grid.bottom) {
+                assertTrue("Previous row is cropped beneath the hero: $tag $bounds in $grid", bounds.top >= grid.top)
+            }
+        }
+    }
+    private fun show(poster: Boolean, fixedPreview: Boolean = false) {
         val context = compose.activity
         val assets = InstrumentationRegistry.getInstrumentation().context.assets
         val destination = File(context.cacheDir, "library-fixtures").apply { mkdirs() }
@@ -144,7 +232,9 @@ class OledLibraryDeviceTest {
         val seed = (0 until rows.length()).map { i -> val row = rows.getJSONObject(i)
             MediaItem(id=row.getInt("id"), title=row.getString("title"), year=row.getString("year"), mediaType=MediaType.valueOf(row.getString("mediaType")), image=uri(row.getString("poster")), backdrop=uri(row.getString("backdrop"))) }
         val titles = (0 until 6).flatMap { batch -> seed.map { it.copy(id=it.id + batch*1000000) } }
-        val logos = (0 until 6).flatMap { batch -> (0 until rows.length()).map { i ->
+            .map { if (fixedPreview) seed.first().copy(id = it.id) else it }
+        val logos = if (fixedPreview) titles.associate { watchlistLogoKey(it) to uri(rows.getJSONObject(0).optString("logo")) }
+        else (0 until 6).flatMap { batch -> (0 until rows.length()).map { i ->
             watchlistLogoKey(seed[i].copy(id = seed[i].id + batch * 1000000)) to uri(rows.getJSONObject(i).optString("logo"))
         } }.toMap()
         val lists = listOf("Friday night","Science fiction essentials","Family favourites","Hidden gems","Weekend series","Award winners").mapIndexed { index, title ->

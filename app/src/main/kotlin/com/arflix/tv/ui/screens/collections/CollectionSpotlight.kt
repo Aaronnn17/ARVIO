@@ -65,7 +65,7 @@ internal fun collectionRating(item: MediaItem?): String? {
     fun valid(value: String) = value.toDoubleOrNull()?.let { it.isFinite() && it > 0 && it <= 10 } == true
     return when {
         valid(item.imdbRating) -> "IMDb ${item.imdbRating}"
-        valid(item.tmdbRating) -> "TMDB ${item.tmdbRating}"
+        !item.isHomeServer && valid(item.tmdbRating) -> "TMDB ${item.tmdbRating}"
         else -> null
     }
 }

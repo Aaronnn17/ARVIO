@@ -993,6 +993,20 @@ class WatchlistViewModel @Inject constructor(
 
     private val libraryPreviews = linkedMapOf<String, LibraryPreview>()
 
+    internal suspend fun loadLibraryImdbRating(item: MediaItem): String? {
+        val profile = profileManager.getProfileIdSync()
+        val key = "$profile:${libraryPreviewKey(item)}"
+        val preview = libraryPreviews[key] ?: LibraryPreview(item)
+        val rating = try {
+            mediaRepository.getImdbRating(preview.item)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { null }
+        if (rating != null && profileManager.getProfileIdSync() == profile) {
+            libraryPreviews[key]?.let { libraryPreviews[key] = it.copy(item = it.item.copy(imdbRating = rating)) }
+        }
+        return rating
+    }
+
     internal suspend fun loadLibraryPreview(item: MediaItem): LibraryPreview {
         val profile = profileManager.getProfileIdSync()
         val key = "$profile:${libraryPreviewKey(item)}"

@@ -494,6 +494,19 @@ class MediaRepository @Inject constructor(
         else -> getTvDetails(mediaId)
     }
 
+    suspend fun getImdbRating(item: MediaItem): String? {
+        item.imdbRating.takeIf { value ->
+            value.toDoubleOrNull()?.let { it.isFinite() && it > 0 && it <= 10 } == true
+        }?.let { return it }
+        val imdbId = item.homeServerImdbId?.trim()
+            ?.takeIf { it.startsWith("tt", ignoreCase = true) }
+        if (item.id > 0 || imdbId != null) return getImdbRating(item.mediaType, item.id, imdbId)
+        if (!item.isHomeServer) return null
+        // Reuse the server title's resolved identity, never its unlabelled community score.
+        val resolved = resolveHomeServerLogoRef(item) ?: return null
+        return getImdbRating(resolved.first, resolved.second)
+    }
+
     suspend fun getImdbRating(mediaType: MediaType, mediaId: Int, imdbId: String? = null): String? {
         // No IMDb rating exists under a negative stand-in id (native addon / home-server items).
         if (mediaId <= 0 && imdbId?.startsWith("tt", ignoreCase = true) != true) return null
