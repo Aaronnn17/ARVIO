@@ -21,6 +21,7 @@ export function MembershipCheckout({ children, className, entry, title, onEntitl
   const [waiting, setWaiting] = useState(false);
   const [status, setStatus] = useState<"idle" | "checking" | "pending" | "active" | "error">("idle");
   const [copied, setCopied] = useState(false);
+  const [handoffAttempt, setHandoffAttempt] = useState(0);
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLAnchorElement | HTMLButtonElement | null>(null);
   const recovery = useRef<ReturnType<typeof createPaymentRecovery> | null>(null);
@@ -74,7 +75,7 @@ export function MembershipCheckout({ children, className, entry, title, onEntitl
     const controller = createPaymentRecovery({
       check: () => fetchEntitlement(authClient),
       isCurrent: () => authClient.session?.userId === accountId,
-      isVisible: () => document.visibilityState === "visible",
+      isVisible: () => document.visibilityState === "visible" && document.hasFocus(),
       onResult: (result, state) => {
         setStatus(result);
         if (result !== "checking") void trackPremiumEvent(authClient, "payment_status_checked", { entry, status: result, ...flow });
@@ -83,14 +84,17 @@ export function MembershipCheckout({ children, className, entry, title, onEntitl
     });
     recovery.current = controller;
     const onReturn = () => {
-      if (document.visibilityState === "hidden") { hasLeft = true; return; }
+      if (document.visibilityState === "hidden" || !document.hasFocus()) { hasLeft = true; return; }
       if (!hasLeft) return;
       hasLeft = false;
       if (waiting && !returned) {
         returned = true;
         void trackPremiumEvent(authClient, "checkout_returned", { entry, ...flow });
       }
-      void controller.resume();
+      // A later genuine return can follow an exhausted earlier cycle (for
+      // example a background Ko-fi tab opened with Ctrl-click). Recheck rather
+      // than stranding a just-paid customer behind the old four-check budget.
+      void controller.retry();
     };
     const onLeave = () => { hasLeft = true; };
     window.addEventListener("focus", onReturn);
@@ -105,7 +109,7 @@ export function MembershipCheckout({ children, className, entry, title, onEntitl
       window.removeEventListener("blur", onLeave);
       document.removeEventListener("visibilitychange", onReturn);
     };
-  }, [open, waiting, accountId, entry, status === "active"]);
+  }, [open, waiting, accountId, entry, handoffAttempt, status === "active"]);
 
   const close = () => {
     void trackPremiumEvent(authClient, "checkout_recovery_closed", { entry, ...flow });
@@ -113,6 +117,7 @@ export function MembershipCheckout({ children, className, entry, title, onEntitl
   };
   const handoff = () => {
     setWaiting(true); setStatus("idle"); setOpen(true);
+    setHandoffAttempt(value => value + 1);
     void trackPremiumEvent(authClient, "checkout_opened", { entry, ...flow });
   };
   const onPaymentClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
