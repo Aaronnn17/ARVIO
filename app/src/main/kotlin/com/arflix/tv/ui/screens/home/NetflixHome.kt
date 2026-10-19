@@ -98,6 +98,7 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.isPortrait
 import com.arflix.tv.ui.components.AppTopBarHeight
 import com.arflix.tv.ui.components.CardLayoutMode
+import com.arflix.tv.ui.components.CardClearLogo
 import com.arflix.tv.ui.components.TrailerPlayer
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
@@ -1129,16 +1130,12 @@ private fun NetflixFeaturedCard(
                         )
                 )
                 if (!logoUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = logoUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        alignment = Alignment.BottomStart,
+                    CardClearLogo(
+                        url = logoUrl,
                         modifier = Modifier
                             .align(Alignment.BottomStart)
                             .padding(start = 16.dp, bottom = if (showProgress) 22.dp else 16.dp)
-                            .fillMaxWidth(0.45f)
-                            .height(64.dp)
+                            .testTag("netflix_logo_${item.mediaType}_${item.id}")
                     )
                 } else {
                     Text(
