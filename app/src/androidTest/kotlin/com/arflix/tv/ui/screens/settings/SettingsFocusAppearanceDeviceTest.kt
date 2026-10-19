@@ -25,7 +25,7 @@ class SettingsFocusAppearanceDeviceTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun outlineMovesImmediatelyWithoutChangingRowGeometry() {
-        val focused = mutableIntStateOf(0)
+        val focused = mutableIntStateOf(-1)
         compose.setContent {
             Column(
                 Modifier.background(Color.Black).width(600.dp).padding(12.dp),
@@ -45,8 +45,10 @@ class SettingsFocusAppearanceDeviceTest {
         }
         val first = compose.onNodeWithTag("setting-0")
         val bounds = first.fetchSemanticsNode().boundsInRoot
+        // Compare each row in place; fractional coordinates change text rasterization.
+        val resting = List(2) { compose.onNodeWithTag("setting-$it").captureToImage().asAndroidBitmap() }
+        compose.runOnIdle { focused.intValue = 0 }
         assertFocusedSurface("setting-0")
-        val resting = compose.onNodeWithTag("setting-1").captureToImage().asAndroidBitmap()
         compose.mainClock.autoAdvance = false
         repeat(8) { index ->
             val target = (index + 1) % 2
@@ -55,7 +57,7 @@ class SettingsFocusAppearanceDeviceTest {
             compose.waitForIdle()
             assertFocusedSurface("setting-$target")
             val old = compose.onNodeWithTag("setting-${1 - target}").captureToImage().asAndroidBitmap()
-            assertTrue("The previous row retained its focus halo", resting.sameAs(old))
+            assertTrue("The previous row retained its focus halo", resting[1 - target].sameAs(old))
             assertEquals(bounds, first.fetchSemanticsNode().boundsInRoot)
         }
     }
