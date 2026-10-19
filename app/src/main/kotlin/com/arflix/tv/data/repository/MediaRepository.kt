@@ -2430,13 +2430,22 @@ class MediaRepository @Inject constructor(
         episodeNumber: Int,
         language: String = contentLanguage
     ): String? {
+        return getLightweightEpisode(tvId, seasonNumber, episodeNumber, language)?.name
+    }
+
+    internal suspend fun getLightweightEpisode(
+        tvId: Int,
+        seasonNumber: Int,
+        episodeNumber: Int,
+        language: String = contentLanguage
+    ): TmdbEpisode? {
         return runCatching {
             tmdbApi.getTvSeason(
                 tvId = tvId,
                 seasonNumber = seasonNumber,
                 apiKey = apiKey,
                 language = language
-            ).episodes.firstOrNull { it.episodeNumber == episodeNumber }?.name
+            ).episodes.firstOrNull { it.episodeNumber == episodeNumber }
         }.getOrNull()
     }
 
