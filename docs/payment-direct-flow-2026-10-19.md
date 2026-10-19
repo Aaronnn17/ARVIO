@@ -38,11 +38,12 @@ verification, billing ownership verification and privacy opt-outs are unchanged.
 
 - Backend: 146 regression tests, including forged server-event rejection,
   conditional-write races, status transitions and attribution chronology.
-- Headless local UI: 18 scenarios including 320/390/1440-pixel layouts, native
+- Headless local UI: 19 scenarios including 320/390/1440-pixel layouts, native
   pointer/keyboard handoff, visible-only impressions, delayed payment, errors,
   billing verification, late responses, account changes, exhausted polling cycles
   visibility-before-focus event ordering and account-boundary telemetry.
-  Membership state is keyed per account so a previous account's open dialog
+  The mobile navigation control remains an accessible 38-pixel icon during
+  pending/active states. Membership state is keyed per account so a previous account's open dialog
   cannot emit recovery events or access requests for the next account. Local test identity
   and HTTP fixtures only; an allowlist and fail-closed local proxy block external
   payment/email traffic. Screenshots are fixtures, not real payment evidence.
@@ -57,7 +58,7 @@ verification, billing ownership verification and privacy opt-outs are unchanged.
 - Concurrent full-suite runs hit existing calendar tests with small wall-clock
   budgets. The complete serial runtime suite passed 1067/1067 with no skipped
   tests or test changes. Final focused Premium/recovery tests and TypeScript also
-  passed. All 18 headless scenarios passed against the final account-keyed component.
+  passed. All 19 headless scenarios passed against the final account-keyed component.
 - Publish backend support before the new web client. Check production report
   schema, protected endpoints, exact web build/version stamp and deployed bundle.
 - No real charge, customer trial, billing email or cancellation is created by
