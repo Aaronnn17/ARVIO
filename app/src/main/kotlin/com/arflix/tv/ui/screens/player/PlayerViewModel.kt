@@ -7670,8 +7670,7 @@ class PlayerViewModel @Inject constructor(
         recentSourceGate.disarm()
         preparedStream = null
         recentSourceLoad = viewModelScope.async {
-            val recent = recentPlayedSourceRepository.get(mediaType, mediaId)
-                ?.takeIf { it.appliesTo(mediaType, mediaId, season, episode) }
+            val recent = recentPlayedSourceRepository.get(mediaType, mediaId, season, episode)
             val stillCurrent = currentMediaType == mediaType && currentMediaId == mediaId &&
                 currentSeason == season && currentEpisode == episode
             if (recent == null || !stillCurrent) return@async null

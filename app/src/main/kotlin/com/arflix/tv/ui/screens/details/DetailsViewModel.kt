@@ -2069,11 +2069,9 @@ class DetailsViewModel @Inject constructor(
         val requestMediaId = currentMediaId
 
         viewModelScope.launch {
-            val recent = recentPlayedSourceRepository.get(requestMediaType, requestMediaId)
-                ?.takeIf {
-                    it.appliesTo(requestMediaType, requestMediaId, identity?.tmdbSeason, identity?.tmdbEpisode)
-                }
-                ?: return@launch
+            val recent = recentPlayedSourceRepository.get(
+                requestMediaType, requestMediaId, identity?.tmdbSeason, identity?.tmdbEpisode
+            ) ?: return@launch
             if (requestId == loadStreamsRequestId) {
                 _uiState.value = _uiState.value.copy(recentSource = recent)
             }
