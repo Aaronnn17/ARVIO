@@ -40,7 +40,9 @@ class NativeTrailerQualityDeviceTest {
         assertTrue("YouTube returned no playable source", source != null)
         Log.i("TrailerQualityTest", "Source maximum=${source?.maxVideoHeight}p; separate audio=${source?.audioUrl != null}")
         if (minimumHeight >= 720) {
-            assumeTrue("YouTube only exposed ${source?.maxVideoHeight}p for this video", (source?.maxVideoHeight ?: 0) >= minimumHeight)
+            val message = "YouTube only exposed ${source?.maxVideoHeight}p for this video"
+            if (args.getString("requireHd") == "true") assertTrue(message, (source?.maxVideoHeight ?: 0) >= minimumHeight)
+            else assumeTrue(message, (source?.maxVideoHeight ?: 0) >= minimumHeight)
         }
         // Use the real frame clock: polling a Compose-test activity without pumping
         // its virtual clock never starts AnimatedVisibility after the IO result arrives.

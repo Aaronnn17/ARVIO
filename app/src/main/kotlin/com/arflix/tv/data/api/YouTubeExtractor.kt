@@ -24,7 +24,8 @@ import javax.inject.Singleton
 private const val TAG = "InAppYouTubeExtractor"
 private const val EXTRACTOR_TIMEOUT_MS = 30_000L
 private const val URL_CACHE_TTL_MS = 5 * 60_000L
-private const val WATCH_CONFIG_TTL_MS = 24 * 60 * 60_000L  // 24h — key rarely changes
+private const val WATCH_CONFIG_TTL_MS = 6 * 60 * 60_000L
+private const val WATCH_CONFIG_RETRY_MS = 60_000L
 
 // Known stable InnerTube API key for Android clients. Used as primary to skip the watch page
 // GET (which can take 3-5s). Falls back to scraping the watch page if this ever gets rejected.
@@ -101,6 +102,25 @@ private val DEFAULT_HEADERS = mapOf(
 
 private val CLIENTS = listOf(
     YouTubeClient(
+        key = "visionos",
+        id = "101",
+        version = "1.02",
+        userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 " +
+            "(KHTML, like Gecko) Version/26.0 Safari/605.1.15",
+        context = mapOf(
+            "clientName" to "VISIONOS",
+            "clientVersion" to "1.02",
+            "deviceMake" to "Apple",
+            "deviceModel" to "RealityDevice17,1",
+            "osName" to "visionOS",
+            "osVersion" to "26.5.23O471",
+            "platform" to "MOBILE",
+            "hl" to "en",
+            "gl" to "US"
+        ),
+        priority = 0
+    ),
+    YouTubeClient(
         key = "android_vr",
         id = "28",
         version = "1.56.21",
@@ -171,7 +191,7 @@ class InAppYouTubeExtractor @Inject constructor() {
     // Result cache: videoId -> (source, fetchedAtMs). Cleared on error so stale 403 URLs don't stick.
     private val urlCache = ConcurrentHashMap<String, Pair<TrailerPlaybackSource, Long>>()
 
-    // WatchConfig cache: INNERTUBE_API_KEY is global and rarely changes
+    // Reuse a logged-out visitor session across previews, not a WebView or account.
     private val watchConfigMutex = Mutex()
     private var cachedWatchConfig: WatchConfig? = null
     private var watchConfigFetchedAt: Long = 0L
@@ -404,10 +424,25 @@ class InAppYouTubeExtractor @Inject constructor() {
         return watchConfigMutex.withLock {
             val now = System.currentTimeMillis()
             val cached = cachedWatchConfig
-            if (cached != null && now - watchConfigFetchedAt < WATCH_CONFIG_TTL_MS) {
+            val ttl = if (cached?.visitorData != null) WATCH_CONFIG_TTL_MS else WATCH_CONFIG_RETRY_MS
+            if (cached != null && now - watchConfigFetchedAt < ttl) {
                 return@withLock cached
             }
-            val config = WatchConfig(apiKey = FALLBACK_INNERTUBE_KEY, visitorData = null)
+            val session = try {
+                val response = performRequest(
+                    url = "https://www.youtube.com/sw.js_data?hl=en",
+                    method = "GET",
+                    headers = DEFAULT_HEADERS + ("referer" to "https://www.youtube.com/sw.js"),
+                    timeoutMs = 2000L
+                )
+                if (response.ok) parseYoutubeGuestSession(response.body) else null
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                Log.w(TAG, "Guest session unavailable (${error.javaClass.simpleName}); keeping legacy fallback")
+                null
+            }
+            val config = WatchConfig(apiKey = session?.apiKey ?: FALLBACK_INNERTUBE_KEY,
+                visitorData = session?.visitorData)
             cachedWatchConfig = config
             watchConfigFetchedAt = now
             config
@@ -499,7 +534,11 @@ class InAppYouTubeExtractor @Inject constructor() {
             "videoId" to videoId,
             "contentCheckOk" to true,
             "racyCheckOk" to true,
-            "context" to mapOf("client" to client.context),
+            "context" to mapOf("client" to buildMap {
+                putAll(client.context)
+                if (!visitorData.isNullOrBlank()) put("visitorData", visitorData)
+                put("userAgent", client.userAgent)
+            }),
             "playbackContext" to mapOf(
                 "contentPlaybackContext" to mapOf("html5Preference" to "HTML5_PREF_WANTS")
             )
@@ -525,6 +564,7 @@ class InAppYouTubeExtractor @Inject constructor() {
             val nextLine = lines.getOrNull(i + 1) ?: continue
             if (nextLine.startsWith("#")) continue
             val (width, height) = parseResolution(attrs["RESOLUTION"].orEmpty())
+            if (height > 1080 || width > 1920) continue
             val bandwidth = attrs["BANDWIDTH"]?.toLongOrNull() ?: 0L
             val candidate = ManifestBestVariant(url = absolutizeUrl(manifestUrl, nextLine), width = width, height = height, bandwidth = bandwidth)
             if (bestVariant == null || candidate.height > bestVariant.height ||
@@ -601,7 +641,8 @@ class InAppYouTubeExtractor @Inject constructor() {
     private fun absolutizeUrl(baseUrl: String, maybeRelative: String): String =
         try { URL(URL(baseUrl), maybeRelative).toString() } catch (e: java.net.MalformedURLException) { maybeRelative }
 
-    private fun performRequest(url: String, method: String, headers: Map<String, String>, body: String? = null): RequestResponse {
+    private fun performRequest(url: String, method: String, headers: Map<String, String>, body: String? = null,
+                               timeoutMs: Long? = null): RequestResponse {
         val requestBuilder = Request.Builder().url(url).headers(buildHeaders(headers))
         when (method.uppercase()) {
             "POST" -> requestBuilder.post((body ?: "").toRequestBody())
@@ -609,7 +650,9 @@ class InAppYouTubeExtractor @Inject constructor() {
             "DELETE" -> requestBuilder.delete()
             else -> requestBuilder.get()
         }
-        httpClient.newCall(requestBuilder.build()).execute().use { response ->
+        val call = httpClient.newCall(requestBuilder.build())
+        timeoutMs?.let { call.timeout().timeout(it, TimeUnit.MILLISECONDS) }
+        call.execute().use { response ->
             return RequestResponse(
                 ok = response.isSuccessful, status = response.code,
                 statusText = response.message, url = response.request.url.toString(),
