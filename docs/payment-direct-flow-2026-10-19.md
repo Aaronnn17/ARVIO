@@ -38,9 +38,12 @@ verification, billing ownership verification and privacy opt-outs are unchanged.
 
 - Backend: 146 regression tests, including forged server-event rejection,
   conditional-write races, status transitions and attribution chronology.
-- Headless local UI: 15 scenarios including 320/390/1440-pixel layouts, native
+- Headless local UI: 18 scenarios including 320/390/1440-pixel layouts, native
   pointer/keyboard handoff, visible-only impressions, delayed payment, errors,
-  billing verification, late responses and account changes. Local test identity
+  billing verification, late responses, account changes, exhausted polling cycles
+  visibility-before-focus event ordering and account-boundary telemetry.
+  Membership state is keyed per account so a previous account's open dialog
+  cannot emit recovery events or access requests for the next account. Local test identity
   and HTTP fixtures only; an allowlist and fail-closed local proxy block external
   payment/email traffic. Screenshots are fixtures, not real payment evidence.
 - Privacy/attribution and bounded payment recovery unit tests; TypeScript check.
@@ -51,8 +54,10 @@ verification, billing ownership verification and privacy opt-outs are unchanged.
   those runtime trees matched live a417ae4c0 and main 9ee9132a9 exactly. No existing
   web/library/SIMKL changes are rolled back. The known main failure must not be
   presented as a green main pipeline.
-- An initial parallel full-suite run also hit an unrelated timing-sensitive
-  calendar test; repeat isolated release verification before publication.
+- Concurrent full-suite runs hit existing calendar tests with small wall-clock
+  budgets. The complete serial runtime suite passed 1067/1067 with no skipped
+  tests or test changes. Final focused Premium/recovery tests and TypeScript also
+  passed. All 18 headless scenarios passed against the final account-keyed component.
 - Publish backend support before the new web client. Check production report
   schema, protected endpoints, exact web build/version stamp and deployed bundle.
 - No real charge, customer trial, billing email or cancellation is created by
@@ -60,3 +65,12 @@ verification, billing ownership verification and privacy opt-outs are unchanged.
 
 Deployment IDs and final validation results belong in the pull request/release
 record. New diagnostics have no historical baseline before deployment.
+
+The isolated remote release uses branch `codex/payment-runtime-release-20261019`.
+Its web/auth trees are checked against the primary implementation commit; only
+deployment orchestration differs. The first candidate (run `39268387543`)
+passed tests/build but was cancelled before publication to add the account-boundary
+correction. Final source/deployment IDs are recorded on PR #812.
+The release workflow tests both runtimes, builds and validates the web version,
+then publishes the compatible backend before the browser client. The main PR
+contains no Android rollback or deployment-guard change.
