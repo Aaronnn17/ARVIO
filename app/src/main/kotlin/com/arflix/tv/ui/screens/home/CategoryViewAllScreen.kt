@@ -42,7 +42,11 @@ fun CategoryViewAllScreen(
     onNavigateToDetails: (MediaType, Int) -> Unit,
     onBack: () -> Unit
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val rawUiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val kidsFilterState by viewModel.kidsFilterState.collectAsStateWithLifecycle()
+    val uiState = remember(rawUiState, kidsFilterState) {
+        viewModel.applyKidsFilter(rawUiState, kidsFilterState)
+    }
     val category = uiState.categories.firstOrNull { it.id == categoryId }
     val items = remember(category?.items) { category?.items?.filterNot { it.isPlaceholder }.orEmpty() }
     val hasMore = uiState.categoryHasMoreMap[categoryId] != false

@@ -73,6 +73,8 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
     lateinit var watchlistRepository: WatchlistRepository
     @Inject
     lateinit var appUsageAnalyticsRepository: AppUsageAnalyticsRepository
+    @Inject
+    lateinit var kidsStarterCatalogs: com.arflix.tv.data.repository.KidsStarterCatalogs
 
     /**
      * [OkHttpProvider.init] must run before *anything* first touches [OkHttpProvider.client]:
@@ -171,6 +173,9 @@ class ArflixApplication : Application(), Configuration.Provider, ImageLoaderFact
                     AppLogger.recordException(e)
                 }
             }
+            // After the first cloud pull: a kids profile synced from another device brings its
+            // "starter rows added" flag along, so rows removed there are not added back here.
+            kidsStarterCatalogs.start()
         }
 
         appScope.launch {

@@ -13,11 +13,39 @@ data class Profile(
     val avatarImageVersion: Long = 0L, // 0 = no custom uploaded photo
     val avatarImageStoragePath: String? = null,
     val isKidsProfile: Boolean = false,
+    // KidsAgeLevel name. Nullable because Gson skips Kotlin defaults: profiles saved
+    // before the field existed decode it as null, read as the default level.
+    val kidsAgeLevel: String? = null,
+    // Set once the kids starter rows were added to this profile's catalogs. Kept on the
+    // profile so it syncs: a row the parent removed must not come back on another device.
+    val kidsStarterRowsAdded: Boolean = false,
     val pin: String? = null, // 4-5 digit PIN, null if not set
     val isLocked: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val lastUsedAt: Long = System.currentTimeMillis()
-)
+) {
+    /** The age cap this profile enforces, or null for a regular profile. */
+    val kidsLevel: KidsAgeLevel?
+        get() = if (isKidsProfile) KidsAgeLevel.fromName(kidsAgeLevel) else null
+}
+
+/**
+ * How old a kids profile's viewer is. [maxAge] is the highest minimum viewing age a
+ * title may carry: PG (7) passes every level, TV-PG (10) "older kids" and up, PG-13 (13)
+ * and TV-14 (14) only "teens".
+ */
+enum class KidsAgeLevel(val maxAge: Int) {
+    LITTLE_KIDS(7),
+    OLDER_KIDS(10),
+    TEENS(14);
+
+    companion object {
+        val DEFAULT = OLDER_KIDS
+
+        fun fromName(name: String?): KidsAgeLevel =
+            entries.firstOrNull { it.name == name } ?: DEFAULT
+    }
+}
 
 /**
  * Predefined profile avatar colors (Netflix-style)

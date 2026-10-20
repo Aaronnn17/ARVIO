@@ -299,4 +299,18 @@
     <string name="addon_failed_add">הוספת התוסף נכשלה</string>
     <string name="catalog_tmdb_title">קטלוג TMDB</string>
     <string name="catalog_url_tmdb_hint">השתמש בכתובת של דף TMDB מסוג list, collection, company, network, person, keyword או genre</string>
+    <string name="profile_kids">פרופיל ילדים</string>
+    <string name="profile_kids_on">מופעל</string>
+    <string name="profile_kids_off">כבוי</string>
+    <string name="profile_kids_badge">ילדים</string>
+    <string name="profile_kids_max_age">גיל מרבי</string>
+    <string name="profile_kids_little">עד 7</string>
+    <string name="profile_kids_older">עד 10</string>
+    <string name="profile_kids_teens">עד 14</string>
+    <string name="profile_kids_hint">רק תכנים שמתאימים לגיל הזה. תכנים ללא סיווג גיל וטלוויזיה בשידור חי מוסתרים.</string>
+    <string name="kids_title_blocked">לא זמין בפרופיל הילדים הזה</string>
+    <string name="kids_row_movies">סרטים לילדים</string>
+    <string name="kids_row_shows">סדרות לילדים</string>
+    <string name="kids_row_animated">סרטי אנימציה אהובים</string>
+    <string name="kids_row_family_shows">סדרות למשפחה</string>
 </resources>

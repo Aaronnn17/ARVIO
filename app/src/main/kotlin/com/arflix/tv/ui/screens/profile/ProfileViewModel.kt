@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.arflix.tv.R
+import com.arflix.tv.data.model.KidsAgeLevel
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.model.ProfileColors
 import com.arflix.tv.data.repository.CloudSyncRepository
@@ -44,6 +45,7 @@ data class ProfileUiState(
     val selectedAvatarImageUri: String? = null,
     val useCustomAvatarImage: Boolean = false,
     val isKidsProfile: Boolean = false,
+    val kidsAgeLevel: KidsAgeLevel = KidsAgeLevel.DEFAULT,
     // Edit profile dialog state
     val editingProfile: Profile? = null,
     // Toast state
@@ -282,7 +284,8 @@ class ProfileViewModel @Inject constructor(
             selectedAvatarId = 0,
             selectedAvatarImageUri = null,
             useCustomAvatarImage = false,
-            isKidsProfile = false
+            isKidsProfile = false,
+            kidsAgeLevel = KidsAgeLevel.DEFAULT
         )
     }
 
@@ -326,6 +329,14 @@ class ProfileViewModel @Inject constructor(
         )
     }
 
+    fun setKidsProfile(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(isKidsProfile = enabled)
+    }
+
+    fun setKidsAgeLevel(level: KidsAgeLevel) {
+        _uiState.value = _uiState.value.copy(kidsAgeLevel = level)
+    }
+
     fun createProfile() {
         val state = _uiState.value
         if (state.newProfileName.isBlank()) return
@@ -335,7 +346,8 @@ class ProfileViewModel @Inject constructor(
                 name = state.newProfileName.trim(),
                 avatarColor = ProfileColors.getByIndex(state.selectedColorIndex),
                 avatarId = state.selectedAvatarId,
-                isKidsProfile = false
+                isKidsProfile = state.isKidsProfile,
+                kidsAgeLevel = state.kidsAgeLevel.name.takeIf { state.isKidsProfile }
             )
             val selectedImage = state.selectedAvatarImageUri
             if (state.useCustomAvatarImage && !selectedImage.isNullOrBlank()) {
@@ -378,7 +390,8 @@ class ProfileViewModel @Inject constructor(
                 selectedAvatarId = profile.avatarId,
                 selectedAvatarImageUri = null,
                 useCustomAvatarImage = profile.avatarImageVersion > 0L,
-                isKidsProfile = false
+                isKidsProfile = profile.isKidsProfile,
+                kidsAgeLevel = KidsAgeLevel.fromName(profile.kidsAgeLevel)
             )
         }
     }
@@ -397,7 +410,8 @@ class ProfileViewModel @Inject constructor(
                 name = state.newProfileName.trim(),
                 avatarColor = ProfileColors.getByIndex(state.selectedColorIndex),
                 avatarId = state.selectedAvatarId,
-                isKidsProfile = false
+                isKidsProfile = state.isKidsProfile,
+                kidsAgeLevel = state.kidsAgeLevel.name.takeIf { state.isKidsProfile }
             )
             val selectedImage = state.selectedAvatarImageUri
             if (state.useCustomAvatarImage && !selectedImage.isNullOrBlank()) {
@@ -523,7 +537,8 @@ class ProfileViewModel @Inject constructor(
                         selectedAvatarId = profile.avatarId,
                         selectedAvatarImageUri = null,
                         useCustomAvatarImage = profile.avatarImageVersion > 0L,
-                        isKidsProfile = false
+                        isKidsProfile = profile.isKidsProfile,
+                        kidsAgeLevel = KidsAgeLevel.fromName(profile.kidsAgeLevel)
                     )
                 }
                 "delete" -> {

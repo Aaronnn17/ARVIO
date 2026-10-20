@@ -33,6 +33,13 @@ class NetflixHomeTest {
         assertTrue(candidateIds(listOf(row("popular", 7))).isEmpty())
     }
 
+    @Test fun kidsProfileBillboardFallsBackToKidsRows() {
+        val kidsHome = listOf(row("popular", 7), row("kids_shows", 8, mediaType = MediaType.TV))
+        assertEquals(listOf(8), candidateIds(kidsHome))
+        // A Top 10 title that passed the age filter still wins.
+        assertEquals(listOf(9), candidateIds(kidsHome + row("top10_movies_today", 9)))
+    }
+
     @Test fun billboardSkipsTitlesItCannotShow() {
         val rows = listOf(
             Category(

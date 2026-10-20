@@ -26,6 +26,7 @@ import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.R
+import com.arflix.tv.data.repository.KidsContentFilter
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.network.TmdbPriorityDispatcher
@@ -392,8 +393,37 @@ class HomeViewModel @Inject constructor(
     private val updatePreferences: com.arflix.tv.updater.UpdatePreferences,
     private val updateStatusManager: com.arflix.tv.updater.UpdateStatusManager,
     private val youTubeExtractor: com.arflix.tv.data.api.InAppYouTubeExtractor,
+    private val kidsContentFilter: KidsContentFilter,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+    val kidsFilterState: StateFlow<KidsContentFilter.State> = kidsContentFilter.state
+
+    /**
+     * Home as a kids profile may see it: every row age-filtered, no live TV. Any other
+     * profile gets [state] back unchanged.
+     */
+    fun applyKidsFilter(state: HomeUiState, kids: KidsContentFilter.State): HomeUiState {
+        if (!kids.isActive) return state
+        val categories = kidsContentFilter.filterCategories(
+            state.categories.filterNot { it.id == FAVORITE_TV_CATEGORY_ID },
+            kids
+        )
+        val hero = state.heroItem?.takeIf(kids::allows)
+            ?: categories.asSequence().flatMap { it.items }.firstOrNull { !it.isPlaceholder }
+        val sameHero = hero == state.heroItem
+        return state.copy(
+            categories = categories,
+            heroItem = hero,
+            heroLogoUrl = state.heroLogoUrl.takeIf { sameHero },
+            heroTrailerKey = state.heroTrailerKey.takeIf { sameHero },
+            heroOverviewOverride = state.heroOverviewOverride.takeIf { sameHero },
+            previousHeroItem = state.previousHeroItem?.takeIf(kids::allows)
+        )
+    }
+
+    fun filterForKids(items: List<MediaItem>, kids: KidsContentFilter.State): List<MediaItem> =
+        kidsContentFilter.filter(items, kids)
+
     private val _homeWatchlistItems = MutableStateFlow<List<MediaItem>>(emptyList())
     val homeWatchlistItems: StateFlow<List<MediaItem>> = _homeWatchlistItems.asStateFlow()
     private val homeWatchlistRefreshes = MutableSharedFlow<Unit>(extraBufferCapacity = 1)

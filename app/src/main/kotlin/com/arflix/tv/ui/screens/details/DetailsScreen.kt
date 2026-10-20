@@ -259,9 +259,24 @@ fun DetailsScreen(
     onBack: () -> Unit
 ) {
     val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val rawUiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val kidsFilterState by viewModel.kidsFilterState.collectAsStateWithLifecycle()
+    // A kids profile sees the rows age-filtered; any other profile gets the state unchanged.
+    val uiState = remember(rawUiState, kidsFilterState) {
+        viewModel.applyKidsFilter(rawUiState, kidsFilterState)
+    }
     val usePosterCards = rememberCatalogueRowLayoutMode("details:similar") == CardLayoutMode.POSTER
     val context = LocalContext.current
+    // A title can be reached from anywhere (a person's page, a deep link, an old Continue
+    // Watching entry), so a kids profile judges the title itself and leaves when it fails.
+    LaunchedEffect(mediaType, mediaId, kidsFilterState.isActive) {
+        if (kidsFilterState.isActive && !viewModel.isAllowedForKids(mediaType, mediaId)) {
+            android.widget.Toast.makeText(
+                context, R.string.kids_title_blocked, android.widget.Toast.LENGTH_LONG
+            ).show()
+            onBack()
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     val isMobile = LocalDeviceType.current.isTouchDevice()
 

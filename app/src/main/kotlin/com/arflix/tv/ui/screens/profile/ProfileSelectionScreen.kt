@@ -445,6 +445,10 @@ fun ProfileSelectionScreen(
                 useCustomAvatarImage = uiState.useCustomAvatarImage,
                 onAvatarImageSelected = { viewModel.setSelectedAvatarImage(it) },
                 onRemoveAvatarImage = { viewModel.removeSelectedAvatarImage() },
+                isKidsProfile = uiState.isKidsProfile,
+                onKidsProfileChange = viewModel::setKidsProfile,
+                kidsAgeLevel = uiState.kidsAgeLevel,
+                onKidsAgeLevelChange = viewModel::setKidsAgeLevel,
                 onConfirm = { viewModel.createProfile() },
                 onDismiss = { viewModel.hideAddDialog() }
             )
@@ -464,6 +468,10 @@ fun ProfileSelectionScreen(
                 useCustomAvatarImage = uiState.useCustomAvatarImage,
                 onAvatarImageSelected = { viewModel.setSelectedAvatarImage(it) },
                 onRemoveAvatarImage = { viewModel.removeSelectedAvatarImage() },
+                isKidsProfile = uiState.isKidsProfile,
+                onKidsProfileChange = viewModel::setKidsProfile,
+                kidsAgeLevel = uiState.kidsAgeLevel,
+                onKidsAgeLevelChange = viewModel::setKidsAgeLevel,
                 onConfirm = { viewModel.updateProfile() },
                 onDelete = { viewModel.deleteProfile(profile); viewModel.hideEditDialog() },
                 onDismiss = { viewModel.hideEditDialog() },
@@ -613,6 +621,19 @@ private fun ProfileAvatar(
             textAlign = TextAlign.Center
         )
 
+        if (profile.isKidsProfile) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.profile_kids_badge),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color(0xFF3B82F6))
+                    .padding(horizontal = 8.dp, vertical = 2.dp)
+            )
+        }
     }
 }
 
