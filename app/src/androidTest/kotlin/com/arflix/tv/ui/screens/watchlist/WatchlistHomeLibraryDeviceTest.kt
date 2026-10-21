@@ -127,7 +127,7 @@ class WatchlistHomeLibraryDeviceTest {
         compose.runOnUiThread {
             model = WatchlistViewModel(compose.activity.applicationContext, watchlist, cloud, trakt,
                 remote, media, homes, catalogs, history, simkl, mockk(relaxed = true), profiles,
-                mockk(relaxed = true))
+                personalLists())
             store.put("library", model)
         }
         compose.setContent {
@@ -156,5 +156,11 @@ class WatchlistHomeLibraryDeviceTest {
         File(compose.activity.getExternalFilesDir(null), "$name.png").outputStream().use {
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
         }
+    }
+
+    // A relaxed mock's `changes` flow completes at once, which the ViewModel's never-ending
+    // collector reports as an uncaught exception; a real (empty) flow behaves like production.
+    private fun personalLists() = mockk<com.arflix.tv.data.repository.PersonalListsRepository>(relaxed = true) {
+        every { changes } returns kotlinx.coroutines.flow.MutableSharedFlow()
     }
 }
