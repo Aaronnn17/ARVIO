@@ -5,6 +5,7 @@ import com.arflix.tv.util.AppLogger
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import com.arflix.tv.data.model.Profile
 import com.arflix.tv.data.model.ProfileColors
 import com.arflix.tv.util.profilesDataStore
@@ -32,7 +33,13 @@ class ProfileRepository @Inject constructor(
     companion object {
         private val PROFILES_KEY = stringPreferencesKey("profiles")
         private val ACTIVE_PROFILE_KEY = stringPreferencesKey("active_profile_id")
+        // Profiles deleted on this device; the cloud merge removes only these (ProfileListMerge).
+        private val DELETED_PROFILE_IDS_KEY = stringSetPreferencesKey("deleted_profile_ids")
     }
+
+    /** Ids of the profiles the user deleted on this device. */
+    suspend fun getDeletedProfileIds(): Set<String> =
+        context.profilesDataStore.data.first()[DELETED_PROFILE_IDS_KEY].orEmpty()
 
     /**
      * Flow of all profiles
@@ -129,6 +136,7 @@ class ProfileRepository @Inject constructor(
             val currentList = decodeProfiles(prefs[PROFILES_KEY]).toMutableList()
             currentList.removeAll { it.id == profileId }
             prefs[PROFILES_KEY] = encodeProfiles(currentList)
+            prefs[DELETED_PROFILE_IDS_KEY] = prefs[DELETED_PROFILE_IDS_KEY].orEmpty() + profileId
 
             // If we deleted the active profile, clear it
             if (prefs[ACTIVE_PROFILE_KEY] == profileId) {
@@ -211,13 +219,23 @@ class ProfileRepository @Inject constructor(
         val userId = authRepository.getCurrentUserIdForSync() ?: return
         val profiles = getProfiles()
         val activeProfileId = getActiveProfileId()
+        val deletedIds = getDeletedProfileIds()
         authRepository.mutateAccountSyncPayload { root ->
-            root.put("activeProfileId", activeProfileId ?: JSONObject.NULL)
-            root.put("profiles", JSONArray(gson.toJson(profiles)))
+            // Merged into the account's list, not replacing it: see ProfileListMerge.
+            val merged = ProfileListMerge.merge(
+                local = JSONObject()
+                    .put("activeProfileId", activeProfileId ?: JSONObject.NULL)
+                    .put("profiles", JSONArray(gson.toJson(profiles))),
+                remote = root,
+                localDeleted = deletedIds
+            )
+            root.put("activeProfileId", merged.opt("activeProfileId") ?: JSONObject.NULL)
+            root.put("profiles", merged.getJSONArray("profiles"))
+            merged.optJSONArray(ProfileListMerge.DELETED_KEY)?.let { root.put(ProfileListMerge.DELETED_KEY, it) }
             root.put(
                 "profileAvatarImagesById",
                 profileAvatarImageManager.buildInlineAvatarImagesJson(
-                    profiles,
+                    decodeProfiles(merged.getJSONArray("profiles").toString()),
                     root.optJSONObject("profileAvatarImagesById")
                 )
             )

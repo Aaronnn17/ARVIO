@@ -2487,16 +2487,24 @@ export function AppProvider({
     return hydrateTraktItems(dedupeMedia(rows.map(traktItemToMedia)));
   }, [fetchTraktListItems]);
 
-  const persistProfiles = useCallback((next: Profile[], activeId: string | null) => {
+  // The cloud save merges into the account's list (saveCloudProfiles), so a list cached
+  // in this browser can no longer delete profiles; only [deletedIds] remove one.
+  const persistProfiles = useCallback((next: Profile[], activeId: string | null, deletedIds: string[] = []) => {
     activeProfileIdRef.current = activeId;
     setProfiles(next);
     setActiveProfileId(activeId);
     saveStored(PROFILES_KEY, next);
     saveStored(ACTIVE_PROFILE_KEY, activeId);
-    void saveCloudProfiles(authClient, next, activeId).catch(() => undefined);
+    void saveCloudProfiles(authClient, next, activeId, deletedIds).catch(() => undefined);
   }, []);
 
   const selectProfile = useCallback(async (profile: Profile, pin?: string) => {
+    // Until the account's profiles arrive, this browser shows the list it cached on its last
+    // visit; picking from it would act on a list that may be out of date.
+    if (authClient.session && !cloudProfilesHydrated) {
+      setToast("Loading your profiles, try again in a moment.");
+      return;
+    }
     if (profile.isLocked && profile.pin && !await verifyProfilePin(pin ?? "", profile.pin)) {
       setToast("Unlock this profile with its PIN.");
       return;
@@ -2528,7 +2536,7 @@ export function AppProvider({
     setView("app");
     setSection("home");
     void refreshData(profile.id);
-  }, [profiles, activeProfileId, persistProfiles, refreshData]);
+  }, [profiles, activeProfileId, persistProfiles, refreshData, cloudProfilesHydrated]);
 
   const createProfile = useCallback(async (name: string, avatarColor: number, avatarId: number) => {
     const profile = makeProfile(name || "Profile", avatarColor || randomProfileColor(), avatarId);
@@ -2541,7 +2549,7 @@ export function AppProvider({
 
   const deleteProfileAction = useCallback(async (id: string) => {
     const next = profiles.filter((p) => p.id !== id);
-    persistProfiles(next, activeProfileId === id ? null : activeProfileId);
+    persistProfiles(next, activeProfileId === id ? null : activeProfileId, [id]);
   }, [profiles, activeProfileId, persistProfiles]);
 
   const switchProfile = useCallback(() => {
