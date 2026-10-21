@@ -1899,5 +1899,11 @@
     <string name="live_audio">Audio</string>
     <string name="watchlist_on_home">Show watchlist on home</string>
     <string name="watchlist_on_home_desc">Place your watchlist below Continue Watching.</string>
+    <string name="list_add_to">Add to list</string>
+    <string name="list_picker_loading">Loading your lists…</string>
+    <string name="list_picker_empty">No lists on your connected services</string>
+    <string name="list_added_to">Added to %1$s</string>
+    <string name="list_removed_from">Removed from %1$s</string>
+    <string name="list_update_failed">Could not update %1$s</string>
 </resources>
 

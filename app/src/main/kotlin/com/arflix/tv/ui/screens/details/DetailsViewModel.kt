@@ -28,6 +28,8 @@ import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.ContinueWatchingMerge
 import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
+import com.arflix.tv.data.repository.PersonalListsRepository
+import com.arflix.tv.ui.components.PersonalListPicker
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.MdbExternalRating
 import com.arflix.tv.data.repository.MdbListRepository
@@ -256,8 +258,23 @@ class DetailsViewModel @Inject constructor(
     private val cloudSyncRepository: CloudSyncRepository,
     private val launcherContinueWatchingRepository: LauncherContinueWatchingRepository,
     private val streamIntegrationRepository: StreamIntegrationRepository,
-    private val recentPlayedSourceRepository: RecentPlayedSourceRepository
+    private val recentPlayedSourceRepository: RecentPlayedSourceRepository,
+    personalListsRepository: PersonalListsRepository
 ) : ViewModel() {
+
+    /** "Add to list" from the action row; the result shows as a Details toast. */
+    private val personalListPicker = PersonalListPicker(viewModelScope, personalListsRepository, context) { message, ok ->
+        _uiState.value = _uiState.value.copy(
+            toastMessage = message,
+            toastType = if (ok) ToastType.SUCCESS else ToastType.ERROR
+        )
+    }
+    val listPicker: StateFlow<PersonalListPicker.State?> = personalListPicker.state
+
+    suspend fun hasPersonalLists(): Boolean = personalListPicker.isAvailable()
+    fun openListPicker() { _uiState.value.item?.let(personalListPicker::open) }
+    fun toggleListMembership(choice: PersonalListsRepository.Choice) = personalListPicker.toggle(choice)
+    fun closeListPicker() = personalListPicker.close()
 
     companion object {
         private const val TAG = "DetailsViewModel"

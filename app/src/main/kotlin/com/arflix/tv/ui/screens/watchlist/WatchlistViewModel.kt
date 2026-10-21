@@ -21,6 +21,7 @@ import com.arflix.tv.data.repository.HomeServerConnection
 import com.arflix.tv.data.repository.HomeServerKind
 import com.arflix.tv.data.repository.HomeServerLibrarySort
 import com.arflix.tv.data.repository.HomeServerRepository
+import com.arflix.tv.data.repository.PersonalListsRepository
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.TraktRepository
@@ -57,7 +58,8 @@ enum class ToastType {
 
 enum class TrackerLibraryProvider(val displayName: String) {
     TRAKT("Trakt"),
-    SIMKL("Simkl")
+    SIMKL("Simkl"),
+    MDBLIST("MDBList")
 }
 
 sealed interface WatchlistSourceItem {
@@ -111,7 +113,10 @@ sealed interface WatchlistSourceItem {
         val provider: TrackerLibraryProvider,
         val listKey: String,
         override val title: String,
-        @param:StringRes val titleRes: Int? = null
+        @param:StringRes val titleRes: Int? = null,
+        // MDBList only: "user/slug" of the list's mdblist.com URL, so a Home catalog added
+        // from that URL is not shown a second time next to it.
+        val urlPath: String? = null
     ) : WatchlistSourceItem {
         override val id: String = "tracker_${provider.name.lowercase()}_$listKey"
         override val subtitle: String = provider.displayName
@@ -187,6 +192,11 @@ internal fun buildWatchlistSources(
             config.kind != CatalogKind.COLLECTION_RAIL &&
             config.sourceType != CatalogSourceType.PREINSTALLED &&
             config.sourceType != CatalogSourceType.HOME_SERVER
+    }.filterNot { config ->
+        config.sourceType == CatalogSourceType.MDBLIST && trackerLists.any { list ->
+            list.urlPath != null &&
+                config.sourceUrl?.trimEnd('/')?.endsWith("/lists/${list.urlPath}", ignoreCase = true) == true
+        }
     }.map { WatchlistSourceItem.Catalog(it) }
     val homeServers = homeServerCandidates.map { WatchlistSourceItem.HomeServer(it) }
     return (listOf<WatchlistSourceItem>(WatchlistSourceItem.MyWatchlist) + homeServers + trackerLists + customCatalogs)
@@ -206,7 +216,8 @@ class WatchlistViewModel @Inject constructor(
     private val watchHistoryRepository: WatchHistoryRepository,
     private val simklAuthManager: SimklAuthManager,
     private val simklSyncService: SimklSyncService,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    private val personalListsRepository: PersonalListsRepository
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(WatchlistUiState())
     val uiState: StateFlow<WatchlistUiState> = _uiState.asStateFlow()
@@ -224,6 +235,22 @@ class WatchlistViewModel @Inject constructor(
 
     private val sourceItemsCache = linkedMapOf<String, List<MediaItem>>()
     private val sourcePageStates = mutableMapOf<String, SourcePageState>()
+
+    init {
+        // A list edited through "Add to list" must not be shown from this screen's cache.
+        viewModelScope.launch {
+            personalListsRepository.changes.collect { list ->
+                val provider = when (list.provider) {
+                    PersonalListsRepository.Provider.TRAKT -> TrackerLibraryProvider.TRAKT
+                    PersonalListsRepository.Provider.MDBLIST -> TrackerLibraryProvider.MDBLIST
+                }
+                val sourceId = WatchlistSourceItem.TrackerList(provider, list.id, list.title).id
+                sourceItemsCache.remove(sourceId)
+                sourcePageStates.remove(sourceId)
+                if (_uiState.value.selectedSourceId == sourceId) loadActiveSourceItems(forceRefresh = true)
+            }
+        }
+    }
     private var currentCatalogs: List<CatalogConfig> = emptyList()
     private var currentHomeServerCandidates: List<HomeServerCatalogCandidate> = emptyList()
     private val libraryRecoveryAttempts = mutableSetOf<Pair<String, HomeServerConnection>>()
@@ -355,6 +382,17 @@ class WatchlistViewModel @Inject constructor(
                     }
                 }
             }
+            runCatching { personalListsRepository.mdbListLibraryLists() }.getOrDefault(emptyList())
+                .forEach { list ->
+                    add(
+                        WatchlistSourceItem.TrackerList(
+                            provider = TrackerLibraryProvider.MDBLIST,
+                            listKey = list.id.toString(),
+                            title = list.title,
+                            urlPath = list.path
+                        )
+                    )
+                }
             if (simklConnected) {
                 SIMKL_LIBRARY_LISTS.forEach { (status, title, titleRes) ->
                     add(
@@ -765,6 +803,9 @@ class WatchlistViewModel @Inject constructor(
                                     traktRepository.getPersonalListItems(activeSource.listKey)
                                 }
                             }
+                            TrackerLibraryProvider.MDBLIST -> activeSource.listKey.toLongOrNull()
+                                ?.let { personalListsRepository.mdbListItems(it) }
+                                .orEmpty()
                             TrackerLibraryProvider.SIMKL -> simklSyncService.getLibraryItems(
                                 status = activeSource.listKey,
                                 forceRefresh = forceRefresh
