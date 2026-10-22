@@ -84,4 +84,32 @@ class ProfileListMergeTest {
         assertFalse(ids(merged).contains("gone"))
         assertTrue(ProfileListMerge.deletedIds(merged).contains("gone"))
     }
+
+    @Test
+    fun `a stale copy does not overwrite newer kids settings or PIN protection`() {
+        // Edited on another device: age limit raised to teens, parent PIN and lock set.
+        val newer = profile("kids").put("isKidsProfile", true).put("kidsAgeLevel", "TEENS")
+            .put("parentPin", "hash-new").put("isLocked", true).put("pin", "pin-new")
+            .put("updatedAt", 2_000L).put("lastUsedAt", 1_000L)
+        // This device's copy predates that edit, but it selected the profile more recently.
+        val stale = profile("kids").put("isKidsProfile", true).put("kidsAgeLevel", "LITTLE_KIDS")
+            .put("updatedAt", 1_000L).put("lastUsedAt", 5_000L)
+
+        val merged = ProfileListMerge.merge(payload(stale), payload(newer), emptySet())
+        val kept = merged.getJSONArray("profiles").getJSONObject(0)
+        assertEquals("TEENS", kept.getString("kidsAgeLevel"))
+        assertEquals("hash-new", kept.getString("parentPin"))
+        assertTrue(kept.getBoolean("isLocked"))
+        assertEquals(5_000L, kept.getLong("lastUsedAt"))
+
+        // A copy saved before updatedAt existed counts as oldest.
+        val legacy = profile("kids").put("isKidsProfile", true).put("kidsAgeLevel", "LITTLE_KIDS")
+        val fromLegacy = ProfileListMerge.merge(payload(legacy), payload(newer), emptySet())
+        assertEquals("TEENS", fromLegacy.getJSONArray("profiles").getJSONObject(0).getString("kidsAgeLevel"))
+
+        // And this device's own newer edit still wins.
+        val edited = profile("kids").put("isKidsProfile", false).put("updatedAt", 3_000L)
+        val fromEdit = ProfileListMerge.merge(payload(edited), payload(newer), emptySet())
+        assertFalse(fromEdit.getJSONArray("profiles").getJSONObject(0).getBoolean("isKidsProfile"))
+    }
 }

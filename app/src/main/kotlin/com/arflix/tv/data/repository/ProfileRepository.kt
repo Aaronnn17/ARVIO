@@ -91,14 +91,17 @@ class ProfileRepository @Inject constructor(
         avatarColor: Long,
         avatarId: Int = 0,
         isKidsProfile: Boolean = false,
-        kidsAgeLevel: String? = null
+        kidsAgeLevel: String? = null,
+        parentPin: String? = null
     ): Profile {
         val profile = Profile(
             name = name,
             avatarColor = avatarColor,
             avatarId = avatarId,
             isKidsProfile = isKidsProfile,
-            kidsAgeLevel = kidsAgeLevel
+            kidsAgeLevel = kidsAgeLevel,
+            parentPin = parentPin,
+            updatedAt = System.currentTimeMillis()
         )
 
         context.profilesDataStore.edit { prefs ->
@@ -116,6 +119,8 @@ class ProfileRepository @Inject constructor(
      * Update an existing profile
      */
     suspend fun updateProfile(profile: Profile) {
+        // Every call is a user edit; selecting a profile goes through setActiveProfile instead.
+        val profile = profile.copy(updatedAt = System.currentTimeMillis())
         context.profilesDataStore.edit { prefs ->
             val currentList = decodeProfiles(prefs[PROFILES_KEY]).toMutableList()
             val index = currentList.indexOfFirst { it.id == profile.id }

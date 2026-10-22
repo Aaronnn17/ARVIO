@@ -531,6 +531,8 @@ class HomeViewModel @Inject constructor(
 
     companion object {
         const val FAVORITE_TV_CATEGORY_ID = "favorite_tv"
+        /** Unfiltered titles a kids top-up may load for one grid before it gives up. */
+        private const val MAX_KIDS_TOP_UP_ITEMS = 600
         /** Prefix used in MediaItem.status to identify IPTV items. */
         const val IPTV_STATUS_PREFIX = "iptv:"
         private const val TOP_10_ITEM_LIMIT = 10
@@ -3938,7 +3940,11 @@ class HomeViewModel @Inject constructor(
         if (isHardCappedTop10Catalog(categoryId)) return
         val currentCategory = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
         if (currentCategory.items.isEmpty() || currentCategory.items.all { it.isPlaceholder }) return
-        if (focusedItemIndex < currentCategory.items.size - nearEndThreshold) return
+        // A kids profile reports positions in the filtered row; page on the unfiltered one.
+        val index = KidsPaging.rawIndex(
+            currentCategory.items, kidsContentFilter.state.value, focusedItemIndex, nearEndThreshold
+        )
+        if (index < currentCategory.items.size - nearEndThreshold) return
         loadNextHomeRowPage(categoryId)
     }
 
@@ -3963,10 +3969,28 @@ class HomeViewModel @Inject constructor(
      */
     fun onViewAllVisiblePosition(categoryId: String, lastVisibleItemIndex: Int, lookAheadItems: Int) {
         if (lastVisibleItemIndex < 0) return
-        prefetchLogosAroundCategoryPosition(categoryId, lastVisibleItemIndex)
         val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        // A kids profile reports positions in the filtered grid; page on the unfiltered one.
+        val index = KidsPaging.rawIndex(
+            category.items, kidsContentFilter.state.value, lastVisibleItemIndex, lookAheadItems
+        )
+        prefetchLogosAroundCategoryPosition(categoryId, index)
         val realCount = category.items.count { !it.isPlaceholder }
-        if (lastVisibleItemIndex >= realCount - lookAheadItems) {
+        if (index >= realCount - lookAheadItems) {
+            loadNextPageForCategory(categoryId)
+        }
+    }
+
+    /**
+     * Kids profile: keeps loading pages of a filtered grid while fewer than [minVisible] titles
+     * pass, so a page where most or all titles are excluded does not end the list early. The
+     * screen calls it whenever what it shows changes; [MAX_KIDS_TOP_UP_ITEMS] bounds the walk.
+     */
+    fun topUpKidsCategory(categoryId: String, minVisible: Int = 24) {
+        val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        if (category.items.size >= MAX_KIDS_TOP_UP_ITEMS) return
+        if (_uiState.value.categoryHasMoreMap[categoryId] != true) return
+        if (KidsPaging.needsMore(category.items, kidsContentFilter.state.value, minVisible)) {
             loadNextPageForCategory(categoryId)
         }
     }

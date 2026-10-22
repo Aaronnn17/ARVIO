@@ -46,6 +46,8 @@ data class ProfileUiState(
     val useCustomAvatarImage: Boolean = false,
     val isKidsProfile: Boolean = false,
     val kidsAgeLevel: KidsAgeLevel = KidsAgeLevel.DEFAULT,
+    // Hashed parent PIN chosen in this dialog, before the profile is saved with it.
+    val pendingParentPin: String? = null,
     // Edit profile dialog state
     val editingProfile: Profile? = null,
     // Toast state
@@ -285,7 +287,8 @@ class ProfileViewModel @Inject constructor(
             selectedAvatarImageUri = null,
             useCustomAvatarImage = false,
             isKidsProfile = false,
-            kidsAgeLevel = KidsAgeLevel.DEFAULT
+            kidsAgeLevel = KidsAgeLevel.DEFAULT,
+            pendingParentPin = null
         )
     }
 
@@ -340,6 +343,10 @@ class ProfileViewModel @Inject constructor(
     fun createProfile() {
         val state = _uiState.value
         if (state.newProfileName.isBlank()) return
+        if (state.isKidsProfile && state.pendingParentPin == null) {
+            requestParentPinSetup(PIN_CONTEXT_PARENT_SETUP_CREATE)
+            return
+        }
 
         viewModelScope.launch {
             val profile = profileRepository.createProfile(
@@ -347,7 +354,8 @@ class ProfileViewModel @Inject constructor(
                 avatarColor = ProfileColors.getByIndex(state.selectedColorIndex),
                 avatarId = state.selectedAvatarId,
                 isKidsProfile = state.isKidsProfile,
-                kidsAgeLevel = state.kidsAgeLevel.name.takeIf { state.isKidsProfile }
+                kidsAgeLevel = state.kidsAgeLevel.name.takeIf { state.isKidsProfile },
+                parentPin = state.pendingParentPin.takeIf { state.isKidsProfile }
             )
             val selectedImage = state.selectedAvatarImageUri
             if (state.useCustomAvatarImage && !selectedImage.isNullOrBlank()) {
@@ -365,7 +373,7 @@ class ProfileViewModel @Inject constructor(
                     showToast(context.getString(R.string.profile_avatar_import_failed), ToastType.ERROR)
                 }
             }
-            _uiState.value = _uiState.value.copy(showAddDialog = false)
+            _uiState.value = _uiState.value.copy(showAddDialog = false, pendingParentPin = null)
             showToast(context.getString(R.string.profile_created_success), ToastType.SUCCESS)
             runCatching { cloudSyncRepository.pushToCloud(force = true) }
         }
@@ -374,8 +382,16 @@ class ProfileViewModel @Inject constructor(
     // ========== Edit Profile ==========
 
     fun showEditDialog(profile: Profile) {
-        // If profile is locked, require PIN verification before allowing edit
-        if (profile.isLocked && !profile.pin.isNullOrEmpty()) {
+        // A kids profile's restrictions belong to the parent: its parent PIN, not access to the
+        // profile itself, opens the editor (where kids mode and the age limit can change).
+        if (profile.isKidsProfile && !profile.parentPin.isNullOrEmpty()) {
+            _uiState.value = _uiState.value.copy(
+                showPinDialog = true,
+                pinDialogMode = "verify",
+                pendingProfileForPin = profile,
+                pinContext = PIN_CONTEXT_PARENT_EDIT
+            )
+        } else if (profile.isLocked && !profile.pin.isNullOrEmpty()) {
             _uiState.value = _uiState.value.copy(
                 showPinDialog = true,
                 pinDialogMode = "verify",
@@ -391,7 +407,8 @@ class ProfileViewModel @Inject constructor(
                 selectedAvatarImageUri = null,
                 useCustomAvatarImage = profile.avatarImageVersion > 0L,
                 isKidsProfile = profile.isKidsProfile,
-                kidsAgeLevel = KidsAgeLevel.fromName(profile.kidsAgeLevel)
+                kidsAgeLevel = KidsAgeLevel.fromName(profile.kidsAgeLevel),
+                pendingParentPin = null
             )
         }
     }
@@ -404,6 +421,10 @@ class ProfileViewModel @Inject constructor(
         val state = _uiState.value
         val editing = state.editingProfile ?: return
         if (state.newProfileName.isBlank()) return
+        if (state.isKidsProfile && editing.parentPin.isNullOrEmpty() && state.pendingParentPin == null) {
+            requestParentPinSetup(PIN_CONTEXT_PARENT_SETUP_EDIT)
+            return
+        }
 
         viewModelScope.launch {
             var updatedProfile = editing.copy(
@@ -411,7 +432,9 @@ class ProfileViewModel @Inject constructor(
                 avatarColor = ProfileColors.getByIndex(state.selectedColorIndex),
                 avatarId = state.selectedAvatarId,
                 isKidsProfile = state.isKidsProfile,
-                kidsAgeLevel = state.kidsAgeLevel.name.takeIf { state.isKidsProfile }
+                kidsAgeLevel = state.kidsAgeLevel.name.takeIf { state.isKidsProfile },
+                // Turning kids mode off (reachable only through the parent PIN) drops the PIN.
+                parentPin = if (state.isKidsProfile) state.pendingParentPin ?: editing.parentPin else null
             )
             val selectedImage = state.selectedAvatarImageUri
             if (state.useCustomAvatarImage && !selectedImage.isNullOrBlank()) {
@@ -441,7 +464,8 @@ class ProfileViewModel @Inject constructor(
             }
             _uiState.value = _uiState.value.copy(
                 editingProfile = null,
-                profiles = updatedProfiles
+                profiles = updatedProfiles,
+                pendingParentPin = null
             )
             showToast(context.getString(R.string.profile_updated), ToastType.SUCCESS)
             runCatching { cloudSyncRepository.pushToCloud(force = true) }
@@ -459,8 +483,14 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun deleteProfile(profile: Profile) {
-        // If profile is locked, require PIN verification before allowing delete
-        if (profile.isLocked && !profile.pin.isNullOrEmpty()) {
+        if (profile.isKidsProfile && !profile.parentPin.isNullOrEmpty()) {
+            _uiState.value = _uiState.value.copy(
+                showPinDialog = true,
+                pinDialogMode = "verify",
+                pendingProfileForPin = profile,
+                pinContext = PIN_CONTEXT_PARENT_DELETE
+            )
+        } else if (profile.isLocked && !profile.pin.isNullOrEmpty()) {
             _uiState.value = _uiState.value.copy(
                 showPinDialog = true,
                 pinDialogMode = "verify",
@@ -524,11 +554,12 @@ class ProfileViewModel @Inject constructor(
     fun verifyPinAndSelectProfile(enteredPin: String) {
         val profile = _uiState.value.pendingProfileForPin ?: return
         val context = _uiState.value.pinContext
-        if (PinUtil.verifyPin(enteredPin, profile.pin)) {
+        val expected = if (context.startsWith(PIN_CONTEXT_PARENT_PREFIX)) profile.parentPin else profile.pin
+        if (PinUtil.verifyPin(enteredPin, expected)) {
             hidePinDialog()
             // Handle PIN verification context
             when (context) {
-                "edit" -> {
+                "edit", PIN_CONTEXT_PARENT_EDIT -> {
                     // Open edit dialog for locked profile
                     _uiState.value = _uiState.value.copy(
                         editingProfile = profile,
@@ -538,10 +569,11 @@ class ProfileViewModel @Inject constructor(
                         selectedAvatarImageUri = null,
                         useCustomAvatarImage = profile.avatarImageVersion > 0L,
                         isKidsProfile = profile.isKidsProfile,
-                        kidsAgeLevel = KidsAgeLevel.fromName(profile.kidsAgeLevel)
+                        kidsAgeLevel = KidsAgeLevel.fromName(profile.kidsAgeLevel),
+                        pendingParentPin = null
                     )
                 }
-                "delete" -> {
+                "delete", PIN_CONTEXT_PARENT_DELETE -> {
                     // Delete locked profile after PIN verification
                     performDeleteProfile(profile)
                 }
@@ -556,6 +588,25 @@ class ProfileViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(
                 pinError = "Incorrect PIN. Please try again."
             )
+        }
+    }
+
+    private fun requestParentPinSetup(context: String) {
+        _uiState.value = _uiState.value.copy(
+            showPinDialog = true,
+            pinDialogMode = "setup",
+            pinContext = context
+        )
+    }
+
+    /** Parent PIN chosen while saving a kids profile; the save then continues with it. */
+    fun setupParentPin(pin: String) {
+        val context = _uiState.value.pinContext
+        hidePinDialog()
+        _uiState.value = _uiState.value.copy(pendingParentPin = PinUtil.hashPin(pin))
+        when (context) {
+            PIN_CONTEXT_PARENT_SETUP_CREATE -> createProfile()
+            PIN_CONTEXT_PARENT_SETUP_EDIT -> updateProfile()
         }
     }
 
@@ -594,5 +645,13 @@ class ProfileViewModel @Inject constructor(
             showToast(context.getString(R.string.profile_pin_removed_success), ToastType.SUCCESS)
             runCatching { cloudSyncRepository.pushToCloud(force = true) }
         }
+    }
+
+    companion object {
+        const val PIN_CONTEXT_PARENT_PREFIX = "parent_"
+        const val PIN_CONTEXT_PARENT_EDIT = "parent_edit"
+        const val PIN_CONTEXT_PARENT_DELETE = "parent_delete"
+        const val PIN_CONTEXT_PARENT_SETUP_CREATE = "parent_setup_create"
+        const val PIN_CONTEXT_PARENT_SETUP_EDIT = "parent_setup_edit"
     }
 }

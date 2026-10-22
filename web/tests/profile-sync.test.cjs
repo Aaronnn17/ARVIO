@@ -59,3 +59,15 @@ test('profiles created here are added and the active profile stays valid', async
   same(read().profiles, [{ id: 'p1', name: 'Main' }, { id: 'p2', name: 'New' }]);
   assert.equal(read().activeProfileId, 'p1');
 });
+
+test('a stale copy does not overwrite newer kids settings or PIN protection', async () => {
+  const newer = { ...kids, kidsAgeLevel: 'TEENS', parentPin: 'hash-new', isLocked: true, pin: 'pin-new', updatedAt: 2000, lastUsedAt: 1000 };
+  const { cloud, read } = setup({ profiles: [{ id: 'p1', name: 'Main' }, newer], activeProfileId: 'p1' });
+  const stale = { ...kids, updatedAt: 1000, lastUsedAt: 5000 };
+  await cloud.saveCloudProfiles(auth, [{ id: 'p1', name: 'Main' }, stale], 'p1');
+  same(read().profiles[1], { ...newer, lastUsedAt: 5000 });
+
+  // This browser's own newer edit still wins.
+  await cloud.saveCloudProfiles(auth, [{ id: 'p1', name: 'Main' }, { ...newer, kidsAgeLevel: 'OLDER_KIDS', updatedAt: 3000 }], 'p1');
+  assert.equal(read().profiles[1].kidsAgeLevel, 'OLDER_KIDS');
+});

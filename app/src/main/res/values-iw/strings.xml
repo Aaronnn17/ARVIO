@@ -313,4 +313,7 @@
     <string name="kids_row_shows">סדרות לילדים</string>
     <string name="kids_row_animated">סרטי אנימציה אהובים</string>
     <string name="kids_row_family_shows">סדרות למשפחה</string>
+    <string name="profile_parent_pin_set">הגדר קוד הורים לפרופיל הילדים</string>
+    <string name="profile_parent_pin_enter">קוד הורים</string>
+    <string name="profile_parent_pin_hint">4–5 ספרות. נדרש כדי לשנות או למחוק את פרופיל הילדים, לא כדי לצפות.</string>
 </resources>

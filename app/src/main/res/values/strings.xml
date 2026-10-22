@@ -1913,5 +1913,8 @@
     <string name="live_audio">Audio</string>
     <string name="watchlist_on_home">Show watchlist on home</string>
     <string name="watchlist_on_home_desc">Place your watchlist below Continue Watching.</string>
+    <string name="profile_parent_pin_set">Set a parent PIN for this kids profile</string>
+    <string name="profile_parent_pin_enter">Parent PIN</string>
+    <string name="profile_parent_pin_hint">4-5 digits. Needed to change or delete this kids profile, not to watch.</string>
 </resources>
 

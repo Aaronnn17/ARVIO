@@ -19,10 +19,16 @@ data class Profile(
     // Set once the kids starter rows were added to this profile's catalogs. Kept on the
     // profile so it syncs: a row the parent removed must not come back on another device.
     val kidsStarterRowsAdded: Boolean = false,
+    // Hashed parent PIN of a kids profile: needed to edit or delete it, never to watch.
+    val parentPin: String? = null,
     val pin: String? = null, // 4-5 digit PIN, null if not set
     val isLocked: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
-    val lastUsedAt: Long = System.currentTimeMillis()
+    val lastUsedAt: Long = System.currentTimeMillis(),
+    // When the profile itself was last edited (name, avatar, PIN, kids settings). Selecting a
+    // profile does not count. Lets the cloud merge keep the newer copy (ProfileListMerge).
+    // Nullable: profiles saved before it existed decode it as null, read as "oldest".
+    val updatedAt: Long? = null
 ) {
     /** The age cap this profile enforces, or null for a regular profile. */
     val kidsLevel: KidsAgeLevel?

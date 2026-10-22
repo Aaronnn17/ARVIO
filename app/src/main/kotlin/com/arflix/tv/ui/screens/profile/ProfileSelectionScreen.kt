@@ -491,8 +491,9 @@ fun ProfileSelectionScreen(
         // PIN Entry Dialog
         if (uiState.showPinDialog) {
             if (uiState.pinDialogMode == "verify") {
+                val isParentPin = uiState.pinContext.startsWith(ProfileViewModel.PIN_CONTEXT_PARENT_PREFIX)
                 PinEntryDialog(
-                    title = stringResource(R.string.enter_pin_to_unlock),
+                    title = stringResource(if (isParentPin) R.string.profile_parent_pin_enter else R.string.enter_pin_to_unlock),
                     onPinConfirmed = { pin ->
                         val pending = uiState.pendingProfileForPin
                         if (pending != null && PinUtil.verifyPin(pin, pending.pin) && uiState.pinContext == "select") {
@@ -505,9 +506,13 @@ fun ProfileSelectionScreen(
                     pinError = uiState.pinError
                 )
             } else if (uiState.pinDialogMode == "setup") {
+                val isParentPin = uiState.pinContext.startsWith(ProfileViewModel.PIN_CONTEXT_PARENT_PREFIX)
                 PinEntryDialog(
-                    title = stringResource(R.string.set_profile_pin),
-                    onPinConfirmed = { pin -> viewModel.setupProfilePin(pin) },
+                    title = stringResource(if (isParentPin) R.string.profile_parent_pin_set else R.string.set_profile_pin),
+                    onPinConfirmed = { pin ->
+                        if (isParentPin) viewModel.setupParentPin(pin) else viewModel.setupProfilePin(pin)
+                    },
+                    setupHint = if (isParentPin) stringResource(R.string.profile_parent_pin_hint) else null,
                     onDismiss = { viewModel.hidePinDialog() },
                     isSetup = true
                 )

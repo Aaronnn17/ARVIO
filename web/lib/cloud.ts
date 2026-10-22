@@ -1054,16 +1054,25 @@ function deletedProfileIds(root: RawPayload): string[] {
 /**
  * The account's profile list after one device saves its own. Profiles the device does not
  * know stay: a browser or TV holding an older copy of the list must not delete a profile
- * another device added. Only an explicit delete ([deleted]) removes one. The device's own
- * version wins for the profiles it has, and remote-only fields of other profiles are kept.
+ * another device added. Only an explicit delete ([deleted]) removes one. For a profile both
+ * sides have, the copy edited last wins (`updatedAt`, stamped on edits only, missing = oldest;
+ * a tie keeps this device's copy), so a stale copy cannot revert newer settings.
  */
+function newerProfile(local: Profile, remote: Profile): Profile {
+  const edited = (profile: Profile) => Number((profile as { updatedAt?: number }).updatedAt ?? 0) || 0;
+  const winner = edited(remote) > edited(local) ? remote : local;
+  const lastUsedAt = Math.max(Number(local.lastUsedAt) || 0, Number(remote.lastUsedAt) || 0);
+  return lastUsedAt > 0 ? { ...winner, lastUsedAt } : winner;
+}
+
 export function mergeCloudProfiles(remote: Profile[], local: Profile[], deleted: ReadonlySet<string>): Profile[] {
   const localById = new Map(local.map(profile => [profile.id, profile]));
   const merged: Profile[] = [];
   const seen = new Set<string>();
   for (const profile of remote) {
     if (!profile?.id || deleted.has(profile.id) || seen.has(profile.id)) continue;
-    merged.push(localById.get(profile.id) ?? profile);
+    const own = localById.get(profile.id);
+    merged.push(own ? newerProfile(own, profile) : profile);
     seen.add(profile.id);
   }
   for (const profile of local) {

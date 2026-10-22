@@ -183,7 +183,8 @@ function makeProfile(name: string, avatarColor: number, avatarId = 0): Profile {
     pin: null,
     isLocked: false,
     createdAt: now,
-    lastUsedAt: now
+    lastUsedAt: now,
+    updatedAt: now
   };
 }
 
@@ -2544,7 +2545,8 @@ export function AppProvider({
   }, [profiles, activeProfileId, persistProfiles]);
 
   const updateProfileAction = useCallback(async (profile: Profile) => {
-    persistProfiles(profiles.map((p) => (p.id === profile.id ? profile : p)), activeProfileId);
+    const edited = { ...profile, updatedAt: Date.now() };
+    persistProfiles(profiles.map((p) => (p.id === profile.id ? edited : p)), activeProfileId);
   }, [profiles, activeProfileId, persistProfiles]);
 
   const deleteProfileAction = useCallback(async (id: string) => {

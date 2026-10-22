@@ -14,6 +14,10 @@ import org.json.JSONObject
  * Now a profile the device does not know stays, together with its per-profile data. Only an
  * explicit delete removes one: deleted ids are kept in the payload under [DELETED_KEY], so a
  * device still holding a deleted profile cannot bring it back either.
+ *
+ * For a profile both sides have, the copy edited last wins (`updatedAt`, stamped on edits
+ * only), so a stale copy cannot revert newer settings such as a PIN or the kids age limit. A
+ * copy without the stamp predates it and counts as oldest; on a tie the device's copy wins.
  */
 internal object ProfileListMerge {
     const val DELETED_KEY = "deletedProfileIds"
@@ -52,7 +56,7 @@ internal object ProfileListMerge {
             val id = profile.optString("id")
             val own = localProfiles.firstOrNull { it.optString("id") == id }
             if (own == null && id.isNotBlank() && id !in deleted) remoteOnlyIds += id
-            add(own ?: profile)
+            add(if (own == null) profile else newer(own, profile))
         }
         // A fresh install's untouched "Profile 1" is not a profile the user made; adding it to
         // an account that already has profiles would leave a stray one behind.
@@ -92,6 +96,14 @@ internal object ProfileListMerge {
                 if (remoteMap.has(id) && !localMap.has(id)) localMap.put(id, remoteMap.get(id))
             }
         }
+    }
+
+    /** The copy edited last; the most recent `lastUsedAt` is kept either way. */
+    private fun newer(local: JSONObject, remote: JSONObject): JSONObject {
+        val winner = if (remote.optLong("updatedAt", 0L) > local.optLong("updatedAt", 0L)) remote else local
+        val lastUsed = maxOf(local.optLong("lastUsedAt", 0L), remote.optLong("lastUsedAt", 0L))
+        if (lastUsed > 0L) winner.put("lastUsedAt", lastUsed)
+        return winner
     }
 
     private fun profiles(root: JSONObject): List<JSONObject> {

@@ -269,14 +269,21 @@ fun DetailsScreen(
     val context = LocalContext.current
     // A title can be reached from anywhere (a person's page, a deep link, an old Continue
     // Watching entry), so a kids profile judges the title itself and leaves when it fails.
+    // Until the verdict is in, the page stays on its loading skeleton and ignores input: no
+    // buttons, no trailer, nothing to start before the age check has passed.
+    var kidsApproved by remember(mediaType, mediaId) { mutableStateOf(false) }
     LaunchedEffect(mediaType, mediaId, kidsFilterState.isActive) {
-        if (kidsFilterState.isActive && !viewModel.isAllowedForKids(mediaType, mediaId)) {
+        if (!kidsFilterState.isActive) return@LaunchedEffect
+        if (viewModel.isAllowedForKids(mediaType, mediaId)) {
+            kidsApproved = true
+        } else {
             android.widget.Toast.makeText(
                 context, R.string.kids_title_blocked, android.widget.Toast.LENGTH_LONG
             ).show()
             onBack()
         }
     }
+    val kidsGatePending = kidsFilterState.isActive && !kidsApproved
     val lifecycleOwner = LocalLifecycleOwner.current
     val isMobile = LocalDeviceType.current.isTouchDevice()
 
@@ -623,6 +630,10 @@ fun DetailsScreen(
         verticalMinRepeatIntervalMs = 112L
     )
     val keyModifier = if (isMobile) Modifier else Modifier.onPreviewKeyEvent { event ->
+                if (kidsGatePending) {
+                    if (event.type == KeyEventType.KeyUp && (event.key == Key.Back || event.key == Key.Escape)) onBack()
+                    return@onPreviewKeyEvent true
+                }
                 // Check if any modal is showing — let the modal handle all keys exclusively
                 if (showStreamSelector || showEpisodeContextMenu || showSeasonContextMenu || uiState.showPersonModal || showTrailerPlayer) {
                     return@onPreviewKeyEvent false
@@ -881,7 +892,7 @@ fun DetailsScreen(
     ) {
         // Main content - full screen with sidebar overlay (same as HomeScreen)
         Crossfade(
-            targetState = uiState.isLoading || uiState.item == null,
+            targetState = uiState.isLoading || uiState.item == null || kidsGatePending,
             animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
             label = "details_loading_crossfade"
         ) { loading ->
