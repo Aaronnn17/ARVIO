@@ -1056,7 +1056,7 @@ export function AppProvider({
         // Only Trakt has a hidden-from-progress concept; MDBList reads return an
         // empty set so the filters below are no-ops for it.
         readsFrom("continueWatching", "trakt")
-          ? traktClient.hiddenProgressShowIds().catch(() => new Set<number>())
+          ? traktClient.hiddenProgressShowIds().catch(() => { failedRead("cw-hidden"); return new Set<number>(); })
           : Promise.resolve(new Set<number>()),
         cwMoviesRead,
         cwShowsRead
@@ -1169,7 +1169,7 @@ export function AppProvider({
       // empty, the calls were blocked (Cloudflare challenges the CORS
       // preflight intermittently, especially on VPN/datacenter IPs) — keep
       // showing the cached rail instead of wiping it with an empty list.
-      const traktOutage = readFailures.has("playback") || readFailures.has("cw-watched") || readFailures.has("cw-movies") || readFailures.has("cw-shows");
+      const traktOutage = readFailures.has("playback") || readFailures.has("cw-watched") || readFailures.has("cw-movies") || readFailures.has("cw-shows") || readFailures.has("cw-hidden");
       if (!traktOutage && upNext.fetchFailures === 0 && episodeLookupFailures === 0 && isCurrent() && activitySignature) {
         traktActivityRef.current = { key: `${accountId ?? "local"}:${profileId}`, signature: activitySignature };
       }
