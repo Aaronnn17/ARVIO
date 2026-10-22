@@ -23,6 +23,7 @@ import com.arflix.tv.data.model.IptvVodSourceIds
 import com.arflix.tv.data.model.isDirectStreamUrl
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
+import com.arflix.tv.data.repository.KidsContentFilter
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.PlaybackTelemetryRepository
@@ -306,8 +307,13 @@ class PlayerViewModel @Inject constructor(
     private val playbackTelemetryRepository: PlaybackTelemetryRepository,
     private val pluginManager: PluginManager,
     private val streamIntegrationRepository: StreamIntegrationRepository,
-    private val recentPlayedSourceRepository: RecentPlayedSourceRepository
+    private val recentPlayedSourceRepository: RecentPlayedSourceRepository,
+    private val kidsContentFilter: KidsContentFilter
 ) : ViewModel() {
+
+    /** Whether the active profile may play this title; always true outside a kids profile. */
+    suspend fun isAllowedForKids(mediaType: MediaType, mediaId: Int): Boolean =
+        kidsContentFilter.isAllowed(mediaType, mediaId)
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()

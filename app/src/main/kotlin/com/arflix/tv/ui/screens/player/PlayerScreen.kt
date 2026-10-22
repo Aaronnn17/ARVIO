@@ -862,6 +862,15 @@ fun PlayerScreen(
 
     // Load media
     LaunchedEffect(mediaType, mediaId, seasonNumber, episodeNumber, tmdbSeasonNumber, tmdbEpisodeNumber, kitsuId, kitsuEpisodeNumber, imdbId, preferredAddonId, preferredSourceName, preferredBingeGroup, startPositionMs, isLiveStream) {
+        // Last line of the kids filter: whatever led here, an over-age or unrated title
+        // does not play on a kids profile.
+        if (!viewModel.isAllowedForKids(mediaType, mediaId)) {
+            android.widget.Toast.makeText(
+                context, R.string.kids_title_blocked, android.widget.Toast.LENGTH_LONG
+            ).show()
+            onBack()
+            return@LaunchedEffect
+        }
         playbackIssueReported = false
         startupRecoverAttempted = false
         startupHardFailureReported = false

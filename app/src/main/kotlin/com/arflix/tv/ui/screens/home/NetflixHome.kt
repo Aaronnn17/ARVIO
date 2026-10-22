@@ -94,6 +94,7 @@ import coil.size.Precision
 import com.arflix.tv.R
 import com.arflix.tv.data.model.Category
 import com.arflix.tv.data.model.MediaItem
+import com.arflix.tv.data.repository.KidsStarterCatalogs
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.isPortrait
 import com.arflix.tv.ui.components.AppTopBarHeight
@@ -141,10 +142,16 @@ internal data class NetflixHomeContent(
 
 private val NETFLIX_BILLBOARD_TOP10_IDS = setOf("top10_movies_today", "top10_shows_today")
 private val NETFLIX_BILLBOARD_TRENDING_IDS = setOf("trending_movies", "trending_tv")
+private val NETFLIX_BILLBOARD_KIDS_IDS = setOf(
+    KidsStarterCatalogs.ROW_MOVIES, KidsStarterCatalogs.ROW_ANIMATED,
+    KidsStarterCatalogs.ROW_SHOWS, KidsStarterCatalogs.ROW_FAMILY_SHOWS
+)
 
 /**
  * Billboard candidates: today's Top 10 movies and series. When those rows are hidden,
- * any other Top 10 row, then the trending rows.
+ * any other Top 10 row, then the trending rows, then the kids starter rows. Those exist
+ * on a kids profile, where the age filter can empty every Top 10 and trending row and an
+ * empty candidate list left a black billboard.
  */
 internal fun netflixBillboardCandidates(
     categories: List<Category>,
@@ -163,7 +170,8 @@ internal fun netflixBillboardCandidates(
     return sequenceOf<(Category) -> Boolean>(
         { it.id in NETFLIX_BILLBOARD_TOP10_IDS },
         isOtherTop10,
-        { it.id in NETFLIX_BILLBOARD_TRENDING_IDS }
+        { it.id in NETFLIX_BILLBOARD_TRENDING_IDS },
+        { it.id in NETFLIX_BILLBOARD_KIDS_IDS }
     )
         .map { matches -> itemsOf(categories.filter(matches)) }
         .firstOrNull { it.isNotEmpty() }

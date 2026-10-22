@@ -26,6 +26,7 @@ import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.R
+import com.arflix.tv.data.repository.KidsContentFilter
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.network.TmdbPriorityDispatcher
@@ -392,8 +393,37 @@ class HomeViewModel @Inject constructor(
     private val updatePreferences: com.arflix.tv.updater.UpdatePreferences,
     private val updateStatusManager: com.arflix.tv.updater.UpdateStatusManager,
     private val youTubeExtractor: com.arflix.tv.data.api.InAppYouTubeExtractor,
+    private val kidsContentFilter: KidsContentFilter,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+    val kidsFilterState: StateFlow<KidsContentFilter.State> = kidsContentFilter.state
+
+    /**
+     * Home as a kids profile may see it: every row age-filtered, no live TV. Any other
+     * profile gets [state] back unchanged.
+     */
+    fun applyKidsFilter(state: HomeUiState, kids: KidsContentFilter.State): HomeUiState {
+        if (!kids.isActive) return state
+        val categories = kidsContentFilter.filterCategories(
+            state.categories.filterNot { it.id == FAVORITE_TV_CATEGORY_ID },
+            kids
+        )
+        val hero = state.heroItem?.takeIf(kids::allows)
+            ?: categories.asSequence().flatMap { it.items }.firstOrNull { !it.isPlaceholder }
+        val sameHero = hero == state.heroItem
+        return state.copy(
+            categories = categories,
+            heroItem = hero,
+            heroLogoUrl = state.heroLogoUrl.takeIf { sameHero },
+            heroTrailerKey = state.heroTrailerKey.takeIf { sameHero },
+            heroOverviewOverride = state.heroOverviewOverride.takeIf { sameHero },
+            previousHeroItem = state.previousHeroItem?.takeIf(kids::allows)
+        )
+    }
+
+    fun filterForKids(items: List<MediaItem>, kids: KidsContentFilter.State): List<MediaItem> =
+        kidsContentFilter.filter(items, kids)
+
     private val _homeWatchlistItems = MutableStateFlow<List<MediaItem>>(emptyList())
     val homeWatchlistItems: StateFlow<List<MediaItem>> = _homeWatchlistItems.asStateFlow()
     private val homeWatchlistRefreshes = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -501,6 +531,8 @@ class HomeViewModel @Inject constructor(
 
     companion object {
         const val FAVORITE_TV_CATEGORY_ID = "favorite_tv"
+        /** Unfiltered titles a kids top-up may load for one grid before it gives up. */
+        private const val MAX_KIDS_TOP_UP_ITEMS = 600
         /** Prefix used in MediaItem.status to identify IPTV items. */
         const val IPTV_STATUS_PREFIX = "iptv:"
         private const val TOP_10_ITEM_LIMIT = 10
@@ -3908,7 +3940,11 @@ class HomeViewModel @Inject constructor(
         if (isHardCappedTop10Catalog(categoryId)) return
         val currentCategory = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
         if (currentCategory.items.isEmpty() || currentCategory.items.all { it.isPlaceholder }) return
-        if (focusedItemIndex < currentCategory.items.size - nearEndThreshold) return
+        // A kids profile reports positions in the filtered row; page on the unfiltered one.
+        val index = KidsPaging.rawIndex(
+            currentCategory.items, kidsContentFilter.state.value, focusedItemIndex, nearEndThreshold
+        )
+        if (index < currentCategory.items.size - nearEndThreshold) return
         loadNextHomeRowPage(categoryId)
     }
 
@@ -3933,10 +3969,28 @@ class HomeViewModel @Inject constructor(
      */
     fun onViewAllVisiblePosition(categoryId: String, lastVisibleItemIndex: Int, lookAheadItems: Int) {
         if (lastVisibleItemIndex < 0) return
-        prefetchLogosAroundCategoryPosition(categoryId, lastVisibleItemIndex)
         val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        // A kids profile reports positions in the filtered grid; page on the unfiltered one.
+        val index = KidsPaging.rawIndex(
+            category.items, kidsContentFilter.state.value, lastVisibleItemIndex, lookAheadItems
+        )
+        prefetchLogosAroundCategoryPosition(categoryId, index)
         val realCount = category.items.count { !it.isPlaceholder }
-        if (lastVisibleItemIndex >= realCount - lookAheadItems) {
+        if (index >= realCount - lookAheadItems) {
+            loadNextPageForCategory(categoryId)
+        }
+    }
+
+    /**
+     * Kids profile: keeps loading pages of a filtered grid while fewer than [minVisible] titles
+     * pass, so a page where most or all titles are excluded does not end the list early. The
+     * screen calls it whenever what it shows changes; [MAX_KIDS_TOP_UP_ITEMS] bounds the walk.
+     */
+    fun topUpKidsCategory(categoryId: String, minVisible: Int = 24) {
+        val category = _uiState.value.categories.firstOrNull { it.id == categoryId } ?: return
+        if (category.items.size >= MAX_KIDS_TOP_UP_ITEMS) return
+        if (_uiState.value.categoryHasMoreMap[categoryId] != true) return
+        if (KidsPaging.needsMore(category.items, kidsContentFilter.state.value, minVisible)) {
             loadNextPageForCategory(categoryId)
         }
     }

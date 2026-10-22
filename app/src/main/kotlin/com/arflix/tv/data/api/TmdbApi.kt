@@ -104,6 +104,19 @@ interface TmdbApi {
         @Query("language") language: String? = null
     ): TmdbTvDetails
 
+    /** Certifications only — the kids filter checks many titles and needs nothing else. */
+    @GET("movie/{movie_id}/release_dates")
+    suspend fun getMovieReleaseDates(
+        @Path("movie_id") movieId: Int,
+        @Query("api_key") apiKey: String
+    ): TmdbReleaseDatesResponse
+
+    @GET("tv/{tv_id}/content_ratings")
+    suspend fun getTvContentRatings(
+        @Path("tv_id") tvId: Int,
+        @Query("api_key") apiKey: String
+    ): TmdbContentRatingsResponse
+
     @GET("tv/{tv_id}/season/{season_number}")
     suspend fun getTvSeason(
         @Path("tv_id") tvId: Int,

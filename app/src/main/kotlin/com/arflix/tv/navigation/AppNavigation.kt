@@ -22,6 +22,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.arflix.tv.ui.components.KidsNavigation
+import androidx.compose.runtime.SideEffect
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -194,7 +196,11 @@ fun AppNavigation(
 ) {
     // Activity-scoped results survive Home/Library navigation and remain profile-scoped internally.
     val calendarViewModel: ReleaseCalendarViewModel = hiltViewModel()
-    val navigateTopLevel: (String) -> Unit = { route ->
+    // Live TV carries no age ratings: a kids profile loses the tab and every way into it.
+    val isKidsProfile = currentProfile?.isKidsProfile == true
+    SideEffect { KidsNavigation.hideLiveTv = isKidsProfile }
+    val navigateTopLevel: (String) -> Unit = navigate@{ route ->
+        if (isKidsProfile && route.substringBefore('?') == "tv") return@navigate
         navController.navigate(route) {
             popUpTo(Screen.Home.route) { saveState = true }
             launchSingleTop = true
@@ -362,6 +368,10 @@ fun AppNavigation(
         ) { backStackEntry ->
             val initialChannelId = backStackEntry.arguments?.getString("channelId")
             val initialStreamUrl = backStackEntry.arguments?.getString("streamUrl")
+            if (isKidsProfile) {
+                LaunchedEffect(Unit) { navigateHome() }
+                return@composable
+            }
             LiveTvScreen(
                 currentProfile = currentProfile,
                 initialChannelId = initialChannelId,

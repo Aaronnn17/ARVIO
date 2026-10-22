@@ -21,6 +21,7 @@ import com.arflix.tv.data.repository.HomeServerConnection
 import com.arflix.tv.data.repository.HomeServerKind
 import com.arflix.tv.data.repository.HomeServerLibrarySort
 import com.arflix.tv.data.repository.HomeServerRepository
+import com.arflix.tv.data.repository.KidsContentFilter
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.ProfileManager
 import com.arflix.tv.data.repository.TraktRepository
@@ -206,8 +207,24 @@ class WatchlistViewModel @Inject constructor(
     private val watchHistoryRepository: WatchHistoryRepository,
     private val simklAuthManager: SimklAuthManager,
     private val simklSyncService: SimklSyncService,
-    private val profileManager: ProfileManager
+    private val profileManager: ProfileManager,
+    private val kidsContentFilter: KidsContentFilter
 ) : ViewModel() {
+    val kidsFilterState: StateFlow<KidsContentFilter.State> = kidsContentFilter.state
+
+    /** The watchlist as a kids profile may see it; others get [state] unchanged. */
+    fun applyKidsFilter(state: WatchlistUiState, kids: KidsContentFilter.State): WatchlistUiState {
+        if (!kids.isActive) return state
+        return state.copy(
+            movies = kidsContentFilter.filter(state.movies, kids),
+            series = kidsContentFilter.filter(state.series, kids)
+        )
+    }
+
+    fun applyKidsFilter(state: HomeLibraryUiState, kids: KidsContentFilter.State): HomeLibraryUiState {
+        if (!kids.isActive) return state
+        return state.copy(items = kidsContentFilter.filter(state.items, kids))
+    }
     private val _uiState = MutableStateFlow(WatchlistUiState())
     val uiState: StateFlow<WatchlistUiState> = _uiState.asStateFlow()
 

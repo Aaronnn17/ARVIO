@@ -932,6 +932,28 @@ class CatalogRepository @Inject constructor(
         return Result.success(newCatalog)
     }
 
+    /**
+     * Appends TMDB catalogs to [profileId]'s list, after its own rows, skipping any whose page
+     * is already there. Used for a kids profile's starter rows; afterwards they are ordinary
+     * catalogs the profile can hide, move, rename or remove. [starters] are (id, title, url).
+     */
+    suspend fun appendTmdbCatalogs(profileId: String, starters: List<Triple<String, String, String>>) {
+        val current = getCatalogsForProfile(profileId)
+        val added = starters.mapNotNull { (id, title, url) ->
+            val parsed = CatalogUrlParser.parseTmdb(url) ?: return@mapNotNull null
+            if (current.any { it.id == id || it.sourceUrl.equals(url, ignoreCase = true) }) return@mapNotNull null
+            CatalogConfig(
+                id = id,
+                title = title,
+                sourceType = CatalogSourceType.TMDB,
+                sourceUrl = url,
+                sourceRef = tmdbSourceRef(parsed),
+                isPreinstalled = false
+            )
+        }
+        if (added.isNotEmpty()) saveCatalogs(current + added, targetProfileId = profileId)
+    }
+
     suspend fun updateCustomCatalog(catalogId: String, rawUrl: String): Result<CatalogConfig> {
         val targetProfileId = profileManager.getProfileIdSync()
         val current = getCatalogsForProfile(targetProfileId).toMutableList()
