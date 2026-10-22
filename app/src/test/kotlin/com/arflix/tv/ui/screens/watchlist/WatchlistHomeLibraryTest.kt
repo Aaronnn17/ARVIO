@@ -75,7 +75,7 @@ class WatchlistHomeLibraryTest {
         coEvery { remote.isRemoteConnected(any()) } returns false
         model = WatchlistViewModel(mockk<Context>(relaxed = true), watchlist, cloud, trakt,
             remote, media, homes, catalogs, history, simkl, mockk(relaxed = true), profiles,
-            personalLists())
+            personalLists(), mockk(relaxed = true))
         store.put("library", model)
     }
 

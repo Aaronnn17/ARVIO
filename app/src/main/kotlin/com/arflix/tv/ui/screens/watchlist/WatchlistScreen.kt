@@ -101,8 +101,12 @@ fun WatchlistScreen(
     calendarViewModel: ReleaseCalendarViewModel? = null,
     onCalendarOpenRelease: ((com.arflix.tv.data.model.CalendarRelease) -> Unit)? = null
 ) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val servers by viewModel.libraryState.collectAsStateWithLifecycle()
+    val rawState by viewModel.uiState.collectAsStateWithLifecycle()
+    val rawServers by viewModel.libraryState.collectAsStateWithLifecycle()
+    val kidsFilterState by viewModel.kidsFilterState.collectAsStateWithLifecycle()
+    // A kids profile sees its lists age-filtered; any other profile gets them unchanged.
+    val state = remember(rawState, kidsFilterState) { viewModel.applyKidsFilter(rawState, kidsFilterState) }
+    val servers = remember(rawServers, kidsFilterState) { viewModel.applyKidsFilter(rawServers, kidsFilterState) }
     val logos by viewModel.logoUrls.collectAsStateWithLifecycle()
     val touch = LocalDeviceType.current.isTouchDevice()
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl

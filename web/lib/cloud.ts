@@ -1044,10 +1044,50 @@ export interface CloudProfiles {
   avatarImages: Record<string, string>;
 }
 
+/** Most recent deletions kept in the payload; older ids are long gone from every device. */
+const DELETED_PROFILES_LIMIT = 100;
+
+function deletedProfileIds(root: RawPayload): string[] {
+  return arrayValue<unknown>(root.deletedProfileIds).filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
+/**
+ * The account's profile list after one device saves its own. Profiles the device does not
+ * know stay: a browser or TV holding an older copy of the list must not delete a profile
+ * another device added. Only an explicit delete ([deleted]) removes one. For a profile both
+ * sides have, the copy edited last wins (`updatedAt`, stamped on edits only, missing = oldest;
+ * a tie keeps this device's copy), so a stale copy cannot revert newer settings.
+ */
+function newerProfile(local: Profile, remote: Profile): Profile {
+  const edited = (profile: Profile) => Number((profile as { updatedAt?: number }).updatedAt ?? 0) || 0;
+  const winner = edited(remote) > edited(local) ? remote : local;
+  const lastUsedAt = Math.max(Number(local.lastUsedAt) || 0, Number(remote.lastUsedAt) || 0);
+  return lastUsedAt > 0 ? { ...winner, lastUsedAt } : winner;
+}
+
+export function mergeCloudProfiles(remote: Profile[], local: Profile[], deleted: ReadonlySet<string>): Profile[] {
+  const localById = new Map(local.map(profile => [profile.id, profile]));
+  const merged: Profile[] = [];
+  const seen = new Set<string>();
+  for (const profile of remote) {
+    if (!profile?.id || deleted.has(profile.id) || seen.has(profile.id)) continue;
+    const own = localById.get(profile.id);
+    merged.push(own ? newerProfile(own, profile) : profile);
+    seen.add(profile.id);
+  }
+  for (const profile of local) {
+    if (!profile?.id || deleted.has(profile.id) || seen.has(profile.id)) continue;
+    merged.push(profile);
+    seen.add(profile.id);
+  }
+  return merged;
+}
+
 export async function pullCloudProfiles(auth: AuthClient): Promise<CloudProfiles> {
   const root = await pullRawPayload(auth);
+  const deleted = new Set(deletedProfileIds(root));
   return {
-    profiles: arrayValue<Profile>(root.profiles),
+    profiles: arrayValue<Profile>(root.profiles).filter(profile => !deleted.has(profile?.id)),
     activeProfileId: typeof root.activeProfileId === "string" ? root.activeProfileId : null,
     avatarImages: objectRecord<string>(root.profileAvatarImagesById)
   };
@@ -1447,10 +1487,24 @@ export async function pullCloudContinueWatchingDismissals(
   return merged;
 }
 
-export async function saveCloudProfiles(auth: AuthClient, profiles: Profile[], activeProfileId: string | null) {
+/**
+ * Saves this browser's profiles into the account, merged with the list already there (see
+ * [mergeCloudProfiles]); [deletedIds] are the profiles the user deleted here.
+ */
+export async function saveCloudProfiles(
+  auth: AuthClient,
+  profiles: Profile[],
+  activeProfileId: string | null,
+  deletedIds: string[] = []
+) {
   await mutateCloudPayload(auth, (root) => {
-    root.profiles = profiles;
-    root.activeProfileId = activeProfileId;
+    const deleted = [...new Set([...deletedProfileIds(root), ...deletedIds])].slice(-DELETED_PROFILES_LIMIT);
+    const merged = mergeCloudProfiles(arrayValue<Profile>(root.profiles), profiles, new Set(deleted));
+    root.profiles = merged;
+    if (deleted.length) root.deletedProfileIds = deleted;
+    root.activeProfileId = merged.some(profile => profile.id === activeProfileId)
+      ? activeProfileId
+      : merged[0]?.id ?? null;
   });
 }
 

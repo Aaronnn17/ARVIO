@@ -30,6 +30,7 @@ import com.arflix.tv.data.repository.HomeServerRepository
 import com.arflix.tv.data.repository.LauncherContinueWatchingRepository
 import com.arflix.tv.data.repository.PersonalListsRepository
 import com.arflix.tv.ui.components.PersonalListPicker
+import com.arflix.tv.data.repository.KidsContentFilter
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.MdbExternalRating
 import com.arflix.tv.data.repository.MdbListRepository
@@ -259,7 +260,8 @@ class DetailsViewModel @Inject constructor(
     private val launcherContinueWatchingRepository: LauncherContinueWatchingRepository,
     private val streamIntegrationRepository: StreamIntegrationRepository,
     private val recentPlayedSourceRepository: RecentPlayedSourceRepository,
-    personalListsRepository: PersonalListsRepository
+    personalListsRepository: PersonalListsRepository,
+    private val kidsContentFilter: KidsContentFilter
 ) : ViewModel() {
 
     /** "Add to list" from the action row; the result shows as a Details toast. */
@@ -275,6 +277,24 @@ class DetailsViewModel @Inject constructor(
     fun openListPicker() { _uiState.value.item?.let(personalListPicker::open) }
     fun toggleListMembership(choice: PersonalListsRepository.Choice) = personalListPicker.toggle(choice)
     fun closeListPicker() = personalListPicker.close()
+
+    val kidsFilterState: StateFlow<KidsContentFilter.State> = kidsContentFilter.state
+
+    /** Whether the active profile may open this title; always true outside a kids profile. */
+    suspend fun isAllowedForKids(mediaType: MediaType, mediaId: Int): Boolean =
+        kidsContentFilter.isAllowed(mediaType, mediaId)
+
+    /** Rows and filmography as a kids profile may see them; others get [state] unchanged. */
+    fun applyKidsFilter(state: DetailsUiState, kids: KidsContentFilter.State): DetailsUiState {
+        if (!kids.isActive) return state
+        return state.copy(
+            similar = kidsContentFilter.filter(state.similar, kids),
+            collectionItems = kidsContentFilter.filter(state.collectionItems, kids),
+            selectedPerson = state.selectedPerson?.let { person ->
+                person.copy(knownFor = kidsContentFilter.filter(person.knownFor, kids))
+            }
+        )
+    }
 
     companion object {
         private const val TAG = "DetailsViewModel"

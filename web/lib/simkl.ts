@@ -176,13 +176,14 @@ function activityMarker(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const root = value as Record<string, unknown>;
   if (typeof root.all === "string") return root.all;
+  const markers: string[] = [];
   for (const key of ["movies", "tv_shows", "shows", "anime"]) {
     const group = root[key];
     if (group && typeof group === "object" && typeof (group as Record<string, unknown>).all === "string") {
-      return (group as Record<string, string>).all;
+      markers.push((group as Record<string, string>).all);
     }
   }
-  return null;
+  return markers.sort((a, b) => (Date.parse(b) || 0) - (Date.parse(a) || 0))[0] ?? null;
 }
 
 function removalMarkers(value: unknown): NonNullable<SimklSnapshot["removals"]> {

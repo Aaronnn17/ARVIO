@@ -307,6 +307,8 @@ export interface Profile {
   isLocked?: boolean;
   createdAt?: number;
   lastUsedAt?: number;
+  // Last edit of the profile itself (not a selection); the cloud merge keeps the newer copy.
+  updatedAt?: number;
 }
 
 export interface UserProfile {

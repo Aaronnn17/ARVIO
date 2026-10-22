@@ -407,8 +407,8 @@ interface TraktApi {
         @Query("page") page: Int? = null
     ): List<TraktHiddenItem>
 
-    @GET("users/hidden/progress_watched_reset")
-    suspend fun getHiddenProgressResetShows(
+    @GET("users/hidden/dropped")
+    suspend fun getDroppedShows(
         @Header("Authorization") auth: String,
         @Header("trakt-api-key") clientId: String,
         @Header("trakt-api-version") version: String = "2",

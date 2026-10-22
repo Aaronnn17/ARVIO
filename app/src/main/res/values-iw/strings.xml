@@ -305,4 +305,21 @@
     <string name="list_added_to">נוסף ל%1$s</string>
     <string name="list_removed_from">הוסר מ%1$s</string>
     <string name="list_update_failed">לא ניתן לעדכן את %1$s</string>
+    <string name="profile_kids">פרופיל ילדים</string>
+    <string name="profile_kids_on">מופעל</string>
+    <string name="profile_kids_off">כבוי</string>
+    <string name="profile_kids_badge">ילדים</string>
+    <string name="profile_kids_max_age">גיל מרבי</string>
+    <string name="profile_kids_little">עד 7</string>
+    <string name="profile_kids_older">עד 10</string>
+    <string name="profile_kids_teens">עד 14</string>
+    <string name="profile_kids_hint">רק תכנים שמתאימים לגיל הזה. תכנים ללא סיווג גיל וטלוויזיה בשידור חי מוסתרים.</string>
+    <string name="kids_title_blocked">לא זמין בפרופיל הילדים הזה</string>
+    <string name="kids_row_movies">סרטים לילדים</string>
+    <string name="kids_row_shows">סדרות לילדים</string>
+    <string name="kids_row_animated">סרטי אנימציה אהובים</string>
+    <string name="kids_row_family_shows">סדרות למשפחה</string>
+    <string name="profile_parent_pin_set">הגדר קוד הורים לפרופיל הילדים</string>
+    <string name="profile_parent_pin_enter">קוד הורים</string>
+    <string name="profile_parent_pin_hint">4–5 ספרות. נדרש כדי לשנות או למחוק את פרופיל הילדים, לא כדי לצפות.</string>
 </resources>

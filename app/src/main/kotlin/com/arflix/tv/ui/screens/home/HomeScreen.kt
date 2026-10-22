@@ -811,8 +811,16 @@ fun HomeScreen(
     // Lifecycle-aware: stops collecting when HomeScreen is off-screen so the
     // ViewModel's TMDB/Trakt refresh pushes don't drive recompositions behind
     // an invisible UI.
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val homeWatchlistItems by viewModel.homeWatchlistItems.collectAsStateWithLifecycle()
+    val rawUiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val rawHomeWatchlistItems by viewModel.homeWatchlistItems.collectAsStateWithLifecycle()
+    val kidsFilterState by viewModel.kidsFilterState.collectAsStateWithLifecycle()
+    // A kids profile sees Home age-filtered; any other profile gets the state unchanged.
+    val uiState = remember(rawUiState, kidsFilterState) {
+        viewModel.applyKidsFilter(rawUiState, kidsFilterState)
+    }
+    val homeWatchlistItems = remember(rawHomeWatchlistItems, kidsFilterState) {
+        viewModel.filterForKids(rawHomeWatchlistItems, kidsFilterState)
+    }
     // Per-card logo reads now come from a stable snapshotStateMap so a single
     // logo arriving no longer recomposes the full home surface.
     val cardLogoUrls = viewModel.cardLogoUrls
@@ -874,19 +882,22 @@ fun HomeScreen(
         }
     }
 
-    val rawDisplayCategoriesBase = if (uiState.categories.isNotEmpty()) {
+    // The startup preload bypasses the kids filter, so a kids profile never falls back to it.
+    val rawDisplayCategoriesBase = if (uiState.categories.isNotEmpty() || kidsFilterState.isActive) {
         uiState.categories
     } else {
         preloadedCategories
     }
-    val sportsHomeRows by viewModel.sportsHomeRows.collectAsStateWithLifecycle()
+    val allSportsHomeRows by viewModel.sportsHomeRows.collectAsStateWithLifecycle()
+    // Live sports carry no age rating; a kids profile does not get them.
+    val sportsHomeRows = if (kidsFilterState.isActive) emptyList() else allSportsHomeRows
     val rawDisplayCategories = remember(rawDisplayCategoriesBase, sportsHomeRows) {
         viewModel.withSportsHomeRows(rawDisplayCategoriesBase, sportsHomeRows)
     }
     val displayCategories = remember(rawDisplayCategories, homeWatchlistItems) {
         withHomeWatchlistRow(deduplicateHomeCategories(rawDisplayCategories), homeWatchlistItems, enabled = true)
     }
-    val displayHeroItem = uiState.heroItem ?: preloadedHeroItem
+    val displayHeroItem = uiState.heroItem ?: preloadedHeroItem?.takeIf { !kidsFilterState.isActive }
         ?: if (uiState.categories.isEmpty()) {
             // Only fall through to first-row hero while the ViewModel is still
             // publishing its initial categories. Once categories are populated,
@@ -944,10 +955,16 @@ fun HomeScreen(
     // A random title per Home visit; saved so returning from Details keeps it.
     var billboardKey by rememberSaveable(currentProfile?.id) { mutableStateOf<String?>(null) }
     var billboardItem by remember(currentProfile?.id) { mutableStateOf<MediaItem?>(null) }
-    LaunchedEffect(netflixHome, displayCategories) {
+    LaunchedEffect(netflixHome, displayCategories, kidsFilterState) {
         if (!netflixHome) return@LaunchedEffect
         val candidates = netflixBillboardCandidates(displayCategories) { item ->
             viewModel.isIptvItem(item) || viewModel.isCollectionItem(item) || viewModel.isSportsHomeItem(item)
+        }
+        // The billboard keeps its title for the whole visit; on a kids profile that title
+        // must still pass the age filter, or it is picked again from the filtered rows.
+        if (billboardItem?.let(kidsFilterState::allows) == false) {
+            billboardItem = null
+            billboardKey = null
         }
         if (candidates.isEmpty()) return@LaunchedEffect
         val restored = billboardItem ?: billboardKey?.let { key -> candidates.firstOrNull { homeRowItemKey(it) == key } }

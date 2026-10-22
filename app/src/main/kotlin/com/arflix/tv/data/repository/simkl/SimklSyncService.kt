@@ -100,6 +100,7 @@ class SimklSyncService @Inject constructor(
     private val cachedWatchlist = mutableMapOf<Pair<MediaType, Int>, MediaItem>()
     private val cachedContinueWatching = ConcurrentHashMap<Pair<MediaType, Int>, ContinueWatchingItem>()
     private val cachedUpNext = ConcurrentHashMap<Pair<MediaType, Int>, ContinueWatchingItem>()
+    private val validatedContinueWatching = mutableMapOf<Pair<MediaType, Int>, ContinueWatchingItem>()
     private val completionTimes = mutableMapOf<String, Long>()
     private val completedShows = mutableSetOf<Int>()
     private val recentCompletions = ConcurrentHashMap<String, Long>()
@@ -241,9 +242,8 @@ class SimklSyncService @Inject constructor(
         try {
             val activities = simklApi.getActivities(authHeader, clientId)
             val currentActivityDate = activities.all
-                ?: activities.movies?.all
-                ?: activities.shows?.all
-                ?: activities.anime?.all
+                ?: listOfNotNull(activities.movies?.all, activities.shows?.all, activities.anime?.all)
+                    .maxByOrNull(::parseTimestamp)
 
             val removalTimestamps = mapOf(
                 "movies" to activities.movies?.removedFromList,
@@ -572,6 +572,7 @@ class SimklSyncService @Inject constructor(
         anime: SimklAllItemsResponse,
         playback: List<com.arflix.tv.data.api.SimklPlaybackItem>
     ) {
+        val previousUpNext = cachedUpNext.toMap()
         cachedWatchedMovies.clear()
         cachedWatchedEpisodes.clear()
         cachedWatchlist.clear()
@@ -584,6 +585,14 @@ class SimklSyncService @Inject constructor(
         processShowsResponse(shows)
         processShowsResponse(anime)
         cachedUpNext.putAll(cachedContinueWatching)
+        // A new tracker pointer can refer to an episode absent from an older
+        // season response. Refresh that show's metadata, not the whole library.
+        cachedUpNext.forEach { (key, item) ->
+            val previous = previousUpNext[key]
+            if (previous != null && (previous.season != item.season || previous.episode != item.episode)) {
+                episodeSeasons.keys.removeIf { it.first == item.id }
+            }
+        }
         processPlayback(playback)
     }
 
@@ -608,6 +617,8 @@ class SimklSyncService @Inject constructor(
         resolvedExternalIds.clear()
         recentCompletions.clear()
         cachedUpNext.clear()
+        validatedContinueWatching.clear()
+        episodeSeasons.clear()
         completionTimes.clear()
         completedShows.clear()
         cachedWatchedMovies.clear()
@@ -1031,18 +1042,41 @@ class SimklSyncService @Inject constructor(
             ContinueWatchingSnapshot(activeTokenScope, candidates, upNext,
                 cachedWatchedEpisodes.toSet() + localWatchedEpisodes + recentCompletions.keys.filter { it.startsWith("show_tmdb:") })
         }
-        val result = coroutineScope {
+        val reads = coroutineScope {
             snapshot.items.map { item -> async {
-                if (item.mediaType != MediaType.TV) item else episodeLookups.withPermit {
-                    validateNextEpisode(item, snapshot.watched) ?: if (!item.isUpNext) {
-                        snapshot.upNext[item.mediaType to item.id]?.let { validateNextEpisode(it, snapshot.watched) }
-                    } else null
+                try {
+                    Result.success(if (item.mediaType != MediaType.TV) item else episodeLookups.withPermit {
+                        validateNextEpisode(item, snapshot.watched) ?: if (!item.isUpNext) {
+                            snapshot.upNext[item.mediaType to item.id]?.let { validateNextEpisode(it, snapshot.watched) }
+                        } else null
+                    })
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    Result.failure<ContinueWatchingItem?>(error)
                 }
-            } }.mapNotNull { it.await() }
-        }.sortedByDescending { it.updatedAtMs }
-        check(synced || result.isNotEmpty()) { "SIMKL Continue Watching is unavailable" }
-        check(snapshot.scope == activeTokenScope) { "SIMKL profile changed" }
-        return result
+            } }.map { it.await() }
+        }
+        return syncMutex.withLock {
+            check(snapshot.scope == activeTokenScope) { "SIMKL profile changed" }
+            val result = snapshot.items.zip(reads).mapNotNull { (item, read) ->
+                if (read.isSuccess) read.getOrNull() else {
+                    // A metadata outage for one series must not block successful
+                    // next-episode updates for every other series.
+                    validatedContinueWatching[item.mediaType to item.id]?.takeIf { saved ->
+                        saved.season == item.season && saved.episode == item.episode &&
+                            episodeKey(saved.id, saved.season ?: -1, saved.episode ?: -1) !in snapshot.watched
+                    }
+                }
+            }.sortedByDescending { it.updatedAtMs }
+            if (result.isEmpty() && reads.any { it.isFailure }) {
+                throw reads.first { it.isFailure }.exceptionOrNull()!!
+            }
+            check(synced || result.isNotEmpty()) { "SIMKL Continue Watching is unavailable" }
+            validatedContinueWatching.clear()
+            result.associateByTo(validatedContinueWatching) { it.mediaType to it.id }
+            result
+        }
     }
 
     private suspend fun seasonEpisodes(show: Int, season: Int): com.arflix.tv.data.api.TmdbSeasonDetails {

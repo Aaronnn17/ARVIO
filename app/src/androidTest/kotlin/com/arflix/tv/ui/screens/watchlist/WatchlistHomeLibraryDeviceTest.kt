@@ -127,7 +127,7 @@ class WatchlistHomeLibraryDeviceTest {
         compose.runOnUiThread {
             model = WatchlistViewModel(compose.activity.applicationContext, watchlist, cloud, trakt,
                 remote, media, homes, catalogs, history, simkl, mockk(relaxed = true), profiles,
-                personalLists())
+                personalLists(), mockk(relaxed = true))
             store.put("library", model)
         }
         compose.setContent {

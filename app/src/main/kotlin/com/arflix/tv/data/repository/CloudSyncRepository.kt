@@ -1104,10 +1104,18 @@ class CloudSyncRepository @Inject constructor(
         // Field-level merge against the already-loaded remote: keep local fields we changed more
         // recently, but never overwrite a cloud field with an older local value. This is what stops
         // a stale device from reverting a peer's setting (even via the pull's pre-push).
-        val effectivePayload = if (existingRemotePayload != null) {
+        val timestampMerged = if (existingRemotePayload != null) {
             mergeSettingsByTimestamp(baseStr = trackingMerged, otherStr = existingRemotePayload).json
         } else {
             trackingMerged
+        }
+
+        // The profile list merges into the account's instead of replacing it, so a device that
+        // missed another device's new profile cannot delete it (ProfileListMerge).
+        val effectivePayload = if (existingRemotePayload != null) {
+            mergeRemoteProfiles(timestampMerged, existingRemotePayload)
+        } else {
+            timestampMerged
         }
 
         val payloadHash = try {
@@ -1221,6 +1229,24 @@ class CloudSyncRepository @Inject constructor(
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             localPayload
+        }
+    }
+
+    private suspend fun mergeRemoteProfiles(localPayload: String, remotePayload: String): String {
+        val deletedHere = profileRepository.getDeletedProfileIds()
+        return try {
+            ProfileListMerge.merge(JSONObject(localPayload), JSONObject(remotePayload), deletedHere).toString()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.w(TAG, "Profile merge failed; keeping the remote profile list", e)
+            // Never fall back to the local list: that is the replacement this merge prevents.
+            try {
+                val local = JSONObject(localPayload)
+                val remote = JSONObject(remotePayload)
+                local.put("profiles", remote.optJSONArray("profiles") ?: return localPayload).toString()
+            } catch (_: Exception) {
+                localPayload
+            }
         }
     }
 
@@ -1534,7 +1560,9 @@ class CloudSyncRepository @Inject constructor(
         val avatarImagesById = root.optJSONObject("profileAvatarImagesById")
         root.optJSONArray("profiles")?.toString()?.takeIf { it.isNotBlank() }?.let { json ->
             val type = TypeToken.getParameterized(List::class.java, Profile::class.java).type
-            val profiles: List<Profile> = gson.fromJson(json, type) ?: emptyList()
+            val deletedIds = ProfileListMerge.deletedIds(root)
+            val profiles: List<Profile> = (gson.fromJson<List<Profile>>(json, type) ?: emptyList())
+                .filterNot { it.id in deletedIds }
             val activeProfileId = root.optString("activeProfileId").ifBlank { null }
             if (profiles.isNotEmpty()) {
                 val localProfilesById = profileRepository.getProfiles().associateBy { it.id }
