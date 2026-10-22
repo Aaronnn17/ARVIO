@@ -121,7 +121,7 @@ interface MdbListApi {
         @Header("Authorization") authHeader: String? = null,
         @Query("apikey") apiKey: String? = null,
         @Body body: MdbWatchlistModifyBody
-    ): MdbCountResponse
+    ): MdbListModifyResponse
 
     // ===== Watched (Trakt-style ids objects) =====
 
@@ -264,6 +264,18 @@ data class MdbWatchlistModifyBody(
 )
 
 data class MdbTmdbRef(val tmdb: Int)
+
+/**
+ * Result of a list add/remove, per item (live-checked 2026-10-22). HTTP 200 does not mean the
+ * title changed: an unknown id comes back under `not_found`, an addition already in the list
+ * under `existing`, and a removal of a title the list does not hold also under `not_found`.
+ */
+data class MdbListModifyResponse(
+    val added: MdbCounts? = null,
+    val removed: MdbCounts? = null,
+    val existing: MdbCounts? = null,
+    @SerializedName("not_found") val notFound: MdbCounts? = null
+)
 
 /** One of the user's own lists. Dynamic (filter-based) lists cannot take items. */
 data class MdbUserList(

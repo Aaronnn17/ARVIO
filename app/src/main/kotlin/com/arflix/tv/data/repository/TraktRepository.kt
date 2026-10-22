@@ -3458,7 +3458,7 @@ class TraktRepository @Inject constructor(
         }
     }
 
-    /** Adds a title to, or removes it from, one of the user's own lists. */
+    /** Adds a title to, or removes it from, one of the user's own lists; true only when Trakt applied it. */
     suspend fun modifyPersonalList(
         listId: String,
         mediaType: MediaType,
@@ -3473,12 +3473,16 @@ class TraktRepository @Inject constructor(
             TraktWatchlistBody(shows = listOf(TraktShowId(ids)))
         }
         return try {
-            if (add) {
+            val response = if (add) {
                 traktApi.addToMyList(auth = auth, clientId = clientId, listId = listId, body = body)
             } else {
                 traktApi.removeFromMyList(auth = auth, clientId = clientId, listId = listId, body = body)
             }
-            true
+            listChangeAccepted(response, mediaType, add).also { accepted ->
+                if (!accepted) {
+                    AppLogger.w("TraktRepository", "Personal list ${if (add) "add" else "remove"} not applied: $response")
+                }
+            }
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Exception) {

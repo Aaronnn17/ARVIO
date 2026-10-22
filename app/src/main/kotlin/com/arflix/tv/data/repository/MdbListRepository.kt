@@ -417,23 +417,35 @@ class MdbListRepository @Inject constructor(
         }
     }
 
-    /** The titles in one of the user's lists, in list order; empty when it cannot be read. */
+    /**
+     * The titles in one of the user's lists, in list order; empty when it cannot be read.
+     * The API returns at most [LIST_ITEMS_PAGE] titles per request, so every page is read: a
+     * missing page would leave titles out of the Library and show them unticked in the picker.
+     */
     suspend fun listItems(listId: Long): List<MediaItem> = withContext(Dispatchers.IO) {
-        val json = try {
-            executeWithAuth { authHeader, apiKey ->
-                api.getListItems(listId = listId, authHeader = authHeader, apiKey = apiKey)
+        val rows = fetchAllPages(LIST_ITEMS_PAGE, LIST_ITEMS_MAX_PAGES) { offset ->
+            val json = try {
+                executeWithAuth { authHeader, apiKey ->
+                    api.getListItems(
+                        listId = listId,
+                        authHeader = authHeader,
+                        apiKey = apiKey,
+                        limit = LIST_ITEMS_PAGE,
+                        offset = offset
+                    )
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                AppLogger.e(TAG, "list items failed at offset $offset", e)
+                null
+            } ?: return@fetchAllPages null
+            when {
+                json.isJsonArray -> json.asJsonArray.toList()
+                json.isJsonObject -> listOf("items", "movies", "shows")
+                    .flatMap { key -> json.asJsonObject.getAsJsonArray(key)?.toList().orEmpty() }
+                else -> emptyList()
             }
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            AppLogger.e(TAG, "list items failed", e)
-            null
         } ?: return@withContext emptyList()
-        val rows = when {
-            json.isJsonArray -> json.asJsonArray.toList()
-            json.isJsonObject -> listOf("items", "movies", "shows")
-                .flatMap { key -> json.asJsonObject.getAsJsonArray(key)?.toList().orEmpty() }
-            else -> emptyList()
-        }
         rows.mapIndexedNotNull { index, row ->
             val obj = row.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapIndexedNotNull null
             fun text(name: String) = obj.get(name)?.takeIf { it.isJsonPrimitive }?.asString
@@ -454,6 +466,7 @@ class MdbListRepository @Inject constructor(
     suspend fun listItemKeys(listId: Long): Set<String> =
         listItems(listId).map { "${it.mediaType.name}:${it.id}" }.toSet()
 
+    /** Adds a title to, or removes it from, one of the user's lists; true only when MDBList applied it. */
     suspend fun modifyList(listId: Long, mediaType: MediaType, tmdbId: Int, add: Boolean): Boolean =
         withContext(Dispatchers.IO) {
             try {
@@ -462,7 +475,7 @@ class MdbListRepository @Inject constructor(
                 } else {
                     MdbWatchlistModifyBody(shows = listOf(MdbTmdbRef(tmdbId)))
                 }
-                executeWithAuth { authHeader, apiKey ->
+                val response = executeWithAuth { authHeader, apiKey ->
                     api.modifyList(
                         listId = listId,
                         action = if (add) "add" else "remove",
@@ -470,7 +483,10 @@ class MdbListRepository @Inject constructor(
                         apiKey = apiKey,
                         body = body
                     )
-                } != null
+                }
+                listChangeAccepted(response, mediaType, add).also { accepted ->
+                    if (!accepted) AppLogger.w(TAG, "list ${if (add) "add" else "remove"} not applied: $response")
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 AppLogger.e(TAG, "list ${if (add) "add" else "remove"} failed", e)

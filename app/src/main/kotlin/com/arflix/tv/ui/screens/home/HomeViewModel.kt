@@ -1661,6 +1661,7 @@ class HomeViewModel @Inject constructor(
     private var startupCatalogWarmupJob: Job? = null
     private var customCatalogsJob: Job? = null
     private var loadHomeJob: Job? = null
+    private val listRowsReloadJobs = ConcurrentHashMap<PersonalListsRepository.Provider, Job>()
     private var refreshContinueWatchingJob: Job? = null
     private val continueWatchingRequests = ContinueWatchingRefreshRequests()
     private var cwFetchJob: Job? = null
@@ -1764,19 +1765,28 @@ class HomeViewModel @Inject constructor(
             PersonalListsRepository.Provider.TRAKT -> CatalogSourceType.TRAKT
             PersonalListsRepository.Provider.MDBLIST -> CatalogSourceType.MDBLIST
         }
-        viewModelScope.launch(networkDispatcher) {
+        // The rows belong to the profile and Home load they started on. A profile switch or a
+        // new Home load while they are fetched makes them stale: they are dropped, not merged
+        // into the next profile's Home (or over a newer load's rows and paging).
+        val profileId = profileManager.getProfileIdSync()
+        val requestId = loadHomeRequestId
+        fun isCurrent() = profileManager.getProfileIdSync() == profileId && loadHomeRequestId == requestId
+        listRowsReloadJobs.remove(provider)?.cancel()
+        listRowsReloadJobs[provider] = viewModelScope.launch(networkDispatcher) {
             val catalogs = runCatching { catalogRepository.getCatalogs() }.getOrDefault(emptyList())
                 .filter { it.sourceType == sourceType }
             for (catalog in catalogs) {
+                if (!isCurrent()) return@launch
                 val page = runCatching {
                     mediaRepository.loadCustomCatalogPage(catalog, offset = 0, limit = catalogInitialLimit(catalog))
                 }.getOrNull() ?: continue
-                categoryPaginationStates[catalog.id] = CategoryPaginationState(
-                    loadedCount = page.items.size,
-                    hasMore = page.hasMore,
-                    nextOffset = page.nextOffset ?: page.items.size
-                )
                 withContext(Dispatchers.Main.immediate) {
+                    if (!isCurrent()) return@withContext
+                    categoryPaginationStates[catalog.id] = CategoryPaginationState(
+                        loadedCount = page.items.size,
+                        hasMore = page.hasMore,
+                        nextOffset = page.nextOffset ?: page.items.size
+                    )
                     val state = _uiState.value
                     val index = state.categories.indexOfFirst { it.id == catalog.id }
                     val categories = state.categories.toMutableList()
@@ -1909,6 +1919,8 @@ class HomeViewModel @Inject constructor(
         preloadCategoryJobs.clear()
         startupCatalogWarmupJob?.cancel()
         customCatalogsJob?.cancel()
+        listRowsReloadJobs.values.forEach { it.cancel() }
+        listRowsReloadJobs.clear()
         activeEpgRefreshJob?.cancel()
         lastFavoriteTvFocusRefreshMs = 0L
         lastContinueWatchingItems = emptyList()
