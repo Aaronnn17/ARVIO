@@ -995,6 +995,7 @@ fun SettingsScreen(
         showCatalogRename ||
         youTubeManagerCatalogId != null ||
         showYouTubeAddInput ||
+        uiState.pendingYouTubeUrl != null ||
         showSubtitlePicker ||
         showSecondarySubtitlePicker ||
         showAudioLanguagePicker ||
@@ -2857,7 +2858,7 @@ fun SettingsScreen(
         }
 
         val youTubeManagerCatalog = youTubeManagerCatalogId?.let { id -> uiState.catalogs.firstOrNull { it.id == id } }
-        if (youTubeManagerCatalog != null && !showYouTubeAddInput && !showCatalogRename) {
+        if (youTubeManagerCatalog != null && !showYouTubeAddInput && !showCatalogRename && uiState.pendingYouTubeUrl == null) {
             YouTubeCollectionModal(
                 catalog = youTubeManagerCatalog,
                 onAddVideo = { youTubeAddUrl = ""; showYouTubeAddInput = true },
@@ -2884,6 +2885,17 @@ fun SettingsScreen(
                 },
                 onDismiss = { showYouTubeAddInput = false }
             )
+        }
+
+        if (uiState.pendingYouTubeUrl != null) {
+            androidx.compose.runtime.key(uiState.youTubeApprovalFailures) {
+                com.arflix.tv.ui.screens.profile.PinEntryDialog(
+                    title = stringResource(R.string.profile_parent_pin_enter),
+                    onPinConfirmed = viewModel::confirmYouTubeAddition,
+                    onDismiss = viewModel::dismissYouTubeApproval,
+                    pinError = uiState.youTubeApprovalError?.localizedText().orEmpty()
+                )
+            }
         }
 
         if (showCatalogRename) {

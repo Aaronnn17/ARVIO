@@ -937,8 +937,21 @@ class CatalogRepository @Inject constructor(
      * Returns the row and the video's title. The title comes from YouTube's public oEmbed
      * endpoint, falling back to the video id.
      */
-    suspend fun addYouTubeVideo(rawUrl: String): Result<Pair<CatalogConfig, String>> {
-        val targetProfileId = profileManager.getProfileIdSync()
+    suspend fun addYouTubeVideo(
+        rawUrl: String,
+        parentPin: String? = null,
+        targetProfileId: String = profileManager.getProfileIdSync()
+    ): Result<Pair<CatalogConfig, String>> {
+        suspend fun approvalError(): CatalogException? {
+            val profile = profileManager.getActiveProfile()
+            if (targetProfileId != profileManager.getProfileIdSync() ||
+                (profile?.id ?: "default") != targetProfileId) {
+                return CatalogException(R.string.youtube_profile_changed)
+            }
+            return if (YouTubeCollection.canAddToProfile(profile, parentPin)) null
+            else CatalogException(R.string.youtube_parent_approval_required)
+        }
+        approvalError()?.let { return Result.failure(it) }
         val videoId = YouTubeCollection.videoIdFromUrl(rawUrl)
             ?: return Result.failure(CatalogException(R.string.catalog_url_invalid))
         val oembed = fetchUrl(
@@ -951,25 +964,39 @@ class CatalogRepository @Inject constructor(
             }.getOrNull()
         }?.trim()?.takeIf { it.isNotBlank() } ?: videoId
 
-        if (targetProfileId != profileManager.getProfileIdSync()) return Result.failure(IllegalStateException("Profile changed while adding the video. Please try again."))
-        val current = getCatalogsForProfile(targetProfileId).toMutableList()
-        val index = current.indexOfFirst { it.sourceType == CatalogSourceType.YOUTUBE }
-        val existing = current.getOrNull(index)
-        val videos = YouTubeCollection.decode(existing?.sourceRef)
-        if (videos.any { it.id == videoId }) {
-            return Result.failure(CatalogException(R.string.catalog_already_added))
+        approvalError()?.let { return Result.failure(it) }
+        var updated: CatalogConfig? = null
+        var error: CatalogException? = null
+        // Check the limit against the latest list in the same transaction as the addition.
+        context.settingsDataStore.edit { prefs ->
+            if (targetProfileId != profileManager.getProfileIdSync()) {
+                error = CatalogException(R.string.youtube_profile_changed)
+                return@edit
+            }
+            val current = sanitizeCollectionCatalogs(readCatalogsFromPrefs(targetProfileId, prefs)).toMutableList()
+            val index = current.indexOfFirst { it.sourceType == CatalogSourceType.YOUTUBE }
+            val existing = current.getOrNull(index)
+            val videos = YouTubeCollection.decode(existing?.sourceRef)
+            if (videos.any { it.id == videoId }) {
+                error = CatalogException(R.string.catalog_already_added)
+                return@edit
+            }
+            if (videos.size >= YouTubeCollection.MAX_VIDEOS) {
+                error = CatalogException(R.string.youtube_collection_full, listOf(YouTubeCollection.MAX_VIDEOS))
+                return@edit
+            }
+            val ref = YouTubeCollection.encode(listOf(YouTubeCollection.Video(videoId, title)) + videos)
+            val row = existing?.copy(sourceRef = ref) ?: CatalogConfig(
+                id = "youtube_${System.currentTimeMillis()}", title = YouTubeCollection.DEFAULT_TITLE,
+                sourceType = CatalogSourceType.YOUTUBE, sourceRef = ref, isPreinstalled = false
+            )
+            if (existing != null) current[index] = row else current.add(0, row)
+            writeCatalogField(prefs, targetProfileId, "catalogsByProfile", gson.toJson(current))
+            updated = row
         }
-        val sourceRef = YouTubeCollection.encode(listOf(YouTubeCollection.Video(videoId, title)) + videos)
-        val updated = existing?.copy(sourceRef = sourceRef) ?: CatalogConfig(
-            id = "youtube_${System.currentTimeMillis()}",
-            title = YouTubeCollection.DEFAULT_TITLE,
-            sourceType = CatalogSourceType.YOUTUBE,
-            sourceRef = sourceRef,
-            isPreinstalled = false
-        )
-        if (existing != null) current[index] = updated else current.add(0, updated)
-        saveCatalogs(current, targetProfileId = targetProfileId)
-        return Result.success(updated to title)
+        error?.let { return Result.failure(it) }
+        invalidationBus.markDirty(CloudSyncScope.CATALOGS, targetProfileId, "add YouTube video")
+        return Result.success(requireNotNull(updated) to title)
     }
 
     /** Moves one video of the profile's YouTube row by [delta] places (negative = towards the top). */

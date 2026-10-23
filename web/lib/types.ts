@@ -322,6 +322,8 @@ export interface UserProfile {
 }
 
 export interface WatchHistoryEntry {
+  addon_native_id?: string | null;
+  addon_native_addon_id?: string | null;
   id?: string | null;
   user_id: string;
   profile_id?: string | null;

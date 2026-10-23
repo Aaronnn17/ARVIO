@@ -1,6 +1,9 @@
 package com.arflix.tv.data.repository
 
 import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.data.model.Profile
+import com.arflix.tv.data.api.TrailerPlaybackSource
+import com.arflix.tv.util.PinUtil
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.net.URI
@@ -23,7 +26,7 @@ internal object YouTubeCollection {
     const val SOURCE_REF_PREFIX = "youtube:"
     private const val META_ID_PREFIX = "ytv:"
     private const val STREAM_MARKER = "arvio-youtube://"
-    private const val MAX_VIDEOS = 500
+    const val MAX_VIDEOS = 500
 
     data class Video(val id: String, val title: String)
 
@@ -51,7 +54,16 @@ internal object YouTubeCollection {
         return id?.takeIf { VIDEO_ID.matches(it) }
     }
 
-    fun encode(videos: List<Video>): String = SOURCE_REF_PREFIX + gson.toJson(videos.take(MAX_VIDEOS))
+    fun encode(videos: List<Video>): String = SOURCE_REF_PREFIX + gson.toJson(videos)
+
+    fun canAddToProfile(profile: Profile?, parentPin: String?): Boolean =
+        profile?.isKidsProfile != true || PinUtil.verifyPin(parentPin.orEmpty(), profile.parentPin)
+
+    fun resolve(stream: StreamSource, source: TrailerPlaybackSource): StreamSource = stream.copy(
+        url = source.videoUrl,
+        youTubeAudioUrl = source.audioUrl?.takeIf { it.isNotBlank() },
+        youTubeFallbackUrl = source.fallbackVideoUrl?.takeIf { it.isNotBlank() }
+    )
 
     fun decode(sourceRef: String?): List<Video> {
         val json = sourceRef?.takeIf { it.startsWith(SOURCE_REF_PREFIX) }?.removePrefix(SOURCE_REF_PREFIX)

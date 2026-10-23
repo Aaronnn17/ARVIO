@@ -4391,16 +4391,14 @@ class StreamRepository @Inject constructor(
     }
 
     /**
-     * Exchanges a YouTube collection source for a playable URL. The player takes one URL, so
-     * a muxed stream (HLS master playlist or progressive file) is used, never the split
-     * video+audio pair the trailer player merges. Has its own budget: YouTube extraction
+     * Exchanges a YouTube collection source for playable tracks, retaining separate audio
+     * when the extractor selects it. Has its own budget: YouTube extraction
      * routinely takes longer than [STREAM_RESOLUTION_TIMEOUT_MS].
      */
     private suspend fun resolveYouTubeStream(stream: StreamSource): StreamSource? {
         val videoId = YouTubeCollection.videoIdFromStreamMarker(stream.url.orEmpty()) ?: return null
         val source = youTubeExtractor.extractPlaybackSource(YouTubeCollection.watchUrl(videoId)) ?: return null
-        val url = if (source.audioUrl.isNullOrBlank()) source.videoUrl else source.fallbackVideoUrl
-        return url?.takeIf { it.isNotBlank() }?.let { stream.copy(url = it) }
+        return YouTubeCollection.resolve(stream, source)
     }
 
     suspend fun prewarmStreamForPlayback(

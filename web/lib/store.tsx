@@ -1838,7 +1838,7 @@ export function AppProvider({
     // + save progress when the user returns. forceBrowser overrides (e.g. the
     // in-player source panel, which is already in the browser player).
     const preferredPlayer = settingsRef.current.defaultPlayer;
-    if (!stream.autoSelect && !options.forceBrowser && !options.forceRemux && !options.forceTranscode && (preferredPlayer === "vlc" || preferredPlayer === "infuse")) {
+    if (stream.addonId !== "arvio_youtube" && !stream.autoSelect && !options.forceBrowser && !options.forceRemux && !options.forceTranscode && (preferredPlayer === "vlc" || preferredPlayer === "infuse")) {
       const externalItem = selected;
       const externalTitle = selected?.title ?? stream.source ?? "ARVIO stream";
       const preferredSub = settingsRef.current.defaultSubtitle;

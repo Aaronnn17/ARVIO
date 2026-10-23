@@ -3321,6 +3321,12 @@ class PlayerViewModel @Inject constructor(
 
     fun reportPlaybackError(message: PlayerMessage) {
         playbackErrorReportJob?.cancel()
+        val current = _uiState.value
+        val fallback = current.selectedStream?.youTubeFallbackUrl
+        if (current.selectedStream?.addonId == YouTubeCollection.ADDON_ID && !fallback.isNullOrBlank()) {
+            selectStream(current.selectedStream.copy(url = fallback, youTubeAudioUrl = null, youTubeFallbackUrl = null))
+            return
+        }
         val errorSelectionNonce = _uiState.value.streamSelectionNonce
         val errorSelectedUrl = _uiState.value.selectedStreamUrl
         playbackErrorReportJob = viewModelScope.launch {

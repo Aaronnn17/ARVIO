@@ -8,6 +8,35 @@ import org.junit.Test
 
 class YouTubeCollectionTest {
     @Test
+    fun `kids additions require the correct parent PIN and adults do not`() {
+        val profile = com.arflix.tv.data.model.Profile(name = "Child", isKidsProfile = true,
+            parentPin = com.arflix.tv.util.PinUtil.hashPin("1234"))
+        assertFalse(YouTubeCollection.canAddToProfile(profile, null))
+        assertFalse(YouTubeCollection.canAddToProfile(profile, "4321"))
+        assertFalse(YouTubeCollection.canAddToProfile(profile.copy(parentPin = null), "1234"))
+        assertTrue(YouTubeCollection.canAddToProfile(profile, "1234"))
+        assertTrue(YouTubeCollection.canAddToProfile(profile.copy(isKidsProfile = false), null))
+    }
+
+    @Test
+    fun `encoding never silently removes an existing video above the addition limit`() {
+        val videos = (0..YouTubeCollection.MAX_VIDEOS).map { YouTubeCollection.Video(it.toString().padStart(11, '0'), "Video $it") }
+        assertEquals(videos, YouTubeCollection.decode(YouTubeCollection.encode(videos)))
+    }
+
+    @Test
+    fun `resolved streams retain split audio even without a muxed fallback`() {
+        val source = com.arflix.tv.data.api.TrailerPlaybackSource("https://video.test/v", "https://video.test/a")
+        val resolved = YouTubeCollection.resolve(YouTubeCollection.stream("abcDEF12_-x"), source)
+        assertEquals(source.videoUrl, resolved.url)
+        assertEquals(source.audioUrl, resolved.youTubeAudioUrl)
+        assertNull(resolved.youTubeFallbackUrl)
+        val muxed = YouTubeCollection.resolve(resolved, source.copy(audioUrl = null, fallbackVideoUrl = "https://video.test/fallback"))
+        assertNull(muxed.youTubeAudioUrl)
+        assertEquals("https://video.test/fallback", muxed.youTubeFallbackUrl)
+    }
+
+    @Test
     fun `video id is read from share, watch, shorts and embed links`() {
         assertEquals("abcDEF12_-x", YouTubeCollection.videoIdFromUrl("https://youtu.be/abcDEF12_-x?si=tracking"))
         assertEquals("abcDEF12_-x", YouTubeCollection.videoIdFromUrl("https://www.youtube.com/watch?v=abcDEF12_-x&t=30"))

@@ -73,6 +73,8 @@ function cardFor(id: number, video: Video): MediaItem {
     id,
     title: video.title,
     mediaType: "movie",
+    addonNativeId: META_ID_PREFIX + video.id,
+    addonNativeAddonId: ADDON_ID,
     image: `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`,
     backdrop: `https://i.ytimg.com/vi/${video.id}/maxresdefault.jpg`,
     overview: ""
@@ -93,8 +95,14 @@ export function youTubeCatalogItems(catalog: CatalogConfig): MediaItem[] {
   });
 }
 
-export function isYouTubeItem(item: { id: number }) {
-  return item.id < 0 && entries().has(item.id);
+export function isYouTubeItem(item: { id: number; addonNativeId?: string | null; addonNativeAddonId?: string | null }) {
+  if (item.id >= 0) return false;
+  if (entries().has(item.id)) return true;
+  const videoId = item.addonNativeId?.startsWith(META_ID_PREFIX) ? item.addonNativeId.slice(META_ID_PREFIX.length) : "";
+  if (item.addonNativeAddonId !== ADDON_ID || !VIDEO_ID.test(videoId) || youTubeItemId(videoId) !== item.id) return false;
+  entries().set(item.id, { id: videoId, title: videoId });
+  persistSoon();
+  return true;
 }
 
 /** The video's card; YouTube videos have no other metadata to fetch. */
