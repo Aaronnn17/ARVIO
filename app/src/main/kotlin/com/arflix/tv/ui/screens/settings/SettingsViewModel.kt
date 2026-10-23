@@ -38,6 +38,7 @@ import com.arflix.tv.data.model.StreamIntegrationConfig
 import com.arflix.tv.data.model.StreamIntegrationType
 import com.arflix.tv.data.model.StreamProviderItem
 import com.arflix.tv.data.repository.AuthRepository
+import com.arflix.tv.data.repository.YouTubeCollection
 import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.data.repository.CatalogDiscoveryRepository
 import com.arflix.tv.data.repository.CatalogRepository
@@ -2876,6 +2877,11 @@ class SettingsViewModel @Inject constructor(
             requestAddonInstall(url, fromLink = false)
             return
         }
+        // A YouTube video link goes into the profile's own YouTube row.
+        if (YouTubeCollection.videoIdFromUrl(url) != null) {
+            addYouTubeVideo(url)
+            return
+        }
         viewModelScope.launch {
             val result = catalogRepository.addCustomCatalog(url)
             result.onSuccess { catalog ->
@@ -2892,6 +2898,50 @@ class SettingsViewModel @Inject constructor(
                     toastMessage = error.orCatalogMessage(
                         SettingsMessage.Res(R.string.catalog_failed_add)
                     ),
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun addYouTubeVideo(url: String) {
+        viewModelScope.launch {
+            catalogRepository.addYouTubeVideo(url).onSuccess { (_, title) ->
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = SettingsMessage.Res(R.string.settings_catalog_added, listOf(title)),
+                    toastType = ToastType.SUCCESS
+                )
+                syncLocalStateToCloud(silent = true)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = error.orCatalogMessage(
+                        SettingsMessage.Res(R.string.catalog_failed_add)
+                    ),
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    internal fun moveYouTubeVideo(catalogId: String, video: YouTubeCollection.Video, delta: Int) {
+        viewModelScope.launch {
+            catalogRepository.moveYouTubeVideo(catalogId, video.id, delta).onSuccess {
+                syncLocalStateToCloud(silent = true)
+            }
+        }
+    }
+
+    internal fun removeYouTubeVideo(catalogId: String, video: YouTubeCollection.Video) {
+        viewModelScope.launch {
+            catalogRepository.removeYouTubeVideo(catalogId, video.id).onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = SettingsMessage.Res(R.string.youtube_video_removed, listOf(video.title)),
+                    toastType = ToastType.SUCCESS
+                )
+                syncLocalStateToCloud(silent = true)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = error.orCatalogMessage(SettingsMessage.Res(R.string.catalog_not_found)),
                     toastType = ToastType.ERROR
                 )
             }
