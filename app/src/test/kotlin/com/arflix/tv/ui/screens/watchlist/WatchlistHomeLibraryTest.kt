@@ -74,7 +74,8 @@ class WatchlistHomeLibraryTest {
         val remote = mockk<RemoteSyncManager>(relaxed = true)
         coEvery { remote.isRemoteConnected(any()) } returns false
         model = WatchlistViewModel(mockk<Context>(relaxed = true), watchlist, cloud, trakt,
-            remote, media, homes, catalogs, history, simkl, mockk(relaxed = true), profiles, mockk(relaxed = true))
+            remote, media, homes, catalogs, history, simkl, mockk(relaxed = true), profiles,
+            personalLists(), mockk(relaxed = true))
         store.put("library", model)
     }
 
@@ -272,5 +273,11 @@ class WatchlistHomeLibraryTest {
         assertFalse(model.logoUrls.value.containsKey(watchlistLogoKey(item)))
         model.prefetchLogos(listOf(item))
         assertTrue(model.logoUrls.value.containsKey(watchlistLogoKey(item)))
+    }
+
+    // A relaxed mock's `changes` flow completes at once, which the ViewModel's never-ending
+    // collector reports as an uncaught exception; a real (empty) flow behaves like production.
+    private fun personalLists() = mockk<com.arflix.tv.data.repository.PersonalListsRepository>(relaxed = true) {
+        every { changes } returns kotlinx.coroutines.flow.MutableSharedFlow()
     }
 }

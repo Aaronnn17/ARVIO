@@ -3458,6 +3458,39 @@ class TraktRepository @Inject constructor(
         }
     }
 
+    /** Adds a title to, or removes it from, one of the user's own lists; true only when Trakt applied it. */
+    suspend fun modifyPersonalList(
+        listId: String,
+        mediaType: MediaType,
+        tmdbId: Int,
+        add: Boolean
+    ): Boolean {
+        val auth = getAuthHeader() ?: return false
+        val ids = TraktIds(tmdb = tmdbId)
+        val body = if (mediaType == MediaType.MOVIE) {
+            TraktWatchlistBody(movies = listOf(TraktMovieId(ids)))
+        } else {
+            TraktWatchlistBody(shows = listOf(TraktShowId(ids)))
+        }
+        return try {
+            val response = if (add) {
+                traktApi.addToMyList(auth = auth, clientId = clientId, listId = listId, body = body)
+            } else {
+                traktApi.removeFromMyList(auth = auth, clientId = clientId, listId = listId, body = body)
+            }
+            listChangeAccepted(response, mediaType, add).also { accepted ->
+                if (!accepted) {
+                    AppLogger.w("TraktRepository", "Personal list ${if (add) "add" else "remove"} not applied: $response")
+                }
+            }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            AppLogger.e("TraktRepository", "Personal list ${if (add) "add" else "remove"} failed: ${error.message}")
+            false
+        }
+    }
+
     suspend fun getPersonalListItems(listId: String): List<MediaItem> {
         val auth = getAuthHeader() ?: return emptyList()
 

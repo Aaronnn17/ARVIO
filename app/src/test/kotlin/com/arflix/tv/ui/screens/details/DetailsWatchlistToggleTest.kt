@@ -112,7 +112,7 @@ class DetailsWatchlistToggleTest {
             launcherContinueWatchingRepository = mockk(relaxed = true),
             streamIntegrationRepository = integrations,
             recentPlayedSourceRepository = mockk(relaxed = true),
-
+            personalListsRepository = mockk(relaxed = true),
             kidsContentFilter = mockk(relaxed = true)
         )
         store.put("details", model)

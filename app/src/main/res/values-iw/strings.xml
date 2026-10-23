@@ -299,6 +299,12 @@
     <string name="addon_failed_add">הוספת התוסף נכשלה</string>
     <string name="catalog_tmdb_title">קטלוג TMDB</string>
     <string name="catalog_url_tmdb_hint">השתמש בכתובת של דף TMDB מסוג list, collection, company, network, person, keyword או genre</string>
+    <string name="list_add_to">הוסף לרשימה</string>
+    <string name="list_picker_loading">טוען את הרשימות שלך…</string>
+    <string name="list_picker_empty">אין רשימות בשירותים המחוברים</string>
+    <string name="list_added_to">נוסף ל%1$s</string>
+    <string name="list_removed_from">הוסר מ%1$s</string>
+    <string name="list_update_failed">לא ניתן לעדכן את %1$s</string>
     <string name="profile_kids">פרופיל ילדים</string>
     <string name="profile_kids_on">מופעל</string>
     <string name="profile_kids_off">כבוי</string>

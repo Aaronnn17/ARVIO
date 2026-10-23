@@ -78,6 +78,7 @@ import com.arflix.tv.util.settingsDataStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
@@ -190,6 +191,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.key.onKeyEvent
+import com.arflix.tv.ui.components.ListPickerMenu
 import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
@@ -261,9 +263,16 @@ fun DetailsScreen(
     val isRtlLayoutDirection = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     val rawUiState by viewModel.uiState.collectAsStateWithLifecycle()
     val kidsFilterState by viewModel.kidsFilterState.collectAsStateWithLifecycle()
+    val listPicker by viewModel.listPicker.collectAsStateWithLifecycle()
     // A kids profile sees the rows age-filtered; any other profile gets the state unchanged.
     val uiState = remember(rawUiState, kidsFilterState) {
         viewModel.applyKidsFilter(rawUiState, kidsFilterState)
+    }
+    // "Add to list" sits at the end of the action row, after "View Collection" when present,
+    // so the D-pad button indices stay contiguous; -1 hides it (no Trakt/MDBList connected).
+    var hasPersonalLists by remember(mediaType, mediaId) { mutableStateOf(false) }
+    LaunchedEffect(mediaType, mediaId) {
+        hasPersonalLists = mediaId > 0 && viewModel.hasPersonalLists()
     }
     val usePosterCards = rememberCatalogueRowLayoutMode("details:similar") == CardLayoutMode.POSTER
     val context = LocalContext.current
@@ -466,6 +475,14 @@ fun DetailsScreen(
         }
     }
 
+    val hasCollectionButton = uiState.collectionId != null
+    val listButtonIndex = when {
+        !hasPersonalLists -> -1
+        hasCollectionButton -> 6
+        else -> 5
+    }
+    val maxActionButtonIndex = 4 + (if (hasCollectionButton) 1 else 0) + (if (hasPersonalLists) 1 else 0)
+    val currentListButtonIndex = rememberUpdatedState(listButtonIndex)
     val currentUiState = rememberUpdatedState(uiState)
     val currentEpisodeIndex = rememberUpdatedState(episodeIndex)
     val currentSelectedEpisodeIdentity = rememberUpdatedState(selectedEpisodeIdentity)
@@ -477,7 +494,7 @@ fun DetailsScreen(
             val selectedEp = state.episodes.firstOrNull {
                 it.identity == currentSelectedEpisodeIdentity.value
             }
-            when (idx) {
+            if (idx == currentListButtonIndex.value) viewModel.openListPicker() else when (idx) {
                 0 -> { // Play
                     val season = if (mediaType == MediaType.TV) {
                         selectedEp?.seasonNumber
@@ -635,7 +652,7 @@ fun DetailsScreen(
                     return@onPreviewKeyEvent true
                 }
                 // Check if any modal is showing — let the modal handle all keys exclusively
-                if (showStreamSelector || showEpisodeContextMenu || showSeasonContextMenu || uiState.showPersonModal || showTrailerPlayer) {
+                if (showStreamSelector || showEpisodeContextMenu || showSeasonContextMenu || uiState.showPersonModal || showTrailerPlayer || listPicker != null) {
                     return@onPreviewKeyEvent false
                 }
                 if (event.type == KeyEventType.KeyUp && isArvioDpadNavigationKey(event.key)) {
@@ -718,7 +735,7 @@ fun DetailsScreen(
                             } else {
                                 handleRight(
                                     focusedSection, buttonIndex, episodeIndex, ratingsIndex, seasonIndex, castIndex, reviewIndex, similarIndex, collectionIndex,
-                                    if (uiState.collectionId != null) 5 else 4,
+                                    maxActionButtonIndex,
                                     uiState.episodes.size,
                                     (uiState.episodes.size + 11) / 12,
                                     uiState.totalSeasons,
@@ -750,7 +767,7 @@ fun DetailsScreen(
                                     reviewCount = uiState.reviews.size,
                                     similarCount = uiState.similar.size,
                                     collectionCount = uiState.collectionItems.size,
-                                    maxButtonIndex = if (uiState.collectionId != null) 5 else 4,
+                                    maxButtonIndex = maxActionButtonIndex,
                                     isTv = isTV,
                                     hasRatingsSection = isTV && hasEpisodes && uiState.showEpisodeRatings && hasAnyValidRating
                                 )
@@ -780,7 +797,7 @@ fun DetailsScreen(
                                     reviewCount = uiState.reviews.size,
                                     similarCount = uiState.similar.size,
                                     collectionCount = uiState.collectionItems.size,
-                                    maxButtonIndex = if (uiState.collectionId != null) 5 else 4,
+                                    maxButtonIndex = maxActionButtonIndex,
                                     isTv = isTV,
                                     hasRatingsSection = isTV && hasEpisodes && uiState.showEpisodeRatings && hasAnyValidRating
                                 )
@@ -935,6 +952,7 @@ fun DetailsScreen(
                         collectionItems = uiState.collectionItems,
                         collectionName = uiState.collectionName,
                         hasCollectionAction = uiState.collectionId != null,
+                        listButtonIndex = listButtonIndex,
                         collectionIndex = collectionIndex,
                         focusedSection = focusedSection,
                         buttonIndex = buttonIndex,
@@ -1124,19 +1142,35 @@ fun DetailsScreen(
             }
         )
 
-        // Toast notifications
-        uiState.toastMessage?.let { message ->
-            Toast(
-                message = message,
-                type = when (uiState.toastType) {
-                    com.arflix.tv.ui.screens.details.ToastType.SUCCESS -> com.arflix.tv.ui.components.ToastType.SUCCESS
-                    com.arflix.tv.ui.screens.details.ToastType.ERROR -> com.arflix.tv.ui.components.ToastType.ERROR
-                    com.arflix.tv.ui.screens.details.ToastType.INFO -> com.arflix.tv.ui.components.ToastType.INFO
-                },
-                isVisible = true,
-                durationMs = if (uiState.toastType == com.arflix.tv.ui.screens.details.ToastType.ERROR) 8000 else 4000,
-                onDismiss = { viewModel.dismissToast() }
+        listPicker?.let { picker ->
+            ListPickerMenu(
+                title = picker.item.title,
+                isLoading = picker.isLoading,
+                choices = picker.choices,
+                busyKeys = picker.busyKeys,
+                onToggle = viewModel::toggleListMembership,
+                onDismiss = {
+                    viewModel.closeListPicker()
+                    runCatching { focusRequester.requestFocus() }
+                }
             )
+        }
+
+        // Toast notifications, above the list picker whose results they report
+        uiState.toastMessage?.let { message ->
+            Box(modifier = Modifier.fillMaxSize().zIndex(70f)) {
+                Toast(
+                    message = message,
+                    type = when (uiState.toastType) {
+                        com.arflix.tv.ui.screens.details.ToastType.SUCCESS -> com.arflix.tv.ui.components.ToastType.SUCCESS
+                        com.arflix.tv.ui.screens.details.ToastType.ERROR -> com.arflix.tv.ui.components.ToastType.ERROR
+                        com.arflix.tv.ui.screens.details.ToastType.INFO -> com.arflix.tv.ui.components.ToastType.INFO
+                    },
+                    isVisible = true,
+                    durationMs = if (uiState.toastType == com.arflix.tv.ui.screens.details.ToastType.ERROR) 8000 else 4000,
+                    onDismiss = { viewModel.dismissToast() }
+                )
+            }
         }
     }
 }
@@ -1160,6 +1194,7 @@ private fun DetailsContent(
     collectionItems: List<MediaItem> = emptyList(),
     collectionName: String? = null,
     hasCollectionAction: Boolean = collectionItems.isNotEmpty(),
+    listButtonIndex: Int = -1,
     collectionIndex: Int = 0,
     focusedSection: FocusSection,
     buttonIndex: Int,
@@ -1584,6 +1619,16 @@ private fun DetailsContent(
                                 .height(54.dp),
                             onClick = { onButtonClick(4) }
                         )
+                        if (listButtonIndex >= 0) {
+                            MobileIconActionButton(
+                                icon = Icons.AutoMirrored.Filled.PlaylistAdd,
+                                contentDescription = stringResource(R.string.list_add_to),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(54.dp),
+                                onClick = { onButtonClick(listButtonIndex) }
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(18.dp))
@@ -2361,6 +2406,17 @@ private fun DetailsContent(
                                 icon = Icons.Default.Star,
                                 text = stringResource(R.string.view_collection),
                                 isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == 5,
+                                isIconOnly = true
+                            )
+                        }
+                    }
+
+                    if (listButtonIndex >= 0) {
+                        Box(modifier = Modifier.clickable { onButtonClick(listButtonIndex) }) {
+                            PremiumActionButton(
+                                icon = Icons.AutoMirrored.Filled.PlaylistAdd,
+                                text = stringResource(R.string.list_add_to),
+                                isFocused = focusSectionForUi == FocusSection.BUTTONS && buttonIndex == listButtonIndex,
                                 isIconOnly = true
                             )
                         }
