@@ -1688,11 +1688,12 @@ export async function saveProgress(auth: AuthClient, entry: Omit<WatchHistoryEnt
     });
     return;
   }
+  const { addon_native_id: _nativeId, addon_native_addon_id: _nativeAddonId, ...databaseEntry } = entry;
   await auth.supabase("/rest/v1/watch_history", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
     body: JSON.stringify({
-      ...entry,
+      ...databaseEntry,
       user_id: auth.session.userId,
       profile_id: entry.profile_id ?? profileId ?? null,
       paused_at: new Date().toISOString(),

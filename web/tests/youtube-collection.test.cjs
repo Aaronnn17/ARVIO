@@ -97,3 +97,20 @@ test('YouTube progress round trips through account sync with native identity and
   await cloud.saveProgress(auth, { ...history, position_seconds: 100, progress: 1 }, 'child');
   assert.deepEqual(plain(await cloud.getContinueWatching(auth, 'child')), []);
 });
+
+test('legacy progress storage does not send unsupported native identity columns', async () => {
+  const cloud = load('lib/cloud.ts', {
+    './storage': storage(), './config': { config: {}, hasNetlifyBackendUrl: () => false },
+    './homeserver': {}, './iptv': {}, './mediaImages': {}, './http': {}
+  });
+  let saved;
+  const auth = { session: { userId: 'legacy' }, supabase: async (_url, request) => { saved = JSON.parse(request.body); } };
+  await cloud.saveProgress(auth, {
+    media_type: 'movie', show_tmdb_id: 123, title: 'Legacy movie', progress: .42,
+    position_seconds: 42, duration_seconds: 100, addon_native_id: null, addon_native_addon_id: null
+  }, 'profile');
+  assert.equal(saved.position_seconds, 42);
+  assert.equal(saved.profile_id, 'profile');
+  assert.equal('addon_native_id' in saved, false);
+  assert.equal('addon_native_addon_id' in saved, false);
+});
