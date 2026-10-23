@@ -1,5 +1,25 @@
 # Premium access and measurement
 
+## Current access policy — October 23, 2026
+
+Hosted Web is permanently paid-only, not a timed or randomized trial test.
+Public visitors see a static feature preview before explicit Cloud sign-in.
+Both profile selection and the media application require an active paid
+entitlement. New trial requests are rejected server-side; historical trial
+records and client caches cannot authorize access. Queued trial service emails
+are suppressed, not sent. Android, Cloud accounts and independent self-hosting
+remain free; the Ko-fi membership stays $2.99/month.
+
+`paid_only_v1` identifies authenticated feature-preview diagnostics, with
+`feature_preview` as the checkout entry. Other payment placements retain
+`direct_v2`. Anonymous previews are not authenticated account exposures. Trial
+cohorts below are historical only. Compare complete windows and verified new
+payments/renewals; a before/after comparison is not a randomized causal test.
+No automatic one-week rollback or new review automation is configured.
+
+See `docs/paid-only-web-2026-10-23.md` for release verification. Earlier changes
+and trial measurement definitions below are retained as historical context.
+
 The September 2026 release fixes billing-email requests encoded by Netlify,
 requires ownership verification before linking a different billing email,
 rechecks access on expiry and when returning from checkout, and offers a manual

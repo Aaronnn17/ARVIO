@@ -330,6 +330,25 @@ test('checkout recovery requires an observed click then return then check, not u
   assert.equal(after.checkedStatusAfterReturn, 1);
 });
 
+test('paid-only preview tracking retains bounded labels without treating a CTA or status as a payment', async () => {
+  assert.deepEqual(funnel._test.sanitizeMetadata({ flow_version: 'paid_only_v1', entry: 'feature_preview' }), { flow_version: 'paid_only_v1', entry: 'feature_preview' });
+  for (const flow_version of ['paid_only_v2', '__proto__', 'buyer@example.test', {}, 1]) assert.deepEqual(funnel._test.sanitizeMetadata({ flow_version }), {});
+  const store = memoryStore();
+  const module = fixtureModule('_premium-funnel', { '@netlify/blobs': { connectLambda() {}, getStore: () => store }, './_backend': { privacyHash: (_purpose, value) => value }, './_premium-measurement': measurement });
+  const body = { email: 'fixture@example.test', occurredAt: '2026-10-23T10:00:00Z', metadata: { flow_version: 'paid_only_v1', entry: 'feature_preview' } };
+  for (const eventName of ['paywall_view', 'membership_cta_viewed', 'checkout_opened']) await module.recordPremiumEvent({}, { ...body, eventName });
+  await module.recordPremiumEvent({}, { ...body, eventName: 'payment_status_checked', metadata: { ...body.metadata, status: 'active' } });
+  const records = [...store.data.values()];
+  assert.ok(records.every(record => record.metadata.flow_version === 'paid_only_v1'));
+  const report = measurement.summarizeMeasurements(records, []);
+  assert.equal(report.checkoutDiagnostics.byEntry.feature_preview.ctaViewed, 1);
+  assert.equal(report.checkoutDiagnostics.byEntry.feature_preview.membershipLinkOpened, 1);
+  assert.equal(report.checkoutDiagnostics.byFlowVersion.paid_only_v1.statusChecked, 1);
+  assert.equal(report.checkoutDiagnostics.byFlowVersion.unversioned, undefined);
+  assert.equal(report.checkoutDiagnostics.browserReportedStatusResults.active, 1);
+  assert.equal(report.paymentActivation.confirmedNewMemberships, 0);
+});
+
 test('a post-payment journey connection cannot retroactively attribute a sale', () => {
   const records = [
     { accountKey: 'buyer', eventName: 'subscription_started', firstAt: '2026-10-19T11:00:00Z' },

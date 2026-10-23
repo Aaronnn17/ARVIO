@@ -2,16 +2,26 @@
 // auth client, browser profile and real customer accounts are never used.
 import { useSyncExternalStore } from 'react';
 const listeners = new Set<() => void>();
+type FixtureSession = { userId: string; email: string; accessToken: string; provider: string };
+const scenario = new URLSearchParams(location.search).get('case');
+let view = scenario === 'preview-signedout' ? 'login' : 'profiles';
 export const authClient = {
-  session: { userId: 'premium-fixture', email: 'tester@example.test', accessToken: 'fixture', provider: 'netlify' },
+  session: (scenario === 'preview-signedout' ? null : { userId: 'premium-fixture', email: 'tester@example.test', accessToken: 'fixture', provider: 'netlify' }) as FixtureSession | null,
   accessToken: async () => 'fixture',
   refresh: async () => undefined
 };
-export function setFixtureAccount(userId: string) {
-  authClient.session = { ...authClient.session, userId, email: `${userId}@example.test` };
+export function setFixtureAccount(userId: string | null) {
+  authClient.session = userId ? { userId, email: `${userId}@example.test`, accessToken: 'fixture', provider: 'netlify' } : null;
   for (const listener of listeners) listener();
 }
+export function setFixtureView(next: string) { view = next; for (const listener of listeners) listener(); }
 export const useApp = () => {
   const auth = useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => authClient.session);
-  return { auth, addons: [], addonsReady: true, settings: { homeServers: [], iptvPlaylists: [] }, setSection: () => {}, signOut: () => { location.href = '/?case=signedout'; }, goToLogin: () => { location.href = '/?case=login'; } };
+  const currentView = useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => view);
+  return { auth, view: currentView, section: 'home', selected: null, activeStream: null, activeChannel: null, addons: [], addonsReady: true,
+    settings: { homeServers: [], iptvPlaylists: [], smoothScrolling: false, oledBlack: true, spoilerBlur: false, accentColor: 'arctic' },
+    setSection: () => {}, signOut: () => setFixtureAccount(null), goToLogin: () => {
+      const windowFixture = window as unknown as { __authNavigateCount?: number };
+      windowFixture.__authNavigateCount = (windowFixture.__authNavigateCount || 0) + 1;
+    }, backToProfiles: () => setFixtureView('profiles'), cloudLoginRequired: true };
 };

@@ -1,6 +1,6 @@
 const { connectLambda, getStore } = require("@netlify/blobs");
 const { privacyHash } = require("./_backend");
-const { journeyKey, summarizeMeasurements, FAILURE_KINDS, TRANSPORTS, PHASES } = require("./_premium-measurement");
+const { journeyKey, summarizeMeasurements, FAILURE_KINDS, TRANSPORTS, PHASES, CHECKOUT_FLOW_VERSIONS } = require("./_premium-measurement");
 
 const PREMIUM_EVENTS = new Set([
   "journey_connected", "web_opened", "sources_configured", "sources_missing",
@@ -58,7 +58,7 @@ function sanitizeMetadata(metadata) {
     if (key === "failure_kind" && !FAILURE_KINDS.has(value)) continue;
     if (key === "transport" && !TRANSPORTS.has(value)) continue;
     if (key === "phase" && !PHASES.has(value)) continue;
-    if (key === "flow_version" && value !== "direct_v2") continue;
+    if (key === "flow_version" && !CHECKOUT_FLOW_VERSIONS.has(value)) continue;
     if (!/^[a-z][a-z0-9_]{0,31}$/i.test(key)) continue;
     if (typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) {
       result[key] = value;
