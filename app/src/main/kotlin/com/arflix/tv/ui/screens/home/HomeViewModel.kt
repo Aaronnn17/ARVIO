@@ -28,6 +28,8 @@ import com.arflix.tv.data.model.SportsAddonCapabilities
 import com.arflix.tv.R
 import com.arflix.tv.data.repository.KidsContentFilter
 import com.arflix.tv.data.repository.MediaRepository
+import com.arflix.tv.data.repository.PersonalListsRepository
+import com.arflix.tv.ui.components.PersonalListPicker
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.network.TmdbPriorityDispatcher
 import com.arflix.tv.network.withIptvProviderRequestGuard
@@ -393,9 +395,24 @@ class HomeViewModel @Inject constructor(
     private val updatePreferences: com.arflix.tv.updater.UpdatePreferences,
     private val updateStatusManager: com.arflix.tv.updater.UpdateStatusManager,
     private val youTubeExtractor: com.arflix.tv.data.api.InAppYouTubeExtractor,
+    private val personalListsRepository: PersonalListsRepository,
     private val kidsContentFilter: KidsContentFilter,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
+    /** "Add to list" from the context menu; the result shows as a Home toast. */
+    private val personalListPicker = PersonalListPicker(viewModelScope, personalListsRepository, context) { message, ok ->
+        _uiState.value = _uiState.value.copy(
+            toastMessage = message,
+            toastType = if (ok) ToastType.SUCCESS else ToastType.ERROR
+        )
+    }
+    val listPicker: StateFlow<PersonalListPicker.State?> = personalListPicker.state
+
+    suspend fun hasPersonalLists(): Boolean = personalListPicker.isAvailable()
+    fun openListPicker(item: MediaItem) = personalListPicker.open(item)
+    fun toggleListMembership(choice: PersonalListsRepository.Choice) = personalListPicker.toggle(choice)
+    fun closeListPicker() = personalListPicker.close()
+
     val kidsFilterState: StateFlow<KidsContentFilter.State> = kidsContentFilter.state
 
     /**
@@ -1644,6 +1661,7 @@ class HomeViewModel @Inject constructor(
     private var startupCatalogWarmupJob: Job? = null
     private var customCatalogsJob: Job? = null
     private var loadHomeJob: Job? = null
+    private val listRowsReloadJobs = ConcurrentHashMap<PersonalListsRepository.Provider, Job>()
     private var refreshContinueWatchingJob: Job? = null
     private val continueWatchingRequests = ContinueWatchingRefreshRequests()
     private var cwFetchJob: Job? = null
@@ -1729,6 +1747,63 @@ class HomeViewModel @Inject constructor(
     private var currentSavedCatalogs: List<CatalogConfig> = emptyList()
     private val savedCatalogById = ConcurrentHashMap<String, CatalogConfig>()
     private val categoryPaginationStates = ConcurrentHashMap<String, CategoryPaginationState>()
+
+    init {
+        // A list edited through "Add to list" is shown fresh at once, not after the next reload.
+        viewModelScope.launch {
+            personalListsRepository.changes.collect { list -> reloadRowsFor(list.provider) }
+        }
+    }
+
+    /**
+     * Reloads every Home row that comes from [provider]'s lists, in place. A row cannot be
+     * tied to one list id reliably (rows keep the list's URL, the picker its numeric id), and a
+     * user has few such rows, so all of that service's rows are reloaded.
+     */
+    private fun reloadRowsFor(provider: PersonalListsRepository.Provider) {
+        val sourceType = when (provider) {
+            PersonalListsRepository.Provider.TRAKT -> CatalogSourceType.TRAKT
+            PersonalListsRepository.Provider.MDBLIST -> CatalogSourceType.MDBLIST
+        }
+        // The rows belong to the profile and Home load they started on. A profile switch or a
+        // new Home load while they are fetched makes them stale: they are dropped, not merged
+        // into the next profile's Home (or over a newer load's rows and paging).
+        val profileId = profileManager.getProfileIdSync()
+        val requestId = loadHomeRequestId
+        fun isCurrent() = profileManager.getProfileIdSync() == profileId && loadHomeRequestId == requestId
+        listRowsReloadJobs.remove(provider)?.cancel()
+        listRowsReloadJobs[provider] = viewModelScope.launch(networkDispatcher) {
+            val catalogs = runCatching { catalogRepository.getCatalogs() }.getOrDefault(emptyList())
+                .filter { it.sourceType == sourceType }
+            for (catalog in catalogs) {
+                if (!isCurrent()) return@launch
+                val page = runCatching {
+                    mediaRepository.loadCustomCatalogPage(catalog, offset = 0, limit = catalogInitialLimit(catalog))
+                }.getOrNull() ?: continue
+                withContext(Dispatchers.Main.immediate) {
+                    if (!isCurrent()) return@withContext
+                    categoryPaginationStates[catalog.id] = CategoryPaginationState(
+                        loadedCount = page.items.size,
+                        hasMore = page.hasMore,
+                        nextOffset = page.nextOffset ?: page.items.size
+                    )
+                    val state = _uiState.value
+                    val index = state.categories.indexOfFirst { it.id == catalog.id }
+                    val categories = state.categories.toMutableList()
+                    when {
+                        index >= 0 && page.items.isEmpty() -> categories.removeAt(index)
+                        index >= 0 -> categories[index] = categories[index].copy(items = page.items)
+                        page.items.isNotEmpty() -> categories.add(Category(catalog.id, catalog.title, page.items))
+                        else -> return@withContext
+                    }
+                    _uiState.value = state.copy(
+                        categories = categories,
+                        categoryHasMoreMap = categoryPaginationStates.mapValues { it.value.hasMore }
+                    )
+                }
+            }
+        }
+    }
     private val preloadedRequests: MutableSet<String> = run {
         val backingMap = object : java.util.LinkedHashMap<String, Boolean>(1200, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>): Boolean {
@@ -1844,6 +1919,8 @@ class HomeViewModel @Inject constructor(
         preloadCategoryJobs.clear()
         startupCatalogWarmupJob?.cancel()
         customCatalogsJob?.cancel()
+        listRowsReloadJobs.values.forEach { it.cancel() }
+        listRowsReloadJobs.clear()
         activeEpgRefreshJob?.cancel()
         lastFavoriteTvFocusRefreshMs = 0L
         lastContinueWatchingItems = emptyList()

@@ -164,6 +164,7 @@ import com.arflix.tv.ui.components.resolveMobileHeroLayout
 import com.arflix.tv.ui.components.ProfileAvatarVisual
 import com.arflix.tv.util.LocalDeviceType
 import com.arflix.tv.util.TmdbImageSizing
+import com.arflix.tv.ui.components.ListPickerMenu
 import com.arflix.tv.ui.components.MediaContextMenu
 import com.arflix.tv.ui.components.rememberCardLayoutMode
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
@@ -1034,6 +1035,10 @@ fun HomeScreen(
     var contextMenuItem by remember { mutableStateOf<MediaItem?>(null) }
     var contextMenuIsContinueWatching by remember { mutableStateOf(false) }
     var contextMenuIsInWatchlist by remember { mutableStateOf(false) }
+    var contextMenuHasLists by remember { mutableStateOf(false) }
+    val listPicker by viewModel.listPicker.collectAsStateWithLifecycle()
+    // The list picker opens from the context menu and blocks Home the same way.
+    val homeOverlayOpen = showContextMenu || listPicker != null
 
     val focusedCategory = displayCategories.getOrNull(focusState.currentRowIndex)
     val focusedHomeItem = focusedCategory?.items?.getOrNull(focusState.currentItemIndex)
@@ -1043,7 +1048,7 @@ fun HomeScreen(
         !viewModel.isIptvItem(focusedHomeItem) && !viewModel.isCollectionItem(focusedHomeItem) &&
         !viewModel.isSportsHomeItem(focusedHomeItem)
     val focusedHomeTrailerKey = uiState.heroTrailerKey.takeIf {
-        !isMobile && uiState.trailerAutoPlay && !showContextMenu && !focusState.isSidebarFocused &&
+        !isMobile && uiState.trailerAutoPlay && !homeOverlayOpen && !focusState.isSidebarFocused &&
             !focusState.isHeroFocused &&
             focusedCategory?.id != "continue_watching" && focusedHomeItem != null &&
             uiState.heroItem.isSameHomeHero(focusedHomeItem) && displayHeroItem.isSameHomeHero(focusedHomeItem) &&
@@ -1053,7 +1058,7 @@ fun HomeScreen(
 
     val billboardTrailerKey = uiState.heroTrailerKey.takeIf {
         // Only while the billboard itself has focus: the top bar above it stops the trailer.
-        netflixHome && uiState.trailerAutoPlay && !showContextMenu && focusState.isHeroFocused &&
+        netflixHome && uiState.trailerAutoPlay && !homeOverlayOpen && focusState.isHeroFocused &&
             !focusState.isSidebarFocused && billboardItem != null && uiState.heroItem.isSameHomeHero(billboardItem)
     }
 
@@ -1184,6 +1189,12 @@ fun HomeScreen(
         } else {
             contextMenuIsInWatchlist = false
         }
+    }
+    LaunchedEffect(showContextMenu, contextMenuItem) {
+        val item = contextMenuItem
+        contextMenuHasLists = showContextMenu && item != null && item.id > 0 &&
+            !viewModel.isSportsHomeItem(item) && !viewModel.isIptvItem(item) &&
+            !viewModel.isCollectionItem(item) && viewModel.hasPersonalLists()
     }
 
     // ── IPTV + service-collection hero player state ──
@@ -1517,7 +1528,7 @@ fun HomeScreen(
             contentStartPadding = contentStartPadding,
             fastScrollThresholdMs = fastScrollThresholdMs,
             usePosterCards = usePosterCards,
-            isContextMenuOpen = showContextMenu,
+            isContextMenuOpen = homeOverlayOpen,
             trailerIsPlaying = isTrailerPlaying,
             onTrailerStop = { trailerSuppressed = true },
             isMobile = isMobile,
@@ -1704,6 +1715,9 @@ fun HomeScreen(
                     onRemoveFromContinueWatching = if (contextMenuIsContinueWatching) {
                         { viewModel.removeFromContinueWatching(item) }
                     } else null,
+                    onAddToList = if (contextMenuHasLists) {
+                        { viewModel.openListPicker(item) }
+                    } else null,
                     onDismiss = {
                         showContextMenu = false
                         contextMenuItem = null
@@ -1714,18 +1728,39 @@ fun HomeScreen(
         }
 
 
+        listPicker?.let { picker ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(121f)
+            ) {
+                ListPickerMenu(
+                    title = picker.item.title,
+                    isLoading = picker.isLoading,
+                    choices = picker.choices,
+                    busyKeys = picker.busyKeys,
+                    onToggle = viewModel::toggleListMembership,
+                    onDismiss = viewModel::closeListPicker
+                )
+            }
+        }
+
+
         // Toast notification
         uiState.toastMessage?.let { message ->
-            Toast(
-                message = message,
-                type = when (uiState.toastType) {
-                    ToastType.SUCCESS -> ComponentToastType.SUCCESS
-                    ToastType.ERROR -> ComponentToastType.ERROR
-                    ToastType.INFO -> ComponentToastType.INFO
-                },
-                isVisible = true,
-                onDismiss = { viewModel.dismissToast() }
-            )
+            // Above the context menu and list picker, whose results it reports.
+            Box(modifier = Modifier.fillMaxSize().zIndex(122f)) {
+                Toast(
+                    message = message,
+                    type = when (uiState.toastType) {
+                        ToastType.SUCCESS -> ComponentToastType.SUCCESS
+                        ToastType.ERROR -> ComponentToastType.ERROR
+                        ToastType.INFO -> ComponentToastType.INFO
+                    },
+                    isVisible = true,
+                    onDismiss = { viewModel.dismissToast() }
+                )
+            }
         }
 
         // App Update Modal

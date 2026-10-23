@@ -9,8 +9,6 @@ import { createPaymentRecovery } from "@/lib/paymentRecovery";
 import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 import { BillingEmailForm } from "./BillingEmailForm";
 
-const flow = { flow_version: "direct_v2" };
-
 type MembershipCheckoutProps = {
   children: React.ReactNode; className?: string; entry: string; title?: string;
   onEntitled?: (state: EntitlementState) => void; showEmailHint?: boolean; iconOnly?: boolean;
@@ -24,6 +22,7 @@ export function MembershipCheckout(props: MembershipCheckoutProps) {
 }
 
 function MembershipCheckoutSession({ children, className, entry, title, onEntitled, showEmailHint = false, iconOnly = false }: MembershipCheckoutProps) {
+  const flow = { flow_version: entry === "feature_preview" ? "paid_only_v1" : "direct_v2" };
   const translateUi = useTranslation();
   const { auth, goToLogin } = useApp();
   const [open, setOpen] = useState(false);
@@ -71,7 +70,7 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
   }, [open, accountId, entry]);
 
   const activate = (state: EntitlementState) => {
-    if (!state.entitled || state.reason !== "subscription") return;
+    if (!state.entitled || state.reason !== "subscription" || state.source === "trial") return;
     setStatus("active"); setWaiting(false);
     applied.current?.(state);
     window.dispatchEvent(new Event(ENTITLEMENT_REFRESH_EVENT));

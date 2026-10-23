@@ -434,6 +434,27 @@ interface TraktApi {
         @Header("trakt-api-version") version: String = "2"
     ): List<TraktSearchList>
 
+    /** Adds titles to one of the user's own lists; same body shape as the watchlist. */
+    @POST("users/me/lists/{listId}/items")
+    @retrofit2.http.Headers("Content-Type: application/json")
+    suspend fun addToMyList(
+        @Header("Authorization") auth: String,
+        @Header("trakt-api-key") clientId: String,
+        @Header("trakt-api-version") version: String = "2",
+        @Path("listId") listId: String,
+        @Body body: TraktWatchlistBody
+    ): TraktSyncResponse
+
+    @POST("users/me/lists/{listId}/items/remove")
+    @retrofit2.http.Headers("Content-Type: application/json")
+    suspend fun removeFromMyList(
+        @Header("Authorization") auth: String,
+        @Header("trakt-api-key") clientId: String,
+        @Header("trakt-api-version") version: String = "2",
+        @Path("listId") listId: String,
+        @Body body: TraktWatchlistBody
+    ): TraktSyncResponse
+
     @GET("users/me/lists/{listId}/items/{type}")
     suspend fun getMyListItems(
         @Header("Authorization") auth: String,

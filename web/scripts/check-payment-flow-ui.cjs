@@ -28,8 +28,8 @@ const assert = require('node:assert/strict');
       res.setHeader('content-type', url.pathname.endsWith('js') ? 'text/javascript' : 'text/css');
       return res.end(url.pathname.endsWith('js') ? js : css);
     }
-    if (['/arvio-logo.svg', '/arvio-wordmark.svg'].includes(url.pathname) || /^\/i18n\/[a-zA-Z-]+\.json$/.test(url.pathname)) {
-      res.setHeader('content-type', url.pathname.endsWith('.svg') ? 'image/svg+xml' : 'application/json');
+    if (['/arvio-logo.svg', '/arvio-wordmark.svg'].includes(url.pathname) || /^\/i18n\/[a-zA-Z-]+\.json$/.test(url.pathname) || /^\/premium\/(home|tv|library|homeserver|sports)\.png$/.test(url.pathname)) {
+      res.setHeader('content-type', url.pathname.endsWith('.svg') ? 'image/svg+xml' : url.pathname.endsWith('.png') ? 'image/png' : 'application/json');
       return res.end(fs.readFileSync(path.join(root, 'public', url.pathname)));
     }
     res.setHeader('content-type', 'text/html');
@@ -43,7 +43,7 @@ const assert = require('node:assert/strict');
   denyProxy.on('connect', (_req, socket) => socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'));
   await new Promise(resolve => denyProxy.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const evidence = path.resolve(root, '../artifacts/payment-flow-20261019');
+  const evidence = path.resolve(root, '../artifacts/paid-only-web-20261023');
   fs.mkdirSync(evidence, { recursive: true });
   let browser;
   let passed = 0;
@@ -278,7 +278,7 @@ const assert = require('node:assert/strict');
     }
 
     await go('delayed-payment');
-    await handoff(page.getByRole('link', { name: /Keep Premium/ }));
+    await handoff(page.getByRole('link', { name: 'Subscribe on Ko-fi', exact: true }));
     await returnToApp();
     await page.getByText('Membership active', { exact: true }).waitFor({ timeout: 20000 });
     // EntitlementGate also refreshes on focus and may activate/unmount the

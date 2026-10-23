@@ -5,7 +5,7 @@ import { useTranslation } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { hasNetlifyBackendConfig, hasSupabaseConfig, getAuthPortalUrl } from "@/lib/config";
-import { capturePremiumAttribution, TRIAL_INTENT_KEY } from "@/lib/premiumAnalytics";
+import { capturePremiumAttribution } from "@/lib/premiumAnalytics";
 import { useApp } from "@/lib/store";
 import { partnerLoginRedirect } from "@/lib/partnerLinks";
 
@@ -24,9 +24,6 @@ export function LoginScreen() {
 
   useEffect(() => {
     capturePremiumAttribution();
-    if (new URLSearchParams(window.location.search).get("intent") === "trial") {
-      try { localStorage.setItem(TRIAL_INTENT_KEY, "1"); } catch { /* storage is optional */ }
-    }
     setMounted(true);
   }, []);
 
