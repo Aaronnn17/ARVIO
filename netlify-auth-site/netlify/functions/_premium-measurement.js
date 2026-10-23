@@ -13,7 +13,8 @@ const CHECKOUT_EVENTS = {
   membership_link_started: "billingLinkStarted", membership_linked: "billingLinkReportedComplete",
   membership_link_failed: "billingLinkFailed", billing_email_verified: "billingOwnershipVerified"
 };
-const CHECKOUT_ENTRIES = new Set(["trial_nav", "trial_mobile_nav", "paywall", "account_settings"]);
+const CHECKOUT_ENTRIES = new Set(["trial_nav", "trial_mobile_nav", "paywall", "account_settings", "feature_preview"]);
+const CHECKOUT_FLOW_VERSIONS = new Set(["direct_v2", "paid_only_v1"]);
 
 function summarizeCheckoutDiagnostics(records) {
   const empty = () => Object.fromEntries(Object.values(CHECKOUT_EVENTS).map(name => [name, new Set()]));
@@ -22,7 +23,7 @@ function summarizeCheckoutDiagnostics(records) {
   for (const record of records) {
     const stage = CHECKOUT_EVENTS[record.eventName];
     if (!stage || !record.accountKey) continue;
-    const version = record.metadata?.flow_version === "direct_v2" ? "direct_v2" : "unversioned";
+    const version = CHECKOUT_FLOW_VERSIONS.has(record.metadata?.flow_version) ? record.metadata.flow_version : "unversioned";
     const entry = CHECKOUT_ENTRIES.has(record.metadata?.entry) ? record.metadata.entry : "unspecified";
     if (!versions.has(version)) versions.set(version, empty());
     if (!entries.has(entry)) entries.set(entry, empty());
@@ -39,7 +40,7 @@ function summarizeCheckoutDiagnostics(records) {
     unit: "unique authenticated accounts per observed event in the report window",
     ...count(totals), byFlowVersion: byGroup(versions), byEntry: byGroup(entries),
     browserReportedStatusResults: count(statuses),
-    note: "These are overlapping observed stages, not a sequential funnel or abandonment rate. First placement/version per event/account/UTC day is retained; groups can overlap across days. Direct flow labels, visible CTAs, recovery open/close and bounded status outcomes begin with the October 19, 2026 release. Missing historical events mean unmeasured stages. Browser-reported active status is not a confirmed payment."
+    note: "These are overlapping observed stages, not a sequential funnel or abandonment rate. First placement/version per event/account/UTC day is retained; groups can overlap across days. Direct flow labels, visible CTAs, recovery open/close and bounded status outcomes begin with the October 19, 2026 release. Paid-only preview labels begin with the October 23 release; they do not identify a randomized experiment. Missing historical events mean unmeasured stages. Browser-reported active status is not a confirmed payment."
   };
 }
 
@@ -253,4 +254,4 @@ function summarizeMeasurements(records, journeys, verifiedLinks = [], { contextR
   };
 }
 
-module.exports = { journeyKey, marketingMetadata, recordJourneyEvent, summarizeMeasurements, FAILURE_KINDS, TRANSPORTS, PHASES };
+module.exports = { journeyKey, marketingMetadata, recordJourneyEvent, summarizeMeasurements, FAILURE_KINDS, TRANSPORTS, PHASES, CHECKOUT_FLOW_VERSIONS };
