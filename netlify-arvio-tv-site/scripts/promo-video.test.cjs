@@ -163,9 +163,13 @@ for (const file of ['index.html', 'es/index.html', 'pt-br/index.html']) {
   });
 }
 
-test('README replaces screenshots with a linked animated preview', () => {
+test('README leads with a linked animated preview before downloads and long-form sections', () => {
   const readme = fs.readFileSync(path.join(root, '../README.md'), 'utf8');
   assert.doesNotMatch(readme, /screenshots-v2|## Screenshots/);
   assert.match(readme, /arvio-tour-preview.gif\)\]\(https:\/\/arvio.tv\/#demo\)/);
   assert.match(readme, /arvio-tour-720p.mp4/);
+  const preview = readme.indexOf('arvio-tour-preview.gif');
+  assert.ok(preview < readme.indexOf('\n## '), 'Keep the tour above all major sections');
+  assert.ok(preview < readme.indexOf('img.shields.io'), 'Do not bury the tour below badges');
+  assert.ok(readme.slice(0, preview).split('\n').length <= 25, 'The tour belongs directly below the introduction');
 });

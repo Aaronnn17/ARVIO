@@ -1,264 +1,218 @@
-
 <div align="center">
 
-  <img src="web/public/arvio-logo.svg" alt="ARVIO" width="150" />
+  <img src="web/public/arvio-logo.svg" alt="ARVIO" width="96" />
 
-  <br />
+  <h1>ARVIO</h1>
 
-  <p>A modern, open-source media hub for Android TV, phones, tablets, and the web.</p>
+  <p><strong>Your media, together. On TV, phone, tablet and the web.</strong></p>
 
-  <p>
-    Browse your own media sources with a unified experience across your devices.
-  </p>
-
-  <p>
-    <a href="https://github.com/ProdigyV21/ARVIO">GitHub</a>
-    ·
-    <a href="https://github.com/ProdigyV21/ARVIO/releases">Releases</a>
-    ·
-    <a href="https://web.arvio.tv">ARVIO Web</a>
-  </p>
-
-  <br />
-
-  <img src="https://img.shields.io/github/v/release/ProdigyV21/ARVIO?style=for-the-badge&logo=github" alt="Latest Version" />
-  <img src="https://img.shields.io/github/downloads/ProdigyV21/ARVIO/total?style=for-the-badge&logo=github" alt="Downloads" />
-  <img src="https://img.shields.io/github/stars/ProdigyV21/ARVIO?style=for-the-badge&logo=github" alt="Stars" />
-  <img src="https://img.shields.io/github/license/ProdigyV21/ARVIO?style=for-the-badge" alt="License" />
-
-  <br />
-
-  <img src="https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android" />
-  <img src="https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin" />
-  <img src="https://img.shields.io/badge/Jetpack%20Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose" />
-
-  <br />
-  <br />
-
-  <a href="https://web.arvio.tv"><img src="https://img.shields.io/badge/ARVIO-Web%20App-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="ARVIO Web App" /></a>
-
-  <br />
-  <br />
-
-  <a href="https://trendshift.io/repositories/28671?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-28671" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/28671/weekly?language=Kotlin" alt="ProdigyV21/ARVIO | Trendshift" width="250" height="55" /></a>
-
+  <p>An open-source media hub for your home servers, live TV, collections and connected sources.</p>
 
 </div>
 
+<div align="center">
 
+[![Watch ARVIO: a looping preview of the home screen, collections, live TV and connected sources.](netlify-arvio-tv-site/assets/promo/arvio-tour-preview.gif)](https://arvio.tv/#demo)
 
----
+</div>
 
-# ARVIO
+<p align="center">
+  <a href="https://arvio.tv/#demo"><strong>Watch the full 85-second tour</strong></a>
+  &middot; <a href="https://arvio.tv/assets/promo/arvio-tour-720p.mp4">Download video</a>
+</p>
 
-ARVIO is an Android media hub for TV, phone, and tablet form factors. This repository is maintained as a source-code and development mirror for the Android application.
+<p align="center">
+  <a href="https://arvio.tv/">Website</a>
+  &middot; <a href="https://arvio.tv/guides/">Setup guides</a>
+  &middot; <a href="https://discord.gg/UavuEYMfQ4">Discord</a>
+</p>
 
-The app provides a media browser, player shell, profile support, optional cloud sync, IPTV playlist support, catalog configuration, home-server integrations, and integrations with user-configured sources. ARVIO does not host, store, sell, or distribute movies, series, live TV channels, playlists, streams, or other third-party media.
+<p align="center">
+  <a href="https://github.com/ProdigyV21/ARVIO/releases/latest"><img src="https://img.shields.io/github/v/release/ProdigyV21/ARVIO?style=flat-square" alt="Latest release" /></a>
+  <a href="https://github.com/ProdigyV21/ARVIO/releases"><img src="https://img.shields.io/github/downloads/ProdigyV21/ARVIO/total?style=flat-square" alt="Release downloads" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/ProdigyV21/ARVIO?style=flat-square" alt="License" /></a>
+</p>
 
-## Self-Host ARVIO Web
+**ARVIO includes no movies, series, live channels or third-party subscriptions.** Connect your own authorized services and sources. Catalog artwork and listings are for discovery, not a grant of access to the content.
 
-The webapp can run on your own computer or server **without an ARVIO Premium subscription**, using your own TMDB, Trakt, Simkl and other integration credentials. The paid hosted webapp is optional.
+[Get ARVIO](#get-arvio) &middot; [Features](#features) &middot; [Get started](#get-started) &middot; [Collections](#make-it-yours) &middot; [Self-host](#self-host-arvio-web) &middot; [Build](#build-from-source) &middot; [Contribute](#contributing)
 
-Start with the [webapp setup guide](web/README.md): it includes Node.js and Docker Compose instructions, a self-hosted environment template, and a configuration checker. See [self-hosting details](web/docs/SELF-HOSTING.md) for security, updates and limitations. Local profiles are stored per browser; this setup does not provide cross-device ARVIO Cloud sync.
+## Get ARVIO
 
-## Repository Purpose
+<p>
+  <a href="https://play.google.com/store/apps/details?id=com.arvio.tv"><img src="assets/badges/badge_google_play.png" alt="Get it on Google Play" width="160" /></a>
+  <a href="https://github.com/ProdigyV21/ARVIO/releases/latest"><img src="assets/badges/badge_github.png" alt="Download the APK on GitHub" width="160" /></a>
+  <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium%3A%2F%2Fadd%2Fhttps%3A%2F%2Fgithub.com%2FProdigyV21%2FARVIO"><img src="assets/badges/badge_obtainium.png" alt="Get it on Obtainium" width="160" /></a>
+</p>
 
+| Where you watch | How to get it |
+| --- | --- |
+| Android TV, Google TV, Fire TV, Android phones and tablets | **Free app.** Install from Google Play where available, or download the signed APK from [GitHub Releases](https://github.com/ProdigyV21/ARVIO/releases/latest). |
+| Desktop, iPhone, iPad and other browsers | Open [ARVIO Web](https://web.arvio.tv). The official hosted service requires [ARVIO Premium](https://arvio.tv/premium/). |
+| Your own computer or server | **Free self-hosting.** Run the web app with Docker Compose or Node.js and your own integration credentials. [Setup instructions](web/README.md). |
 
+The GitHub APK supports Android 6.0+; the Play build requires Android 7.0+. The standard APK contains ARMv7 and ARM64 builds. Device, codec and service support can vary.
 
-This GitHub repository is for:
+For GitHub updates through Obtainium, add `https://github.com/ProdigyV21/ARVIO` as the app source. The [Obtainium guide](docs/distribution/OBTAINIUM.md) includes an import file and APK filtering instructions.
 
-- Source code review and development
-- Issue investigation and technical discussion
-- Build documentation
-- License and privacy documentation
-- Contribution review
-
-It is not intended as an advertising page, download landing page, or content distribution repository.
+**What's new?** See the [latest release notes](https://github.com/ProdigyV21/ARVIO/releases/latest) and [changelog](CHANGELOG.md). This README and the tour describe the current `main` branch, which can include improvements not yet in a published APK. Features can differ between Android, web and distribution builds.
 
 ## Features
 
-- Android TV, Fire TV, phone, and tablet UI
-- TMDB-powered movie, series, cast, collection, franchise, and metadata browsing
-- IPTV M3U/Xtream playlist support with provider categories, favorites, hidden categories, EPG, and mobile/tablet fullscreen playback
-- Optional ARVIO Cloud sync for profiles, settings, catalogs, IPTV state, watch state, and custom profile avatars
-- Optional per-profile Trakt.tv integration for watchlist, history, progress, and continue watching
-- Catalog management with manual URLs and public Trakt/MDBList list discovery
-- Home-server source and catalog support for user-owned Jellyfin, Emby, and Plex libraries
-- Optional Telegram integration for searching video files in your own connected channels and groups
-- Third-party addon support for user-configured sources
-- Watchlist and continue-watching state with profile isolation
-- Subtitle and audio track selection, subtitle language filtering, and AI subtitle tools
-- Profile PINs and custom profile avatars
-- ExoPlayer/Media3 playback with TV remote, mobile, and tablet controls
+- **A home screen you can make your own.** Choose the expanded-card TV home or the classic layout, arrange catalogs and collections, show your watchlist beneath Continue Watching, and enable optional trailer previews.
+- **Collections and discovery.** Browse built-in collections or import your own. Collection pages include artwork, title previews, descriptions and ratings where available. Add compatible TMDB pages, Trakt, SIMKL and MDBList lists, or add-on catalogs.
+- **Your library and release Calendar.** Keep watchlists, personal lists and home-server libraries together. See upcoming movies and episodes from supported lists and shows you are watching, with local-time schedules where an air time is known.
+- **Plex, Emby and Jellyfin.** Connect your own servers or libraries shared with you, browse their contents and use available server media as playback sources.
+- **Live TV and catch-up.** Connect supported M3U, Xtream Codes or Stalker sources. Browse categories, favorites, recently watched channels and the programme guide, with a mini-player and fullscreen playback. Guide coverage, catch-up and seeking depend on your provider.
+- **Sports inside Live TV.** Browse live and upcoming events, then choose a matched channel or compatible sports add-on source. Use IPTV, sports add-ons, or both. Coverage and artwork depend on the schedules and sources available to your setup.
+- **Add-ons, debrid and Telegram.** Browse and install compatible community add-ons, configure supported debrid sources, or search video files in your connected Telegram channels and groups. These services need their own configuration and access.
+- **Trakt and SIMKL tracking.** Connect accounts per profile for supported watchlists, history, scrobbling and Continue Watching/next episodes. SIMKL uses AUTH V2 for new connections; its custom lists require SIMKL PRO/VIP, not ARVIO Premium.
+- **Playback and subtitles.** Media3 playback on Android, episode-aware controls, source selection, audio/subtitle tracks, automatic frame-rate matching on supported hardware, subtitle language preferences and optional AI subtitle tools.
+- **Profiles and optional cloud sync.** Separate viewing state, avatars and PINs, plus age-filtered kids profiles on Android. ARVIO Cloud can sync supported settings, catalogs, playlists and watch state across your devices.
 
+Browser playback depends on the source, CORS, codecs and browser. It is not a guarantee that every source playable on Android will play in a browser. See the [browser playback guide](https://arvio.tv/browser-playback-guide/).
 
-## Availability
+## Get Started
 
-ARVIO is available across official app stores, direct GitHub releases, and Obtainium:
+1. **Install and create a profile.** Use local profiles, or connect ARVIO Cloud for supported cross-device sync.
+2. **Connect your sources in Settings.** Add your home server, a compatible add-on, your live TV playlist or Telegram account. Browsing a catalog alone does not create a playable source.
+3. **Connect your trackers.** Add Trakt or SIMKL for viewing progress and supported lists; connect MDBList if you use its lists.
+4. **Make Home yours.** Choose your layout, organize catalogs and import collections. Open a title and select an available source to watch.
 
-<p align="left">
-  <a href="https://play.google.com/store/apps/details?id=com.arvio.tv"><img src="assets/badges/badge_google_play.png" alt="Get it on Google Play" width="160"></a>
-  <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/ProdigyV21/ARVIO"><img src="assets/badges/badge_obtainium.png" alt="Get it on Obtainium" width="160"></a>
-  <a href="https://github.com/ProdigyV21/ARVIO/releases/latest"><img src="assets/badges/badge_github.png" alt="Get it on GitHub" width="160"></a>
-</p>
+[All setup guides](https://arvio.tv/guides/) &middot; [Plex / Emby / Jellyfin](https://arvio.tv/plex-emby-jellyfin/) &middot; [Ask the community](https://discord.gg/UavuEYMfQ4)
 
-### Obtainium (Recommended for Sideloading)
-Install and automatically receive updates directly from GitHub Releases using [Obtainium](https://github.com/ImranR98/Obtainium):
+## Make It Yours
 
-- **1-Click Add:** Click the **Get it on Obtainium** badge above or open [`obtainium://add/https://github.com/ProdigyV21/ARVIO`](obtainium://add/https://github.com/ProdigyV21/ARVIO) on your Android device.
-- **Manual App Source URL:** `https://github.com/ProdigyV21/ARVIO`
-- See [Obtainium Setup Guide](docs/distribution/OBTAINIUM.md) for pre-configured JSON import and APK filtering details.
+**Catalogs** are rows of titles, such as a trending feed or a personal list. **Collections** organize supported catalogs and discovery sources into browsable folders with their own artwork.
 
-### Direct GitHub Releases
-Signed APKs (`ARVIO-v*-sideload-release.apk`) and checksums (`SHA256SUMS.txt`) are published on [GitHub Releases](https://github.com/ProdigyV21/ARVIO/releases/latest).
+Use [Collection Studio](https://arvio.tv/collection-studio/) to create a collection, then import its JSON in Settings. You can also paste a supported collection document or a direct JSON URL hosted on GitHub or another public host. **Direct file uploads are not supported yet.**
 
+- [Create, host and import collections and catalogs](https://arvio.tv/collections-catalogs/)
+- [Collection format, supported sources and examples](docs/custom-collections.md)
+- [Release Calendar behavior and supported sources](docs/library-calendar.md)
+- [SIMKL V2 and custom-list setup](docs/simkl-v2-and-custom-lists.md)
 
+Imported collections do not include streaming access. You still need your own sources, and any subscriptions required by the connected service.
 
+## Self-Host ARVIO Web
 
-## Support ARVIO
+Run the web app on your own computer or server **without an ARVIO Premium subscription**. Docker Compose and Node.js are supported; configure your own TMDB key and any optional integration credentials.
 
-ARVIO is a free hobby project built and maintained with a lot of time, testing, hosting, and service costs. The goal is to keep ARVIO free as it grows, but running and improving it still costs money every month.
+The [web README](web/README.md) has the complete quick start, environment setup, configuration checker and update commands. Read the [self-hosting guide](web/docs/SELF-HOSTING.md) before exposing it to your network or the internet.
 
-If ARVIO helps you and you want to support development, donations are appreciated:
+Self-hosted profiles and settings are local to each browser; this mode does **not** provide ARVIO Cloud cross-device sync. Connected Trakt/SIMKL accounts can still synchronize the data those services support. Self-hosting is separate from access to the official paid hosted service.
 
-[Support ARVIO on Ko-fi](https://ko-fi.com/arvio/tiers)
+## Help and Support
 
-## See ARVIO in Action
+- **Setup help and discussion:** [ARVIO Discord](https://discord.gg/UavuEYMfQ4) and [guides](https://arvio.tv/guides/).
+- **Bug reports:** [open a GitHub issue](https://github.com/ProdigyV21/ARVIO/issues/new/choose) with the app version, device/OS, install source, steps to reproduce and expected behavior. Include a crash reference or redacted logs when available.
+- **Feature requests:** describe the workflow you want to improve and check [existing issues](https://github.com/ProdigyV21/ARVIO/issues) first.
 
-[![ARVIO video preview: the new home layout, collections, live TV and connected sources. Watch the full 85-second tour.](netlify-arvio-tv-site/assets/promo/arvio-tour-preview.gif)](https://arvio.tv/#demo)
+Never post passwords, API keys, tokens, private playlist URLs or unredacted account information in an issue or screenshot.
 
-**[Watch the full 85-second tour](https://arvio.tv/#demo)** · [Download the video](https://arvio.tv/assets/promo/arvio-tour-720p.mp4)
+ARVIO takes ongoing development, testing, hosting and service costs. [Support the project on Ko-fi](https://ko-fi.com/arvio/tiers) to help fund future work. The Android app and self-hosted web app remain free; Premium provides the optional hosted web service, not media subscriptions.
 
-Explore the new home layout, the classic-layout option, collections, home servers, live TV, sports, addons, debrid, Telegram and more.
+## Build From Source
 
-The looping preview opens the full video on arvio.tv. Connected services and media are examples; ARVIO includes no media or third-party subscriptions.
+This repository contains the Android app, web app, public website and supporting services. Android uses Kotlin and Jetpack Compose; web setup is documented separately in [web/README.md](web/README.md).
 
-## Content And Source Policy
+### Android Development
 
-ARVIO is a media browser and player interface for user-configured sources. It works like a media player or browser: users provide their own services, playlists, addons, and URLs.
-
-ARVIO does not supply a film, TV or live-channel subscription. Playback sources must be configured by the user. Catalog metadata and artwork do not grant viewing rights. Use only services and media you are authorized to access.
-
-We review reports concerning material and links controlled by ARVIO. See [copyright reporting](COPYRIGHT.md) for how to contact us. Material hosted by an independent provider may also need to be reported to that provider; this does not prevent reporting an ARVIO-controlled link or asset to us.
-
-Contributors must not submit media without appropriate permission, credentials, private keys, access tokens, or links intended to enable unauthorized access to content. Public demonstration assets require documented permission, not just an API URL.
-
-### Metadata Credits
-
-<img src="app/src/main/assets/tmdb-logo.svg" alt="TMDB" width="100">
-
-This product uses the TMDB API but is not endorsed or certified by TMDB.
-
-TMDB attribution does not establish rights to every image. Commercial uses of TMDB require the applicable agreement. Other services and trademarks belong to their respective owners; integration does not imply endorsement.
-
-## Cloud Sync
-
-ARVIO Cloud is optional. When enabled, it can sync profiles, settings, catalogs, IPTV state, watch progress, watchlist state, and profile avatars across devices. See [PRIVACY.md](PRIVACY.md) for details and account deletion instructions.
-
-## Build And Run
-
-Requirements:
-
-- Android Studio or Android SDK command-line tools
-- JDK 17
-- Android SDK 35
-
-Use the tracked Gradle wrapper:
+Requirements: **JDK 17**, **Android SDK 36**, Android Studio or the SDK command-line tools, and the tracked Gradle wrapper.
 
 ```bash
-./gradlew :app:assemblePlayDebug
+git clone https://github.com/ProdigyV21/ARVIO.git
+cd ARVIO
+cp secrets.defaults.properties secrets.properties
+# Configure the integrations you want to test in secrets.properties.
 ./gradlew :app:assembleSideloadDebug
 ```
 
-On Windows PowerShell or Command Prompt:
+On Windows PowerShell:
 
 ```powershell
-.\gradlew.bat :app:assemblePlayDebug
+git clone https://github.com/ProdigyV21/ARVIO.git
+cd ARVIO
+Copy-Item secrets.defaults.properties secrets.properties
+# Configure the integrations you want to test in secrets.properties.
 .\gradlew.bat :app:assembleSideloadDebug
 ```
 
-APK builds include 32-bit and 64-bit ARM by default. For an x86/x86_64 emulator,
-add `-PincludeX86Abis=true` to the Gradle command.
+The debug APK is written to `app/build/outputs/apk/sideload/debug/`. For an x86/x86_64 emulator, add `-PincludeX86Abis=true`; APK builds otherwise include ARMv7 and ARM64.
 
-Install a debug build on a connected Android TV, Fire TV, emulator, phone, or tablet:
+Use your own TMDB, Trakt, SIMKL, Telegram and other application credentials for the integrations you test. Placeholder values do not provide working authentication. Cloud/auth features also require appropriate backend configuration. Keep `secrets.properties`, keystores and signing credentials out of Git.
+
+**Test on an emulator or dedicated device.** Ordinary debug builds use the production package ID but a different signing key, so they cannot update an official signed installation. Do not uninstall a user's app just to install a debug build.
+
+<details>
+<summary>Build variants, optional SDKs and release verification</summary>
+
+### Variants and Installation
+
+| Variant | Purpose |
+| --- | --- |
+| `play` | Google Play distribution; in-app self-update disabled. |
+| `sideload` | Direct APK distribution; in-app self-update enabled. |
+| `debug` | Development build with debugging enabled. |
+| `staging` | Release-like beta in the separate `com.arvio.tv.beta` package; uses release signing when configured, otherwise debug signing. |
+| `release` | Optimized production build. Configure your own private release keystore before distribution. |
 
 ```bash
-./gradlew :app:installPlayDebug
 ./gradlew :app:installSideloadDebug
+./gradlew :app:assemblePlayDebug
+./gradlew :app:testSideloadDebugUnitTest
 ```
 
-For network ADB devices:
+For an emulator, include `-PincludeX86Abis=true` in the build/install command. For a network-connected test device:
 
 ```bash
 adb connect <device-ip>:5555
-adb install -r app/build/outputs/apk/sideload/debug/app-sideload-debug.apk
+adb -s <device-ip>:5555 install -r app/build/outputs/apk/sideload/debug/app-sideload-debug.apk
 ```
 
-Build variants:
+### Optional Integrations
 
-- `play`: Play Store build, self-update disabled.
-- `sideload`: Direct APK build, self-update enabled.
-- `debug`: development build.
-- `staging`: release-like build signed with the debug keystore for upgrade testing.
-- `release`: production build. Use a private release keystore for distribution.
+Discord Rich Presence requires Discord's separately licensed Android Partner SDK. Place the approved AAR at `app/libs/discord_partner_sdk.aar` and configure `DISCORD_CLIENT_ID`. Builds without it remain valid and show Discord as unavailable. Do not commit or redistribute the SDK without the required permission.
 
-## Local Configuration
+The speech-recognition AAR is downloaded and checksum-verified by Gradle. Integration availability can differ by distribution: for example, Sync by Hearing is currently a sideload feature.
 
-Cloud sync, Google sign-in, and Supabase-backed auth require local secrets. Copy the defaults file and fill in real values:
+Debug builds disable crash reporting. Fork maintainers should use their own Firebase client configuration before distributing builds. See [Firebase diagnostics](docs/firebase-diagnostics.md) for configuration, consent and symbol-upload instructions.
 
-```bash
-cp secrets.defaults.properties secrets.properties
-```
+### Release Verification
 
-`secrets.properties` is ignored and must not be committed.
-
-Discord Rich Presence is optional and requires Discord's separately licensed
-Android Partner SDK. Place the approved file at
-`app/libs/discord_partner_sdk.aar` and set `DISCORD_CLIENT_ID` in
-`secrets.properties`. Builds without that AAR remain valid, but show Discord as
-unavailable instead of compiling a simulated connection. Do not commit or
-redistribute the AAR unless your Discord SDK agreement explicitly permits it.
-Trusted signed builds restore the AAR from the private
-`ProdigyV21/ARVIO-private-dependencies` repository through a read-only deploy
-key stored as the `DISCORD_SDK_DEPLOY_KEY` repository secret.
-
-TMDB and Trakt credentials are not committed to the repository. When a valid
-Supabase config is present, app requests are routed through the tracked
-`tmdb-proxy` and `trakt-proxy` Edge Functions, where those credentials should be
-stored as Supabase function secrets. Forks that do not use those proxy functions
-can still add their own local `TMDB_API_KEY`, `TRAKT_CLIENT_ID`, and
-`TRAKT_CLIENT_SECRET` values in `secrets.properties` for direct local testing.
-
-For signed release builds, copy the keystore template and fill in local signing values:
+Copy `keystore.properties.template` to `keystore.properties`, configure a private release keystore, and keep both out of version control. A locally built APK does not share the official release signing key.
 
 ```bash
-cp keystore.properties.template keystore.properties
-```
-
-`keystore.properties` and keystore files are ignored and must stay private.
-
-## Release Checks
-
-Before publishing a build, run:
-
-```bash
-./gradlew :app:compilePlayDebugKotlin
+./gradlew :app:testSideloadDebugUnitTest
 ./gradlew :app:assemblePlayRelease
 ./gradlew :app:assembleSideloadRelease
+./gradlew :app:bundlePlayRelease
 ```
 
-Smoke-test startup, profile switching, playback, stream fallback, subtitle/audio switching, IPTV/EPG loading, addon add/remove, search, settings navigation, background sync, and repeated player open/close on the supported device classes.
+Smoke-test startup, profile switching, playback, source fallback, audio/subtitles, IPTV/EPG, add-on management, search, settings, sync and repeated player open/close on the supported device classes. Complete the [release content/rights checklist](docs/play-copyright-release-checklist.md) before publishing.
 
-## Privacy
+</details>
 
-See [PRIVACY.md](PRIVACY.md) for the privacy policy. Cloud account and synced data deletion is available at [auth.arvio.tv/delete](https://auth.arvio.tv/delete).
+## Contributing
 
-## License
+Bug fixes, tests, translations, documentation and accessibility improvements are welcome. Open a focused pull request, explain the change, and include testing details and screenshots for UI work. Discuss larger changes in an issue first.
 
-This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
+Keep credentials and private media out of submissions. Public demo assets need documented permission. AI-assisted contributions are welcome under the same review and testing standards as other changes; ARVIO itself has been developed with significant AI assistance.
 
-## AI Disclosure
+Thank you to [all contributors](https://github.com/ProdigyV21/ARVIO/graphs/contributors), testers, translators and community members. Individual release credits are preserved in the [changelog](CHANGELOG.md) and [release notes](https://github.com/ProdigyV21/ARVIO/releases).
 
-This application was developed with significant AI assistance. Contributions should still be reviewed, tested, and treated as normal source code changes.
+## Credits, Privacy and License
 
-If you have concerns about using AI-generated software, please do not use this application.
+<img src="app/src/main/assets/tmdb-logo.svg" alt="TMDB" width="100" />
+
+This product uses the TMDB API but is not endorsed or certified by TMDB. Other integrated services, trademarks, SDKs and artwork belong to their respective owners; compatibility does not imply endorsement.
+
+The optional Kaptain collection import example retains credit to [Kaptain / ImKaptain](https://github.com/ImKaptain), [Kaptain Collection](https://github.com/ImKaptain/Kaptain-Collection) and [nuvio-art](https://github.com/ImKaptain/nuvio-art). See [collection credits and reuse notes](docs/custom-collections.md#collection-credits). ARVIO's built-in collection queries are maintained separately.
+
+- **Privacy and cloud data:** [Privacy policy](PRIVACY.md). Cloud account and synced-data deletion is available at [auth.arvio.tv/delete](https://auth.arvio.tv/delete).
+- **Content and copyright:** ARVIO does not host, sell or distribute movies, series, channels or streams. Metadata and artwork do not grant viewing rights or permission to reuse an image. Use sources you are authorized to access. Report concerns about ARVIO-controlled material or links through [COPYRIGHT.md](COPYRIGHT.md); independently hosted material may also need reporting to its provider.
+- **License:** [Apache License 2.0](LICENSE) for this project. Third-party components and assets retain their own terms.
+
+<p align="center">
+  <a href="https://trendshift.io/repositories/28671?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-28671"><img src="https://trendshift.io/api/badge/trendshift/repositories/28671/weekly?language=Kotlin" alt="ARVIO on Trendshift" width="250" height="55" /></a>
+</p>
