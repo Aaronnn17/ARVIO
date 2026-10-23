@@ -13,7 +13,7 @@ function fixture({ reduced = false, saveData = false, rejectPlay = false } = {})
     const handlers = {};
     return Object.assign(values, {
       addEventListener(name, fn) { (handlers[name] ||= []).push(fn); },
-      emit(name) { (handlers[name] || []).forEach(fn => fn()); },
+      emit(name, event) { (handlers[name] || []).forEach(fn => fn(event)); },
     });
   }
   const motion = events({ matches: reduced });
@@ -30,7 +30,7 @@ function fixture({ reduced = false, saveData = false, rejectPlay = false } = {})
     },
     pause() { this.paused = true; this.emit('pause'); },
   });
-  const document = events({ hidden: false, getElementById: () => video });
+  const document = events({ hidden: false, getElementById: () => video, body: { classList: { contains: () => reduced } } });
   let observer;
   class IntersectionObserver {
     constructor(callback) { observer = callback; }
@@ -112,6 +112,32 @@ test('autoplay rejection remains a paused player without an unhandled error', as
   assert.equal(f.video.paused, true);
 });
 
+test('the shared page motion control pauses and resumes the hero video', async () => {
+  const f = fixture();
+  f.visible(true);
+  await settle();
+  f.document.emit('arvio:motionchange', { detail: { paused: true } });
+  assert.equal(f.video.paused, true);
+  f.visible(false);
+  f.visible(true);
+  await settle();
+  assert.equal(f.video.paused, true);
+  f.document.emit('arvio:motionchange', { detail: { paused: false } });
+  await settle();
+  assert.equal(f.video.paused, false);
+});
+
+test('enabling page motion does not override an explicit video pause', async () => {
+  const f = fixture();
+  f.visible(true);
+  await settle();
+  f.video.pause();
+  f.document.emit('arvio:motionchange', { detail: { paused: true } });
+  f.document.emit('arvio:motionchange', { detail: { paused: false } });
+  await settle();
+  assert.equal(f.video.paused, true);
+});
+
 test('a preference change during play startup cannot leak autoplay', async () => {
   const f = fixture();
   f.visible(true);
@@ -128,7 +154,12 @@ for (const file of ['index.html', 'es/index.html', 'pt-br/index.html']) {
     assert.match(html, /<video[^>]+controls autoplay muted loop playsinline preload="none"/);
     assert.match(html, /data-src="\/assets\/promo\/arvio-tour-720p.mp4"/);
     assert.match(html, /href="\/assets\/promo\/arvio-tour-720p.mp4" download/);
-    assert.match(html, /promo-video.js\?v=1/);
+    assert.match(html, /promo-video.js\?v=2/);
+    const hero = html.match(/<section class="hero hero-v2"[^>]*>([\s\S]*?)<\/section>/)?.[1];
+    assert.ok(hero?.includes('id="promo-video"'), 'The video must be inside the first-screen hero');
+    assert.ok(hero.includes('id="demo"'), 'README links must still target the tour');
+    assert.equal((html.match(/<video\b/g) || []).length, 1, 'Do not duplicate the video below the hero');
+    assert.doesNotMatch(hero, /id="hero-screen"|class="scene-phone"|class="chapter-dock"/);
   });
 }
 

@@ -3,6 +3,7 @@
   if (!video) return;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const connection = navigator.connection;
+  let motionPaused = document.body.classList.contains('paused');
   let visible = false;
   let userPaused = false;
   let internalPauses = 0;
@@ -26,7 +27,7 @@
       return;
     }
     if (!video.getAttribute('src')) video.src = video.dataset.src;
-    if (userPaused || reducedMotion.matches || connection?.saveData || playPending || !video.paused) return;
+    if (userPaused || motionPaused || reducedMotion.matches || connection?.saveData || playPending || !video.paused) return;
     playPending = true;
     try {
       await video.play();
@@ -34,7 +35,7 @@
       // Browser autoplay restrictions leave native Play available.
     } finally {
       playPending = false;
-      if (!visible || document.hidden || userPaused || reducedMotion.matches || connection?.saveData) pause();
+      if (!visible || document.hidden || userPaused || motionPaused || reducedMotion.matches || connection?.saveData) pause();
     }
   }
 
@@ -46,6 +47,11 @@
     if (!playPending) userPaused = false;
   });
   document.addEventListener('visibilitychange', update);
+  document.addEventListener('arvio:motionchange', event => {
+    motionPaused = event.detail.paused;
+    if (motionPaused) pause();
+    else update();
+  });
   function preferenceChanged() {
     if (reducedMotion.matches || connection?.saveData) pause();
     else update();
