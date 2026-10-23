@@ -9,6 +9,7 @@ import { mergeTvSessions, normalizeTvSession } from "./iptvSession";
 import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
 import { tmdbImageUrl } from "./mediaImages";
 import type { TraktToken } from "./trakt";
+import { isYouTubeItem } from "./youtubeCollection";
 import type { SimklToken } from "./simkl";
 import type { TrackingPreferences, TrackingReadMode } from "./sync";
 import type { AppSettings, InstalledAddon, IptvPlaylistEntry, MediaItem, Profile, QualityFilterConfig, WatchHistoryEntry } from "./types";
@@ -29,6 +30,8 @@ interface AccountSyncPullResponse {
 }
 
 interface AndroidContinueWatchingItem {
+  addonNativeId?: string | null;
+  addonNativeAddonId?: string | null;
   id?: number;
   title?: string;
   mediaType?: string;
@@ -550,6 +553,7 @@ function androidCwToHistory(item: AndroidContinueWatchingItem, profileId?: strin
   const position = Math.max(0, Number(item.resumePositionSeconds ?? 0));
   const progress = Math.max(0, Math.min(0.99, Number(item.progress ?? 0) / 100));
   return {
+    ...(item.addonNativeId ? { addon_native_id: item.addonNativeId, addon_native_addon_id: item.addonNativeAddonId } : {}),
     user_id: "",
     profile_id: profileId ?? null,
     media_type: mediaType,
@@ -573,6 +577,7 @@ function androidCwToHistory(item: AndroidContinueWatchingItem, profileId?: strin
 
 function historyToAndroidCw(entry: Omit<WatchHistoryEntry, "user_id">): AndroidContinueWatchingItem {
   return {
+    ...(entry.addon_native_id ? { addonNativeId: entry.addon_native_id, addonNativeAddonId: entry.addon_native_addon_id } : {}),
     id: entry.show_tmdb_id,
     title: entry.title ?? "",
     mediaType: entry.media_type,
@@ -1590,6 +1595,10 @@ function isLiveOnlyAddon(addon: InstalledAddon): boolean {
 }
 
 export function isLiveStreamOrSportsItem(item: {
+  addonNativeId?: string | null;
+  addonNativeAddonId?: string | null;
+  addon_native_id?: string | null;
+  addon_native_addon_id?: string | null;
   mediaType?: string | null;
   media_type?: string | null;
   id?: number | string | null;
@@ -1608,6 +1617,10 @@ export function isLiveStreamOrSportsItem(item: {
   if (mediaType && mediaType !== "movie" && mediaType !== "tv") {
     return true;
   }
+  if (id < 0 && isYouTubeItem({
+    id, addonNativeId: item.addonNativeId ?? item.addon_native_id,
+    addonNativeAddonId: item.addonNativeAddonId ?? item.addon_native_addon_id
+  })) return false;
   if (!id || id <= 0) {
     return true;
   }
@@ -1675,11 +1688,12 @@ export async function saveProgress(auth: AuthClient, entry: Omit<WatchHistoryEnt
     });
     return;
   }
+  const { addon_native_id: _nativeId, addon_native_addon_id: _nativeAddonId, ...databaseEntry } = entry;
   await auth.supabase("/rest/v1/watch_history", {
     method: "POST",
     headers: { Prefer: "resolution=merge-duplicates" },
     body: JSON.stringify({
-      ...entry,
+      ...databaseEntry,
       user_id: auth.session.userId,
       profile_id: entry.profile_id ?? profileId ?? null,
       paused_at: new Date().toISOString(),

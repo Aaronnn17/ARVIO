@@ -10,6 +10,7 @@ import { LanguageProvider } from "./i18n";
 import { shouldRefreshAutomatically } from "./automaticRefresh";
 import { getStreams, getStreamsProgressive, installAddon as installAddonManifest, loadLocalAddons, normalizeAddons, saveLocalAddons } from "./addons";
 import { isAddonNative } from "./addonNative";
+import { isYouTubeItem } from "./youtubeCollection";
 import { AuthClient, SESSION_KEY, decodeJwtPayload } from "./auth";
 import { config, getAuthPortalUrl, isDisabledTelegramSource, TELEGRAM_DISABLED_MESSAGE } from "./config";
 import { defaultCatalogs, mergeCatalogs } from "./catalogs";
@@ -1735,7 +1736,7 @@ export function AppProvider({
     setStreams([]);
     const priorityConfig = getPriorityConfig(settingsRef.current);
     // Native addon items keep their own (negative) id; their details come from the addon.
-    const resolvedId = item.id > 0 || isAddonNative(item) ? item.id : await resolveTmdbId(item).catch(() => null);
+    const resolvedId = item.id > 0 || isAddonNative(item) || isYouTubeItem(item) ? item.id : await resolveTmdbId(item).catch(() => null);
     if (sourceGeneration.current !== generation) return;
     if (!resolvedId && !item.isHomeServer) { setBusy(""); setToast("Metadata could not be matched for this title."); return; }
     const detailsTarget = item.isHomeServer && item.tmdbId ? { ...item, id: item.tmdbId } : { ...item, id: resolvedId ?? item.id };
@@ -1837,7 +1838,7 @@ export function AppProvider({
     // + save progress when the user returns. forceBrowser overrides (e.g. the
     // in-player source panel, which is already in the browser player).
     const preferredPlayer = settingsRef.current.defaultPlayer;
-    if (!stream.autoSelect && !options.forceBrowser && !options.forceRemux && !options.forceTranscode && (preferredPlayer === "vlc" || preferredPlayer === "infuse")) {
+    if (stream.addonId !== "arvio_youtube" && !stream.autoSelect && !options.forceBrowser && !options.forceRemux && !options.forceTranscode && (preferredPlayer === "vlc" || preferredPlayer === "infuse")) {
       const externalItem = selected;
       const externalTitle = selected?.title ?? stream.source ?? "ARVIO stream";
       const preferredSub = settingsRef.current.defaultSubtitle;

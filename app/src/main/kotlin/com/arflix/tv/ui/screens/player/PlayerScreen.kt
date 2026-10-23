@@ -2400,6 +2400,22 @@ fun PlayerScreen(
             val isHeavy = isLikelyHeavyStream(latestUiState.selectedStream)
             val isRemoteHttp = urlLower.startsWith("http://") || urlLower.startsWith("https://")
             val mediaSource: MediaSource = when {
+                latestUiState.selectedStream?.addonId == com.arflix.tv.data.repository.YouTubeCollection.ADDON_ID -> {
+                    val audioUrl = latestUiState.selectedStream?.youTubeAudioUrl
+                    val factory = DefaultMediaSourceFactory(context, audioTapExtractorsFactory)
+                        .setDataSourceFactory(if (!audioUrl.isNullOrBlank()) {
+                            com.arflix.tv.data.api.YoutubeChunkedDataSourceFactory()
+                        } else {
+                            androidx.media3.datasource.DefaultHttpDataSource.Factory()
+                                .setUserAgent(com.arflix.tv.data.api.YOUTUBE_TRAILER_USER_AGENT)
+                        })
+                    val videoSource = factory.createMediaSource(mediaItem)
+                    if (audioUrl.isNullOrBlank()) videoSource else {
+                        androidx.media3.exoplayer.source.MergingMediaSource(
+                            videoSource, factory.createMediaSource(MediaItem.fromUri(audioUrl))
+                        )
+                    }
+                }
                 // Sidecar subtitle configs only merge through a DefaultMediaSourceFactory; the
                 // preload variant streams video uncached (like directProgressiveFactory) and
                 // resolves HLS/DASH from the MIME hints set above.

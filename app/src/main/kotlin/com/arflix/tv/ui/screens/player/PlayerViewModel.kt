@@ -23,6 +23,7 @@ import com.arflix.tv.data.model.IptvVodSourceIds
 import com.arflix.tv.data.model.isDirectStreamUrl
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
+import com.arflix.tv.data.repository.YouTubeCollection
 import com.arflix.tv.data.repository.KidsContentFilter
 import com.arflix.tv.data.repository.MediaRepository
 import com.arflix.tv.data.repository.HomeServerRepository
@@ -1066,7 +1067,7 @@ class PlayerViewModel @Inject constructor(
                 // Load IPTV and home-server sources from cache in parallel so the
                 // source picker in the player shows alternatives immediately.
                 homeServerAppendJob?.cancel()
-                if (streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.HOME_SERVER)) {
+                if (!isYouTubeVideo() && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.HOME_SERVER)) {
                     homeServerAppendJob = launch {
                         runCatching {
                             appendHomeServerSourcesInBackground(
@@ -1080,7 +1081,7 @@ class PlayerViewModel @Inject constructor(
                     }
                 }
                 vodAppendJob?.cancel()
-                if (streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.IPTV_VOD)) {
+                if (!isYouTubeVideo() && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.IPTV_VOD)) {
                     vodAppendJob = launch {
                         runCatching {
                             appendVodSourceInBackground(
@@ -1245,7 +1246,7 @@ class PlayerViewModel @Inject constructor(
 
                 if (!isSequential) {
                     homeServerAppendJob?.cancel()
-                    if (streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.HOME_SERVER)) {
+                    if (!isYouTubeVideo() && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.HOME_SERVER)) {
                         homeServerAppendJob = launch {
                             appendHomeServerSourcesInBackground(
                                 mediaType = mediaType,
@@ -1257,7 +1258,7 @@ class PlayerViewModel @Inject constructor(
                         }
                     }
                     vodAppendJob?.cancel()
-                    if (streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.IPTV_VOD)) {
+                    if (!isYouTubeVideo() && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.IPTV_VOD)) {
                         vodAppendJob = launch {
                             // VOD runs in parallel with addon streams — catalog is disk-cached
                             // so lookups are usually fast. Give enough time for series info calls.
@@ -1543,7 +1544,7 @@ class PlayerViewModel @Inject constructor(
                 var sourceEmptyReported = false
 
                 var pluginSearchStarted = false
-                val pluginsEnabled = streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.PLUGINS)
+                val pluginsEnabled = !isYouTubeVideo() && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.PLUGINS)
                 val pluginBatches = if (pluginsEnabled) {
                     pluginManager.executeScrapersStreaming(
                         tmdbId = mediaId.toString(),
@@ -1831,11 +1832,29 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** A YouTube collection video: its only source is YouTube, so no title-matched extras are fetched. */
+    private fun isYouTubeVideo(): Boolean =
+        mediaRepository.addonNativeCard(currentMediaType, currentMediaId)?.addonNativeAddonId == YouTubeCollection.ADDON_ID
+
     private suspend fun fetchMediaMetadata(mediaType: MediaType, mediaId: Int) {
         val season = currentSeason
         val episode = currentEpisode
         val displaySeason = currentDisplaySeason ?: season
         val sessionStart = playbackSessionStartTime
+        // A native addon item (negative id) has no TMDB entry: its own card carries the artwork
+        // that watch history and Continue Watching show.
+        if (mediaId < 0) {
+            val card = mediaRepository.addonNativeCard(mediaType, mediaId) ?: mediaRepository.getCachedItem(mediaType, mediaId) ?: return
+            if (playbackSessionStartTime != sessionStart || currentMediaId != mediaId) return
+            currentPoster = card.image.takeIf { it.isNotBlank() } ?: currentPoster
+            currentBackdrop = card.backdrop?.takeIf { it.isNotBlank() } ?: currentBackdrop ?: currentPoster
+            if (currentTitle.isBlank()) currentTitle = card.title
+            _uiState.value = _uiState.value.copy(
+                posterUrl = currentPoster ?: _uiState.value.posterUrl,
+                backdropUrl = currentBackdrop ?: _uiState.value.backdropUrl
+            )
+            return
+        }
         try {
             val details = if (mediaType == MediaType.TV) {
                 tmdbApi.getTvDetails(mediaId, Constants.TMDB_API_KEY)
@@ -3302,6 +3321,12 @@ class PlayerViewModel @Inject constructor(
 
     fun reportPlaybackError(message: PlayerMessage) {
         playbackErrorReportJob?.cancel()
+        val current = _uiState.value
+        val fallback = current.selectedStream?.youTubeFallbackUrl
+        if (current.selectedStream?.addonId == YouTubeCollection.ADDON_ID && !fallback.isNullOrBlank()) {
+            selectStream(current.selectedStream.copy(url = fallback, youTubeAudioUrl = null, youTubeFallbackUrl = null))
+            return
+        }
         val errorSelectionNonce = _uiState.value.streamSelectionNonce
         val errorSelectedUrl = _uiState.value.selectedStreamUrl
         playbackErrorReportJob = viewModelScope.launch {

@@ -132,7 +132,7 @@
     <string name="show_loading_stats_desc">הצג התקדמות רזולוציית הסטרים</string>
     <string name="volume_boost_desc">הגבר מקורות שקטים</string>
     <string name="dns_desc">פנה בקשות API ו-stream</string>
-    <string name="add_catalog_desc">ייבא כתובת URL של Trakt, MDBList או TMDB</string>
+    <string name="add_catalog_desc">ייבא כתובת URL של Trakt, MDBList או TMDB, או הוסף קישור לסרטון YouTube</string>
 
     <!-- Missing translations -->
     <string name="default_subtitle">כתוביות ברירת מחדל</string>
@@ -322,4 +322,18 @@
     <string name="profile_parent_pin_set">הגדר קוד הורים לפרופיל הילדים</string>
     <string name="profile_parent_pin_enter">קוד הורים</string>
     <string name="profile_parent_pin_hint">4–5 ספרות. נדרש כדי לשנות או למחוק את פרופיל הילדים, לא כדי לצפות.</string>
+    <!-- YouTube collection -->
+    <string name="youtube_add_link">הוסף קישור YouTube</string>
+    <string name="youtube_link_label">קישור YouTube</string>
+    <string name="youtube_add_link_desc">הדבק קישור לסרטון מ-youtu.be או youtube.com</string>
+    <string name="youtube_video_count">%1$d סרטוני YouTube</string>
+    <string name="youtube_no_videos">עדיין אין סרטונים. הוסף קישור YouTube.</string>
+    <string name="youtube_videos_home_order">%1$d סרטונים • מוצגים בדף הבית בסדר הזה</string>
+    <string name="youtube_videos_home_order_tv">%1$d סרטונים • מוצגים בדף הבית בסדר הזה • ימינה/שמאלה: הזזה או הסרה</string>
+    <string name="youtube_rename_row">שנה שם לשורה</string>
+    <string name="youtube_press_ok_again_remove">לחץ OK שוב כדי להסיר</string>
+    <string name="youtube_ok_move_up">%1$d • OK: הזזה למעלה</string>
+    <string name="youtube_ok_move_down">%1$d • OK: הזזה למטה</string>
+    <string name="youtube_ok_remove">%1$d • OK: הסרה</string>
+    <string name="youtube_video_removed">הוסר: %1$s</string>
 </resources>

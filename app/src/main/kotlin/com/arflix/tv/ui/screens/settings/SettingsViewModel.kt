@@ -38,6 +38,7 @@ import com.arflix.tv.data.model.StreamIntegrationConfig
 import com.arflix.tv.data.model.StreamIntegrationType
 import com.arflix.tv.data.model.StreamProviderItem
 import com.arflix.tv.data.repository.AuthRepository
+import com.arflix.tv.data.repository.YouTubeCollection
 import com.arflix.tv.data.repository.AuthState
 import com.arflix.tv.data.repository.CatalogDiscoveryRepository
 import com.arflix.tv.data.repository.CatalogRepository
@@ -350,6 +351,10 @@ data class SettingsUiState(
     val showUnknownSourcesDialog: Boolean = false,
     // Catalogs
     val catalogs: List<CatalogConfig> = emptyList(),
+    val pendingYouTubeUrl: String? = null,
+    val youTubeApprovalProfileId: String? = null,
+    val youTubeApprovalError: SettingsMessage? = null,
+    val youTubeApprovalFailures: Int = 0,
     val catalogSearchQuery: String = "",
     val catalogSearchResults: List<CatalogDiscoveryResult> = emptyList(),
     val isCatalogSearching: Boolean = false,
@@ -1052,6 +1057,7 @@ class SettingsViewModel @Inject constructor(
             profileManager.activeProfileId.collect { profileId ->
                 if (observedProfileId == profileId) return@collect
                 observedProfileId = profileId
+                dismissYouTubeApproval()
                 cancelMdbListAuth()
                 hasObservedIptvConfig = false
                 lastObservedIptvConfigSignature = null
@@ -2876,6 +2882,11 @@ class SettingsViewModel @Inject constructor(
             requestAddonInstall(url, fromLink = false)
             return
         }
+        // A YouTube video link goes into the profile's own YouTube row.
+        if (YouTubeCollection.videoIdFromUrl(url) != null) {
+            addYouTubeVideo(url)
+            return
+        }
         viewModelScope.launch {
             val result = catalogRepository.addCustomCatalog(url)
             result.onSuccess { catalog ->
@@ -2892,6 +2903,83 @@ class SettingsViewModel @Inject constructor(
                     toastMessage = error.orCatalogMessage(
                         SettingsMessage.Res(R.string.catalog_failed_add)
                     ),
+                    toastType = ToastType.ERROR
+                )
+            }
+        }
+    }
+
+    fun addYouTubeVideo(url: String) {
+        val profileId = profileManager.getProfileIdSync()
+        viewModelScope.launch {
+            val profile = profileRepository.getActiveProfile()
+            if (profileManager.getProfileIdSync() != profileId) return@launch
+            if (profile?.isKidsProfile == true) {
+                _uiState.value = _uiState.value.copy(
+                    pendingYouTubeUrl = url,
+                    youTubeApprovalProfileId = profileId,
+                    youTubeApprovalError = null
+                )
+            } else {
+                performYouTubeAddition(url, profileId)
+            }
+        }
+    }
+
+    fun dismissYouTubeApproval() {
+        _uiState.value = _uiState.value.copy(pendingYouTubeUrl = null, youTubeApprovalProfileId = null, youTubeApprovalError = null)
+    }
+
+    fun confirmYouTubeAddition(pin: String) {
+        val state = _uiState.value
+        val url = state.pendingYouTubeUrl ?: return
+        val profileId = state.youTubeApprovalProfileId ?: return
+        viewModelScope.launch { performYouTubeAddition(url, profileId, pin) }
+    }
+
+    private suspend fun performYouTubeAddition(url: String, profileId: String, pin: String? = null) {
+        catalogRepository.addYouTubeVideo(url, parentPin = pin, targetProfileId = profileId).onSuccess { (_, title) ->
+            dismissYouTubeApproval()
+            _uiState.value = _uiState.value.copy(
+                toastMessage = SettingsMessage.Res(R.string.settings_catalog_added, listOf(title)),
+                toastType = ToastType.SUCCESS
+            )
+            syncLocalStateToCloud(silent = true)
+        }.onFailure { error ->
+            if (error is CatalogException && error.messageRes == R.string.youtube_parent_approval_required) {
+                _uiState.value = _uiState.value.copy(
+                    youTubeApprovalError = SettingsMessage.Res(error.messageRes),
+                    youTubeApprovalFailures = _uiState.value.youTubeApprovalFailures + 1
+                )
+                return@onFailure
+            }
+            dismissYouTubeApproval()
+            _uiState.value = _uiState.value.copy(
+                toastMessage = error.orCatalogMessage(SettingsMessage.Res(R.string.catalog_failed_add)),
+                toastType = ToastType.ERROR
+            )
+        }
+    }
+
+    internal fun moveYouTubeVideo(catalogId: String, video: YouTubeCollection.Video, delta: Int) {
+        viewModelScope.launch {
+            catalogRepository.moveYouTubeVideo(catalogId, video.id, delta).onSuccess {
+                syncLocalStateToCloud(silent = true)
+            }
+        }
+    }
+
+    internal fun removeYouTubeVideo(catalogId: String, video: YouTubeCollection.Video) {
+        viewModelScope.launch {
+            catalogRepository.removeYouTubeVideo(catalogId, video.id).onSuccess {
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = SettingsMessage.Res(R.string.youtube_video_removed, listOf(video.title)),
+                    toastType = ToastType.SUCCESS
+                )
+                syncLocalStateToCloud(silent = true)
+            }.onFailure { error ->
+                _uiState.value = _uiState.value.copy(
+                    toastMessage = error.orCatalogMessage(SettingsMessage.Res(R.string.catalog_not_found)),
                     toastType = ToastType.ERROR
                 )
             }
