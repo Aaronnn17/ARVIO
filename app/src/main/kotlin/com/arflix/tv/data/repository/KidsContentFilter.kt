@@ -63,6 +63,8 @@ class KidsContentFilter @Inject constructor(
         fun allows(item: MediaItem): Boolean {
             val cap = level ?: return true
             if (item.isPlaceholder || isCollectionTile(item)) return true
+            // A parent picked every video of the profile's own YouTube row; there is no rating to look up.
+            if (item.addonNativeAddonId == YouTubeCollection.ADDON_ID) return true
             if (item.id <= 0) return false
             val age = ages[key(region, item.mediaType, item.id)] ?: return false
             return age != UNRATED && age <= cap.maxAge
@@ -115,6 +117,9 @@ class KidsContentFilter @Inject constructor(
      */
     suspend fun isAllowed(mediaType: MediaType, tmdbId: Int): Boolean {
         val cap = activeLevel() ?: return true
+        if (tmdbId < 0 && mediaRepository.get().addonNativeCard(mediaType, tmdbId)?.addonNativeAddonId == YouTubeCollection.ADDON_ID) {
+            return true
+        }
         if (tmdbId <= 0) return false
         val region = region()
         val key = key(region, mediaType, tmdbId)

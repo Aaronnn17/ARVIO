@@ -229,6 +229,7 @@ import com.arflix.tv.data.model.settingsPageUrl
 import com.arflix.tv.data.model.effectivePackName
 import com.arflix.tv.data.model.isBulkDeletablePack
 import com.arflix.tv.data.model.CatalogSourceType
+import com.arflix.tv.data.repository.YouTubeCollection
 import com.arflix.tv.data.model.QualityFilterConfig
 import com.arflix.tv.data.model.RuntimeKind
 import com.arflix.tv.data.model.StalkerCatalogKind
@@ -645,6 +646,9 @@ fun SettingsScreen(
     var showIptvCategoriesSettings by remember { mutableStateOf(false) }
     // Rename dialog state
     var showCatalogRename by remember { mutableStateOf(false) }
+    var youTubeManagerCatalogId by remember { mutableStateOf<String?>(null) }
+    var showYouTubeAddInput by remember { mutableStateOf(false) }
+    var youTubeAddUrl by remember { mutableStateOf("") }
     var renameCatalogId by remember { mutableStateOf("") }
     var renameCatalogTitle by remember { mutableStateOf("") }
 
@@ -989,6 +993,8 @@ fun SettingsScreen(
         showPlexHomeServerInput ||
         showCatalogInput ||
         showCatalogRename ||
+        youTubeManagerCatalogId != null ||
+        showYouTubeAddInput ||
         showSubtitlePicker ||
         showSecondarySubtitlePicker ||
         showAudioLanguagePicker ||
@@ -1695,9 +1701,13 @@ fun SettingsScreen(
                                                 if (catalog != null) {
                                                     when (catalogActionIndex) {
                                                         0 -> {
-                                                            renameCatalogId = catalog.id
-                                                            renameCatalogTitle = catalog.title
-                                                            showCatalogRename = true
+                                                            if (catalog.sourceType == CatalogSourceType.YOUTUBE) {
+                                                                youTubeManagerCatalogId = catalog.id
+                                                            } else {
+                                                                renameCatalogId = catalog.id
+                                                                renameCatalogTitle = catalog.title
+                                                                showCatalogRename = true
+                                                            }
                                                         }
                                                         1 -> viewModel.moveCatalogUp(catalog.id)
                                                         2 -> viewModel.moveCatalogDown(catalog.id)
@@ -1886,9 +1896,13 @@ fun SettingsScreen(
                 onAddCatalogClick = { showCatalogInput = true },
                 onImportCatalogPackClick = { showCatalogPackInput = true },
                 onRenameCatalogClick = { catalog ->
-                    renameCatalogId = catalog.id
-                    renameCatalogTitle = catalog.title
-                    showCatalogRename = true
+                    if (catalog.sourceType == CatalogSourceType.YOUTUBE) {
+                        youTubeManagerCatalogId = catalog.id
+                    } else {
+                        renameCatalogId = catalog.id
+                        renameCatalogTitle = catalog.title
+                        showCatalogRename = true
+                    }
                 },
                 onDeleteCatalogClick = { catalog ->
                     if (catalog.isBulkDeletablePack) {
@@ -2416,9 +2430,13 @@ fun SettingsScreen(
                             builtInCollectionsEnabled = uiState.builtInCollectionsEnabled,
                             onToggleBuiltInCollections = { viewModel.toggleBuiltInCollections() },
                             onRenameCatalog = { catalog ->
-                                renameCatalogId = catalog.id
-                                renameCatalogTitle = catalog.title
-                                showCatalogRename = true
+                                if (catalog.sourceType == CatalogSourceType.YOUTUBE) {
+                                    youTubeManagerCatalogId = catalog.id
+                                } else {
+                                    renameCatalogId = catalog.id
+                                    renameCatalogTitle = catalog.title
+                                    showCatalogRename = true
+                                }
                             },
                             onMoveCatalogUp = { catalog -> viewModel.moveCatalogUp(catalog.id) },
                             onMoveCatalogDown = { catalog -> viewModel.moveCatalogDown(catalog.id) },
@@ -2835,6 +2853,36 @@ fun SettingsScreen(
                     viewModel.clearCatalogDiscovery()
                     showCatalogInput = false
                 }
+            )
+        }
+
+        val youTubeManagerCatalog = youTubeManagerCatalogId?.let { id -> uiState.catalogs.firstOrNull { it.id == id } }
+        if (youTubeManagerCatalog != null && !showYouTubeAddInput && !showCatalogRename) {
+            YouTubeCollectionModal(
+                catalog = youTubeManagerCatalog,
+                onAddVideo = { youTubeAddUrl = ""; showYouTubeAddInput = true },
+                onRename = {
+                    renameCatalogId = youTubeManagerCatalog.id
+                    renameCatalogTitle = youTubeManagerCatalog.title
+                    showCatalogRename = true
+                },
+                onMoveVideo = { video, delta -> viewModel.moveYouTubeVideo(youTubeManagerCatalog.id, video, delta) },
+                onRemoveVideo = { video -> viewModel.removeYouTubeVideo(youTubeManagerCatalog.id, video) },
+                onDismiss = { youTubeManagerCatalogId = null }
+            )
+        }
+
+        if (showYouTubeAddInput) {
+            InputModal(
+                title = stringResource(R.string.youtube_add_link),
+                fields = listOf(
+                    InputField(label = stringResource(R.string.youtube_link_label), value = youTubeAddUrl, placeholder = "https://youtu.be/...", onValueChange = { youTubeAddUrl = it })
+                ),
+                onConfirm = {
+                    if (youTubeAddUrl.isNotBlank()) viewModel.addYouTubeVideo(youTubeAddUrl)
+                    showYouTubeAddInput = false
+                },
+                onDismiss = { showYouTubeAddInput = false }
             )
         }
 
@@ -9773,6 +9821,7 @@ private fun sourceLabel(sourceType: CatalogSourceType): String {
         CatalogSourceType.PREINSTALLED -> stringResource(R.string.settings_source_builtin)
         CatalogSourceType.ADDON -> stringResource(R.string.settings_source_addon)
         CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_home_server)
+        CatalogSourceType.YOUTUBE -> "YouTube"
     }
 }
 
@@ -9850,6 +9899,7 @@ private fun CatalogsSettings(
                                     stringResource(R.string.settings_from_source, addonLabel)
                                 }
                                 catalog.sourceType == CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server)
+                                catalog.sourceType == CatalogSourceType.YOUTUBE -> stringResource(R.string.youtube_video_count, YouTubeCollection.decode(catalog.sourceRef).size)
                                 else -> catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog)
                             }
                             "Pack: ${catalog.effectivePackName} • $baseSubtitle"
@@ -10072,6 +10122,7 @@ private fun TvCatalogSettingsRow(
                             stringResource(R.string.settings_from_source, addonLabel)
                         }
                         catalog.sourceType == CatalogSourceType.HOME_SERVER -> stringResource(R.string.settings_from_home_server)
+                        catalog.sourceType == CatalogSourceType.YOUTUBE -> stringResource(R.string.youtube_video_count, YouTubeCollection.decode(catalog.sourceRef).size)
                         else -> catalog.sourceUrl ?: stringResource(R.string.settings_custom_catalog)
                     }
                     "Pack: ${catalog.effectivePackName} • $baseSubtitle"
@@ -14022,5 +14073,250 @@ private fun CatalogPackDeleteConfirmDialog(
                 }
             }
         }
+    }
+}
+
+/**
+ * Lists the videos of the profile's YouTube row (see YouTubeCollection) in Home's order, with
+ * add, rename, move and remove. On TV, Left/Right picks a video's action (up, down, remove) and
+ * OK runs it; remove needs a second OK, so a stray press cannot drop a video.
+ */
+@Composable
+private fun YouTubeCollectionModal(
+    catalog: CatalogConfig,
+    onAddVideo: () -> Unit,
+    onRename: () -> Unit,
+    onMoveVideo: (YouTubeCollection.Video, Int) -> Unit,
+    onRemoveVideo: (YouTubeCollection.Video) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val videos = remember(catalog.sourceRef) { YouTubeCollection.decode(catalog.sourceRef) }
+    // 0 = add, 1 = rename, 2.. = videos
+    var focusedIndex by remember { mutableIntStateOf(0) }
+    // Within a video row: which of its buttons OK runs.
+    var focusedAction by remember { mutableIntStateOf(VIDEO_ACTION_REMOVE) }
+    var armedVideoId by remember { mutableStateOf<String?>(null) }
+    val itemCount = 2 + videos.size
+    LaunchedEffect(itemCount) { focusedIndex = focusedIndex.coerceAtMost(itemCount - 1) }
+    val isTouchDevice = LocalDeviceType.current.isTouchDevice()
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val modalFocusRequester = remember { FocusRequester() }
+    val listState = rememberLazyListState()
+    LaunchedEffect(Unit) { modalFocusRequester.requestFocus() }
+    LaunchedEffect(focusedIndex) { runCatching { listState.animateScrollToItem(focusedIndex.coerceAtLeast(0)) } }
+
+    fun runVideoAction(videoIndex: Int, action: Int) {
+        val video = videos.getOrNull(videoIndex) ?: return
+        when (action) {
+            VIDEO_ACTION_UP, VIDEO_ACTION_DOWN -> {
+                armedVideoId = null
+                val delta = if (action == VIDEO_ACTION_UP) -1 else 1
+                if (videoIndex + delta !in videos.indices) return
+                onMoveVideo(video, delta)
+                // Focus follows the video to its new place.
+                focusedIndex = videoIndex + delta + 2
+            }
+            else -> if (isTouchDevice || armedVideoId == video.id) {
+                armedVideoId = null
+                onRemoveVideo(video)
+            } else {
+                armedVideoId = video.id
+            }
+        }
+    }
+
+    fun activate(index: Int) {
+        when (index) {
+            0 -> onAddVideo()
+            1 -> onRename()
+            else -> runVideoAction(index - 2, focusedAction)
+        }
+    }
+
+    fun stepAction(towardsLast: Boolean) {
+        if (focusedIndex < 2) return
+        armedVideoId = null
+        focusedAction = (focusedAction + if (towardsLast) 1 else -1).coerceIn(VIDEO_ACTION_UP, VIDEO_ACTION_REMOVE)
+    }
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        ModalScrim(onDismiss = onDismiss) {
+            Column(
+                modifier = Modifier
+                    .then(if (isTouchDevice) Modifier.fillMaxWidth(0.92f).widthIn(max = 640.dp) else Modifier.width(720.dp))
+                    .heightIn(max = 620.dp)
+                    .background(BackgroundElevated, RoundedCornerShape(14.dp))
+                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 20.dp, vertical = 18.dp)
+                    .focusRequester(modalFocusRequester)
+                    .focusable()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            Key.Back, Key.Escape -> { onDismiss(); true }
+                            Key.DirectionUp -> { if (focusedIndex > 0) focusedIndex--; armedVideoId = null; true }
+                            Key.DirectionDown -> { if (focusedIndex < itemCount - 1) focusedIndex++; armedVideoId = null; true }
+                            // The buttons are laid out mirrored in RTL, so keys follow what is on screen.
+                            Key.DirectionLeft -> { stepAction(towardsLast = isRtl); true }
+                            Key.DirectionRight -> { stepAction(towardsLast = !isRtl); true }
+                            Key.Enter, Key.DirectionCenter -> { activate(focusedIndex); true }
+                            else -> false
+                        }
+                    }
+            ) {
+                Text(catalog.title, style = ArflixTypography.sectionTitle, color = TextPrimary)
+                Text(
+                    text = when {
+                        videos.isEmpty() -> stringResource(R.string.youtube_no_videos)
+                        isTouchDevice -> stringResource(R.string.youtube_videos_home_order, videos.size)
+                        else -> stringResource(R.string.youtube_videos_home_order_tv, videos.size)
+                    },
+                    style = ArflixTypography.caption,
+                    color = TextSecondary.copy(alpha = 0.75f),
+                    modifier = Modifier.padding(top = 2.dp, bottom = 12.dp)
+                )
+                LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
+                    item(key = "add") {
+                        YouTubeModalRow(
+                            title = stringResource(R.string.youtube_add_link), subtitle = stringResource(R.string.youtube_add_link_desc),
+                            isFocused = focusedIndex == 0, onClick = { focusedIndex = 0; activate(0) }
+                        ) { YouTubeActionChip(Icons.Default.Add, highlighted = focusedIndex == 0, onClick = { focusedIndex = 0; activate(0) }) }
+                    }
+                    item(key = "rename") {
+                        YouTubeModalRow(
+                            title = stringResource(R.string.youtube_rename_row), subtitle = catalog.title,
+                            isFocused = focusedIndex == 1, onClick = { focusedIndex = 1; activate(1) }
+                        ) { YouTubeActionChip(Icons.Default.Edit, highlighted = focusedIndex == 1, onClick = { focusedIndex = 1; activate(1) }) }
+                    }
+                    itemsIndexed(videos, key = { _, video -> video.id }) { index, video ->
+                        val rowIndex = index + 2
+                        val rowFocused = focusedIndex == rowIndex
+                        val armed = armedVideoId == video.id
+                        fun press(action: Int) {
+                            focusedIndex = rowIndex
+                            focusedAction = action
+                            runVideoAction(index, action)
+                        }
+                        YouTubeModalRow(
+                            title = video.title,
+                            subtitle = when {
+                                armed -> stringResource(R.string.youtube_press_ok_again_remove)
+                                !rowFocused || isTouchDevice -> "${index + 1}"
+                                focusedAction == VIDEO_ACTION_UP -> stringResource(R.string.youtube_ok_move_up, index + 1)
+                                focusedAction == VIDEO_ACTION_DOWN -> stringResource(R.string.youtube_ok_move_down, index + 1)
+                                else -> stringResource(R.string.youtube_ok_remove, index + 1)
+                            },
+                            isFocused = rowFocused,
+                            danger = armed,
+                            imageUrl = YouTubeCollection.posterUrl(video.id),
+                            onClick = null
+                        ) {
+                            YouTubeActionChip(
+                                Icons.Default.ArrowUpward,
+                                highlighted = rowFocused && focusedAction == VIDEO_ACTION_UP,
+                                enabled = index > 0,
+                                onClick = { press(VIDEO_ACTION_UP) }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            YouTubeActionChip(
+                                Icons.Default.ArrowDownward,
+                                highlighted = rowFocused && focusedAction == VIDEO_ACTION_DOWN,
+                                enabled = index < videos.size - 1,
+                                onClick = { press(VIDEO_ACTION_DOWN) }
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            YouTubeActionChip(
+                                Icons.Default.Delete,
+                                highlighted = rowFocused && focusedAction == VIDEO_ACTION_REMOVE,
+                                danger = armed,
+                                onClick = { press(VIDEO_ACTION_REMOVE) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private const val VIDEO_ACTION_UP = 0
+private const val VIDEO_ACTION_DOWN = 1
+private const val VIDEO_ACTION_REMOVE = 2
+
+@Composable
+private fun YouTubeModalRow(
+    title: String,
+    subtitle: String,
+    isFocused: Boolean,
+    onClick: (() -> Unit)?,
+    danger: Boolean = false,
+    imageUrl: String? = null,
+    actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit
+) {
+    val accent = if (danger) Color(0xFFDC2626) else Pink
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .background(Color.White.copy(alpha = if (isFocused) 0.12f else 0.04f), RoundedCornerShape(10.dp))
+            .border(if (isFocused) 2.dp else 1.dp, if (isFocused) accent else Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (imageUrl != null) {
+            coil.compose.AsyncImage(
+                model = imageUrl,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.width(96.dp).height(54.dp).clip(RoundedCornerShape(6.dp))
+            )
+            Spacer(modifier = Modifier.width(14.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, style = ArflixTypography.caption.copy(fontSize = 13.sp), color = if (danger) accent else TextSecondary, maxLines = 1)
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        actions()
+    }
+}
+
+@Composable
+private fun YouTubeActionChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    highlighted: Boolean,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    danger: Boolean = false
+) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .background(
+                when {
+                    highlighted && danger -> Color(0xFFDC2626)
+                    highlighted -> Color.White
+                    else -> Color.White.copy(alpha = 0.08f)
+                },
+                RoundedCornerShape(8.dp)
+            )
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = when {
+                highlighted && danger -> Color.White
+                highlighted -> Color.Black
+                !enabled -> TextSecondary.copy(alpha = 0.3f)
+                else -> TextSecondary
+            },
+            modifier = Modifier.size(20.dp)
+        )
     }
 }
