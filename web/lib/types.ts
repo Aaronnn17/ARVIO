@@ -136,7 +136,9 @@ export type CatalogSourceType =
   | "simkl"
   | "addon"
   | "home-server"
-  | "template";
+  | "template"
+  // The profile's own YouTube row (see youtubeCollection.ts).
+  | "youtube";
 
 export interface CatalogConfig {
   id: string;
