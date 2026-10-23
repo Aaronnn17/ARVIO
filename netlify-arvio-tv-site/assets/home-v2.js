@@ -1,11 +1,6 @@
 // Server-rendered translations keep first paint and interactive labels in the same language.
 const homeCopy = JSON.parse(document.getElementById('home-copy').textContent);
 const t = text => homeCopy[text] || text;
-function setPreviewButton(label, symbol) {
-  const icon = document.createElement('span');
-  icon.className = 'play-disc'; icon.setAttribute('aria-hidden','true'); icon.textContent = symbol;
-  previewButton.replaceChildren(icon, document.createTextNode(' ' + t(label)));
-}
 // Transparent over the hero; a soft fade keeps navigation readable after scrolling.
 const siteNav = document.querySelector('.nav');
 let navFrame;
@@ -19,25 +14,18 @@ updateNavigation();
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const finePointer = window.matchMedia('(hover:hover) and (pointer:fine)');
 let paused = reduceMotion.matches;
-let tourTimer, touring = false, tourRun = 0, heroRequest = 0, heroVisible = true;
+let heroRequest = 0, heroVisible = true;
 const motionButton = document.querySelector('#motion');
-const previewButton = document.querySelector('#play-preview');
 const display = document.querySelector('#display');
 const stage = document.querySelector('#stage');
 const hero = document.querySelector('#hero-screen');
 const sceneAnimations = new Set();
-function stopTour() {
-  clearTimeout(tourTimer); touring = false; tourRun++;
-  setPreviewButton('See it in action','▶');
-  document.querySelectorAll('.touring').forEach(el=>el.classList.remove('touring'));
-}
 function updateMotion() {
   document.body.classList.toggle('paused', paused);
   document.documentElement.classList.toggle('motion-allowed', !paused);
   motionButton.setAttribute('aria-pressed', String(paused));
   motionButton.textContent = paused ? t('Enable motion ↗') : t('Pause motion Ⅱ');
   if (paused) {
-    stopTour();
     sceneAnimations.forEach(animation=>animation.cancel()); sceneAnimations.clear();
     document.querySelectorAll('.screen-outgoing').forEach(el=>el.remove());
     stage.style.setProperty('--phone-y','0px'); stage.style.setProperty('--chip-y','0px');
@@ -55,13 +43,11 @@ if ('IntersectionObserver' in window) {
   const heroObserver = new IntersectionObserver(entries=>entries.forEach(entry=>{
     heroVisible=entry.isIntersecting;
     document.body.classList.toggle('hero-offscreen',!heroVisible || document.hidden);
-    if(!entry.isIntersecting) stopTour();
   }),{threshold:0});
   heroObserver.observe(document.querySelector('.hero'));
 }
 document.addEventListener('visibilitychange',()=>{
   document.body.classList.toggle('hero-offscreen',document.hidden || !heroVisible);
-  if(document.hidden) stopTour();
 });
 let pointerFrame;
 stage.addEventListener('pointermove', event => {
@@ -116,23 +102,7 @@ async function showScene(key) {
   document.querySelector('#screen-status').textContent=t(scene.alt);
   return true;
 }
-document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListener('click',()=>{stopTour();showScene(button.dataset.screen);}));
-previewButton.addEventListener('click',async()=>{
-  if(touring){stopTour();return;}
-  paused=false;updateMotion();stopTour();touring=true;const run=++tourRun;
-  setPreviewButton('Stop preview','Ⅱ');
-  const keys=['home','library','live','sports'];
-  const step=async index=>{
-    if(run!==tourRun)return;
-    const loaded=await showScene(keys[index]);
-    if(run!==tourRun)return;
-    if(!loaded){stopTour();return;}
-    document.querySelectorAll('.touring').forEach(el=>el.classList.remove('touring'));
-    document.querySelector(`[data-screen="${keys[index]}"]`).classList.add('touring');
-    tourTimer=setTimeout(()=>index<keys.length-1?step(index+1):stopTour(),3800);
-  };
-  await step(0);
-});
+document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListener('click',()=>showScene(button.dataset.screen)));
 const features = {
   library:{title:'Everything you saved.\nRight where it belongs.',copy:'Watchlists, personal lists and home servers. Browse your collections in one place, with layouts that feel at home on TV.',src:'/assets/screenshots-v2/tv/03-library.webp',alt:'ARVIO TV library with watchlists, personal lists and home servers',number:'01'},
   live:{title:'Your channels.\nA guide that feels right.',copy:'Bring your M3U or Xtream playlist. Explore channels, see what’s on next and keep your favorites close, all with your remote.',src:'/assets/screenshots-v2/tv/05-tv.webp',alt:'ARVIO live TV guide with channel listings and programme information',number:'02'},
