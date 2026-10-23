@@ -1,5 +1,4 @@
 import type { CatalogConfig } from "./types";
-import { isYouTubeCatalogRef } from "./youtubeCollection";
 import bundledDefaults from "./defaultCatalogs.json";
 
 // Exported from MediaRepository.buildPreinstalledDefaults; checked by the APK tests.
@@ -99,7 +98,6 @@ function normalizedSourceType(value: unknown): CatalogConfig["sourceType"] {
   if (raw === "addon") return "addon";
   if (raw === "home-server" || raw === "homeserver") return "home-server";
   if (raw === "template") return "template";
-  if (raw === "youtube") return "youtube";
   if (raw === "tmdb") return "tmdb";
   return "preinstalled";
 }
@@ -116,8 +114,7 @@ function normalizedCatalog(catalog: CatalogConfig): CatalogConfig {
     id: String(catalog.id).trim(),
     name: String(catalog.name ?? catalog.title).trim(),
     title: String(catalog.name ?? catalog.title).trim(),
-    // Android recognizes its YouTube row by the sourceRef as well; an unknown type must not hide it.
-    sourceType: isYouTubeCatalogRef(catalog.sourceRef) ? "youtube" : normalizedSourceType(catalog.sourceType),
+    sourceType: normalizedSourceType(catalog.sourceType),
     layout: normalizedLayout(catalog),
     enabled: catalog.enabled !== false
   };

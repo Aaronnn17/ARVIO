@@ -1,5 +1,4 @@
 import { addonServesOwnMeta, nativeStreamTarget } from "./addonNative";
-import { isYouTubeItem, youTubeStreams } from "./youtubeCollection";
 import { jsonRequest, proxiedUrl } from "./http";
 import { hasResolverConfig } from "./config";
 import { getResolverStreamsProgressive } from "./resolver";
@@ -261,12 +260,6 @@ export async function getStreamsProgressive(
 ) {
   const update = onUpdate ? (streams: StreamSource[], batch: StreamSource[]) =>
     onUpdate(streams.filter(stream => !isInformationalAddonStream(stream)), batch.filter(stream => !isInformationalAddonStream(stream))) : undefined;
-  // A YouTube row video has exactly one source, its YouTube page; no addon knows it.
-  if (isYouTubeItem(item)) {
-    const streams = youTubeStreams(item);
-    onUpdate?.(streams, streams);
-    return streams;
-  }
   // Native addon items are only known to the addon that serves them, by its own ids.
   const native = await nativeStreamTarget(item, season, episode);
   if (native) {

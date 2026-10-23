@@ -24,7 +24,6 @@ import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
 import com.arflix.tv.data.api.TmdbApi
 import com.arflix.tv.data.api.TraktComment
-import com.arflix.tv.data.repository.YouTubeCollection
 import com.arflix.tv.data.repository.CloudSyncRepository
 import com.arflix.tv.data.repository.ContinueWatchingMerge
 import com.arflix.tv.data.repository.HomeServerRepository
@@ -2176,10 +2175,7 @@ class DetailsViewModel @Inject constructor(
                 val originalLanguage = item?.originalLanguage
                 val canonicalSeason = identity?.tmdbSeason
                 val canonicalEpisode = identity?.tmdbEpisode
-                // A YouTube collection video has exactly one source (YouTube); Telegram, home
-                // servers, IPTV VOD and plugins would only list unrelated title matches.
-                val isYouTubeVideo = YouTubeCollection.videoIdFromMetaId(effectiveStreamId) != null
-                if (!isYouTubeVideo && !effectiveStreamId.isNullOrBlank() && streamRepository.isTelegramSearchOnClick()) {
+                if (!effectiveStreamId.isNullOrBlank() && streamRepository.isTelegramSearchOnClick()) {
                     // The keys the automatic search would use, so both share its cache.
                     telegramSearchRequest = TelegramSearchRequest(
                         requestId = requestId,
@@ -2196,13 +2192,13 @@ class DetailsViewModel @Inject constructor(
                 }
                 val animeQueryOverride = identity?.kitsuQuery
                 val homeServerEnabled = streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.HOME_SERVER)
-                val hasHomeServerConnections = !isYouTubeVideo && homeServerEnabled && streamRepository.hasHomeServerConnections()
+                val hasHomeServerConnections = homeServerEnabled && streamRepository.hasHomeServerConnections()
                 // Counted alongside the addons: an IPTV playlist or portal is a
                 // source of streams like any other, and leaving it out told every
                 // user whose only provider is IPTV to go install a streaming addon
                 // whenever a search came back empty. Only while IPTV VOD is switched
                 // on, though - switched off, ARVIO does not search there at all.
-                val vodEnabled = !isYouTubeVideo && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.IPTV_VOD)
+                val vodEnabled = streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.IPTV_VOD)
                 val hasIptvVodProviders = vodEnabled && streamRepository.hasIptvVodProviders()
                 if (!isCurrentRequest()) return@launch
                 if (hasHomeServerConnections) {
@@ -2249,7 +2245,7 @@ class DetailsViewModel @Inject constructor(
                 }
 
                 var pluginScraperJob: kotlinx.coroutines.Job? = null
-                val pluginsEnabled = !isYouTubeVideo && streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.PLUGINS)
+                val pluginsEnabled = streamIntegrationRepository.isIntegrationEnabled(StreamIntegrationType.PLUGINS)
                 if (pluginsEnabled) {
                     pluginScraperJob = viewModelScope.launch {
                     try {

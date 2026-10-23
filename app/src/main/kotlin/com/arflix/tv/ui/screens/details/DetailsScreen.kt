@@ -165,7 +165,6 @@ import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.Review
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.repository.MdbExternalRating
-import com.arflix.tv.data.repository.YouTubeCollection
 import com.arflix.tv.network.OkHttpProvider
 import com.arflix.tv.ui.components.EpisodeContextMenu
 import com.arflix.tv.ui.components.KeepScreenOn
@@ -522,17 +521,7 @@ fun DetailsScreen(
                         state.playPositionMs
                     } else null
 
-                    val youTubeVideoId = YouTubeCollection.videoIdFromMetaId(state.imdbId)
-                    if (youTubeVideoId != null) {
-                        // A YouTube collection video has exactly one source: play it as if
-                        // it had been picked, whatever the autoplay setting says.
-                        val stream = YouTubeCollection.stream(youTubeVideoId)
-                        viewModel.recordPlayedEpisode(mediaId, null)
-                        onNavigateToPlayer(
-                            mediaType, mediaId, null, state.imdbId,
-                            stream.url, stream.addonId, stream.source, startPositionMs
-                        )
-                    } else if (!state.autoPlaySingleSource) {
+                    if (!state.autoPlaySingleSource) {
                         // Autoplay OFF → open the source picker; never auto-play.
                         showStreamSelector = true
                         val identity = selectedEp?.identity ?: state.episodes.firstOrNull {
