@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { useApp } from "@/lib/store";
 import { kidsLevelOf } from "@/lib/kids";
 import { config } from "@/lib/config";
+import { ACCENTS } from "@/lib/accents";
 import { useTranslation } from "@/lib/i18n";
 import { focusAfterViewChange, installTvNav } from "@/lib/tvNav";
 import { watchHoverCapability } from "@/lib/deviceClass";
@@ -56,14 +57,6 @@ const SettingsScreen = dynamic(() => import("@/components/settings/SettingsScree
 const DetailsDrawer = dynamic(() => import("@/components/details/DetailsDrawer").then((m) => m.DetailsDrawer), { ssr: false, loading: () => <ScreenLoading /> });
 const LoginScreen = dynamic(() => import("@/components/login/LoginScreen").then((m) => m.LoginScreen), { ssr: false, loading: () => <ScreenLoading /> });
 const PlayerOverlay = dynamic(() => loadPlayer().then((m) => m.PlayerOverlay), { ssr: false, loading: () => <PlayerLoading /> });
-
-const ACCENTS: Record<string, string> = {
-  arctic: "#ededed",
-  gold: "#ffcd3c",
-  green: "#00d588",
-  blue: "#3b82f6",
-  purple: "#8b5cf6"
-};
 
 /**
  * Preload the playback stack (player chunk, hls.js, mediabunny) — but only

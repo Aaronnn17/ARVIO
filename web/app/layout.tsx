@@ -4,6 +4,7 @@ import { UpdateWatcher } from "@/components/shell/UpdateWatcher";
 import { DEVICE_CLASS_SCRIPT } from "@/lib/deviceClass";
 import "./globals.css";
 import "./premium.css";
+import "./settings.css";
 import "./tv-guide.css";
 import "./source-setup.css";
 import "./calendar.css";
