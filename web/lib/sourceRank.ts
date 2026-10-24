@@ -1,5 +1,5 @@
 import { isUncachedDebridStream, parseDebridStream } from "./debrid";
-import { audioDecodableForDevice, isBrowserPlayableStream, isDirectPlayableStream, videoDecodableForDevice } from "./streamCompatibility";
+import { audioDecodableForDevice, isBrowserPlayableStream, isDirectPlayableStream, playbackPlan, videoDecodableForDevice, type PlaybackPlan } from "./streamCompatibility";
 import type { StreamSource } from "./types";
 
 // Shared source ranking — the details source picker, the in-player source
@@ -156,4 +156,45 @@ function parseSizeBytes(value: string) {
   if (unit === "tb") return amount * 1_000_000_000_000;
   if (unit === "gb") return amount * 1_000_000_000;
   return amount * 1_000_000;
+}
+
+type PlanOf = (stream: StreamSource) => Pick<PlaybackPlan, "route" | "method">;
+const METHOD_RANK: Record<PlaybackPlan["method"], number> = { direct: 0, remux: 1, transcode: 2 };
+
+/**
+ * Best-first order for playing in THIS browser: sources that play as they are,
+ * then those that need repackaging, then provider conversion; quality and
+ * debrid preference decide within each method. Autoplay, the details source
+ * picker and the in-player source list all use this one comparator, so "the
+ * next source" means the same thing everywhere.
+ */
+export function compareForBrowser(a: StreamSource, b: StreamSource, planOf: PlanOf = playbackPlan) {
+  return METHOD_RANK[planOf(a).method] - METHOD_RANK[planOf(b).method]
+    || sourcePickerScore(b, "browser") - sourcePickerScore(a, "browser");
+}
+
+export type PlaybackGroups = {
+  /** Plays in this browser (directly or after conversion), best first. */
+  here: StreamSource[];
+  /** No browser route: external players only, quality first. */
+  external: StreamSource[];
+};
+
+/** Split and order a source list into "Plays here" and "External player". */
+export function groupSourcesForPlayback(streams: StreamSource[], planOf: PlanOf = playbackPlan): PlaybackGroups {
+  const here: StreamSource[] = [];
+  const external: StreamSource[] = [];
+  for (const stream of streams) {
+    if (stream.url && planOf(stream).route === "here") here.push(stream);
+    else external.push(stream);
+  }
+  here.sort((a, b) => compareForBrowser(a, b, planOf));
+  external.sort((a, b) => sourcePickerScore(b, "external") - sourcePickerScore(a, "external"));
+  return { here, external };
+}
+
+/** The combined order (plays-here group first) used by every source list. */
+export function orderSourcesForPlayback(streams: StreamSource[], planOf: PlanOf = playbackPlan) {
+  const groups = groupSourcesForPlayback(streams, planOf);
+  return [...groups.here, ...groups.external];
 }

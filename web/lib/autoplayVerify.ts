@@ -1,6 +1,6 @@
 import { cachedDebridDirectUrl, parseDebridStream } from "./debrid";
 import { playbackPlan, streamTransport } from "./streamCompatibility";
-import { cachedVerdict, verifyTopSources } from "./streamVerify";
+import { cachedVerdict, verifyStream } from "./streamVerify";
 import type { StreamSource } from "./types";
 
 type ProbeGlobals = { VideoDecoder?: unknown; AudioDecoder?: unknown };
@@ -32,32 +32,58 @@ export function canProbeDecoders(scope: ProbeGlobals = globalThis as ProbeGlobal
   return typeof scope.VideoDecoder === "function" && typeof scope.AudioDecoder === "function";
 }
 
+/** Map a probe verdict to the autoplay ranking signal (null = inconclusive). */
+function rankingVerdict(verdict: { playable: boolean; videoOk: boolean; audioOk: boolean } | null | undefined): boolean | null {
+  if (!verdict) return null;
+  // WebCodecs audio support is narrower than <video>'s (Safari plays AC-3 /
+  // E-AC-3 natively but its AudioDecoder may not report them), so an
+  // audio-only failure is inconclusive for ranking; only video counts.
+  if (!verdict.playable && verdict.videoOk && !verdict.audioOk) return null;
+  return verdict.playable;
+}
+
 /**
- * Verify the leading autoplay candidates with the (previously unused)
- * streamVerify probe, inside a hard time budget. Returns true/false per
- * candidate when the probe was conclusive, null otherwise.
+ * Verify the leading autoplay candidates with the streamVerify probe, inside a
+ * hard time budget. Returns true/false per candidate when the probe was
+ * conclusive, null otherwise.
+ *
+ * `onVerdict` reports each candidate the moment its verdict is known
+ * (unprobeable candidates immediately, as null), so the chooser can start the
+ * best-ranked source as soon as IT passes instead of waiting for the slowest
+ * probe or the whole budget.
  */
-export async function verifyAutoplayCandidates(candidates: StreamSource[], budgetMs: number, signal: AbortSignal) {
+export async function verifyAutoplayCandidates(
+  candidates: StreamSource[],
+  budgetMs: number,
+  signal: AbortSignal,
+  onVerdict?: (stream: StreamSource, verdict: boolean | null) => void
+) {
   const verdicts = new Map<StreamSource, boolean | null>();
   for (const stream of candidates) verdicts.set(stream, null);
-  if (!canProbeDecoders()) return verdicts;
-  const targets = candidates.map((stream) => ({ stream, url: probeUrlFor(stream) }));
-  const probeable = targets.filter((target): target is { stream: StreamSource; url: string } => Boolean(target.url));
-  if (!probeable.length) return verdicts;
+  const report = (stream: StreamSource, verdict: boolean | null) => {
+    verdicts.set(stream, verdict);
+    onVerdict?.(stream, verdict);
+  };
+  if (!canProbeDecoders()) {
+    for (const stream of candidates) report(stream, null);
+    return verdicts;
+  }
+  const probes: Promise<void>[] = [];
+  for (const stream of candidates) {
+    const url = probeUrlFor(stream);
+    if (!url) { report(stream, null); continue; }
+    const known = cachedVerdict(url);
+    if (known) { report(stream, rankingVerdict(known)); continue; }
+    probes.push(verifyStream(url, undefined, signal)
+      .then((verdict) => { if (!signal.aborted) report(stream, rankingVerdict(verdict)); })
+      .catch(() => { if (!signal.aborted) report(stream, null); }));
+  }
+  if (!probes.length) return verdicts;
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([
-    verifyTopSources(probeable.map(({ url }) => ({ url })), probeable.length, probeable.length, signal).catch(() => undefined),
+    Promise.all(probes),
     new Promise<void>((resolve) => { timer = setTimeout(resolve, budgetMs); })
   ]);
   if (timer) clearTimeout(timer);
-  for (const { stream, url } of probeable) {
-    const verdict = cachedVerdict(url);
-    if (!verdict) continue;
-    // WebCodecs audio support is narrower than <video>'s (Safari plays AC-3 /
-    // E-AC-3 natively but its AudioDecoder may not report them), so an
-    // audio-only failure is inconclusive for ranking; only video counts.
-    if (!verdict.playable && verdict.videoOk && !verdict.audioOk) continue;
-    verdicts.set(stream, verdict.playable);
-  }
   return verdicts;
 }

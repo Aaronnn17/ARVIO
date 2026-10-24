@@ -34,6 +34,8 @@ import { isCurrentIptvSnapshot, recordTvPlayback } from "./iptvSession";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId, tmdb } from "./tmdb";
+import { loadDetails } from "@/components/details/detailsLoaders";
+import { resumeFromContinueWatching } from "./playerResume";
 import { verifyProfilePin } from "./profilePin";
 import { hydratedProfileId } from "./profiles";
 import { partnerLoginRedirect } from "./partnerLinks";
@@ -1725,6 +1727,9 @@ export function AppProvider({
     })();
   }, []);
 
+  // openDetails reads the latest rail without re-creating the callback.
+  const continueWatchingRef = useRef(continueWatching);
+  continueWatchingRef.current = continueWatching;
   const openDetails = useCallback(async (item: MediaItem) => {
     // Kids profiles: a title opens only when its rating fits the profile, whatever the
     // entry point (card, billboard, Continue Watching, a shared link).
@@ -1755,8 +1760,11 @@ export function AppProvider({
     if (sourceGeneration.current !== generation) return;
     if (!resolvedId && !item.isHomeServer) { setBusy(""); setToast("Metadata could not be matched for this title."); return; }
     const detailsTarget = item.isHomeServer && item.tmdbId ? { ...item, id: item.tmdbId } : { ...item, id: resolvedId ?? item.id };
-    const detailed = await getDetails(detailsTarget, priorityConfig).catch(() => item);
+    const detailed = await loadDetails(detailsTarget, priorityConfig).catch(() => item);
     if (sourceGeneration.current !== generation) return;
+    // Resume from ANY entry point: a title opened from search or a rail carries
+    // no progress, but the Continue Watching row for it does (episode, position).
+    const resume = resumeFromContinueWatching(item, continueWatchingRef.current);
     const withResumeEpisode = {
       ...detailed,
       ...(item.isHomeServer ? {
@@ -1769,9 +1777,12 @@ export function AppProvider({
         image: detailed.image || item.image,
         backdrop: detailed.backdrop || item.backdrop
       } : {}),
-      seasonNumber: item.seasonNumber ?? detailed.seasonNumber ?? null,
-      episodeNumber: item.episodeNumber ?? detailed.episodeNumber ?? null,
-      episodeTitle: item.episodeTitle ?? detailed.episodeTitle ?? null
+      seasonNumber: item.seasonNumber ?? resume?.seasonNumber ?? detailed.seasonNumber ?? null,
+      episodeNumber: item.episodeNumber ?? resume?.episodeNumber ?? detailed.episodeNumber ?? null,
+      episodeTitle: item.episodeTitle ?? resume?.episodeTitle ?? detailed.episodeTitle ?? null,
+      progress: item.progress ?? resume?.progress ?? detailed.progress,
+      resumePositionSeconds: item.resumePositionSeconds ?? resume?.resumePositionSeconds ?? detailed.resumePositionSeconds,
+      durationSeconds: item.durationSeconds ?? resume?.durationSeconds ?? detailed.durationSeconds
     };
     setSelected(withResumeEpisode);
     // Movies fetch sources immediately. Continue-watching TV entries already
@@ -2022,15 +2033,19 @@ export function AppProvider({
       setToast("No trailer available for this title.");
       return;
     }
-    // Trailers are YouTube page URLs — the built-in <video> player can't play
-    // those. Open YouTube directly: the YouTube app on mobile (youtube.com/
-    // youtu.be deep-links into it) or a new browser tab on desktop.
-    if (typeof window !== "undefined") {
-      const videoId = url.match(/(?:v=|youtu\.be\/|embed\/)([\w-]{11})/)?.[1];
-      const target = videoId ? `https://www.youtube.com/watch?v=${videoId}` : url;
-      const opened = window.open(target, "_blank", "noopener,noreferrer");
-      if (!opened) window.location.href = target;
+    // Trailers are YouTube page URLs: play them in the in-app YouTube embed
+    // (PlayerOverlay) instead of window.open, which left the iPhone home-screen
+    // app for Safari/YouTube with no way back.
+    const videoId = url.match(/(?:v=|youtu\.be\/|embed\/)([\w-]{11})/)?.[1];
+    if (!videoId) {
+      if (typeof window !== "undefined") window.open(url, "_blank", "noopener,noreferrer");
+      return;
     }
+    playbackPreparation.current?.abort();
+    stopOwnedPlayback();
+    playbackGeneration.current++;
+    setActiveChannel(null);
+    setActiveStream({ source: "Trailer", addonName: "Trailer", addonId: "arvio_trailer", url: `https://www.youtube.com/watch?v=${videoId}`, resumePositionSeconds: 0 });
   }, [setToast]);
 
   // Hand a live/catch-up stream to VLC/Infuse. Most IPTV is plain-HTTP (mixed

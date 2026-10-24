@@ -99,6 +99,21 @@ export async function toggleFullscreen(container: HTMLElement | null, video: HTM
   }
 }
 
+/**
+ * Phones: turn to landscape while the player is fullscreen, where the browser
+ * allows it (Android Chrome, installed web apps). iOS Safari has no
+ * orientation lock; its native video player rotates by itself.
+ */
+export function lockLandscape(scope: { screen?: { orientation?: { lock?: (orientation: string) => Promise<void> } } } = typeof window === "undefined" ? {} : window as unknown as { screen?: { orientation?: { lock?: (orientation: string) => Promise<void> } } }) {
+  const lock = scope.screen?.orientation?.lock;
+  if (typeof lock !== "function") return false;
+  try { void lock.call(scope.screen!.orientation, "landscape").catch(() => undefined); return true; } catch { return false; }
+}
+
+export function unlockOrientation(scope: { screen?: { orientation?: { unlock?: () => void } } } = typeof window === "undefined" ? {} : window as unknown as { screen?: { orientation?: { unlock?: () => void } } }) {
+  try { scope.screen?.orientation?.unlock?.(); } catch { /* not locked */ }
+}
+
 /** Subscribe to every fullscreen signal (standard, prefixed and iOS video). */
 export function onFullscreenChange(video: HTMLVideoElement, listener: () => void, doc: Document = document) {
   const events: Array<[EventTarget, string]> = [
@@ -214,6 +229,8 @@ export type MediaSessionHandlers = {
   seekBy?: (deltaSeconds: number) => void;
   seekTo?: (seconds: number, fast: boolean) => void;
   next?: (() => void) | null;
+  /** Skip interval of the on-screen buttons; the lock screen uses the same. */
+  skipSeconds?: number;
 };
 
 type MediaSessionLike = {
@@ -256,8 +273,10 @@ export function bindMediaSession(details: MediaSessionDetails, handlers: MediaSe
   };
   set("play", () => handlers.play());
   set("pause", () => handlers.pause());
-  set("seekbackward", handlers.seekBy ? (event) => handlers.seekBy!(-(event?.seekOffset || 10)) : null);
-  set("seekforward", handlers.seekBy ? (event) => handlers.seekBy!(event?.seekOffset || 10) : null);
+  // The lock screen skips by the same interval as the on-screen buttons.
+  const skip = handlers.skipSeconds ?? 0;
+  set("seekbackward", handlers.seekBy ? (event) => handlers.seekBy!(-(skip || event?.seekOffset || 10)) : null);
+  set("seekforward", handlers.seekBy ? (event) => handlers.seekBy!(skip || event?.seekOffset || 10) : null);
   set("seekto", handlers.seekTo ? (event) => { if (typeof event?.seekTime === "number" && Number.isFinite(event.seekTime)) handlers.seekTo!(event.seekTime, Boolean(event.fastSeek)); } : null);
   // No "previous episode" in the web player; leaving it null lets iOS show
   // the seek-back button instead of a dead previous-track button.

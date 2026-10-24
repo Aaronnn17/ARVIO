@@ -15,6 +15,11 @@ import {
 
 type PromptMode = "choice" | "progress";
 
+/** 90 % and above counts as watched, matching the in-app player and Android. */
+export function isExternalPlaybackFinished(progressPercent: number) {
+  return progressPercent >= 90;
+}
+
 function labelFor(pending: PendingExternalPlayback) {
   const episode = pending.mediaType === "tv" && pending.season && pending.episode
     ? `S${pending.season} E${pending.episode}${pending.episodeTitle ? ` - ${pending.episodeTitle}` : ""}`
@@ -75,7 +80,11 @@ export function ExternalPlaybackPrompt() {
   const syncProgress = async (progress: number, action: "start" | "pause" | "stop") => {
     if (!pending) return;
     setSaving(true);
-    const finished = progress >= 100;
+    // ARVIO's completion threshold is 90 % (Android WATCHED_THRESHOLD): Continue
+    // Watching drops anything at or past it, so "90 %" saved as plain progress
+    // made the title vanish without ever being marked watched. Treat it as
+    // finished: watched badge, tracker history, out of Continue Watching.
+    const finished = isExternalPlaybackFinished(progress);
     const duration = pending.durationSeconds || 0;
     const position = duration > 0 ? Math.round((duration * progress) / 100) : 0;
     // Close the prompt immediately so the buttons feel instant; the sync
@@ -182,8 +191,8 @@ export function ExternalPlaybackPrompt() {
           <>
             <div className="external-progress-grid">
               {[25, 50, 75, 90].map((progress) => (
-                <button type="button" key={progress} disabled={saving} onClick={() => void syncProgress(progress, "pause")}>
-                  {progress}%
+                <button type="button" key={progress} disabled={saving} onClick={() => void syncProgress(progress, isExternalPlaybackFinished(progress) ? "stop" : "pause")}>
+                  {isExternalPlaybackFinished(progress) ? translateUi("{value0}% · watched", { value0: progress }) : `${progress}%`}
                 </button>
               ))}
             </div>
