@@ -361,6 +361,10 @@ export interface IptvPlaylistEntry {
   epgUrl?: string;
   epgUrls?: string[];
   enabled: boolean;
+  /** Android/TV: what the app imports from this playlist. Undefined = on (Android's default). */
+  importLiveTv?: boolean;
+  importVod?: boolean;
+  importSeries?: boolean;
 }
 
 export interface IptvTvSession {
@@ -567,6 +571,17 @@ export interface AppSettings {
   /** Read from cloud; locked IPTV groups are not exposed without a PIN flow. */
   lockedIptvGroupIds?: string[];
   groupOrder: string[];
+  /** Manual channel order per category: { "<playlistId>|<group>": [channel ids…] } (iptvByProfile.channelOrder). */
+  iptvChannelOrder?: Record<string, string[]>;
+  /** Android/TV source priority (profileSettingsById). Undefined = keep the app's value. */
+  streamProvidersCustomOrder?: string;
+  streamIntegrationsMacroOrder?: string;
+  streamMacroEnabledMap?: Record<string, boolean>;
+  streamProviderEnabledMap?: Record<string, boolean>;
+  /** Per-row card style the Android app keeps ({ "home:<catalogId>": "Poster" | "Landscape" }). */
+  catalogueRowLayoutModes?: Record<string, string>;
+  /** Read only: plugin repositories installed on the Android app (names for the source list). */
+  androidPluginRepositories?: Array<{ id: string; name: string; enabled: boolean }>;
   // Metadata & API Keys
   customTmdbApiKey: string;
   customTvdbApiKey: string;

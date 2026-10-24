@@ -8,6 +8,7 @@ import { jsonRequest } from "./http";
 import { mergeTvSessions, normalizeTvSession } from "./iptvSession";
 import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
 import { tmdbImageUrl } from "./mediaImages";
+import { applyRowLayoutModes, normalizedRowLayoutModes } from "./homeRows";
 import type { TraktToken } from "./trakt";
 import { isYouTubeItem } from "./youtubeCollection";
 import type { SimklToken } from "./simkl";
@@ -63,6 +64,8 @@ interface AndroidIptvProfileState {
   groupOrder?: string[];
   groupOrderSchema?: number;
   sortOrder?: string;
+  /** { "<playlistId>|<group>": [channel ids…] } — manual channel order inside a category. */
+  channelOrder?: Record<string, string[]>;
 }
 
 function canUseBackendSync(auth: AuthClient) {
@@ -223,7 +226,7 @@ function normalizeIptvPlaylist(value: unknown, fallbackId: string): IptvPlaylist
   const id = stringValue(raw.id) || fallbackId;
   const name = stringValue(raw.name) || "Cloud IPTV";
   const epgUrl = stringValue(raw.epgUrl ?? raw.epg_url ?? raw.xmltvUrl ?? raw.xmltv_url);
-  return normalizeRuntimeIptvPlaylist({
+  const normalized = normalizeRuntimeIptvPlaylist({
     id,
     name,
     m3uUrl,
@@ -231,6 +234,24 @@ function normalizeIptvPlaylist(value: unknown, fallbackId: string): IptvPlaylist
     epgUrls: stringArray(raw.epgUrls ?? raw.epg_urls),
     enabled: raw.enabled !== false
   }, Number(fallbackId.match(/\d+$/)?.[0] ?? 1) - 1);
+  if (!normalized) return null;
+  // Android's per-playlist import switches. Carried through so a web edit of
+  // the playlist list does not quietly turn VOD/series import back on.
+  for (const flag of ["importLiveTv", "importVod", "importSeries"] as const) {
+    if (typeof raw[flag] === "boolean") normalized[flag] = raw[flag] as boolean;
+  }
+  return normalized;
+}
+
+/** iptvByProfile.<id>.channelOrder → only string lists under `playlist|group` keys. */
+export function normalizeChannelOrder(value: unknown): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const [key, refs] of Object.entries(objectRecord(value))) {
+    if (!key.includes("|")) continue;
+    const list = [...new Set(stringArray(refs))];
+    if (list.length) result[key] = list;
+  }
+  return result;
 }
 
 function normalizeIptvPlaylists(value: unknown, fallbackPrefix: string): IptvPlaylistEntry[] {
@@ -486,7 +507,11 @@ function androidProfileSettings(settings: AppSettings) {
     ...(settings.autoPlayMaxSizeGb !== undefined ? { autoPlayMaxSizeGb: Math.max(0, Math.min(1024, Math.round(Number(settings.autoPlayMaxSizeGb) || 0))) } : {}),
     homeServerConnectionJson: serializeHomeServerConnectionJson(settings.homeServers),
     torrServerBaseUrl: settings.torrServerBaseUrl || null,
-    catalogueRowLayoutModes: {},
+    ...(settings.catalogueRowLayoutModes !== undefined ? { catalogueRowLayoutModes: settings.catalogueRowLayoutModes } : {}),
+    ...(settings.streamProvidersCustomOrder !== undefined ? { streamProvidersCustomOrder: settings.streamProvidersCustomOrder } : {}),
+    ...(settings.streamIntegrationsMacroOrder !== undefined ? { streamIntegrationsMacroOrder: settings.streamIntegrationsMacroOrder } : {}),
+    ...(settings.streamMacroEnabledMap !== undefined ? { streamMacroEnabledMap: settings.streamMacroEnabledMap } : {}),
+    ...(settings.streamProviderEnabledMap !== undefined ? { streamProviderEnabledMap: settings.streamProviderEnabledMap } : {}),
     cardLayoutMode: settings.cardLayoutMode,
     frameRateMatchingMode: androidFrameRateMode(settings.frameRateMatchingMode),
     autoPlayNext: settings.autoPlayNext,
@@ -554,12 +579,22 @@ function settingsFromAndroidProfile(value: unknown): Partial<AppSettings> {
   if ("autoPlaySingleSource" in state) partial.autoPlaySingleSource = Boolean(state.autoPlaySingleSource);
   if ("autoPlayMinQuality" in state) partial.autoPlayMinQuality = webQuality(state.autoPlayMinQuality);
   if ("torrServerBaseUrl" in state) partial.torrServerBaseUrl = stringValue(state.torrServerBaseUrl);
+  // Source priority (StreamIntegrationRepository). Blank strings mean "not set" on Android.
+  if (typeof state.streamProvidersCustomOrder === "string") partial.streamProvidersCustomOrder = state.streamProvidersCustomOrder;
+  if (typeof state.streamIntegrationsMacroOrder === "string") partial.streamIntegrationsMacroOrder = state.streamIntegrationsMacroOrder;
+  if ("streamMacroEnabledMap" in state) partial.streamMacroEnabledMap = booleanMap(state.streamMacroEnabledMap);
+  if ("streamProviderEnabledMap" in state) partial.streamProviderEnabledMap = booleanMap(state.streamProviderEnabledMap);
+  if ("catalogueRowLayoutModes" in state) partial.catalogueRowLayoutModes = normalizedRowLayoutModes(state.catalogueRowLayoutModes) ?? {};
   if ("qualityFilters" in state) {
     const filters = validQualityFilters(state.qualityFilters);
     partial.qualityFilters = filters;
     if (filters.length) partial.qualityFilterPreset = "custom";
   }
   return partial;
+}
+
+function booleanMap(value: unknown): Record<string, boolean> {
+  return Object.fromEntries(Object.entries(objectRecord(value)).filter(([key, enabled]) => key.trim() && typeof enabled === "boolean")) as Record<string, boolean>;
 }
 
 function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings> {
@@ -596,6 +631,7 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
     hiddenGroupIds: stringArray(state.hiddenGroups),
     lockedIptvGroupIds: stringArray(state.lockedGroups),
     groupOrder: (state.groupOrderSchema ?? 0) >= 3 ? stringArray(state.groupOrder) : [],
+    iptvChannelOrder: normalizeChannelOrder(state.channelOrder),
     iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
     iptvStalkerUrl: stringValue(state.stalkerPortalUrl ?? rootState.iptvStalkerUrl),
     iptvStalkerMac: stringValue(state.stalkerMacAddress ?? rootState.iptvStalkerMac)
@@ -807,6 +843,13 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
   delete legacySettings.customTmdbApiKey;
   delete legacySettings.customTvdbApiKey;
   delete legacySettings.customTvdbUserPin;
+  // Profile-scoped values: the legacy blob holds whichever profile saved last.
+  delete legacySettings.streamProvidersCustomOrder;
+  delete legacySettings.streamIntegrationsMacroOrder;
+  delete legacySettings.streamMacroEnabledMap;
+  delete legacySettings.streamProviderEnabledMap;
+  delete legacySettings.catalogueRowLayoutModes;
+  delete legacySettings.androidPluginRepositories;
   const legacyCatalogs = parseNestedJson(root.catalogs);
   const hasProfileCatalogs = Array.isArray(profileCatalogs);
   const effectiveHiddenCatalogs = hiddenCatalogIds ?? (hasProfileCatalogs ? [] : root.hiddenPreinstalledCatalogs ?? legacySettings.hiddenCatalogIds);
@@ -815,7 +858,9 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
   // Profile-scoped lists are authoritative, including []. Do not inherit stale
   // visibility flags from the last profile that wrote the legacy settings blob.
   const catalogSettings: Partial<AppSettings> = {
-    ...(hasProfileCatalogs ? { catalogs: profileCatalogs } : Array.isArray(legacyCatalogs) ? { catalogs: legacyCatalogs } : {}),
+    // Card style per row lives in the profile's catalogueRowLayoutModes (Android drops `layout`).
+    ...(hasProfileCatalogs ? { catalogs: applyRowLayoutModes(profileCatalogs, profileSettings.catalogueRowLayoutModes) }
+      : Array.isArray(legacyCatalogs) ? { catalogs: applyRowLayoutModes(legacyCatalogs as AppSettings["catalogs"], profileSettings.catalogueRowLayoutModes) } : {}),
     ...(effectiveHiddenCatalogs !== undefined ? { hiddenCatalogIds: arrayValue<string>(effectiveHiddenCatalogs) } : {}),
     ...(effectiveHiddenAddons !== undefined ? { hiddenAddonCatalogIds: arrayValue<string>(effectiveHiddenAddons) } : {}),
     ...(effectiveHiddenHomeServers !== undefined ? { hiddenHomeServerCatalogIds: arrayValue<string>(effectiveHiddenHomeServers) } : {})
@@ -838,6 +883,12 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
   if ("dolbyVisionCompatEnabled" in root) globalSettings.dolbyVisionCompat = root.dolbyVisionCompatEnabled !== false;
   if ("telegramSearchOnClickOnly" in root) globalSettings.telegramSearchOnClickOnly = root.telegramSearchOnClickOnly !== false;
   if ("subtitleRemoveHearingImpaired" in root) globalSettings.removeHearingImpaired = Boolean(root.subtitleRemoveHearingImpaired);
+  // Read only: lets Settings name the TV's plugin repositories in the source list.
+  if (Array.isArray(parseNestedJson(root.pluginRepositories))) {
+    globalSettings.androidPluginRepositories = arrayValue<Record<string, unknown>>(root.pluginRepositories)
+      .map((repo) => ({ id: stringValue(repo?.id), name: stringValue(repo?.name), enabled: repo?.enabled !== false }))
+      .filter((repo) => repo.id);
+  }
   return {
     version: typeof root.version === "number" ? root.version : 1,
     // Union the per-profile scope with the global list. An empty/partial profile
@@ -845,6 +896,13 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
     addons: unionAddons(arrayValue<InstalledAddon>(profileAddons), arrayValue<InstalledAddon>(root.addons)),
     settings: {
       ...legacySettings,
+      // Explicitly unset, so a profile without them never keeps the previous profile's values.
+      streamProvidersCustomOrder: undefined,
+      streamIntegrationsMacroOrder: undefined,
+      streamMacroEnabledMap: undefined,
+      streamProviderEnabledMap: undefined,
+      catalogueRowLayoutModes: undefined,
+      androidPluginRepositories: undefined,
       ...profileSettings,
       ...globalSettings,
       ...iptvSettings,
@@ -907,8 +965,17 @@ function androidIptvSettings(settings: AppSettings): Record<string, unknown> {
     favoriteGroups: settings.favoriteGroupIds,
     hiddenGroups: settings.hiddenGroupIds,
     groupOrder: settings.groupOrder,
-    sortOrder: settings.iptvSortOrder ?? "provider"
+    sortOrder: settings.iptvSortOrder ?? "provider",
+    // Only once known, so a browser that never read it cannot blank the TV's.
+    ...(settings.iptvChannelOrder !== undefined ? { channelOrder: settings.iptvChannelOrder } : {})
   };
+}
+
+/** A missing channel order and an empty one mean the same thing. */
+function sameIptvField(field: string, a: unknown, b: unknown) {
+  return field === "channelOrder"
+    ? sameFieldValue(normalizeChannelOrder(a), normalizeChannelOrder(b))
+    : sameFieldValue(a, b);
 }
 
 function mergeFavoriteEdits(remote: string[], local: string[], baseline: string[]): string[] {
@@ -939,9 +1006,22 @@ export function mergeIptvSettings(existing: Record<string, unknown>, settings: A
   const base = baseline ? androidIptvSettings(baseline) : null;
   const merged = { ...existing };
   for (const [field, value] of Object.entries(incoming)) {
-    if (base && sameFieldValue(value, base[field])) continue;
+    if (base && sameIptvField(field, value, base[field])) continue;
     if (field === "tvSession") {
       merged[field] = mergeTvSessions(existing[field], value);
+      continue;
+    }
+    if (field === "channelOrder") {
+      // Per category: only the categories this browser reordered (or reset) change.
+      const local = normalizeChannelOrder(value);
+      const previous = base ? normalizeChannelOrder(base[field]) : {};
+      const next = base ? normalizeChannelOrder(existing[field]) : {};
+      for (const key of new Set([...Object.keys(local), ...Object.keys(previous)])) {
+        if (base && sameFieldValue(local[key], previous[key])) continue;
+        if (local[key]?.length) next[key] = local[key];
+        else delete next[key];
+      }
+      merged[field] = next;
       continue;
     }
     if (field === "groupOrder") {
@@ -1080,11 +1160,16 @@ export async function saveCloudSettings(
       const merged: Record<string, unknown> = { ...existing };
       // Fields the web doesn't genuinely own (always sends empty) — never write them, so they can't
       // wipe a phone's value. defaultSubtitle keeps its own timestamp logic (handled below).
-      const skip = new Set(["catalogueRowLayoutModes", "subtitleUsageJson", "defaultSubtitle", "subtitleSettingsUpdatedAt"]);
+      const skip = new Set(["subtitleUsageJson", "defaultSubtitle", "subtitleSettingsUpdatedAt"]);
+      // Map-valued fields: Android only ever adds or overwrites entries on import,
+      // so merge over the cloud's map instead of replacing rows another device set.
+      const unionFields = new Set(["catalogueRowLayoutModes", "streamMacroEnabledMap", "streamProviderEnabledMap"]);
       for (const field of Object.keys(newProfile)) {
         if (skip.has(field)) continue;
         if (!baseProfile || !sameFieldValue(newProfile[field], baseProfile[field])) {
-          merged[field] = newProfile[field];
+          merged[field] = unionFields.has(field)
+            ? { ...objectRecord(existing[field]), ...objectRecord(newProfile[field]) }
+            : newProfile[field];
           bumpFieldTs(root, `p:${profileId}:${field}`, changedAt);
         }
       }
@@ -1106,7 +1191,7 @@ export async function saveCloudSettings(
       const newIptv = androidIptvSettings(settings);
       const baseIptv = baseline ? androidIptvSettings(baseline) : null;
       for (const [field, value] of Object.entries(newIptv)) {
-        if (!baseIptv || !sameFieldValue(value, baseIptv[field])) {
+        if (!baseIptv || !sameIptvField(field, value, baseIptv[field])) {
           bumpFieldTs(root, `i:${profileId}:${field}`, changedAt);
         }
       }
