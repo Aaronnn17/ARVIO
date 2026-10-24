@@ -31,7 +31,8 @@ export class SubtitleTranslationError extends Error {
 export function translationErrorFor(provider: "groq" | "gemini", status: number): SubtitleTranslationError {
   const name = provider === "gemini" ? "Gemini" : "Groq";
   if (status === 429) return new SubtitleTranslationError(`${name} rate limit reached — AI subtitles will retry shortly.`, "rate_limited");
-  if (status === 400 || status === 401 || status === 403) return new SubtitleTranslationError(`${name} rejected the API key. Check AI subtitles in Settings.`, "auth");
+  if (status === 401 || status === 403) return new SubtitleTranslationError(`${name} rejected the API key. Check AI subtitles in Settings.`, "auth");
+  if (status === 400) return new SubtitleTranslationError(`${name} could not process this subtitle batch (HTTP 400).`, "network");
   if (status === 404) return new SubtitleTranslationError(`The ${name} translation model is unavailable right now.`, "model");
   return new SubtitleTranslationError(`${name} could not translate subtitles (HTTP ${status}).`, "network");
 }

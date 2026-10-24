@@ -1964,12 +1964,14 @@ export function AppProvider({
       // the addon that last played on this device gets a short window to
       // arrive before the fastest addon's first row wins by default.
       const preference = loadAutoplayPreference();
-      const arrived: StreamSource[] = [];
+      // Addon updates are cumulative snapshots while home-server, VOD and
+      // Telegram results arrive once each: keep one entry per source.
+      const arrived = new Map<string, StreamSource>();
       let settled = false;
       const choose = (rows: StreamSource[]) => {
         if (!isCurrent() || started) return;
-        arrived.push(...rows);
-        const candidates = orderByPreference(browserAutoplayCandidates(arrived), preference, (row) => playbackPlan(row).method);
+        for (const row of rows) arrived.set(`${row.addonId ?? row.addonName ?? ""}|${row.url}`, row);
+        const candidates = orderByPreference(browserAutoplayCandidates([...arrived.values()]), preference, (row) => playbackPlan(row).method);
         if (!settled && !candidates.some((row) => isPreferredAutoplaySource(row, preference, (entry) => Boolean(parseDebridStream(entry.originalUrl ?? entry.url))))) return;
         const candidate = candidates[0];
         if (!candidate) return;

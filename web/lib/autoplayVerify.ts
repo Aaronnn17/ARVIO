@@ -52,7 +52,12 @@ export async function verifyAutoplayCandidates(candidates: StreamSource[], budge
   if (timer) clearTimeout(timer);
   for (const { stream, url } of probeable) {
     const verdict = cachedVerdict(url);
-    if (verdict) verdicts.set(stream, verdict.playable);
+    if (!verdict) continue;
+    // WebCodecs audio support is narrower than <video>'s (Safari plays AC-3 /
+    // E-AC-3 natively but its AudioDecoder may not report them), so an
+    // audio-only failure is inconclusive for ranking; only video counts.
+    if (!verdict.playable && verdict.videoOk && !verdict.audioOk) continue;
+    verdicts.set(stream, verdict.playable);
   }
   return verdicts;
 }
