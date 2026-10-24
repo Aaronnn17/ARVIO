@@ -5,6 +5,7 @@ import { useTranslation } from "@/lib/i18n";
 import { BadgeCheck, Bookmark, Home, Search, Settings, Tv } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
+import { kidsLevelOf } from "@/lib/kids";
 import { ProfileAvatarVisual } from "@/components/profile/ProfileAvatar";
 import type { NavSection } from "@/lib/types";
 import { useEntitlement } from "@/lib/entitlementContext";
@@ -22,6 +23,8 @@ export function TopNav() {
   const translateUi = useTranslation();
   const { view, section, setSection, switchProfile, activeProfile, avatarImages, settings, closeDetails, selected } = useApp();
   const [scrolled, setScrolled] = useState(false);
+  // Live TV carries no age ratings: a kids profile loses the tab (Android KidsNavigation).
+  const visibleNav = kidsLevelOf(activeProfile) ? nav.filter((item) => item.id !== "tv") : nav;
   const entitlement = useEntitlement();
   const [now, setNow] = useState(Date.now);
   const trialLabel = trialRemainingLabel(entitlement, now);
@@ -54,7 +57,7 @@ export function TopNav() {
           <span className="profile-name-text">{activeProfile?.name ?? ""}</span>
         </div>
         <nav>
-          {nav.map((item) => {
+          {visibleNav.map((item) => {
             const Icon = item.icon;
             return (
               <button
@@ -133,7 +136,7 @@ export function TopNav() {
 
       {/* Mobile Bottom Navigation (screen <= 680px) */}
       <nav className="mobile-bottom-nav" aria-label={translateUi("Mobile navigation")}>
-        {nav.map((item) => {
+        {visibleNav.map((item) => {
           const Icon = item.icon;
           return (
             <button

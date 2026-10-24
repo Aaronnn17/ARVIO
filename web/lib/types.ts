@@ -305,6 +305,12 @@ export interface Profile {
   avatarImageVersion?: number; // 0 = no custom uploaded photo
   avatarImageStoragePath?: string | null;
   isKidsProfile?: boolean;
+  // KidsAgeLevel name (LITTLE_KIDS | OLDER_KIDS | TEENS); missing reads as the default.
+  kidsAgeLevel?: string | null;
+  // The kids starter rows were added once; a row the parent removed must not come back.
+  kidsStarterRowsAdded?: boolean;
+  // Hashed parent PIN of a kids profile: needed to edit or delete it, never to watch.
+  parentPin?: string | null;
   pin?: string | null;
   isLocked?: boolean;
   createdAt?: number;

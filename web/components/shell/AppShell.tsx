@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
+import { kidsLevelOf } from "@/lib/kids";
 import { config } from "@/lib/config";
 import { AddonsScreen } from "@/components/addons/AddonsScreen";
 import { DetailsDrawer } from "@/components/details/DetailsDrawer";
@@ -48,7 +49,12 @@ function PaidPlayerWarmup() {
 }
 
 export function AppShell() {
-  const { auth, goToLogin, signOut, view, section, settings, selected, activeStream, activeChannel } = useApp();
+  const { auth, goToLogin, signOut, view, section, setSection, settings, selected, activeStream, activeChannel, activeProfile } = useApp();
+  const kidsProfile = Boolean(kidsLevelOf(activeProfile));
+  // A kids profile never stays on Live TV, however it got there (a saved section, a link).
+  useEffect(() => {
+    if (kidsProfile && section === "tv") setSection("home");
+  }, [kidsProfile, section, setSection]);
   const [mounted, setMounted] = useState(false);
   const [collectionOpen, setCollectionOpen] = useState(false);
 
@@ -108,7 +114,7 @@ export function AppShell() {
           <>
             {section === "search" && <SearchScreen />}
             {section === "watchlist" && <WatchlistScreen />}
-            {section === "tv" && <LiveTvScreen />}
+            {section === "tv" && !kidsProfile && <LiveTvScreen />}
             {section === "addons" && <AddonsScreen />}
             {section === "settings" && <SettingsScreen />}
           </>

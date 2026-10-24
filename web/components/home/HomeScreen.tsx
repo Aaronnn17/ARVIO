@@ -9,6 +9,7 @@ import { IMDB_LOGO } from "@/lib/serviceLogos";
 import { genreNamesFromIds, getCardMeta, getLogoUrl } from "@/lib/tmdb";
 import { getImdbRating } from "@/lib/imdbRatings";
 import { useApp } from "@/lib/store";
+import { useKidsFilter } from "@/lib/useKids";
 import { LazyRail } from "@/components/media/LazyRail";
 import { CustomCollectionRail } from "@/components/media/CustomCollectionRail";
 import { MediaRail } from "@/components/media/MediaRail";
@@ -20,6 +21,7 @@ export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?
   const translateUi = useTranslation();
   const { hero, categories, catalogConfigs, homeServerRows, continueWatching, openDetails, setHeroPreview, settings } = useApp();
   const posterMode = settings.cardLayoutMode === "poster";
+  const kids = useKidsFilter();
 
   // The eager rails (trending/popular/provider lists) overlap heavily; keep each
   // title in the first rail it appears in and trim repeats from later rails,
@@ -58,14 +60,15 @@ export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?
       return additions.length ? [...prev, ...additions].slice(0, 12) : prev;
     });
     if (seededHero.current || continueWatching.length) return;
-    const first = row.items[0];
+    const first = row.items.find(kids.allows);
     if (first) {
       seededHero.current = true;
       setHeroPreview(first);
     }
   };
 
-  const heroPool = heroPoolRows;
+  // Kids profiles rotate only titles rated for the profile.
+  const heroPool = useMemo(() => heroPoolRows.filter(kids.allows), [heroPoolRows, kids.allows]);
 
   // Auto-advance the hero every 8s until the user hovers a card (which pins the
   // hero to whatever they're pointing at and stops the carousel).
@@ -126,7 +129,9 @@ export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?
     hoverTimer.current = setTimeout(() => setHeroPreview(item), 220);
   };
 
-  const heroGenres = (displayHero?.genres?.length ? displayHero.genres : genreNamesFromIds(displayHero?.genreIds)).slice(0, 3);
+  // The billboard never shows a title the kids filter has not cleared.
+  const shownHero = displayHero && kids.allows(displayHero) ? displayHero : null;
+  const heroGenres = (shownHero?.genres?.length ? shownHero.genres : genreNamesFromIds(shownHero?.genreIds)).slice(0, 3);
 
   // Real IMDb rating for the hero (Cinemeta by imdb id) — TMDB's vote_average
   // is a different score and must not sit under an IMDb badge. The imdb id
@@ -134,36 +139,36 @@ export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?
   const [heroImdbRating, setHeroImdbRating] = useState<string | null>(null);
   useEffect(() => {
     setHeroImdbRating(null);
-    if (!displayHero || displayHero.id <= 0 || displayHero.isHomeServer) return undefined;
+    if (!shownHero || shownHero.id <= 0 || shownHero.isHomeServer) return undefined;
     let active = true;
     void (async () => {
-      const imdbId = displayHero.imdbId
-        ?? (await getCardMeta({ mediaType: displayHero.mediaType, id: displayHero.id }).catch(() => null))?.imdbId;
+      const imdbId = shownHero.imdbId
+        ?? (await getCardMeta({ mediaType: shownHero.mediaType, id: shownHero.id }).catch(() => null))?.imdbId;
       if (!active || !imdbId) return;
-      const rating = await getImdbRating(displayHero.mediaType, imdbId).catch(() => null);
+      const rating = await getImdbRating(shownHero.mediaType, imdbId).catch(() => null);
       if (active && rating) setHeroImdbRating(rating);
     })();
     return () => { active = false; };
-  }, [displayHero?.id, displayHero?.mediaType, displayHero?.imdbId, displayHero?.isHomeServer]);
+  }, [shownHero?.id, shownHero?.mediaType, shownHero?.imdbId, shownHero?.isHomeServer]);
   const metaBits = [
-    displayHero?.mediaType === "tv" ? "Series" : "Movie",
-    displayHero?.releaseDate?.slice(0, 4) || displayHero?.year || null,
-    displayHero?.duration || null,
+    shownHero?.mediaType === "tv" ? "Series" : "Movie",
+    shownHero?.releaseDate?.slice(0, 4) || shownHero?.year || null,
+    shownHero?.duration || null,
     ...heroGenres
   ].filter(Boolean);
 
   return (
     // has-hero mirrors the CSS :has(.hero) padding rule for TV browsers whose
     // engines predate :has() support (Tizen/webOS).
-    <div className={displayHero ? "screen has-hero" : "screen"}>
-      {displayHero && (
-        <section className="hero home-hero" style={{ backgroundImage: displayHero.backdrop ? `url(${displayHero.backdrop})` : undefined }}>
+    <div className={shownHero ? "screen has-hero" : "screen"}>
+      {shownHero && (
+        <section className="hero home-hero" style={{ backgroundImage: shownHero.backdrop ? `url(${shownHero.backdrop})` : undefined }}>
           <div className="hero-copy">
             <div className="hero-title">
               {heroLogo ? (
-                <img className="hero-logo" src={heroLogo} alt={displayHero.title} />
+                <img className="hero-logo" src={heroLogo} alt={shownHero.title} />
               ) : (
-                <h2>{displayHero.title}</h2>
+                <h2>{shownHero.title}</h2>
               )}
             </div>
             <div className="hero-meta">
@@ -177,13 +182,13 @@ export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?
             </div>
             <p>
               {(() => {
-                const desc = displayHero.overview || displayHero.subtitle || translateUi("Continue from your ARVIO library.");
+                const desc = shownHero.overview || shownHero.subtitle || translateUi("Continue from your ARVIO library.");
                 return desc.length > 150 ? desc.slice(0, 150) + "..." : desc;
               })()}
             </p>
             <div className="hero-actions">
-              <button type="button" className="primary" onClick={() => openDetails(displayHero)}><Play size={20} fill="currentColor" /> {translateUi(" Play")}</button>
-              <button type="button" className="secondary" onClick={() => openDetails(displayHero)}><Info size={20} /> {translateUi(" More Info")}</button>
+              <button type="button" className="primary" onClick={() => openDetails(shownHero)}><Play size={20} fill="currentColor" /> {translateUi(" Play")}</button>
+              <button type="button" className="secondary" onClick={() => openDetails(shownHero)}><Info size={20} /> {translateUi(" More Info")}</button>
             </div>
           </div>
         </section>
@@ -192,7 +197,7 @@ export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?
         <MediaRail key={category.id} category={category} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode} />
       ))}
       {collectionHomeCatalogs(catalogConfigs).map((catalog, index) => (
-        catalog.id === FAVORITE_TV_CATALOG_ID ? <FavoriteTvRail key={catalog.id} title={catalog.name} /> :
+        catalog.id === FAVORITE_TV_CATALOG_ID ? (kids.active ? null : <FavoriteTvRail key={catalog.id} title={catalog.name} />) :
         String(catalog.kind).toUpperCase() === "COLLECTION_RAIL" ?
         <CustomCollectionRail key={catalog.id} catalog={catalog} onOpen={openDetails} onCollectionOpenChange={onCollectionOpenChange}
           folders={collectionFolders(catalog, catalogConfigs)} /> :
@@ -206,7 +211,7 @@ export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?
         />
       ))}
       {/* Like Android, a catalog list without the row still shows it, after the others. */}
-      {!catalogConfigs.some((catalog) => catalog.id === FAVORITE_TV_CATALOG_ID) && <FavoriteTvRail />}
+      {!kids.active && !catalogConfigs.some((catalog) => catalog.id === FAVORITE_TV_CATALOG_ID) && <FavoriteTvRail />}
       {homeServerRows.map((category) => (
         <MediaRail key={category.id} category={category} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode} />
       ))}

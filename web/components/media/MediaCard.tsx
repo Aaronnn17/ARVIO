@@ -7,6 +7,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { getImdbRating } from "@/lib/imdbRatings";
 import { IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { useApp } from "@/lib/store";
+import { useKidsFilter } from "@/lib/useKids";
 import { getCardMeta, getCardProviders, getLogoUrl, prefetchDetails, resolveTmdbId } from "@/lib/tmdb";
 import type { MediaItem } from "@/lib/types";
 
@@ -271,9 +272,19 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode }: {
 // Rails mount hundreds of cards; without memoization every parent re-render
 // (hero rotation, hover, etc.) re-renders all of them, which is the main cause
 // of vertical-scroll jank. Re-render only when the item or display mode change.
-export const MediaCard = memo(MediaCardBase, (prev, next) =>
+const MemoMediaCard = memo(MediaCardBase, (prev, next) =>
   prev.item === next.item &&
   prev.posterMode === next.posterMode &&
   prev.onOpen === next.onOpen &&
   prev.onFocus === next.onFocus
 );
+
+/**
+ * Every card passes the kids filter: on a kids profile a title is shown only once its
+ * rating is known and fits the profile's age (grids, collections, Library, related titles).
+ */
+export function MediaCard(props: Parameters<typeof MediaCardBase>[0]) {
+  const kids = useKidsFilter();
+  if (kids.active && !kids.filter([props.item]).length) return null;
+  return <MemoMediaCard {...props} />;
+}

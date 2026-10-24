@@ -618,6 +618,8 @@ function storeHarness(prepare, report = async () => {}, overrides = {}) {
     isDisabledTelegramSource, TELEGRAM_DISABLED_MESSAGE,
     playbackPreparation: { current: null }, playbackGeneration: { current: 0 }, ownedPlayback: { current: null },
     activeProfileIdRef: { current: 'profile-a' }, settingsRef: { current: settings },
+    // Kids gate (store.tsx): a regular profile, so channel and catchup playback proceed.
+    activeProfileRef: { current: { id: 'profile-a' } }, kidsLevelOf: (profile) => (profile?.isKidsProfile ? 'OLDER_KIDS' : null),
     authClient: { session: { userId: 'account-a' } }, selected: { title: 'Fixture' }, activeProfile: { id: 'profile-a' }, selectedEpisode: null,
     prepareBrowserStream: prepare, reportHomeServerPlayback: report,
     busyRef: { current: "" }, streamsRef: { current: [] }, browserAutoplayCandidates: (streams, excluded = new Set()) => streams.filter(s => s.url && !excluded.has(s.originalUrl ?? s.url)), recordBrowserPlaybackFailure: () => {},

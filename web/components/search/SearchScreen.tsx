@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle, Search } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n';
 import { useApp } from '@/lib/store';
+import { useKidsFilter } from '@/lib/useKids';
 import { searchMediaPage, type SearchFilters } from '@/lib/tmdb';
 import type { MediaItem } from '@/lib/types';
 import { MediaCard } from '@/components/media/MediaCard';
@@ -10,6 +11,7 @@ const genres = [['','All Genres'],['28','Action'],['12','Adventure'],['16','Anim
 export function SearchScreen() {
   const translateUi = useTranslation();
   const { query, setQuery, openDetails, settings } = useApp();
+  const kids = useKidsFilter();
   const [type,setType] = useState<'movie'|'tv'>(()=>typeof window!=='undefined'&&new URL(location.href).searchParams.get('searchType')==='tv'?'tv':'movie');
   const [genre,setGenre] = useState(()=>typeof window!=='undefined'?new URL(location.href).searchParams.get('genre')||'':'');
   const [year,setYear] = useState(()=>typeof window!=='undefined'?new URL(location.href).searchParams.get('year')||'':'');
@@ -47,6 +49,8 @@ export function SearchScreen() {
       setPage(page+1);setMore(result.hasMore);
     } catch {if(id===generation.current)setError(true);} finally {if(id===generation.current)setLoading(false);}
   };
+  // Kids profiles: only titles rated for the profile's age.
+  const visibleItems = kids.filter(items);
   return <div className={`screen has-search-hero ${settings.cardLayoutMode==='poster'?'poster-results':''}`}>
     <section className="search-hero"><span className="search-icon-shell"><Search size={28}/></span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={translateUi('Search movies and series')} aria-label={translateUi('Search movies and series')}/></section>
     <div className="search-filters">
@@ -58,8 +62,8 @@ export function SearchScreen() {
     </div>
     <h2 className="search-results-title">{query.trim()?translateUi('Search results'):translateUi('Discover')}</h2>
     {error&&<div className="library-error" role="alert">{translateUi('Search is temporarily unavailable. Please try again.')} <button className="secondary" onClick={()=>items.length?void loadMore():setRetry(v=>v+1)}>{translateUi('Retry')}</button></div>}
-    {!loading&&!error&&!items.length&&<div className="watchlist-empty"><Search size={34}/><p>{translateUi('No matching titles')}</p></div>}
-    <div className="grid-results">{items.map(item=><MediaCard key={`${item.mediaType}:${item.id}`} item={item} onOpen={openDetails} posterMode={settings.cardLayoutMode==='poster'}/>)}</div>
+    {!loading&&!error&&!visibleItems.length&&<div className="watchlist-empty"><Search size={34}/><p>{translateUi('No matching titles')}</p></div>}
+    <div className="grid-results">{visibleItems.map(item=><MediaCard key={`${item.mediaType}:${item.id}`} item={item} onOpen={openDetails} posterMode={settings.cardLayoutMode==='poster'}/>)}</div>
     <div className="search-pagination">{loading?<span role="status"><LoaderCircle size={20}/>{translateUi('Loading')}</span>:more&&<button className="secondary" onClick={()=>void loadMore()}>{translateUi('Load more')}</button>}</div>
   </div>;
 }
