@@ -12,6 +12,7 @@ const {
   evaluateEntitlement
 } = require("./_entitlements");
 const { recordPremiumEvent } = require("./_premium-funnel");
+const { rewardReferralIfDue } = require("./_referrals");
 
 function requestAction(event) {
   let raw = event.body;
@@ -93,6 +94,20 @@ exports.handler = async (event) => {
           await writeEntitlement(store, emailHash, record);
           state = evaluateEntitlement(record);
         }
+      }
+    }
+
+    // An invite is rewarded on the invited account's first payment. The Ko-fi
+    // webhook does this when the Ko-fi email is the account email; a payment
+    // made with a different, linked Ko-fi email is caught here instead.
+    if (state.entitled && state.reason === "subscription" && record && record.source !== "referral") {
+      const reward = await rewardReferralIfDue(event, { emailHash }).catch((error) => {
+        console.error("referral reward check failed", error && error.message);
+        return null;
+      });
+      if (reward && reward.rewarded) {
+        record = await readEntitlement(store, emailHash);
+        state = evaluateEntitlement(record);
       }
     }
 

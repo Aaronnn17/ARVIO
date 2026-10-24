@@ -24,7 +24,8 @@ function fixture(record = null) {
       evaluateEntitlement
     },
     './_premium-funnel': { recordPremiumEvent: async (_event, value) => events.push(value) },
-    './_trial-emails': { queueTrialEmails: async () => { queuedEmails++; } }
+    './_trial-emails': { queueTrialEmails: async () => { queuedEmails++; } },
+    './_referrals': { rewardReferralIfDue: async () => ({ rewarded: false }) }
   };
   vm.runInNewContext(fs.readFileSync(require.resolve('../netlify/functions/entitlement-status'), 'utf8'), {
     exports, Buffer, Date, console,
