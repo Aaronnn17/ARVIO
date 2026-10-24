@@ -21,6 +21,31 @@ export function isSourcePromptDismissed(profileId: string): boolean {
   }
 }
 
+// Whether the last check found no sources. The real answer needs the cloud
+// addon pull, which lands after Home has painted; on phones and tablets the
+// banner sits in the page flow, so it is shown from this hint at first paint
+// instead of pushing Home down a few seconds later.
+const EXPECTED_KEY_PREFIX = "arvio.web.sourcePrompt.expected.v1:";
+
+export function isSourcePromptExpected(profileId: string): boolean {
+  if (!profileId) return false;
+  try {
+    return storage()?.getItem(`${EXPECTED_KEY_PREFIX}${profileId}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setSourcePromptExpected(profileId: string, expected: boolean) {
+  if (!profileId) return;
+  try {
+    if (expected) storage()?.setItem(`${EXPECTED_KEY_PREFIX}${profileId}`, "1");
+    else storage()?.removeItem(`${EXPECTED_KEY_PREFIX}${profileId}`);
+  } catch {
+    /* optional */
+  }
+}
+
 export function setSourcePromptDismissed(profileId: string, dismissed: boolean) {
   if (!profileId) return;
   try {

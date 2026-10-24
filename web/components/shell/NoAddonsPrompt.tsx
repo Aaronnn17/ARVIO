@@ -1,11 +1,11 @@
 "use client";
 
 import { Plus, Puzzle, Server, Tv, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { useApp } from "@/lib/store";
 import { requestSourceSettings, sourceSetupState } from "@/lib/sourceSetup";
-import { isSourcePromptDismissed, setSourcePromptDismissed, SOURCE_PROMPT_EVENT } from "@/lib/sourcePrompt";
+import { isSourcePromptDismissed, isSourcePromptExpected, setSourcePromptDismissed, setSourcePromptExpected, SOURCE_PROMPT_EVENT } from "@/lib/sourcePrompt";
 
 /**
  * Per-profile dismissal of the "Add a source" banner. It persists in localStorage
@@ -26,7 +26,13 @@ function useSourcePrompt() {
   }, [profileId]);
 
   const sources = sourceSetupState(addons, settings);
-  const eligible = view === "app" && section === "home" && Boolean(profileId) && addonsReady && !sources.hasAny &&
+  // Until the cloud addon pull lands, trust the last answer for this profile
+  // (no late layout shift); afterwards record the real one for next launch.
+  const expected = useMemo(() => isSourcePromptExpected(profileId), [profileId]);
+  useEffect(() => {
+    if (addonsReady && profileId) setSourcePromptExpected(profileId, !sources.hasAny);
+  }, [addonsReady, profileId, sources.hasAny]);
+  const eligible = view === "app" && section === "home" && Boolean(profileId) && (addonsReady || expected) && !sources.hasAny &&
     dismissal?.profileId === profileId;
   const setDismissed = useCallback((dismissed: boolean) => {
     setSourcePromptDismissed(profileId, dismissed);

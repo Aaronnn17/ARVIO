@@ -294,6 +294,19 @@ test('dismissing the source banner persists across launches (localStorage), per 
   assert.doesNotMatch(css, /\.content > \.source-setup-card\s*\{/, 'the selector that never matched is gone');
 });
 
+test('the banner is expected from the last launch so it never pushes Home down late', () => {
+  const values = new Map();
+  const window = { localStorage: { getItem: (key) => values.has(key) ? values.get(key) : null, setItem: (key, value) => values.set(key, value), removeItem: (key) => values.delete(key) }, dispatchEvent: () => {} };
+  const prompt = load('lib/sourcePrompt.ts', {}, { window, CustomEvent: class { constructor(type) { this.type = type; } } });
+  assert.equal(prompt.isSourcePromptExpected('p1'), false, 'first launch: wait for the addon pull');
+  prompt.setSourcePromptExpected('p1', true);
+  assert.equal(prompt.isSourcePromptExpected('p1'), true);
+  prompt.setSourcePromptExpected('p1', false);
+  assert.equal(prompt.isSourcePromptExpected('p1'), false, 'a profile that gained a source stops reserving it');
+  const source = fs.readFileSync(path.join(__dirname, '../components/shell/NoAddonsPrompt.tsx'), 'utf8');
+  assert.match(source, /\(addonsReady \|\| expected\)/);
+});
+
 // ---- Collections ----------------------------------------------------------------
 
 test('collections show 4-5 columns on a laptop and hide their own service badge', () => {
