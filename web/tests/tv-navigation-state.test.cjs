@@ -14,7 +14,7 @@ test('TV snapshots belong to both the playlist configuration and account/profile
 
 test('a docked player does not disable guide keyboard navigation', () => {
   let expanded = false;
-  const { playerIsOpen } = load('lib/tvNav.ts', { './hoverParity': { enterKbdNav() {} } }, {
+  const { playerIsOpen } = load('lib/tvNav.ts', { './hoverParity': { enterKbdNav() {} }, './deviceClass': load('lib/deviceClass.ts') }, {
     document: { querySelector: selector => {
       assert.equal(selector, '.player-overlay:not(.player-docked)');
       return expanded ? {} : null;
