@@ -99,6 +99,22 @@ export function savePlaylists(playlists: IptvPlaylistEntry[]) {
   saveStored(IPTV_KEY, playlists);
 }
 
+/**
+ * Try one playlist (or a Stalker portal) before saving it: the channel count,
+ * or the loader's error. Uses the same loading path and cache as Live TV.
+ */
+export async function testIptvPlaylist(playlist: IptvPlaylistEntry | null, options: IptvLoadOptions = {}): Promise<{ ok: true; channels: number } | { ok: false; message: string }> {
+  try {
+    const snapshot = await loadIptvSnapshot(playlist ? [{ ...playlist, enabled: true }] : [], [], [], [], [], options);
+    const error = snapshot.playlistErrors?.[0];
+    if (error) return { ok: false, message: error.message };
+    const channels = (snapshot.allChannels ?? snapshot.channels).length;
+    return channels ? { ok: true, channels } : { ok: false, message: "Playlist response did not contain any channels." };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : "Could not load playlist" };
+  }
+}
+
 export async function loadIptvChannels(playlists: IptvPlaylistEntry[]) {
   return (await loadIptvSnapshot(playlists)).channels;
 }
@@ -114,6 +130,7 @@ export async function loadIptvSnapshot(
   const normalizedPlaylists = normalizeIptvPlaylists(playlists);
   const enabled = normalizedPlaylists.filter((playlist) => playlist.enabled && playlist.m3uUrl.trim());
   const playlistWarnings: string[] = [];
+  const playlistErrors: NonNullable<IptvSnapshot["playlistErrors"]> = [];
   const channelSets = await Promise.all(
     enabled.map(async (playlist) => {
       try {
@@ -139,14 +156,20 @@ export async function loadIptvSnapshot(
         if (xtreamChannels.length) return xtreamChannels;
         throw new Error("Playlist response did not contain any channels.");
       } catch (error) {
-        playlistWarnings.push(`${playlist.name || playlist.m3uUrl}: ${error instanceof Error ? error.message : "Could not load playlist"}`);
+        const message = error instanceof Error ? error.message : "Could not load playlist";
+        playlistWarnings.push(`${playlist.name || playlist.m3uUrl}: ${message}`);
+        playlistErrors.push({ playlistId: playlist.id, name: playlist.name || playlist.m3uUrl, message });
         return [] as IptvChannel[];
       }
     })
   );
   if (options.stalkerUrl?.trim() && options.stalkerMac?.trim()) {
     try { channelSets.push(await loadStalkerChannels(options.stalkerUrl.trim(), options.stalkerMac.trim())); }
-    catch (error) { playlistWarnings.push(error instanceof Error ? error.message : "Could not load IPTV portal"); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load IPTV portal";
+      playlistWarnings.push(message);
+      playlistErrors.push({ playlistId: "stalker", name: "Stalker portal", message });
+    }
   }
   const allChannels = channelSets.flat();
   const channels = accessibleChannels(allChannels, hiddenGroups);
@@ -179,6 +202,7 @@ export async function loadIptvSnapshot(
     hiddenGroups,
     groupOrder,
     playlistWarnings,
+    playlistErrors,
     epgWarning,
     loadedAt: Date.now()
   };

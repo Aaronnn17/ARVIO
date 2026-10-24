@@ -31,6 +31,7 @@ import { loadHomeServerRows } from "./homeserver";
 import { accessibleChannels, buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvChannelIdentities, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { cachedFavoriteChannels, favoriteCopyIsStale, resolveFavoriteChannels, saveFavoriteChannels } from "./favoriteTv";
 import { isCurrentIptvSnapshot, recordTvPlayback } from "./iptvSession";
+import { createIptvRefresher } from "./iptvRefresh";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId, tmdb } from "./tmdb";
@@ -712,7 +713,6 @@ export function AppProvider({
     ownedPlayback.current = null;
     if (owned) void reportHomeServerPlayback(owned.stream, owned.settings, "stop").catch(() => undefined);
   }, []);
-  const iptvRefresh = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const guideRetryAfter = useRef(new Map<string, number>());
 
   const [profiles, setProfiles] = useState<Profile[]>(() => {
@@ -1258,36 +1258,32 @@ export function AppProvider({
 
   // `quiet` is the Home background load for the Favorite TV row: no status text, no
   // error toast — Live TV reports playlist problems when the user opens it.
-  const refreshIptv = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
-    const currentSettings = settingsRef.current;
-    const profileId = activeProfileIdRef.current;
-    const account = authClient.session?.userId;
-    const signature = iptvPlaylistSignature(currentSettings.iptvPlaylists) + (currentSettings.iptvStalkerUrl ? JSON.stringify([currentSettings.iptvStalkerUrl, currentSettings.iptvStalkerMac]) : "");
-    const key = `${account}:${profileId}:${signature}`;
-    if (iptvRefresh.current?.key === key) return iptvRefresh.current.promise;
-    const isCurrent = () => activeProfileIdRef.current === profileId && authClient.session?.userId === account && iptvPlaylistSignature(settingsRef.current.iptvPlaylists) + (settingsRef.current.iptvStalkerUrl ? JSON.stringify([settingsRef.current.iptvStalkerUrl, settingsRef.current.iptvStalkerMac]) : "") === signature;
-    const run = (async () => {
-    if (!quiet) setBusy("Loading TV");
-    try {
-      const loadedIptv = await loadIptvSnapshot(
+  const iptvRefresher = useRef<ReturnType<typeof createIptvRefresher<AppSettings, IptvSnapshot>> | null>(null);
+  const refreshIptv = useCallback(({ quiet = false }: { quiet?: boolean } = {}) => {
+    iptvRefresher.current ??= createIptvRefresher<AppSettings, IptvSnapshot>({
+      read: () => {
+        const current = settingsRef.current;
+        return {
+          scope: `${authClient.session?.userId ?? "local"}:${activeProfileIdRef.current ?? "local"}`,
+          signature: iptvPlaylistSignature(current.iptvPlaylists) + (current.iptvStalkerUrl ? JSON.stringify([current.iptvStalkerUrl, current.iptvStalkerMac]) : ""),
+          settings: current
+        };
+      },
+      load: (currentSettings) => loadIptvSnapshot(
         currentSettings.iptvPlaylists,
         currentSettings.favoriteChannelIds,
         currentSettings.favoriteGroupIds,
         currentSettings.hiddenGroupIds,
         currentSettings.groupOrder,
         { userAgent: currentSettings.customUserAgent, stalkerUrl: currentSettings.iptvStalkerUrl, stalkerMac: currentSettings.iptvStalkerMac }
-      );
+      ),
       // Stamp which playlists this snapshot came from so Live TV can reuse it
       // on re-entry instead of rebuilding ~139k channels every visit.
-      if (isCurrent()) setIptvSnapshot({ ...loadedIptv, signature, scopeKey: `${account ?? "local"}:${profileId ?? "local"}` });
-    } catch (error) {
-      if (isCurrent() && !quiet) setToast(error instanceof Error ? error.message : "Failed to load Live TV");
-    } finally {
-      if (isCurrent() && !quiet) setBusy("");
-    }
-    })();
-    iptvRefresh.current = { key, promise: run };
-    return run.finally(() => { if (iptvRefresh.current?.promise === run) iptvRefresh.current = null; });
+      apply: (loadedIptv, { signature, scope }) => setIptvSnapshot({ ...loadedIptv, signature, scopeKey: scope }),
+      report: (error) => setToast(error instanceof Error ? error.message : "Failed to load Live TV"),
+      setLoading: (loading) => setBusy(current => loading ? "Loading TV" : current === "Loading TV" ? "" : current)
+    });
+    return iptvRefresher.current({ quiet });
   }, []);
 
   useEffect(() => {
