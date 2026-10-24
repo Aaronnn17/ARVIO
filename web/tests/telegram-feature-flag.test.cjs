@@ -126,7 +126,7 @@ test('settings navigation and direct render hide Telegram only in disabled build
   const settings = source('components/settings/SettingsScreen.tsx');
   const declarations = settings.match(/const SECTIONS = [\s\S]*?const VISIBLE_SECTIONS = [^;]+;/)?.[0];
   assert.ok(declarations);
-  const icons = ['Cloud','User','Play','Download','VlcIcon','Languages','Subtitles','Captions','LayoutGrid','Tv','Network','Server','Send','ListVideo','Sparkles','Eye'];
+  const icons = ['Cloud','Crown','User','Link2','Play','Languages','Captions','Bot','Puzzle','ListVideo','Tv','Server','Send','Database','Palette','Monitor','Info'];
   for (const enabled of [true, false]) {
     const context = { config: { telegramEnabled: enabled }, module: { exports: null }, ...Object.fromEntries(icons.map(name => [name, {}])) };
     const js = ts.transpileModule(declarations + '\nmodule.exports = VISIBLE_SECTIONS.map(section => section.id);', { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -134,9 +134,11 @@ test('settings navigation and direct render hide Telegram only in disabled build
     assert.equal(context.module.exports.includes('telegram'), enabled);
     assert.equal(context.module.exports.includes('credits'), true);
   }
-  assert.equal((settings.match(/VISIBLE_SECTIONS\.map\(/g) || []).length, 2, 'both navigation surfaces must use the filtered list');
+  assert.doesNotMatch(settings, /[^_]SECTIONS\.(map|filter)\(\(s\)/, 'navigation and search must use the filtered list');
+  assert.match(settings, /VISIBLE_SECTIONS\.filter\(\(s\) => s\.group === group\)/);
   assert.match(settings, /case "telegram":\s*return config\.telegramEnabled \? <TelegramSection \/> : null/);
-  assert.match(settings, /useEffect\(\(\) => \{\s*if \(!config\.telegramEnabled\) return;\s*let unsub/);
+  const telegram = source('components/settings/sections/Telegram.tsx');
+  assert.match(telegram, /useEffect\(\(\) => \{\s*if \(!config\.telegramEnabled\) return;\s*let unsub/);
 });
 
 test('store imports use the disabled-build alias and saved-source actions are guarded', () => {

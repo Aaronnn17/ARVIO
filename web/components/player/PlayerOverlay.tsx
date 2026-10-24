@@ -66,6 +66,7 @@ import {
 } from "@/lib/playerPlatform";
 import { syncClient } from "@/lib/sync";
 import { SubtitleTranslator, subtitleLanguageName } from "@/lib/subtitleAi";
+import { languageCode, sameLanguage, trackLanguageName } from "@/lib/languages";
 import { getLogoUrl } from "@/lib/tmdb";
 import type { AppSettings, InstalledAddon, MediaItem, StreamSource } from "@/lib/types";
 
@@ -168,13 +169,18 @@ function qualityBadges(stream: StreamSource) {
   ].filter(Boolean);
 }
 
+// The preference is a code ("en") or the Android app's display name
+// ("English", "Portuguese (Brazil)") synced from ARVIO Cloud.
 function defaultSubtitleIndex(stream: StreamSource, language: string) {
-  const desired = language.trim().toLowerCase();
-  if (!desired || desired === "off") return -1;
-  return (stream.subtitles ?? []).findIndex((subtitle) => {
-    const lang = subtitle.lang?.toLowerCase() ?? "";
+  const desired = languageCode(language);
+  if (!desired) return -1;
+  const name = trackLanguageName(language).toLowerCase();
+  const subtitles = stream.subtitles ?? [];
+  const exact = subtitles.findIndex((subtitle) => languageCode(subtitle.lang) === desired);
+  if (exact >= 0) return exact;
+  return subtitles.findIndex((subtitle) => {
     const label = subtitle.label?.toLowerCase() ?? "";
-    return lang.startsWith(desired) || label.includes(desired);
+    return sameLanguage(subtitle.lang, desired) || (name.length > 2 && label.includes(name)) || languageCode(subtitle.label) === desired;
   });
 }
 
@@ -182,7 +188,7 @@ function defaultSubtitleIndex(stream: StreamSource, language: string) {
 // English next, then everything else alphabetically by language name. Each
 // entry keeps its original index in the source's subtitle list.
 function orderedSubtitles(stream: StreamSource, preferred: string) {
-  const pref = preferred.trim().toLowerCase();
+  const pref = languageCode(preferred);
   return (stream.subtitles ?? [])
     .map((subtitle, index) => ({
       subtitle,
@@ -191,9 +197,9 @@ function orderedSubtitles(stream: StreamSource, preferred: string) {
     }))
     .sort((a, b) => {
       const rank = (entry: { subtitle: { lang?: string | null } }) => {
-        const lang = (entry.subtitle.lang ?? "").toLowerCase();
-        if (pref && pref !== "off" && lang.startsWith(pref)) return 0;
-        if (lang.startsWith("en")) return 1;
+        const lang = languageCode(entry.subtitle.lang);
+        if (pref && sameLanguage(lang, pref)) return 0;
+        if (lang === "en") return 1;
         return 2;
       };
       return rank(a) - rank(b) || a.langName.localeCompare(b.langName);
@@ -349,8 +355,8 @@ function VideoPlayer({
   // Last translation failure, shown in the subtitle panel (and toasted, at
   // most every 20 s) instead of silently leaving cues untranslated.
   const [aiError, setAiError] = useState<string | null>(null);
-  const aiTargetName = subtitleLanguageName(settings.defaultSubtitle);
-  const aiAvailable = settings.aiSubtitlesEnabled && settings.aiSubtitleModel !== "off" && Boolean(settings.aiApiKey) && Boolean(aiTargetName) && !aiTargetName.toLowerCase().startsWith("engl");
+  const aiTargetName = subtitleLanguageName(trackLanguageName(settings.defaultSubtitle) || settings.defaultSubtitle);
+  const aiAvailable = settings.aiSubtitlesEnabled && Boolean(settings.aiApiKey) && Boolean(aiTargetName) && Boolean(languageCode(settings.defaultSubtitle)) && languageCode(settings.defaultSubtitle) !== "en";
   const translatorRef = useRef<SubtitleTranslator | null>(null);
   const [playbackRate, setPlaybackRateState] = useState(1);
   const setPlaybackRate = useCallback((rate: number) => {
@@ -768,9 +774,9 @@ function VideoPlayer({
     } else {
       manualSubtitle.current = null;
       const preferred = defaultSubtitleIndex(stream, settings.defaultSubtitle);
-      const language = settings.defaultSubtitle.trim().toLowerCase();
-      const english = (stream.subtitles ?? []).findIndex(subtitle => (subtitle.lang ?? "").toLowerCase().startsWith("en"));
-      const translate = !!(aiAvailable && settings.aiAutoSelect && !liveTv && language && language !== "off" && preferred < 0 && english >= 0);
+      const language = languageCode(settings.defaultSubtitle);
+      const english = (stream.subtitles ?? []).findIndex(subtitle => languageCode(subtitle.lang) === "en");
+      const translate = !!(aiAvailable && settings.aiAutoSelect && !liveTv && language && preferred < 0 && english >= 0);
       setActiveSubtitle(translate ? english : preferred);
       setAiSubsActive(translate);
     }
