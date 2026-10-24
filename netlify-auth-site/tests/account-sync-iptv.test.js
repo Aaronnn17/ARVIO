@@ -31,3 +31,16 @@ test("IPTV protection does not recreate data for a deleted profile", () => {
   const result = merge({ payload: payload(["a"], 200) }, incoming);
   assert.equal(result.iptvByProfile.p1, undefined);
 });
+
+test("a web channel order survives a push from an app that does not know the field yet", () => {
+  const previous = payload(["a"], 100);
+  previous.iptvByProfile.p1.channelOrder = { "list_1|News": ["list_1:b", "list_1:a"] };
+  previous.fieldUpdatedAt["i:p1:channelOrder"] = 300;
+  const result = merge({ payload: previous }, payload(["a"], 100));
+  assert.deepEqual(result.iptvByProfile.p1.channelOrder, { "list_1|News": ["list_1:b", "list_1:a"] });
+  assert.equal(result.fieldUpdatedAt["i:p1:channelOrder"], 300);
+  const newer = payload(["a"], 100);
+  newer.iptvByProfile.p1.channelOrder = {};
+  newer.fieldUpdatedAt["i:p1:channelOrder"] = 400;
+  assert.deepEqual(merge({ payload: previous }, newer).iptvByProfile.p1.channelOrder, {});
+});
