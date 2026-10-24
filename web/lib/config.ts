@@ -29,6 +29,12 @@ export const config = {
   // master switch to enable the paywall (off by default so nothing changes for
   // users until you flip it in the environment).
   kofiUrl: envValue(process.env.NEXT_PUBLIC_KOFI_URL, ""),
+  // Ko-fi Shop item for the 12-month pass (https://ko-fi.com/s/<code>). The
+  // yearly plan is shown only when this is set.
+  kofiYearlyUrl: envValue(process.env.NEXT_PUBLIC_KOFI_YEARLY_URL, ""),
+  // The short promo video shown on the Premium offer (hosted on arvio.tv).
+  promoVideoUrl: envValue(process.env.NEXT_PUBLIC_PROMO_VIDEO_URL, "https://arvio.tv/assets/promo/arvio-tour-web.mp4"),
+  promoPosterUrl: envValue(process.env.NEXT_PUBLIC_PROMO_POSTER_URL, "https://arvio.tv/assets/promo/arvio-premium-poster.webp"),
   paywallEnabled: !selfHosted && envValue(process.env.NEXT_PUBLIC_PAYWALL_ENABLED, "false") === "true",
   imageBase: "https://image.tmdb.org/t/p/w780",
   backdropBase: "https://image.tmdb.org/t/p/w1280",

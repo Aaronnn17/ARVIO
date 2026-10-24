@@ -9,6 +9,7 @@ import { MediaCard } from "@/components/media/MediaCard";
 import { RailScroller } from "@/components/media/RailScroller";
 import { config, isDisabledTelegramSource, TELEGRAM_DISABLED_MESSAGE } from "@/lib/config";
 import { chooseDownloadFile, startManagedDownload, recordDownloadHandoff } from "@/lib/downloads";
+import { premiumAllows } from "@/lib/premiumGate";
 import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveWatchedState } from "@/lib/cloud";
@@ -161,10 +162,13 @@ function DetailsView({ item }: { item: MediaItem }) {
       setToast(isTv ? "Pick an episode to find sources first." : "No sources found yet.");
       return;
     }
+    // Explore mode: ask for Premium before waiting on sources.
+    if (!premiumAllows("play", () => setAutoplayRequested(true))) return;
     setAutoplayRequested(true);
   };
 
   const openEpisodeSources = async (season: number, episode: number) => {
+    if (!premiumAllows("play", () => { void openEpisodeSources(season, episode); })) return;
     await loadEpisodeStreams(displayItem, season, episode);
     setAutoplayRequested(true);
   };
@@ -535,6 +539,8 @@ function SourcePickerModal({
   };
   const openExternal = (player: "vlc" | "infuse", stream: StreamSource) => {
     if (rejectDisabledTelegram(stream)) return;
+    // No resume: iOS only opens an app from inside the original tap.
+    if (!premiumAllows("external")) return;
     if (!stream.url) {
       onToast("This source has no direct URL for an external player.");
       return;
@@ -576,6 +582,7 @@ function SourcePickerModal({
   // system chooser — the equivalent of the iOS-only Infuse button.
   const openAnyPlayer = (stream: StreamSource) => {
     if (rejectDisabledTelegram(stream)) return;
+    if (!premiumAllows("external")) return;
     if (!stream.url) {
       onToast("This source has no direct URL for an external player.");
       return;
@@ -598,11 +605,13 @@ function SourcePickerModal({
   };
   const copyUrl = async (stream: StreamSource) => {
     if (rejectDisabledTelegram(stream)) return;
+    if (!premiumAllows("copy")) return;
     const copied = await copyStreamUrl(stream).catch(() => false);
     onToast(copied ? "Stream URL copied." : "Could not copy this stream URL.");
   };
   const downloadSource = async (stream: StreamSource) => {
     if (rejectDisabledTelegram(stream)) return;
+    if (!premiumAllows("download")) return;
     void trackPremiumEvent(authClient, "download_requested", { entry: "sources" }, true);
     if (!stream.url) {
       void trackPremiumEvent(authClient, "download_failed", { stage: "missing_url" }, true);

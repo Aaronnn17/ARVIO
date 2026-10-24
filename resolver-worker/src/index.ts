@@ -7,7 +7,29 @@ type Env = {
   TRAKT_CLIENT_ID?: string;
   TRAKT_CLIENT_SECRET?: string;
   TMDB_API_KEY?: string;
+  // When set (32+ characters, the same value as the auth site's
+  // STREAM_TICKET_SECRET), /media relays only requests that carry a valid,
+  // unexpired ARVIO Premium stream ticket in the `t` parameter.
+  STREAM_TICKET_SECRET?: string;
 };
+
+// Stream tickets are minted by the auth site's /stream-ticket function:
+// v1.<expiry, unix seconds>.<account tag>.<HMAC-SHA256 of the first three parts, base64url>
+async function validStreamTicket(secret: string, ticket: string | null, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const parts = String(ticket ?? "").split(".");
+  if (parts.length !== 4 || parts[0] !== "v1") return false;
+  const expiry = Number(parts[1]);
+  if (!Number.isInteger(expiry) || expiry < nowSeconds) return false;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+  let signature: Uint8Array;
+  try {
+    const base64 = parts[3].replace(/-/g, "+").replace(/_/g, "/");
+    signature = Uint8Array.from(atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4)), (char) => char.charCodeAt(0));
+  } catch {
+    return false;
+  }
+  return crypto.subtle.verify("HMAC", key, signature, new TextEncoder().encode(parts.slice(0, 3).join(".")));
+}
 
 // Trakt device-token exchange from the Worker. The Netlify backend's egress IP
 // is Cloudflare-challenged by Trakt; the Worker (Cloudflare-origin) is not. The
@@ -425,6 +447,10 @@ async function media(request: Request, env: Env) {
   const input = new URL(request.url);
   const raw = input.searchParams.get("url");
   if (!raw) return json({ error: "Missing url" }, request, env, 400);
+  const ticketSecret = env.STREAM_TICKET_SECRET ?? "";
+  if (ticketSecret.length >= 32 && !(await validStreamTicket(ticketSecret, input.searchParams.get("t")))) {
+    return json({ error: "ARVIO Premium is required for this stream." }, request, env, 403);
+  }
   let target: URL;
   try {
     target = new URL(raw);
@@ -591,6 +617,9 @@ function rewriteHlsPlaylist(text: string, baseUrl: URL, workerUrl: URL) {
     const params = new URLSearchParams();
     params.set("url", absolute.toString());
     if (headersParam) params.set("h", headersParam);
+    // Segments and variant playlists carry the same stream ticket.
+    const ticket = workerUrl.searchParams.get("t");
+    if (ticket) params.set("t", ticket);
     return `/media?${params.toString()}`;
   };
 

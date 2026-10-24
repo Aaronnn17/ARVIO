@@ -1,4 +1,5 @@
 "use client";
+import { currentStreamTicket } from "@/lib/streamTicket";
 import { useTranslation } from "@/lib/i18n";
 
 
@@ -141,6 +142,8 @@ function workerManifestUrl(url: string, headers?: Record<string, string>) {
   // segments via the configured resolver worker with its CORS/header handling.
   const target = new URL(proxiedUrl(url, { ...liveTvProxyHeaders(), ...headers }));
   target.searchParams.set("rewrite", "worker");
+  const ticket = currentStreamTicket();
+  if (ticket) target.searchParams.set("t", ticket);
   return target.toString();
 }
 

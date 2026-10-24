@@ -22,6 +22,7 @@ import { cachedDebridDirectUrl, parseDebridStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { trackPremiumEvent } from "./premiumAnalytics";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
+import { premiumAllows } from "./premiumGate";
 import { playbackPlan } from "./streamCompatibility";
 import { prepareBrowserStream } from "./prepareBrowserStream";
 import { reportHomeServerPlayback } from "./homeServerPlayback";
@@ -1828,6 +1829,13 @@ export function AppProvider({
       setToast(TELEGRAM_DISABLED_MESSAGE);
       return;
     }
+    // Explore mode: hosted ARVIO Web asks for Premium here (and resumes after
+    // payment). Self-hosted builds never register a gate. A source headed for
+    // VLC/Infuse is not resumed automatically: iOS opens an app only from
+    // inside the original tap, so the member presses Play again.
+    const headedExternal = stream.addonId !== "arvio_youtube" && !stream.autoSelect && !options.forceBrowser && !options.forceRemux && !options.forceTranscode
+      && (settingsRef.current.defaultPlayer === "vlc" || settingsRef.current.defaultPlayer === "infuse");
+    if (!premiumAllows("play", headedExternal ? undefined : () => playStream(stream, options))) return;
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     if (!stream.autoSelect) setActiveStream(null);
@@ -2040,6 +2048,7 @@ export function AppProvider({
   const playChannel = useCallback(async (channel: IptvChannel) => {
     // Live TV carries no age ratings: a kids profile never plays it.
     if (kidsLevelOf(activeProfileRef.current)) { setToast("Not available on this kids profile"); return; }
+    if (!premiumAllows("live", () => { void playChannel(channel); })) return;
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     const generation = ++playbackGeneration.current;
@@ -2070,6 +2079,7 @@ export function AppProvider({
   // still gives it the IPTV proxy ladder via the "Catch-up" addonName marker.
   const playCatchup = useCallback((channel: IptvChannel, program: IptvProgram) => {
     if (kidsLevelOf(activeProfileRef.current)) { setToast("Not available on this kids profile"); return; }
+    if (!premiumAllows("live", () => playCatchup(channel, program))) return;
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     playbackGeneration.current++;
