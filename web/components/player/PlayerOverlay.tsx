@@ -1327,9 +1327,10 @@ function VideoPlayer({
       capturePosition();
       if (!lastPosition || !authClient.session || authClient.session.userId !== userId || isLiveStream) return;
       const now = Date.now();
-      // The current backend saves an account snapshot per checkpoint. Bound
-      // periodic traffic while pause/close/background/end still flush immediately.
-      if (force !== true && now - lastSavedRef.current < 60_000) return;
+      // Each checkpoint is one small queued item (lib/progressOutbox). Periodic
+      // saves every 30 s; pause/seek/close/background/end flush immediately.
+      // saveProgress skips plays under 3% and 60 s like Android.
+      if (force !== true && now - lastSavedRef.current < 30_000) return;
       const { position, duration } = lastPosition;
       if (lastQueuedPosition === Math.round(position)) return;
       lastQueuedPosition = Math.round(position);
@@ -1376,11 +1377,13 @@ function VideoPlayer({
       if (settings.autoPlayNext && canAdvance && !nextDismissed.current) { setShowControls(true); setNextCountdown(10); }
     };
     const flush = () => { save(true); onPaused(); };
+    const onSeeked = () => { if (playbackStarted) save(true); };
     const background = () => {
       if (document.visibilityState === "hidden") flush();
       else if (!video.paused && !video.ended && video.readyState >= 2) onPlaying();
     };
     video.addEventListener("timeupdate", save);
+    video.addEventListener("seeked", onSeeked);
     video.addEventListener("pause", flush);
     window.addEventListener("pagehide", onStopped);
     document.addEventListener("visibilitychange", background);
@@ -1392,6 +1395,7 @@ function VideoPlayer({
     return () => {
       flush();
       video.removeEventListener("timeupdate", save);
+      video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("pause", flush);
       window.removeEventListener("pagehide", onStopped);
       document.removeEventListener("visibilitychange", background);

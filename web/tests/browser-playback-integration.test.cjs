@@ -724,16 +724,29 @@ function progressEffect(overrides = {}) {
     emit: (name) => video.dispatchEvent(new Event(name)) };
 }
 
-test('Progress cloud checkpoints are once per minute, not every 15 seconds', () => {
+test('Progress cloud checkpoints are every 30 seconds while playing, not on every time update', () => {
   const h = progressEffect();
   h.emit('timeupdate');
   assert.equal(h.calls.length, 1);
-  for (let n = 0; n < 3; n++) { h.advance(15); h.emit('timeupdate'); }
+  for (let n = 0; n < 5; n++) { h.advance(5); h.emit('timeupdate'); }
   assert.equal(h.calls.length, 1);
-  h.advance(15); h.emit('timeupdate');
+  h.advance(5); h.emit('timeupdate');
   assert.equal(h.calls.length, 2);
   h.cleanup();
   assert.equal(h.calls.length, 2, 'unchanged teardown position is not saved twice');
+});
+
+test('A seek after playback started saves the new position immediately; the resume seek does not', () => {
+  const h = progressEffect();
+  h.video.currentTime = 400; h.emit('seeked');
+  assert.equal(h.calls.length, 0, 'seek before playback (resume) is not a checkpoint');
+  h.video.paused = false; h.emit('playing');
+  h.emit('timeupdate');
+  assert.equal(h.calls.length, 1);
+  h.video.currentTime = 700; h.emit('seeked');
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[1][1].position_seconds, 700);
+  h.cleanup();
 });
 
 test('Pause, background, pagehide, end and close bypass periodic checkpoint throttling', () => {
