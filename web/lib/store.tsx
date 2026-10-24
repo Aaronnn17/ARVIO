@@ -2667,6 +2667,9 @@ export function AppProvider({
         await flushWatchlistOutbox(authClient).catch(() => {
           if (isCurrentAction()) setToast('Watchlist updated. Cloud sync will retry when you reconnect.');
         });
+      } else if (!userId && !authClient.session) {
+        // No ARVIO account: the device-local outbox bucket is the watchlist.
+        queueWatchlistChange(authClient, slim, inWatchlist, activeProfileId, cloudChange);
       }
     } catch (err) {
       if (!isCurrentAction()) return;
