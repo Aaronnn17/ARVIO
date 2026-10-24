@@ -1,6 +1,7 @@
 "use client";
 import { resolveStalkerChannel } from "./stalker";
 import { browserAutoplayCandidates } from "./browserAutoplay";
+import { isPreferredAutoplaySource, loadAutoplayPreference, orderByPreference } from "./autoplaySelection";
 import { recordBrowserPlaybackFailure } from "./streamCompatibility";
 import { queueAddons, hasPendingAddons, flushAddonOutbox, pendingAddonSnapshot } from "./addonOutbox";
 import { applyPendingWatchlist, prepareWatchlistChange, queueWatchlistChange, flushWatchlistOutbox } from "./watchlistOutbox";
@@ -1959,9 +1960,18 @@ export function AppProvider({
       const episode = episodes.find((item) => item.episodeNumber === next.episodeNumber);
       if (!episode || (episode.airDate && Date.parse(episode.airDate) > Date.now())) { setToast("The next episode is not available yet."); return false; }
       let started = false;
+      // Same bounded preference as the details Play button: a debrid source or
+      // the addon that last played on this device gets a short window to
+      // arrive before the fastest addon's first row wins by default.
+      const preference = loadAutoplayPreference();
+      const arrived: StreamSource[] = [];
+      let settled = false;
       const choose = (rows: StreamSource[]) => {
         if (!isCurrent() || started) return;
-        const candidate = browserAutoplayCandidates(rows)[0];
+        arrived.push(...rows);
+        const candidates = orderByPreference(browserAutoplayCandidates(arrived), preference, (row) => playbackPlan(row).method);
+        if (!settled && !candidates.some((row) => isPreferredAutoplaySource(row, preference, (entry) => Boolean(parseDebridStream(entry.originalUrl ?? entry.url))))) return;
+        const candidate = candidates[0];
         if (!candidate) return;
         started = true;
         setSelectedEpisode({ season: next.seasonNumber!, episode: next.episodeNumber! });
@@ -1971,6 +1981,7 @@ export function AppProvider({
       };
       setStreams([]);
       const publish = (rows: StreamSource[]) => { if (sourceGeneration.current === generation) { mergeStreams(rows); choose(rows); } };
+      const settleTimer = window.setTimeout(() => { settled = true; choose([]); }, 2500);
       // All source types participate; one unavailable provider does not hold up another.
       await Promise.allSettled([
         getStreamsProgressive(addonsRef.current, selected, next.seasonNumber, next.episodeNumber, publish).then(publish),
@@ -1978,6 +1989,9 @@ export function AppProvider({
         appendVodSources(selected, next.seasonNumber, next.episodeNumber).then(choose),
         appendTelegramSources(selected, next.seasonNumber, next.episodeNumber).then(choose)
       ]);
+      window.clearTimeout(settleTimer);
+      settled = true;
+      choose([]);
       if (!started && isCurrent()) setToast("No browser-playable source for the next episode. Choose a source manually.");
       return started;
     } catch {

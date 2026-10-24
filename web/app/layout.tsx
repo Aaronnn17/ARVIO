@@ -7,6 +7,7 @@ import "./tv-guide.css";
 import "./source-setup.css";
 import "./calendar.css";
 import "./ui-refinements.css";
+import "./player-platform.css";
 
 export const metadata: Metadata = {
   title: "ARVIO",
@@ -25,6 +26,8 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
+      // Browsers and crawlers still request /favicon.ico directly.
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48 64x64", type: "image/x-icon" },
       { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
       { url: "/arvio-icon-192.png", sizes: "192x192", type: "image/png" },
       { url: "/arvio-icon-512.png", sizes: "512x512", type: "image/png" }
@@ -67,6 +70,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             carry the version bust. */}
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v3.png" />
         <link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon-v3.png" />
+        {/* Safari, share sheets and crawlers still probe the legacy root paths
+            /apple-touch-icon-precomposed.png and /favicon.ico regardless of
+            these links; both files now exist in /public. */}
       </head>
       <body>
         <UpdateWatcher />
