@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { isLiveStreamOrSportsItem, saveProgress, saveWatchedState } from "@/lib/cloud";
 import { authClient, useApp } from "@/lib/store";
 import { syncClient } from "@/lib/sync";
+import { isFinishedPercent as isExternalPlaybackFinished } from "@/lib/playerResume";
 import {
   clearPendingExternalPlayback,
   loadPendingExternalPlayback,
@@ -15,10 +16,6 @@ import {
 
 type PromptMode = "choice" | "progress";
 
-/** 90 % and above counts as watched, matching the in-app player and Android. */
-export function isExternalPlaybackFinished(progressPercent: number) {
-  return progressPercent >= 90;
-}
 
 function labelFor(pending: PendingExternalPlayback) {
   const episode = pending.mediaType === "tv" && pending.season && pending.episode

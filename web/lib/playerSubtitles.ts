@@ -450,5 +450,5 @@ export function saveTitleSubtitleDelay(titleKey: string, delayMs: number, storag
 
 /** Step a delay by ±100 ms, clamped to ±30 s. */
 export function stepSubtitleDelay(currentMs: number, direction: 1 | -1) {
-  return Math.max(-30_000, Math.min(30_000, Math.round((currentMs + direction * 100) / 100) * 100));
+  return Math.max(-30_000, Math.min(30_000, Math.round(currentMs + direction * 100)));
 }

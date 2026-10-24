@@ -147,9 +147,11 @@ test('store imports use the disabled-build alias and saved-source actions are gu
   assert.equal((store.match(/import\("@\/lib\/telegram"\)/g) || []).length, 2);
   assert.match(store, /const appendTelegramSources = [\s\S]*?if \(!config\.telegramEnabled\) return Promise\.resolve/);
   assert.match(store, /const playStream = [^\n]+\n\s*if \(isDisabledTelegramSource\(stream\)\)/);
-  const details = source('components/details/DetailsDrawer.tsx');
-  assert.match(details, /!telegramDisabled && <span className="source-row-actions">/);
-  for (const handler of ['openExternal', 'openAnyPlayer', 'copyUrl', 'downloadSource']) {
+  const details = source('components/details/SourcePicker.tsx');
+  // Disabled Telegram rows are locked: no primary action and no row actions.
+  assert.match(details, /locked: !stream\.url \|\| telegramDisabled/);
+  assert.match(source('components/details/SourceRow.tsx'), /\{!locked && \(sideOptions\.length > 0/);
+  for (const handler of ['openExternal', 'copyUrl', 'downloadSource']) {
     assert.match(details, new RegExp('const ' + handler + ' = [^\\n]+\\n\\s*if \\(rejectDisabledTelegram\\(stream\\)\\) return;'));
   }
 });

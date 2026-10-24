@@ -16,6 +16,11 @@ export const MIN_RESUME_PERCENT = 3;
 export const WATCHED_PERCENT = 90;
 const MIN_RESUME_SECONDS = 60;
 
+/** 90 % and above counts as watched (player, external-player prompt, Android). */
+export function isFinishedPercent(progressPercent: number) {
+  return progressPercent >= WATCHED_PERCENT;
+}
+
 export type EpisodeKey = `${number}:${number}`;
 export const episodeKey = (season: number, episode: number): EpisodeKey => `${season}:${episode}`;
 

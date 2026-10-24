@@ -181,8 +181,8 @@ test('pre-play probes only read direct-play files and never resolve debrid links
       streamTransport: (s) => (s.url.includes('.m3u8') ? 'hls' : 'file')
     },
     './streamVerify': {
-      verifyTopSources: async (targets) => { verifyCalls.push(targets.map((t) => t.url)); },
-      cachedVerdict: (url) => (url.includes('bad') ? { playable: false } : url.includes('good') ? { playable: true } : undefined)
+      verifyStream: async (url) => { verifyCalls.push(url); return url.includes('bad') ? { playable: false } : url.includes('good') ? { playable: true } : null; },
+      cachedVerdict: () => undefined
     }
   }, { VideoDecoder: function () {}, AudioDecoder: function () {} });
   assert.equal(verifier.probeUrlFor({ url: 'https://h.example/good.mp4' }), 'https://h.example/good.mp4');
@@ -195,8 +195,12 @@ test('pre-play probes only read direct-play files and never resolve debrid links
   const good = { url: 'https://h.example/good.mp4' };
   const bad = { url: 'https://h.example/bad.mp4' };
   const remux = { url: 'https://h.example/movie.mkv' };
-  const verdicts = await verifier.verifyAutoplayCandidates([good, bad, remux], 500, new AbortController().signal);
-  assert.deepEqual(plain(verifyCalls), [[good.url, bad.url]]);
+  const reported = [];
+  const verdicts = await verifier.verifyAutoplayCandidates([good, bad, remux], 500, new AbortController().signal, (stream, verdict) => reported.push([stream.url, verdict]));
+  assert.deepEqual(plain(verifyCalls), [good.url, bad.url]);
+  // Unprobeable candidates are reported at once; probed ones as they finish.
+  assert.deepEqual(plain(reported[0]), [remux.url, null]);
+  assert.equal(reported.length, 3);
   assert.equal(verdicts.get(good), true);
   assert.equal(verdicts.get(bad), false);
   assert.equal(verdicts.get(remux), null);

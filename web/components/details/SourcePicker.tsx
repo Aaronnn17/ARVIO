@@ -136,7 +136,7 @@ export function SourcePickerModal({
     setAddonFilter("all");
     setFilter("all");
     setQuery("");
-    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (document.activeElement instanceof HTMLElement && !document.activeElement.closest(".source-modal")) openerRef.current = document.activeElement;
     const focusTimer = window.setTimeout(() => {
       const panel = panelRef.current;
       const target = panel?.querySelector<HTMLElement>(".src-row-main:not([disabled])") ?? panel?.querySelector<HTMLElement>(".person-close");

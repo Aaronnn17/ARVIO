@@ -283,9 +283,12 @@ export function PlayerOverlay() {
 function YouTubeLayer({ videoId, item, stream, title, onClose }: { videoId: string; item: MediaItem | null; stream: StreamSource; title: string; onClose: () => void }) {
   const translateUi = useTranslation();
   const ref = useRef<HTMLElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    ref.current?.querySelector<HTMLElement>(".player-icon-btn")?.focus({ preventScroll: true });
+    const node = ref.current;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && !node?.contains(active)) openerRef.current = active;
+    node?.querySelector<HTMLElement>(".player-icon-btn")?.focus({ preventScroll: true });
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Tab" && ref.current) { trapTab(event, ref.current); return; }
       if (event.key !== "Escape" || !claimEscape(event)) return;
@@ -295,7 +298,11 @@ function YouTubeLayer({ videoId, item, stream, title, onClose }: { videoId: stri
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
-      if (opener?.isConnected) window.setTimeout(() => opener.focus({ preventScroll: true }), 0);
+      // Only on a real close (React dev re-runs effects without unmounting).
+      window.setTimeout(() => {
+        const opener = openerRef.current;
+        if (node && !node.isConnected && opener?.isConnected) opener.focus({ preventScroll: true });
+      }, 0);
     };
   }, [onClose]);
   const kind = stream.addonId === "arvio_youtube" ? "YouTube" : translateUi("Trailer");
@@ -435,7 +442,7 @@ function VideoPlayer({
   const [showControls, setShowControls] = useState(true);
   // What the loading screen says it is doing ("Connecting…", "Trying next
   // source (2 of 4)") — the boot screen used to be a silent logo for up to 20 s.
-  const [bootStatus, setBootStatus] = useState<{ text: string; values?: Record<string, string | number> }>({ text: "Connecting…" });
+  const [bootStatus, setBootStatus] = useState<{ label: string; values?: Record<string, string | number> }>({ label: "Connecting…" });
   const [nextCountdown, setNextCountdown] = useState<number | null>(null);
   const nextDismissed = useRef(false);
   const [upNextDismissed, setUpNextDismissed] = useState(false);
@@ -860,7 +867,7 @@ function VideoPlayer({
       setErrorDetail("");
       failureDiagnosticRef.current = { failure_kind: "unknown", phase: "startup" };
       setBuffering(true);
-      setBootStatus({ text: "Preparing this file for your browser…" });
+      setBootStatus({ label: "Preparing this file for your browser…" });
       setRemuxTracks([]);
       lastSavedRef.current = 0;
       const remuxFailed = (message: string) => {
@@ -955,8 +962,8 @@ function VideoPlayer({
     const hops = autoSourceHopsRef.current;
     const candidateCount = Math.max(hops + 1, browserAutoplayCandidates(sourceListRef.current).length);
     setBootStatus(hops > 0
-      ? { text: "Trying next source ({value0} of {value1})", values: { value0: hops + 1, value1: candidateCount } }
-      : stream.transcoded ? { text: "Waiting for the provider's conversion…" } : { text: "Connecting…" });
+      ? { label: "Trying next source ({value0} of {value1})", values: { value0: hops + 1, value1: candidateCount } }
+      : stream.transcoded ? { label: "Waiting for the provider's conversion…" } : { label: "Connecting…" });
     lastSavedRef.current = 0;
     const headers = stream.behaviorHints?.proxyHeaders?.request;
     let handlingError = false;
@@ -1137,7 +1144,7 @@ function VideoPlayer({
         const debridInfo = parseDebridStream(stream.originalUrl);
         if (debridInfo) {
           detach?.();
-          setBootStatus({ text: "Refreshing the source link…" });
+          setBootStatus({ label: "Refreshing the source link…" });
           void resolveDebridDirectUrl(debridInfo).then((result) => {
             if (cancelled) return;
             if (result.url && result.url !== stream.url) {
@@ -1163,7 +1170,7 @@ function VideoPlayer({
       if (nextUrl) {
         setError(false);
         setBuffering(true);
-        setBootStatus({ text: "Trying another connection ({value0} of {value1})", values: { value0: attemptIndex + 1, value1: uniqueAttempts.length } });
+        setBootStatus({ label: "Trying another connection ({value0} of {value1})", values: { value0: attemptIndex + 1, value1: uniqueAttempts.length } });
         detach?.();
         detach = attach(nextUrl);
         armStallTimer();
@@ -1554,10 +1561,19 @@ function VideoPlayer({
   useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
   // A modal player: focus moves in when it opens and back to whatever opened
   // it (the details Play button) when it closes.
+  const playerOpenerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    containerRef.current?.focus({ preventScroll: true });
-    return () => { if (opener?.isConnected) window.setTimeout(() => opener.focus({ preventScroll: true }), 0); };
+    const node = containerRef.current;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && !node?.contains(active)) playerOpenerRef.current = active;
+    node?.focus({ preventScroll: true });
+    return () => {
+      // Only on a real close (React dev re-runs effects without unmounting).
+      window.setTimeout(() => {
+        const opener = playerOpenerRef.current;
+        if (node && !node.isConnected && opener?.isConnected) opener.focus({ preventScroll: true });
+      }, 0);
+    };
   }, []);
 
   const retryPlayback = useCallback(() => {
@@ -2061,7 +2077,7 @@ function VideoPlayer({
               ? <img className="player-boot-logo" src={bootLogo} alt={title} />
               : <h2 className="player-boot-title">{title}</h2>}
             <p className="player-boot-status" role="status" aria-live="polite">
-              <Loader2 size={16} aria-hidden="true" /> {translateUi(bootStatus.text, bootStatus.values)}
+              <Loader2 size={16} aria-hidden="true" /> {translateUi(bootStatus.label, bootStatus.values)}
             </p>
             {subtitleLabel ? <p className="player-boot-sub">{subtitleLabel}{item?.episodeTitle ? ` · ${item.episodeTitle}` : ""}</p> : null}
           </div>

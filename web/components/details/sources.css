@@ -29,6 +29,7 @@
 
 .src-row {
   position: relative;
+  flex: 0 0 auto;
   display: flex;
   align-items: stretch;
   gap: 6px;
