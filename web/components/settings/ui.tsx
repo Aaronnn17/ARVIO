@@ -4,7 +4,7 @@
 // only), so settings changed here are never a guess about what syncs.
 
 import { Check, ChevronDown, Cloud, Eye, EyeOff, Globe, Monitor, Tv, type LucideIcon } from "lucide-react";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { isValidElement, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "@/lib/i18n";
 
@@ -70,8 +70,10 @@ export function Row({ id, label, hint, scope, children, stack, disabled }: {
   disabled?: boolean;
 }) {
   const translateUi = useTranslation();
+  // A row whose only control is a switch keeps the switch beside the text on phones.
+  const toggleOnly = isValidElement(children) && children.type === Toggle;
   return (
-    <div className={`st-row ${stack ? "is-stacked" : ""} ${disabled ? "is-disabled" : ""}`} id={id ? `st-${id}` : undefined} data-setting={id}>
+    <div className={`st-row ${stack ? "is-stacked" : ""} ${disabled ? "is-disabled" : ""} ${toggleOnly ? "is-toggle" : ""}`} id={id ? `st-${id}` : undefined} data-setting={id}>
       <div className="st-row-text">
         <span className="st-row-label">
           {translateUi(label)}
@@ -147,10 +149,16 @@ export function Select<T extends string>({
 }) {
   const translateUi = useTranslation();
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const selected = options.find(([option]) => option === value)?.[1] ?? value;
+  // Give focus back to the dropdown so keyboards and TV remotes carry on from it.
+  const close = () => {
+    setOpen(false);
+    window.requestAnimationFrame(() => buttonRef.current?.focus({ preventScroll: true }));
+  };
   const choose = (next: T) => {
     onChange(next);
-    setOpen(false);
+    close();
   };
 
   // Lock body scroll while the option sheet is open — the position:fixed
@@ -165,7 +173,12 @@ export function Select<T extends string>({
     style.left = "0";
     style.right = "0";
     style.overflow = "hidden";
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { event.stopPropagation(); setOpen(false); } };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOpen(false);
+      window.requestAnimationFrame(() => buttonRef.current?.focus({ preventScroll: true }));
+    };
     window.addEventListener("keydown", onKey, true);
     return () => {
       style.position = prev.position;
@@ -181,6 +194,7 @@ export function Select<T extends string>({
   return (
     <>
       <button
+        ref={buttonRef}
         type="button"
         className="option-button st-select"
         disabled={disabled}
@@ -195,11 +209,11 @@ export function Select<T extends string>({
         <ChevronDown size={16} />
       </button>
       {open && typeof document !== "undefined" && createPortal(
-        <div className="option-sheet-backdrop" role="presentation" onClick={() => setOpen(false)}>
+        <div className="option-sheet-backdrop" role="presentation" onClick={close}>
           <div className="option-sheet" role="dialog" aria-modal="true" aria-label={translateUi(label ?? "Choose option")} onClick={(event) => event.stopPropagation()}>
             <div className="option-sheet-head">
               <strong>{translateUi(label ?? "Choose option")}</strong>
-              <button type="button" className="secondary" onClick={() => setOpen(false)}>{translateUi("Close")}</button>
+              <button type="button" className="secondary" onClick={close}>{translateUi("Close")}</button>
             </div>
             <div className="option-sheet-list">
               {options.map(([option, text]) => (

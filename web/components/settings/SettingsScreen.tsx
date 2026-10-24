@@ -88,7 +88,7 @@ function useSummaries(): Partial<Record<SectionId, string>> {
     const subtitle = trackLanguageName(settings.defaultSubtitle);
     return {
       account: auth?.email ?? translateUi(config.selfHosted ? "This browser" : "Not signed in"),
-      premium: entitlement?.entitled ? translateUi("Active") : translateUi("Not a member"),
+      premium: !auth ? undefined : entitlement?.entitled ? translateUi("Active") : translateUi("Not a member"),
       profiles: activeProfile?.name,
       services: services || translateUi("None"),
       language: subtitle ? `${translateUi("Subtitles")}: ${subtitle}` : undefined,

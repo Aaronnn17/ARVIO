@@ -132,3 +132,35 @@ test('the player matches Android-style subtitle names against track codes', () =
   assert.match(player, /languageCode\(settings\.defaultSubtitle\) !== "en"/);
   assert.doesNotMatch(player, /aiSubtitleModel !== "off"/);
 });
+
+test('longer language names win, and audio preferences match Android names', () => {
+  const l = load('lib/languages.ts');
+  assert.equal(l.languageCode('Malayalam (SDH)'), 'ml');
+  assert.equal(l.languageCode('Malay'), 'ms');
+  const remux = load('lib/remuxProtocol.ts');
+  const track = (index, language) => ({ index, codec: 'aac', label: language, language, browserPlayable: true, passthrough: true });
+  const tracks = [track(0, 'eng'), track(1, 'tur'), track(2, 'pol'), track(3, 'por')];
+  assert.equal(remux.preferredAudioIndex(tracks, 'Turkish'), 1);
+  assert.equal(remux.preferredAudioIndex(tracks, 'Polish'), 2);
+  assert.equal(remux.preferredAudioIndex(tracks, 'Portuguese (Brazil)'), 3);
+  assert.equal(remux.preferredAudioIndex(tracks, 'English'), 0);
+  assert.equal(remux.preferredAudioIndex(tracks, ''), 0);
+});
+
+test('values older web builds wrote are rewritten for Android on the next save', async () => {
+  const h = cloudHarness({ subtitleAiModel: 'gemini', accentColor: 'purple', profileSettingsById: { p1: {} } });
+  const base = { ...webDefaults(), aiSubtitleModel: 'gemini', accentColor: 'purple' };
+  await h.cloud.saveCloudSettings(h.auth, { ...base, showBudget: !base.showBudget }, [], 'p1', [], base);
+  assert.equal(h.remote().subtitleAiModel, 'GEMINI_FLASH_25');
+  assert.equal(h.remote().accentColor, 'Violet');
+  assert.ok(h.remote().fieldUpdatedAt['g:subtitleAiModel'] > 0);
+});
+
+test('returning from a settings section does not leave the app history stuck', () => {
+  const back = fs.readFileSync(path.join(__dirname, '../components/shell/BackHandler.tsx'), 'utf8');
+  const guard = back.indexOf("route.section===current.section&&route.query===shownQuery)return;");
+  assert.ok(guard > 0, 'a pop to the route already shown is ignored');
+  assert.ok(guard < back.indexOf('applying.current=route;'), 'before it is recorded as pending');
+  const ai = fs.readFileSync(path.join(__dirname, '../components/player/PlayerOverlay.tsx'), 'utf8');
+  assert.match(ai, /Boolean\(languageCode\(settings\.defaultSubtitle\)\) && languageCode\(settings\.defaultSubtitle\) !== "en"/, '"Forced" is not a translation target');
+});

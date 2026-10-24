@@ -1,6 +1,6 @@
 "use client";
 import { ExternalLink, Eye, EyeOff, KeyRound, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { CONTENT_LANGUAGE_OPTIONS } from "@/lib/i18n/languageOptions";
 import { languageCode, TRACK_LANGUAGES, trackLanguageName } from "@/lib/languages";
@@ -250,7 +250,7 @@ export function SubtitlesSection() {
         </Row>
         <Row id="subtitle-style" label="Style" scope="all">
           <Segmented label="Subtitle style" value={style} onChange={(v) => set({ subtitleStyle: v })}
-            options={[["outline", "Bold outline"], ["shadow", "Shadow"], ["background", "Background"]]} />
+            options={[["outline", "Bold outline"], ["shadow", "Normal"], ["background", "Background"]]} />
         </Row>
         <Row id="subtitle-position" label="Position" scope="all">
           <Segmented label="Subtitle position" value={settings.subtitleOffset} onChange={(v) => set({ subtitleOffset: v })}
@@ -306,6 +306,8 @@ export function AiSubtitlesSection({ openSection }: { openSection: (id: string) 
   const [settings, set] = useSettings();
   const provider = settings.aiSubtitleModel === "gemini" ? "gemini" : "groq";
   const [check, setCheck] = useState<null | "busy" | "ok" | "bad" | "limit" | "error">(null);
+  // A result only counts for the key and provider it was run with.
+  const checkRun = useRef(0);
   const target = trackLanguageName(settings.defaultSubtitle);
   const targetCode = languageCode(settings.defaultSubtitle);
   const info = PROVIDERS[provider];
@@ -327,7 +329,7 @@ export function AiSubtitlesSection({ openSection }: { openSection: (id: string) 
         <div className="st-choice" role="radiogroup" aria-label={translateUi("AI provider")}>
           {(Object.keys(PROVIDERS) as Array<keyof typeof PROVIDERS>).map((id) => (
             <button key={id} type="button" role="radio" aria-checked={provider === id} className={provider === id ? "is-active" : ""}
-              onClick={() => { set({ aiSubtitleModel: id }); setCheck(null); }}>
+              onClick={() => { set({ aiSubtitleModel: id }); checkRun.current++; setCheck(null); }}>
               <strong>{PROVIDERS[id].name}{provider === id && <Status tone="ok">{translateUi("Selected")}</Status>}</strong>
               <span>{translateUi(PROVIDERS[id].note)}</span>
             </button>
@@ -335,8 +337,13 @@ export function AiSubtitlesSection({ openSection }: { openSection: (id: string) 
         </div>
         <Row id="ai-key" label={`${info.name} API key`} stack scope="all"
           hint={<>{translateUi("Free from")} <a className="st-link" href={info.keyUrl} target="_blank" rel="noreferrer">{info.keyUrl.replace("https://", "")} <ExternalLink size={12} /></a>. {translateUi("The key is stored in your ARVIO account so your TV can use it too.")}</>}>
-          <SecretInput label={`${info.name} API key`} value={settings.aiApiKey} placeholder="Paste your key" onChange={(v) => { set({ aiApiKey: v }); setCheck(null); }} />
-          <button type="button" className="st-btn" disabled={!settings.aiApiKey || check === "busy"} onClick={async () => { setCheck("busy"); setCheck(await testKey(provider, settings.aiApiKey)); }}>
+          <SecretInput label={`${info.name} API key`} value={settings.aiApiKey} placeholder="Paste your key" onChange={(v) => { set({ aiApiKey: v }); checkRun.current++; setCheck(null); }} />
+          <button type="button" className="st-btn" disabled={!settings.aiApiKey || check === "busy"} onClick={async () => {
+            const run = ++checkRun.current;
+            setCheck("busy");
+            const result = await testKey(provider, settings.aiApiKey);
+            if (run === checkRun.current) setCheck(result);
+          }}>
             <KeyRound size={16} /> {translateUi(check === "busy" ? "Checking…" : "Test key")}
           </button>
           {check === "ok" && <Status tone="ok">{translateUi("Key works")}</Status>}

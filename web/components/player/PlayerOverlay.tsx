@@ -356,7 +356,7 @@ function VideoPlayer({
   // most every 20 s) instead of silently leaving cues untranslated.
   const [aiError, setAiError] = useState<string | null>(null);
   const aiTargetName = subtitleLanguageName(trackLanguageName(settings.defaultSubtitle) || settings.defaultSubtitle);
-  const aiAvailable = settings.aiSubtitlesEnabled && Boolean(settings.aiApiKey) && Boolean(aiTargetName) && languageCode(settings.defaultSubtitle) !== "en";
+  const aiAvailable = settings.aiSubtitlesEnabled && Boolean(settings.aiApiKey) && Boolean(aiTargetName) && Boolean(languageCode(settings.defaultSubtitle)) && languageCode(settings.defaultSubtitle) !== "en";
   const translatorRef = useRef<SubtitleTranslator | null>(null);
   const [playbackRate, setPlaybackRateState] = useState(1);
   const setPlaybackRate = useCallback((rate: number) => {

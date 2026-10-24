@@ -1009,8 +1009,14 @@ export async function saveCloudSettings(
       ["telegramSearchOnClickOnly", settings.telegramSearchOnClickOnly, baseline?.telegramSearchOnClickOnly],
       ["subtitleRemoveHearingImpaired", settings.removeHearingImpaired, baseline?.removeHearingImpaired]
     ];
+    // Older web builds wrote "gemini"/"groq"/"off" and "gold"/"purple"/"arctic", which Android
+    // cannot read and keeps echoing back. Rewrite those in Android's vocabulary on the next save.
+    const legacyRoot = (key: string) =>
+      (key === "subtitleAiModel" && typeof root.subtitleAiModel === "string" && !["GROQ_LLAMA_70B", "GEMINI_FLASH_25"].includes(root.subtitleAiModel)) ||
+      // Only the web's own accent ids; an unknown value (e.g. a hex colour) is left as it is.
+      (key === "accentColor" && typeof root.accentColor === "string" && root.accentColor in ACCENT_TO_ANDROID);
     for (const [rootKey, newVal, baseVal] of globalFields) {
-      if (!baseline || !sameFieldValue(newVal, baseVal)) {
+      if (!baseline || !sameFieldValue(newVal, baseVal) || legacyRoot(rootKey)) {
         root[rootKey] = newVal;
         bumpFieldTs(root, `g:${rootKey}`, changedAt);
       }

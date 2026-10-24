@@ -23,6 +23,9 @@ const NAME_TO_CODE: Record<string, string> = {
   telugu: "te", thai: "th", turkish: "tr", ukrainian: "uk", vietnamese: "vi",
 };
 
+// "malayalam" must be tried before "malay", "portuguese (brazil)" before "portuguese".
+const NAMES_LONGEST_FIRST = Object.keys(NAME_TO_CODE).sort((a, b) => b.length - a.length);
+
 const THREE_LETTER: Record<string, string> = {
   eng: "en", spa: "es", fra: "fr", fre: "fr", deu: "de", ger: "de", ita: "it", por: "pt", pob: "pt-br", pobr: "pt-br",
   nld: "nl", dut: "nl", rus: "ru", zho: "zh", chi: "zh", jpn: "ja", kor: "ko", ara: "ar", hin: "hi", tur: "tr",
@@ -39,7 +42,7 @@ export function languageCode(value: string | null | undefined): string {
   if (!raw || raw === "off" || raw === "none" || raw === "forced" || raw.startsWith("auto")) return "";
   if (raw in NAME_TO_CODE) return NAME_TO_CODE[raw];
   if (raw === "pt-br" || raw === "pt_br" || raw === "ptbr" || raw.includes("brazil")) return "pt-br";
-  const name = Object.keys(NAME_TO_CODE).find((key) => raw.startsWith(key));
+  const name = NAMES_LONGEST_FIRST.find((key) => raw.startsWith(key));
   if (name) return NAME_TO_CODE[name];
   if (raw === "espanol") return "es";
   if (raw === "francais") return "fr";

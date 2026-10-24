@@ -364,7 +364,7 @@ export function LiveTvSection() {
         </Row>
       </Group>
 
-      {playlists.length > 0 && (
+      {(playlists.length > 0 || Boolean(settings.iptvStalkerUrl)) && (
         <Group title="Categories" description="Show, hide and reorder channel groups.">
           <div style={{ padding: "4px 20px 16px" }}>
             <IptvGroupSettings key={groupScope} settings={settings} updateSettings={updateSettings} channels={groupsLoaded ? iptvSnapshot.allChannels ?? iptvSnapshot.channels : []} />

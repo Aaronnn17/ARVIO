@@ -98,10 +98,12 @@ export function AccountSection() {
 }
 
 export function PremiumSection() {
+  const translateUi = useTranslation();
+  const { auth } = useApp();
   return (
     <>
       <SectionHeader title="ARVIO Web Premium" description="Hosted ARVIO Web on iPhone, iPad, Mac and PC. The Android and TV app stays free." />
-      <PremiumAccount />
+      {auth ? <PremiumAccount /> : <Group><Empty>{translateUi("Sign in to see or start your membership.")}</Empty></Group>}
     </>
   );
 }
