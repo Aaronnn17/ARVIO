@@ -92,20 +92,14 @@ const loadDetails = () => import("@/components/details/DetailsDrawer");
 
 /**
  * The details page is the most common next step from any screen and its chunk
- * is small: fetch it once the app is idle so the first title opens instantly.
+ * is small (~40 kB). Fetch it as soon as the app view mounts — before Home's
+ * rails start their burst of metadata requests, which would otherwise queue
+ * the chunk behind them on HTTP/1.1 connections (seen: 10 s to open a title).
+ * It still stays out of the first-load bundle.
  */
 function DetailsPrefetch() {
   useEffect(() => {
-    let idle = 0;
-    const timer = window.setTimeout(() => {
-      const run = () => { void loadDetails().catch(() => undefined); };
-      if (typeof window.requestIdleCallback === "function") idle = window.requestIdleCallback(run, { timeout: 6000 });
-      else run();
-    }, 3000);
-    return () => {
-      window.clearTimeout(timer);
-      if (idle) window.cancelIdleCallback(idle);
-    };
+    void loadDetails().catch(() => undefined);
   }, []);
   return null;
 }
