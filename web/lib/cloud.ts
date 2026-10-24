@@ -5,6 +5,8 @@ import { loadStored, saveStored } from "./storage";
 import { config, hasNetlifyBackendUrl } from "./config";
 import { parseHomeServerConnectionJson, serializeHomeServerConnectionJson } from "./homeserver";
 import { jsonRequest } from "./http";
+import { findNextEpisode, type SeasonEpisodesLookup } from "./nextEpisode";
+import { discardPendingProgress, flushProgressOutbox, installProgressRetry, pendingProgress, queueProgress, type ProgressItem, type ProgressOperation, type ProgressSendResult } from "./progressOutbox";
 import { mergeTvSessions, normalizeTvSession } from "./iptvSession";
 import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
 import { tmdbImageUrl } from "./mediaImages";
@@ -40,6 +42,8 @@ interface AndroidContinueWatchingItem {
   durationSeconds?: number;
   season?: number | null;
   episode?: number | null;
+  displaySeason?: number | null;
+  displayEpisode?: number | null;
   episodeTitle?: string | null;
   backdropPath?: string | null;
   episodeStillPath?: string | null;
@@ -47,6 +51,8 @@ interface AndroidContinueWatchingItem {
   streamKey?: string | null;
   streamAddonId?: string | null;
   streamTitle?: string | null;
+  isUpNext?: boolean;
+  releaseDate?: string | null;
   updatedAtMs?: number;
 }
 
@@ -554,6 +560,7 @@ function androidCwToHistory(item: AndroidContinueWatchingItem, profileId?: strin
   const progress = Math.max(0, Math.min(0.99, Number(item.progress ?? 0) / 100));
   return {
     ...(item.addonNativeId ? { addon_native_id: item.addonNativeId, addon_native_addon_id: item.addonNativeAddonId } : {}),
+    ...(item.isUpNext ? { is_up_next: true, release_date: item.releaseDate || null } : {}),
     user_id: "",
     profile_id: profileId ?? null,
     media_type: mediaType,
@@ -575,17 +582,26 @@ function androidCwToHistory(item: AndroidContinueWatchingItem, profileId?: strin
   };
 }
 
-function historyToAndroidCw(entry: Omit<WatchHistoryEntry, "user_id">): AndroidContinueWatchingItem {
+/**
+ * A web playback checkpoint in Android's ContinueWatchingItem shape. Fields the
+ * web does not know are left null/absent so the merge keeps Android's value
+ * (stream_key, display numbering, release date) for the same episode.
+ */
+function historyToAndroidCw(entry: Omit<WatchHistoryEntry, "user_id">, updatedAtMs = Date.now()): ProgressItem {
+  const isTv = entry.media_type === "tv";
   return {
     ...(entry.addon_native_id ? { addonNativeId: entry.addon_native_id, addonNativeAddonId: entry.addon_native_addon_id } : {}),
     id: entry.show_tmdb_id,
-    title: entry.title ?? "",
-    mediaType: entry.media_type,
-    progress: Math.round(Math.max(0, Math.min(1, entry.progress)) * 100),
-    resumePositionSeconds: entry.position_seconds ?? 0,
-    durationSeconds: entry.duration_seconds ?? 0,
+    // Android drops rows without a title (sanitizeContinueWatchingItems).
+    title: entry.title?.trim() || entry.episode_title?.trim() || "Untitled",
+    mediaType: isTv ? "tv" : "movie",
+    // 89.6% must not round up to Android's 90% "watched" threshold.
+    progress: Math.min(Math.round(Math.max(0, Math.min(1, entry.progress)) * 100), entry.progress < 0.9 ? 89 : 100),
+    resumePositionSeconds: Math.max(0, Math.round(entry.position_seconds ?? 0)),
+    durationSeconds: Math.max(0, Math.round(entry.duration_seconds ?? 0)),
     season: entry.season ?? null,
     episode: entry.episode ?? null,
+    ...(isTv && entry.season != null && entry.episode != null ? { displaySeason: entry.season, displayEpisode: entry.episode } : {}),
     episodeTitle: entry.episode_title ?? null,
     backdropPath: entry.backdrop_path ?? null,
     episodeStillPath: entry.episode_still_path ?? null,
@@ -593,8 +609,24 @@ function historyToAndroidCw(entry: Omit<WatchHistoryEntry, "user_id">): AndroidC
     streamKey: entry.stream_key ?? null,
     streamAddonId: entry.stream_addon_id ?? null,
     streamTitle: entry.stream_title ?? entry.source ?? null,
-    updatedAtMs: Date.now()
+    isUpNext: false,
+    updatedAtMs
   };
+}
+
+const continueWatchingShowKey = (item: { id?: number; mediaType?: string }) =>
+  `${String(item.mediaType ?? "").toLowerCase()}:${Number(item.id ?? 0)}`;
+
+/** Android keeps one row per show (TraktRepository.saveLocalContinueWatching); the newest wins. */
+function newestPerShow(items: AndroidContinueWatchingItem[]): AndroidContinueWatchingItem[] {
+  const byShow = new Map<string, AndroidContinueWatchingItem>();
+  for (const item of items) {
+    if (!item?.id) continue;
+    const key = continueWatchingShowKey(item);
+    const current = byShow.get(key);
+    if (!current || Number(item.updatedAtMs ?? 0) > Number(current.updatedAtMs ?? 0)) byShow.set(key, item);
+  }
+  return [...byShow.values()];
 }
 
 function androidContinueWatchingItems(root: RawPayload, profileId?: string | null): AndroidContinueWatchingItem[] {
@@ -614,13 +646,10 @@ function androidContinueWatchingItems(root: RawPayload, profileId?: string | nul
     ...arrayValue<AndroidContinueWatchingItem>(root.localContinueWatching),
     ...arrayValue<AndroidContinueWatchingItem>(root.continueWatching)
   ];
-  const seen = new Set<string>();
-  return [...scoped, ...global].filter((item) => {
-    const key = `${item.mediaType ?? ""}:${item.id ?? ""}:${item.season ?? ""}:${item.episode ?? ""}`;
-    if (!item.id || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  // Legacy single-profile lists only fill titles the profile's own list lacks.
+  const own = newestPerShow(scoped);
+  const seen = new Set(own.map(continueWatchingShowKey));
+  return [...own, ...newestPerShow(global).filter((item) => !seen.has(continueWatchingShowKey(item)))];
 }
 
 // A single app refresh calls pullRawPayload five times (payload, trakt token,
@@ -681,15 +710,18 @@ export async function pullRawPayload(auth: AuthClient): Promise<RawPayload> {
   return structuredClone(await promise);
 }
 
-async function writeRawPayload(auth: AuthClient, payload: RawPayload) {
+async function writeRawPayload(auth: AuthClient, payload: RawPayload, baseUpdatedAtMs?: number) {
   if (!auth.session) return;
   payload.userId = auth.session.userId;
   payload.updatedAt = Date.now();
   const userId = auth.session.userId;
   if (canUseBackendSync(auth)) {
+    // baseUpdatedAtMs = when this document was read. The server keeps another
+    // device's Continue Watching rows written after that instead of treating
+    // their absence here as a removal (netlify-auth-site _sync-merge.js).
     const result = await backendRequest<{ accepted?: boolean; reason?: string }>(auth, "account-sync-push", {
       method: "POST",
-      body: JSON.stringify({ payload })
+      body: JSON.stringify(baseUpdatedAtMs ? { payload, baseUpdatedAtMs } : { payload })
     });
     if (result.accepted !== true) {
       invalidateRawPayloadCache();
@@ -727,10 +759,11 @@ export async function mutateCloudPayload(auth: AuthClient, mutator: (root: RawPa
     // A recent read cache can predate another device's change. Mutations must
     // start from a fresh snapshot, not echo that stale cached account back.
     invalidateRawPayloadCache();
+    const readAt = Date.now();
     const root = await pullRawPayload(auth);
     if (auth.session?.userId !== userId) throw new Error("Account changed before sync completed");
     mutator(root);
-    await writeRawPayload(auth, root);
+    await writeRawPayload(auth, root, readAt);
   });
   mutationQueues.set(userId, task);
   try { await task; }
@@ -1638,11 +1671,182 @@ export function isLiveStreamOrSportsItem(item: {
   return false;
 }
 
+// ── Continue Watching progress (parity with Android TraktRepository/PlayerViewModel) ──
+
+/** Android Constants.MIN_PROGRESS_THRESHOLD (3%) or 60 s played: shorter plays are accidental taps. */
+const MIN_PROGRESS = 0.03;
+const MIN_POSITION_SECONDS = 60;
+/** Android Constants.WATCHED_THRESHOLD (90%). */
+const WATCHED_PROGRESS = 0.9;
+const PROGRESS_ENDPOINT = "account-sync-progress";
+// Set NEXT_PUBLIC_ARVIO_PROGRESS_ENDPOINT=false to send every checkpoint through
+// the full-document write (the behaviour before account-sync-progress existed).
+const progressEndpointEnabled = process.env.NEXT_PUBLIC_ARVIO_PROGRESS_ENDPOINT !== "false";
+const ENDPOINT_MISSING_KEY = "arvio.web.progressEndpointMissing.v1";
+const ENDPOINT_RECHECK_MS = 60 * 60_000;
+const COMPLETION_REPEAT_MS = 30 * 60_000;
+const recentCompletions = new Map<string, number>();
+
+function progressEndpointAvailable() {
+  if (!progressEndpointEnabled) return false;
+  const missingAt = Number(loadStored<number>(ENDPOINT_MISSING_KEY, 0)) || 0;
+  return !missingAt || Date.now() - missingAt > ENDPOINT_RECHECK_MS;
+}
+
+/** Same row rules as the server (account-sync-progress), for the full-document fallback. */
+function applyProgressOperationToRoot(root: RawPayload, operation: ProgressOperation) {
+  const { profileId } = operation;
+  if (deletedProfileIds(root).includes(profileId)) return;
+  const byProfile = objectRecord<unknown>(root.localContinueWatchingByProfile);
+  const current = arrayValue<AndroidContinueWatchingItem>(byProfile[profileId]);
+  const updatedAt = (row: AndroidContinueWatchingItem) => Number(row.updatedAtMs ?? 0) || 0;
+  const sameEpisode = (row: AndroidContinueWatchingItem, season?: number | null, episode?: number | null) =>
+    (row.season ?? null) === (season ?? null) && (row.episode ?? null) === (episode ?? null);
+  if (operation.op === "remove") {
+    const key = continueWatchingShowKey(operation.match);
+    const exact = operation.match.mediaType === "tv" && operation.match.season != null && operation.match.episode != null;
+    byProfile[profileId] = current.filter((row) => continueWatchingShowKey(row) !== key ||
+      updatedAt(row) > operation.updatedAtMs ||
+      (exact && !sameEpisode(row, operation.match.season, operation.match.episode)));
+    root.localContinueWatchingByProfile = byProfile;
+    return;
+  }
+  const { item } = operation;
+  const key = continueWatchingShowKey(item);
+  const sameShow = current.filter((row) => continueWatchingShowKey(row) === key);
+  if (sameShow.some((row) => updatedAt(row) > item.updatedAtMs)) return;
+  const previous = sameShow.find((row) => sameEpisode(row, item.season, item.episode)) as Record<string, unknown> | undefined;
+  const merged: Record<string, unknown> = { ...(previous ?? {}) };
+  for (const [field, value] of Object.entries(item)) {
+    if (value === undefined) continue;
+    if (value !== null || !previous || previous[field] == null) merged[field] = value;
+  }
+  byProfile[profileId] = [merged as AndroidContinueWatchingItem, ...current.filter((row) => continueWatchingShowKey(row) !== key)]
+    .sort((a, b) => updatedAt(b) - updatedAt(a))
+    .slice(0, 50);
+  root.localContinueWatchingByProfile = byProfile;
+  const { showKey, exactKey } = continueWatchingDismissalKeys({
+    id: item.id, mediaType: item.mediaType, seasonNumber: item.season, episodeNumber: item.episode
+  });
+  updateProfileDismissals(root, profileId, (values) => {
+    for (const dismissalKey of [showKey, exactKey]) {
+      if ((values.get(dismissalKey) ?? Infinity) <= item.updatedAtMs) values.delete(dismissalKey);
+    }
+  });
+}
+
+function errorStatus(error: unknown) {
+  const status = Number((error as { status?: unknown } | null)?.status);
+  return Number.isFinite(status) ? status : 0;
+}
+
+async function sendProgressOperation(auth: AuthClient, userId: string, operation: ProgressOperation, keepalive: boolean): Promise<ProgressSendResult | "unreachable"> {
+  if (!progressEndpointAvailable()) return "fallback";
+  // A still-valid token is used as is, so a send started while the page is
+  // being hidden or closed is issued without waiting on a refresh.
+  const session = auth.session;
+  if (!session || session.userId !== userId) throw new Error("Account changed before progress was saved");
+  const token = session.accessToken && session.expiresAt - Date.now() > 60_000 ? session.accessToken : await auth.accessToken();
+  let result: { accepted?: boolean; applied?: boolean; reason?: string } | undefined;
+  try {
+    // text/plain + token in the body keeps this a CORS "simple" request: no
+    // preflight, which keepalive requests on closing pages may not get.
+    result = await jsonRequest<{ accepted?: boolean; applied?: boolean; reason?: string }>(
+      `${config.netlifyBackendUrl.replace(/\/+$/, "")}/${PROGRESS_ENDPOINT}`,
+      {
+        method: "POST",
+        keepalive,
+        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        body: JSON.stringify({ ...operation, accessToken: token })
+      }
+    );
+  } catch (error) {
+    const status = errorStatus(error);
+    // Backend without this endpoint yet: use the full-document write for a while.
+    if (status === 404 || status === 405) {
+      saveStored(ENDPOINT_MISSING_KEY, Date.now());
+      return "fallback";
+    }
+    // No account document to merge into, or a lost write race: the full write handles both.
+    if (status === 409) return "fallback";
+    // The server rejected this change as malformed; retrying cannot help.
+    if (status === 400 || status === 413) return "drop";
+    // No HTTP status: offline, timed out, or a response the browser hid. A host
+    // without this function answers 404 without CORS headers, which surfaces
+    // here too, so try the full-document write. Offline, that fails as well
+    // and the change stays queued.
+    if (!status) return "unreachable";
+    throw error;
+  }
+  // "applied: false" (an older checkpoint, a deleted profile) is still an answer: nothing to retry.
+  if (result?.accepted !== true) throw new Error(result?.reason || "Progress was not accepted");
+  return "done";
+}
+
+function progressTransport(auth: AuthClient, userId: string) {
+  let unreachable = false;
+  return {
+    send: async (operation: ProgressOperation, options: { keepalive: boolean }): Promise<ProgressSendResult> => {
+      const result = await sendProgressOperation(auth, userId, operation, options.keepalive);
+      unreachable = result === "unreachable";
+      return unreachable ? "fallback" : result as ProgressSendResult;
+    },
+    fallback: async (operation: ProgressOperation) => {
+      await mutateCloudPayload(auth, (root) => applyProgressOperationToRoot(root, operation));
+      // The account backend answered but the progress endpoint did not: treat it as missing for a while.
+      if (unreachable) saveStored(ENDPOINT_MISSING_KEY, Date.now());
+    },
+    isCurrent: () => auth.session?.userId === userId
+  };
+}
+
+/** Send queued progress now. Failures leave it queued for the next attempt. */
+export function flushPendingProgress(auth: AuthClient): Promise<void> {
+  const userId = auth.session?.userId;
+  if (!userId || !canUseBackendSync(auth)) return Promise.resolve();
+  installProgressRetry(userId, () => { void flushPendingProgress(auth).catch(() => undefined); });
+  return flushProgressOutbox(userId, progressTransport(auth, userId));
+}
+
+/** Overlay unsent local progress onto a cloud read so this device shows what it just watched. */
+function withPendingProgress(items: AndroidContinueWatchingItem[], userId: string, profileId?: string | null) {
+  const pending = pendingProgress(userId).filter((entry) => !profileId || entry.operation.profileId === profileId);
+  if (!pending.length) return items;
+  const byShow = new Map(items.map((item) => [continueWatchingShowKey(item), item]));
+  for (const { operation } of pending) {
+    if (operation.op === "upsert") {
+      const key = continueWatchingShowKey(operation.item);
+      const current = byShow.get(key);
+      if (!current || Number(current.updatedAtMs ?? 0) <= operation.item.updatedAtMs) {
+        const previous = current && (current.season ?? null) === (operation.item.season ?? null) &&
+          (current.episode ?? null) === (operation.item.episode ?? null) ? current : {};
+        const merged: Record<string, unknown> = { ...previous };
+        for (const [field, value] of Object.entries(operation.item)) {
+          if (value !== null && value !== undefined) merged[field] = value;
+        }
+        byShow.set(key, merged as AndroidContinueWatchingItem);
+      }
+    } else {
+      const key = continueWatchingShowKey(operation.match);
+      const current = byShow.get(key);
+      const exact = operation.match.mediaType === "tv" && operation.match.season != null && operation.match.episode != null;
+      if (current && Number(current.updatedAtMs ?? 0) <= operation.updatedAtMs &&
+          (!exact || ((current.season ?? null) === operation.match.season && (current.episode ?? null) === operation.match.episode))) {
+        byShow.delete(key);
+      }
+    }
+  }
+  return [...byShow.values()];
+}
+
 export async function getContinueWatching(auth: AuthClient, profileId?: string | null, addons: InstalledAddon[] = []) {
   if (!auth.session) return [];
   if (canUseBackendSync(auth)) {
+    const userId = auth.session.userId;
+    // Progress saved while offline or while the app was closing goes out now.
+    void flushPendingProgress(auth).catch(() => undefined);
     const root = await pullRawPayload(auth);
-    return androidContinueWatchingItems(root, profileId)
+    return withPendingProgress(androidContinueWatchingItems(root, profileId), userId, profileId)
       .map((item) => androidCwToHistory(item, profileId))
       .filter((item): item is WatchHistoryEntry => Boolean(item))
       .filter((item) => (item.progress ?? 0) < 0.9 && !isLiveStreamOrSportsItem(item, addons))
@@ -1656,37 +1860,92 @@ export async function getContinueWatching(auth: AuthClient, profileId?: string |
   return records.filter((item) => !isLiveStreamOrSportsItem(item, addons));
 }
 
-export async function saveProgress(auth: AuthClient, entry: Omit<WatchHistoryEntry, "user_id">, profileId?: string | null, addons: InstalledAddon[] = []) {
+const defaultSeasonLookup: SeasonEpisodesLookup = async (tvId, season) => {
+  const { getSeasonEpisodes } = await import("./tmdb");
+  return getSeasonEpisodes(tvId, season);
+};
+
+export interface SaveProgressOptions {
+  /** Season episode list used to find the episode after a finished one (defaults to TMDB). */
+  seasonEpisodes?: SeasonEpisodesLookup;
+}
+
+/**
+ * Saves a playback checkpoint the way Android's player does:
+ * - under 3% and under 60 s nothing is saved (an accidental play creates no row);
+ * - one row per show: a new episode replaces the show's previous row;
+ * - at 90% the title is finished: a movie leaves Continue Watching, a TV episode
+ *   is replaced by the next episode as an "up next" row (persistNextEpisodeAfterCompletion);
+ * - stream_key and other fields this browser does not know are kept.
+ * The change is queued durably (progressOutbox) and sent as one small item to
+ * account-sync-progress, falling back to the full-document write.
+ */
+export async function saveProgress(
+  auth: AuthClient,
+  entry: Omit<WatchHistoryEntry, "user_id">,
+  profileId?: string | null,
+  addons: InstalledAddon[] = [],
+  options: SaveProgressOptions = {}
+) {
   if (!auth.session || isLiveStreamOrSportsItem(entry, addons)) return;
   if (canUseBackendSync(auth)) {
-    await mutateCloudPayload(auth, (root) => {
-      const targetProfileId = entry.profile_id ?? profileId ?? "default";
-      const byProfile = objectRecord<unknown>(root.localContinueWatchingByProfile);
-      const current = arrayValue<AndroidContinueWatchingItem>(byProfile[targetProfileId]);
-      const nextItem = historyToAndroidCw({ ...entry, profile_id: targetProfileId });
-      const filtered = current.filter((candidate) => {
-        const sameTitle = candidate.id === nextItem.id && String(candidate.mediaType ?? "").toLowerCase() === nextItem.mediaType;
-        if (!sameTitle) return true;
-        if (nextItem.mediaType !== "tv") return false;
-        return candidate.season !== nextItem.season || candidate.episode !== nextItem.episode;
+    const userId = auth.session.userId;
+    const targetProfileId = entry.profile_id ?? profileId ?? "default";
+    const progress = Math.max(0, Math.min(1, Number(entry.progress) || 0));
+    const position = Math.max(0, Number(entry.position_seconds) || 0);
+    const mediaType = entry.media_type === "tv" ? "tv" : "movie";
+    if (progress < WATCHED_PROGRESS) {
+      if (progress < MIN_PROGRESS && position < MIN_POSITION_SECONDS) return;
+      queueProgress(userId, {
+        profileId: targetProfileId,
+        op: "upsert",
+        item: historyToAndroidCw({ ...entry, profile_id: targetProfileId })
       });
-      byProfile[targetProfileId] = (nextItem.progress ?? 0) >= 90 ? filtered : [nextItem, ...filtered].slice(0, 50);
-      root.localContinueWatchingByProfile = byProfile;
-      if ((nextItem.progress ?? 0) > 0 && (nextItem.progress ?? 0) < 90) {
-        const dismissalItem = {
-          id: entry.show_tmdb_id,
-          mediaType: entry.media_type,
-          seasonNumber: entry.season,
-          episodeNumber: entry.episode
-        };
-        const { showKey, exactKey } = continueWatchingDismissalKeys(dismissalItem);
-        updateProfileDismissals(root, targetProfileId, (values) => {
-          values.delete(showKey);
-          values.delete(exactKey);
-        });
-      }
+      return flushPendingProgress(auth);
+    }
+
+    // Finished. Periodic checkpoints during the credits must not repeat this.
+    const completionKey = `${userId}|${targetProfileId}|${mediaType}:${entry.show_tmdb_id}:${entry.season ?? ""}:${entry.episode ?? ""}`;
+    const completedAt = recentCompletions.get(completionKey) ?? 0;
+    if (Date.now() - completedAt < COMPLETION_REPEAT_MS) return flushPendingProgress(auth);
+    recentCompletions.set(completionKey, Date.now());
+    if (recentCompletions.size > 200) recentCompletions.delete(recentCompletions.keys().next().value!);
+    // Removing the finished title goes out first, so closing the app now still records it.
+    queueProgress(userId, {
+      profileId: targetProfileId,
+      op: "remove",
+      match: { id: entry.show_tmdb_id, mediaType, season: entry.season ?? null, episode: entry.episode ?? null },
+      updatedAtMs: Date.now()
     });
-    return;
+    const removal = flushPendingProgress(auth);
+    if (mediaType !== "tv" || entry.season == null || entry.episode == null) return removal;
+    const next = await findNextEpisode(entry.show_tmdb_id, entry.season, entry.episode, options.seasonEpisodes ?? defaultSeasonLookup)
+      .catch(() => null);
+    if (next && auth.session?.userId === userId) {
+      const item: ProgressItem = {
+        ...(entry.addon_native_id ? { addonNativeId: entry.addon_native_id, addonNativeAddonId: entry.addon_native_addon_id } : {}),
+        id: entry.show_tmdb_id,
+        title: entry.title?.trim() || "Untitled",
+        mediaType: "tv",
+        progress: 0,
+        resumePositionSeconds: 0,
+        durationSeconds: 0,
+        season: next.seasonNumber,
+        episode: next.episodeNumber,
+        displaySeason: next.seasonNumber,
+        displayEpisode: next.episodeNumber,
+        episodeTitle: next.name || null,
+        backdropPath: entry.backdrop_path ?? null,
+        posterPath: entry.poster_path ?? null,
+        isUpNext: true,
+        releaseDate: next.airDate ?? "",
+        updatedAtMs: Date.now()
+      };
+      // Replaces the queued removal if it has not been sent; otherwise follows it.
+      queueProgress(userId, { profileId: targetProfileId, op: "upsert", item });
+    }
+    await removal.catch(() => undefined);
+    return flushPendingProgress(auth);
   }
   const { addon_native_id: _nativeId, addon_native_addon_id: _nativeAddonId, ...databaseEntry } = entry;
   await auth.supabase("/rest/v1/watch_history", {
@@ -1717,6 +1976,8 @@ export async function removeContinueWatchingProgress(
   };
 
   if (canUseBackendSync(auth)) {
+    // An unsent checkpoint for this title must not bring the row back later.
+    discardPendingProgress(auth.session.userId, profileId ?? "default", item.mediaType, item.id);
     await mutateCloudPayload(auth, (root) => {
       const targetProfileId = profileId ?? "default";
       for (const key of ["localContinueWatchingByProfile", "continueWatchingByProfile"]) {
@@ -1765,6 +2026,17 @@ export async function saveWatchedState(
 ) {
   if (!auth.session) return;
   const targetProfileId = profileId ?? "default";
+  // Android removeFromLocalContinueWatching: only the watched episode's row goes,
+  // so the "up next" row written for the following episode stays.
+  const isWatchedRow = (candidate: { id?: number; mediaType?: string; season?: number | null; episode?: number | null }) =>
+    candidate.id === item.id && String(candidate.mediaType ?? "").toLowerCase() === item.mediaType &&
+    (item.mediaType !== "tv" || item.seasonNumber == null || candidate.season === item.seasonNumber) &&
+    (item.mediaType !== "tv" || item.episodeNumber == null || candidate.episode === item.episodeNumber);
+  if (watched) {
+    discardPendingProgress(auth.session.userId, targetProfileId, item.mediaType, item.id, {
+      matches: (operation) => operation.op === "upsert" && isWatchedRow(operation.item)
+    });
+  }
   await mutateCloudPayload(auth, (root) => {
     if (item.mediaType === "movie") {
       const byProfile = objectRecord<unknown>(root.localWatchedMoviesByProfile);
@@ -1782,10 +2054,9 @@ export async function saveWatchedState(
     }
 
     if (watched) {
-      const matches = (candidate: AndroidContinueWatchingItem) =>
-        candidate.id === item.id && String(candidate.mediaType ?? "").toLowerCase() === item.mediaType;
       const byProfile = objectRecord<unknown>(root.localContinueWatchingByProfile);
-      byProfile[targetProfileId] = arrayValue<AndroidContinueWatchingItem>(byProfile[targetProfileId]).filter((candidate) => !matches(candidate));
+      byProfile[targetProfileId] = arrayValue<AndroidContinueWatchingItem>(byProfile[targetProfileId])
+        .filter((candidate) => !isWatchedRow(candidate));
       root.localContinueWatchingByProfile = byProfile;
     }
   });

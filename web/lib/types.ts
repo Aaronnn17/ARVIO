@@ -352,6 +352,10 @@ export interface WatchHistoryEntry {
   stream_key?: string | null;
   stream_addon_id?: string | null;
   stream_title?: string | null;
+  /** Android "up next" pointer: the episode after a finished one (progress 0). */
+  is_up_next?: boolean | null;
+  /** Air date of an up-next episode (YYYY-MM-DD); unaired pointers stay hidden. */
+  release_date?: string | null;
 }
 
 export interface IptvPlaylistEntry {
