@@ -1,3 +1,5 @@
+import { languageCode, sameLanguage, trackLanguageName } from "./languages";
+
 export type SubtitleLoadState = {
   status: "off" | "loading" | "ready" | "failed";
   track: TextTrack | null;
@@ -311,27 +313,33 @@ export function positionSubtitleCues(track: TextTrack, line: number, offsetMs: n
 
 // ---------- Presentation ----------
 
-// OpenSubtitles and friends use their own three-letter codes for regional
-// variants, which Intl does not know ("pob" printed as "pob").
-const SPECIAL_LANGUAGES: Record<string, string> = {
-  pob: "Portuguese (Brazil)", pb: "Portuguese (Brazil)", "pt-br": "Portuguese (Brazil)", ptbr: "Portuguese (Brazil)",
-  spl: "Spanish (Latin America)", spn: "Spanish (Latin America)", ea: "Spanish (Latin America)", "es-419": "Spanish (Latin America)", "es-la": "Spanish (Latin America)",
-  zht: "Chinese (Traditional)", "zh-tw": "Chinese (Traditional)", "zh-hant": "Chinese (Traditional)",
-  zhs: "Chinese (Simplified)", zhc: "Chinese (Simplified)", "zh-cn": "Chinese (Simplified)", "zh-hans": "Chinese (Simplified)",
-  ze: "Chinese (Bilingual)", mne: "Montenegrin", scc: "Serbian", scr: "Croatian", fil: "Filipino", und: "Unknown language"
+// Display names. Matching and normalising go through lib/languages.ts (the
+// port of Android's LanguageCodes); this only adds the regional variants that
+// subtitle sites use and Intl does not name ("pob" used to print as "pob").
+const REGIONAL_NAMES: Record<string, string> = {
+  "pt-br": "Portuguese (Brazil)", spl: "Spanish (Latin America)", spn: "Spanish (Latin America)", ea: "Spanish (Latin America)",
+  "es-419": "Spanish (Latin America)", "es-la": "Spanish (Latin America)", zht: "Chinese (Traditional)", "zh-tw": "Chinese (Traditional)",
+  "zh-hant": "Chinese (Traditional)", zhs: "Chinese (Simplified)", zhc: "Chinese (Simplified)", "zh-cn": "Chinese (Simplified)",
+  "zh-hans": "Chinese (Simplified)", ze: "Chinese (Bilingual)", mne: "Montenegrin", scc: "Serbian", scr: "Croatian", und: "Unknown language"
 };
 
 /** Readable language name for a subtitle's language code or label. */
 export function subtitleLanguageLabel(codeOrName: string | null | undefined): string {
   const value = (codeOrName ?? "").trim();
   if (!value) return "Unknown language";
-  const key = value.toLowerCase().replace(/_/g, "-");
-  if (SPECIAL_LANGUAGES[key]) return SPECIAL_LANGUAGES[key];
-  if (key.length > 3 && !/^[a-z]{2,3}-[a-z0-9]{2,4}$/.test(key)) return value;
-  try {
-    const name = new Intl.DisplayNames(["en"], { type: "language" }).of(key);
-    if (name && name.toLowerCase() !== key) return name;
-  } catch { /* fall through */ }
+  const raw = value.toLowerCase().replace(/_/g, "-");
+  if (REGIONAL_NAMES[raw]) return REGIONAL_NAMES[raw];
+  const code = languageCode(value);
+  if (!code) return value;
+  if (REGIONAL_NAMES[code]) return REGIONAL_NAMES[code];
+  const known = trackLanguageName(code);
+  if (known && languageCode(known) === code && known.toLowerCase() !== code) return known;
+  if (/^[a-z]{2,3}(?:-[a-z0-9]{2,4})?$/.test(code)) {
+    try {
+      const name = new Intl.DisplayNames(["en"], { type: "language" }).of(code);
+      if (name && name.toLowerCase() !== code) return name;
+    } catch { /* fall through */ }
+  }
   return value;
 }
 
@@ -373,7 +381,7 @@ function releaseOf(subtitle: SubtitleLike, language: string) {
  * full subtitles before forced-only ones, and regular before SDH/HI.
  */
 export function groupSubtitles(subtitles: SubtitleLike[], options: { preferred?: string | null; releaseName?: string | null } = {}): SubtitleGroup[] {
-  const preferred = subtitleLanguageLabel(options.preferred && options.preferred !== "off" ? options.preferred : "");
+  const preferredCode = languageCode(options.preferred);
   const playing = releaseTokens(options.releaseName);
   const groups = new Map<string, SubtitleChoice[]>();
   subtitles.forEach((subtitle, index) => {
@@ -394,14 +402,21 @@ export function groupSubtitles(subtitles: SubtitleLike[], options: { preferred?:
     };
     groups.set(language, [...(groups.get(language) ?? []), choice]);
   });
-  const rank = (language: string) => (preferred !== "Unknown language" && language === preferred ? 0 : language === "English" ? 1 : 2);
+  // Rank groups with lib/languages: the preferred language, then English.
+  const rankOf = (choices: SubtitleChoice[]) => {
+    const first = subtitles[choices[0]?.index ?? -1];
+    const code = languageCode(first?.lang || first?.label);
+    if (preferredCode && code === preferredCode) return 0;
+    if (preferredCode && sameLanguage(code, preferredCode)) return 0.5;
+    return code === "en" ? 1 : 2;
+  };
   return [...groups.entries()]
     .map(([language, choices]) => ({
       language,
       choices: choices.sort((a, b) => b.match - a.match || Number(a.forced) - Number(b.forced)
         || Number(a.hearingImpaired) - Number(b.hearingImpaired) || a.index - b.index)
     }))
-    .sort((a, b) => rank(a.language) - rank(b.language) || a.language.localeCompare(b.language));
+    .sort((a, b) => rankOf(a.choices) - rankOf(b.choices) || a.language.localeCompare(b.language));
 }
 
 // ---------- Per-title subtitle delay ----------

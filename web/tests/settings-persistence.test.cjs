@@ -1,3 +1,4 @@
+// Accent colours sync as Android's names (White, Red, …); the web keeps its own ids (arctic, red, …).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -8,7 +9,7 @@ const { load, storage } = require('./load.cjs');
 
 function harness() {
   const disk = storage();
-  let remote = { accentColor: '#ffffff', profileSettingsById: { p1: { contentLanguage: 'en-US' } } };
+  let remote = { accentColor: 'White', profileSettingsById: { p1: { contentLanguage: 'en-US' } } };
   let reject = false;
   let pause;
   const cloud = load('lib/cloud.ts', {
@@ -28,7 +29,7 @@ function harness() {
   const auth = { session: { userId: 'account', accessToken: 'test' }, isNetlifySession: true, accessToken: async () => 'test' };
   const createOutbox = () => load('lib/settingsOutbox.ts', { './storage': disk, './cloud': cloud });
   const outbox = createOutbox();
-  const initial = { language: 'en-US', accentColor: '#ffffff', iptvPlaylists: [], homeServers: [], catalogs: [],
+  const initial = { language: 'en-US', accentColor: 'arctic', iptvPlaylists: [], homeServers: [], catalogs: [],
     hiddenCatalogIds: [], hiddenHomeServerCatalogIds: [], favoriteChannelIds: [], favoriteGroupIds: [], hiddenGroupIds: [], groupOrder: [],
     subtitleStyle: 'outline', subtitleSize: 100, subtitleOffset: 0, subtitleColorName: 'white', frameRateMatchingMode: 'off', qualityFilters: [] };
   const settingsRef = { current: initial };
@@ -58,30 +59,30 @@ test('an edit before initial cloud hydration is durable immediately and survives
   await h.createOutbox().flushSettingsOutbox(h.auth);
   const restored = await h.cloud.pullCloudPayload(h.auth,'p1');
   assert.equal(restored.settings.language,'nl-NL');
-  assert.equal(restored.settings.accentColor,'#ffffff');
+  assert.equal(restored.settings.accentColor,'arctic');
 });
 
 test('back-to-back edits preserve both changes before React effects run', async () => {
   const h = harness();
   h.edit({language:'nl-NL'});
-  h.edit({accentColor:'#ff0000'});
+  h.edit({accentColor:'red'});
   await h.outbox.flushSettingsOutbox(h.auth);
   const restored = await h.cloud.pullCloudPayload(h.auth,'p1');
   assert.equal(restored.settings.language,'nl-NL');
-  assert.equal(restored.settings.accentColor,'#ff0000');
+  assert.equal(restored.settings.accentColor,'red');
 });
 
 test('reverting a setting while its earlier save is in flight persists the latest choice', async () => {
   const h = harness();
   let release;
   h.pause(new Promise(resolve => {release = resolve;}));
-  h.edit({accentColor:'#ff0000'});
+  h.edit({accentColor:'red'});
   const saving = h.outbox.flushSettingsOutbox(h.auth);
   await new Promise(setImmediate);
-  h.edit({accentColor:'#ffffff'});
+  h.edit({accentColor:'arctic'});
   release();
   await saving;
-  assert.equal(h.remote().accentColor,'#ffffff');
+  assert.equal(h.remote().accentColor,'White');
   assert.equal(h.outbox.hasPendingSettings(h.auth),false);
 });
 
@@ -98,25 +99,25 @@ test('rejected saves remain queued across refresh and succeed on retry', async (
 
 test('explicit pre-hydration edits do not overwrite unrelated settings on another device', async () => {
   const h = harness();
-  h.remote().accentColor='#00ff00';
+  h.remote().accentColor='Green';
   h.edit({language:'fr-FR'});
   await h.outbox.flushSettingsOutbox(h.auth);
-  assert.equal(h.remote().accentColor,'#00ff00');
+  assert.equal(h.remote().accentColor,'Green');
   assert.equal(h.remote().profileSettingsById.p1.contentLanguage,'fr-FR');
 });
 
 test('a late hydration response preserves the edit while adopting unrelated cloud settings', async () => {
   const h = harness();
   h.edit({language:'nl-NL'});
-  const remote = {...h.initial, accentColor:'#00ff00'};
+  const remote = {...h.initial, accentColor:'green'};
   const merged = h.outbox.settingsWithPendingEdits(h.auth,'p1',remote,h.initial,h.state());
   assert.equal(merged.language,'nl-NL');
-  assert.equal(merged.accentColor,'#00ff00');
+  assert.equal(merged.accentColor,'green');
   // The autosave effect sees the merged state, not the old local defaults.
   h.outbox.queueSettings(h.auth,'p1',merged,remote);
   // A second remote edit after the pull must also survive the queued save.
-  h.remote().accentColor='#0000ff';
+  h.remote().accentColor='Blue';
   await h.outbox.flushSettingsOutbox(h.auth);
-  assert.equal(h.remote().accentColor,'#0000ff');
+  assert.equal(h.remote().accentColor,'Blue');
   assert.equal(h.remote().profileSettingsById.p1.contentLanguage,'nl-NL');
 });

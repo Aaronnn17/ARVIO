@@ -59,8 +59,12 @@ const TV_RW_CODES = new Set([412]);
 function isTextTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
+  if (tag === "INPUT") {
+    // Arrow keys on a slider, checkbox or colour picker should move focus like any button.
+    const type = (target as HTMLInputElement).type;
+    return !["range", "checkbox", "radio", "color", "button", "submit", "reset"].includes(type);
+  }
   return (
-    tag === "INPUT" ||
     tag === "TEXTAREA" ||
     tag === "SELECT" ||
     target.isContentEditable

@@ -3,6 +3,7 @@ import Script from "next/script";
 import { UpdateWatcher } from "@/components/shell/UpdateWatcher";
 import "./globals.css";
 import "./premium.css";
+import "./settings.css";
 import "./tv-guide.css";
 import "./source-setup.css";
 import "./calendar.css";
