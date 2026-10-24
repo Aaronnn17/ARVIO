@@ -54,18 +54,34 @@ function twinSelector(selectorText: string): string | null {
     // twin it would unblur every synopsis the D-pad merely passes over,
     // silently defeating the setting — suppression rules don't get twins.
     .filter((p) => !p.includes(".spoiler-blur"))
+    // Touch-device hover neutralisers (app/app-foundations.css) exist to
+    // cancel sticky hover — a focus twin would cancel focus styling instead.
+    .filter((p) => !p.includes(".no-hover"))
     .map((p) => `html.kbd-nav ${p.split(":hover").join(":focus-within")}`);
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
+// Screens are code-split (next/dynamic), so their stylesheets arrive AFTER the
+// first key press built the twins. Each sheet is processed once; later calls
+// only pick up sheets that appeared since.
+const processedSheets = new WeakSet<CSSStyleSheet>();
+let paritySheet: CSSStyleSheet | null = null;
+let seenSheetCount = -1;
+
 function buildParitySheet() {
-  if (sheetBuilt) return;
-  sheetBuilt = true;
-  const style = document.createElement("style");
-  style.setAttribute("data-hover-parity", "");
-  document.head.appendChild(style);
-  const target = style.sheet;
+  if (!sheetBuilt) {
+    sheetBuilt = true;
+    const style = document.createElement("style");
+    style.setAttribute("data-hover-parity", "");
+    document.head.appendChild(style);
+    paritySheet = style.sheet;
+    if (paritySheet) processedSheets.add(paritySheet);
+  }
+  const target = paritySheet;
   if (!target) return;
+  const sheets = Array.from(document.styleSheets);
+  if (sheets.length === seenSheetCount && sheets.every((sheet) => processedSheets.has(sheet))) return;
+  seenSheetCount = sheets.length;
 
   const walk = (rules: CSSRuleList) => {
     for (const rule of Array.from(rules)) {
@@ -91,14 +107,15 @@ function buildParitySheet() {
     }
   };
 
-  for (const sheet of Array.from(document.styleSheets)) {
+  for (const sheet of sheets) {
+    if (processedSheets.has(sheet)) continue;
     let rules: CSSRuleList;
     try {
       rules = sheet.cssRules;
     } catch {
-      continue; // cross-origin sheet
+      continue; // cross-origin sheet (or still loading) — retried next time
     }
-    if (sheet.ownerNode === style) continue;
+    processedSheets.add(sheet);
     walk(rules);
   }
 }

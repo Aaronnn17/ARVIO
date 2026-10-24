@@ -35,6 +35,8 @@ import { loadSeasonEpisodes } from "@/components/details/detailsLoaders";
 import { claimEscape, moveFocusWithin, playerKeyAction, trapTab } from "@/lib/playerKeys";
 import { activeSkipSegment, fetchSkipSegments, isCreditsSegment, skipSegmentLabel, upNextStartTime, type SkipSegment } from "@/lib/playerSkipSegments";
 import { diagnoseSourceFailure } from "@/lib/playerRecovery";
+import { PLAYER_COMMAND_EVENT, type PlayerCommandDetail } from "@/lib/playerCommands";
+import { prefersVideoElementFullscreen, requestVideoFullscreen } from "@/lib/fullscreen";
 import type { EpisodeInfo } from "@/lib/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLivePlayerDock } from "./useLivePlayerDock";
@@ -1628,7 +1630,13 @@ function VideoPlayer({
     // iPhone Safari has no element fullscreen; this falls back to Apple's
     // native video player (webkitEnterFullscreen). Subtitles are native
     // <track>s, so they show there too — in the iOS system caption style.
-    void toggleFullscreenFor(containerRef.current, videoRef.current).then((result) => {
+    // Vision Pro (and other no-hover Apple WebKit): fullscreen the <video> so
+    // the system player takes over; elsewhere the container, keeping ARVIO's
+    // controls and styled subtitles (lib/fullscreen.ts, workstream D).
+    const request = prefersVideoElementFullscreen() && !isFullscreenActive(videoRef.current)
+      ? requestVideoFullscreen(videoRef.current)
+      : toggleFullscreenFor(containerRef.current, videoRef.current);
+    void request.then((result) => {
       // Phones turn to landscape in fullscreen where the browser allows a lock.
       if (result === "entered" && window.matchMedia?.("(pointer: coarse)").matches) lockLandscape();
       else if (result === "exited") unlockOrientation();
@@ -1895,6 +1903,21 @@ function VideoPlayer({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [togglePlay, seekBy, toggleFullscreen, flashControls, revealControls, hideControlsNow, onClose, openPanel, activePanel, dock.docked, showControls, error, ended, booted]);
+
+  // Controller View/Select and long-press Y (lib/gamepadNav via
+  // lib/playerCommands) open the subtitle and source panels.
+  useEffect(() => {
+    const onCommand = (event: Event) => {
+      if (dock.docked) return;
+      const command = (event as CustomEvent<PlayerCommandDetail>).detail?.command;
+      if (command !== "subtitles" && command !== "sources") return;
+      if (liveTv && command === "subtitles") return;
+      event.preventDefault();
+      openPanel(command);
+    };
+    window.addEventListener(PLAYER_COMMAND_EVENT, onCommand);
+    return () => window.removeEventListener(PLAYER_COMMAND_EVENT, onCommand);
+  }, [openPanel, dock.docked, liveTv]);
 
   // ---------- Skip intro / recap / credits and "Up next" ----------
   const [skipSegments, setSkipSegments] = useState<SkipSegment[]>([]);

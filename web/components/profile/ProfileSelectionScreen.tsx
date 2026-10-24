@@ -19,6 +19,8 @@ export function ProfileSelectionScreen() {
     goToLogin, auth
   } = useApp();
 
+  // TV / keyboard starting focus (lib/tvNav data-autofocus): the last-used profile.
+  const lastUsedId = profiles.reduce<Profile | null>((best, profile) => (!best || (profile.lastUsedAt ?? 0) > (best.lastUsedAt ?? 0) ? profile : best), null)?.id;
   const [dialog, setDialog] = useState<{ mode: "add" | "edit"; profile?: Profile } | null>(null);
   const [openingProfileId, setOpeningProfileId] = useState<string | null>(null);
   const [lockedProfile, setLockedProfile] = useState<Profile | null>(null);
@@ -51,6 +53,7 @@ export function ProfileSelectionScreen() {
               type="button"
               key={profile.id}
               className="profile-pick"
+              data-autofocus={profile.id === lastUsedId ? "" : undefined}
               onClick={() => openProfile(profile)}
               aria-busy={openingProfileId === profile.id}
             >
