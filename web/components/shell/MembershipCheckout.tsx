@@ -12,6 +12,11 @@ import { BillingEmailForm } from "./BillingEmailForm";
 type MembershipCheckoutProps = {
   children: React.ReactNode; className?: string; entry: string; title?: string;
   onEntitled?: (state: EntitlementState) => void; showEmailHint?: boolean; iconOnly?: boolean;
+  /** Ko-fi page to open; defaults to the monthly membership. */
+  href?: string;
+  /** For an upgrade by someone already paying (monthly to the 12-month pass):
+   *  when the purchase counts as done. Being entitled alone is not enough. */
+  activeWhen?: (state: EntitlementState) => boolean;
 };
 
 export function MembershipCheckout(props: MembershipCheckoutProps) {
@@ -21,8 +26,11 @@ export function MembershipCheckout(props: MembershipCheckoutProps) {
   return <MembershipCheckoutSession key={auth?.userId ?? "signed-out"} {...props} />;
 }
 
-function MembershipCheckoutSession({ children, className, entry, title, onEntitled, showEmailHint = false, iconOnly = false }: MembershipCheckoutProps) {
-  const flow = { flow_version: entry === "feature_preview" ? "paid_only_v1" : "direct_v2" };
+function MembershipCheckoutSession({ children, className, entry, title, onEntitled, showEmailHint = false, iconOnly = false, href, activeWhen }: MembershipCheckoutProps) {
+  const done = useRef(activeWhen);
+  done.current = activeWhen;
+  const checkoutUrl = href || kofiSubscribeUrl();
+  const flow = { flow_version: entry === "feature_preview" ? "paid_only_v1" : entry.startsWith("explore") ? "explore_v1" : "direct_v2" };
   const translateUi = useTranslation();
   const { auth, goToLogin } = useApp();
   const [open, setOpen] = useState(false);
@@ -71,6 +79,7 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
 
   const activate = (state: EntitlementState) => {
     if (!state.entitled || state.reason !== "subscription" || state.source === "trial") return;
+    if (done.current && !done.current(state)) return;
     setStatus("active"); setWaiting(false);
     applied.current?.(state);
     window.dispatchEvent(new Event(ENTITLEMENT_REFRESH_EVENT));
@@ -84,7 +93,9 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
       check: () => fetchEntitlement(authClient),
       isCurrent: () => authClient.session?.userId === accountId,
       isVisible: () => document.visibilityState === "visible" && document.hasFocus(),
-      onResult: (result, state) => {
+      onResult: (rawResult, state) => {
+        // An upgrade is done only when its condition holds (e.g. plan yearly).
+        const result = rawResult === "active" && state && done.current && !done.current(state) ? "pending" : rawResult;
         setStatus(result);
         if (result !== "checking") void trackPremiumEvent(authClient, "payment_status_checked", { entry, status: result, ...flow });
         if (result === "active" && state) activate(state);
@@ -138,7 +149,7 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
     {!auth ? <button ref={element => { trigger.current = element; }} type="button" className={className} title={title} aria-label={title} onClick={goToLogin}>{children}</button>
       : <a ref={element => { trigger.current = element; }} className={className} title={recoveryLabel ?? title} aria-label={recoveryLabel ?? title}
         role={waiting || status === "active" ? "button" : undefined}
-        aria-describedby={showEmailHint ? `${id}-hint` : undefined} href={kofiSubscribeUrl()} target="_blank" rel="noopener noreferrer"
+        aria-describedby={showEmailHint ? `${id}-hint` : undefined} href={checkoutUrl} target="_blank" rel="noopener noreferrer"
         onKeyDown={event => { if ((waiting || status === "active") && event.key === " ") { event.preventDefault(); setOpen(true); } }}
         onClick={onPaymentClick} onAuxClick={event => { if (event.button === 1) onPaymentClick(event); }}>
           {recoveryLabel && !iconOnly ? recoveryLabel : children}
@@ -165,7 +176,7 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
         <button type="button" className="paywall-primary" disabled={status === "checking"} onClick={() => { void recovery.current?.retry(); }}>{translateUi("Check payment status")}</button>
         <p>{translateUi("PayPal or Ko-fi may use a different email. You can securely link that email here after paying.")}</p>
         <BillingEmailForm key={accountId} onEntitled={activate} />
-        <a className="membership-return-link" href={kofiSubscribeUrl()} target="_blank" rel="noopener noreferrer" onClick={handoff} onAuxClick={event => { if (event.button === 1) handoff(); }}>{translateUi("Return to Ko-fi")} <ExternalLink size={14} /></a>
+        <a className="membership-return-link" href={checkoutUrl} target="_blank" rel="noopener noreferrer" onClick={handoff} onAuxClick={event => { if (event.button === 1) handoff(); }}>{translateUi("Return to Ko-fi")} <ExternalLink size={14} /></a>
       </>}
       {status === "active" && <button type="button" className="paywall-primary" onClick={close}>{translateUi("Continue watching")}</button>}
     </dialog>}

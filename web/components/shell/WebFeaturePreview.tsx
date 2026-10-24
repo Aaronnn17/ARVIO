@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { ArrowRight, Check, Cloud, Download, Layers, LockKeyhole, LogOut, Monitor, Server, ShieldCheck, Tv } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
+import { kofiYearlyUrl } from "@/lib/entitlement";
 
 // A public product preview, not a second app mode. Only static screenshots and
 // feature copy are mounted here: no catalogs, source configuration or player.
@@ -63,6 +64,7 @@ export function WebFeaturePreview({ checkout, isSignedIn, expired = false, onCon
         <h2 id="web-preview-membership-title">{expired ? translateUi("Your ARVIO Web membership has ended") : translateUi("ARVIO Web Premium")}</h2>
         <p className="web-preview-plan-description">{translateUi("24/7 hosting. No server to set up or maintain.")}</p>
         <div className="web-preview-price"><strong>$2.99</strong><span>{translateUi("/ month")}</span></div>
+        {kofiYearlyUrl() && <p className="web-preview-yearly">{translateUi("Or $20 for 12 months, one payment (save 44%).")}</p>}
         <ul className="web-preview-plan-benefits">
           <li><Check size={16} />{translateUi("All ARVIO Web features")}</li>
           <li><Check size={16} />{translateUi("Browser playback and one-click VLC")}</li>
@@ -70,8 +72,8 @@ export function WebFeaturePreview({ checkout, isSignedIn, expired = false, onCon
         </ul>
         <div className="web-preview-checkout">{checkout}</div>
         <p className="web-preview-terms">{translateUi("Monthly membership. Cancel anytime through Ko-fi.")}</p>
-        <p className="web-preview-unlock"><ShieldCheck size={16} /><span>{translateUi("Full access unlocks after your Ko-fi payment is confirmed.")}</span></p>
-        {!isSignedIn && <p className="web-preview-account-note">{translateUi("Connect your ARVIO Cloud account, then subscribe on Ko-fi. Already paid? Sign in with your account to check access.")}</p>}
+        <p className="web-preview-unlock"><ShieldCheck size={16} /><span>{translateUi("Look around first: sign in with your ARVIO account and you only pay when you press Play.")}</span></p>
+        {!isSignedIn && <p className="web-preview-account-note">{translateUi("Your profiles, watchlist and addons from the Android app are already there. Already a member? Sign in to continue.")}</p>}
         <div className="web-preview-free"><p>{translateUi("Android and TV app remains completely free")}</p><a href="https://github.com/ProdigyV21/ARVIO/blob/main/web/README.md" target="_blank" rel="noopener noreferrer">{translateUi("Self-host ARVIO Web for free.")}<ArrowRight size={13} /></a></div>
       </aside>
     </div>

@@ -45,7 +45,7 @@ test('live manifest fallbacks preserve add-on authentication and referer headers
     let forwarded;
     const build = extracted('components/player/PlayerOverlay.tsx', node =>
       ts.isFunctionDeclaration(node) && node.name?.text === name ? node : undefined, {
-        URL, liveTvProxyHeaders: () => ({ Accept: '*/*', 'User-Agent': 'default' }),
+        URL, currentStreamTicket: () => '', liveTvProxyHeaders: () => ({ Accept: '*/*', 'User-Agent': 'default' }),
         proxiedUrl: (url, headers) => { forwarded = headers; return `https://app.example/api/proxy?url=${encodeURIComponent(url)}`; }
       });
     const result = new URL(build('https://media.example/live.m3u8', { Authorization: 'test-token', Referer: 'https://addon.example/', 'User-Agent': 'addon-player' }));
@@ -619,7 +619,7 @@ function storeHarness(prepare, report = async () => {}, overrides = {}) {
     playbackPreparation: { current: null }, playbackGeneration: { current: 0 }, ownedPlayback: { current: null },
     activeProfileIdRef: { current: 'profile-a' }, settingsRef: { current: settings },
     // Kids gate (store.tsx): a regular profile, so channel and catchup playback proceed.
-    activeProfileRef: { current: { id: 'profile-a' } }, kidsLevelOf: (profile) => (profile?.isKidsProfile ? 'OLDER_KIDS' : null),
+    activeProfileRef: { current: { id: 'profile-a' } }, kidsLevelOf: (profile) => (profile?.isKidsProfile ? 'OLDER_KIDS' : null), premiumAllows: () => true,
     authClient: { session: { userId: 'account-a' } }, selected: { title: 'Fixture' }, activeProfile: { id: 'profile-a' }, selectedEpisode: null,
     prepareBrowserStream: prepare, reportHomeServerPlayback: report,
     busyRef: { current: "" }, streamsRef: { current: [] }, browserAutoplayCandidates: (streams, excluded = new Set()) => streams.filter(s => s.url && !excluded.has(s.originalUrl ?? s.url)), recordBrowserPlaybackFailure: () => {},
