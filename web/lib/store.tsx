@@ -1,6 +1,7 @@
 "use client";
 import { resolveStalkerChannel } from "./stalker";
 import { browserAutoplayCandidates } from "./browserAutoplay";
+import { isPreferredAutoplaySource, loadAutoplayPreference, orderByPreference } from "./autoplaySelection";
 import { recordBrowserPlaybackFailure } from "./streamCompatibility";
 import { queueAddons, hasPendingAddons, flushAddonOutbox, pendingAddonSnapshot } from "./addonOutbox";
 import { applyPendingWatchlist, prepareWatchlistChange, queueWatchlistChange, flushWatchlistOutbox } from "./watchlistOutbox";
@@ -22,6 +23,7 @@ import { cachedDebridDirectUrl, parseDebridStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { trackPremiumEvent } from "./premiumAnalytics";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
+import { premiumAllows } from "./premiumGate";
 import { playbackPlan } from "./streamCompatibility";
 import { prepareBrowserStream } from "./prepareBrowserStream";
 import { reportHomeServerPlayback } from "./homeServerPlayback";
@@ -1828,6 +1830,13 @@ export function AppProvider({
       setToast(TELEGRAM_DISABLED_MESSAGE);
       return;
     }
+    // Explore mode: hosted ARVIO Web asks for Premium here (and resumes after
+    // payment). Self-hosted builds never register a gate. A source headed for
+    // VLC/Infuse is not resumed automatically: iOS opens an app only from
+    // inside the original tap, so the member presses Play again.
+    const headedExternal = stream.addonId !== "arvio_youtube" && !stream.autoSelect && !options.forceBrowser && !options.forceRemux && !options.forceTranscode
+      && (settingsRef.current.defaultPlayer === "vlc" || settingsRef.current.defaultPlayer === "infuse");
+    if (!premiumAllows("play", headedExternal ? undefined : () => playStream(stream, options))) return;
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     if (!stream.autoSelect) setActiveStream(null);
@@ -1959,9 +1968,20 @@ export function AppProvider({
       const episode = episodes.find((item) => item.episodeNumber === next.episodeNumber);
       if (!episode || (episode.airDate && Date.parse(episode.airDate) > Date.now())) { setToast("The next episode is not available yet."); return false; }
       let started = false;
+      // Same bounded preference as the details Play button: a debrid source or
+      // the addon that last played on this device gets a short window to
+      // arrive before the fastest addon's first row wins by default.
+      const preference = loadAutoplayPreference();
+      // Addon updates are cumulative snapshots while home-server, VOD and
+      // Telegram results arrive once each: keep one entry per source.
+      const arrived = new Map<string, StreamSource>();
+      let settled = false;
       const choose = (rows: StreamSource[]) => {
         if (!isCurrent() || started) return;
-        const candidate = browserAutoplayCandidates(rows)[0];
+        for (const row of rows) arrived.set(`${row.addonId ?? row.addonName ?? ""}|${row.url}`, row);
+        const candidates = orderByPreference(browserAutoplayCandidates([...arrived.values()]), preference, (row) => playbackPlan(row).method);
+        if (!settled && !candidates.some((row) => isPreferredAutoplaySource(row, preference, (entry) => Boolean(parseDebridStream(entry.originalUrl ?? entry.url))))) return;
+        const candidate = candidates[0];
         if (!candidate) return;
         started = true;
         setSelectedEpisode({ season: next.seasonNumber!, episode: next.episodeNumber! });
@@ -1971,6 +1991,7 @@ export function AppProvider({
       };
       setStreams([]);
       const publish = (rows: StreamSource[]) => { if (sourceGeneration.current === generation) { mergeStreams(rows); choose(rows); } };
+      const settleTimer = window.setTimeout(() => { settled = true; choose([]); }, 2500);
       // All source types participate; one unavailable provider does not hold up another.
       await Promise.allSettled([
         getStreamsProgressive(addonsRef.current, selected, next.seasonNumber, next.episodeNumber, publish).then(publish),
@@ -1978,6 +1999,9 @@ export function AppProvider({
         appendVodSources(selected, next.seasonNumber, next.episodeNumber).then(choose),
         appendTelegramSources(selected, next.seasonNumber, next.episodeNumber).then(choose)
       ]);
+      window.clearTimeout(settleTimer);
+      settled = true;
+      choose([]);
       if (!started && isCurrent()) setToast("No browser-playable source for the next episode. Choose a source manually.");
       return started;
     } catch {
@@ -2040,6 +2064,7 @@ export function AppProvider({
   const playChannel = useCallback(async (channel: IptvChannel) => {
     // Live TV carries no age ratings: a kids profile never plays it.
     if (kidsLevelOf(activeProfileRef.current)) { setToast("Not available on this kids profile"); return; }
+    if (!premiumAllows("live", () => { void playChannel(channel); })) return;
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     const generation = ++playbackGeneration.current;
@@ -2070,6 +2095,7 @@ export function AppProvider({
   // still gives it the IPTV proxy ladder via the "Catch-up" addonName marker.
   const playCatchup = useCallback((channel: IptvChannel, program: IptvProgram) => {
     if (kidsLevelOf(activeProfileRef.current)) { setToast("Not available on this kids profile"); return; }
+    if (!premiumAllows("live", () => playCatchup(channel, program))) return;
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     playbackGeneration.current++;

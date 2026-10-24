@@ -84,8 +84,8 @@ export function AppShell() {
     );
   }
 
-  // Show the product before requesting a login. No app/profile/player screen
-  // is mounted until the signed-in account has a confirmed paid entitlement.
+  // Show the product before requesting a login. After signing in, the app
+  // opens in explore mode (see EntitlementGate).
   if (config.paywallEnabled && !auth) {
     return <PaywallScreen state={null} accountId={null} isSignedIn={false} onEntitled={() => {}} onConnect={goToLogin} onSignOut={signOut} />;
   }
@@ -93,8 +93,9 @@ export function AppShell() {
 
   const accent = ACCENTS[settings.accentColor] ?? ACCENTS.arctic;
 
-  // Both profile selection and the application are behind the hosted gate.
-  // Self-hosted distributions and the Android app remain unchanged.
+  // Explore mode: signed-in accounts use the app; the gate asks for Premium
+  // only when something would play. Self-hosted builds and the Android app
+  // remain unchanged.
   return (
     <EntitlementGate>
     <PaidPlayerWarmup />

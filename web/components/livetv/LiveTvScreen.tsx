@@ -1,4 +1,5 @@
 "use client";
+import { premiumAllows } from "@/lib/premiumGate";
 import { useTranslation } from "@/lib/i18n";
 
 
@@ -47,6 +48,7 @@ export function LiveTvScreen() {
   // path for the many IPTV providers whose plain-HTTP streams a secure web page
   // can't play, without first waiting for the in-browser attempt to fail.
   const openChannelExternally = useCallback((channel: IptvChannel, player: "vlc" | "infuse") => {
+    if (!premiumAllows("live")) return;
     setToast(
       player === "infuse"
         ? "Opening in Infuse…"
