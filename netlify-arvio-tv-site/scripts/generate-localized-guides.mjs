@@ -363,7 +363,7 @@ const locales = {
         stepsTitle: "Comece pelo navegador.",
         steps: [
           ["Conecte sua conta", "Entre com a mesma conta ARVIO usada nos dispositivos Android."],
-          ["Assine o Premium", "A hospedagem gerenciada custa US$ 2,99/mês. O acesso é liberado após a confirmação do pagamento no Ko-fi."],
+          ["Escolha um plano ao apertar Play", "Explore e configure de graça. Ao apertar Play, você escolhe um plano: US$ 2,99/mês ou US$ 20 por 12 meses."],
           ["Abra seus serviços", "Navegue pelos perfis, bibliotecas e integrações autorizadas sincronizadas."]
         ],
         faq: [
@@ -707,7 +707,7 @@ const locales = {
         stepsTitle: "Empieza desde el navegador.",
         steps: [
           ["Conecta tu cuenta", "Inicia sesión con la misma cuenta ARVIO utilizada en tus dispositivos Android."],
-          ["Suscríbete a Premium", "El alojamiento gestionado cuesta 2,99 $/mes. El acceso se activa tras confirmar el pago en Ko-fi."],
+          ["Elige un plan al pulsar Play", "Explora y configura gratis. Al pulsar Play eliges un plan: 2,99 $/mes o 20 $ por 12 meses."],
           ["Abre tus servicios", "Explora perfiles, bibliotecas e integraciones autorizadas sincronizadas."]
         ],
         faq: [
