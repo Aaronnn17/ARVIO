@@ -86,6 +86,7 @@ test('the offer names the device it is opened on', () => {
   assert.equal(deviceName('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 5), 'iPad');
   assert.equal(deviceName('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 0), 'Mac');
   assert.equal(deviceName('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 0), 'computer');
+  assert.equal(deviceName('Mozilla/5.0 (SMART-TV; Linux; Tizen 6.5) AppleWebKit/537.36', 0), 'TV');
 });
 
 test("what's new shows the latest entry once", () => {
