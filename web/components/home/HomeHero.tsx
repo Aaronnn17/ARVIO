@@ -125,7 +125,7 @@ export function HomeHero({ controller, fallback, onOpen, onPlay }: {
           </div>
           <p>{heroOverview(item, translateUi("Continue from your ARVIO library."))}</p>
           <div className="hero-actions">
-            <button type="button" className="primary" onClick={() => onPlay(item)}><Play size={20} fill="currentColor" aria-hidden /> {translateUi("Play")}</button>
+            <button type="button" className="primary" data-autofocus onClick={() => onPlay(item)}><Play size={20} fill="currentColor" aria-hidden /> {translateUi("Play")}</button>
             <button type="button" className="secondary" onClick={() => onOpen(item)}><Info size={20} aria-hidden /> {translateUi("More Info")}</button>
             {showToggle && <button type="button" className="hero-rotation-toggle" onClick={() => controller.togglePaused()}
               aria-pressed={paused} aria-label={toggleLabel}

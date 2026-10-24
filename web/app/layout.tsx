@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { UpdateWatcher } from "@/components/shell/UpdateWatcher";
+import { DEVICE_CLASS_SCRIPT } from "@/lib/deviceClass";
 import "./globals.css";
 import "./premium.css";
 import "./settings.css";
@@ -9,6 +10,7 @@ import "./source-setup.css";
 import "./calendar.css";
 import "./ui-refinements.css";
 import "./player-platform.css";
+import "./app-foundations.css";
 
 export const metadata: Metadata = {
   title: "ARVIO",
@@ -50,7 +52,9 @@ export const viewport: Viewport = {
   colorScheme: "dark",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // No maximum scale: pinch-zoom must stay available (WCAG 1.4.4). iOS's
+  // focus-zoom on small inputs is prevented by 16px form controls on touch
+  // devices instead (app/app-foundations.css).
   // Cover the iOS status-bar area — without this the page top bleeds through
   // above fullscreen surfaces like the player.
   viewportFit: "cover"
@@ -58,8 +62,12 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Device classes (is-tv, is-xbox, no-hover) before first paint, so TV
+            focus rings and touch hover guards never flash in late. The class
+            attribute is not React-managed, hence suppressHydrationWarning. */}
+        <script dangerouslySetInnerHTML={{ __html: DEVICE_CLASS_SCRIPT }} />
         {process.env.NEXT_PUBLIC_UNRAID_DISTRIBUTION === "true" && (
           <link rel="license" href="/distribution-sources/index.html" />
         )}

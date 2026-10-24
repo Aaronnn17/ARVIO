@@ -15,6 +15,7 @@ import { FavoriteTvRail } from "@/components/media/FavoriteTvRail";
 import { FAVORITE_TV_CATALOG_ID } from "@/lib/favoriteTv";
 import { HOME_ROW_LIMIT } from "@/lib/tmdb";
 import type { CatalogConfig, Category, MediaItem } from "@/lib/types";
+import { RowBoundary } from "@/components/shell/ErrorBoundary";
 import { HomeHero } from "./HomeHero";
 import "@/app/home.css";
 
@@ -82,16 +83,18 @@ export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?
         // they show the first HOME_ROW_LIMIT titles and open the rest in the grid.
         const capped = category.items.length > HOME_ROW_LIMIT;
         const shown = capped ? { ...category, items: category.items.slice(0, HOME_ROW_LIMIT) } : category;
-        return <MediaRail key={category.id} category={shown} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode}
-          onViewAll={capped ? () => openViewAll(null, category) : undefined} />;
+        return <RowBoundary key={category.id} name={category.id} resetKey={category.items}>
+          <MediaRail category={shown} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode}
+            onViewAll={capped ? () => openViewAll(null, category) : undefined} />
+        </RowBoundary>;
       })}
-      {collectionHomeCatalogs(catalogConfigs).map((catalog, index) => (
-        catalog.id === FAVORITE_TV_CATALOG_ID ? (kids.active ? null : <FavoriteTvRail key={catalog.id} title={catalog.name} />) :
+      {/* Each row is isolated: one that throws drops out instead of taking Home down. */}
+      {collectionHomeCatalogs(catalogConfigs).map((catalog, index) => <RowBoundary key={catalog.id} name={catalog.id} resetKey={catalog}>{
+        catalog.id === FAVORITE_TV_CATALOG_ID ? (kids.active ? null : <FavoriteTvRail title={catalog.name} />) :
         String(catalog.kind).toUpperCase() === "COLLECTION_RAIL" ?
-        <CustomCollectionRail key={catalog.id} catalog={catalog} onOpen={openDetails} onCollectionOpenChange={onCollectionOpenChange}
+        <CustomCollectionRail catalog={catalog} onOpen={openDetails} onCollectionOpenChange={onCollectionOpenChange}
           folders={collectionFolders(catalog, catalogConfigs)} /> :
         <LazyRail
-          key={catalog.id}
           catalog={catalog}
           eager={index < 8}
           onOpen={openDetails}
@@ -99,11 +102,13 @@ export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?
           onLoaded={seedHeroFromRow}
           onViewAll={openViewAll}
         />
-      ))}
+      }</RowBoundary>)}
       {/* Like Android, a catalog list without the row still shows it, after the others. */}
       {!kids.active && !catalogConfigs.some((catalog) => catalog.id === FAVORITE_TV_CATALOG_ID) && <FavoriteTvRail />}
       {homeServerRows.map((category) => (
-        <MediaRail key={category.id} category={category} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode} />
+        <RowBoundary key={category.id} name={category.id} resetKey={category.items}>
+          <MediaRail category={category} onOpen={openDetails} onFocus={onCardFocus} posterMode={posterMode} />
+        </RowBoundary>
       ))}
       {viewAll && <CategoryViewAll key={viewAll.category.id} catalog={viewAll.catalog} preview={viewAll.category}
         onBack={() => setViewAll(null)} onOpen={openDetails} />}
