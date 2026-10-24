@@ -22,10 +22,10 @@ import { collectResumePoints, episodeKey, episodeProgressMap, firstUnwatchedEpis
 import { authClient, getPriorityConfig, useApp } from "@/lib/store";
 import { simklClient, getSimklItemUrl } from "@/lib/simkl";
 import { syncClient, syncSeasonWatched } from "@/lib/sync";
-import { getLogoUrl, getPersonDetails, getReviews } from "@/lib/tmdb";
+import { getLogoUrl, getPersonDetails } from "@/lib/tmdb";
 import type { EpisodeInfo, MediaItem, PersonCredit, PersonDetails, ReviewInfo, WatchHistoryEntry } from "@/lib/types";
 import { EpisodeCard } from "./EpisodeCard";
-import { loadDetails, loadSeasonEpisodes } from "./detailsLoaders";
+import { loadDetails, loadReviews, loadSeasonEpisodes } from "./detailsLoaders";
 import { buildDetailMeta, cleanReviewText, formatDate } from "./detailsText";
 import { SourcePickerModal, useCompactSources } from "./SourcePicker";
 
@@ -211,7 +211,7 @@ function DetailsView({ item }: { item: MediaItem }) {
   useEffect(() => {
     if (detailsLoading) return undefined;
     let active = true;
-    void getReviews(item).then((r) => active && setReviews(r)).catch(() => undefined);
+    void loadReviews(item).then((r) => active && setReviews(r)).catch(() => undefined);
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, item.mediaType, detailsLoading]);

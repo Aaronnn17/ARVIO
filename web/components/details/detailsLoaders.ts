@@ -1,6 +1,6 @@
-import { getDetails, getSeasonEpisodes } from "@/lib/tmdb";
+import { getDetails, getReviews, getSeasonEpisodes } from "@/lib/tmdb";
 import type { ProviderPriorityConfig } from "@/lib/metadata/types";
-import type { EpisodeInfo, MediaItem } from "@/lib/types";
+import type { EpisodeInfo, MediaItem, ReviewInfo } from "@/lib/types";
 
 // One in-flight request per key. Opening a series used to fire tv/{id} three
 // times in the same millisecond (store.openDetails, the details view mount and
@@ -37,6 +37,24 @@ export function loadSeasonEpisodes(
   config?: ProviderPriorityConfig,
   context?: Parameters<typeof getSeasonEpisodes>[4]
 ) {
-  const key = `${tvId}:${season}:${language}:${configKey(config)}:${context?.tvdbId ?? ""}:${context?.anilistId ?? ""}:${context?.isAnime ? 1 : 0}`;
+  // Same key as tmdb.ts's own season cache: the metadata context (which only
+  // enriches names/stills) changes when the shallow item is swapped for the
+  // hydrated one, and must not start a second identical season fetch.
+  const key = `${tvId}:${season}:${language}`;
   return seasonInFlight(key, () => getSeasonEpisodes(tvId, season, language, config, context));
+}
+
+// Reviews are below the fold and never change while details are open: one
+// request per title for the session (bounded).
+const reviewsInFlight = createInFlight<string, ReviewInfo[]>();
+const reviewsCache = new Map<string, ReviewInfo[]>();
+export function loadReviews(item: Pick<MediaItem, "mediaType" | "id">) {
+  const key = `${item.mediaType}:${item.id}`;
+  const hit = reviewsCache.get(key);
+  if (hit) return Promise.resolve(hit);
+  return reviewsInFlight(key, () => getReviews(item).then((reviews) => {
+    reviewsCache.set(key, reviews);
+    if (reviewsCache.size > 50) reviewsCache.delete(reviewsCache.keys().next().value!);
+    return reviews;
+  }));
 }
