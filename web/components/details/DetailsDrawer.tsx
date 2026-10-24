@@ -10,6 +10,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { config, isDisabledTelegramSource, TELEGRAM_DISABLED_MESSAGE } from "@/lib/config";
 import { chooseDownloadFile, startManagedDownload, recordDownloadHandoff } from "@/lib/downloads";
 import { premiumAllows } from "@/lib/premiumGate";
+import { clearPlayOnOpen, peekPlayOnOpen } from "@/lib/playIntent";
 import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { saveWatchedState } from "@/lib/cloud";
@@ -191,6 +192,22 @@ function DetailsView({ item }: { item: MediaItem }) {
     await loadEpisodeStreams(displayItem, season, episode);
     setAutoplayRequested(true);
   };
+
+  // Home billboard "Play": start playback here through the same automatic
+  // source choice as the Play button. Movies start at once (the chooser waits
+  // for sources); series wait for the resume episode, else play S1 E1.
+  const [heroPlayIntent] = useState(() => peekPlayOnOpen(item));
+  const heroPlayDone = useRef(false);
+  useEffect(() => {
+    if (!heroPlayIntent || heroPlayDone.current) return;
+    if (item.mediaType === "tv" && busy) return;
+    heroPlayDone.current = true;
+    clearPlayOnOpen();
+    if (item.mediaType !== "tv") playBest();
+    else if (selectedEpisode) playBest();
+    else void openEpisodeSources(heroPlayIntent.season ?? 1, heroPlayIntent.episode ?? 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroPlayIntent, busy, selectedEpisode]);
 
   const addToWatchlist = async () => {
     if (!syncClient().isConnected) {

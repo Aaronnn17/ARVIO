@@ -530,8 +530,6 @@ export interface AppStore {
   watchlist: MediaItem[];
   isWatched: (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => boolean;
   markWatchedLocally: (item: { mediaType: MediaItem["mediaType"]; id: number; season?: number | null; episode?: number | null }, watched?: boolean) => void;
-  hero: MediaItem | null;
-  setHeroPreview: (item: MediaItem | null) => void;
   selected: MediaItem | null;
   streams: StreamSource[];
   selectedEpisode: { season: number; episode: number } | null;
@@ -752,8 +750,8 @@ export function AppProvider({
   const activeProfileRef = useRef(activeProfile);
   activeProfileRef.current = activeProfile;
 
-  const [heroPreview, setHeroPreview] = useState<MediaItem | null>(null);
-  const hero = heroPreview ?? continueWatching[0] ?? categories[0]?.items[0] ?? null;
+  // The Home billboard's preview lives in HomeScreen (lib/homeHero): as store
+  // state, every 8 s rotation and card hover re-rendered almost the whole app.
 
   // Refs so stable callbacks always read the latest values without re-creating.
   const addonsRef = useRef(addons);
@@ -2634,10 +2632,9 @@ export function AppProvider({
   const toggleWatchlist = useCallback(async (item: MediaItem) => {
     const userId = authClient.session?.userId;
     const inWatchlist = watchlist.some((entry) => entry.mediaType === item.mediaType && entry.id === item.id);
-    if (activeSyncProvider() === "none") {
-      setToast("Connect Trakt, Simkl, or MDBList in Settings to use Watchlist.");
-      return;
-    }
+    // Like Android (WatchlistRepository), the watchlist lives in ARVIO Cloud
+    // (watchlistByProfile via the outbox below) and on this device; Trakt,
+    // Simkl and MDBList are optional mirrors written when connected.
     const mutationKey = JSON.stringify([userId, activeProfileId, item.mediaType, item.id]);
     const mutationId = (watchlistMutationRef.current.get(mutationKey) ?? 0) + 1;
     watchlistMutationRef.current.set(mutationKey, mutationId);
@@ -2779,8 +2776,6 @@ export function AppProvider({
     watchlist,
     isWatched,
     markWatchedLocally,
-    hero,
-    setHeroPreview,
     selected,
     streams,
     selectedEpisode,
@@ -2848,7 +2843,7 @@ export function AppProvider({
   }), [
     view, cloudProfilesHydrated, cloudLoginRequired, profiles, activeProfile, activeProfileId, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
-    section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
+    section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
     addons, addonsReady, iptvSnapshot, query, results, searchState, settingsSyncState, settings, auth, traktConnected, mdblistConnected, simklConnected, trackingPreferences, deviceCode, simklDeviceCode, busy, toast,
     updateSettings, refreshData, openDetails, closeDetails, playStream, playTrailer, playChannel, recordChannelPlayback, playCatchup, closePlayer,
     refreshIptv, loadIptvGuide, favoriteTvChannels,
