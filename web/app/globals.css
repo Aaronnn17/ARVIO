@@ -2188,6 +2188,22 @@ a.login-submit {
   color: #fff;
 }
 .color-dot.is-active { border-color: #fff; }
+/* Kids profile settings in the profile dialog (mirrors Android's ProfileDialogs). */
+.profile-kids-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.profile-kids-row .text-button.is-active {
+  border-color: var(--accent, #fff);
+  color: #fff;
+}
+.profile-kids-hint {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--soft);
+}
 .avatar-picker {
   display: grid;
   gap: 18px;

@@ -22,10 +22,13 @@ export function ProfileSelectionScreen() {
   const [dialog, setDialog] = useState<{ mode: "add" | "edit"; profile?: Profile } | null>(null);
   const [openingProfileId, setOpeningProfileId] = useState<string | null>(null);
   const [lockedProfile, setLockedProfile] = useState<Profile | null>(null);
+  // A kids profile's parent PIN guards editing and deleting it, never watching (Android parity).
+  const [parentGateProfile, setParentGateProfile] = useState<Profile | null>(null);
 
   const openProfile = (profile: Profile, pin?: string) => {
     if (profile.isLocked && profile.pin && !pin) { setLockedProfile(profile); return; }
     if (manageMode) {
+      if (profile.isKidsProfile && profile.parentPin) { setParentGateProfile(profile); return; }
       setDialog({ mode: "edit", profile });
       return;
     }
@@ -97,15 +100,19 @@ export function ProfileSelectionScreen() {
         openProfile(lockedProfile, pin);
         setLockedProfile(null);
       }} />}
+      {parentGateProfile && <PinDialog profile={parentGateProfile} storedPin={parentGateProfile.parentPin} label="Parent PIN" onClose={() => setParentGateProfile(null)} onUnlock={() => {
+        setDialog({ mode: "edit", profile: parentGateProfile });
+        setParentGateProfile(null);
+      }} />}
       {dialog && (
         <ProfileDialog
           mode={dialog.mode}
           initial={dialog.profile}
-          onConfirm={(name, color, avatarId) => {
+          onConfirm={(name, color, avatarId, kids) => {
             if (dialog.mode === "add") {
-              void createProfile(name, color, avatarId);
+              void createProfile(name, color, avatarId, kids);
             } else if (dialog.profile) {
-              void updateProfile({ ...dialog.profile, name, avatarColor: color, avatarId });
+              void updateProfile({ ...dialog.profile, name, avatarColor: color, avatarId, ...kids });
             }
             setDialog(null);
           }}

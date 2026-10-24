@@ -40,6 +40,8 @@ import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/type
 import { TraktClient, type TraktDeviceCode } from "./trakt";
 import { continueWatchingActivitySignature, createTraktActivityCheck, type TraktActivitySnapshot } from "./traktActivity";
 import { mdblistClient } from "./mdblist";
+import { isAllowedForProfile } from "./kidsGate";
+import { kidsLevelOf } from "./kids";
 import { simklClient, type SimklPinCode } from "./simkl";
 import {
   activeSyncProvider,
@@ -500,7 +502,7 @@ export interface AppStore {
   manageMode: boolean;
   setManageMode: (value: boolean) => void;
   selectProfile: (profile: Profile, pin?: string) => Promise<void>;
-  createProfile: (name: string, avatarColor: number, avatarId: number) => Promise<void>;
+  createProfile: (name: string, avatarColor: number, avatarId: number, extra?: Partial<Profile>) => Promise<void>;
   updateProfile: (profile: Profile) => Promise<void>;
   deleteProfile: (id: string) => Promise<void>;
   switchProfile: () => void;
@@ -735,6 +737,9 @@ export function AppProvider({
   });
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
+  // Read inside callbacks (openDetails, playChannel) so a gate always sees the profile in use.
+  const activeProfileRef = useRef(activeProfile);
+  activeProfileRef.current = activeProfile;
 
   const [heroPreview, setHeroPreview] = useState<MediaItem | null>(null);
   const hero = heroPreview ?? continueWatching[0] ?? categories[0]?.items[0] ?? null;
@@ -1719,6 +1724,14 @@ export function AppProvider({
   }, []);
 
   const openDetails = useCallback(async (item: MediaItem) => {
+    // Kids profiles: a title opens only when its rating fits the profile, whatever the
+    // entry point (card, billboard, Continue Watching, a shared link).
+    if (kidsLevelOf(activeProfileRef.current)) {
+      const gateGeneration = ++sourceGeneration.current;
+      const allowed = await isAllowedForProfile(item, activeProfileRef.current, settingsRef.current.language);
+      if (sourceGeneration.current !== gateGeneration) return;
+      if (!allowed) { setToast("Not available on this kids profile"); return; }
+    }
     const generation = ++sourceGeneration.current;
     const publish = (rows: StreamSource[]) => { if (sourceGeneration.current === generation) mergeStreams(rows); };
     setSelected(item);
@@ -2025,6 +2038,8 @@ export function AppProvider({
   }, []);
 
   const playChannel = useCallback(async (channel: IptvChannel) => {
+    // Live TV carries no age ratings: a kids profile never plays it.
+    if (kidsLevelOf(activeProfileRef.current)) { setToast("Not available on this kids profile"); return; }
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     const generation = ++playbackGeneration.current;
@@ -2054,6 +2069,7 @@ export function AppProvider({
   // seekable VOD stream (no activeChannel → scrubber works), but the player
   // still gives it the IPTV proxy ladder via the "Catch-up" addonName marker.
   const playCatchup = useCallback((channel: IptvChannel, program: IptvProgram) => {
+    if (kidsLevelOf(activeProfileRef.current)) { setToast("Not available on this kids profile"); return; }
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     playbackGeneration.current++;
@@ -2540,8 +2556,8 @@ export function AppProvider({
     void refreshData(profile.id);
   }, [profiles, activeProfileId, persistProfiles, refreshData, cloudProfilesHydrated]);
 
-  const createProfile = useCallback(async (name: string, avatarColor: number, avatarId: number) => {
-    const profile = makeProfile(name || "Profile", avatarColor || randomProfileColor(), avatarId);
+  const createProfile = useCallback(async (name: string, avatarColor: number, avatarId: number, extra?: Partial<Profile>) => {
+    const profile = { ...makeProfile(name || "Profile", avatarColor || randomProfileColor(), avatarId), ...extra };
     persistProfiles([...profiles, profile], activeProfileId);
   }, [profiles, activeProfileId, persistProfiles]);
 

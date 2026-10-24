@@ -6,11 +6,20 @@ import { Check, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { avatarCategories, avatarGradient, avatarSrc, colorToCss, profileColors } from "@/lib/profiles";
 import type { Profile } from "@/lib/types";
+import { DEFAULT_KIDS_LEVEL, KIDS_LEVELS, kidsLevelOf, type KidsAgeLevel } from "@/lib/kids";
+import { hashProfilePin, isValidProfilePin } from "@/lib/profilePin";
+
+/** Kids settings saved with the profile; same fields Android writes (Profile.kt). */
+export interface KidsProfileFields {
+  isKidsProfile: boolean;
+  kidsAgeLevel: KidsAgeLevel | null;
+  parentPin: string | null;
+}
 
 export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
   mode: "add" | "edit";
   initial?: Profile;
-  onConfirm: (name: string, avatarColor: number, avatarId: number) => void;
+  onConfirm: (name: string, avatarColor: number, avatarId: number, kids: KidsProfileFields) => void;
   onDelete?: () => void;
   onClose: () => void;
 }) {
@@ -18,6 +27,28 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
   const [name, setName] = useState(initial?.name ?? "");
   const [avatarColor, setAvatarColor] = useState(initial?.avatarColor ?? profileColors[0]);
   const [avatarId, setAvatarId] = useState(initial?.avatarId ?? 0);
+  const [kidsOn, setKidsOn] = useState(Boolean(initial?.isKidsProfile));
+  const [kidsLevel, setKidsLevel] = useState<KidsAgeLevel>(kidsLevelOf(initial) ?? DEFAULT_KIDS_LEVEL);
+  const [parentPin, setParentPin] = useState("");
+  const [saving, setSaving] = useState(false);
+  // A kids profile always has a parent PIN: an existing one is kept, a new one must be set here.
+  const needsParentPin = kidsOn && !initial?.parentPin;
+  const pinMissing = needsParentPin && !isValidProfilePin(parentPin);
+
+  const confirm = async () => {
+    if (saving || !name.trim() || pinMissing) return;
+    setSaving(true);
+    try {
+      const pin = kidsOn ? (needsParentPin ? await hashProfilePin(parentPin) : initial?.parentPin ?? null) : null;
+      onConfirm(name.trim() || "Profile", avatarColor, avatarId, {
+        isKidsProfile: kidsOn,
+        kidsAgeLevel: kidsOn ? kidsLevel : null,
+        parentPin: pin
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Escape / remote Back / gamepad B closes the dialog like every other
   // modal. When the event targets the name input, tvNav already turned that
@@ -104,12 +135,48 @@ export function ProfileDialog({ mode, initial, onConfirm, onDelete, onClose }: {
           ))}
         </div>
 
+        <h3 className="profile-dialog-label">{translateUi("Kids Profile")}</h3>
+        <div className="profile-kids-row" role="group" aria-label={translateUi("Kids Profile")}>
+          <button type="button" className={`secondary text-button ${kidsOn ? "is-active" : ""}`} aria-pressed={kidsOn} onClick={() => setKidsOn(true)}>{kidsOn ? <Check size={16} /> : null} {translateUi("On")}</button>
+          <button type="button" className={`secondary text-button ${!kidsOn ? "is-active" : ""}`} aria-pressed={!kidsOn} onClick={() => setKidsOn(false)}>{!kidsOn ? <Check size={16} /> : null} {translateUi("Off")}</button>
+        </div>
+        {kidsOn && (
+          <>
+            <p className="profile-kids-hint">{translateUi("Only titles rated for this age. Unrated titles and Live TV are hidden.")}</p>
+            <h3 className="profile-dialog-label">{translateUi("Max age")}</h3>
+            <div className="profile-kids-row" role="radiogroup" aria-label={translateUi("Max age")}>
+              {KIDS_LEVELS.map((level) => (
+                <button type="button" key={level} role="radio" aria-checked={kidsLevel === level} className={`secondary text-button ${kidsLevel === level ? "is-active" : ""}`} onClick={() => setKidsLevel(level)}>
+                  {level === "LITTLE_KIDS" ? translateUi("Up to 7") : level === "OLDER_KIDS" ? translateUi("Up to 10") : translateUi("Up to 14")}
+                </button>
+              ))}
+            </div>
+            {needsParentPin && (
+              <>
+                <label className="profile-name-label" htmlFor="profile-parent-pin">{translateUi("Set a parent PIN for this kids profile")}</label>
+                <input
+                  id="profile-parent-pin"
+                  className="profile-name-input"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="new-password"
+                  maxLength={5}
+                  value={parentPin}
+                  onChange={(event) => setParentPin(event.target.value.replace(/\D/g, "").slice(0, 5))}
+                  aria-describedby="profile-parent-pin-hint"
+                />
+                <p id="profile-parent-pin-hint" className="profile-kids-hint">{translateUi("4-5 digits. Needed to change or delete this kids profile, not to watch.")}</p>
+              </>
+            )}
+          </>
+        )}
+
         <div className="profile-dialog-actions">
           {mode === "edit" && onDelete && (
             <button type="button" className="secondary text-button danger" onClick={onDelete}><Trash2 size={18} /> {translateUi(" Delete")}</button>
           )}
           <button type="button" className="secondary text-button" onClick={onClose}>{translateUi("Cancel")}</button>
-          <button type="button" className="primary" onClick={() => onConfirm(name.trim() || "Profile", avatarColor, avatarId)} disabled={!name.trim()}>
+          <button type="button" className="primary" onClick={() => void confirm()} disabled={!name.trim() || pinMissing || saving}>
             {mode === "add" ? translateUi("Create") : translateUi("Save")}
           </button>
         </div>
