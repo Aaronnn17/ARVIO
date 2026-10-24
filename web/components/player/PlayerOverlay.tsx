@@ -4,6 +4,7 @@ import { useTranslation } from "@/lib/i18n";
 
 
 import {
+  Airplay,
   ArrowLeft,
   AudioLines,
   Check,
@@ -14,6 +15,7 @@ import {
   Maximize,
   Minimize,
   Pause,
+  PictureInPicture2,
   Play,
   RotateCcw,
   RotateCw,
@@ -26,6 +28,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLivePlayerDock } from "./useLivePlayerDock";
+import { HomeScreenTip } from "./HomeScreenTip";
 import { YouTubeEmbed } from "./YouTubeEmbed";
 import { usePlayerEpisodeMetadata } from "./usePlayerEpisodeMetadata";
 import { config } from "@/lib/config";
@@ -52,7 +55,15 @@ import {
   playbackFailureKind,
 } from "@/lib/playerRecovery";
 import { authClient, getPriorityConfig, useApp } from "@/lib/store";
-import { trackPremiumDaily, trackPremiumEvent, trackPremiumMilestone } from "@/lib/premiumAnalytics";
+import { trackPremiumAttempt, trackPremiumDaily, trackPremiumEvent, trackPremiumMilestone } from "@/lib/premiumAnalytics";
+import { playbackAttemptDetail } from "@/lib/playbackTelemetry";
+import { rememberSuccessfulSource } from "@/lib/autoplaySelection";
+import { markHomeScreenTipEligible } from "@/lib/homeScreenTip";
+import {
+  airPlaySupported, airPlayUsable, bindMediaSession, isFullscreenActive, isPipActive, onFullscreenChange, onPipChange,
+  pipStrategy, showAirPlayPicker, toggleFullscreen as toggleFullscreenFor, togglePictureInPicture, updateMediaPosition,
+  watchAirPlayAvailability
+} from "@/lib/playerPlatform";
 import { syncClient } from "@/lib/sync";
 import { SubtitleTranslator, subtitleLanguageName } from "@/lib/subtitleAi";
 import { getLogoUrl } from "@/lib/tmdb";
@@ -209,13 +220,16 @@ export function PlayerOverlay() {
 
   const enrichment = streams.find((candidate) => activeStream && (isSameStream(candidate, activeStream) || (candidate.url && candidate.url === activeStream.url)));
   const enrichedStream = useMemo(() => activeStream ? mergeSubtitleTracks(activeStream, enrichment) : null, [activeStream, enrichment]);
-  if (!activeStream?.url || !enrichedStream) return null;
+  // The one-time iOS "Add to Home Screen" tip lives here because this
+  // component is always mounted; it waits until the player is closed.
+  const tip = <HomeScreenTip playerOpen={Boolean(activeStream?.url)} />;
+  if (!activeStream?.url || !enrichedStream) return tip;
 
   const ytId = youTubeId(activeStream.url);
   const title = activeChannel?.name ?? selected?.title ?? activeStream.source;
 
   if (ytId) {
-    return (
+    return (<>{tip}
       <section className="player-overlay youtube-player-layout">
         <YouTubeEmbed videoId={ytId} item={selected} stream={activeStream} />
         <div className="youtube-player-toolbar">
@@ -230,11 +244,11 @@ export function PlayerOverlay() {
           <button type="button" className="player-icon-btn" onClick={closePlayer} aria-label={translateUi("Close")}><X size={24} /></button>
         </div>
       </section>
-    );
+    </>);
   }
 
   const canAdvance = Boolean(selected?.mediaType === "tv" && selectedEpisode && !activeChannel);
-  return (
+  return (<>{tip}
     <VideoPlayer
       title={title}
       subtitleLabel={selectedEpisode ? `S${selectedEpisode.season} E${selectedEpisode.episode}` : null}
@@ -253,7 +267,7 @@ export function PlayerOverlay() {
       onToast={setToast}
       onClose={closePlayer}
     />
-  );
+  </>);
 }
 
 function VideoPlayer({
@@ -332,6 +346,9 @@ function VideoPlayer({
   // AI subtitle translation (same providers/prompt as the Android app).
   const [aiSubsActive, setAiSubsActive] = useState(false);
   const [aiTranslating, setAiTranslating] = useState(false);
+  // Last translation failure, shown in the subtitle panel (and toasted, at
+  // most every 20 s) instead of silently leaving cues untranslated.
+  const [aiError, setAiError] = useState<string | null>(null);
   const aiTargetName = subtitleLanguageName(settings.defaultSubtitle);
   const aiAvailable = settings.aiSubtitlesEnabled && settings.aiSubtitleModel !== "off" && Boolean(settings.aiApiKey) && Boolean(aiTargetName) && !aiTargetName.toLowerCase().startsWith("engl");
   const translatorRef = useRef<SubtitleTranslator | null>(null);
@@ -374,12 +391,21 @@ function VideoPlayer({
   const [error, setError] = useState(false);
   const [errorDetail, setErrorDetail] = useState("");
   const failureDiagnosticRef = useRef<{ failure_kind: string; phase: "startup" | "playback"; transport?: string }>({ failure_kind: "unknown", phase: "startup" });
-  useEffect(() => {
-    if (error) void trackPremiumDaily(authClient, "playback_failed", {
-      playback_type: liveTv ? "live" : "vod", transport: stream.remux ? "remux" : stream.transport ?? "file",
-      ...failureDiagnosticRef.current
+  // One diagnostic per failed attempt (capped per page): platform, method,
+  // container and host type — allow-listed labels, never URLs or titles.
+  // "retried" = this source failed but the player moved on to another one;
+  // "final" = the failure reached the error screen.
+  const reportFailedAttempt = useCallback((failed: StreamSource, outcome: "retried" | "final") => {
+    void trackPremiumAttempt(authClient, "playback_failed", {
+      playback_type: liveTv ? "live" : "vod", transport: failed.remux ? "remux" : failed.transport ?? "file",
+      ...failureDiagnosticRef.current,
+      ...playbackAttemptDetail(failed, { liveTv, debrid: Boolean(parseDebridStream(failed.originalUrl ?? failed.url)) }),
+      outcome
     });
-  }, [error, liveTv, stream.remux, stream.transport]);
+  }, [liveTv]);
+  useEffect(() => {
+    if (error) reportFailedAttempt(currentStreamRef.current, "final");
+  }, [error, reportFailedAttempt]);
   const [activePanel, setActivePanel] = useState<PlayerPanel>(null);
   const [activeSubtitle, setActiveSubtitle] = useState(-1);
   const [subtitleState, setSubtitleState] = useState<SubtitleLoadState>({ status: "off", track: null });
@@ -510,6 +536,11 @@ function VideoPlayer({
       onReady();
       void trackPremiumMilestone(authClient, "first_playback", { playback_type: liveTv ? "live" : "vod" });
       void trackPremiumDaily(authClient, "playback_started", { playback_type: liveTv ? "live" : "vod" });
+      if (!liveTv) {
+        // Autoplay waits briefly for this addon next time (see autoplaySelection).
+        rememberSuccessfulSource(currentStreamRef.current);
+        markHomeScreenTipEligible();
+      }
     };
     video.addEventListener("playing", onPlaying);
     video.addEventListener("loadeddata", onReady);
@@ -533,8 +564,8 @@ function VideoPlayer({
         onSelectStream(stream, { forceTranscode: true, forceBrowser: true });
         return;
       }
-      if (tryNextSource()) return;
       failureDiagnosticRef.current = { failure_kind: "format", phase: "playback" };
+      if (tryNextSource()) return;
       setErrorDetail("This browser could not decode video frames from the selected source.");
       setBuffering(false);
       setShowControls(true);
@@ -555,6 +586,17 @@ function VideoPlayer({
     if (!video || !track) return undefined;
     const translator = new SubtitleTranslator(settings.aiApiKey, settings.aiSubtitleModel === "gemini" ? "gemini" : "groq", aiTargetName);
     translator.onTranslatingChanged = setAiTranslating;
+    let lastErrorToast = 0;
+    translator.onError = (failure) => {
+      if (translatorRef.current !== translator) return;
+      setAiError(failure.message);
+      const now = Date.now();
+      if (now - lastErrorToast >= 20_000) {
+        lastErrorToast = now;
+        onToast(failure.message);
+      }
+    };
+    setAiError(null);
     translatorRef.current = translator;
     const originals = new WeakMap<VTTCue, string>();
     const applyToCue = (cue: VTTCue) => {
@@ -705,11 +747,12 @@ function VideoPlayer({
     });
     const next = pick(true) ?? pick(false);
     if (!next) return false;
+    reportFailedAttempt(current, "retried");
     autoSourceHopsRef.current += 1;
     onToast(`Source failed — trying ${next.source || next.addonName || "the next source"}`);
     onSelectStream({ ...next, autoSelect: true, resumePositionSeconds: resumeAtRef.current }, { forceBrowser: true });
     return true;
-  }, [liveTv, onSelectStream, onToast]);
+  }, [liveTv, onSelectStream, onToast, reportFailedAttempt]);
   const badges = useMemo(() => {
     if (liveTv) return ["LIVE"];
     const base = qualityBadges(stream);
@@ -1409,17 +1452,98 @@ function VideoPlayer({
   }, [flashControls]);
 
   const toggleFullscreen = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    if (!document.fullscreenElement) {
-      void el.requestFullscreen?.().catch(() => {
+    // iPhone Safari has no element fullscreen; this falls back to Apple's
+    // native video player (webkitEnterFullscreen). Subtitles are native
+    // <track>s, so they show there too — in the iOS system caption style.
+    void toggleFullscreenFor(containerRef.current, videoRef.current).then((result) => {
+      if (result === "failed") {
         // Fullscreen demands a real click/tap (transient activation), which
         // controller input can never mint — say so instead of doing nothing.
         onToast("Fullscreen needs a real click or tap first — or press F11.");
-      });
-    }
-    else void document.exitFullscreen?.().catch(() => undefined);
+      } else if (result === "needs-metadata") {
+        onToast("Fullscreen is available once the video starts.");
+      } else if (result === "unsupported") {
+        onToast("This browser does not support fullscreen video.");
+      }
+    });
   }, [onToast]);
+
+  // Picture in picture (standard API, or Safari's presentation mode) and the
+  // AirPlay picker. Each button only renders where the API really exists.
+  const [pipAvailable, setPipAvailable] = useState(false);
+  const [pipActive, setPipActive] = useState(false);
+  const [airPlayAvailable, setAirPlayAvailable] = useState(false);
+  const [airPlayAllowed, setAirPlayAllowed] = useState(false);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+    const refresh = () => {
+      setPipAvailable(pipStrategy(video) !== "none");
+      setPipActive(isPipActive(video));
+      // MediaSource-fed playback (hls.js relay, remux, MPEG-TS) disables
+      // remote playback: AirPlay receivers cannot fetch those bytes.
+      setAirPlayAllowed(airPlayUsable(video));
+    };
+    refresh();
+    const media = ["loadedmetadata", "emptied", "playing"];
+    for (const name of media) video.addEventListener(name, refresh);
+    const stopPip = onPipChange(video, refresh);
+    const stopAirPlay = airPlaySupported() ? watchAirPlayAvailability(video, setAirPlayAvailable) : () => {};
+    return () => {
+      for (const name of media) video.removeEventListener(name, refresh);
+      stopPip();
+      stopAirPlay();
+    };
+  }, []);
+  const togglePip = useCallback(() => {
+    void togglePictureInPicture(videoRef.current).then((ok) => {
+      if (!ok) onToast("Picture in picture is not available for this video.");
+    });
+  }, [onToast]);
+
+  // Lock screen, Control Center, headset and car controls (Media Session).
+  // Handlers read through a ref so seeking/advancing never re-registers them.
+  const sessionActions = useRef({ seekBy, onAdvance, canAdvance, liveTv });
+  sessionActions.current = { seekBy, onAdvance, canAdvance, liveTv };
+  const episodeTitle = item?.episodeTitle ?? null;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+    const line = liveTv ? translateUi("Live TV") : [subtitleLabel, episodeTitle].filter(Boolean).join(" · ") || stream.addonName || "";
+    const unbind = bindMediaSession({
+      title, subtitle: line, album: "ARVIO",
+      poster: item?.image ?? null, backdrop: item?.backdrop ?? null, still: item?.episodeStill ?? null
+    }, {
+      play: () => { void video.play().catch(() => undefined); },
+      pause: () => video.pause(),
+      seekBy: liveTv ? undefined : (delta) => sessionActions.current.seekBy(delta),
+      seekTo: liveTv ? undefined : (seconds, fast) => {
+        const target = Math.max(0, Math.min(video.duration || seconds, seconds));
+        const seekable = video as HTMLVideoElement & { fastSeek?: (time: number) => void };
+        if (fast && typeof seekable.fastSeek === "function") seekable.fastSeek(target);
+        else video.currentTime = target;
+        updateMediaPosition(video);
+      },
+      next: canAdvance ? () => { void sessionActions.current.onAdvance(); } : null
+    });
+    let lastPosition = 0;
+    const position = (event?: Event) => {
+      // timeupdate fires ~4x/s; the lock screen extrapolates between updates.
+      const now = Date.now();
+      if (event?.type === "timeupdate" && now - lastPosition < 5000) return;
+      lastPosition = now;
+      if (!sessionActions.current.liveTv) updateMediaPosition(video);
+    };
+    const names = ["timeupdate", "durationchange", "ratechange", "play", "pause", "seeked", "loadedmetadata"];
+    for (const name of names) video.addEventListener(name, position);
+    position();
+    return () => {
+      for (const name of names) video.removeEventListener(name, position);
+      unbind();
+    };
+    // translateUi only formats the static "Live TV" line.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, subtitleLabel, episodeTitle, item?.image, item?.backdrop, item?.episodeStill, stream.addonName, liveTv, canAdvance]);
 
   const openPanel = useCallback((panel: Exclude<PlayerPanel, null>) => {
     const next = activePanel === panel ? null : panel;
@@ -1490,9 +1614,10 @@ function VideoPlayer({
   }, [onToast]);
 
   useEffect(() => {
-    const onFs = () => setFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+    const video = videoRef.current;
+    if (!video) return undefined;
+    // Standard, webkit-prefixed and iOS native video fullscreen all report here.
+    return onFullscreenChange(video, () => setFullscreen(isFullscreenActive(video)));
   }, []);
 
   useEffect(() => {
@@ -1557,7 +1682,7 @@ function VideoPlayer({
           if (activePanel) setActivePanel(null);
           // A synthetic Escape (gamepad B) can't trigger the browser's own
           // exit-fullscreen default — do it ourselves, then close next press.
-          else if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+          else if (isFullscreenActive(videoRef.current)) toggleFullscreen();
           else onClose();
           break;
         default:
@@ -1598,7 +1723,7 @@ function VideoPlayer({
   return (
     <section
       ref={containerRef}
-      className={`player-overlay ${dock.docked ? "player-docked" : ""} ${showControls || activePanel ? "controls-on" : "controls-off"}`}
+      className={`player-overlay ${dock.docked ? "player-docked" : ""} ${showControls || activePanel ? "controls-on" : "controls-off"} ${pipAvailable || (airPlayAvailable && airPlayAllowed) ? "has-platform-actions" : ""}`}
       style={dock.style}
       onMouseMove={flashControls}
     >
@@ -1677,6 +1802,8 @@ function VideoPlayer({
         <div className="player-top-actions">
           {nextCountdown !== null && <div className="next-episode-prompt" role="status"><span>{translateUi("Next episode in ")}{nextCountdown}{translateUi("s")}</span><button type="button" className="icon-button" aria-label={translateUi("Cancel next episode")} onClick={() => { nextDismissed.current = true; setNextCountdown(null); }}><X size={20} /></button></div>}
           {canAdvance && <button type="button" className="player-next" onClick={() => { setNextCountdown(null); void onAdvance(); }}><SkipForward size={18} /> {translateUi(" Next episode")}</button>}
+          {airPlayAvailable && airPlayAllowed && <button type="button" className="player-icon-btn player-platform-btn" onClick={() => showAirPlayPicker(videoRef.current)} aria-label={translateUi("AirPlay")} title={translateUi("AirPlay")}><Airplay size={20} /></button>}
+          {pipAvailable && <button type="button" className={`player-icon-btn player-platform-btn ${pipActive ? "is-active" : ""}`} onClick={togglePip} aria-label={translateUi("Picture in picture")} title={translateUi("Picture in picture")}><PictureInPicture2 size={20} /></button>}
           <button type="button" className="player-icon-btn" onClick={onClose} aria-label={translateUi("Close")}><X size={22} /></button>
         </div>
       </div>
@@ -1790,7 +1917,7 @@ function VideoPlayer({
                   <span className="player-row-icon">{aiSubsActive ? <Check size={17} /> : translateUi("AI")}</span>
                   <span>
                     <strong>{translateUi("AI · ")}{aiTargetName}</strong>
-                    <em>{aiSubsActive ? (aiTranslating ? "Translating…" : "Live-translating English subtitles") : translateUi("Translate English subtitles to {value0}", {value0: aiTargetName})}</em>
+                    <em role={aiSubsActive && aiError ? "alert" : undefined}>{aiSubsActive ? (aiTranslating ? translateUi("Translating…") : aiError ? translateUi(aiError) : translateUi("Live-translating English subtitles")) : translateUi("Translate English subtitles to {value0}", {value0: aiTargetName})}</em>
                   </span>
                 </button>
               )}

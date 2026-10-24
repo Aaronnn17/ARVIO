@@ -3,7 +3,7 @@ import { useTranslation } from "@/lib/i18n";
 
 
 import { BadgeCheck, Bookmark, CalendarDays, Check, Clapperboard, Copy, Download, ExternalLink, EyeOff, Filter, Folder, Info, MapPin, Play, Search, Star, Trash2, TriangleAlert, UserCircle, X } from "lucide-react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { MediaCard } from "@/components/media/MediaCard";
 import { RailScroller } from "@/components/media/RailScroller";
@@ -20,6 +20,8 @@ import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/service
 import { getImdbRating } from "@/lib/imdbRatings";
 import { mdblistClient, type MdbExternalRating } from "@/lib/mdblist";
 import { browserAutoplayCandidates } from "@/lib/browserAutoplay";
+import { chooseAutoplaySource, loadAutoplayPreference } from "@/lib/autoplaySelection";
+import { verifyAutoplayCandidates } from "@/lib/autoplayVerify";
 import { sourcePickerScore } from "@/lib/sourceRank";
 import { playbackCompatibilityRevision, playbackPlan, subscribePlaybackCompatibility } from "@/lib/streamCompatibility";
 import { authClient, getPriorityConfig, useApp } from "@/lib/store";
@@ -57,18 +59,35 @@ function DetailsView({ item }: { item: MediaItem }) {
   const [personVisible, setPersonVisible] = useState(false);
   const [sourcePickerVisible, setSourcePickerVisible] = useState(false);
   const [autoplayRequested, setAutoplayRequested] = useState(false);
+  // The chooser polls these while sources are still arriving; refs keep one
+  // selection run alive across the progressive stream updates.
+  const autoplayLive = useRef({ streams, busy, playStream, setToast });
+  autoplayLive.current = { streams, busy, playStream, setToast };
   useEffect(() => {
-    if (!autoplayRequested) return;
-    const source = browserAutoplayCandidates(streams)[0];
-    if (source) {
+    if (!autoplayRequested) return undefined;
+    const controller = new AbortController();
+    // Wait briefly for a debrid source or the addon that last played on this
+    // device, probe the top candidates, then start — instead of taking the
+    // first row that happened to arrive. Bounded to a few seconds.
+    void chooseAutoplaySource({
+      candidates: () => browserAutoplayCandidates(autoplayLive.current.streams),
+      searching: () => Boolean(autoplayLive.current.busy),
+      preference: loadAutoplayPreference(),
+      isDebrid: (stream) => Boolean(parseDebridStream(stream.originalUrl ?? stream.url)),
+      methodOf: (stream) => playbackPlan(stream).method,
+      verify: verifyAutoplayCandidates,
+      signal: controller.signal
+    }).then(({ stream: source }) => {
+      if (controller.signal.aborted) return;
       setAutoplayRequested(false);
-      playStream({ ...source, autoSelect: true }, { forceBrowser: true });
-    } else if (!busy) {
-      setAutoplayRequested(false);
-      setSourcePickerVisible(true);
-      setToast("No browser-playable source is available. Choose a source manually.");
-    }
-  }, [autoplayRequested, streams, busy, playStream, setToast]);
+      if (source) autoplayLive.current.playStream({ ...source, autoSelect: true }, { forceBrowser: true });
+      else {
+        setSourcePickerVisible(true);
+        autoplayLive.current.setToast("No browser-playable source is available. Choose a source manually.");
+      }
+    });
+    return () => controller.abort();
+  }, [autoplayRequested]);
   const [logo, setLogo] = useState<string | null>(null);
   const displayItem = detailsItem ?? item;
   const priorityConfig = useMemo(() => getPriorityConfig(settings), [settings]);
