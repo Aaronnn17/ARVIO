@@ -1104,6 +1104,9 @@ fun LiveTvScreen(
     // Category switches are served from prebuilt buckets. Favorites and
     // recents remain ordered dynamic lists, but they are simple id lookups.
     val filteredChannelsState = remember { mutableStateOf<List<EnrichedChannel>>(emptyList()) }
+    // Manual channel order per category, set in ARVIO Web Settings and synced through the cloud.
+    val manualChannelOrder by remember(viewModel) { viewModel.iptvRepository.observeChannelOrder() }
+        .collectAsStateWithLifecycle(initialValue = emptyMap())
     var filteredChannelsCategoryKey by remember { mutableStateOf<String?>(null) }
     var filteredChannelsScopeKey by remember { mutableStateOf(categoryScope) }
     val recentsFilterKey = if (selectedCategoryId == "recent") recents.value else Unit
@@ -1123,6 +1126,7 @@ fun LiveTvScreen(
         restrictedGroupSet,
         lastKnownPagedTotal,
         lastKnownPlaylistGroupCounts,
+        manualChannelOrder,
     ) {
         val tree = visibleEnrichedState.value.tree
         val categoryCount = when (selectedCategoryId) {
@@ -1217,7 +1221,7 @@ fun LiveTvScreen(
         // outgoing one-row favorites would clamp the restored All position.
         filteredChannelsScopeKey = categoryScope
         filteredChannelsState.value = prepareGuideChannels(
-            result, selectedCategoryId, state.snapshot.sortOrder, hiddenGroupSet, restrictedGroupSet
+            result, selectedCategoryId, state.snapshot.sortOrder, hiddenGroupSet, restrictedGroupSet, manualChannelOrder
         )
     }
     val visibleChannels = visibleEnrichedState.value.all

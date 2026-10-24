@@ -84,6 +84,22 @@ class IptvCloudFieldsTest {
         assertEquals("[\"a\"]", IptvCloudFields.value(snapshot, "i:p1:playlists").toString())
     }
 
+    @Test fun webChannelOrderIsATimestampedFieldThatSurvivesAStalePush() {
+        val order = JSONObject().put("list_1|News", JSONArray().put("list_1:b").put("list_1:a"))
+        val web = payload(listOf("a"), 100)
+        web.getJSONObject("iptvByProfile").getJSONObject("p1").put("channelOrder", order)
+        web.getJSONObject("fieldUpdatedAt").put("i:p1:channelOrder", 300)
+        assertTrue("i:p1:channelOrder" in IptvCloudFields.keys(web))
+        // An older device snapshot without the field must not drop the web's order.
+        val stale = payload(listOf("a"), 100)
+        assertEquals(setOf("i:p1:channelOrder"), IptvCloudFields.merge(stale, web))
+        assertEquals(order.toString(), IptvCloudFields.value(stale, "i:p1:channelOrder").toString())
+        // And a stamped local edit is written with its own timestamp.
+        val prefs = mutablePreferencesOf()
+        IptvCloudFields.stamp(prefs, "p1", JSONObject().put("channelOrder", JSONObject()), 400)
+        assertEquals(400, JSONObject(prefs[stringPreferencesKey("cloud_sync_field_ts")]!!).getInt("i:p1:channelOrder"))
+    }
+
     private fun payload(ids: List<String>, time: Long) = JSONObject()
         .put("iptvByProfile", JSONObject().put("p1", JSONObject().put("playlists", JSONArray(ids))))
         .put("fieldUpdatedAt", JSONObject().put("i:p1:playlists", time))
