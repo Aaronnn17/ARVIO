@@ -54,7 +54,7 @@ const WatchlistScreen = dynamic(() => import("@/components/watchlist/WatchlistSc
 const LiveTvScreen = dynamic(() => import("@/components/livetv/LiveTvScreen").then((m) => m.LiveTvScreen), { ssr: false, loading: () => <ScreenLoading /> });
 const AddonsScreen = dynamic(() => import("@/components/addons/AddonsScreen").then((m) => m.AddonsScreen), { ssr: false, loading: () => <ScreenLoading /> });
 const SettingsScreen = dynamic(() => import("@/components/settings/SettingsScreen").then((m) => m.SettingsScreen), { ssr: false, loading: () => <ScreenLoading /> });
-const DetailsDrawer = dynamic(() => import("@/components/details/DetailsDrawer").then((m) => m.DetailsDrawer), { ssr: false, loading: () => <ScreenLoading /> });
+const DetailsDrawer = dynamic(() => loadDetails().then((m) => m.DetailsDrawer), { ssr: false, loading: () => <ScreenLoading /> });
 const LoginScreen = dynamic(() => import("@/components/login/LoginScreen").then((m) => m.LoginScreen), { ssr: false, loading: () => <ScreenLoading /> });
 const PlayerOverlay = dynamic(() => loadPlayer().then((m) => m.PlayerOverlay), { ssr: false, loading: () => <PlayerLoading /> });
 
@@ -73,13 +73,40 @@ function PaidPlayerWarmup({ active }: { active: boolean }) {
       void import("hls.js").catch(() => undefined);
       void import("mediabunny").catch(() => undefined);
     };
-    if (typeof window.requestIdleCallback === "function") {
-      const id = window.requestIdleCallback(warm, { timeout: 3000 });
-      return () => window.cancelIdleCallback(id);
-    }
-    const timer = window.setTimeout(warm, 800);
-    return () => window.clearTimeout(timer);
+    // Start after the details page had its moment: these modules are large,
+    // and parsing them alongside the details chunk made opening a title slow.
+    let idle = 0;
+    const timer = window.setTimeout(() => {
+      if (typeof window.requestIdleCallback === "function") idle = window.requestIdleCallback(warm, { timeout: 8000 });
+      else warm();
+    }, 2500);
+    return () => {
+      window.clearTimeout(timer);
+      if (idle) window.cancelIdleCallback(idle);
+    };
   }, [active]);
+  return null;
+}
+
+const loadDetails = () => import("@/components/details/DetailsDrawer");
+
+/**
+ * The details page is the most common next step from any screen and its chunk
+ * is small: fetch it once the app is idle so the first title opens instantly.
+ */
+function DetailsPrefetch() {
+  useEffect(() => {
+    let idle = 0;
+    const timer = window.setTimeout(() => {
+      const run = () => { void loadDetails().catch(() => undefined); };
+      if (typeof window.requestIdleCallback === "function") idle = window.requestIdleCallback(run, { timeout: 6000 });
+      else run();
+    }, 3000);
+    return () => {
+      window.clearTimeout(timer);
+      if (idle) window.cancelIdleCallback(idle);
+    };
+  }, []);
   return null;
 }
 
@@ -173,6 +200,7 @@ export function AppShell() {
   return (
     <EntitlementGate>
     <PaidPlayerWarmup active={Boolean(selected) || Boolean(activeStream)} />
+    {view === "app" && <DetailsPrefetch />}
     {view === "profiles" ? <ScreenBoundary screen="profiles"><ProfileSelectionScreen /></ScreenBoundary> :
     <main
       className={`app-shell ${settings.oledBlack ? "oled" : ""} ${settings.spoilerBlur ? "spoiler-blur" : ""}`}

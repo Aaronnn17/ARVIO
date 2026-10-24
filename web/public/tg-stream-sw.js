@@ -128,7 +128,9 @@ async function networkFirstPage(request, url) {
     }
     return response;
   } catch {
-    const cached = (await caches.match(pageKey(url))) || (await caches.match(pageKey(new URL("/", url.origin))));
+    // Only the page's own last good copy: serving "/" for another route would
+    // hydrate the wrong page.
+    const cached = await caches.match(pageKey(url));
     return cached || offlineResponse();
   }
 }
