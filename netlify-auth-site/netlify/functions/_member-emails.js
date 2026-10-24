@@ -11,6 +11,7 @@ const { privacyHash, sendTransactionalEmail } = require("./_backend");
 const { entitlementsStore, readEntitlement, evaluateEntitlement, DAY_MS } = require("./_entitlements");
 
 const JOB_RETENTION_MS = 30 * DAY_MS;
+const MAX_ATTEMPTS = 5;
 const TYPES = ["tips_day7", "yearly_day20", "pass_ends_14", "pass_ends_3", "referral_reward"];
 const WEB_URL = "https://web.arvio.tv/";
 
@@ -265,6 +266,19 @@ async function runDueMemberEmails(event, limit = 50, options = {}) {
     } catch (error) {
       result.failed += 1;
       console.error("member email delivery failed", key, error && error.message);
+      // Back off (2, 4, 8, 16 hours) and give up after MAX_ATTEMPTS, so a
+      // permanently failing address never blocks the jobs behind it.
+      const attempts = Number(job.attempts || 0) + 1;
+      const failedForGood = attempts >= MAX_ATTEMPTS;
+      await store.setJSON(key, {
+        ...job,
+        attempts,
+        status: failedForGood ? "failed" : "queued",
+        sealedEmail: failedForGood ? null : job.sealedEmail,
+        dueAt: new Date(now + 2 ** attempts * 60 * 60 * 1000).toISOString(),
+        lastError: String(error && error.message || "error").slice(0, 120),
+        updatedAt: new Date(now).toISOString()
+      }).catch(() => {});
     }
   }
   return result;

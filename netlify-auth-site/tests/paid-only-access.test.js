@@ -132,6 +132,17 @@ test('linked Ko-fi renewal still refreshes an expired account copy', async () =>
   assert.equal(f.writes(), 1);
 });
 
+test('a linked account follows an on-time renewal or a new pass right away, without grace', async () => {
+  const soon = new Date(Date.now() - 3600000).toISOString();
+  const f = fixture({ status: 'active', source: 'kofi', plan: 'monthly', startedAt: '2026-01-01', expiresAt: soon, linkedFrom: 'billing@example.test' });
+  f.records.set('billing@example.test', { status: 'active', source: 'kofi', plan: 'yearly', tier: '12-month pass', startedAt: '2026-01-01', expiresAt: '2099-01-01' });
+  const result = await f.request();
+  assert.equal(result.body.reason, 'subscription', 'no "payment not received" while the billing record is paid');
+  assert.equal(result.body.plan, 'yearly');
+  assert.equal(result.body.expiresAt, '2099-01-01');
+  assert.equal(f.records.get('account@example.test').linkedFrom, 'billing@example.test');
+});
+
 test('legacy callers cannot queue trial emails, even without mail-provider credentials', async () => {
   assert.deepEqual(await trialEmails.queueTrialEmails({}, 'fixture@example.test', '2099-01-01'), []);
 });

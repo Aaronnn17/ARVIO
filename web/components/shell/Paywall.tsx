@@ -38,6 +38,9 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
   const lastVerifiedAt = useRef(Date.now());
   const lastRefreshAt = useRef(0);
 
+  // Invite links opened while already signed in.
+  useEffect(() => { if (config.paywallEnabled) captureReferralCode(); }, []);
+
   useEffect(() => {
     if (!config.paywallEnabled) return;
     const cached = cachedEntitlement(authClient);
@@ -137,14 +140,22 @@ export function EntitlementGate({ children }: { children: React.ReactNode }) {
     if (!offer || !entitledNow) return;
     const resume = offer.resume;
     setOffer(null);
-    resume?.();
+    // Fetch the stream ticket first (bounded), so the resumed playback's relay
+    // URLs carry it.
+    let done = false;
+    const go = () => { if (!done) { done = true; resume?.(); } };
+    const timer = setTimeout(go, 2500);
+    void refreshStreamTicket(authClient).finally(() => { clearTimeout(timer); go(); });
   }, [entitledNow, offer]);
 
   // Premium stream tickets for the media relay, and invites to claim.
   useEffect(() => {
     if (!config.paywallEnabled || !accountId) return;
-    if (entitledNow) void refreshStreamTicket(authClient);
-    else clearStreamTicket();
+    if (!entitledNow) { clearStreamTicket(); return; }
+    void refreshStreamTicket(authClient);
+    // Tabs and home-screen apps stay open for days: keep the ticket fresh.
+    const timer = window.setInterval(() => { void refreshStreamTicket(authClient); }, 6 * 60 * 60 * 1000);
+    return () => window.clearInterval(timer);
   }, [accountId, entitledNow]);
   useEffect(() => {
     if (!config.paywallEnabled || !accountId || status !== "ready" || !access) return;

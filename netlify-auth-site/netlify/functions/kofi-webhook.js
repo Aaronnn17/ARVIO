@@ -4,8 +4,9 @@
 // secret, then grant/renew web access for the buyer's email.
 //
 // Two ways to pay:
-//   - Monthly membership (type "Subscription"): KOFI_MEMBERSHIP_DAYS (default
-//     31) per payment.
+//   - Monthly membership (type "Subscription"): one calendar month per payment
+//     (in step with Ko-fi's billing date; a late renewal is covered by the
+//     3-day grace). Set KOFI_MEMBERSHIP_MONTHS=0 to use KOFI_MEMBERSHIP_DAYS.
 //   - 12-month pass (type "Shop Order" for one of KOFI_YEARLY_ITEM_CODES, the
 //     Ko-fi Shop item's direct link code(s), comma separated): 366 days per
 //     pass bought.
@@ -17,8 +18,7 @@
 const { json, options, normalizeEmail, sha256 } = require("./_backend");
 const {
   entitlementsStore,
-  readEntitlement,
-  writeEntitlement,
+  updateEntitlement,
   buildPaidRecord
 } = require("./_entitlements");
 const { recordPremiumEvent } = require("./_premium-funnel");
@@ -94,6 +94,18 @@ exports.handler = async (event) => {
   const isSubscription = data.is_subscription_payment === true || type === "subscription";
   const passes = type === "shop order" ? passesInOrder(data) : 0;
   if (!isSubscription && !passes) {
+    if (type === "shop order") {
+      // A shop order we did not recognise. If it was meant to be the pass
+      // (wrong or missing KOFI_YEARLY_ITEM_CODES), keep a record so the buyer
+      // can be granted by hand instead of silently getting nothing.
+      const codes = (Array.isArray(data.shop_items) ? data.shop_items : []).map((item) => String(item && item.direct_link_code || "").slice(0, 40));
+      console.error("kofi-webhook: shop order not matched to the 12-month pass", { codes, configured: yearlyItemCodes().size });
+      try {
+        await entitlementsStore(event).setJSON(`unmatched-shop-orders/${paymentId(data) || Date.now()}.json`, {
+          at: new Date().toISOString(), codes, emailHash: sha256(email), amount: String(data.amount || ""), currency: String(data.currency || "")
+        });
+      } catch (error) { console.error("unmatched shop order not stored", error && error.message); }
+    }
     return json(200, { ok: true, ignored: "not_membership", type });
   }
   const plan = passes ? "yearly" : "monthly";
@@ -102,27 +114,32 @@ exports.handler = async (event) => {
   try {
     const store = entitlementsStore(event);
     const emailHash = sha256(email);
-    const existing = await readEntitlement(store, emailHash);
-
-    // Ko-fi retries a webhook it thinks failed. Paid time is now added on top
-    // of time already paid, so a repeated delivery must not grant twice.
     const id = paymentId(data);
-    const processed = Array.isArray(existing?.payments) ? existing.payments : [];
-    if (id && processed.includes(id)) {
-      return json(200, { ok: true, duplicate: true, expiresAt: existing.expiresAt || null });
-    }
-
-    const days = passes ? PASS_DAYS * passes : Number(process.env.KOFI_MEMBERSHIP_DAYS || 31);
-    const firstPayment = !existing || existing.source === "trial" || !existing.startedAt;
-    const record = buildPaidRecord(existing, {
-      source: "kofi",
-      tier: passes ? "12-month pass" : (data.tier_name || (existing && existing.tier) || null),
-      plan,
-      days,
-      event: passes ? "kofi-pass-purchased" : isFirstSub ? "kofi-subscription-started" : "kofi-subscription-renewed"
+    let duplicate = false;
+    let firstPayment = false;
+    const monthsSetting = process.env.KOFI_MEMBERSHIP_MONTHS;
+    const months = passes ? 0 : (monthsSetting === undefined || monthsSetting === "" ? 1 : Math.max(0, Math.floor(Number(monthsSetting) || 0)));
+    const days = passes ? PASS_DAYS * passes : months ? null : Number(process.env.KOFI_MEMBERSHIP_DAYS || 31);
+    // Conditional write: two deliveries of the same event racing each other
+    // cannot both add time, and a concurrent bonus is never overwritten.
+    const { record } = await updateEntitlement(store, emailHash, (existing) => {
+      // Ko-fi retries a webhook it thinks failed. Paid time is added on top of
+      // time already paid, so a repeated delivery must not grant twice.
+      const processed = Array.isArray(existing?.payments) ? existing.payments : [];
+      if (id && processed.includes(id)) { duplicate = true; return null; }
+      firstPayment = !existing || existing.source === "trial" || !existing.startedAt;
+      const next = buildPaidRecord(existing, {
+        source: "kofi",
+        tier: passes ? "12-month pass" : (data.tier_name || (existing && existing.tier) || null),
+        plan,
+        days,
+        months,
+        event: passes ? "kofi-pass-purchased" : isFirstSub ? "kofi-subscription-started" : "kofi-subscription-renewed"
+      });
+      if (id) next.payments = [...processed, id].slice(-MAX_REMEMBERED_PAYMENTS);
+      return next;
     });
-    if (id) record.payments = [...processed, id].slice(-MAX_REMEMBERED_PAYMENTS);
-    await writeEntitlement(store, emailHash, record);
+    if (duplicate) return json(200, { ok: true, duplicate: true, expiresAt: record?.expiresAt || null });
 
     await recordPremiumEvent(event, {
       email,
@@ -133,7 +150,7 @@ exports.handler = async (event) => {
     // Side effects that must never fail the payment itself.
     await queueForPayment(event, { email, emailHash, plan, firstPayment: firstPayment || isFirstSub, record })
       .catch((error) => console.error("member emails not queued", error && error.message));
-    await rewardReferralIfDue(event, { emailHash })
+    await rewardReferralIfDue(event, { emailHash, payerHash: emailHash })
       .catch((error) => console.error("referral reward failed", error && error.message));
 
     return json(200, { ok: true, entitled: true, plan, expiresAt: record.expiresAt });

@@ -47,12 +47,52 @@ async function writeEntitlement(store, emailHash, record) {
   return record;
 }
 
+// Read with the blob's etag, for writes that must not overwrite a concurrent
+// change (two deliveries of the same Ko-fi event, a renewal racing a bonus).
+async function readEntitlementVersioned(store, emailHash) {
+  const key = entitlementKey(emailHash);
+  let result;
+  try {
+    result = await store.getWithMetadata(key, { type: "json", consistency: "strong" });
+  } catch (error) {
+    if (String(error?.message || "").includes("uncachedEdgeURL")) result = await store.getWithMetadata(key, { type: "json" });
+    else if (error?.status === 404 || error?.name === "BlobNotFoundError") result = null;
+    else throw error;
+  }
+  return { record: result?.data ?? null, etag: result?.etag ?? null };
+}
+
+// Write only if the record is still the one read; false when it changed.
+async function writeEntitlementIfUnchanged(store, emailHash, record, etag, existed = Boolean(etag)) {
+  // An existing blob read without an etag (older stores) is written as before.
+  const condition = etag ? { onlyIfMatch: etag } : existed ? {} : { onlyIfNew: true };
+  const result = await store.setJSON(entitlementKey(emailHash), record, condition);
+  return result?.modified !== false;
+}
+
+// Read-modify-write with a few retries on concurrent changes.
+async function updateEntitlement(store, emailHash, change, attempts = 4) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const { record, etag } = await readEntitlementVersioned(store, emailHash);
+    const next = await change(record);
+    if (!next) return { record, changed: false };
+    if (await writeEntitlementIfUnchanged(store, emailHash, next, etag, Boolean(record))) return { record: next, changed: true };
+  }
+  throw new Error("Entitlement changed concurrently; please retry");
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // A renewal that arrives a little late (PayPal retries, bank holidays) must not
 // lock a paying member out. Access continues for this many days after the paid
 // end; the app shows a "payment didn't come through" banner meanwhile. Grace is
 // applied when reading, so it never adds paid time and never accumulates.
+// Grace exists for a monthly Ko-fi membership whose renewal is late. A
+// 12-month pass, a referral bonus or a manual grant simply ends.
+function graceApplies(record) {
+  return Boolean(record) && record.source === "kofi" && record.plan !== "yearly" && !/12-month/i.test(String(record.tier || ""));
+}
+
 function graceDays() {
   const value = Number(process.env.PREMIUM_GRACE_DAYS ?? 3);
   return Number.isFinite(value) ? Math.max(0, Math.min(14, value)) : 3;
@@ -72,7 +112,7 @@ function evaluateEntitlement(record, now = Date.now()) {
   const historicalTrial = record.source === "trial";
   const activeRecord = !historicalTrial && record.status === "active";
   const paid = activeRecord && (expiresAt === null || expiresAt > now);
-  const graceEnds = activeRecord && Number.isFinite(expiresAt) && expiresAt !== null ? expiresAt + graceDays() * DAY_MS : null;
+  const graceEnds = activeRecord && graceApplies(record) && Number.isFinite(expiresAt) && expiresAt !== null ? expiresAt + graceDays() * DAY_MS : null;
   const inGrace = !paid && graceEnds !== null && graceEnds > now;
   const entitled = paid || inGrace;
   return {
@@ -103,15 +143,26 @@ function paidTimeBase(existing, now) {
   return Number.isFinite(end) && end > now ? end : now;
 }
 
-// Grant/renew paid access for `days` (or lifetime when days is null), added on
-// top of any paid time still ahead. Merges onto any existing record so history
-// (startedAt, linkedFrom, processed payments) is kept.
-function buildPaidRecord(existing, { source, tier, days, event, plan, now = Date.now() }) {
+function addMonths(timestamp, months) {
+  const date = new Date(timestamp);
+  const day = date.getUTCDate();
+  date.setUTCMonth(date.getUTCMonth() + months);
+  // 31 January + 1 month is the last day of February, not 3 March.
+  if (date.getUTCDate() < day) date.setUTCDate(0);
+  return date.getTime();
+}
+
+// Grant/renew paid access for `months` (calendar months, so a monthly
+// membership stays in step with Ko-fi's billing date) or `days` (or lifetime
+// when both are null), added on top of any paid time still ahead. Merges onto
+// any existing record so history (startedAt, linkedFrom, payments) is kept.
+function buildPaidRecord(existing, { source, tier, days, months, event, plan, now = Date.now() }) {
   const nowDate = new Date(now);
   const lifetime = existing && existing.status === "active" && existing.source !== "trial" && existing.expiresAt === null;
-  const expiresAt = days == null || lifetime
+  const base = paidTimeBase(existing, now);
+  const expiresAt = lifetime || (days == null && !months)
     ? null
-    : new Date(paidTimeBase(existing, now) + days * DAY_MS).toISOString();
+    : new Date(months ? addMonths(base, months) : base + days * DAY_MS).toISOString();
   return {
     ...(existing || {}),
     status: "active",
@@ -129,6 +180,11 @@ function buildPaidRecord(existing, { source, tier, days, event, plan, now = Date
 module.exports = {
   DAY_MS,
   graceDays,
+  graceApplies,
+  addMonths,
+  readEntitlementVersioned,
+  writeEntitlementIfUnchanged,
+  updateEntitlement,
   paidTimeBase,
   TRIAL_MS,
   TRIAL_DAYS,

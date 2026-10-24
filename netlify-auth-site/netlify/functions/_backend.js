@@ -2309,13 +2309,17 @@ async function deletePremiumDataForAccount(event, email) {
   }
   const trialEmailJobs = await deleteBlobPrefix(trialEmailStore, `jobs/${accountKey}/`);
   const emailHash = sha256(normalizedEmail);
+  const entitlementRecord = await entitlementStore.get(`email/${emailHash}.json`, { type: "json" }).catch(() => null);
+  const linkedEmail = normalizeEmail(entitlementRecord && entitlementRecord.linkedFrom);
   const entitlementKey = `email/${emailHash}.json`;
   const entitlementDeleted = await entitlementStore.delete(entitlementKey).then(() => 1).catch(() => 0);
   // Member emails, invite codes and exit-survey answers (see _member-emails.js,
   // _referrals.js and premium-exit-survey.js; keys are derived the same way).
   const memberEmailStore = getStore("premium-member-emails");
   const memberKey = privacyHash("premium-member-email", normalizedEmail);
-  const memberEmailJobs = await deleteBlobPrefix(memberEmailStore, `jobs/${memberKey}/`);
+  let memberEmailJobs = await deleteBlobPrefix(memberEmailStore, `jobs/${memberKey}/`);
+  // Pass reminders for a linked account are queued under its billing email.
+  if (linkedEmail && linkedEmail !== normalizedEmail) memberEmailJobs += await deleteBlobPrefix(memberEmailStore, `jobs/${privacyHash("premium-member-email", linkedEmail)}/`);
   await memberEmailStore.delete(`optout/${memberKey}.json`).catch(() => {});
   const referralStore = getStore("premium-referrals");
   const owner = await referralStore.get(`owner/${emailHash}.json`, { type: "json" }).catch(() => null);

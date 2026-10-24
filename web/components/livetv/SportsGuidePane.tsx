@@ -1,4 +1,5 @@
 "use client";
+import { premiumAllows } from "@/lib/premiumGate";
 import { useTranslation } from "@/lib/i18n";
 
 
@@ -188,7 +189,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
         }}><span className="tv-source-logo-fallback"><ChannelLogo channel={ch} size={28} /></span><span><strong>{ch.name}</strong><small>{providerNames[ch.id.split(":")[0]] || ch.group}{possibleChannels.some(candidate => candidate.id === ch.id) ? translateUi(" · Possible broadcast") : translateUi(" · Guide match")}</small></span>{ch.qualityLabel && <em>{ch.qualityLabel}</em>}{ch.language && <em>{ch.language.toUpperCase()}</em>}<ChevronRight className="tv-source-arrow" size={22} /><Play className="tv-source-play" size={22} /></button>} />}
       {selected?.addonSources?.map(source => <AddonSourceRow key={`${selected.id}:${source.key}`} event={source} addons={addons} canPlay={isOnAir(selected, now) && (source.startsAt === undefined || source.startsAt <= now)} onPlay={stream => {
         if (!addons.some(a => a.enabled !== false && a.manifestUrl === source.installation)) return;
-        if (stream.external) window.open(stream.url, "_blank", "noopener,noreferrer");
+        if (stream.external) { if (premiumAllows("external")) window.open(stream.url, "_blank", "noopener,noreferrer"); }
         else onPlay({ id: `sports-addon:${source.addonId}:${source.type}:${source.eventId}`, name: source.title, group: source.addonName, streamUrl: stream.url, requestHeaders: stream.headers });
         close();
       }} />)}

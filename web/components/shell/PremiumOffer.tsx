@@ -105,7 +105,7 @@ export function PremiumOffer({ intent, state, status, account, onClose, onRetry,
     {status === "loading" && !state ? <div className="premium-offer-checking" role="status">
       <Loader2 size={28} className="paywall-spinner" />
       <p>{translateUi("Checking your membership…")}</p>
-    </div> : status === "error" && !state?.entitled ? <div role="alert">
+    </div> : status === "error" ? <div role="alert">
       <h2 id={`${id}-title`}>{translateUi("We could not check your membership")}</h2>
       <p>{translateUi("Your payment status has not changed. Please retry before subscribing again.")}</p>
       <button type="button" className="paywall-primary" onClick={onRetry}><RefreshCw size={16} /> {translateUi("Check access again")}</button>

@@ -76,15 +76,19 @@ exports.handler = async (event) => {
 
     // Renewal sync for linked Ko-fi emails. The Ko-fi webhook renews the record
     // under the KO-FI email; an account that linked a different email holds a
-    // COPY with the old expiry. When that copy lapses, chase linkedFrom — if the
-    // source subscription is still active, refresh the copy in place so
-    // mismatched-email subscribers never have to re-link after each renewal.
+    // COPY. On every read, take the billing record when it reaches further or
+    // its plan changed (a renewal, a 12-month pass, a referral bonus), so a
+    // linked member never sees "payment not received" after paying on time.
     let state = evaluateEntitlement(record);
-    if (!state.entitled && record && record.linkedFrom) {
+    let payerHash = emailHash;
+    if (record && record.linkedFrom) {
       const sourceEmail = normalizeEmail(record.linkedFrom);
       if (sourceEmail && sourceEmail !== email) {
-        const source = await readEntitlement(store, sha256(sourceEmail));
-        if (evaluateEntitlement(source).entitled) {
+        payerHash = sha256(sourceEmail);
+        const source = await readEntitlement(store, payerHash);
+        const sourceState = evaluateEntitlement(source);
+        const end = (value) => (value && value.expiresAt === null ? Infinity : Date.parse(value?.expiresAt || "") || 0);
+        if (sourceState.entitled && (!state.entitled || end(source) > end(record) || (source.plan || null) !== (record.plan || null))) {
           record = {
             ...source,
             linkedFrom: sourceEmail,
@@ -97,16 +101,23 @@ exports.handler = async (event) => {
       }
     }
 
-    // An invite is rewarded on the invited account's first payment. The Ko-fi
-    // webhook does this when the Ko-fi email is the account email; a payment
-    // made with a different, linked Ko-fi email is caught here instead.
+    // Invites are rewarded once the invited account has been paying for 7
+    // days (past the refund window); a paying member opening ARVIO Web is the
+    // moment to check. Bonuses land on the billing record.
     if (state.entitled && state.reason === "subscription" && record && record.source !== "referral") {
-      const reward = await rewardReferralIfDue(event, { emailHash }).catch((error) => {
+      const reward = await rewardReferralIfDue(event, { emailHash, payerHash }).catch((error) => {
         console.error("referral reward check failed", error && error.message);
         return null;
       });
       if (reward && reward.rewarded) {
         record = await readEntitlement(store, emailHash);
+        if (record && record.linkedFrom) {
+          const source = await readEntitlement(store, payerHash);
+          if (source) {
+            record = { ...source, linkedFrom: record.linkedFrom, trialUsed: record.trialUsed === true, updatedAt: new Date().toISOString() };
+            await writeEntitlement(store, emailHash, record);
+          }
+        }
         state = evaluateEntitlement(record);
       }
     }

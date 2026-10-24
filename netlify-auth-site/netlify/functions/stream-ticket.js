@@ -3,13 +3,15 @@
 // ARVIO Web attaches the ticket to the resolver worker's /media URLs. When the
 // worker has the same STREAM_TICKET_SECRET, it relays video only for valid,
 // unexpired tickets, so the relay serves paying members and nobody else.
-// Format: v1.<expiry, unix seconds>.<account tag>.<HMAC-SHA256, base64url>
+// Format: v1.<expiry, unix seconds>.<account tag>.<HMAC-SHA256, base64url>, valid 14 days.
 // The account tag is a short keyed hash for logs; it reveals no address.
 const crypto = require("crypto");
 const { json, options, resolveIdentity, normalizeEmail, sha256, privacyHash } = require("./_backend");
 const { entitlementsStore, readEntitlement, evaluateEntitlement } = require("./_entitlements");
 
-const TICKET_TTL_SECONDS = 12 * 60 * 60;
+// Long enough for a paused download or a tab left open for days; refreshed by
+// the web app well before it runs out.
+const TICKET_TTL_SECONDS = 14 * 24 * 60 * 60;
 
 function ticketSecret() {
   const secret = process.env.STREAM_TICKET_SECRET || "";

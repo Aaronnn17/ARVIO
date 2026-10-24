@@ -7,7 +7,8 @@ import { fetchStreamTicket } from "./entitlement";
 let ticket: { value: string; expiresAt: number; account: string } | null = null;
 let inflight: Promise<void> | null = null;
 
-const REFRESH_MARGIN_MS = 60 * 60 * 1000;
+// Tickets last 14 days; refresh once fewer than 7 remain.
+const REFRESH_MARGIN_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** The current ticket, or "" (the relay then decides). The Premium gate
  *  clears it whenever the account changes or access ends. */

@@ -69,7 +69,7 @@ export function PremiumAccount() {
     {paid && end && <p>{translateUi("Access until")}: {new Date(end).toLocaleString()}</p>}
     <p>{translateUi("Browser access on iPhone, iPad, Windows, Mac and Linux. The Android app and Cloud dashboard remain free.")}</p>
     <div className="premium-account-actions">
-      {yearly && state?.plan !== "yearly" && <MembershipCheckout className="paywall-primary" entry="account_settings_yearly" href={yearly} onEntitled={applied}>
+      {yearly && state?.plan !== "yearly" && <MembershipCheckout className="paywall-primary" entry="account_settings_yearly" href={yearly} onEntitled={applied} activeWhen={paid ? (next) => next.plan === "yearly" : undefined}>
         {translateUi(paid ? "Switch to the 12-month pass - $20" : "Get the 12-month pass - $20")} <ExternalLink size={15} />
       </MembershipCheckout>}
       {!paid && <MembershipCheckout className={yearly ? "paywall-trial" : "paywall-primary"} entry="account_settings" onEntitled={applied} showEmailHint>

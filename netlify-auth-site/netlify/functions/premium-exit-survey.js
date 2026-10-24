@@ -85,4 +85,19 @@ exports.handler = async (event) => {
   }
 };
 
+// Answers are kept for 24 months; older months are deleted by the worker.
+async function cleanupExitSurvey(event, keepMonths = 24, scanMonths = 12) {
+  const store = surveyStore(event);
+  const now = new Date();
+  let deleted = 0;
+  for (let i = keepMonths; i < keepMonths + scanMonths; i += 1) {
+    const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)).toISOString().slice(0, 7);
+    for (const key of await listKeys(store, `responses/${month}/`)) {
+      await store.delete(key).then(() => { deleted += 1; }, () => {});
+    }
+  }
+  return deleted;
+}
+
+exports.cleanupExitSurvey = cleanupExitSurvey;
 exports._test = { REASONS, cleanDetail };

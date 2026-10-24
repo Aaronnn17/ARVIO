@@ -1830,8 +1830,12 @@ export function AppProvider({
       return;
     }
     // Explore mode: hosted ARVIO Web asks for Premium here (and resumes after
-    // payment). Self-hosted builds never register a gate.
-    if (!premiumAllows("play", () => playStream(stream, options))) return;
+    // payment). Self-hosted builds never register a gate. A source headed for
+    // VLC/Infuse is not resumed automatically: iOS opens an app only from
+    // inside the original tap, so the member presses Play again.
+    const headedExternal = stream.addonId !== "arvio_youtube" && !stream.autoSelect && !options.forceBrowser && !options.forceRemux && !options.forceTranscode
+      && (settingsRef.current.defaultPlayer === "vlc" || settingsRef.current.defaultPlayer === "infuse");
+    if (!premiumAllows("play", headedExternal ? undefined : () => playStream(stream, options))) return;
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     if (!stream.autoSelect) setActiveStream(null);

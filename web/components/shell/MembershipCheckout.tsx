@@ -14,6 +14,9 @@ type MembershipCheckoutProps = {
   onEntitled?: (state: EntitlementState) => void; showEmailHint?: boolean; iconOnly?: boolean;
   /** Ko-fi page to open; defaults to the monthly membership. */
   href?: string;
+  /** For an upgrade by someone already paying (monthly to the 12-month pass):
+   *  when the purchase counts as done. Being entitled alone is not enough. */
+  activeWhen?: (state: EntitlementState) => boolean;
 };
 
 export function MembershipCheckout(props: MembershipCheckoutProps) {
@@ -23,7 +26,9 @@ export function MembershipCheckout(props: MembershipCheckoutProps) {
   return <MembershipCheckoutSession key={auth?.userId ?? "signed-out"} {...props} />;
 }
 
-function MembershipCheckoutSession({ children, className, entry, title, onEntitled, showEmailHint = false, iconOnly = false, href }: MembershipCheckoutProps) {
+function MembershipCheckoutSession({ children, className, entry, title, onEntitled, showEmailHint = false, iconOnly = false, href, activeWhen }: MembershipCheckoutProps) {
+  const done = useRef(activeWhen);
+  done.current = activeWhen;
   const checkoutUrl = href || kofiSubscribeUrl();
   const flow = { flow_version: entry === "feature_preview" ? "paid_only_v1" : entry.startsWith("explore") ? "explore_v1" : "direct_v2" };
   const translateUi = useTranslation();
@@ -74,6 +79,7 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
 
   const activate = (state: EntitlementState) => {
     if (!state.entitled || state.reason !== "subscription" || state.source === "trial") return;
+    if (done.current && !done.current(state)) return;
     setStatus("active"); setWaiting(false);
     applied.current?.(state);
     window.dispatchEvent(new Event(ENTITLEMENT_REFRESH_EVENT));
@@ -87,7 +93,9 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
       check: () => fetchEntitlement(authClient),
       isCurrent: () => authClient.session?.userId === accountId,
       isVisible: () => document.visibilityState === "visible" && document.hasFocus(),
-      onResult: (result, state) => {
+      onResult: (rawResult, state) => {
+        // An upgrade is done only when its condition holds (e.g. plan yearly).
+        const result = rawResult === "active" && state && done.current && !done.current(state) ? "pending" : rawResult;
         setStatus(result);
         if (result !== "checking") void trackPremiumEvent(authClient, "payment_status_checked", { entry, status: result, ...flow });
         if (result === "active" && state) activate(state);

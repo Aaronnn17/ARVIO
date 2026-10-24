@@ -24,7 +24,7 @@ test('the hosted app renders for signed-in accounts and asks for Premium only at
   assert.match(gateBody, /\{children\}/);
   assert.match(gateBody, /setPremiumGate\(/);
   const store = read('lib/store.tsx');
-  assert.match(store, /premiumAllows\("play", \(\) => playStream\(stream, options\)\)/);
+  assert.match(store, /premiumAllows\("play", headedExternal \? undefined : \(\) => playStream\(stream, options\)\)/);
   assert.match(store, /premiumAllows\("live", \(\) => \{ void playChannel\(channel\); \}\)/);
   assert.match(store, /premiumAllows\("live", \(\) => playCatchup\(channel, program\)\)/);
   const details = read('components/details/DetailsDrawer.tsx');
@@ -93,4 +93,31 @@ test("what's new shows the latest entry once", () => {
   assert.equal(new Set(whatsNew.WHATS_NEW.map((e) => e.id)).size, whatsNew.WHATS_NEW.length);
   assert.equal(whatsNew.unseenWhatsNew(null).id, whatsNew.WHATS_NEW[0].id);
   assert.equal(whatsNew.unseenWhatsNew(whatsNew.WHATS_NEW[0].id), null);
+});
+
+test('a hosted build denies playback until the gate is registered', () => {
+  const hosted = load('lib/premiumGate.ts', { './config': { config: { paywallEnabled: true } } });
+  assert.equal(hosted.premiumAllows('play'), false);
+  const selfHosted = load('lib/premiumGate.ts', { './config': { config: { paywallEnabled: false } } });
+  assert.equal(selfHosted.premiumAllows('play'), true);
+});
+
+test('review fixes stay in place: error card, upgrades, external players, tickets on worker playlists', () => {
+  const offer = read('components/shell/PremiumOffer.tsx');
+  assert.match(offer, /status === "error" \? <div role="alert">/, 'a failed check never shows a paying member the buy plans');
+  const account = read('components/shell/PremiumAccount.tsx');
+  assert.match(account, /activeWhen=\{paid \? \(next\) => next\.plan === "yearly" : undefined\}/, 'switching to the pass waits for the pass');
+  const checkout = read('components/shell/MembershipCheckout.tsx');
+  assert.match(checkout, /rawResult === "active" && state && done\.current && !done\.current\(state\) \? "pending"/);
+  const store = read('lib/store.tsx');
+  assert.match(store, /premiumAllows\("play", headedExternal \? undefined : \(\) => playStream\(stream, options\)\)/, 'VLC/Infuse is not opened outside the tap');
+  const proxy = read('app/api/proxy/route.ts');
+  assert.match(proxy, /if \(ticket\) proxied\.searchParams\.set\("t", ticket\)/);
+  assert.match(proxy, /if \(ticket\) params\.set\("t", ticket\)/);
+  const gate = read('components/shell/Paywall.tsx');
+  assert.match(gate, /useEffect\(\(\) => \{ if \(config\.paywallEnabled\) captureReferralCode\(\); \}, \[\]\)/, 'invite links work when already signed in');
+  assert.match(gate, /setInterval\(\(\) => \{ void refreshStreamTicket\(authClient\); \}/, 'tickets are kept fresh');
+  for (const [file, call] of [['components/livetv/SportsGuidePane.tsx', 'premiumAllows("external")'], ['components/settings/DownloadsPanel.tsx', 'premiumAllows("download")']]) {
+    assert.ok(read(file).includes(call), `${file} is gated`);
+  }
 });

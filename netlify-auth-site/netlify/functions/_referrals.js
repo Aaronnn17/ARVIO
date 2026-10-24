@@ -1,19 +1,25 @@
 // "Give a month, get a month". Every account can get an invite code. Someone
-// who signs up through it and makes a first payment earns 31 extra days for
-// both accounts; the inviter can earn at most MAX_REWARDS_PER_YEAR a year.
+// who signs up through it and then starts paying earns 31 extra days for both
+// accounts, once the 7-day refund window has passed; the inviter can earn at
+// most MAX_REWARDS_PER_YEAR a year. Each paying identity (the billing email)
+// rewards at most once, however many accounts link it.
 //
 // Store "premium-referrals":
 //   code/<CODE>.json         { ownerHash, createdAt }
 //   owner/<ownerHash>.json   { code, sealedEmail, rewards: [ISO], joined }
 //   referred/<emailHash>.json { code, ownerHash, claimedAt, rewardedAt? }
+//   rewarded-payer/<payerHash>.json  once per billing email
 // ownerHash / emailHash = sha256(email), the same key as the entitlement
 // record, so a reward can extend the right membership directly.
 const crypto = require("crypto");
 const { connectLambda, getStore } = require("@netlify/blobs");
-const { entitlementsStore, readEntitlement, writeEntitlement, evaluateEntitlement, buildPaidRecord, DAY_MS } = require("./_entitlements");
+const { normalizeEmail, sha256 } = require("./_backend");
+const { entitlementsStore, readEntitlement, updateEntitlement, evaluateEntitlement, buildPaidRecord, DAY_MS } = require("./_entitlements");
 const { queueMemberEmail, _test: memberEmailInternals } = require("./_member-emails");
 
 const REWARD_DAYS = 31;
+// Matches the refund promise: a payment refunded within 7 days earns nothing.
+const REWARD_DELAY_MS = 7 * DAY_MS;
 const MAX_REWARDS_PER_YEAR = 6;
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_PATTERN = /^[A-HJ-NP-Z2-9]{8}$/;
@@ -37,6 +43,16 @@ function inviteLink(code) {
   return `https://web.arvio.tv/?ref=${code}`;
 }
 
+async function getVersioned(store, key) {
+  try {
+    return await store.getWithMetadata(key, { type: "json", consistency: "strong" });
+  } catch (error) {
+    if (String(error?.message || "").includes("uncachedEdgeURL")) return store.getWithMetadata(key, { type: "json" });
+    if (error?.status === 404 || error?.name === "BlobNotFoundError") return null;
+    throw error;
+  }
+}
+
 async function getJSON(store, key) {
   try {
     return await store.get(key, { type: "json", consistency: "strong" });
@@ -53,14 +69,16 @@ function rewardsInLastYear(owner, now = Date.now()) {
 
 // The account's invite code, created on first request.
 async function ensureOwner(store, { email, emailHash }) {
-  const existing = await getJSON(store, `owner/${emailHash}.json`);
+  const snapshot = await getVersioned(store, `owner/${emailHash}.json`);
+  const existing = snapshot?.data;
   if (existing?.code) return existing;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = newCode();
     const claimed = await store.setJSON(`code/${code}.json`, { ownerHash: emailHash, createdAt: new Date().toISOString() }, { onlyIfNew: true });
     if (claimed?.modified === false) continue;
-    const owner = { code, sealedEmail: memberEmailInternals.sealEmail(email), rewards: [], joined: 0, createdAt: new Date().toISOString() };
-    const written = await store.setJSON(`owner/${emailHash}.json`, owner, { onlyIfNew: true });
+    // Keep any history (rewards, joined) from a record that lost its code.
+    const owner = { rewards: [], joined: 0, ...(existing || {}), code, sealedEmail: memberEmailInternals.sealEmail(email), createdAt: existing?.createdAt || new Date().toISOString() };
+    const written = await store.setJSON(`owner/${emailHash}.json`, owner, existing ? { onlyIfMatch: snapshot.etag } : { onlyIfNew: true });
     if (written?.modified === false) {
       // Another request created it first; keep theirs.
       await store.delete(`code/${code}.json`).catch(() => {});
@@ -97,32 +115,73 @@ async function claimReferral(event, { emailHash, code }, { entitlements } = {}) 
   if (!codeRecord?.ownerHash) return { ok: false, error: "unknown_code" };
   if (codeRecord.ownerHash === emailHash) return { ok: false, error: "own_code" };
   const record = await readEntitlement(entitlements || entitlementsStore(event), emailHash);
-  if (evaluateEntitlement(record).everPaid) return { ok: false, error: "already_member" };
+  // A linked billing email means the account already pays (or paid) elsewhere.
+  if (evaluateEntitlement(record).everPaid || (record && record.linkedFrom)) return { ok: false, error: "already_member" };
   const written = await store.setJSON(`referred/${emailHash}.json`, { code: normalized, ownerHash: codeRecord.ownerHash, claimedAt: new Date().toISOString() }, { onlyIfNew: true });
   if (written?.modified === false) return { ok: false, error: "already_claimed" };
   return { ok: true };
 }
 
-// Called after a payment for `emailHash` (the payer, or the ARVIO account a
-// payment was linked to). Rewards both accounts once.
-async function rewardReferralIfDue(event, { emailHash, now = Date.now() }, { entitlements } = {}) {
+// The record a bonus belongs on: the billing record when the account pays with
+// a linked Ko-fi email (copies are refreshed from it), otherwise its own.
+async function bonusTarget(entitlementStore, accountHash) {
+  const record = await readEntitlement(entitlementStore, accountHash);
+  const linked = normalizeEmail(record && record.linkedFrom);
+  return linked ? sha256(linked) : accountHash;
+}
+
+function addBonus(store, hash, event, now) {
+  return updateEntitlement(store, hash, (existing) => buildPaidRecord(existing, {
+    // A legacy trial record is not paid access; the bonus must be visible.
+    source: existing && existing.source && existing.source !== "trial" ? existing.source : "referral",
+    days: REWARD_DAYS,
+    event,
+    now
+  }));
+}
+
+// Checked after payments and when a paying account opens ARVIO Web.
+// `emailHash` is the invited ARVIO account; `payerHash` the billing email
+// that pays for it (the same unless a Ko-fi email is linked). Rewards both
+// accounts once, when the payer started paying after the invite and has
+// stayed past the refund window.
+async function rewardReferralIfDue(event, { emailHash, payerHash = emailHash, now = Date.now() }, { entitlements } = {}) {
   const store = referralStore(event);
-  const snapshot = await store.getWithMetadata(`referred/${emailHash}.json`, { type: "json", consistency: "strong" }).catch(() => null);
+  const snapshot = await getVersioned(store, `referred/${emailHash}.json`);
   const referred = snapshot?.data;
   if (!referred || referred.rewardedAt) return { rewarded: false };
-  const marked = await store.setJSON(`referred/${emailHash}.json`, { ...referred, rewardedAt: new Date(now).toISOString() }, { onlyIfMatch: snapshot.etag });
-  if (marked?.modified === false) return { rewarded: false };
 
   const entitlementStore = entitlements || entitlementsStore(event);
-  const friend = await readEntitlement(entitlementStore, emailHash);
-  await writeEntitlement(entitlementStore, emailHash, buildPaidRecord(friend, { source: friend?.source || "referral", days: REWARD_DAYS, event: "referral-bonus-invited", now }));
+  const payer = await readEntitlement(entitlementStore, payerHash);
+  const paying = payer && payer.status === "active" && payer.source !== "trial" && payer.source !== "referral" && evaluateEntitlement(payer, now).entitled;
+  const started = Date.parse(payer?.startedAt || "");
+  if (!paying || !Number.isFinite(started)) return { rewarded: false, reason: "not_paying" };
+  // Paying since before the invite: an existing member, not a new one.
+  if (started < Date.parse(referred.claimedAt) - 60 * 60 * 1000) {
+    await store.setJSON(`referred/${emailHash}.json`, { ...referred, rewardedAt: new Date(now).toISOString(), outcome: "existing_member" }, { onlyIfMatch: snapshot.etag });
+    return { rewarded: false, reason: "existing_member" };
+  }
+  if (now - started < REWARD_DELAY_MS) return { rewarded: false, reason: "too_early" };
 
-  const owner = await getJSON(store, `owner/${referred.ownerHash}.json`);
-  const ownerUpdate = { ...(owner || {}), joined: Number(owner?.joined || 0) + 1 };
+  // One reward per billing identity, however many accounts link it.
+  const payerMark = await store.setJSON(`rewarded-payer/${payerHash}.json`, { at: new Date(now).toISOString(), account: emailHash }, { onlyIfNew: true });
+  if (payerMark?.modified === false) {
+    await store.setJSON(`referred/${emailHash}.json`, { ...referred, rewardedAt: new Date(now).toISOString(), outcome: "payer_already_rewarded" }, { onlyIfMatch: snapshot.etag });
+    return { rewarded: false, reason: "payer_already_rewarded" };
+  }
+  const marked = await store.setJSON(`referred/${emailHash}.json`, { ...referred, rewardedAt: new Date(now).toISOString(), outcome: "rewarded" }, { onlyIfMatch: snapshot.etag });
+  if (marked?.modified === false) return { rewarded: false };
+
+  await addBonus(entitlementStore, payerHash, "referral-bonus-invited", now);
+
+  const ownerSnapshot = await getVersioned(store, `owner/${referred.ownerHash}.json`);
+  const owner = ownerSnapshot?.data;
+  // The inviter deleted their account: nothing to reward or recreate.
+  if (!owner) return { rewarded: true, inviterRewarded: false };
+  const ownerUpdate = { ...owner, joined: Number(owner.joined || 0) + 1 };
   let inviterRewarded = false;
-  if (owner && rewardsInLastYear(owner, now) < MAX_REWARDS_PER_YEAR) {
-    const inviter = await readEntitlement(entitlementStore, referred.ownerHash);
-    await writeEntitlement(entitlementStore, referred.ownerHash, buildPaidRecord(inviter, { source: inviter?.source || "referral", days: REWARD_DAYS, event: "referral-bonus-inviter", now }));
+  if (rewardsInLastYear(owner, now) < MAX_REWARDS_PER_YEAR) {
+    await addBonus(entitlementStore, await bonusTarget(entitlementStore, referred.ownerHash), "referral-bonus-inviter", now);
     ownerUpdate.rewards = [...(owner.rewards || []), new Date(now).toISOString()].slice(-24);
     inviterRewarded = true;
     if (owner.sealedEmail) {
@@ -134,7 +193,7 @@ async function rewardReferralIfDue(event, { emailHash, now = Date.now() }, { ent
       }
     }
   }
-  await store.setJSON(`owner/${referred.ownerHash}.json`, ownerUpdate);
+  await store.setJSON(`owner/${referred.ownerHash}.json`, ownerUpdate, { onlyIfMatch: ownerSnapshot.etag });
   return { rewarded: true, inviterRewarded };
 }
 

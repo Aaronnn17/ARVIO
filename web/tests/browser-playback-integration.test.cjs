@@ -45,7 +45,7 @@ test('live manifest fallbacks preserve add-on authentication and referer headers
     let forwarded;
     const build = extracted('components/player/PlayerOverlay.tsx', node =>
       ts.isFunctionDeclaration(node) && node.name?.text === name ? node : undefined, {
-        URL, liveTvProxyHeaders: () => ({ Accept: '*/*', 'User-Agent': 'default' }),
+        URL, currentStreamTicket: () => '', liveTvProxyHeaders: () => ({ Accept: '*/*', 'User-Agent': 'default' }),
         proxiedUrl: (url, headers) => { forwarded = headers; return `https://app.example/api/proxy?url=${encodeURIComponent(url)}`; }
       });
     const result = new URL(build('https://media.example/live.m3u8', { Authorization: 'test-token', Referer: 'https://addon.example/', 'User-Agent': 'addon-player' }));

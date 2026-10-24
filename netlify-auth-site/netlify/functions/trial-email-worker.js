@@ -1,6 +1,7 @@
 const { json } = require("./_backend");
 const { runDueTrialEmails } = require("./_trial-emails");
 const { runDueMemberEmails } = require("./_member-emails");
+const { cleanupExitSurvey } = require("./premium-exit-survey");
 const { cleanupPremiumFunnel } = require("./_premium-funnel");
 
 exports.handler = async (event) => {
@@ -13,6 +14,7 @@ exports.handler = async (event) => {
       return { error: "member_emails_failed" };
     });
     const funnelEventsDeleted = await cleanupPremiumFunnel(event, 90);
+    await cleanupExitSurvey(event).catch((error) => console.error("exit survey cleanup failed", error && error.message));
     return json(200, { ok: true, ...emailResult, member_emails: memberEmails, funnel_events_deleted: funnelEventsDeleted });
   } catch (error) {
     console.error("trial-email-worker failed", error);
