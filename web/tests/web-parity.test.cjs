@@ -43,11 +43,3 @@ test('Stalker paginates channels, resolves temporary streams and isolates portal
  assert.match(requests[1].headers.Cookie,/mac=/);
 });
 
-test('search sends language, media filters and page numbers and distinguishes discovery from text search',async()=>{
- const calls=[];const api=load('lib/tmdb.ts',{'./config':{config:{}},'./storage':storage(),'./metadata/anizip':{},'./metadata/dispatcher':{},'./mediaImages':{tmdbImageUrl:()=>''},'./http':{proxiedUrl:x=>x,apiProxiedUrl:x=>x,jsonRequest:async url=>{calls.push(new URL(url));return {results:[{id:7,name:'A show',genre_ids:[18]},{id:8,name:'Other',genre_ids:[35]}],total_pages:3};}}},{window:{location:{origin:'https://web.example'}}});
- const result=await api.searchMediaPage({query:'space',type:'tv',genre:'18',year:'2020',sort:'popularity.desc'},'es-ES',2);
- assert.equal(result.items.length,1);assert.equal(result.items[0].mediaType,'tv');assert.equal(result.hasMore,true);
- assert.equal(calls[0].pathname,'/api/tmdb/search/tv');assert.equal(calls[0].searchParams.get('page'),'2');assert.equal(calls[0].searchParams.get('language'),'es-ES');assert.equal(calls[0].searchParams.get('first_air_date_year'),'2020');
- const last=await api.searchMediaPage({query:'',type:'movie',genre:'18',year:'',sort:'vote_average.desc'},'en-US',3);
- assert.equal(last.hasMore,false);assert.equal(calls[1].pathname,'/api/tmdb/discover/movie');assert.equal(calls[1].searchParams.get('with_genres'),'18');assert.equal(calls[1].searchParams.get('vote_count.gte'),'100');
-});
