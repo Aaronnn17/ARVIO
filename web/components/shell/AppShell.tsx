@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
 import { kidsLevelOf } from "@/lib/kids";
 import { config } from "@/lib/config";
+import { ACCENTS } from "@/lib/accents";
 import { AddonsScreen } from "@/components/addons/AddonsScreen";
 import { DetailsDrawer } from "@/components/details/DetailsDrawer";
 import { HomeScreen } from "@/components/home/HomeScreen";
@@ -23,14 +24,6 @@ import { Toast } from "./Toast";
 import { TopNav } from "./TopNav";
 import { PremiumUsage } from "./PremiumUsage";
 import { PartnerLinkHandler } from "./PartnerLinkHandler";
-
-const ACCENTS: Record<string, string> = {
-  arctic: "#ededed",
-  gold: "#ffcd3c",
-  green: "#00d588",
-  blue: "#3b82f6",
-  purple: "#8b5cf6"
-};
 
 function PaidPlayerWarmup() {
   useEffect(() => {

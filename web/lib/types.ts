@@ -477,6 +477,11 @@ export interface AppSettings {
   trailerSound: boolean;
   trailerDelaySeconds: number;
   trailerInCards: boolean;
+  /** Android/TV: highest quality and largest file Auto-Play may pick. Undefined = keep the app's value. */
+  autoPlayMaxQuality?: "Unlimited" | "720p" | "1080p" | "4K";
+  autoPlayMaxSizeGb?: number;
+  /** Android/TV: search sources from all integrations at once or one after another. */
+  streamSearchMode: "parallel" | "sequential";
   volumeBoostDb: number;
   includeSpecials: boolean;
   qualityFilterPreset: "off" | "1080p-plus" | "1080p-only" | "720p-plus" | "custom";
@@ -496,11 +501,23 @@ export interface AppSettings {
   subtitleStylized: boolean;
   filterSubtitlesByLanguage: boolean;
   removeHearingImpaired: boolean;
+  /** Android/TV subtitle font (System, Noto Sans, …). */
+  subtitleFont: string;
+  useForcedSubtitles: boolean;
+  /** Android/TV: wait for subtitles before the video starts. */
+  subtitlePreload: boolean;
   // AI subtitles
   aiSubtitlesEnabled: boolean;
+  /** "off" is a legacy value from older web builds; it reads as Groq. */
   aiSubtitleModel: "off" | "groq" | "gemini";
   aiAutoSelect: boolean;
   aiApiKey: string;
+  /** Android/TV: let AI pick the best-synced subtitle from your addons. */
+  aiFindBestMatch: boolean;
+  /** Android/TV: play Dolby Vision releases as HDR10 where the device can't decode them. */
+  dolbyVisionCompat: boolean;
+  /** Android/TV: only search Telegram when its source row is selected. */
+  telegramSearchOnClickOnly: boolean;
   // Playback target: "browser" plays in the built-in player; "vlc"/"infuse"
   // hand the top source straight to that external player on Play (Trakt still
   // syncs via the return-to-app prompt).
@@ -511,6 +528,13 @@ export interface AppSettings {
   oledBlack: boolean;
   clockFormat: "12h" | "24h";
   showBudget: boolean;
+  /** Android/TV home layout. Undefined = keep the app's value. */
+  netflixHomeStyle?: boolean;
+  watchlistOnHome?: boolean;
+  /** Android/TV guide rows: 0 = automatic, 6–10. Undefined = keep the app's value. */
+  guideRowCount?: number;
+  showEpisodeRatings: boolean;
+  animeEpisodeStructuring: "broadcast" | "standard";
   /** Settings > IPTV "Favorite channels on Home" (Android `iptvFavoritesOnHome`). */
   iptvFavoritesOnHome: boolean;
   smoothScrolling: boolean;

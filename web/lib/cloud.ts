@@ -256,8 +256,38 @@ function androidSubtitleSize(size: number | string | undefined) {
   if (typeof size === "string") return size;
   if (!Number.isFinite(size)) return "Medium";
   if (Number(size) <= 85) return "Small";
-  if (Number(size) >= 130) return "Large";
+  if (Number(size) >= 160) return "Extra Large";
+  if (Number(size) >= 125) return "Large";
   return "Medium";
+}
+
+// Android stores the AI model as its enum name. Older web builds wrote
+// "groq"/"gemini"/"off", which Android does not understand.
+export function androidAiModel(value: AppSettings["aiSubtitleModel"]) {
+  return value === "gemini" ? "GEMINI_FLASH_25" : "GROQ_LLAMA_70B";
+}
+
+export function webAiModel(value: unknown): AppSettings["aiSubtitleModel"] {
+  return String(value ?? "").toLowerCase().includes("gemini") ? "gemini" : "groq";
+}
+
+// Accent colours: the web ids map onto Android's eight named colours.
+const ACCENT_TO_ANDROID: Record<string, string> = {
+  arctic: "White", red: "Red", orange: "Orange", gold: "Yellow", green: "Green", blue: "Blue", indigo: "Indigo", purple: "Violet"
+};
+
+export function androidAccent(value: string) {
+  return ACCENT_TO_ANDROID[value] ?? (Object.values(ACCENT_TO_ANDROID).includes(value) ? value : "White");
+}
+
+export function webAccent(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (raw in ACCENT_TO_ANDROID) return raw;
+  const lower = raw.toLowerCase();
+  if (lower === "violet" || lower === "purple") return "purple";
+  if (lower === "yellow" || lower === "gold") return "gold";
+  const match = Object.entries(ACCENT_TO_ANDROID).find(([, name]) => name.toLowerCase() === lower);
+  return match ? match[0] : "arctic";
 }
 
 function webSubtitleSize(size: unknown) {
@@ -355,6 +385,15 @@ function webFrameRateMode(value: unknown): AppSettings["frameRateMatchingMode"] 
   }
 }
 
+const ANDROID_MAX_QUALITY = new Set(["Unlimited", "720p", "1080p", "4K"]);
+function webMaxQuality(value: unknown): AppSettings["autoPlayMaxQuality"] {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (raw === "720p" || raw === "hd") return "720p";
+  if (raw === "1080p" || raw === "fhd" || raw === "fullhd") return "1080p";
+  if (raw === "4k" || raw === "2160p" || raw === "uhd") return "4K";
+  return "Unlimited";
+}
+
 function normalizedDns(value: unknown): AppSettings["dnsProvider"] {
   const raw = String(value ?? "").trim().toLowerCase();
   if (raw.includes("cloudflare")) return "cloudflare";
@@ -416,7 +455,7 @@ function androidProfileSettings(settings: AppSettings) {
     contentLanguage: settings.language || "en-US",
     trailerAutoPlay: settings.trailerAutoPlay,
     trailerSoundEnabled: settings.trailerSound,
-    trailerDelaySeconds: settings.trailerDelaySeconds,
+    trailerDelaySeconds: Math.max(0, Math.min(10, Math.round(Number(settings.trailerDelaySeconds) || 0))),
     trailerInCards: settings.trailerInCards,
     clockFormat: settings.clockFormat,
     showBudget: settings.showBudget,
@@ -434,6 +473,17 @@ function androidProfileSettings(settings: AppSettings) {
     subtitleStylized: settings.subtitleStylized,
     secondarySubtitle: settings.secondarySubtitle || "Off",
     filterSubtitlesByLanguage: settings.filterSubtitlesByLanguage,
+    subtitleFont: settings.subtitleFont || "System",
+    useForcedSubtitles: settings.useForcedSubtitles,
+    showEpisodeRatings: settings.showEpisodeRatings,
+    animeEpisodeStructuring: settings.animeEpisodeStructuring === "standard" ? "standard" : "broadcast",
+    streamSearchMode: settings.streamSearchMode === "sequential" ? "sequential" : "parallel",
+    // Optional on Android: only sent once chosen here, so the app keeps its own value otherwise.
+    ...(settings.netflixHomeStyle !== undefined ? { netflixHomeStyle: settings.netflixHomeStyle } : {}),
+    ...(settings.watchlistOnHome !== undefined ? { watchlistOnHome: settings.watchlistOnHome } : {}),
+    ...(settings.guideRowCount !== undefined ? { guideRowCount: settings.guideRowCount } : {}),
+    ...(settings.autoPlayMaxQuality !== undefined && ANDROID_MAX_QUALITY.has(settings.autoPlayMaxQuality) ? { autoPlayMaxQuality: settings.autoPlayMaxQuality } : {}),
+    ...(settings.autoPlayMaxSizeGb !== undefined ? { autoPlayMaxSizeGb: Math.max(0, Math.min(1024, Math.round(Number(settings.autoPlayMaxSizeGb) || 0))) } : {}),
     homeServerConnectionJson: serializeHomeServerConnectionJson(settings.homeServers),
     torrServerBaseUrl: settings.torrServerBaseUrl || null,
     catalogueRowLayoutModes: {},
@@ -455,7 +505,7 @@ function settingsFromAndroidProfile(value: unknown): Partial<AppSettings> {
   if ("contentLanguage" in state) partial.language = String(state.contentLanguage || "en-US");
   if ("trailerAutoPlay" in state) partial.trailerAutoPlay = Boolean(state.trailerAutoPlay);
   if ("trailerSoundEnabled" in state) partial.trailerSound = Boolean(state.trailerSoundEnabled);
-  if ("trailerDelaySeconds" in state) partial.trailerDelaySeconds = Number(state.trailerDelaySeconds) || 2;
+  if ("trailerDelaySeconds" in state) { const delay = Number(state.trailerDelaySeconds); partial.trailerDelaySeconds = Number.isFinite(delay) ? delay : 1; }
   if ("trailerInCards" in state) partial.trailerInCards = Boolean(state.trailerInCards);
   if ("clockFormat" in state) partial.clockFormat = String(state.clockFormat) === "12h" ? "12h" : "24h";
   if ("showBudget" in state) partial.showBudget = Boolean(state.showBudget);
@@ -477,11 +527,18 @@ function settingsFromAndroidProfile(value: unknown): Partial<AppSettings> {
   if ("subtitleAiEnabled" in state) partial.aiSubtitlesEnabled = Boolean(state.subtitleAiEnabled);
   if ("subtitleAiAutoSelect" in state) partial.aiAutoSelect = Boolean(state.subtitleAiAutoSelect);
   if ("subtitleAiApiKey" in state) partial.aiApiKey = String(state.subtitleAiApiKey || "");
-  if ("subtitleAiModel" in state) {
-    const model = String(state.subtitleAiModel || "").toLowerCase();
-    partial.aiSubtitleModel = model === "gemini" ? "gemini" : model === "off" ? "off" : "groq";
-  }
+  if ("subtitleAiModel" in state) partial.aiSubtitleModel = webAiModel(state.subtitleAiModel);
   if ("subtitleStylized" in state) partial.subtitleStylized = Boolean(state.subtitleStylized);
+  if ("subtitleFont" in state && typeof state.subtitleFont === "string" && state.subtitleFont.trim()) partial.subtitleFont = state.subtitleFont.trim();
+  if ("useForcedSubtitles" in state) partial.useForcedSubtitles = Boolean(state.useForcedSubtitles);
+  if ("showEpisodeRatings" in state) partial.showEpisodeRatings = Boolean(state.showEpisodeRatings);
+  if ("animeEpisodeStructuring" in state) partial.animeEpisodeStructuring = String(state.animeEpisodeStructuring).toLowerCase() === "standard" ? "standard" : "broadcast";
+  if ("streamSearchMode" in state) partial.streamSearchMode = String(state.streamSearchMode).toLowerCase() === "sequential" ? "sequential" : "parallel";
+  if (typeof state.netflixHomeStyle === "boolean") partial.netflixHomeStyle = state.netflixHomeStyle;
+  if (typeof state.watchlistOnHome === "boolean") partial.watchlistOnHome = state.watchlistOnHome;
+  if (state.guideRowCount !== undefined && state.guideRowCount !== null && Number.isFinite(Number(state.guideRowCount))) partial.guideRowCount = Number(state.guideRowCount);
+  if (state.autoPlayMaxQuality !== undefined && state.autoPlayMaxQuality !== null) partial.autoPlayMaxQuality = webMaxQuality(state.autoPlayMaxQuality);
+  if (state.autoPlayMaxSizeGb !== undefined && state.autoPlayMaxSizeGb !== null && Number.isFinite(Number(state.autoPlayMaxSizeGb))) partial.autoPlayMaxSizeGb = Number(state.autoPlayMaxSizeGb);
   if ("secondarySubtitle" in state) partial.secondarySubtitle = String(state.secondarySubtitle || "");
   if ("filterSubtitlesByLanguage" in state) partial.filterSubtitlesByLanguage = Boolean(state.filterSubtitlesByLanguage);
   if ("homeServerConnectionJson" in state && typeof state.homeServerConnectionJson === "string" && state.homeServerConnectionJson.trim()) {
@@ -767,19 +824,19 @@ export async function pullCloudPayload(auth: AuthClient, profileId?: string | nu
   // Android with per-field timestamps), NOT in the legacy `root.settings` blob. Map them so an
   // Android change (accent color, AI subtitles, etc.) is actually visible on web.
   const globalSettings: Partial<AppSettings> = {};
-  if ("accentColor" in root) globalSettings.accentColor = String(root.accentColor ?? "");
+  if ("accentColor" in root) globalSettings.accentColor = webAccent(root.accentColor);
   if ("oledBlackBackground" in root) globalSettings.oledBlack = Boolean(root.oledBlackBackground);
   if ("customUserAgent" in root) globalSettings.customUserAgent = String(root.customUserAgent ?? "");
   if ("skipProfileSelection" in root) globalSettings.skipProfileSelection = Boolean(root.skipProfileSelection);
   if ("subtitleAiEnabled" in root) globalSettings.aiSubtitlesEnabled = Boolean(root.subtitleAiEnabled);
   if ("subtitleAiAutoSelect" in root) globalSettings.aiAutoSelect = Boolean(root.subtitleAiAutoSelect);
   if ("subtitleAiApiKey" in root) globalSettings.aiApiKey = String(root.subtitleAiApiKey ?? "");
-  // The web's model is a small enum ("off"/"groq"/"gemini") while Android stores a full model id —
-  // only adopt the value when it's already in the web's vocabulary (i.e. the web wrote it last).
-  if ("subtitleAiModel" in root) {
-    const model = String(root.subtitleAiModel ?? "");
-    if (model === "off" || model === "groq" || model === "gemini") globalSettings.aiSubtitleModel = model;
-  }
+  // Android stores GROQ_LLAMA_70B / GEMINI_FLASH_25; older web builds wrote groq/gemini/off.
+  if ("subtitleAiModel" in root) globalSettings.aiSubtitleModel = webAiModel(root.subtitleAiModel);
+  if ("subtitleAiFindBestMatch" in root) globalSettings.aiFindBestMatch = Boolean(root.subtitleAiFindBestMatch);
+  if ("subtitlePreloadEnabled" in root) globalSettings.subtitlePreload = root.subtitlePreloadEnabled !== false;
+  if ("dolbyVisionCompatEnabled" in root) globalSettings.dolbyVisionCompat = root.dolbyVisionCompatEnabled !== false;
+  if ("telegramSearchOnClickOnly" in root) globalSettings.telegramSearchOnClickOnly = root.telegramSearchOnClickOnly !== false;
   if ("subtitleRemoveHearingImpaired" in root) globalSettings.removeHearingImpaired = Boolean(root.subtitleRemoveHearingImpaired);
   return {
     version: typeof root.version === "number" ? root.version : 1,
@@ -937,7 +994,7 @@ export async function saveCloudSettings(
     //    timestamp when the web actually changed the field vs its baseline; otherwise leave the
     //    (freshly read-modify-written) cloud value so a phone's newer change survives.
     const globalFields: Array<[string, unknown, unknown]> = [
-      ["accentColor", settings.accentColor, baseline?.accentColor],
+      ["accentColor", androidAccent(settings.accentColor), baseline ? androidAccent(baseline.accentColor) : undefined],
       ["oledBlackBackground", settings.oledBlack, baseline?.oledBlack],
       ["skipProfileSelection", settings.skipProfileSelection, baseline?.skipProfileSelection],
       ["customUserAgent", settings.customUserAgent, baseline?.customUserAgent],
@@ -945,7 +1002,11 @@ export async function saveCloudSettings(
       ["subtitleAiEnabled", settings.aiSubtitlesEnabled, baseline?.aiSubtitlesEnabled],
       ["subtitleAiAutoSelect", settings.aiAutoSelect, baseline?.aiAutoSelect],
       ["subtitleAiApiKey", settings.aiApiKey, baseline?.aiApiKey],
-      ["subtitleAiModel", settings.aiSubtitleModel, baseline?.aiSubtitleModel],
+      ["subtitleAiModel", androidAiModel(settings.aiSubtitleModel), baseline ? androidAiModel(baseline.aiSubtitleModel) : undefined],
+      ["subtitleAiFindBestMatch", settings.aiFindBestMatch, baseline?.aiFindBestMatch],
+      ["subtitlePreloadEnabled", settings.subtitlePreload, baseline?.subtitlePreload],
+      ["dolbyVisionCompatEnabled", settings.dolbyVisionCompat, baseline?.dolbyVisionCompat],
+      ["telegramSearchOnClickOnly", settings.telegramSearchOnClickOnly, baseline?.telegramSearchOnClickOnly],
       ["subtitleRemoveHearingImpaired", settings.removeHearingImpaired, baseline?.removeHearingImpaired]
     ];
     for (const [rootKey, newVal, baseVal] of globalFields) {
@@ -954,7 +1015,7 @@ export async function saveCloudSettings(
         bumpFieldTs(root, `g:${rootKey}`, changedAt);
       }
     }
-    root.focusBorderColor = settings.accentColor; // mirror of accentColor (not a merge key)
+    root.focusBorderColor = root.accentColor ?? androidAccent(settings.accentColor); // mirror of accentColor (not a merge key)
 
     // ── Root legacy flat mirrors: only OLD Android clients read these (current clients read
     //    profileSettingsById below). Kept for backward compat; not timestamp-managed.
@@ -1020,6 +1081,11 @@ export async function saveCloudSettings(
           merged[field] = newProfile[field];
           bumpFieldTs(root, `p:${profileId}:${field}`, changedAt);
         }
+      }
+      // Android applies trailerAutoPlay / netflixHomeStyle only from payloads that declare the
+      // current home presentation (HomePresentationMigration).
+      if (["trailerAutoPlay", "netflixHomeStyle"].some((field) => field in newProfile && (!baseProfile || !sameFieldValue(newProfile[field], baseProfile[field])))) {
+        merged.homePresentationVersion = Math.max(1, Number(merged.homePresentationVersion) || 0);
       }
       // defaultSubtitle uses Android's own subtitleSettingsUpdatedAt LWW — assert it only when the
       // web actually changed it, bumping that timestamp so Android adopts it.
