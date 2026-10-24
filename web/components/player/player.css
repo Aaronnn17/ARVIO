@@ -175,7 +175,8 @@
 .player-overlay .player-side-panel { overflow-x: hidden; }
 .player-overlay .player-source-list { gap: 6px; }
 .player-overlay .player-source-list .src-group-head { margin: 4px 2px 2px; }
-.player-source-entry { display: grid; gap: 6px; }
+.player-source-entry { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.player-overlay.is-ended .player-top .player-metadata > div { visibility: hidden; }
 
 .player-subtitle-group {
   display: flex;
@@ -231,7 +232,10 @@
 .player-panel-note { margin: 10px 4px 0; color: var(--soft); font-size: 13px; line-height: 1.4; }
 
 /* Settings rows never push the panel sideways on a phone. */
-.player-overlay .player-settings-panel .player-setting-row { flex-wrap: wrap; min-width: 0; }
+.player-overlay .player-settings-panel .player-setting-row,
+.player-overlay .player-settings-panel .player-setting-toggle,
+.player-overlay .player-panel-list > * { flex: 0 0 auto; }
+.player-overlay .player-settings-panel .player-setting-row { flex-wrap: wrap; min-width: 0; row-gap: 8px; }
 .player-overlay .player-settings-panel .player-setting-choices { flex-wrap: wrap; min-width: 0; max-width: 100%; }
 .player-overlay .player-settings-panel { min-width: 0; max-width: 100%; overflow-x: hidden; }
 

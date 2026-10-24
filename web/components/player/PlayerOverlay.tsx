@@ -30,7 +30,7 @@ import {
   X
 } from "lucide-react";
 import { SourceRow } from "@/components/details/SourceRow";
-import { sourceFacts, useCompactSources } from "@/components/details/SourcePicker";
+import { sourceFacts } from "@/components/details/SourcePicker";
 import { loadSeasonEpisodes } from "@/components/details/detailsLoaders";
 import { claimEscape, moveFocusWithin, playerKeyAction, trapTab } from "@/lib/playerKeys";
 import { activeSkipSegment, fetchSkipSegments, isCreditsSegment, skipSegmentLabel, upNextStartTime, type SkipSegment } from "@/lib/playerSkipSegments";
@@ -1975,10 +1975,12 @@ function VideoPlayer({
       return;
     }
     lastTap.current = { at: now, x };
+    // Decide from the state at the tap, before compatibility mouse events land.
+    const wasVisible = showControlsRef.current;
     window.clearTimeout(tapTimer.current);
     tapTimer.current = window.setTimeout(() => {
       lastTap.current = null;
-      if (showControlsRef.current && !videoRef.current?.paused) hideControlsNow();
+      if (wasVisible && !videoRef.current?.paused) hideControlsNow();
       else flashControls();
     }, 230);
   };
@@ -1988,7 +1990,6 @@ function VideoPlayer({
   // ---------- Platform details ----------
   const appleMobile = useMemo(() => isAppleMobile(), []);
   const externalOptions = useMemo(() => externalPlayerOptions(), []);
-  const compactRows = useCompactSources();
   useEffect(() => {
     const video = videoRef.current as (HTMLVideoElement & { autoPictureInPicture?: boolean }) | null;
     if (!video) return;
@@ -2043,9 +2044,9 @@ function VideoPlayer({
   return (
     <section
       ref={containerRef}
-      className={`player-overlay ${dock.docked ? "player-docked" : ""} ${showControls || activePanel ? "controls-on" : "controls-off"} ${pipAvailable || airPlayAvailable ? "has-platform-actions" : ""} ${!playing && booted && !error ? "is-paused" : ""} ${appleMobile ? "is-apple-mobile" : ""}`}
+      className={`player-overlay ${dock.docked ? "player-docked" : ""} ${showControls || activePanel ? "controls-on" : "controls-off"} ${pipAvailable || airPlayAvailable ? "has-platform-actions" : ""} ${!playing && booted && !error ? "is-paused" : ""} ${appleMobile ? "is-apple-mobile" : ""} ${showEndScreen ? "is-ended" : ""}`}
       style={dock.style}
-      onMouseMove={flashControls}
+      onPointerMove={(event) => { if (event.pointerType === "mouse") flashControls(); }}
       role="dialog"
       aria-modal={dock.docked ? undefined : true}
       aria-label={translateUi("Player: {value0}", { value0: title })}
@@ -2215,7 +2216,7 @@ function VideoPlayer({
                       externalOptions={externalOptions}
                       locked={facts.locked}
                       active={isActive}
-                      compact={compactRows}
+                      compact
                       onPlay={() => { onSelectStream(candidate, { forceBrowser: true }); setActivePanel(null); }}
                       onExternal={(option) => openExternalOption(option, candidate)}
                       onCopy={() => void copyUrl(candidate)}
@@ -2327,7 +2328,7 @@ function VideoPlayer({
                         <span className="player-row-icon">{selectedRow ? <Check size={17} /> : ""}</span>
                         <span>
                           <strong>
-                            {choice.release ?? (rank === 0 ? translateUi("Best match") : translateUi("{value0} subtitle", { value0: translateUi(group.language) }))}
+                            {choice.release ?? (rank === 0 ? translateUi("Best match") : translateUi("{value0} · option {value1}", { value0: translateUi(group.language), value1: rank + 1 }))}
                             {choice.hearingImpaired ? <span className="player-sub-flag">{translateUi("SDH")}</span> : null}
                             {choice.forced ? <span className="player-sub-flag">{translateUi("Forced")}</span> : null}
                           </strong>
