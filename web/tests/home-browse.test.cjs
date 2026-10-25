@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { load, storage } = require('./load.cjs');
+const { sourceOf, storeSource } = require('./sources.cjs');
 // Values built inside load()'s VM context carry its own Array/Object
 // prototypes, so compare structure only.
 const same = (actual, expected, message) => assert.deepEqual(JSON.parse(JSON.stringify(actual)), expected, message);
@@ -400,7 +401,7 @@ test('the search screen uses button pickers, keeps focus on Escape and supports 
 // ---- Library --------------------------------------------------------------------
 
 test('Add to Watchlist works without a tracker: ARVIO Cloud (outbox) is the store, trackers mirror', () => {
-  const store = fs.readFileSync(path.join(__dirname, '../lib/store.tsx'), 'utf8');
+  const store = storeSource();
   const toggle = store.slice(store.indexOf('const toggleWatchlist = useCallback'), store.indexOf('const toggleWatched = useCallback'));
   assert.doesNotMatch(toggle, /activeSyncProvider\(\) === "none"/);
   assert.doesNotMatch(toggle, /Connect Trakt, Simkl, or MDBList/);

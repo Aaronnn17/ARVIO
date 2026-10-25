@@ -5,6 +5,7 @@ const path = require('node:path');
 const ts = require('typescript');
 const vm = require('node:vm');
 const crypto = require('node:crypto');
+const { sourceOf, storeSource } = require('./sources.cjs');
 
 // resolveProfilePins is a plain function exported from the dialog module.
 function loadPins() {
@@ -37,7 +38,7 @@ test('parent PIN: kept, changed on request, required for a new kids profile, dro
 });
 
 test('profile actions report a failed cloud save instead of closing as if synced', () => {
-  const store = fs.readFileSync(path.resolve(__dirname, '../lib/store.tsx'), 'utf8');
+  const store = storeSource();
   const screen = fs.readFileSync(path.resolve(__dirname, '../components/profile/ProfileSelectionScreen.tsx'), 'utf8');
   assert.match(store, /catch \(error\) \{ throw new ProfileCloudSaveError\(profile, error\); \}/);
   assert.match(screen, /await createProfile\(/);

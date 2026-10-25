@@ -6,6 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 const { load, storage } = require('./load.cjs');
+const { sourceOf, storeSource } = require('./sources.cjs');
 
 function harness() {
   const disk = storage();
@@ -35,9 +36,9 @@ function harness() {
   const settingsRef = { current: initial };
   let state = initial;
   let sync;
-  const source = fs.readFileSync(path.join(__dirname, '../lib/store.tsx'), 'utf8');
+  const source = storeSource();
   const start = source.indexOf('  const updateSettings = useCallback(');
-  const end = source.indexOf('  const isWatched =', start);
+  const end = source.indexOf('  return { updateSettings };', start);
   const code = ts.transpileModule(source.slice(start,end) + '\nresult = updateSettings;', { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const context = { result: null, useCallback: fn => fn, settingsRef, activeProfileIdRef: {current:'p1'}, authClient: auth,
     queueSettings: outbox.queueSettings, saveStored: disk.saveStored, settingsKey:'settings',

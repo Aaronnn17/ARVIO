@@ -5,11 +5,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 const { load, storage } = require('./load.cjs');
+const { sourceOf, storeSource } = require('./sources.cjs');
 
 // App modules share the browser's Error constructor. Give separately compiled
 // test VM modules the same realm for existing instanceof Error handling.
 const disabledGlobals = { Error, process: { env: { NEXT_PUBLIC_TELEGRAM_ENABLED: 'false' } } };
-const source = relative => fs.readFileSync(path.resolve(__dirname, '..', relative), 'utf8');
+const source = relative => sourceOf(relative);
 
 test('Telegram is enabled by default, including ordinary self-hosting, and disabled only by the build flag', () => {
   for (const env of [{}, { NEXT_PUBLIC_TELEGRAM_ENABLED: 'true' }, { NEXT_PUBLIC_SELF_HOSTED: 'true' }]) {
