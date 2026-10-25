@@ -7,6 +7,7 @@ import { TopNav } from "@/components/shell/TopNav";
 import { SettingsScreen } from "@/components/settings/SettingsScreen";
 import { AppContext, defaultSettings, type AppStore } from "@/lib/store";
 import { iptvPlaylistSignature } from "@/lib/iptv";
+import { stalkerSourceSignature } from "@/lib/stalkerPortals";
 import type { AppSettings, InstalledAddon, IptvChannel } from "@/lib/types";
 
 const names = ["NPO 1", "NPO 2", "NPO 3", "RTL 4", "RTL 5", "SBS 6", "Veronica", "Net5", "Ziggo Sport", "ESPN 1", "BBC One", "Discovery"];
@@ -18,7 +19,8 @@ const channels: IptvChannel[] = Array.from({ length: 55_000 }, (_, i) => ({
   number: String(i + 1), streamUrl: "https://example.invalid/fixture.m3u8", tvgId: `fixture-${i}`,
 }));
 const second: IptvChannel[] = Array.from({ length: 40 }, (_, i) => ({ id: `backup:${i}`, name: `Backup ${i + 1}`, group: i % 2 ? "Sports" : "News", streamUrl: "https://example.invalid/b.m3u8" }));
-const all = [...channels, ...second];
+const portalChannels: IptvChannel[] = Array.from({ length: 30 }, (_, i) => ({ id: `stalker:stalker1:${i}`, name: `Portal ${i + 1}`, group: i % 3 ? "Sport" : "News", streamUrl: "https://example.invalid/p.m3u8" }));
+const all = [...channels, ...second, ...portalChannels];
 
 const addon = (id: string, name: string, resources: InstalledAddon["resources"], catalogs = 0): InstalledAddon => ({
   id, name, version: "1.2.0", manifestUrl: `https://${id}.example/manifest.json`, resources,
@@ -45,6 +47,11 @@ export function SettingsLayoutFixture() {
     lockedIptvGroupIds: ["fixture|Kids"],
     groupOrder: ["fixture|Sports", "fixture|Netherlands"],
     iptvChannelOrder: { "fixture|Netherlands": ["fixture:m3u-8"] },
+    iptvGroupNames: { "fixture|Sports": "Football and more", "stalker1|Sport": "Live sport" },
+    iptvStalkerPortals: [
+      { id: "stalker1", name: "Home portal", portalUrl: "http://portal.example/stalker_portal/c", macAddress: "00:1A:79:12:34:56", enabled: true, importVod: false, androidOnly: "kept" },
+      { id: "stalker2", name: "Holiday portal", portalUrl: "http://other.example:8080/c", macAddress: "00:1A:79:AB:CD:EF", enabled: false },
+    ],
     homeServers: [
       { id: "hs1", type: "jellyfin", name: "Living room Jellyfin", url: "https://jelly.example:8096", token: "t", enabled: true,
         collections: [{ id: "m", name: "Movies", type: "movies", enabled: true }, { id: "s", name: "Shows", type: "tvshows", enabled: true }, { id: "k", name: "Kids", type: "movies", enabled: false }] },
@@ -57,7 +64,7 @@ export function SettingsLayoutFixture() {
   const updateSettings = useCallback((patch: Partial<AppSettings>) => setSettings((old) => ({ ...old, ...patch })), []);
   const snapshot = useMemo(() => ({ allChannels: all, channels: all, grouped: {}, nowNext: {}, identitiesLoaded: true,
     favoriteChannels: settings.favoriteChannelIds, favoriteGroups: [], hiddenGroups: [], groupOrder: [],
-    loadedAt: Date.now(), signature: iptvPlaylistSignature(settings.iptvPlaylists), scopeKey: "local:fixture" }), [settings.iptvPlaylists, settings.favoriteChannelIds]);
+    loadedAt: Date.now(), signature: iptvPlaylistSignature(settings.iptvPlaylists) + stalkerSourceSignature(settings), scopeKey: "local:fixture" }), [settings]);
   const app = {
     settings, setSettings, updateSettings, iptvSnapshot: snapshot, addons,
     setAddonsState: async (next: InstalledAddon[]) => setAddons(next),

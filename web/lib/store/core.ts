@@ -8,6 +8,7 @@ import { saveCloudTrackingSelection } from "../cloud";
 import { reportHomeServerPlayback } from "../homeServerPlayback";
 import { loadHomeServerRows } from "../homeserver";
 import { loadPlaylists } from "../iptv";
+import { migrateLegacyIptvKeys } from "../stalkerPortals";
 import { loadStored, saveStored } from "../storage";
 import type { TraktDeviceCode } from "../trakt";
 import type { TraktActivitySnapshot } from "../traktActivity";
@@ -69,7 +70,7 @@ export function useStoreCore(initialView?: AppView) {
     const stored = loadStored<AppSettings>(settingsKey, defaultSettings);
     return {
       ...defaultSettings,
-      ...stored,
+      ...migrateLegacyIptvKeys(stored),
       iptvPlaylists: loadPlaylists(),
       catalogs: mergeCatalogs(stored.catalogs, stored.hiddenCatalogIds, stored.hiddenAddonCatalogIds)
     };

@@ -19,6 +19,8 @@ export type GuideCallbacks = {
   onCatchup: (channel: IptvChannel, program: IptvProgram) => void;
   onToggleFavorite: (channel: IptvChannel) => void;
   onMenu: (channel: IptvChannel, anchor: HTMLElement) => void;
+  /** The category name to show for a channel (the user's own name when set). */
+  groupName?: (channel: IptvChannel) => string;
 };
 
 /**
@@ -337,7 +339,7 @@ export const ChannelRow = memo(function ChannelRow({ channel, guide, favorite, s
               <span className="livetv-progress"><span style={{ width: `${progress}%` }} /></span>
             </span>
           ) : (
-            <span className="livetv-row-now"><em className="is-muted">{channel.group || translateUi("Live TV")}</em></span>
+            <span className="livetv-row-now"><em className="is-muted">{callbacks.groupName?.(channel) || channel.group || translateUi("Live TV")}</em></span>
           )}
           {next?.title && <small>{formatGuideTime(next.startUtcMillis, clockFormat)} · {next.title}</small>}
         </span>

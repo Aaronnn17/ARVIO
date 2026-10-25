@@ -1,11 +1,27 @@
 import type { IptvChannel } from "./types";
 import { moveIndex } from "./ordering";
+import { channelPlaylistId } from "./stalkerPortals";
 
-export interface PlaylistGroup { key: string; name: string; count: number }
+/**
+ * `name` is the playlist's own category name (what keys are built from);
+ * `label` is what the user sees: their own name for it, or `name`.
+ */
+export interface PlaylistGroup { key: string; name: string; label: string; count: number }
+
+/**
+ * Key part for a channel without a category name. Android's playlistGroupLabel
+ * uses "Ungrouped"; parsers on both sides already turn a missing group-title
+ * into "Uncategorized", so this only applies to genuinely blank names.
+ */
+export const UNGROUPED = "Ungrouped";
+
+export function groupKeyName(group: string | undefined) {
+  return group?.trim() || UNGROUPED;
+}
 
 /** Same `playlistId|group` key the Android app and the web Live TV page use. */
 export function playlistGroupKey(playlistId: string, group: string | undefined) {
-  return `${playlistId}|${group?.trim() || "Uncategorized"}`;
+  return `${playlistId}|${groupKeyName(group)}`;
 }
 
 export function groupNameOf(key: string) {
@@ -13,15 +29,15 @@ export function groupNameOf(key: string) {
   return split < 0 ? key : key.slice(split + 1);
 }
 
-export function playlistGroups(channels: IptvChannel[], playlistId: string, order: string[]): PlaylistGroup[] {
+export function playlistGroups(channels: IptvChannel[], playlistId: string, order: string[], names?: Record<string, string>): PlaylistGroup[] {
   const groups = new Map<string, PlaylistGroup>();
   for (const channel of channels) {
-    if (channel.id.split(":")[0] !== playlistId) continue;
-    const name = channel.group?.trim() || "Uncategorized";
+    if (channelPlaylistId(channel.id) !== playlistId) continue;
+    const name = groupKeyName(channel.group);
     const key = `${playlistId}|${name}`;
     const group = groups.get(key);
     if (group) group.count++;
-    else groups.set(key, { key, name, count: 1 });
+    else groups.set(key, { key, name, label: names?.[key] || name, count: 1 });
   }
   const ranks = new Map(order.map((key, index) => [key, index]));
   return [...groups.values()].sort((a, b) =>
@@ -152,4 +168,44 @@ export function setGroupChannelOrder(map: Record<string, string[]> | undefined, 
 /** Drop the manual channel orders of one playlist (its categories' keys start with `playlistId|`). */
 export function clearPlaylistChannelOrder(map: Record<string, string[]> | undefined, playlistId: string): Record<string, string[]> {
   return Object.fromEntries(Object.entries(map ?? {}).filter(([key]) => !key.startsWith(`${playlistId}|`)));
+}
+
+/* ---------- category display names ---------- */
+
+/** Longest display name a category can be given. */
+export const MAX_GROUP_NAME_LENGTH = 60;
+/** Most renamed categories kept per profile (keeps the synced payload small). */
+export const MAX_GROUP_NAMES = 2000;
+
+/** iptvByProfile.<id>.groupNames → only `playlist|group` keys with a non-empty name. */
+export function normalizeGroupNames(value: unknown): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return result;
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (Object.keys(result).length >= MAX_GROUP_NAMES) break;
+    if (!key.includes("|") || typeof raw !== "string") continue;
+    const name = raw.replace(/\s+/g, " ").trim().slice(0, MAX_GROUP_NAME_LENGTH);
+    if (name && name !== groupNameOf(key)) result[key] = name;
+  }
+  return result;
+}
+
+/** The name to show for a category key. */
+export function groupDisplayName(names: Record<string, string> | undefined, key: string) {
+  return names?.[key] || groupNameOf(key);
+}
+
+/** Rename a category; an empty name, or the playlist's own name, removes the custom name. */
+export function setGroupDisplayName(names: Record<string, string> | undefined, key: string, name: string): Record<string, string> {
+  const next = { ...(names ?? {}) };
+  const cleaned = name.replace(/\s+/g, " ").trim().slice(0, MAX_GROUP_NAME_LENGTH);
+  if (cleaned && cleaned !== groupNameOf(key)) next[key] = cleaned;
+  else delete next[key];
+  return next;
+}
+
+/** Whether a category matches a search: its own name or the name the user gave it. */
+export function groupMatchesQuery(group: Pick<PlaylistGroup, "name" | "label">, needle: string) {
+  const query = needle.trim().toLowerCase();
+  return !query || group.name.toLowerCase().includes(query) || group.label.toLowerCase().includes(query);
 }

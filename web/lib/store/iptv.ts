@@ -4,6 +4,7 @@ import { accessibleChannels, iptvPlaylistSignature, loadIptvChannelIdentities, l
 import { cachedFavoriteChannels, favoriteCopyIsStale, resolveFavoriteChannels, saveFavoriteChannels } from "../favoriteTv";
 import { isCurrentIptvSnapshot } from "../iptvSession";
 import { createIptvRefresher } from "../iptvRefresh";
+import { hasStalkerPortals, liveTvStalkerPortals, stalkerSourceSignature } from "../stalkerPortals";
 import type { AppSettings, IptvChannel, IptvSnapshot } from "../types";
 import { authClient } from "./clients";
 import type { StoreCore } from "./core";
@@ -32,7 +33,7 @@ export function useIptvState(store: StoreCore) {
         const current = settingsRef.current;
         return {
           scope: `${authClient.session?.userId ?? "local"}:${activeProfileIdRef.current ?? "local"}`,
-          signature: iptvPlaylistSignature(current.iptvPlaylists) + (current.iptvStalkerUrl ? JSON.stringify([current.iptvStalkerUrl, current.iptvStalkerMac]) : ""),
+          signature: iptvPlaylistSignature(current.iptvPlaylists) + stalkerSourceSignature(current),
           settings: current
         };
       },
@@ -42,7 +43,7 @@ export function useIptvState(store: StoreCore) {
         currentSettings.favoriteGroupIds,
         currentSettings.hiddenGroupIds,
         currentSettings.groupOrder,
-        { userAgent: currentSettings.customUserAgent, stalkerUrl: currentSettings.iptvStalkerUrl, stalkerMac: currentSettings.iptvStalkerMac }
+        { userAgent: currentSettings.customUserAgent, stalkerPortals: liveTvStalkerPortals(currentSettings) }
       ),
       // Stamp which playlists this snapshot came from so Live TV can reuse it
       // on re-entry instead of rebuilding ~139k channels every visit.
@@ -55,7 +56,7 @@ export function useIptvState(store: StoreCore) {
 
   useEffect(() => {
     const channels = iptvSnapshot.allChannels ?? iptvSnapshot.channels;
-    if (!channels.length || iptvSnapshot.identitiesLoaded || iptvSnapshot.signature !== (iptvPlaylistSignature(settings.iptvPlaylists) + (settings.iptvStalkerUrl ? JSON.stringify([settings.iptvStalkerUrl, settings.iptvStalkerMac]) : ""))) return;
+    if (!channels.length || iptvSnapshot.identitiesLoaded || iptvSnapshot.signature !== (iptvPlaylistSignature(settings.iptvPlaylists) + stalkerSourceSignature(settings))) return;
     let cancelled = false;
     const profileId = activeProfileId;
     void loadIptvChannelIdentities(settings.iptvPlaylists, channels, { userAgent: settings.customUserAgent }).then(enriched => {
@@ -66,12 +67,12 @@ export function useIptvState(store: StoreCore) {
         channels: current.channels.map(channel => byId.get(channel.id) ?? channel) }));
     });
     return () => { cancelled = true; };
-  }, [iptvSnapshot.allChannels, iptvSnapshot.channels, iptvSnapshot.signature, iptvSnapshot.identitiesLoaded, settings.iptvPlaylists, settings.iptvStalkerUrl, settings.iptvStalkerMac, settings.customUserAgent, activeProfileId]);
+  }, [iptvSnapshot.allChannels, iptvSnapshot.channels, iptvSnapshot.signature, iptvSnapshot.identitiesLoaded, settings.iptvPlaylists, settings.iptvStalkerUrl, settings.iptvStalkerMac, settings.iptvStalkerPortals, settings.customUserAgent, activeProfileId]);
 
   // Home "Favorite TV" row (see favoriteTv.ts): from the loaded playlist when Live TV
   // has one, otherwise from the copy the last loaded playlist left behind.
   const iptvScopeKey = `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`;
-  const iptvSourceSignature = iptvPlaylistSignature(settings.iptvPlaylists) + (settings.iptvStalkerUrl ? JSON.stringify([settings.iptvStalkerUrl, settings.iptvStalkerMac]) : "");
+  const iptvSourceSignature = iptvPlaylistSignature(settings.iptvPlaylists) + stalkerSourceSignature(settings);
   const currentIptvChannels = isCurrentIptvSnapshot(iptvSnapshot, iptvScopeKey, iptvSourceSignature) ? iptvSnapshot.allChannels ?? iptvSnapshot.channels : null;
   const favoriteTvChannels = useMemo(() => {
     const favorites = settings.favoriteChannelIds ?? [];
@@ -90,7 +91,7 @@ export function useIptvState(store: StoreCore) {
   useEffect(() => {
     const favorites = settings.favoriteChannelIds ?? [];
     if (view !== "app" || section !== "home" || !settings.iptvFavoritesOnHome || !favorites.length || currentIptvChannels?.length) return;
-    if (!settings.iptvPlaylists.some((playlist) => playlist.enabled && playlist.m3uUrl.trim()) && !settings.iptvStalkerUrl) return;
+    if (!settings.iptvPlaylists.some((playlist) => playlist.enabled && playlist.m3uUrl.trim()) && !hasStalkerPortals(settings)) return;
     const key = `${iptvScopeKey}:${iptvSourceSignature}`;
     if (favoriteTvLoadKey.current === key || !favoriteCopyIsStale(cachedFavoriteChannels(iptvScopeKey, iptvSourceSignature), favorites)) return;
     // Home's own rows go first.
@@ -99,14 +100,14 @@ export function useIptvState(store: StoreCore) {
       void refreshIptv({ quiet: true });
     }, 2500);
     return () => clearTimeout(timer);
-  }, [view, section, currentIptvChannels, iptvScopeKey, iptvSourceSignature, refreshIptv, settings.favoriteChannelIds, settings.iptvFavoritesOnHome, settings.iptvPlaylists, settings.iptvStalkerUrl]);
+  }, [view, section, currentIptvChannels, iptvScopeKey, iptvSourceSignature, refreshIptv, settings.favoriteChannelIds, settings.iptvFavoritesOnHome, settings.iptvPlaylists, settings.iptvStalkerUrl, settings.iptvStalkerPortals]);
 
   const loadIptvGuide = useCallback(async (channels: IptvChannel[]) => {
     if (!channels.length) return;
     const currentSettings = settingsRef.current;
     const profileId = activeProfileIdRef.current;
     const account = authClient.session?.userId;
-    const signature = iptvPlaylistSignature(currentSettings.iptvPlaylists) + (currentSettings.iptvStalkerUrl ? JSON.stringify([currentSettings.iptvStalkerUrl, currentSettings.iptvStalkerMac]) : "");
+    const signature = iptvPlaylistSignature(currentSettings.iptvPlaylists) + stalkerSourceSignature(currentSettings);
     const scopedKey = (id: string) => `${account}:${profileId}:${signature}:${id}`;
     // A guide entry whose "now" programme already ended is stale — refetch it so
     // the rows keep showing what is actually on air.
@@ -122,7 +123,7 @@ export function useIptvState(store: StoreCore) {
     if (guideRetryAfter.current.size > 2000) for (const [key, expiry] of guideRetryAfter.current) if (expiry < Date.now()) guideRetryAfter.current.delete(key);
     try {
       const guide = await loadIptvGuideForChannels(currentSettings.iptvPlaylists, missing);
-      if (activeProfileIdRef.current !== profileId || authClient.session?.userId !== account || iptvPlaylistSignature(settingsRef.current.iptvPlaylists) + (settingsRef.current.iptvStalkerUrl ? JSON.stringify([settingsRef.current.iptvStalkerUrl, settingsRef.current.iptvStalkerMac]) : "") !== signature) return;
+      if (activeProfileIdRef.current !== profileId || authClient.session?.userId !== account || iptvPlaylistSignature(settingsRef.current.iptvPlaylists) + stalkerSourceSignature(settingsRef.current) !== signature) return;
       if (!Object.keys(guide).length) return;
       setIptvSnapshot((current) => ({
         ...current,

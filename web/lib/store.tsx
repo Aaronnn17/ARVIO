@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { LanguageProvider } from "./i18n";
 import { iptvPlaylistSignature } from "./iptv";
 import { isCurrentIptvSnapshot } from "./iptvSession";
+import { stalkerSourceSignature } from "./stalkerPortals";
 import { AppStoreContext, useAppStoreHandle } from "./store/context";
 import { useStoreCore } from "./store/core";
 import { useRefreshData, useRefreshTriggers } from "./store/refresh";
@@ -117,7 +118,7 @@ export function AppProvider({
     addons,
     addonsReady,
     iptvSnapshot: isCurrentIptvSnapshot(iptvSnapshot, `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`,
-      iptvPlaylistSignature(settings.iptvPlaylists) + (settings.iptvStalkerUrl ? JSON.stringify([settings.iptvStalkerUrl, settings.iptvStalkerMac]) : "")) ? iptvSnapshot : emptyIptv,
+      iptvPlaylistSignature(settings.iptvPlaylists) + stalkerSourceSignature(settings)) ? iptvSnapshot : emptyIptv,
     query,
     setQuery,
     results,

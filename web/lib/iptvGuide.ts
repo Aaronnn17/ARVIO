@@ -74,10 +74,14 @@ export function focusTimeForSlot(slot: GuideSlot, windowStart: number): number {
   return Math.max(slot.start, windowStart);
 }
 
-/** Channel search: name, group, guide id and the titles of loaded programmes. */
-export function channelMatchesQuery(channel: IptvChannel, needle: string, guide?: IptvNowNext): boolean {
+/**
+ * Channel search: name, category (the playlist's name and the name the user
+ * gave it), guide id and the titles of loaded programmes.
+ */
+export function channelMatchesQuery(channel: IptvChannel, needle: string, guide?: IptvNowNext, groupName?: string): boolean {
   if (!needle) return true;
   if (channel.name.toLowerCase().includes(needle) || channel.group.toLowerCase().includes(needle)
+    || Boolean(groupName && groupName.toLowerCase().includes(needle))
     || channel.tvgId?.toLowerCase().includes(needle) || channel.number === needle) return true;
   if (!guide) return false;
   return [guide.now, guide.next, guide.later, ...(guide.upcoming ?? [])]

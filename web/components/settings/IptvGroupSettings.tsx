@@ -3,14 +3,16 @@
 // channel sits where inside a category, and the favourites — per playlist,
 // synced to the Live TV page on every ARVIO app.
 
-import { Eye, EyeOff, ListOrdered, Lock, RotateCcw, Search, Star, X } from "lucide-react";
-import { useDeferredValue, useMemo, useState, type ReactNode } from "react";
+import { Check, Eye, EyeOff, ListOrdered, Lock, Pencil, RotateCcw, Search, Star, X } from "lucide-react";
+import { useDeferredValue, useMemo, useRef, useState, type ReactNode } from "react";
+import "./liveTvSettings.css";
 import { useTranslation } from "@/lib/i18n";
 import {
-  MAX_CHANNEL_ORDER_ENTRIES, applyChannelOrder, clearPlaylistChannelOrder, groupNameOf, isFavoriteGroup,
-  minimalChannelOrder, playlistGroupKey, playlistGroups, replacePlaylistGroupOrder, setGroupChannelOrder,
-  setPlaylistGroupsVisible, sortChannelsLikeLiveTv, toggleFavoriteGroup, type PlaylistGroup,
+  MAX_CHANNEL_ORDER_ENTRIES, MAX_GROUP_NAME_LENGTH, UNGROUPED, applyChannelOrder, clearPlaylistChannelOrder, groupDisplayName, groupMatchesQuery,
+  isFavoriteGroup, minimalChannelOrder, playlistGroupKey, playlistGroups, replacePlaylistGroupOrder, setGroupChannelOrder,
+  setGroupDisplayName, setPlaylistGroupsVisible, sortChannelsLikeLiveTv, toggleFavoriteGroup, type PlaylistGroup,
 } from "@/lib/iptvGroups";
+import { channelPlaylistId, stalkerPortalsOf } from "@/lib/stalkerPortals";
 import { toggleFavoriteChannel } from "@/lib/iptvFavorites";
 import { channelIdentityIndex } from "@/lib/iptvSession";
 import { moveIndex, moveWithinSubset } from "@/lib/ordering";
@@ -38,19 +40,21 @@ export function IptvGroupSettings({ channels, settings, updateSettings, notify }
   const deferredChannelQuery = useDeferredValue(channelQuery);
   const deferredFavoriteQuery = useDeferredValue(favoriteQuery);
 
+  // Each Stalker portal is its own "playlist": its categories, order and names are kept apart.
   const playlists = useMemo(() => [
     ...settings.iptvPlaylists.map((playlist) => ({ id: playlist.id, name: playlist.name || playlist.id })),
-    ...(settings.iptvStalkerUrl ? [{ id: "stalker", name: translateUi("Stalker portal") }] : []),
-  ], [settings.iptvPlaylists, settings.iptvStalkerUrl, translateUi]);
+    ...stalkerPortalsOf(settings).map((portal) => ({ id: portal.id, name: portal.name || translateUi("Stalker portal") })),
+  ], [settings.iptvPlaylists, settings.iptvStalkerPortals, settings.iptvStalkerUrl, settings.iptvStalkerMac, translateUi]); // eslint-disable-line react-hooks/exhaustive-deps
   const playlistId = playlists.some((playlist) => playlist.id === selected) ? selected : playlists[0]?.id ?? "";
   const groupOrder = settings.groupOrder ?? [];
   const hiddenGroups = settings.hiddenGroupIds ?? [];
   const lockedGroups = useMemo(() => new Set(settings.lockedIptvGroupIds ?? []), [settings.lockedIptvGroupIds]);
   const favoriteGroups = settings.favoriteGroupIds ?? [];
   const channelOrder = settings.iptvChannelOrder ?? {};
+  const groupNames = settings.iptvGroupNames;
 
-  const groups = useMemo(() => playlistGroups(channels, playlistId, groupOrder), [channels, playlistId, groupOrder]);
-  const playlistChannels = useMemo(() => channels.filter((channel) => channel.id.split(":")[0] === playlistId), [channels, playlistId]);
+  const groups = useMemo(() => playlistGroups(channels, playlistId, groupOrder, groupNames), [channels, playlistId, groupOrder, groupNames]);
+  const playlistChannels = useMemo(() => channels.filter((channel) => channelPlaylistId(channel.id) === playlistId), [channels, playlistId]);
   const channelsByGroup = useMemo(() => {
     const map = new Map<string, IptvChannel[]>();
     for (const channel of playlistChannels) {
@@ -79,16 +83,16 @@ export function IptvGroupSettings({ channels, settings, updateSettings, notify }
       </div>
       {view === "categories" && (
         <CategoriesView groups={groups} groupOrder={groupOrder} hiddenGroups={hiddenGroups} lockedGroups={lockedGroups}
-          favoriteGroups={favoriteGroups} channelOrder={channelOrder} playlistId={playlistId} query={groupQuery} setQuery={setGroupQuery}
+          favoriteGroups={favoriteGroups} channelOrder={channelOrder} groupNames={groupNames} playlistId={playlistId} query={groupQuery} setQuery={setGroupQuery}
           updateSettings={updateSettings} openGroup={openGroup} />
       )}
       {view === "channels" && (
         <ChannelsView groups={groups} activeGroup={activeGroup} setActiveGroup={setFocusGroup} channelsByGroup={channelsByGroup}
-          playlistChannels={playlistChannels} playlistId={playlistId} settings={settings} channelOrder={channelOrder} identity={identity}
+          playlistChannels={playlistChannels} playlistId={playlistId} settings={settings} channelOrder={channelOrder} groupNames={groupNames} identity={identity}
           query={channelQuery} deferredQuery={deferredChannelQuery} setQuery={setChannelQuery} updateSettings={updateSettings} notify={notify} />
       )}
       {view === "favorites" && (
-        <FavoritesView channels={channels} identity={identity} settings={settings} query={favoriteQuery} deferredQuery={deferredFavoriteQuery}
+        <FavoritesView channels={channels} identity={identity} settings={settings} playlists={playlists} query={favoriteQuery} deferredQuery={deferredFavoriteQuery}
           setQuery={setFavoriteQuery} updateSettings={updateSettings} />
       )}
     </section>
@@ -97,13 +101,21 @@ export function IptvGroupSettings({ channels, settings, updateSettings, notify }
 
 /* ---------- categories ---------- */
 
-function CategoriesView({ groups, groupOrder, hiddenGroups, lockedGroups, favoriteGroups, channelOrder, playlistId, query, setQuery, updateSettings, openGroup }: {
+/** A category's name as shown: the user's own name, or the playlist's (a blank one reads "Ungrouped"). */
+function useGroupLabel() {
+  const translateUi = useTranslation();
+  return (group: Pick<PlaylistGroup, "name" | "label">) => group.label !== group.name ? group.label
+    : group.name === UNGROUPED ? translateUi("Ungrouped") : group.name;
+}
+
+function CategoriesView({ groups, groupOrder, hiddenGroups, lockedGroups, favoriteGroups, channelOrder, groupNames, playlistId, query, setQuery, updateSettings, openGroup }: {
   groups: PlaylistGroup[];
   groupOrder: string[];
   hiddenGroups: string[];
   lockedGroups: Set<string>;
   favoriteGroups: string[];
   channelOrder: Record<string, string[]>;
+  groupNames: Record<string, string> | undefined;
   playlistId: string;
   query: string;
   setQuery: (value: string) => void;
@@ -111,8 +123,18 @@ function CategoriesView({ groups, groupOrder, hiddenGroups, lockedGroups, favori
   openGroup: (key: string) => void;
 }) {
   const translateUi = useTranslation();
+  const labelOf = useGroupLabel();
+  const [renaming, setRenaming] = useState<string | null>(null);
+  // Escape closes the field without saving, even if the browser blurs it on the way out.
+  const cancelRename = useRef(false);
   const needle = query.trim().toLowerCase();
-  const shown = needle ? groups.filter((group) => group.name.toLowerCase().includes(needle)) : groups;
+  // Search finds a category by the playlist's name and by the name it was given.
+  const shown = needle ? groups.filter((group) => groupMatchesQuery(group, needle)) : groups;
+  const rename = (group: PlaylistGroup, value: string) => {
+    setRenaming(null);
+    const next = setGroupDisplayName(groupNames, group.key, value);
+    if ((next[group.key] ?? "") !== (groupNames?.[group.key] ?? "")) updateSettings({ iptvGroupNames: next });
+  };
   const hidden = new Set(hiddenGroups);
   const hasLocked = groups.some((group) => lockedGroups.has(group.key));
   const move = (from: number, to: number) => {
@@ -126,7 +148,7 @@ function CategoriesView({ groups, groupOrder, hiddenGroups, lockedGroups, favori
     <div className="st-layout">
       <div className="st-layout-main">
         <p className="st-hint">
-          {translateUi("Drag categories, or use the arrows, to set their order on the Live TV page. Your order replaces the playlist's own order.")}{" "}
+          {translateUi("Drag categories, or use the arrows, to set their order on the Live TV page. Your order replaces the playlist's own order. Use the pencil to give a category your own name.")}{" "}
           <ScopeBadge scope="all" />
         </p>
         <div className="st-toolbar">
@@ -142,7 +164,7 @@ function CategoriesView({ groups, groupOrder, hiddenGroups, lockedGroups, favori
           items={shown}
           label={translateUi("Categories")}
           getKey={(group) => group.key}
-          getLabel={(group) => group.name}
+          getLabel={labelOf}
           onMove={move}
           rowHeight={ROW_HEIGHT}
           viewportHeight={540}
@@ -151,12 +173,26 @@ function CategoriesView({ groups, groupOrder, hiddenGroups, lockedGroups, favori
           renderMain={(group) => {
             const locked = lockedGroups.has(group.key);
             const custom = Boolean(channelOrder[group.key]?.length);
+            const renamed = group.label !== group.name;
             return <>
               <span className="st-sort-title">
-                <button type="button" className="st-sort-name-btn iptv-group-name" title={translateUi("Arrange channels")} onClick={() => openGroup(group.key)}>{group.name}</button>
+                {renaming === group.key ? (
+                  <input className="st-input iptv-group-rename" defaultValue={group.label} maxLength={MAX_GROUP_NAME_LENGTH} autoFocus
+                    aria-label={translateUi("New name for {value0}", { value0: labelOf(group) })} placeholder={group.name}
+                    onFocus={(event) => event.currentTarget.select()}
+                    onBlur={(event) => { if (cancelRename.current) cancelRename.current = false; else rename(group, event.currentTarget.value); }}
+                    onKeyDown={(event) => {
+                      event.stopPropagation();
+                      if (event.key === "Escape") { event.preventDefault(); cancelRename.current = true; setRenaming(null); }
+                      if (event.key === "Enter") { event.preventDefault(); rename(group, event.currentTarget.value); }
+                    }} />
+                ) : (
+                  <button type="button" className="st-sort-name-btn iptv-group-name" title={translateUi("Arrange channels")} onClick={() => openGroup(group.key)}>{labelOf(group)}</button>
+                )}
                 {locked && <span className="st-tag" title={translateUi("Locked on your TV")}><Lock size={11} /> {translateUi("Locked")}</span>}
               </span>
               <span className="st-sort-sub">
+                {renamed ? `${translateUi("Playlist name: {value0}", { value0: group.name === UNGROUPED ? translateUi("Ungrouped") : group.name })} · ` : ""}
                 {translateUi("{value0} channels", { value0: group.count.toLocaleString() })}
                 {hidden.has(group.key) ? ` · ${translateUi("Hidden")}` : ""}
                 {custom ? ` · ${translateUi("Custom channel order")}` : ""}
@@ -166,11 +202,24 @@ function CategoriesView({ groups, groupOrder, hiddenGroups, lockedGroups, favori
           renderActions={(group) => {
             const isHidden = hidden.has(group.key);
             const favorite = isFavoriteGroup(favoriteGroups, group.key);
+            const label = labelOf(group);
             return <>
+              {renaming === group.key ? (
+                <button type="button" className="st-icon-btn" aria-label={`${translateUi("Save name")}: ${label}`} title={translateUi("Save name")}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={(event) => rename(group, (event.currentTarget.closest("li")?.querySelector<HTMLInputElement>(".iptv-group-rename")?.value) ?? group.label)}><Check size={17} /></button>
+              ) : (
+                <button type="button" className="st-icon-btn" aria-label={`${translateUi("Rename")}: ${label}`} title={translateUi("Rename")}
+                  onClick={() => { cancelRename.current = false; setRenaming(group.key); }}><Pencil size={16} /></button>
+              )}
+              {group.label !== group.name && renaming !== group.key && (
+                <button type="button" className="st-icon-btn" aria-label={`${translateUi("Use the playlist's name")}: ${label}`} title={translateUi("Use the playlist's name")}
+                  onClick={() => rename(group, "")}><RotateCcw size={16} /></button>
+              )}
               <button type="button" className={`st-icon-btn${favorite ? " is-on" : ""}`} aria-pressed={favorite}
-                aria-label={`${(favorite ? translateUi("Remove from favourites") : translateUi("Add to favourites"))}: ${group.name}`} title={(favorite ? translateUi("Remove from favourites") : translateUi("Add to favourites"))}
+                aria-label={`${(favorite ? translateUi("Remove from favourites") : translateUi("Add to favourites"))}: ${label}`} title={(favorite ? translateUi("Remove from favourites") : translateUi("Add to favourites"))}
                 onClick={() => updateSettings({ favoriteGroupIds: toggleFavoriteGroup(favoriteGroups, group.key) })}><Star size={17} /></button>
-              <button type="button" className="st-icon-btn" aria-label={`${(isHidden ? translateUi("Show") : translateUi("Hide"))}: ${group.name}`} title={(isHidden ? translateUi("Show") : translateUi("Hide"))}
+              <button type="button" className="st-icon-btn" aria-label={`${(isHidden ? translateUi("Show") : translateUi("Hide"))}: ${label}`} title={(isHidden ? translateUi("Show") : translateUi("Hide"))}
                 onClick={() => updateSettings({ hiddenGroupIds: setPlaylistGroupsVisible(hiddenGroups, [group], isHidden) })}>{isHidden ? <EyeOff size={17} /> : <Eye size={17} />}</button>
             </>;
           }}
@@ -181,7 +230,7 @@ function CategoriesView({ groups, groupOrder, hiddenGroups, lockedGroups, favori
         <li className="is-fixed"><span>{translateUi("Recently Watched")}</span></li>
         <li className="is-fixed"><span>{translateUi("All Channels")}</span></li>
         {visibleInOrder.slice(0, 14).map((group) => (
-          <li key={group.key}>{isFavoriteGroup(favoriteGroups, group.key) && <Star size={13} />}<span>{group.name}</span></li>
+          <li key={group.key}>{isFavoriteGroup(favoriteGroups, group.key) && <Star size={13} />}<span>{labelOf(group)}</span></li>
         ))}
         {visibleInOrder.length > 14 && <li className="st-preview-more">{translateUi("+ {value0} more", { value0: visibleInOrder.length - 14 })}</li>}
       </Preview>
@@ -191,7 +240,8 @@ function CategoriesView({ groups, groupOrder, hiddenGroups, lockedGroups, favori
 
 /* ---------- channels inside a category ---------- */
 
-function ChannelsView({ groups, activeGroup, setActiveGroup, channelsByGroup, playlistChannels, playlistId, settings, channelOrder, identity, query, deferredQuery, setQuery, updateSettings, notify }: {
+function ChannelsView({ groups, activeGroup, setActiveGroup, channelsByGroup, playlistChannels, playlistId, settings, channelOrder, groupNames, identity, query, deferredQuery, setQuery, updateSettings, notify }: {
+  groupNames: Record<string, string> | undefined;
   identity: Map<string, IptvChannel>;
   groups: PlaylistGroup[];
   activeGroup: string;
@@ -208,6 +258,7 @@ function ChannelsView({ groups, activeGroup, setActiveGroup, channelsByGroup, pl
   notify?: (message: string) => void;
 }) {
   const translateUi = useTranslation();
+  const labelOf = useGroupLabel();
   const [editingPosition, setEditingPosition] = useState<string | null>(null);
   const sortOrder = settings.iptvSortOrder ?? "provider";
   const base = useMemo(() => sortChannelsLikeLiveTv(channelsByGroup.get(activeGroup) ?? [], sortOrder), [channelsByGroup, activeGroup, sortOrder]);
@@ -243,7 +294,8 @@ function ChannelsView({ groups, activeGroup, setActiveGroup, channelsByGroup, pl
     const next = moveIndex(ordered, from, to);
     if (next !== ordered) save(next);
   };
-  const groupName = groups.find((group) => group.key === activeGroup)?.name ?? groupNameOf(activeGroup);
+  const activeEntry = groups.find((group) => group.key === activeGroup);
+  const groupName = activeEntry ? labelOf(activeEntry) : groupDisplayName(groupNames, activeGroup);
 
   return (
     <div className="st-layout">
@@ -256,7 +308,7 @@ function ChannelsView({ groups, activeGroup, setActiveGroup, channelsByGroup, pl
         <div className="st-toolbar">
           {groups.length > 0 && (
             <Select label="Category" translateLabels={false} value={activeGroup} onChange={(key) => { setActiveGroup(key); setQuery(""); }}
-              options={groups.map((group) => [group.key, `${group.name} (${group.count.toLocaleString()})`] as [string, string])} />
+              options={groups.map((group) => [group.key, `${labelOf(group)} (${group.count.toLocaleString()})`] as [string, string])} />
           )}
           <input className="st-input" type="search" value={query} onChange={(event) => setQuery(event.target.value)}
             placeholder={translateUi("Search this playlist's channels")} aria-label={translateUi("Search this playlist's channels")} />
@@ -273,7 +325,7 @@ function ChannelsView({ groups, activeGroup, setActiveGroup, channelsByGroup, pl
               const key = playlistGroupKey(playlistId, channel.group);
               return (
                 <li key={channel.id}>
-                  <ChannelLabel channel={channel} sub={channel.group || translateUi("Uncategorized")} />
+                  <ChannelLabel channel={channel} sub={groupNames?.[key] || channel.group || translateUi("Ungrouped")} />
                   <button type="button" className={`st-icon-btn${isFavorite(channel) ? " is-on" : ""}`} aria-pressed={isFavorite(channel)}
                     aria-label={`${(isFavorite(channel) ? translateUi("Remove from favourites") : translateUi("Add to favourites"))}: ${channel.name}`} onClick={() => toggleFavorite(channel)}><Star size={17} /></button>
                   <button type="button" className="st-btn" onClick={() => { setActiveGroup(key); setQuery(""); }}><ListOrdered size={16} />{translateUi("Arrange")}</button>
@@ -344,10 +396,11 @@ function ChannelLabel({ channel, sub }: { channel: IptvChannel; sub?: string }) 
 
 type FavoriteEntry = { ref: string; channel?: IptvChannel };
 
-function FavoritesView({ channels, identity, settings, query, deferredQuery, setQuery, updateSettings }: {
+function FavoritesView({ channels, identity, settings, playlists, query, deferredQuery, setQuery, updateSettings }: {
   channels: IptvChannel[];
   identity: Map<string, IptvChannel>;
   settings: AppSettings;
+  playlists: Array<{ id: string; name: string }>;
   query: string;
   deferredQuery: string;
   setQuery: (value: string) => void;
@@ -367,7 +420,9 @@ function FavoritesView({ channels, identity, settings, query, deferredQuery, set
     }
     return found;
   }, [needle, channels]);
-  const playlistName = (channel: IptvChannel) => settings.iptvPlaylists.find((playlist) => playlist.id === channel.id.split(":")[0])?.name;
+  const playlistName = (channel: IptvChannel) => playlists.find((playlist) => playlist.id === channelPlaylistId(channel.id))?.name;
+  const groupNames = settings.iptvGroupNames;
+  const channelGroup = (channel: IptvChannel) => groupNames?.[playlistGroupKey(channelPlaylistId(channel.id), channel.group)] || channel.group;
   const remove = (ref: string) => updateSettings({ favoriteChannelIds: favorites.filter((id) => id !== ref) });
   const toggle = (channel: IptvChannel) => updateSettings({ favoriteChannelIds: toggleFavoriteChannel(favorites, channel.id, identity) });
 
@@ -386,7 +441,7 @@ function FavoritesView({ channels, identity, settings, query, deferredQuery, set
           viewportHeight={420}
           emptyText={translateUi("No favourite channels yet. Search below to add some.")}
           renderMain={(entry) => entry.channel
-            ? <ChannelLabel channel={entry.channel} sub={[entry.channel.group, playlistName(entry.channel)].filter(Boolean).join(" · ")} />
+            ? <ChannelLabel channel={entry.channel} sub={[channelGroup(entry.channel), playlistName(entry.channel)].filter(Boolean).join(" · ")} />
             : <><span className="st-sort-title"><span className="st-sort-name">{entry.ref}</span></span><span className="st-sort-sub">{translateUi("Not in the playlists loaded here")}</span></>}
           renderActions={(entry) => (
             <button type="button" className="st-icon-btn is-danger" aria-label={`${translateUi("Remove from favourites")}: ${entry.channel?.name ?? entry.ref}`} title={translateUi("Remove from favourites")}
@@ -406,7 +461,7 @@ function FavoritesView({ channels, identity, settings, query, deferredQuery, set
                 const on = favoriteIds.has(channel.id);
                 return (
                   <li key={channel.id}>
-                    <ChannelLabel channel={channel} sub={[channel.group, playlistName(channel)].filter(Boolean).join(" · ")} />
+                    <ChannelLabel channel={channel} sub={[channelGroup(channel), playlistName(channel)].filter(Boolean).join(" · ")} />
                     <button type="button" className={`st-btn${on ? "" : " is-primary"}`} aria-pressed={on} onClick={() => toggle(channel)}>
                       <Star size={16} />{(on ? translateUi("Remove") : translateUi("Add"))}
                     </button>
@@ -421,13 +476,13 @@ function FavoritesView({ channels, identity, settings, query, deferredQuery, set
           items={favoriteGroups}
           label={translateUi("Favourite categories")}
           getKey={(entry) => entry}
-          getLabel={(entry) => groupNameOf(entry)}
+          getLabel={(entry) => groupDisplayName(groupNames, entry)}
           onMove={(from, to) => updateSettings({ favoriteGroupIds: moveIndex(favoriteGroups, from, to) })}
           edgeButtons={favoriteGroups.length > 3}
           emptyText={translateUi("Star a category in Categories to add it here.")}
-          renderMain={(entry) => <span className="st-sort-title"><span className="st-sort-name">{groupNameOf(entry)}</span></span>}
+          renderMain={(entry) => <span className="st-sort-title"><span className="st-sort-name">{groupDisplayName(groupNames, entry)}</span></span>}
           renderActions={(entry) => (
-            <button type="button" className="st-icon-btn is-danger" aria-label={`${translateUi("Remove from favourites")}: ${groupNameOf(entry)}`} title={translateUi("Remove from favourites")}
+            <button type="button" className="st-icon-btn is-danger" aria-label={`${translateUi("Remove from favourites")}: ${groupDisplayName(groupNames, entry)}`} title={translateUi("Remove from favourites")}
               onClick={() => updateSettings({ favoriteGroupIds: favoriteGroups.filter((item) => item !== entry) })}><X size={17} /></button>
           )}
         />

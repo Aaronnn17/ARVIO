@@ -1,7 +1,8 @@
 import { loadStalkerChannels, loadStalkerGuide } from "./stalker";
 import { proxiedUrl, textRequest } from "./http";
 import { loadStored, saveStored } from "./storage";
-import type { IptvChannel, IptvNowNext, IptvPlaylistEntry, IptvProgram, IptvSnapshot } from "./types";
+import { channelPlaylistId, legacyStalkerPortal } from "./stalkerPortals";
+import type { IptvChannel, IptvNowNext, IptvPlaylistEntry, IptvProgram, IptvSnapshot, StalkerPortalEntry } from "./types";
 
 const IPTV_KEY = "arvio.web.iptv.playlists";
 const IPTV_TEXT_CACHE = "arvio.web.iptv.text.v1";
@@ -55,10 +56,57 @@ async function providerTextRequest(providerUrl: string, requestUrl: string): Pro
 }
 
 type IptvLoadOptions = {
+  /** Portals that fill Live TV (see liveTvStalkerPortals); each one is its own playlist id. */
+  stalkerPortals?: StalkerPortalEntry[];
+  /** Single portal (older callers); used as Portal 1 when `stalkerPortals` is not given. */
   stalkerUrl?: string;
   stalkerMac?: string;
   userAgent?: string;
+  /** Ask the portals again instead of reusing a channel list loaded in the last few minutes. */
+  freshPortals?: boolean;
 };
+
+/** A portal's channel list is reused for this long, so editing one portal does not reload the others. */
+const STALKER_LIST_TTL_MS = 5 * 60 * 1000;
+const stalkerLists = new Map<string, { expires: number; task: Promise<IptvChannel[]> }>();
+
+function loadPortalChannels(portal: StalkerPortalEntry, fresh = false): Promise<IptvChannel[]> {
+  const key = JSON.stringify([portal.id, portal.portalUrl, portal.macAddress]);
+  const cached = stalkerLists.get(key);
+  // A load still running (expires = Infinity) is always shared, even by a fresh request.
+  if (cached && (cached.expires === Infinity || (!fresh && cached.expires > Date.now()))) return cached.task;
+  const entry = { expires: Infinity, task: loadStalkerChannels(portal.portalUrl, portal.macAddress, portal.id) };
+  stalkerLists.set(key, entry);
+  entry.task.then(() => { entry.expires = Date.now() + STALKER_LIST_TTL_MS; },
+    () => { if (stalkerLists.get(key) === entry) stalkerLists.delete(key); });
+  while (stalkerLists.size > 8) stalkerLists.delete(stalkerLists.keys().next().value!);
+  return entry.task;
+}
+
+/**
+ * Every portal's channels, one portal at a time: a portal answers in dozens
+ * of paged requests, so loading several at once would multiply the load on
+ * the proxy and on providers that share a host.
+ */
+async function loadPortals(portals: StalkerPortalEntry[], fresh: boolean, errors: NonNullable<IptvSnapshot["playlistErrors"]>, warnings: string[]) {
+  const sets: IptvChannel[][] = [];
+  for (const portal of portals) {
+    try { sets.push(await loadPortalChannels(portal, fresh)); }
+    catch (error) {
+      const message = error instanceof Error ? error.message : "Could not load IPTV portal";
+      const name = portal.name || "Stalker portal";
+      warnings.push(`${name}: ${message}`);
+      errors.push({ playlistId: portal.id, name, message });
+    }
+  }
+  return sets;
+}
+
+function portalsOf(options: IptvLoadOptions): StalkerPortalEntry[] {
+  if (options.stalkerPortals) return options.stalkerPortals;
+  const legacy = legacyStalkerPortal(options.stalkerUrl, options.stalkerMac);
+  return legacy ? [legacy] : [];
+}
 
 type TextValidator = (text: string) => boolean;
 
@@ -105,7 +153,7 @@ export function savePlaylists(playlists: IptvPlaylistEntry[]) {
  */
 export async function testIptvPlaylist(playlist: IptvPlaylistEntry | null, options: IptvLoadOptions = {}): Promise<{ ok: true; channels: number } | { ok: false; message: string }> {
   try {
-    const snapshot = await loadIptvSnapshot(playlist ? [{ ...playlist, enabled: true }] : [], [], [], [], [], options);
+    const snapshot = await loadIptvSnapshot(playlist ? [{ ...playlist, enabled: true }] : [], [], [], [], [], { freshPortals: true, ...options });
     const error = snapshot.playlistErrors?.[0];
     if (error) return { ok: false, message: error.message };
     const channels = (snapshot.allChannels ?? snapshot.channels).length;
@@ -163,14 +211,8 @@ export async function loadIptvSnapshot(
       }
     })
   );
-  if (options.stalkerUrl?.trim() && options.stalkerMac?.trim()) {
-    try { channelSets.push(await loadStalkerChannels(options.stalkerUrl.trim(), options.stalkerMac.trim())); }
-    catch (error) {
-      const message = error instanceof Error ? error.message : "Could not load IPTV portal";
-      playlistWarnings.push(message);
-      playlistErrors.push({ playlistId: "stalker", name: "Stalker portal", message });
-    }
-  }
+  // Portals after the playlists, as the single portal always was.
+  channelSets.push(...await loadPortals(portalsOf(options), Boolean(options.freshPortals), playlistErrors, playlistWarnings));
   const allChannels = channelSets.flat();
   const channels = accessibleChannels(allChannels, hiddenGroups);
   // Xtream channels get now/next on demand from the panel's JSON EPG (fast,
@@ -458,9 +500,9 @@ export function normalizeEpgInputs(raw: string): string[] {
   return [trimmed];
 }
 
+/** `playlistId|group`, the key Android uses for hidden, ordered, favourite and renamed categories. */
 export function groupKey(channel: Pick<IptvChannel, "id" | "group">) {
-  const playlistId = channel.id.split(":")[0] || "default";
-  return `${playlistId}|${(channel.group || "Uncategorized").trim() || "Uncategorized"}`;
+  return `${channelPlaylistId(channel.id)}|${channel.group?.trim() || "Ungrouped"}`;
 }
 
 function parseUrl(value: string) {
@@ -713,7 +755,8 @@ export function parseM3u(text: string, playlistId = "default") {
       const [, metadata = line, title = ""] = line.match(/^#EXTINF:((?:[^"',]|"[^"]*"|'[^']*')*),(.*)$/i) ?? [];
       pending = {
         name: attr(metadata, "tvg-name") || title.trim() || "Unknown Channel",
-        group: attr(metadata, "group-title") || "Uncategorized",
+        // Android: a blank group-title counts as missing.
+        group: attr(metadata, "group-title").trim() ? attr(metadata, "group-title") : "Uncategorized",
         logo: attr(metadata, "tvg-logo"),
         tvgId: attr(metadata, "tvg-id"),
         number: firstAttr(metadata, ["tvg-chno", "tvg-ch-number", "channel-number", "ch-number", "number"]),
