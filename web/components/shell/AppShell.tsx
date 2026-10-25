@@ -1,32 +1,47 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { kidsLevelOf } from "@/lib/kids";
 import { config } from "@/lib/config";
 import { ACCENTS } from "@/lib/accents";
 import { useTranslation } from "@/lib/i18n";
 import { focusAfterViewChange, installTvNav } from "@/lib/tvNav";
 import { watchHoverCapability } from "@/lib/deviceClass";
-import { HomeScreen } from "@/components/home/HomeScreen";
+import { HomeScreen as HomeScreenView } from "@/components/home/HomeScreen";
 import { ProfileSelectionScreen } from "@/components/profile/ProfileSelectionScreen";
 import { HomeScreenTip } from "@/components/player/HomeScreenTip";
-import { BackHandler } from "./BackHandler";
-import { ExternalPlaybackPrompt } from "./ExternalPlaybackPrompt";
-import { MediaContextMenu } from "./MediaContextMenu";
-import { NoAddonsPrompt } from "./NoAddonsPrompt";
+import { BackHandler as BackHandlerView } from "./BackHandler";
+import { ExternalPlaybackPrompt as ExternalPlaybackPromptView } from "./ExternalPlaybackPrompt";
+import { MediaContextMenu as MediaContextMenuView } from "./MediaContextMenu";
+import { NoAddonsPrompt as NoAddonsPromptView } from "./NoAddonsPrompt";
 import { EntitlementGate, PaywallScreen } from "./Paywall";
-import { Toast } from "./Toast";
-import { TopNav } from "./TopNav";
-import { PremiumUsage } from "./PremiumUsage";
-import { PartnerLinkHandler } from "./PartnerLinkHandler";
+import { Toast as ToastView } from "./Toast";
+import { TopNav as TopNavView } from "./TopNav";
+import { PremiumUsage as PremiumUsageView } from "./PremiumUsage";
+import { PartnerLinkHandler as PartnerLinkHandlerView } from "./PartnerLinkHandler";
 import { ScreenBoundary } from "./ErrorBoundary";
 import { OnScreenKeyboard } from "./OnScreenKeyboard";
 import { UpdateBanner } from "./UpdateBanner";
 import { notifySectionNavigation } from "./UpdateWatcher";
 import { XboxControllerTip } from "./XboxControllerTip";
 import { OfflineNotice } from "./OfflineNotice";
+
+// The shell re-renders whenever the view, section, details or player change.
+// Its always-mounted children subscribe to the store fields they show
+// (useAppPick), so they are memoized here: a shell render alone (opening a
+// title, starting a channel) no longer re-renders the nav, the toast, the
+// context menu and every screen with it.
+const HomeScreen = memo(HomeScreenView);
+const BackHandler = memo(BackHandlerView);
+const ExternalPlaybackPrompt = memo(ExternalPlaybackPromptView);
+const MediaContextMenu = memo(MediaContextMenuView);
+const NoAddonsPrompt = memo(NoAddonsPromptView);
+const Toast = memo(ToastView);
+const TopNav = memo(TopNavView);
+const PremiumUsage = memo(PremiumUsageView);
+const PartnerLinkHandler = memo(PartnerLinkHandlerView);
 
 // Code splitting: Home (the first screen after the profile picker) ships in the
 // first-load bundle; every other section, the details page and the player are
@@ -49,14 +64,14 @@ function PlayerLoading() {
 
 const loadPlayer = () => import("@/components/player/PlayerOverlay");
 
-const SearchScreen = dynamic(() => import("@/components/search/SearchScreen").then((m) => m.SearchScreen), { ssr: false, loading: () => <ScreenLoading /> });
-const WatchlistScreen = dynamic(() => import("@/components/watchlist/WatchlistScreen").then((m) => m.WatchlistScreen), { ssr: false, loading: () => <ScreenLoading /> });
-const LiveTvScreen = dynamic(() => import("@/components/livetv/LiveTvScreen").then((m) => m.LiveTvScreen), { ssr: false, loading: () => <ScreenLoading /> });
-const AddonsScreen = dynamic(() => import("@/components/addons/AddonsScreen").then((m) => m.AddonsScreen), { ssr: false, loading: () => <ScreenLoading /> });
-const SettingsScreen = dynamic(() => import("@/components/settings/SettingsScreen").then((m) => m.SettingsScreen), { ssr: false, loading: () => <ScreenLoading /> });
-const DetailsDrawer = dynamic(() => loadDetails().then((m) => m.DetailsDrawer), { ssr: false, loading: () => <ScreenLoading /> });
-const LoginScreen = dynamic(() => import("@/components/login/LoginScreen").then((m) => m.LoginScreen), { ssr: false, loading: () => <ScreenLoading /> });
-const PlayerOverlay = dynamic(() => loadPlayer().then((m) => m.PlayerOverlay), { ssr: false, loading: () => <PlayerLoading /> });
+const SearchScreen = memo(dynamic(() => import("@/components/search/SearchScreen").then((m) => m.SearchScreen), { ssr: false, loading: () => <ScreenLoading /> }));
+const WatchlistScreen = memo(dynamic(() => import("@/components/watchlist/WatchlistScreen").then((m) => m.WatchlistScreen), { ssr: false, loading: () => <ScreenLoading /> }));
+const LiveTvScreen = memo(dynamic(() => import("@/components/livetv/LiveTvScreen").then((m) => m.LiveTvScreen), { ssr: false, loading: () => <ScreenLoading /> }));
+const AddonsScreen = memo(dynamic(() => import("@/components/addons/AddonsScreen").then((m) => m.AddonsScreen), { ssr: false, loading: () => <ScreenLoading /> }));
+const SettingsScreen = memo(dynamic(() => import("@/components/settings/SettingsScreen").then((m) => m.SettingsScreen), { ssr: false, loading: () => <ScreenLoading /> }));
+const DetailsDrawer = memo(dynamic(() => loadDetails().then((m) => m.DetailsDrawer), { ssr: false, loading: () => <ScreenLoading /> }));
+const LoginScreen = memo(dynamic(() => import("@/components/login/LoginScreen").then((m) => m.LoginScreen), { ssr: false, loading: () => <ScreenLoading /> }));
+const PlayerOverlay = memo(dynamic(() => loadPlayer().then((m) => m.PlayerOverlay), { ssr: false, loading: () => <PlayerLoading /> }));
 
 /**
  * Preload the playback stack (player chunk, hls.js, mediabunny) — but only
@@ -105,7 +120,7 @@ function DetailsPrefetch() {
 }
 
 /** Overlays that live outside any one screen (all views). */
-function ShellOverlays() {
+const ShellOverlays = memo(function ShellOverlays() {
   return (
     <>
       <OnScreenKeyboard />
@@ -114,10 +129,10 @@ function ShellOverlays() {
       <OfflineNotice />
     </>
   );
-}
+});
 
 export function AppShell() {
-  const { auth, goToLogin, signOut, view, section, setSection, settings, selected, activeStream, activeChannel, activeProfile, closePlayer } = useApp();
+  const { auth, goToLogin, signOut, view, section, setSection, settings, selected, activeStream, activeChannel, activeProfile, closePlayer } = useAppPick("auth", "goToLogin", "signOut", "view", "section", "setSection", "settings", "selected", "activeStream", "activeChannel", "activeProfile", "closePlayer");
   const kidsProfile = Boolean(kidsLevelOf(activeProfile));
   // A kids profile never stays on Live TV, however it got there (a saved section, a link).
   useEffect(() => {

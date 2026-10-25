@@ -70,7 +70,7 @@ import {
   monitorVideoFrames,
   playbackFailureKind,
 } from "@/lib/playerRecovery";
-import { authClient, getPriorityConfig, useApp } from "@/lib/store";
+import { authClient, getPriorityConfig, useAppPick } from "@/lib/store";
 import { trackPremiumAttempt, trackPremiumDaily, trackPremiumEvent, trackPremiumMilestone } from "@/lib/premiumAnalytics";
 import { playbackAttemptDetail } from "@/lib/playbackTelemetry";
 import { rememberSuccessfulSource } from "@/lib/autoplaySelection";
@@ -240,7 +240,7 @@ export function PlayerOverlay() {
     setToast,
     closePlayer,
     openDetails
-  } = useApp();
+  } = useAppPick("activeStream", "activeChannel", "selected", "selectedEpisode", "settings", "addons", "updateSettings", "activeProfile", "streams", "playStream", "advanceEpisode", "setToast", "closePlayer", "openDetails");
 
   const enrichment = streams.find((candidate) => activeStream && (isSameStream(candidate, activeStream) || (candidate.url && candidate.url === activeStream.url)));
   const enrichedStream = useMemo(() => activeStream ? mergeSubtitleTracks(activeStream, enrichment) : null, [activeStream, enrichment]);

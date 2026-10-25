@@ -3,7 +3,7 @@ import { LogOut, Send } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { config } from "@/lib/config";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { Empty, Group, Row, SectionHeader, Status, Toggle } from "../ui";
 
 // Lazily-loaded shape of @/lib/telegram. GramJS is a large browser-only bundle,
@@ -14,7 +14,7 @@ type TgAuthState = import("@/lib/telegram").TgAuthState;
 
 export function TelegramSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings, setToast } = useApp();
+  const { settings, updateSettings, setToast } = useAppPick("settings", "updateSettings", "setToast");
   const [mod, setMod] = useState<TgModule | null>(null);
   const [authState, setAuthState] = useState<TgAuthState>({ k: "idle" });
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);

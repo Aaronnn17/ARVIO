@@ -4,7 +4,7 @@ import { useTranslation } from "@/lib/i18n";
 
 import { Cloud, Pencil, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ProfileCloudSaveError, useApp } from "@/lib/store";
+import { ProfileCloudSaveError, useAppPick } from "@/lib/store";
 import { config } from "@/lib/config";
 import type { Profile } from "@/lib/types";
 import { ProfileAvatarVisual } from "./ProfileAvatar";
@@ -17,7 +17,7 @@ export function ProfileSelectionScreen() {
     profiles, avatarImages, manageMode, setManageMode,
     selectProfile, createProfile, updateProfile, deleteProfile,
     goToLogin, auth, setToast
-  } = useApp();
+  } = useAppPick("profiles", "avatarImages", "manageMode", "setManageMode", "selectProfile", "createProfile", "updateProfile", "deleteProfile", "goToLogin", "auth", "setToast");
 
   const [dialog, setDialog] = useState<{ mode: "add" | "edit"; profile?: Profile; error?: string | null } | null>(null);
   const row = useRef<HTMLDivElement>(null);
