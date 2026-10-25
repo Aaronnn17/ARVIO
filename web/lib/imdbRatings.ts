@@ -17,7 +17,7 @@ const MEMORY = new Map<string, string>();
 const INFLIGHT = new Map<string, Promise<string | null>>();
 const STORE_KEY = "arvio.web.imdbRatings.v1";
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_ENTRIES = 600;
+const MAX_ENTRIES = 900;
 
 function readStore(): Record<string, CacheEntry> {
   return loadStored<Record<string, CacheEntry>>(STORE_KEY, {});
@@ -34,22 +34,56 @@ function writeStore(store: Record<string, CacheEntry>) {
   saveStored(STORE_KEY, store);
 }
 
-function cached(imdbId: string): string | null {
-  const hit = MEMORY.get(imdbId);
-  if (hit !== undefined) return hit;
-  const entry = readStore()[imdbId];
-  if (entry && Date.now() - entry.at < TTL_MS) {
-    MEMORY.set(imdbId, entry.rating);
-    return entry.rating;
-  }
-  return null;
+// The persisted store is read once per session into memory. Reading and
+// re-parsing it per card (and re-serialising it per fetched rating) cost more
+// than the lookups themselves on a 100-card Home.
+let restored = false;
+function restore() {
+  if (restored) return;
+  restored = true;
+  const cutoff = Date.now() - TTL_MS;
+  Object.entries(readStore()).forEach(([id, entry]) => {
+    if (entry && typeof entry.rating === "string" && entry.at > cutoff && !MEMORY.has(id)) {
+      MEMORY.set(id, entry.rating);
+      STAMPS.set(id, entry.at);
+    }
+  });
 }
 
+const STAMPS = new Map<string, number>();
+
+function cached(imdbId: string): string | null {
+  restore();
+  const hit = MEMORY.get(imdbId);
+  return hit !== undefined ? hit : null;
+}
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
 function remember(imdbId: string, rating: string) {
   MEMORY.set(imdbId, rating);
-  const store = readStore();
-  store[imdbId] = { rating, at: Date.now() };
-  writeStore(store);
+  STAMPS.set(imdbId, Date.now());
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    // Merge with what another tab may have written, newest entry wins.
+    const store = readStore();
+    STAMPS.forEach((at, id) => {
+      const rating = MEMORY.get(id);
+      if (rating !== undefined && (!store[id] || store[id].at < at)) store[id] = { rating, at };
+    });
+    writeStore(store);
+  }, 1000);
+}
+
+/**
+ * The cached IMDb rating without a request: a string (possibly "" = known to
+ * have none) once looked up, undefined when never looked up.
+ */
+export function peekImdbRating(imdbId?: string | null): string | null | undefined {
+  const id = (imdbId ?? "").trim().toLowerCase();
+  if (!/^tt\d+$/.test(id)) return null;
+  const hit = cached(id);
+  return hit === null ? undefined : hit || null;
 }
 
 function cinemetaUrl(mediaType: "movie" | "tv", imdbId: string) {

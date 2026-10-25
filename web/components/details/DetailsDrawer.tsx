@@ -10,6 +10,7 @@ import { RailScroller } from "@/components/media/RailScroller";
 import { premiumAllows } from "@/lib/premiumGate";
 import { getContinueWatching, saveWatchedState } from "@/lib/cloud";
 import { parseDebridStream } from "@/lib/debrid";
+import { clearPlayOnOpen, peekPlayOnOpen } from "@/lib/playIntent";
 import { canonicalServiceName, IMDB_LOGO, serviceClearLogo } from "@/lib/serviceLogos";
 import { getImdbRating } from "@/lib/imdbRatings";
 import { mdblistClient, type MdbExternalRating } from "@/lib/mdblist";
@@ -341,6 +342,25 @@ function DetailsView({ item }: { item: MediaItem }) {
     if (selectedEpisode?.season === plan.season && selectedEpisode?.episode === plan.episode) requestAutoplay({ resumeSeconds });
     else void openEpisodeSources(plan.season, plan.episode, resumeSeconds);
   };
+
+  // Home billboard "Play": start playback here through the same automatic
+  // source choice as the Play button. Movies start at once (the chooser waits
+  // for sources); series wait briefly for the resume / next episode, else play
+  // the episode the billboard named, or S1 E1.
+  const [heroPlayIntent] = useState(() => peekPlayOnOpen(item));
+  const heroPlayDone = useRef(false);
+  useEffect(() => {
+    if (!heroPlayIntent || heroPlayDone.current) return undefined;
+    const start = (run: () => void) => { heroPlayDone.current = true; clearPlayOnOpen(); run(); };
+    if (!isTv) { start(() => playPrimary(false)); return undefined; }
+    if (plan.season != null && plan.episode != null) { start(() => playPrimary(false)); return undefined; }
+    const timer = window.setTimeout(() => {
+      if (heroPlayDone.current) return;
+      start(() => { void openEpisodeSources(heroPlayIntent.season ?? 1, heroPlayIntent.episode ?? 1); });
+    }, 4000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroPlayIntent, isTv, plan.season, plan.episode]);
 
   const markWatched = async () => {
     const season = selectedEpisode?.season ?? item.seasonNumber ?? null;

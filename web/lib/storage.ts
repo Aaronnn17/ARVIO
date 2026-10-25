@@ -105,11 +105,11 @@ function validatorFor(key: string): Validator | undefined {
  * outboxes — only data the app refetches.
  */
 export const SCREEN_CACHE_KEYS: Record<string, readonly string[]> = {
-  home: ["arvio.web.catalogRows.v3", "arvio.web.cardMeta.v2", "arvio.web.cardProviders.v1", "arvio.web.logoCache", "arvio.web.cw.v4:"],
-  search: ["arvio.web.cardMeta.v2", "arvio.web.cardProviders.v1"],
-  library: ["arvio.web.watchlist.v1:", "arvio.web.traktlist.v2:", "arvio.web.cw.v4:", "arvio.web.cardMeta.v2"],
+  home: ["arvio.web.catalogRows.v3", "arvio.web.cardExtras.v1", "arvio.web.cw.v4:"],
+  search: ["arvio.web.cardExtras.v1"],
+  library: ["arvio.web.watchlist.v1:", "arvio.web.traktlist.v2:", "arvio.web.cw.v4:", "arvio.web.cardExtras.v1"],
   tv: [],
-  details: ["arvio.web.seasonEpisodes.v1", "arvio.web.cardMeta.v2", "arvio.web.logoCache"],
+  details: ["arvio.web.seasonEpisodes.v1", "arvio.web.cardExtras.v1"],
   player: [],
   settings: [],
   addons: []
@@ -142,6 +142,10 @@ const LEGACY_STORAGE_KEYS = [
   "arvio.web.catalogRows.v1",
   "arvio.web.catalogRows.v2",
   "arvio.web.cardMeta.v1",
+  // Replaced by the combined arvio.web.cardExtras.v1 (one TMDB call per title).
+  "arvio.web.cardMeta.v2",
+  "arvio.web.cardProviders.v1",
+  "arvio.web.logoCache",
   "arvio.web.cw.v1",
   // v1 stored full Trakt progress payloads (~740KB); v2 is slimmed.
   "arvio.web.trakt.progressCache.v1"
@@ -163,9 +167,7 @@ export function purgeLegacyStorage() {
 const EVICTABLE_CACHE_KEYS = [
   "arvio.web.catalogRows.v3",
   "arvio.web.seasonEpisodes.v1",
-  "arvio.web.cardMeta.v2",
-  "arvio.web.cardProviders.v1",
-  "arvio.web.logoCache",
+  "arvio.web.cardExtras.v1",
   "arvio.web.trakt.progressCache.v2"
 ];
 

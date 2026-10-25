@@ -56,6 +56,11 @@ export function RailScroller({
     <div className={`rail-scroll-shell ${canPrev ? "can-prev" : ""} ${canNext ? "can-next" : ""}`}>
       <button
         type="button"
+        // Pointer-only: D-pad/Tab users move card to card, so the arrows are
+        // not focus stops (they stay clickable); data-tv-skip keeps tvNav's
+        // spatial navigation off them.
+        tabIndex={-1}
+        data-tv-skip
         className="rail-arrow rail-arrow-left"
         onClick={() => scrollByPage(-1)}
         disabled={!canPrev}
@@ -68,6 +73,11 @@ export function RailScroller({
       </div>
       <button
         type="button"
+        // Pointer-only: D-pad/Tab users move card to card, so the arrows are
+        // not focus stops (they stay clickable); data-tv-skip keeps tvNav's
+        // spatial navigation off them.
+        tabIndex={-1}
+        data-tv-skip
         className="rail-arrow rail-arrow-right"
         onClick={() => scrollByPage(1)}
         disabled={!canNext}

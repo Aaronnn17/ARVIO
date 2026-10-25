@@ -126,6 +126,8 @@ export interface Category {
   sourceLabel?: string;
   layout?: "landscape" | "poster";
   sourceUrl?: string;
+  /** The source has more titles than the row shows (Home rows stop at HOME_ROW_LIMIT). */
+  hasMore?: boolean;
 }
 
 export type CatalogSourceType =

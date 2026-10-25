@@ -36,9 +36,19 @@ export const config = {
   promoVideoUrl: envValue(process.env.NEXT_PUBLIC_PROMO_VIDEO_URL, "https://arvio.tv/assets/promo/arvio-tour-web.mp4"),
   promoPosterUrl: envValue(process.env.NEXT_PUBLIC_PROMO_POSTER_URL, "https://arvio.tv/assets/promo/arvio-premium-poster.webp"),
   paywallEnabled: !selfHosted && envValue(process.env.NEXT_PUBLIC_PAYWALL_ENABLED, "false") === "true",
+  // Base sizes stored on items (details, hero, player). Cards never load these
+  // directly: they pick a smaller rendition from cardImageWidths via srcset.
   imageBase: "https://image.tmdb.org/t/p/w780",
   backdropBase: "https://image.tmdb.org/t/p/w1280",
-  backdropOriginal: "https://image.tmdb.org/t/p/original"
+  backdropOriginal: "https://image.tmdb.org/t/p/original",
+  logoBase: "https://image.tmdb.org/t/p/w500",
+  // TMDB renditions offered to cards (srcset). A ~300px landscape card picks
+  // w300/w780 by device pixel ratio instead of the 1280px backdrop.
+  cardImageWidths: {
+    backdrop: [300, 780, 1280],
+    poster: [185, 342, 500, 780],
+    logo: [185, 300, 500]
+  } as Record<"backdrop" | "poster" | "logo", number[]>
 };
 
 export const TELEGRAM_DISABLED_MESSAGE = "Telegram is not available in this Unraid preview. Choose another source.";
