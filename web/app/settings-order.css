@@ -8,7 +8,7 @@
 .st-sort-list { list-style: none; margin: 0; padding: 0; }
 .st-sort-viewport { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; border-top: 1px solid var(--st-line); }
 .st-sort-row {
-  display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 8px 16px 8px 8px;
+  display: flex; align-items: center; gap: 10px; min-height: 56px; padding-top: 8px; padding-inline-end: 16px; padding-bottom: 8px; padding-inline-start: 8px;
   background: var(--st-card); transition: background 0.12s;
 }
 .st-sort-list:not(.is-virtual) > .st-sort-row + .st-sort-row { border-top: 1px solid var(--st-line); }
@@ -23,7 +23,12 @@
   border: 0; border-radius: 9px; background: transparent; color: var(--st-soft);
   cursor: grab; touch-action: none;
 }
-.st-sort-handle:hover { color: var(--st-text); background: rgba(255, 255, 255, 0.05); }
+@media (hover: hover) and (pointer: fine) {
+  .st-sort-handle:hover {
+    color: var(--st-text);
+    background: rgba(255, 255, 255, 0.05);
+  }
+}
 .st-sort-handle[aria-pressed="true"] { color: var(--st-text); background: rgba(255, 255, 255, 0.1); }
 .st-sort-row.is-dragging .st-sort-handle { cursor: grabbing; }
 
@@ -45,7 +50,12 @@
   border: 1px solid var(--st-line-strong); background: #070808; color: var(--st-muted);
   font: inherit; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer;
 }
-.st-pos:hover { color: var(--st-text); border-color: var(--st-accent); }
+@media (hover: hover) and (pointer: fine) {
+  .st-pos:hover {
+    color: var(--st-text);
+    border-color: var(--st-accent);
+  }
+}
 .st-shell input.st-pos-input { width: 64px; height: 28px; padding: 0 6px; font-size: 12.5px; }
 .st-icon-btn.is-on { color: #ffd166; border-color: rgba(255, 209, 102, 0.35); }
 .st-icon-btn.is-on svg { fill: currentColor; }
@@ -59,7 +69,7 @@
 .st-sort-main > .st-input { min-width: 140px; }
 /* Home rows: the list needs the width (name, card style, actions); the preview sits below it. */
 .st-layout.is-rows { grid-template-columns: minmax(0, 1fr); }
-.st-layout.is-rows .st-preview { border-left: 0; border-top: 1px solid var(--st-line); }
+.st-layout.is-rows .st-preview { border-inline-start: 0; border-top: 1px solid var(--st-line); }
 .st-layout.is-rows .st-preview ol { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 .st-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 20px 10px; }
 .st-chip {
@@ -74,7 +84,7 @@
 
 .st-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 0; border-top: 1px solid var(--st-line); }
 .st-layout > .st-layout-main { min-width: 0; }
-.st-preview { border-left: 1px solid var(--st-line); padding: 14px 16px 16px; background: #0c0d0e; min-width: 0; }
+.st-preview { border-inline-start: 1px solid var(--st-line); padding: 14px 16px 16px; background: #0c0d0e; min-width: 0; }
 .st-preview h4 { margin: 0 0 4px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--st-soft); }
 .st-preview p { margin: 0 0 10px; color: var(--st-soft); font-size: 12px; line-height: 1.45; }
 .st-preview ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; counter-reset: st-preview; }
@@ -108,24 +118,24 @@
 
 @media (max-width: 1080px) {
   .st-layout { grid-template-columns: minmax(0, 1fr); }
-  .st-preview { border-left: 0; border-top: 1px solid var(--st-line); }
+  .st-preview { border-inline-start: 0; border-top: 1px solid var(--st-line); }
   .st-preview ol { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
 }
 
 @media (max-width: 760px) {
-  .st-sort-row { gap: 6px; padding: 8px 10px 8px 4px; }
+  .st-sort-row { gap: 6px; padding-top: 8px; padding-inline-end: 10px; padding-bottom: 8px; padding-inline-start: 4px; }
   .st-sort-list:not(.is-virtual) > .st-sort-row { flex-wrap: wrap; }
   .st-sort-list:not(.is-virtual) > .st-sort-row > .st-sort-main { flex-basis: calc(100% - 48px); }
-  .st-sort-list:not(.is-virtual) > .st-sort-row > .st-sort-actions { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+  .st-sort-list:not(.is-virtual) > .st-sort-row > .st-sort-actions { margin-inline-start: auto; flex-wrap: wrap; justify-content: flex-end; }
   .st-shell .st-sort-btn, .st-sort-btn { width: 32px; height: 32px; }
   .st-sort-list.is-virtual .st-sort-actions .st-icon-btn { width: 32px; height: 32px; }
   .st-sort-handle { width: 30px; }
   /* Phones drag; top/bottom stay available with Home/End and on bigger screens. */
   .st-sort-list.is-virtual .st-sort-btn.is-edge { display: none; }
-  .st-toolbar, .st-chips, .st-subhead { padding-left: 16px; padding-right: 16px; }
-  .st-hint { padding-left: 16px; padding-right: 16px; }
-  .st-picker-results li { padding-left: 16px; padding-right: 16px; }
-  .st-edit-panel { padding-left: 16px; padding-right: 16px; }
+  .st-toolbar, .st-chips, .st-subhead { padding-inline-start: 16px; padding-inline-end: 16px; }
+  .st-hint { padding-inline-start: 16px; padding-inline-end: 16px; }
+  .st-picker-results li { padding-inline-start: 16px; padding-inline-end: 16px; }
+  .st-edit-panel { padding-inline-start: 16px; padding-inline-end: 16px; }
 }
 
 /* Large screens and TVs: bigger targets for a remote. */
@@ -138,4 +148,4 @@
 .st-addon-installer { padding: 4px 20px 16px; }
 .st-confirm { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .st-sort-main .addon-url { max-width: 100%; }
-@media (max-width: 760px) { .st-addon-installer { padding-left: 16px; padding-right: 16px; } }
+@media (max-width: 760px) { .st-addon-installer { padding-inline-start: 16px; padding-inline-end: 16px; } }

@@ -1,4 +1,5 @@
 "use client";
+import "@/app/calendar.css";
 
 import { CalendarDays, ChevronLeft, ChevronRight, LayoutGrid, List } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";

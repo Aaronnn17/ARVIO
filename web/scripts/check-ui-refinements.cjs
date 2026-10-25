@@ -9,7 +9,7 @@ const { chromium } = require('@playwright/test');
 
 const root = path.resolve(__dirname, '..');
 const evidence = path.resolve(root, '../artifacts/ui-refinement-web');
-const styles = ['globals.css', 'premium.css', 'tv-guide.css', 'source-setup.css', 'calendar.css', 'ui-refinements.css'];
+const { APP_SHEETS: styles } = require('./app-styles.cjs');
 
 function extract(file, predicate) {
   const source = ts.createSourceFile(file, require('../tests/sources.cjs').sourceOf(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -106,7 +106,7 @@ async function main() {
   const server = http.createServer((req, res) => {
     const route = new URL(req.url, 'http://localhost').pathname;
     if (route === '/app.js') {res.setHeader('Content-Type','text/javascript'); return res.end(bundle.outputFiles[0].contents);}
-    if (styles.some(name => route === '/'+name)) {res.setHeader('Content-Type','text/css'); return res.end(fs.readFileSync(path.join(root,'app',route.slice(1))));}
+    if (styles.some(name => route === '/'+name)) {res.setHeader('Content-Type','text/css'); return res.end(fs.readFileSync(path.join(root,route.slice(1))));}
     if (route === '/still.jpg') {res.setHeader('Content-Type','image/jpeg'); return res.end(fs.readFileSync(path.join(root,'../app/src/androidTest/assets/library/157336-backdrop.jpg')));}
     if (route === '/white.svg') {res.setHeader('Content-Type','image/svg+xml'); return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450"><path fill="white" d="M0 0h800v450H0z"/></svg>');}
     const publicFile = path.resolve(root,'public',route.replace(/^\//,''));

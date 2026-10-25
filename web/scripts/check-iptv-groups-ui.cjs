@@ -2,6 +2,7 @@
 // keyboard "hold to move", drop/cancel, persistence, show/hide per playlist,
 // reset, and no sideways scrolling on desktop and phone.
 const path = require('node:path');
+const { appCss } = require('./app-styles.cjs');
 const fs = require('node:fs');
 const http = require('node:http');
 const assert = require('node:assert/strict');
@@ -18,7 +19,7 @@ try { ({ chromium } = require(process.env.ARVIO_PLAYWRIGHT || '@playwright/test'
       build.onResolve({ filter: /^@\/lib\/i18n$/ }, () => ({ path: 'i18n', namespace: 'fixture' }));
       build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export const useTranslation = () => (text, values) => values ? text.replace(/\\{(\\w+)\\}/g, (_, key) => String(values[key] ?? "")) : text;', loader: 'js' }));
     }}] });
-  const css = ['app/globals.css', 'app/settings.css', 'app/settings-order.css'].map((file) => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
+  const css = appCss(root);
   const server = http.createServer((req, res) => {
     if (req.url === '/app.js') { res.setHeader('content-type','application/javascript'); res.end(fs.readFileSync(path.join(out,'app.js'))); }
     else if (req.url === '/style.css') { res.setHeader('content-type','text/css'); res.end(css); }

@@ -1,4 +1,5 @@
 "use client";
+import "./sources.css";
 import { useTranslation } from "@/lib/i18n";
 
 import { Search, X } from "lucide-react";

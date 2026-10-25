@@ -1,4 +1,5 @@
 "use client";
+import "@/app/premium.css";
 
 import { useEffect, useId, useRef, useState } from "react";
 import { BadgeCheck, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";

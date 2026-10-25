@@ -1,4 +1,5 @@
 "use client";
+import "@/app/premium.css";
 
 import { useEffect, useId, useRef, useState } from "react";
 import { Copy, ExternalLink, Loader2, X } from "lucide-react";

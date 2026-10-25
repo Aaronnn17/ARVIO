@@ -1,6 +1,7 @@
 const path=require('node:path'),fs=require('node:fs'),http=require('node:http'),assert=require('node:assert/strict');
 const esbuild=require('esbuild'),ts=require('typescript'),{chromium}=require('@playwright/test');
 const {load}=require('../tests/load.cjs');
+const {appCss}=require('./app-styles.cjs');
 (async()=>{
  const root=path.resolve(__dirname,'..'),out=path.resolve(root,'../artifacts/web-i18n');fs.mkdirSync(out,{recursive:true});
  const manifest=require('../lib/i18n/manifest.json');
@@ -20,6 +21,7 @@ const {load}=require('../tests/load.cjs');
  const server=http.createServer((req,res)=>{
   const pathname=new URL(req.url,'http://localhost').pathname;
   if(pathname==='/'){res.setHeader('content-type','text/html; charset=utf-8');res.end(`<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/globals.css"></head><body><div id="root"></div><script>${defaultsScript}</script><script src="/app.js"></script></body></html>`);return;}
+  if(pathname==='/globals.css'){res.setHeader('content-type','text/css');res.end(appCss(root));return;}
   const file=pathname==='/app.js'?path.join(out,'app.js'):pathname==='/globals.css'?path.join(root,'app/globals.css'):pathname.startsWith('/fixtures/')?path.join(root,'../app/src/androidTest/assets/library',path.basename(pathname)):path.join(root,'public',pathname);
   if(!fs.existsSync(file)){res.statusCode=404;res.end();return;}
   res.setHeader('content-type',file.endsWith('.js')?'application/javascript':file.endsWith('.json')?'application/json':file.endsWith('.css')?'text/css':file.endsWith('.svg')?'image/svg+xml':file.endsWith('.png')?'image/png':'image/jpeg');fs.createReadStream(file).pipe(res);

@@ -42,6 +42,6 @@ test('web YouTube player uses an unmodified embed with a separate toolbar', () =
   assert.match(embed, /createElement\("iframe"\)/);
   assert.match(embed, /allowFullscreen = true/);
   assert.match(api, /www\.youtube\.com\/iframe_api/);
-  const css = read('web/app/globals.css');
+  const css = read('web/components/player/player.css');
   assert.match(css, /youtube-player-layout[^}]+grid-template-rows: auto minmax\(200px, 1fr\)/);
 });

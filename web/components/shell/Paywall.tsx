@@ -1,4 +1,5 @@
 "use client";
+import "@/app/premium.css";
 import { useTranslation } from "@/lib/i18n";
 
 

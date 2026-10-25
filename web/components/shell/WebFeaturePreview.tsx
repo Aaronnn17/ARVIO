@@ -1,4 +1,5 @@
 "use client";
+import "@/app/premium.css";
 
 import { useState, type ReactNode } from "react";
 import { ArrowRight, Check, Cloud, Download, Layers, LockKeyhole, LogOut, Monitor, Server, ShieldCheck, Tv } from "lucide-react";
