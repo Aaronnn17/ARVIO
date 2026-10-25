@@ -155,6 +155,17 @@ test('the single-portal option still loads as Portal 1', async () => {
   const iptv = load('lib/iptv.ts', { './http': portalHttp([]), './storage': storage() });
   const snapshot = await iptv.loadIptvSnapshot([], [], [], [], [], { stalkerUrl: 'http://one.example/c/', stalkerMac: '00:1a:79:00:00:01' });
   assert.equal(snapshot.allChannels[0].id, 'stalker:stalker1:1');
+  // A favourite saved by an older build under the address as typed (trailing slash) still resolves.
+  assert.ok(snapshot.allChannels[0].syncAliases.includes(`stalker:${encodeURIComponent('http://one.example/c/')}:1`));
+});
+
+test('portals load after the playlists, as the single portal did', async () => {
+  const events = [];
+  const http = portalHttp(events);
+  const iptv = load('lib/iptv.ts', { './http': { ...http, textRequest: async () => { events.push('playlist'); await new Promise((r) => setTimeout(r, 5)); return '#EXTM3U\n#EXTINF:-1,One\nhttp://example.test/1'; } }, './storage': storage() });
+  const snapshot = await iptv.loadIptvSnapshot([{ id: 'list_1', name: 'List', m3uUrl: 'https://playlist.example/list.m3u', enabled: true }], [], [], [], [], { stalkerPortals: [twoPortals[0]] });
+  eq(snapshot.allChannels.map((c) => c.id.split(':')[0]), ['list_1', 'stalker', 'stalker', 'stalker']);
+  assert.ok(events.indexOf('playlist') < events.findIndex((e) => e.startsWith('one.example')), events.join(', '));
 });
 
 /* ---------- cloud: portals ---------- */

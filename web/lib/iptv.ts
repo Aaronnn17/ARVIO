@@ -179,7 +179,6 @@ export async function loadIptvSnapshot(
   const enabled = normalizedPlaylists.filter((playlist) => playlist.enabled && playlist.m3uUrl.trim());
   const playlistWarnings: string[] = [];
   const playlistErrors: NonNullable<IptvSnapshot["playlistErrors"]> = [];
-  const portalSets = loadPortals(portalsOf(options), Boolean(options.freshPortals), playlistErrors, playlistWarnings);
   const channelSets = await Promise.all(
     enabled.map(async (playlist) => {
       try {
@@ -212,7 +211,8 @@ export async function loadIptvSnapshot(
       }
     })
   );
-  channelSets.push(...await portalSets);
+  // Portals after the playlists, as the single portal always was.
+  channelSets.push(...await loadPortals(portalsOf(options), Boolean(options.freshPortals), playlistErrors, playlistWarnings));
   const allChannels = channelSets.flat();
   const channels = accessibleChannels(allChannels, hiddenGroups);
   // Xtream channels get now/next on demand from the panel's JSON EPG (fast,

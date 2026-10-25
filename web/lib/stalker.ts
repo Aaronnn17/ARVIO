@@ -40,6 +40,8 @@ export async function loadStalkerChannels(url:string,mac:string,portalId='stalke
   // Same names as StalkerApi.getChannels: a genre without a title is "Unknown", a channel without a genre "Uncategorized".
   const names=new Map<string,string>((Array.isArray(genres)?genres:[]).filter((g:any)=>g?.id!=null).map((g:any)=>[String(g.id),g.title==null?'Unknown':String(g.title)]));
   const channels:IptvChannel[]=[];const seen=new Set<string>();
+  // Older builds keyed ids by the address as typed, often with a trailing slash.
+  const legacyBases=[...new Set([url,url.replace(/\/+$/,''),`${url.replace(/\/+$/,'')}/`])].map(base=>`stalker:${encodeURIComponent(base)}:`);
   for(let page=1;;page++){
     const response=await request(p,{type:'itv',action:'get_all_channels',p:String(page)});
     const rows=Array.isArray(response)?response:response.data;
@@ -50,7 +52,7 @@ export async function loadStalkerChannels(url:string,mac:string,portalId='stalke
       const cmd=String(row.cmd);const direct=String(row.use_http_tmp_link)==='0'&&String(row.wowza_tmp_link??0)==='0'&&String(row.flussonic_tmp_link??0)==='0';
       const stream=cmd.replace(/^ffmpeg\s+/i,'').trim();
       const genre=row.tv_genre_id==null?undefined:names.get(String(row.tv_genre_id));
-      channels.push({id:`stalker:${portalId}:${row.id}`,syncAliases:[`stalker:${encodeURIComponent(url)}:${row.id}`],name:String(row.name||row.id),group:genre??'Uncategorized',logo:row.logo||undefined,streamUrl:stream,number:String(row.number||''),
+      channels.push({id:`stalker:${portalId}:${row.id}`,syncAliases:legacyBases.map(base=>`${base}${row.id}`),name:String(row.name||row.id),group:genre??'Uncategorized',logo:row.logo||undefined,streamUrl:stream,number:String(row.number||''),
         stalker:{portal:url,mac,cmd,direct:direct&&/^https?:\/\//i.test(stream)}});
     }
     if(!added||!response.total_items||channels.length>=Number(response.total_items))break;
