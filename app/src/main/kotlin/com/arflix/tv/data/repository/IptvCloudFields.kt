@@ -8,7 +8,7 @@ import org.json.JSONObject
 internal object IptvCloudFields {
     private val fields = setOf("m3uUrl", "epgUrl", "playlists", "stalkerPortals", "stalkerPortalUrl",
         "stalkerMacAddress", "favoriteGroups", "favoriteChannels", "hiddenGroups", "lockedGroups",
-        "groupOrder", "groupOrderSchema", "sortOrder")
+        "groupOrder", "groupOrderSchema", "sortOrder", "channelOrder")
     private val timestampKey = stringPreferencesKey("cloud_sync_field_ts")
     private val baselineKey = stringPreferencesKey("cloud_sync_field_base")
 

@@ -86,6 +86,11 @@ export function Row({ id, label, hint, scope, children, stack, disabled }: {
   );
 }
 
+/** A search target for a block that is not a single Row (e.g. a layout editor). */
+export function SettingAnchor({ id, children }: { id: string; children: ReactNode }) {
+  return <div className="st-anchor" id={`st-${id}`} data-setting={id}>{children}</div>;
+}
+
 export function Toggle({ value, onChange, disabled, label }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }) {
   const translateUi = useTranslation();
   return (
