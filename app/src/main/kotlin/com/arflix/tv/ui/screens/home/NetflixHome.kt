@@ -80,6 +80,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -902,57 +904,62 @@ private fun NetflixContentRow(
                 val landscape = featured || (!expanded && !restingPoster)
                 val cardWidth = if (featured) bigCardWidth else if (expanded) focusedPosterWidth else restingWidth
                 val cardHeight = if (expanded) bigCardHeight else cardWidth / (if (landscape) (16f / 9f) else (2f / 3f))
-                val animatedWidth by animateDpAsState(cardWidth, sizeSpec, label = "netflixCardWidth")
-                val animatedHeight by animateDpAsState(cardHeight, sizeSpec, label = "netflixCardHeight")
+                val animatedWidth = animateDpAsState(cardWidth, sizeSpec, label = "netflixCardWidth")
+                val animatedHeight = animateDpAsState(cardHeight, sizeSpec, label = "netflixCardHeight")
                 // Decode once for the target geometry, never once per animation frame.
                 val artwork = if (item.isPlaceholder) null else rememberNetflixArtwork(
                     item, landscape, cardWidth, cardHeight, isContinueWatching)
                 Box(Modifier.testTag("netflix_morph_${item.mediaType}_${item.id}")) {
-                    when {
-                        featured -> NetflixFeaturedCard(
-                            item = item,
-                            logoUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
-                            width = animatedWidth,
-                            height = animatedHeight,
-                            showProgress = isContinueWatching,
-                            trailerKey = trailerKey,
-                            trailerDelayMs = trailerDelayMs,
-                            trailerVolume = trailerVolume,
-                            // A row held expanded while it leaves must not move the channel preview.
-                            onChannelCardPlaced = if (isCurrentRow) onChannelCardPlaced else { _ -> },
-                            artworkPainter = artwork
-                        )
-                        expanded -> MediaCard(
-                            item = item,
-                            width = animatedWidth,
-                            isLandscape = false,
-                            showLogoImage = false,
-                            raiseOnFocus = false,
-                            showProgress = isContinueWatching,
-                            showTitle = false,
-                            focusedScale = 1f,
-                            animateFocus = false,
-                            enableSystemFocus = false,
-                            artworkPainter = artwork,
-                            artworkHeight = animatedHeight,
-                            onClick = onClick
-                        )
-                        else -> MediaCard(
-                            item = item,
-                            width = animatedWidth,
-                            isLandscape = !restingPoster,
-                            logoImageUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
-                            showLogoImage = true,
-                            raiseOnFocus = false,
-                            showProgress = isContinueWatching,
-                            showTitle = false,
-                            focusedScale = 1f,
-                            animateFocus = false,
-                            enableSystemFocus = false,
-                            artworkPainter = artwork,
-                            artworkHeight = animatedHeight,
-                            onClick = onClick
-                        )
+                    // The morph size is applied at layout time: the cards get their target
+                    // size and are only re-measured each frame, not recomposed.
+                    Box(Modifier.netflixMorphSize(animatedWidth, animatedHeight), propagateMinConstraints = true) {
+                        when {
+                            featured -> NetflixFeaturedCard(
+                                item = item,
+                                logoUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
+                                width = cardWidth,
+                                height = cardHeight,
+                                showProgress = isContinueWatching,
+                                trailerKey = trailerKey,
+                                trailerDelayMs = trailerDelayMs,
+                                trailerVolume = trailerVolume,
+                                // A row held expanded while it leaves must not move the channel preview.
+                                onChannelCardPlaced = if (isCurrentRow) onChannelCardPlaced else { _ -> },
+                                artworkPainter = artwork
+                            )
+                            // The artwork fills whatever height the morph gives the card.
+                            expanded -> MediaCard(
+                                item = item,
+                                width = cardWidth,
+                                isLandscape = false,
+                                showLogoImage = false,
+                                raiseOnFocus = false,
+                                showProgress = isContinueWatching,
+                                showTitle = false,
+                                focusedScale = 1f,
+                                animateFocus = false,
+                                enableSystemFocus = false,
+                                artworkPainter = artwork,
+                                fillArtworkHeight = true,
+                                onClick = onClick
+                            )
+                            else -> MediaCard(
+                                item = item,
+                                width = cardWidth,
+                                isLandscape = !restingPoster,
+                                logoImageUrl = cardLogoUrls["${item.mediaType}_${item.id}"],
+                                showLogoImage = true,
+                                raiseOnFocus = false,
+                                showProgress = isContinueWatching,
+                                showTitle = false,
+                                focusedScale = 1f,
+                                animateFocus = false,
+                                enableSystemFocus = false,
+                                artworkPainter = artwork,
+                                fillArtworkHeight = true,
+                                onClick = onClick
+                            )
+                        }
                     }
                     if (isRanked && index < 10 && !item.isPlaceholder) {
                         TopRankRibbon(
@@ -1056,6 +1063,15 @@ private class NetflixArtworkBlendPainter(
         }
     }
 }
+
+/** Sizes the card to the running morph values. Reading them here, not in composition, keeps the card from recomposing every frame. */
+private fun Modifier.netflixMorphSize(width: State<Dp>, height: State<Dp>): Modifier =
+    layout { measurable, _ ->
+        val w = width.value.roundToPx().coerceAtLeast(0)
+        val h = height.value.roundToPx().coerceAtLeast(0)
+        val placeable = measurable.measure(Constraints.fixed(w, h))
+        layout(w, h) { placeable.place(0, 0) }
+    }
 
 /** Keep the current image while loading, then blend the ready poster/backdrop without a blank frame. */
 @Composable

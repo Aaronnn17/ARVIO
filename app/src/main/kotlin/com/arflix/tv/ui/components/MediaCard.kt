@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -103,6 +104,8 @@ fun MediaCard(
     modifier: Modifier = Modifier,
     artworkPainter: Painter? = null,
     artworkHeight: Dp? = null,
+    /** The artwork fills the height the parent gives the card (a parent that animates the size). */
+    fillArtworkHeight: Boolean = false,
 ) {
     // If this is a placeholder card, show skeleton only
     if (item.isPlaceholder) {
@@ -222,7 +225,11 @@ fun MediaCard(
         ArvioFocusableSurface(
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (artworkHeight != null) Modifier.height(artworkHeight) else Modifier.aspectRatio(aspectRatio)),
+                .then(when {
+                    fillArtworkHeight -> Modifier.fillMaxHeight()
+                    artworkHeight != null -> Modifier.height(artworkHeight)
+                    else -> Modifier.aspectRatio(aspectRatio)
+                }),
             shape = shape,
             backgroundColor = ArvioSkin.colors.surface,
             outlineColor = ArvioSkin.colors.focusOutline,
