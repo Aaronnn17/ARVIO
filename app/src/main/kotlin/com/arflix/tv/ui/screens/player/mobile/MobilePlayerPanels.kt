@@ -858,7 +858,7 @@ fun MobileSubtitlesSheet(
                 ) {
                     itemsIndexed(tracksForLang, key = { index, sub -> "${index}_${sub.id}_${sub.url}" }) { index, sub ->
                         val isActive = selectedSubtitle?.id == sub.id
-                        val trackTitle = sub.label.ifBlank { stringResource(R.string.mplayer_language_track, currentLang, index + 1) }
+                        val trackTitle = sub.label.ifBlank { stringResource(R.string.mplayer_language_track, currentLang.orEmpty(), index + 1) }
                         val isSdh = trackTitle.contains("sdh", ignoreCase = true) ||
                             trackTitle.contains("cc", ignoreCase = true) ||
                             trackTitle.contains("hearing", ignoreCase = true)
