@@ -5,6 +5,13 @@ import { useTranslation } from "@/lib/i18n";
 import { config, getAuthPortalUrl, hasNetlifyBackendConfig, hasSimklConfig, hasSupabaseConfig, hasTraktConfig } from "@/lib/config";
 import { useApp } from "@/lib/store";
 import { PremiumAccount } from "@/components/shell/PremiumAccount";
+
+// One translatable sentence with the link in the middle, so every language can
+// put the link where its word order needs it.
+const LINK_SLOT = "\u0000link\u0000";
+function splitAroundLink(text: string): string[] {
+  return text.split(/(\u0000link\u0000)/).filter(Boolean);
+}
 import { Empty, Group, Row, Select, SectionHeader, Status, Toggle } from "../ui";
 
 function cloudConfigured() {
@@ -185,7 +192,9 @@ export function ServicesSection() {
         {deviceCode && !traktConnected && (
           <div className="st-code">
             <strong>{deviceCode.user_code}</strong>
-            <p>{translateUi("Open ")}<a className="st-link" href={deviceCode.verification_url} target="_blank" rel="noreferrer">{deviceCode.verification_url}</a>{translateUi(" and enter this code, then come back here.")}</p>
+            <p>{splitAroundLink(translateUi("Open {value0} and enter this code, then come back here.", { value0: LINK_SLOT })).map((part, index) => part === LINK_SLOT
+              ? <a key={index} className="st-link" href={deviceCode.verification_url} target="_blank" rel="noreferrer">{deviceCode.verification_url}</a>
+              : <span key={index}>{part}</span>)}</p>
             <button type="button" className="st-btn is-primary" disabled={traktBusy === "poll"} onClick={() => void run(setTraktBusy, setTraktError, "poll", pollTrakt, "Trakt has not approved this device yet.")}>
               {traktBusy === "poll" ? translateUi("Checking...") : translateUi("I approved it")}
             </button>
