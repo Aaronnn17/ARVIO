@@ -10,7 +10,7 @@ import { getImdbRating, peekImdbRating } from "@/lib/imdbRatings";
 import { formatReleaseDate, formatRuntime } from "@/lib/mediaFormat";
 import { tmdbSized, tmdbSrcSet } from "@/lib/mediaImages";
 import { canonicalServiceName, serviceClearLogo } from "@/lib/serviceLogos";
-import { useApp } from "@/lib/store";
+import { useAppPick, useAppSelector } from "@/lib/store";
 import { useKidsFilter } from "@/lib/useKids";
 import { getCardExtras, peekCardExtras, prefetchDetails, resolveTmdbId } from "@/lib/tmdb";
 import type { CardExtras } from "@/lib/cardExtras";
@@ -43,8 +43,11 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode, rank, hideService }:
   hideService?: string;
 }) {
   const translateUi = useTranslation();
-  const { settings, isWatched, openContextMenu } = useApp();
-  const effectivePosterMode = posterMode ?? settings.cardLayoutMode === "poster";
+  const { isWatched, openContextMenu } = useAppPick("isWatched", "openContextMenu");
+  // Only the two settings a card shows, so unrelated settings edits leave the cards alone.
+  const cardLayoutMode = useAppSelector((store) => store.settings.cardLayoutMode);
+  const language = useAppSelector((store) => store.settings.language);
+  const effectivePosterMode = posterMode ?? cardLayoutMode === "poster";
   const cardRef = useRef<HTMLButtonElement | null>(null);
   const near = useNearViewport(cardRef);
   // Hover/focus fetches the extras right away, even before the observer fires.
@@ -190,7 +193,7 @@ function MediaCardBase({ item, onOpen, onFocus, posterMode, rank, hideService }:
     return () => controller.abort();
   }, [imdbId, item.mediaType, near, interacted]);
 
-  const dateLabel = formatReleaseDate(item.releaseDate, settings.language) || item.subtitle || year;
+  const dateLabel = formatReleaseDate(item.releaseDate, language) || item.subtitle || year;
   const runtimeLabel = formatRuntime(item.duration || runtime);
   const episodeLine = formatEpisodeLine(item);
 

@@ -31,7 +31,7 @@ import { useTranslation } from "@/lib/i18n";
 import { config } from "@/lib/config";
 import { trackLanguageName } from "@/lib/languages";
 import { useEntitlement } from "@/lib/entitlementContext";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { clearSourceSettingsRequest, requestedSourceSettings, SOURCE_SETTINGS_EVENT } from "@/lib/sourceSetup";
 import { SETTINGS_INDEX, type SettingsSectionId } from "./settingsIndex";
 import { AccountSection, PremiumSection, ProfilesSection, ServicesSection } from "./sections/Account";
@@ -81,7 +81,7 @@ function isSection(value: unknown): value is SectionId {
 /** One-line current value shown next to a section on phones. */
 function useSummaries(): Partial<Record<SectionId, string>> {
   const translateUi = useTranslation();
-  const { auth, settings, addons, traktConnected, simklConnected, mdblistConnected, activeProfile } = useApp();
+  const { auth, settings, addons, traktConnected, simklConnected, mdblistConnected, activeProfile } = useAppPick("auth", "settings", "addons", "traktConnected", "simklConnected", "mdblistConnected", "activeProfile");
   const entitlement = useEntitlement();
   return useMemo(() => {
     const services = [traktConnected && "Trakt", simklConnected && "Simkl", mdblistConnected && "MDBList"].filter(Boolean).join(", ");
@@ -102,7 +102,7 @@ function useSummaries(): Partial<Record<SectionId, string>> {
 
 export function SettingsScreen() {
   const translateUi = useTranslation();
-  const { settingsSyncState, auth } = useApp();
+  const { settingsSyncState, auth } = useAppPick("settingsSyncState", "auth");
   const requested = requestedSourceSettings();
   const [section, setSectionState] = useState<SectionId>(() => requested ?? "account");
   // Phones show the list of sections first; a deep link opens its section.

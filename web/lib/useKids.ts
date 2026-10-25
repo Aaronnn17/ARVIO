@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { useApp } from "./store";
+import { useAppSelector } from "./store";
 import { allowsItem } from "./kids";
 import { kidsGateFor, kidsRatingStore } from "./kidsGate";
 import type { Category, MediaItem } from "./types";
@@ -15,8 +15,11 @@ const noopSubscribe = () => () => {};
  * every render (never a cached null), so a kids Home is filtered from its first paint.
  */
 export function useKidsFilter() {
-  const { activeProfile, settings } = useApp();
-  const { maxAge, region } = kidsGateFor(activeProfile, settings.language);
+  // Only the two inputs of the gate: every card calls this hook, so subscribing
+  // to the whole store re-rendered every card on any store change.
+  const activeProfile = useAppSelector((store) => store.activeProfile);
+  const language = useAppSelector((store) => store.settings.language);
+  const { maxAge, region } = kidsGateFor(activeProfile, language);
   const active = maxAge !== null;
   const store = active ? kidsRatingStore() : null;
   const version = useSyncExternalStore(store ? store.subscribe : noopSubscribe, () => store?.getVersion() ?? 0, () => 0);

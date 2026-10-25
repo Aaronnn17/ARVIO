@@ -6,7 +6,7 @@ const {load}=require('../tests/load.cjs');
  const manifest=require('../lib/i18n/manifest.json');
  const {resolveLocale,translate}=load('lib/i18n/core.ts',{'./manifest.json':manifest});
  const languages=require('../lib/i18n/languages.json');
- const source=ts.createSourceFile('store.tsx',fs.readFileSync(path.join(root,'lib/store.tsx'),'utf8'),99,true,ts.ScriptKind.TSX);
+ const source=ts.createSourceFile('store.tsx',fs.readFileSync(path.join(root,'lib/store/settings.ts'),'utf8'),99,true,ts.ScriptKind.TSX);
  let defaults;function visit(n){if(ts.isVariableDeclaration(n)&&n.name.getText(source)==='defaultSettings')defaults=n.initializer.getText(source);ts.forEachChild(n,visit)}visit(source);
  assert(defaults);
  const defaultsScript=ts.transpileModule(`const defaultCatalogs=[]; window.fixtureDefaults=${defaults};`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;

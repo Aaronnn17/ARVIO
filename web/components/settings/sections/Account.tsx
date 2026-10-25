@@ -3,7 +3,7 @@ import { CheckCircle2, ExternalLink, LogOut, RefreshCw, User, UserCircle } from 
 import { useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { config, getAuthPortalUrl, hasNetlifyBackendConfig, hasSimklConfig, hasSupabaseConfig, hasTraktConfig } from "@/lib/config";
-import { useApp } from "@/lib/store";
+import { useApp, useAppPick } from "@/lib/store";
 import { PremiumAccount } from "@/components/shell/PremiumAccount";
 
 // One translatable sentence with the link in the middle, so every language can
@@ -26,7 +26,7 @@ function buildStamp() {
 
 export function AccountSection() {
   const translateUi = useTranslation();
-  const { auth, signOut, refreshData, settingsSyncState, activeProfile } = useApp();
+  const { auth, signOut, refreshData, settingsSyncState, activeProfile } = useAppPick("auth", "signOut", "refreshData", "settingsSyncState", "activeProfile");
   const [syncBusy, setSyncBusy] = useState(false);
   const ready = cloudConfigured();
   const signIn = () => {
@@ -106,7 +106,7 @@ export function AccountSection() {
 
 export function PremiumSection() {
   const translateUi = useTranslation();
-  const { auth } = useApp();
+  const { auth } = useAppPick("auth");
   return (
     <>
       <SectionHeader title="ARVIO Web Premium" description="Hosted ARVIO Web on iPhone, iPad, Mac and PC. The Android and TV app stays free." />
@@ -153,7 +153,7 @@ export function ServicesSection() {
     traktConnected, mdblistConnected, simklConnected, trackingPreferences, updateTrackingPreferences,
     deviceCode, simklDeviceCode, beginTrakt, pollTrakt, disconnectTrakt, connectMdblist, disconnectMdblist,
     beginSimkl, pollSimkl, disconnectSimkl,
-  } = useApp();
+  } = useAppPick("traktConnected", "mdblistConnected", "simklConnected", "trackingPreferences", "updateTrackingPreferences", "deviceCode", "simklDeviceCode", "beginTrakt", "pollTrakt", "disconnectTrakt", "connectMdblist", "disconnectMdblist", "beginSimkl", "pollSimkl", "disconnectSimkl");
   const [traktError, setTraktError] = useState<string | null>(null);
   const [traktBusy, setTraktBusy] = useState<"start" | "poll" | null>(null);
   const [simklError, setSimklError] = useState<string | null>(null);

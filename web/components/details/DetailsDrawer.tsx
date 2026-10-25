@@ -20,7 +20,7 @@ import { verifyAutoplayCandidates } from "@/lib/autoplayVerify";
 import { playbackPlan } from "@/lib/streamCompatibility";
 import { claimEscape, isTopmostLayer } from "@/lib/playerKeys";
 import { collectResumePoints, episodeKey, episodeProgressMap, firstUnwatchedEpisode, planPrimaryAction, type ResumePoint } from "@/lib/playerResume";
-import { authClient, getPriorityConfig, useApp } from "@/lib/store";
+import { authClient, getPriorityConfig, useAppPick } from "@/lib/store";
 import { simklClient, getSimklItemUrl } from "@/lib/simkl";
 import { syncClient, syncSeasonWatched } from "@/lib/sync";
 import { getLogoUrl, getPersonDetails } from "@/lib/tmdb";
@@ -31,7 +31,7 @@ import { buildDetailMeta, cleanReviewText, formatDate } from "./detailsText";
 import { SourcePickerModal, useCompactSources } from "./SourcePicker";
 
 export function DetailsDrawer() {
-  const { selected: item } = useApp();
+  const { selected: item } = useAppPick("selected");
   if (!item) return null;
   return <DetailsView key={`${item.mediaType}-${item.id}`} item={item} />;
 }
@@ -99,7 +99,7 @@ type AutoplayRequest = { resumeSeconds: number };
 
 function DetailsView({ item }: { item: MediaItem }) {
   const translateUi = useTranslation();
-  const { streams, playStream, selectedEpisode, activeProfile, activeStream, addons: installedAddons, loadEpisodeStreams, openDetails, closeDetails, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally, toggleWatchlist, mdblistConnected, continueWatching } = useApp();
+  const { streams, playStream, selectedEpisode, activeProfile, activeStream, addons: installedAddons, loadEpisodeStreams, openDetails, closeDetails, playTrailer, setToast, settings, watchlist, refreshData, busy, isWatched, markWatchedLocally, toggleWatchlist, mdblistConnected, continueWatching } = useAppPick("streams", "playStream", "selectedEpisode", "activeProfile", "activeStream", "addons", "loadEpisodeStreams", "openDetails", "closeDetails", "playTrailer", "setToast", "settings", "watchlist", "refreshData", "busy", "isWatched", "markWatchedLocally", "toggleWatchlist", "mdblistConnected", "continueWatching");
   const [detailsItem, setDetailsItem] = useState<MediaItem>(item);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [reviews, setReviews] = useState<ReviewInfo[]>([]);
@@ -712,7 +712,7 @@ function SeasonEpisodes({ sectionRef, item, loadingDetails, selectedEpisode, pre
   onPlayEpisode: (season: number, episode: number) => void;
 }) {
   const translateUi = useTranslation();
-  const { openContextMenu, setToast, settings, toggleWatched } = useApp();
+  const { openContextMenu, setToast, settings, toggleWatched } = useAppPick("openContextMenu", "setToast", "settings", "toggleWatched");
   const narrow = useCompactSources();
   const seasons = (item.seasons ?? []).filter(entry => entry.seasonNumber > 0 || settings.includeSpecials || item.seasonNumber === 0);
   const [season, setSeason] = useState(selectedEpisode?.season ?? item.seasonNumber ?? preferredSeason ?? seasons[0]?.seasonNumber ?? 1);

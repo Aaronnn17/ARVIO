@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load, storage } = require('./load.cjs');
+const { sourceOf, storeSource } = require('./sources.cjs');
 
 const authFor = userId => ({ session: { userId, accessToken: 'test' }, isNetlifySession: true, accessToken: async () => 'test' });
 const auth = authFor('account');
@@ -180,7 +181,7 @@ function extractToggle(globals) {
   const vm = require('node:vm');
   const ts = require('typescript');
   const filename = path.resolve(__dirname, '../lib/store.tsx');
-  const source = ts.createSourceFile(filename, fs.readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const source = ts.createSourceFile(filename, storeSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let callback;
   const visit = node => {
     if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'toggleWatchlist') callback = node.initializer.arguments[0];

@@ -4,7 +4,7 @@ import { useTranslation } from "@/lib/i18n";
 
 import { BadgeCheck, Bookmark, Home, Search, Settings, Tv } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { kidsLevelOf } from "@/lib/kids";
 import { ProfileAvatarVisual } from "@/components/profile/ProfileAvatar";
 import type { NavSection } from "@/lib/types";
@@ -23,7 +23,7 @@ const nav = [
 
 export function TopNav() {
   const translateUi = useTranslation();
-  const { view, section, setSection, switchProfile, activeProfile, avatarImages, settings, closeDetails, selected } = useApp();
+  const { view, section, setSection, switchProfile, activeProfile, avatarImages, settings, closeDetails, selected } = useAppPick("view", "section", "setSection", "switchProfile", "activeProfile", "avatarImages", "settings", "closeDetails", "selected");
   // Per-screen tab titles ("Home · ARVIO"), so history, tabs and screen
   // readers say where the user is.
   useEffect(() => {
