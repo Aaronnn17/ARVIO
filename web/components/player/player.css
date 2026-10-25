@@ -255,9 +255,9 @@
 
   .player-overlay .player-controls .player-time-readout .player-time-remaining { margin-left: 6px; }
   .player-overlay .player-controls-row { flex-wrap: wrap; row-gap: 6px; }
-  .player-upnext { grid-template-columns: 96px minmax(0, 1fr); bottom: 108px; }
+  .player-upnext { grid-template-columns: 96px minmax(0, 1fr); bottom: calc(176px + env(safe-area-inset-bottom)); right: 16px; }
   .player-upnext img { width: 96px; }
-  .player-skip { bottom: 108px; }
+  .player-skip { bottom: calc(176px + env(safe-area-inset-bottom)); }
   .player-error-card { padding: 16px; }
   .player-overlay .player-side-panel { left: 8px; right: 8px; max-width: calc(100vw - 16px); }
 }

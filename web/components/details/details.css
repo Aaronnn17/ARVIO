@@ -191,7 +191,14 @@
 }
 
 .episodes-section.is-narrow .episode-list-vertical > * { flex: 0 0 auto; }
-.episodes-section.is-narrow .episode-list-vertical .episode-card-wrap .episode-row { height: auto; }
+.episodes-section.is-narrow .episode-list-vertical .episode-card-wrap .episode-row {
+  display: block !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: auto !important;
+  aspect-ratio: 16 / 9 !important;
+  contain: none;
+}
 
 .episodes-section.is-narrow .episode-list-vertical .episode-row {
   min-height: 0 !important;
