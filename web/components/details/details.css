@@ -2126,7 +2126,6 @@
   .details-drawer .detail-actions .secondary {
     min-width: 0;
     white-space: normal;
-    line-height: 1.2;
     text-align: center;
   }
   .details-drawer .detail-actions .secondary span { white-space: normal; }

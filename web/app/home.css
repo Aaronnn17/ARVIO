@@ -439,7 +439,6 @@
   .home-screen .hero-actions .secondary {
     min-width: 0;
     white-space: normal;
-    line-height: 1.15;
     text-align: center;
   }
   .home-screen .hero-actions .secondary span { white-space: normal; }
