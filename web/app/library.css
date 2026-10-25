@@ -1,5 +1,9 @@
 /* Library toolbar, inline search, source chips, empty states. Imported by WatchlistScreen. */
 
+/* The screen is a grid with a min-height: without align-content:start its
+   rows stretched, so a short (empty) Library spread the toolbar over ~220px. */
+.screen.oled-library { align-content: start; grid-template-columns: minmax(0, 1fr); }
+.oled-library .oled-library-toolbar { min-width: 0; }
 .oled-library .oled-library-actions { min-height: 48px; }
 .oled-library .oled-library-search {
   position: relative;
@@ -46,7 +50,8 @@
   .screen.oled-library { padding-top: 12px; }
   .oled-library .oled-library-toolbar { gap: 8px; margin-bottom: 8px; }
   .oled-library .oled-library-toolbar nav { gap: 2px; overflow-x: auto; scrollbar-width: none; }
-  .oled-library .oled-library-toolbar nav button { flex: 1 0 auto; min-height: 44px; padding: 8px 10px; font-size: 14px; }
+  .oled-library .oled-library-toolbar nav { min-width: 0; }
+  .oled-library .oled-library-toolbar nav button { flex: 1 0 auto; min-height: 44px; padding: 8px 7px; font-size: 13.5px; }
   .oled-library .oled-library-actions { gap: 8px; min-height: 44px; }
   .oled-library .oled-library-actions.is-empty { min-height: 0; }
   .oled-library .oled-library-actions > .oled-library-count { margin-right: 0; flex: 0 0 auto; font-size: 13px; }

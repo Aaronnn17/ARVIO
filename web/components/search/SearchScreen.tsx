@@ -234,7 +234,7 @@ export function SearchScreen() {
               else firstChip.current?.focus();
             }
           }}
-          placeholder={translateUi('Search movies, series and people')} aria-label={translateUi('Search movies, series and people')} />
+          placeholder={translateUi('Search titles and people')} aria-label={translateUi('Search movies, series and people')} />
         {query && <button type="button" className="search-clear" aria-label={translateUi('Clear search')} onClick={() => { setQuery(''); input.current?.focus(); }}><X size={20} /></button>}
       </div>
     </section>
