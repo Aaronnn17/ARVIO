@@ -98,6 +98,24 @@ test('tmdb card helpers share the combined call (logo, providers and meta: one r
   assert.equal(meta.imdbId, 'tt1');
 });
 
+test('a hover prefetch and the details page opening share one in-flight details request', async () => {
+  let resolve;
+  const calls = [];
+  const api = load('lib/tmdb.ts', {
+    './config': { config: { imageBase: '', backdropBase: '', logoBase: '' } }, './storage': storage(),
+    './metadata/anizip': {}, './metadata/dispatcher': {}, './mediaImages': { tmdbImageUrl: () => '' },
+    './http': { proxiedUrl: (x) => x, apiProxiedUrl: (x) => x, jsonRequest: (url) => { calls.push(String(url)); return new Promise((done) => { resolve = done; }); } }
+  }, { window: { location: { origin: 'https://web.example' } } });
+  const item = { id: 1396, mediaType: 'tv', title: 'Breaking Bad' };
+  api.prefetchDetails(item);
+  api.prefetchDetails(item);
+  assert.equal(calls.filter((url) => url.includes('credits')).length, 1);
+  resolve({ id: 1396, name: 'Breaking Bad' });
+  await tick();
+  api.prefetchDetails(item);
+  assert.equal(calls.filter((url) => url.includes('credits')).length, 1, 'served from the cache once settled');
+});
+
 // ---- Row priority over decoration -------------------------------------------
 
 test('card decoration waits while a row loads, then runs a few at a time', async () => {

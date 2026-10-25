@@ -1423,20 +1423,31 @@ export async function getBasicItem(mediaType: MediaType, id: number, language = 
 const detailsPayloadCache = new Map<string, { at: number; payload: TmdbItem }>();
 const DETAILS_CACHE_TTL_MS = 10 * 60 * 1000;
 
-async function fetchDetailsPayload(item: MediaItem, customApiKey?: string) {
+// Requests in flight, keyed like the cache: a card hover/focus prefetch and the
+// details page opening right after it share one TMDB call instead of two.
+const detailsPayloadInflight = new Map<string, Promise<TmdbItem>>();
+
+function fetchDetailsPayload(item: MediaItem, customApiKey?: string): Promise<TmdbItem> {
   const key = `${item.mediaType}-${item.id}`;
   const cached = detailsPayloadCache.get(key);
-  if (cached && Date.now() - cached.at < DETAILS_CACHE_TTL_MS) return cached.payload;
-  const payload = await tmdb<TmdbItem>(`${item.mediaType}/${item.id}`, {
+  if (cached && Date.now() - cached.at < DETAILS_CACHE_TTL_MS) return Promise.resolve(cached.payload);
+  // A custom API key is a different request (and may fail differently).
+  const inflightKey = `${key}|${customApiKey?.trim() ?? ""}`;
+  const existing = detailsPayloadInflight.get(inflightKey);
+  if (existing) return existing;
+  const request = tmdb<TmdbItem>(`${item.mediaType}/${item.id}`, {
     language: "en-US",
     append_to_response: "credits,videos,similar,recommendations,external_ids,watch/providers"
-  }, customApiKey);
-  detailsPayloadCache.set(key, { at: Date.now(), payload });
-  if (detailsPayloadCache.size > 60) {
-    const oldest = [...detailsPayloadCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
-    if (oldest) detailsPayloadCache.delete(oldest[0]);
-  }
-  return payload;
+  }, customApiKey).then((payload) => {
+    detailsPayloadCache.set(key, { at: Date.now(), payload });
+    if (detailsPayloadCache.size > 60) {
+      const oldest = [...detailsPayloadCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) detailsPayloadCache.delete(oldest[0]);
+    }
+    return payload;
+  }).finally(() => { detailsPayloadInflight.delete(inflightKey); });
+  detailsPayloadInflight.set(inflightKey, request);
+  return request;
 }
 
 /** Warm the details cache from a card hover; failures are irrelevant. */
