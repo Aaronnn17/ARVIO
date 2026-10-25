@@ -844,6 +844,19 @@ async function writeRawPayload(auth: AuthClient, payload: RawPayload, baseUpdate
  */
 const mutationQueues = new Map<string, Promise<void>>();
 
+/**
+ * Run `run` after this account's queued full-document writes. A progress
+ * checkpoint sent while a full write is between its read and its push would
+ * land first, and the push (whose snapshot lacks the new row) would drop it.
+ */
+async function runInMutationQueue<T>(userId: string, run: () => Promise<T>): Promise<T> {
+  const task = (mutationQueues.get(userId) ?? Promise.resolve()).catch(() => undefined).then(run);
+  const settled = task.then(() => undefined, () => undefined);
+  mutationQueues.set(userId, settled);
+  try { return await task; }
+  finally { if (mutationQueues.get(userId) === settled) mutationQueues.delete(userId); }
+}
+
 export async function mutateCloudPayload(auth: AuthClient, mutator: (root: RawPayload) => void) {
   if (!auth.session) return;
   const userId = auth.session.userId;
@@ -1944,7 +1957,10 @@ function progressTransport(auth: AuthClient, userId: string) {
   let unreachable = false;
   return {
     send: async (operation: ProgressOperation, options: { keepalive: boolean }): Promise<ProgressSendResult> => {
-      const result = await sendProgressOperation(auth, userId, operation, options.keepalive);
+      // A send from a closing page cannot wait behind other writes.
+      const result = options.keepalive
+        ? await sendProgressOperation(auth, userId, operation, true)
+        : await runInMutationQueue(userId, () => sendProgressOperation(auth, userId, operation, false));
       unreachable = result === "unreachable";
       return unreachable ? "fallback" : result as ProgressSendResult;
     },

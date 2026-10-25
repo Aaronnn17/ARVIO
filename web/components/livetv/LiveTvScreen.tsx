@@ -6,6 +6,7 @@ import "./livetv.css";
 import { ArrowDown, ArrowUp, PanelLeft, CalendarClock, ChevronDown, ExternalLink, Eye, EyeOff, History, LayoutGrid, List, ListVideo, Play, Plus, RefreshCw, Search, Star, Trophy, Tv, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { externalLaunchMode, openExternalPlayer } from "@/lib/externalPlayers";
+import { applyChannelOrder, isFavoriteGroup, toggleFavoriteGroup } from "@/lib/iptvGroups";
 import { accessibleChannels, groupKey, loadXtreamCatchup, type CatchupProgram } from "@/lib/iptv";
 import { VirtualList } from "@/components/ui/VirtualList";
 import { SportsGuidePane } from "@/components/livetv/SportsGuidePane";
@@ -168,7 +169,7 @@ export function LiveTvScreen() {
         id: `group:${group}`,
         label: groupLabel(items[0]?.group ?? group),
         count: items.length,
-        favorite: favoriteGroups.includes(group) || Boolean(items[0] && favoriteGroups.includes(groupKey(items[0]))),
+        favorite: isFavoriteGroup(favoriteGroups, group) || Boolean(items[0] && isFavoriteGroup(favoriteGroups, groupKey(items[0]))),
         hidden: hiddenGroups.includes(group) || Boolean(items[0] && hiddenGroups.includes(groupKey(items[0]))),
         rank: groupRank(group, items)
       }))
@@ -198,17 +199,19 @@ export function LiveTvScreen() {
         : channels;
     const sortMode = settings.iptvSortOrder ?? "provider";
     if (activeCategory === "favorites" || activeCategory === "recent") return base;
+    let sorted = base;
     if (sortMode === "number") {
-      return [...base].sort((a, b) => {
+      sorted = [...base].sort((a, b) => {
         const numA = a.number ? parseInt(a.number, 10) : Number.MAX_SAFE_INTEGER;
         const numB = b.number ? parseInt(b.number, 10) : Number.MAX_SAFE_INTEGER;
         if (numA !== numB) return numA - numB;
         return a.name.localeCompare(b.name);
       });
-    }
-    if (sortMode === "name") return [...base].sort((a, b) => a.name.localeCompare(b.name));
-    return base;
-  }, [activeCategory, channels, favoriteChannels, recentChannels, groups, settings.iptvSortOrder]);
+    } else if (sortMode === "name") sorted = [...base].sort((a, b) => a.name.localeCompare(b.name));
+    // A manual channel order set in Settings overrides the sort for that category only (as on Android).
+    if (activeCategory.startsWith("group:")) return applyChannelOrder(sorted, settings.iptvChannelOrder?.[activeCategory.slice(6)]);
+    return sorted;
+  }, [activeCategory, channels, favoriteChannels, recentChannels, groups, settings.iptvSortOrder, settings.iptvChannelOrder]);
   // Search also matches the titles of programmes whose guide is loaded.
   const nowNext = iptvSnapshot.nowNext;
   const needle = query.trim().toLowerCase();
@@ -328,7 +331,7 @@ export function LiveTvScreen() {
     const first = groups[group]?.[0];
     return first ? groupKey(first) : group;
   };
-  const toggleGroupFavorite = (group: string) => updateSettings({ favoriteGroupIds: toggleGroupKey(favoriteGroups, groupId(group)) });
+  const toggleGroupFavorite = (group: string) => updateSettings({ favoriteGroupIds: toggleFavoriteGroup(favoriteGroups, groupId(group)) });
   const toggleHiddenGroup = (group: string) => updateSettings({ hiddenGroupIds: toggleGroupKey(hiddenGroups, groupId(group)) });
   const hideChannelGroup = (channel: IptvChannel) => {
     const key = groupKey(channel);

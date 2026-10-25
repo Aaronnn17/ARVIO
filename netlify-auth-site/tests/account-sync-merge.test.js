@@ -201,7 +201,7 @@ test("a deleted profile stays deleted when a stale device still pushes it", () =
 test("a profile added on Android after the web's read keeps its profile and per-profile data", () => {
   const read = androidPayload();
   const stored = clone(read);
-  stored.profiles.push({ id: "p3", name: "Guest", avatarId: 7, updatedAt: 0 });
+  stored.profiles.push({ id: "p3", name: "Guest", avatarId: 7, createdAt: 900, updatedAt: 0 });
   stored.profileSettingsById.p3 = androidProfileSettings({ clockFormat: "12h" });
   stored.localContinueWatchingByProfile.p3 = [cwItem(77, 900)];
   stored.watchlistByProfile.p3 = [{ tmdbId: 5, mediaType: "movie", title: "Five", addedAt: 10 }];
@@ -350,4 +350,24 @@ test("the push endpoint applies the field merges and reads baseUpdatedAtMs from 
   assert.equal(snapshot.payload.accentColor, "Blue");
   assert.equal(snapshot.payload.profileSettingsById.p1.autoPlayNext, false);
   assert.deepEqual(snapshot.payload.localContinueWatchingByProfile.p1.map((item) => item.id), [20, 10]);
+});
+
+test("a profile an older Android build deleted stays deleted", () => {
+  const stored = androidPayload();
+  stored.profiles = stored.profiles.map((profile) => ({ ...profile, createdAt: 100 }));
+  // Android 2.2 removes p2 and pushes its own list, without deletedProfileIds.
+  const android = androidPayload({ updatedAt: 5_000 });
+  android.profiles = android.profiles.filter((profile) => profile.id !== "p2");
+  const result = merge(stored, android);
+  assert.deepEqual(result.profiles.map((profile) => profile.id), ["p1"]);
+});
+
+test("deleting the last profile and adding a new 'Profile 1' keeps the new one", () => {
+  const stored = androidPayload();
+  const web = androidPayload({ updatedAt: 5_000 });
+  web.profiles = [{ id: "new", name: "Profile 1", avatarId: 0, isKidsProfile: false, isLocked: false, pin: null }];
+  web.deletedProfileIds = stored.profiles.map((profile) => profile.id);
+  const result = mergeProfileList(stored, web, 4_000);
+  assert.deepEqual(result.profiles.map((profile) => profile.id), ["new"]);
+  assert.equal(result.activeProfileId, "new");
 });

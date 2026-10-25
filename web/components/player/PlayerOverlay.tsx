@@ -1855,7 +1855,12 @@ function VideoPlayer({
       if (inField && e.key !== "Escape") return;
       if (e.key === "Escape" && !claimEscape(e)) return;
       // Live TV zapping (Up/Down, CH+/-, digits, OK info, Back → guide): lib/liveZap.ts.
-      if (liveTv && !activePanel && handleLiveZapKey(e, dock)) return;
+      // While the control bar is up and focused, arrows move between its
+      // buttons and Back hides it first; digits and CH+/- still zap.
+      const focusedControl = document.activeElement instanceof HTMLElement && container.contains(document.activeElement)
+        ? document.activeElement.closest(".player-controls, .player-top") : null;
+      const controlBarKey = e.key.startsWith("Arrow") || e.key === "Escape";
+      if (liveTv && !activePanel && !(controlBarKey && showControls && focusedControl) && handleLiveZapKey(e, dock)) return;
       switch (e.key) {
         case "m": { const v = videoRef.current; if (v) v.muted = !v.muted; return; }
         case "c": openPanel("subtitles"); return;

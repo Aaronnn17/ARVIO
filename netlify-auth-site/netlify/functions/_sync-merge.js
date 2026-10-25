@@ -107,7 +107,14 @@ function keepPerProfileData(output, stored, ids) {
   }
 }
 
-function mergeProfileList(storedPayload, incoming) {
+/**
+ * `cutoffMs` is when the uploading device read the account (else the upload's
+ * own time). A stored profile the upload lacks is kept only when it was created
+ * or edited after that read, so the uploader could not have known it; an older
+ * one is gone because the uploader deleted it (Android 2.2 and older delete
+ * profiles without writing deletedProfileIds).
+ */
+function mergeProfileList(storedPayload, incoming, cutoffMs) {
   const stored = plainObject(storedPayload);
   const deleted = [...new Set([...deletedProfileIds(stored), ...deletedProfileIds(incoming)])];
   const deletedSet = new Set(deleted);
@@ -126,18 +133,28 @@ function mergeProfileList(storedPayload, incoming) {
     seen.add(id);
     merged.push(profile);
   };
+  const cutoff = timestamp(cutoffMs) || timestamp(incoming.updatedAt) || Infinity;
+  // An upload holding only a fresh install's placeholder knows nothing yet.
+  const uploaderHasRealProfiles = incomingProfiles.some((profile) => !isPlaceholderProfile(profile));
+  const knownToUploader = (profile) => Math.max(timestamp(profile.createdAt), timestamp(profile.updatedAt)) <= cutoff;
   for (const profile of storedProfiles) {
     const id = profileIdOf(profile);
     const own = incomingById.get(id);
+    if (!own && uploaderHasRealProfiles && knownToUploader(profile)) continue;
     if (!own && id && !deletedSet.has(id)) storedOnly.add(id);
     add(own ? newerProfile(own, profile) : profile);
   }
-  // A fresh install's untouched "Profile 1" is not a profile the user made.
-  const keepPlaceholder = storedProfiles.length === 0;
+  // A fresh install's untouched "Profile 1" is not a profile the user made,
+  // unless it would otherwise leave the account without any profile.
+  const placeholders = [];
   for (const profile of incomingProfiles) {
-    if (!keepPlaceholder && isPlaceholderProfile(profile)) continue;
+    if (storedProfiles.length && isPlaceholderProfile(profile)) {
+      placeholders.push(profile);
+      continue;
+    }
     add(profile);
   }
+  if (!merged.length) placeholders.forEach(add);
 
   const output = { ...incoming, profiles: merged };
   if (deleted.length) output[DELETED_PROFILES_KEY] = deleted.slice(-DELETED_PROFILES_LIMIT);

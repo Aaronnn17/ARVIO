@@ -166,7 +166,7 @@ function mergeWithStoredSnapshot(existing, payload, baseUpdatedAtMs) {
     preserveIptvFields(snapshot, preserveTraktTokens(snapshot, preserveTrackingRouting(snapshot, value))));
   if (!stored) return domainMerges(payload);
   try {
-    return mergeAccountFields(stored, domainMerges(mergeProfileList(stored, payload)), { baseUpdatedAtMs });
+    return mergeAccountFields(stored, domainMerges(mergeProfileList(stored, payload, baseUpdatedAtMs)), { baseUpdatedAtMs });
   } catch (error) {
     console.error("account-sync-push: field merge failed; using domain merges only", error);
     return domainMerges(payload);

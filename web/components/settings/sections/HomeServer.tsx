@@ -215,7 +215,7 @@ function EditServer({ server, onSave, onClose, notify }: {
       {libraries.length > 0 && (
         <>
           <div className="st-subhead" style={{ padding: "14px 0 2px" }}>
-            <h4>{translateUi("Libraries")}</h4><ScopeBadge scope="android" />
+            <h4>{translateUi("Libraries")}</h4><ScopeBadge scope="all" />
           </div>
           <p className="st-hint" style={{ padding: "0 0 6px" }}>{translateUi("Libraries that are off are not searched for sources and get no Home row on the Android and TV app.")}</p>
           <ul className="st-libraries">
