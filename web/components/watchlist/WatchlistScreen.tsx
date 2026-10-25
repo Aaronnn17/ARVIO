@@ -11,7 +11,7 @@ import { CollectionCover, LibraryGrid, LibraryDialog } from "./LibraryPresentati
 import { CalendarScreen } from "./CalendarScreen";
 import { LIBRARY_SORT_OPTIONS, compareLibraryItems } from "@/lib/librarySort";
 import type { HomeServerLibraryOption, HomeServerLibraryPage, HomeServerLibrarySort } from "@/lib/homeserver";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { requestSourceSettings } from "@/lib/sourceSetup";
 import type { HomeServerConfig, MediaItem } from "@/lib/types";
 import "@/app/library.css";
@@ -45,7 +45,7 @@ export function WatchlistScreen() {
   const {
     watchlist, traktConnected, simklConnected, mdblistConnected, openDetails,
     settings, trackingPreferences, loadTraktLists, loadTraktListItems, loadTrackerLibrary, loadCatalogRow, catalogConfigs, auth, activeProfile, setSection: navigate
-  } = useApp();
+  } = useAppPick("watchlist", "traktConnected", "simklConnected", "mdblistConnected", "openDetails", "settings", "trackingPreferences", "loadTraktLists", "loadTraktListItems", "loadTrackerLibrary", "loadCatalogRow", "catalogConfigs", "auth", "activeProfile", "setSection");
   const posterMode = settings.cardLayoutMode === "poster";
   const homeServers = useMemo(
     () => (settings.homeServers ?? []).filter((server) => server.enabled && server.url),

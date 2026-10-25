@@ -9,7 +9,7 @@ const { chromium } = require('@playwright/test');
 
 async function main() {
   const root = path.resolve(__dirname, '..');
-  const source = ts.createSourceFile('PlayerOverlay.tsx', fs.readFileSync(path.join(root, 'components/player/PlayerOverlay.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const source = ts.createSourceFile('PlayerOverlay.tsx', require('../tests/sources.cjs').playerSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const panels = [];
   function visit(node) {
     if (ts.isJsxElement(node) && node.openingElement.attributes.properties.some(attr =>

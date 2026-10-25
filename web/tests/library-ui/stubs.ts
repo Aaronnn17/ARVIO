@@ -11,6 +11,8 @@ export const app={
  openDetails:(item:unknown)=>{(window as any).openedLibraryItem=item;},isWatched:()=>false,openContextMenu:()=>{},setSection:()=>{}
 };
 export const useApp=()=>app;
+export const useAppPick=(..._keys:string[])=>app;
+export const useAppSelector=(select:(store:typeof app)=>unknown)=>select(app);
 export const authClient={session:null};
 export const traktClient={watchlist:async()=>[],calendarSeason:async()=>[]};
 export const getLogoUrl=async(item:{id:number})=>asset(fixtures.find((row)=>row.id===item.id)?.logo);

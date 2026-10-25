@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { load, storage } = require('./load.cjs');
+const { playerSource, sourceOf, storeSource } = require('./sources.cjs');
 
 function cloudHarness(remote) {
   const disk = storage();
@@ -22,7 +23,7 @@ function cloudHarness(remote) {
   return { cloud, auth, remote: () => state.remote };
 }
 
-const store = fs.readFileSync(path.join(__dirname, '../lib/store.tsx'), 'utf8');
+const store = storeSource();
 function webDefaults() {
   // The defaults object is plain data apart from the default catalogs import.
   const start = store.indexOf('export const defaultSettings: AppSettings = {');
@@ -127,7 +128,7 @@ test('every searchable setting points at a section and a row that exist', () => 
 });
 
 test('the player matches Android-style subtitle names against track codes', () => {
-  const player = fs.readFileSync(path.join(__dirname, '../components/player/PlayerOverlay.tsx'), 'utf8');
+  const player = playerSource();
   assert.match(player, /const desired = languageCode\(language\);/);
   assert.match(player, /languageCode\(settings\.defaultSubtitle\) !== "en"/);
   assert.doesNotMatch(player, /aiSubtitleModel !== "off"/);
@@ -161,6 +162,6 @@ test('returning from a settings section does not leave the app history stuck', (
   const guard = back.indexOf("route.section===current.section&&route.query===shownQuery)return;");
   assert.ok(guard > 0, 'a pop to the route already shown is ignored');
   assert.ok(guard < back.indexOf('applying.current=route;'), 'before it is recorded as pending');
-  const ai = fs.readFileSync(path.join(__dirname, '../components/player/PlayerOverlay.tsx'), 'utf8');
+  const ai = playerSource();
   assert.match(ai, /Boolean\(languageCode\(settings\.defaultSubtitle\)\) && languageCode\(settings\.defaultSubtitle\) !== "en"/, '"Forced" is not a translation target');
 });

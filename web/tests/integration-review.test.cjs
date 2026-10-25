@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { playerSource } = require('./sources.cjs');
 
 const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 
@@ -14,7 +15,7 @@ test('progress checkpoints wait for queued full-document writes, except from a c
 });
 
 test('Live TV zapping leaves arrows and Back to a focused control bar', () => {
-  const player = read('components/player/PlayerOverlay.tsx');
+  const player = playerSource();
   assert.match(player, /!\(controlBarKey && showControls && focusedControl\) && handleLiveZapKey\(e, dock\)/);
 });
 

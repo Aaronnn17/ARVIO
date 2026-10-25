@@ -5,7 +5,7 @@ import { useTranslation } from "@/lib/i18n";
 import { CheckCircle2, Clock3, Play, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { isLiveStreamOrSportsItem, saveProgress, saveWatchedState } from "@/lib/cloud";
-import { authClient, useApp } from "@/lib/store";
+import { authClient, useAppPick } from "@/lib/store";
 import { syncClient } from "@/lib/sync";
 import { isFinishedPercent as isExternalPlaybackFinished } from "@/lib/playerResume";
 import {
@@ -26,7 +26,7 @@ function labelFor(pending: PendingExternalPlayback) {
 
 export function ExternalPlaybackPrompt() {
   const translateUi = useTranslation();
-  const { addons, refreshData, setToast, markWatchedLocally } = useApp();
+  const { addons, refreshData, setToast, markWatchedLocally } = useAppPick("addons", "refreshData", "setToast", "markWatchedLocally");
   const [pending, setPending] = useState<PendingExternalPlayback | null>(null);
   const [mode, setMode] = useState<PromptMode>("choice");
   const [saving, setSaving] = useState(false);

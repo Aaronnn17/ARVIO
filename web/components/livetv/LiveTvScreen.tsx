@@ -26,7 +26,7 @@ import { appendChannelDigit, DIGIT_COMMIT_MS, exactChannelNumber, keepLivePlayer
 import { requestSourceSettings } from "@/lib/sourceSetup";
 import { playerIsOpen } from "@/lib/tvNav";
 import { loadStored, saveStored } from "@/lib/storage";
-import { authClient, useApp } from "@/lib/store";
+import { authClient, useAppPick } from "@/lib/store";
 import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 import type { IptvChannel } from "@/lib/types";
 
@@ -53,7 +53,7 @@ function blurIntoPlayer() {
 
 export function LiveTvScreen() {
   const translateUi = useTranslation();
-  const { iptvSnapshot, settings, updateSettings, playChannel, recordChannelPlayback, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth, activeProfile, activeChannel, addons, setSection } = useApp();
+  const { iptvSnapshot, settings, updateSettings, playChannel, recordChannelPlayback, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth, activeProfile, activeChannel, addons, setSection } = useAppPick("iptvSnapshot", "settings", "updateSettings", "playChannel", "recordChannelPlayback", "playCatchup", "setToast", "refreshIptv", "loadIptvGuide", "busy", "auth", "activeProfile", "activeChannel", "addons", "setSection");
   const lastChannelKey = `${LAST_CHANNEL_KEY}:${auth?.userId ?? "local"}:${activeProfile?.id ?? "local"}`;
   const listRef = useRef<HTMLElement>(null);
   const pointerNavigation = useRef(false);

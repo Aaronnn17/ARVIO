@@ -13,7 +13,7 @@ const evidence = path.resolve(root, '../artifacts/player-loading-ui');
 const fixture = path.resolve(root, '../app/src/androidTest/assets/library');
 const styles = ['globals.css', 'premium.css', 'tv-guide.css', 'source-setup.css'];
 const filename = path.join(root, 'components/player/PlayerOverlay.tsx');
-const source = ts.createSourceFile(filename, fs.readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const source = ts.createSourceFile(filename, require('../tests/sources.cjs').playerSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const matches = [];
 function visit(node) {
   if (ts.isJsxElement(node) && node.openingElement.attributes.properties.some(attr =>

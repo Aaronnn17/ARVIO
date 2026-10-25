@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { ACCENTS, ACCENT_NAMES } from "@/lib/accents";
 import { isLinux, isMac, isWindows, setVlcProtocolReady, triggerDownload, vlcProtocolReady, VLC_SETUP_SH_URL, VLC_SETUP_URL } from "@/lib/externalPlayers";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { DownloadsPanel } from "../DownloadsPanel";
 import { Group, Row, Segmented, Select, SectionHeader, Status, Swatches, TextInput, Toggle } from "../ui";
 
@@ -13,7 +13,7 @@ const settingsKey = "arvio.web.settings";
 /* ---------- Home and appearance ---------- */
 
 export function AppearanceSection() {
-  const { settings, updateSettings: set } = useApp();
+  const { settings, updateSettings: set } = useAppPick("settings", "updateSettings");
   return (
     <>
       <SectionHeader title="Home and appearance" description="How ARVIO looks, and what shows on Home." />
@@ -62,7 +62,7 @@ export function AppearanceSection() {
 /* ---------- Android and TV ---------- */
 
 export function AndroidTvSection() {
-  const { settings, updateSettings: set } = useApp();
+  const { settings, updateSettings: set } = useAppPick("settings", "updateSettings");
   return (
     <>
       <SectionHeader title="Android and TV" description="These only change the ARVIO app on Android phones, tablets and TVs. Set them here and the app uses them the next time it opens." />
@@ -102,7 +102,7 @@ export function AndroidTvSection() {
 
 export function BrowserSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings: set, setToast } = useApp();
+  const { settings, updateSettings: set, setToast } = useAppPick("settings", "updateSettings", "setToast");
   const [vlcReady, setVlcReady] = useState<boolean>(() => vlcProtocolReady());
   const [confirmReset, setConfirmReset] = useState(false);
   const [checkStatus, setCheckStatus] = useState<"idle" | "testing" | "working" | "not_installed">("idle");

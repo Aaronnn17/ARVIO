@@ -5,7 +5,7 @@ import { RotateCw } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { homeFetchPriority } from "@/lib/fetchPriority";
 import { loadStored, saveStored } from "@/lib/storage";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { HOME_ROW_LIMIT, loadCatalog } from "@/lib/tmdb";
 import type { CatalogConfig, Category, MediaItem } from "@/lib/types";
 import { MediaRail } from "./MediaRail";
@@ -31,7 +31,7 @@ export function LazyRail({ catalog, eager = false, posterMode, onOpen, onFocus, 
   onViewAll?: (catalog: CatalogConfig, category: Category) => void;
   limit?: number;
 }) {
-  const { addons, settings } = useApp();
+  const { addons, settings } = useAppPick("addons", "settings");
   const translateUi = useTranslation();
   const sources = useRef({ addons, homeServers: settings.homeServers });
   sources.current = { addons, homeServers: settings.homeServers };

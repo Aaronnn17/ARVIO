@@ -5,11 +5,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 const { load } = require('./load.cjs');
+const { playerSource, sourceOf, storeSource } = require('./sources.cjs');
 
 const flush = () => new Promise(setImmediate);
 
 test('IPTV VOD tries the subscriber URL before the header relay and never invents a live HLS twin', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../components/player/PlayerOverlay.tsx'), 'utf8');
+  const source = playerSource();
   const start = source.indexOf('const attempts: string[] = [stream.url];');
   const end = source.indexOf('let attemptIndex = 0;', start);
   assert.ok(start >= 0 && end > start);
@@ -36,7 +37,7 @@ test('live sources needing browser-controlled headers use the relay first', () =
   assert.equal(needsRelay({ 'user-agent': 'custom' }), true);
   assert.equal(needsRelay({ Authorization: 'token' }), false);
   assert.equal(needsRelay(), false);
-  const source = fs.readFileSync(path.join(__dirname, '../components/player/PlayerOverlay.tsx'), 'utf8');
+  const source = playerSource();
   assert.match(source, /if \(!iptvVod && needsBrowserHeaderRelay\(headers\)\) attempts\.unshift\(workerUrl\)/);
 });
 
@@ -158,12 +159,12 @@ test('an already wrapped resolver URL is not recursively wrapped even if source 
 // intentionally excludes unrelated React rendering and other provider state.
 function extracted(relative, selector, globals) {
   const filename = path.resolve(__dirname, '..', relative);
-  const source = ts.createSourceFile(filename, fs.readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const source = ts.createSourceFile(filename, sourceOf(relative), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const matches = [];
   const visit = (node) => { const match = selector(node, source); if (match) matches.push(match); ts.forEachChild(node, visit); };
   visit(source);
   assert.equal(matches.length, 1, `Expected one integration callback in ${relative}`);
-  const code = ts.transpileModule(`module.exports = (${matches[0].getText(source)});`, {
+  const code = ts.transpileModule(`module.exports = (${matches[0].getText(source).replace(/^export /, '')});`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
   }).outputText;
   const module = { exports: {} };

@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { CONTENT_LANGUAGE_OPTIONS } from "@/lib/i18n/languageOptions";
 import { languageCode, TRACK_LANGUAGES, trackLanguageName } from "@/lib/languages";
-import { useApp } from "@/lib/store";
+import { useApp, useAppPick } from "@/lib/store";
 import type { AppSettings, QualityFilterConfig } from "@/lib/types";
 import { Group, Row, SecretInput, Segmented, Select, SectionHeader, Slider, Status, Swatches, Toggle, safeArray } from "../ui";
 
@@ -41,7 +41,7 @@ const MAX_SIZES = [0, 1, 2, 3, 5, 10, 15, 20, 30, 50];
 
 export function PlaybackSection() {
   const translateUi = useTranslation();
-  const { setToast } = useApp();
+  const { setToast } = useAppPick("setToast");
   const [settings, set] = useSettings();
   const [filterName, setFilterName] = useState("");
   const [filterPattern, setFilterPattern] = useState("");

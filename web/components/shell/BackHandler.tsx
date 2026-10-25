@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useRef } from 'react';
-import { useApp } from '@/lib/store';
+import { useAppPick } from '@/lib/store';
 import { readWebRoute, writeWebRoute, type WebRoute } from '@/lib/webNavigation';
 import type { MediaItem } from '@/lib/types';
 import { parsePartnerLink } from '@/lib/partnerLinks';
 export function BackHandler(){
-  const app=useApp();const latest=useRef(app);latest.current=app;
+  const app=useAppPick('view','section','query','selected','activeStream','closePlayer','setSection','setQuery','closeDetails','openDetails');const latest=useRef(app);latest.current=app;
   const initialized=useRef(false);
   const applying=useRef<WebRoute|null>(null);
   const previous=useRef('');

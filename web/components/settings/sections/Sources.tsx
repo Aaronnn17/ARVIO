@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { iptvPlaylistSignature } from "@/lib/iptv";
 import { moveIndex } from "@/lib/ordering";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import type { IptvPlaylistEntry } from "@/lib/types";
 import { hasStalkerPortals, stalkerPortalsOf, stalkerSourceSignature } from "@/lib/stalkerPortals";
 import { IptvGroupSettings } from "../IptvGroupSettings";
@@ -21,7 +21,7 @@ export { HomeServerSection } from "./HomeServer";
 
 export function LiveTvSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings, refreshIptv, setToast, busy, iptvSnapshot, activeProfile, auth } = useApp();
+  const { settings, updateSettings, refreshIptv, setToast, busy, iptvSnapshot, activeProfile, auth } = useAppPick("settings", "updateSettings", "refreshIptv", "setToast", "busy", "iptvSnapshot", "activeProfile", "auth");
   const activeProfileId = activeProfile?.id;
   const groupScope = `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`;
   const playlistSignature = iptvPlaylistSignature(settings.iptvPlaylists) + stalkerSourceSignature(settings);
@@ -139,7 +139,7 @@ export function LiveTvSection() {
 
 export function MetadataSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings: set } = useApp();
+  const { settings, updateSettings: set } = useAppPick("settings", "updateSettings");
   const chain = (value: string[] | undefined, fallback: string[]) => (value?.length ? value : fallback).map((p) => p.toUpperCase()).join(" → ");
   const tvdbActive = Boolean(settings.customTvdbApiKey?.trim());
   return (

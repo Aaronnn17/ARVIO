@@ -8,7 +8,7 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { moveIndex } from "@/lib/ordering";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import type { HomeServerCollectionConfig, HomeServerConfig } from "@/lib/types";
 import { SortableList } from "../SortableList";
 import { Empty, Group, ScopeBadge, SectionHeader, Segmented, Toggle, safeArray } from "../ui";
@@ -28,7 +28,7 @@ function draftOf(server: HomeServerConfig): Draft {
 
 export function HomeServerSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings, setToast } = useApp();
+  const { settings, updateSettings, setToast } = useAppPick("settings", "updateSettings", "setToast");
   const [type, setType] = useState<HomeServerConfig["type"]>("jellyfin");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");

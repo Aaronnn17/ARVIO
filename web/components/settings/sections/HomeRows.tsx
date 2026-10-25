@@ -14,14 +14,14 @@ import { textRequest, proxiedUrl } from "@/lib/http";
 import { buildHomeServerCatalogConfigs } from "@/lib/homeserver";
 import { HOME_ROW_SOURCES, homeRowSource, withRowLayoutMode, type HomeRowSource } from "@/lib/homeRows";
 import { moveIndex, moveWithinSubset } from "@/lib/ordering";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import type { AppSettings, CatalogConfig } from "@/lib/types";
 import { SortableList } from "../SortableList";
 import { Group, Row, ScopeBadge, Segmented, SectionHeader, Toggle, safeArray } from "../ui";
 
 export function CatalogsSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings, setToast, activeProfile } = useApp();
+  const { settings, updateSettings, setToast, activeProfile } = useAppPick("settings", "updateSettings", "setToast", "activeProfile");
   const standardCatalogs = mergeCatalogs(safeArray(settings.catalogs), safeArray(settings.hiddenCatalogIds), safeArray(settings.hiddenAddonCatalogIds))
     .filter((catalog) => catalog.sourceType !== "home-server");
   const [homeServerCatalogs, setHomeServerCatalogs] = useState<CatalogConfig[]>([]);
