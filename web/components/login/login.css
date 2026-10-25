@@ -13,6 +13,11 @@
   padding: clamp(22px, 4vw, 56px);
   overflow: hidden;
 }
+[dir="rtl"] .login-shell {
+  background: radial-gradient(circle at 76% 20%, rgba(0, 213, 136, 0.16), transparent 30%),
+    radial-gradient(circle at 18% 78%, rgba(103, 183, 255, 0.12), transparent 28%),
+    linear-gradient(225deg, #050505 0%, #0b1018 54%, #020202 100%);
+}
 .login-shell::before {
   content: "";
   position: absolute;
@@ -23,6 +28,10 @@
   background-size: 72px 72px;
   mask-image: radial-gradient(circle at center, black, transparent 72%);
   pointer-events: none;
+}
+[dir="rtl"] .login-shell::before {
+  background: linear-gradient(270deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
 }
 .login-back {
   position: absolute;
@@ -36,6 +45,10 @@
   color: var(--muted);
   font-size: 15px;
   cursor: pointer;
+}
+[dir="rtl"] .login-back {
+  left: auto;
+  right: 32px;
 }
 @media (hover: hover) and (pointer: fine) {
   .login-back:hover {

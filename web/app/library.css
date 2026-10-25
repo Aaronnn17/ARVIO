@@ -13,7 +13,7 @@
 .oled-library-toolbar nav,.oled-library-actions { display:flex; align-items:center; gap:12px; }
 .oled-library-toolbar button,.oled-list-breadcrumb button { display:flex; align-items:center; justify-content:center; gap:10px; border:0; background:transparent; border-radius:9px; padding:13px 17px; white-space:nowrap; }
 .oled-library-toolbar [aria-current],.oled-library-toolbar .oled-filter-button { background:#242426; }
-.oled-library-actions>span { color:#ccc; margin-right:10px; }
+.oled-library-actions>span { color:#ccc; margin-inline-end:10px; }
 .oled-library button:focus-visible { outline:0; background:var(--accent,#fff); color:#000; }
 .oled-library-body { display:grid; grid-template-columns:minmax(0,1fr); gap:26px; }
 .oled-library-body.with-sources { grid-template-columns:210px minmax(0,1fr); }
@@ -21,7 +21,7 @@
 .oled-source-nav p { color:#c7c7cd; margin:10px 10px 10px; font-size:15px; }
 .oled-source-nav small { display:block; color:#96969e; margin-top:6px; }
 .oled-source-nav>div { margin-top:26px; }
-.oled-source-nav button { display:flex; width:100%; align-items:center; gap:12px; border:0; border-radius:8px; padding:13px 12px; background:transparent; text-align:left; margin-bottom:4px; }
+.oled-source-nav button { display:flex; width:100%; align-items:center; gap:12px; border:0; border-radius:8px; padding:13px 12px; background:transparent; text-align:start; margin-bottom:4px; }
 .oled-source-nav button span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .oled-source-nav button[aria-current] { background:#242426; }
 .oled-source-nav button:focus-visible { background:var(--accent,#fff); color:#000; }
@@ -46,7 +46,7 @@
 .oled-library .media-card .card-logo { object-fit:contain; max-width:70%; max-height:35%; }
 .oled-list-breadcrumb { display:flex; align-items:center; gap:20px; margin-bottom:12px; }
 .oled-collections { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:26px 22px; padding-top:8px; }
-.oled-collection { min-width:0; background:transparent; padding:0; border:0; border-radius:8px; text-align:left; }
+.oled-collection { min-width:0; background:transparent; padding:0; border:0; border-radius:8px; text-align:start; }
 .oled-collection-cover { position:relative; background:#111; border-radius:8px; }
 .oled-collection-cover:before { content:""; position:absolute; left:12px; right:12px; top:-5px; height:8px; border-radius:6px; background:#242428; z-index:0; }
 .oled-collection-cover img { width:100%; height:100%; object-fit:cover; border-radius:8px; position:relative; }
@@ -60,7 +60,7 @@
 .oled-dialog label { display:flex; flex-direction:column; gap:10px; margin-bottom:24px; }
 .oled-dialog select,.oled-dialog input { background:#242426; color:#fff; border:0; border-radius:8px; padding:14px; font:inherit; width:100%; }
 .oled-dialog button { display:flex; align-items:center; gap:10px; border:0; border-radius:8px; padding:12px 16px; background:#242426; }
-.oled-dialog-close { margin-left:auto; }
+.oled-dialog-close { margin-inline-start:auto; }
 @media(max-width:1100px) {
   .oled-library-body.with-sources { grid-template-columns:170px minmax(0,1fr); gap:18px; }
   .oled-collections { grid-template-columns:repeat(2,minmax(0,1fr)); } }
@@ -70,7 +70,7 @@
  .oled-library-toolbar nav { width:100%; gap:4px; }
  .oled-library-toolbar nav button { flex:1; padding:12px 8px; font-size:15px; }
  .oled-library-actions { width:100%; justify-content:flex-end; }
- .oled-library-actions>span { margin-right:auto; font-size:14px; }
+ .oled-library-actions>span { margin-inline-end:auto; font-size:14px; }
  .oled-library-body.with-sources { grid-template-columns:minmax(0,1fr); }
  .oled-source-nav { display:none; }
  .oled-grid-viewport { height:calc(100dvh - 280px); padding-inline:3px; }
@@ -99,6 +99,10 @@
 .oled-library-content.has-preview .collection-page-backdrop { height:min(620px,100%); }
 .oled-library-content.has-preview .collection-page-backdrop::after {
   background:linear-gradient(90deg, #000 0%, #000 25%, #000000e0 40%, #00000073 65%, transparent 92%, #000 100%),
+    linear-gradient(180deg, #000 0%, #00000059 12%, transparent 25%, #0000002e 55%, #000000b8 78%, #000 100%);
+}
+[dir="rtl"] .oled-library-content.has-preview .collection-page-backdrop::after {
+  background: linear-gradient(270deg, #000 0%, #000 25%, #000000e0 40%, #00000073 65%, transparent 92%, #000 100%),
     linear-gradient(180deg, #000 0%, #00000059 12%, transparent 25%, #0000002e 55%, #000000b8 78%, #000 100%);
 }
 .oled-library-content.has-preview .oled-grid-viewport { height:auto; min-height:0; flex:1; }
@@ -181,7 +185,7 @@
   .oled-library .oled-library-toolbar nav button { flex: 1 0 auto; min-height: 44px; padding: 8px 7px; font-size: 13.5px; }
   .oled-library .oled-library-actions { gap: 8px; min-height: 44px; }
   .oled-library .oled-library-actions.is-empty { min-height: 0; }
-  .oled-library .oled-library-actions > .oled-library-count { margin-right: 0; flex: 0 0 auto; font-size: 13px; }
+  .oled-library .oled-library-actions > .oled-library-count { margin-inline-end: 0; flex: 0 0 auto; font-size: 13px; }
   .oled-library .oled-library-search { flex: 1; width: auto; min-width: 0; }
   .oled-library .oled-filter-button { padding: 10px 12px; }
   .oled-library .oled-filter-button span { display: none; }

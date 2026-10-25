@@ -105,7 +105,10 @@ html.kbd-nav .recover-btn:focus { outline: 3px solid #fff; outline-offset: 3px; 
   gap: 12px;
   max-width: min(640px, calc(100vw - 32px));
   box-sizing: border-box;
-  padding: 10px 10px 10px 18px;
+  padding-top: 10px;
+  padding-inline-end: 10px;
+  padding-bottom: 10px;
+  padding-inline-start: 18px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px;
   background: rgba(18, 18, 18, 0.97);
@@ -114,7 +117,7 @@ html.kbd-nav .recover-btn:focus { outline: 3px solid #fff; outline-offset: 3px; 
 }
 /* Bottom, above the toast and the phone tab bar — the top is the nav bar. */
 .update-banner { bottom: calc(88px + env(safe-area-inset-bottom)); }
-.xbox-tip { bottom: 24px; padding-left: 16px; }
+.xbox-tip { bottom: 24px; padding-inline-start: 16px; }
 .xbox-tip p { margin: 0; line-height: 1.4; }
 .offline-banner { top: max(14px, env(safe-area-inset-top)); padding: 10px 18px; }
 .update-banner button,

@@ -143,7 +143,7 @@
   font-variant-numeric: tabular-nums;
 }
 .player-time em { color: var(--soft); font-style: normal; margin: 0 2px; }
-.player-time-remaining { margin-left: 10px; color: rgba(255, 255, 255, 0.55); }
+.player-time-remaining { margin-inline-start: 10px; color: rgba(255, 255, 255, 0.55); }
 .player-buffer-health {
   display: block;
   margin-top: 14px;
@@ -289,6 +289,10 @@
   gap: 16px;
   overflow: hidden;
 }
+[dir="rtl"] .player-side-panel {
+  left: 42px;
+  right: auto;
+}
 .player-panel-head {
   display: flex;
   align-items: center;
@@ -326,7 +330,7 @@
   gap: 12px;
   align-items: center;
   padding: 12px;
-  text-align: left;
+  text-align: start;
 }
 .player-panel-row > span {
   min-width: 0;
@@ -682,7 +686,7 @@
   border-radius: 12px;
   background: transparent;
   color: #fff;
-  text-align: left;
+  text-align: start;
   cursor: pointer;
 }
 @media (hover: hover) and (pointer: fine) {
@@ -714,8 +718,13 @@
   background: #fff;
   transition: transform 0.18s ease;
 }
+[dir="rtl"] .player-switch::after {
+  left: auto;
+  right: 3px;
+}
 .player-switch.is-on { background: #e50914; }
 .player-switch.is-on::after { transform: translateX(18px); }
+[dir="rtl"] .player-switch.is-on::after { transform: translateX(-18px); }
 .player-setting-stepper {
   display: inline-flex;
   align-items: center;
@@ -838,10 +847,11 @@
 .player-overlay.player-docked .player-error p { font-size: 13px; }
 .player-overlay.player-docked .player-error-actions { flex-wrap: wrap; gap: 4px; }
 .player-overlay.player-docked .player-error-actions button { font-size: 12px; padding: 6px; min-height: 32px; }
-.player-dock-controls { position: absolute; z-index: 50; bottom: 8px; inset-inline: 8px; display: flex; gap: 6px; align-items: center; pointer-events: none; }
+.player-dock-controls { position: absolute; z-index: 50; bottom: 8px; left: 8px; right: 8px; display: flex; gap: 6px; align-items: center; pointer-events: none; }
 .player-dock-controls span { color: white; background: #000b; border-radius: 3px; padding: 4px 6px; font-size: 11px; margin-inline-end: auto; }
 .player-dock-controls button, .player-dock-return { pointer-events: auto; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 4px; background: #000b; color: white; }
-.player-dock-return { position: absolute; inset-inline-end: 24px; top: 90px; z-index: 50; }
+.player-dock-return { position: absolute; right: 24px; top: 90px; z-index: 50; }
+[dir="rtl"] .player-dock-return { left: 24px; right: auto; }
 .player-dock-controls button:focus-visible, .player-dock-return:focus-visible { outline: 2px solid white; }
 .player-platform-btn.is-active {
   color: var(--accent, #2ee59d);
@@ -968,6 +978,10 @@
   right: clamp(16px, 3vw, 48px);
   bottom: clamp(112px, 16vh, 150px);
 }
+[dir="rtl"] .player-skip {
+  left: clamp(16px, 3vw, 48px);
+  right: auto;
+}
 
 .player-skip button,
 .player-upnext-play {
@@ -1007,6 +1021,10 @@
   padding: 12px;
   background: rgba(12, 14, 18, 0.92);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+}
+[dir="rtl"] .player-upnext {
+  left: clamp(16px, 3vw, 48px);
+  right: auto;
 }
 
 .player-upnext img {
@@ -1082,7 +1100,7 @@
 
 .player-sub-flag {
   display: inline-block;
-  margin-left: 8px;
+  margin-inline-start: 8px;
   border-radius: 6px;
   padding: 1px 6px;
   background: rgba(255, 255, 255, 0.12);
@@ -1143,6 +1161,7 @@
   .player-overlay .player-controls .player-time-readout .player-time-remaining { margin-left: 6px; }
   .player-overlay .player-controls-row { flex-wrap: wrap; row-gap: 6px; }
   .player-upnext { grid-template-columns: 96px minmax(0, 1fr); bottom: calc(176px + env(safe-area-inset-bottom)); right: 16px; }
+  [dir="rtl"] .player-upnext { left: 16px; right: auto; }
   .player-upnext img { width: 96px; }
   .player-skip { bottom: calc(176px + env(safe-area-inset-bottom)); }
   .player-error-card { padding: 16px; }
@@ -1154,4 +1173,14 @@
   .player-overlay .player-panel-row { min-height: 52px; }
   .player-overlay .player-setting-stepper button,
   .player-overlay .player-setting-choices button { min-height: 44px; min-width: 44px; }
+}
+
+/* Right-to-left: the timeline and transport controls keep running left to
+   right in every language, so seeking never flips direction; the top bar and
+   panels mirror with the rest of the app. */
+[dir="rtl"] .player-controls {
+  direction: ltr;
+}
+[dir="rtl"] .player-controls :is(.lucide-arrow-left, .lucide-arrow-right, .lucide-chevron-left, .lucide-chevron-right) {
+  scale: none;
 }
