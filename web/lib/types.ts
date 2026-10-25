@@ -427,6 +427,8 @@ export interface IptvSnapshot {
   hiddenGroups: string[];
   groupOrder: string[];
   playlistWarnings?: string[];
+  /** One entry per playlist (or the Stalker portal, id "stalker") that failed to load. */
+  playlistErrors?: Array<{ playlistId: string; name: string; message: string }>;
   epgWarning?: string;
   loadedAt: number;
   /**

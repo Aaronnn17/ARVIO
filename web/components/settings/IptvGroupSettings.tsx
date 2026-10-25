@@ -7,10 +7,11 @@ import { Eye, EyeOff, ListOrdered, Lock, RotateCcw, Search, Star, X } from "luci
 import { useDeferredValue, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "@/lib/i18n";
 import {
-  MAX_CHANNEL_ORDER_ENTRIES, applyChannelOrder, channelRef, clearPlaylistChannelOrder, groupNameOf, isFavoriteGroup,
+  MAX_CHANNEL_ORDER_ENTRIES, applyChannelOrder, clearPlaylistChannelOrder, groupNameOf, isFavoriteGroup,
   minimalChannelOrder, playlistGroupKey, playlistGroups, replacePlaylistGroupOrder, setGroupChannelOrder,
   setPlaylistGroupsVisible, sortChannelsLikeLiveTv, toggleFavoriteGroup, type PlaylistGroup,
 } from "@/lib/iptvGroups";
+import { toggleFavoriteChannel } from "@/lib/iptvFavorites";
 import { channelIdentityIndex } from "@/lib/iptvSession";
 import { moveIndex, moveWithinSubset } from "@/lib/ordering";
 import type { AppSettings, IptvChannel } from "@/lib/types";
@@ -83,7 +84,7 @@ export function IptvGroupSettings({ channels, settings, updateSettings, notify }
       )}
       {view === "channels" && (
         <ChannelsView groups={groups} activeGroup={activeGroup} setActiveGroup={setFocusGroup} channelsByGroup={channelsByGroup}
-          playlistChannels={playlistChannels} playlistId={playlistId} settings={settings} channelOrder={channelOrder}
+          playlistChannels={playlistChannels} playlistId={playlistId} settings={settings} channelOrder={channelOrder} identity={identity}
           query={channelQuery} deferredQuery={deferredChannelQuery} setQuery={setChannelQuery} updateSettings={updateSettings} notify={notify} />
       )}
       {view === "favorites" && (
@@ -190,7 +191,8 @@ function CategoriesView({ groups, groupOrder, hiddenGroups, lockedGroups, favori
 
 /* ---------- channels inside a category ---------- */
 
-function ChannelsView({ groups, activeGroup, setActiveGroup, channelsByGroup, playlistChannels, playlistId, settings, channelOrder, query, deferredQuery, setQuery, updateSettings, notify }: {
+function ChannelsView({ groups, activeGroup, setActiveGroup, channelsByGroup, playlistChannels, playlistId, settings, channelOrder, identity, query, deferredQuery, setQuery, updateSettings, notify }: {
+  identity: Map<string, IptvChannel>;
   groups: PlaylistGroup[];
   activeGroup: string;
   setActiveGroup: (key: string) => void;
@@ -212,12 +214,9 @@ function ChannelsView({ groups, activeGroup, setActiveGroup, channelsByGroup, pl
   const ordered = useMemo(() => applyChannelOrder(base, channelOrder[activeGroup]), [base, channelOrder, activeGroup]);
   const favorites = settings.favoriteChannelIds ?? [];
   const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
-  const isFavorite = (channel: IptvChannel) => favoriteSet.has(channel.id) || Boolean(channel.cloudId && favoriteSet.has(channel.cloudId));
-  const toggleFavorite = (channel: IptvChannel) => updateSettings({
-    favoriteChannelIds: isFavorite(channel)
-      ? favorites.filter((id) => id !== channel.id && id !== channel.cloudId)
-      : [channelRef(channel), ...favorites],
-  });
+  const isFavorite = (channel: IptvChannel) => favoriteSet.has(channel.id) || Boolean(channel.cloudId && favoriteSet.has(channel.cloudId)) ||
+    Boolean(channel.syncAliases?.some((alias) => favoriteSet.has(alias)));
+  const toggleFavorite = (channel: IptvChannel) => updateSettings({ favoriteChannelIds: toggleFavoriteChannel(favorites, channel.id, identity) });
   const custom = Boolean(channelOrder[activeGroup]?.length);
   const needle = deferredQuery.trim().toLowerCase();
   const results = useMemo(() => {
@@ -370,11 +369,7 @@ function FavoritesView({ channels, identity, settings, query, deferredQuery, set
   }, [needle, channels]);
   const playlistName = (channel: IptvChannel) => settings.iptvPlaylists.find((playlist) => playlist.id === channel.id.split(":")[0])?.name;
   const remove = (ref: string) => updateSettings({ favoriteChannelIds: favorites.filter((id) => id !== ref) });
-  const toggle = (channel: IptvChannel) => updateSettings({
-    favoriteChannelIds: favoriteIds.has(channel.id)
-      ? favorites.filter((id) => identity.get(id)?.id !== channel.id)
-      : [...favorites, channelRef(channel)],
-  });
+  const toggle = (channel: IptvChannel) => updateSettings({ favoriteChannelIds: toggleFavoriteChannel(favorites, channel.id, identity) });
 
   return (
     <div className="st-layout">

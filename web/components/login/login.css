@@ -1,0 +1,4 @@
+/* Handing over to the ARVIO auth portal: a calm centred card, no Back button flash. */
+.login-shell.login-redirecting { display: grid; place-items: center; min-height: 100dvh; padding: 24px; }
+.login-redirecting .login-card { display: grid; justify-items: center; gap: 14px; text-align: center; max-width: 360px; }
+.login-redirecting .login-brand-logo { width: 48px; height: 48px; }

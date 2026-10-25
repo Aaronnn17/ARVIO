@@ -133,3 +133,9 @@
   .st-sort-row { min-height: 60px; }
   .st-shell .st-sort-btn, .st-sort-btn, .st-sort-handle { width: 40px; height: 40px; }
 }
+
+/* Settings → Addons reuses the Addons screen installer. */
+.st-addon-installer { padding: 4px 20px 16px; }
+.st-confirm { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.st-sort-main .addon-url { max-width: 100%; }
+@media (max-width: 760px) { .st-addon-installer { padding-left: 16px; padding-right: 16px; } }

@@ -3,9 +3,11 @@
 // and sources come first; on Android the same order is written into the
 // source-priority list (streamProvidersCustomOrder) so the TV follows it.
 
-import { Plus, Trash2 } from "lucide-react";
+import { Settings2, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "@/lib/i18n";
+import { AddonInstaller, MaskedAddonUrl } from "@/components/addons/AddonManager";
+import { addonConfigureUrl } from "@/lib/addonInstall";
 import { moveIndex } from "@/lib/ordering";
 import {
   addonServesStreams, effectiveProviderOrder, integrationOrder, knownProviders, parseIdList,
@@ -25,9 +27,8 @@ function addonTags(addon: InstalledAddon) {
 
 export function AddonsSection() {
   const translateUi = useTranslation();
-  const { addons, installAddon, removeAddon, setAddonsState, setToast, settings, updateSettings } = useApp();
-  const [addonUrl, setAddonUrl] = useState("");
-  const [installing, setInstalling] = useState(false);
+  const { addons, removeAddon, setAddonsState, setToast, settings, updateSettings } = useApp();
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const list = safeArray(addons);
 
   const providers = useMemo(() => knownProviders({
@@ -48,22 +49,6 @@ export function AddonsSection() {
     telegram: translateUi("Telegram"), iptv_vod: translateUi("IPTV movies and series"),
   })[type];
   const saveAddons = (next: InstalledAddon[]) => setAddonsState(next).catch((error) => setToast(error instanceof Error ? error.message : "Could not save addons."));
-
-  const install = async () => {
-    const trimmedUrl = addonUrl.trim();
-    if (!trimmedUrl) { setToast("Enter an addon manifest URL first."); return; }
-    if (!/^https?:\/\/.+\/manifest\.json(?:[?#].*)?$/i.test(trimmedUrl)) { setToast("Addon URL must be a full http(s) manifest.json URL."); return; }
-    setInstalling(true);
-    try {
-      await installAddon(trimmedUrl);
-      setAddonUrl("");
-      setToast("Addon installed.");
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : "Could not install addon.");
-    } finally {
-      setInstalling(false);
-    }
-  };
 
   // Addon order → web addon list (merge-protected path) + the TV's provider order.
   const moveAddon = (from: number, to: number) => {
@@ -112,13 +97,7 @@ export function AddonsSection() {
     <>
       <SectionHeader title="Addons" description="Stremio-compatible addons supply catalogs, sources and subtitles. Addons are shared by every profile and every ARVIO app on your account." />
       <Group title="Install an addon">
-        <div className="st-form">
-          <input className="st-input" value={addonUrl} onChange={(e) => setAddonUrl(e.target.value)} placeholder="https://addon.example.com/manifest.json"
-            aria-label={translateUi("Addon manifest URL")} inputMode="url" onKeyDown={(e) => { if (e.key === "Enter") void install(); }} />
-          <div className="st-form-actions">
-            <button type="button" className="st-btn is-primary" disabled={installing} onClick={() => void install()}><Plus size={16} /> {(installing ? translateUi("Installing...") : translateUi("Install"))}</button>
-          </div>
-        </div>
+        <div className="st-addon-installer"><AddonInstaller /></div>
       </Group>
 
       <Group title={`${translateUi("Installed")} · ${list.length}`}
@@ -134,16 +113,27 @@ export function AddonsSection() {
             renderMain={(addon) => (
               <>
                 <span className="st-sort-title"><span className="st-sort-name">{addon.name || translateUi("Unnamed addon")}</span><span className="st-tag">v{addon.version || "1.0.0"}</span></span>
-                <span className="st-sort-sub" title={addon.manifestUrl}>{addonTags(addon).map((tag) => translateUi(tag)).join(" · ") || translateUi("Manifest")} · {addon.manifestUrl}</span>
+                <span className="st-sort-sub">{addonTags(addon).map((tag) => translateUi(tag)).join(" · ") || translateUi("Manifest")}</span>
+                <MaskedAddonUrl url={addon.manifestUrl} />
               </>
             )}
-            renderActions={(addon) => (
-              <>
-                <Toggle label={addon.name || "addon"} value={addon.enabled !== false} onChange={() => toggleAddon(addon)} />
-                <button type="button" className="st-icon-btn is-danger" aria-label={translateUi("Remove {value0}", { value0: addon.name || "addon" })}
-                  onClick={() => void removeAddon(addon).catch((error) => setToast(error instanceof Error ? error.message : "Could not remove addon."))}><Trash2 size={17} /></button>
-              </>
-            )}
+            renderActions={(addon) => {
+              const configure = addonConfigureUrl(addon);
+              if (confirmRemove === addon.id) return (
+                <span className="st-confirm" role="group" aria-label={translateUi("Remove {value0}?", { value0: addon.name || "addon" })}>
+                  <button type="button" className="st-btn is-danger" autoFocus onClick={() => { setConfirmRemove(null); void removeAddon(addon).catch((error) => setToast(error instanceof Error ? error.message : "Could not remove addon.")); }}>{translateUi("Remove")}</button>
+                  <button type="button" className="st-btn is-ghost" onClick={() => setConfirmRemove(null)}>{translateUi("Cancel")}</button>
+                </span>
+              );
+              return (
+                <>
+                  <Toggle label={addon.name || "addon"} value={addon.enabled !== false} onChange={() => toggleAddon(addon)} />
+                  {configure && <a className="st-icon-btn" href={configure} target="_blank" rel="noopener noreferrer" aria-label={translateUi("Configure {value0}", { value0: addon.name || "addon" })} title={translateUi("Configure")}><Settings2 size={17} /></a>}
+                  <button type="button" className="st-icon-btn is-danger" aria-label={translateUi("Remove {value0}", { value0: addon.name || "addon" })}
+                    onClick={() => setConfirmRemove(addon.id)}><Trash2 size={17} /></button>
+                </>
+              );
+            }}
           />
         )}
       </Group>
