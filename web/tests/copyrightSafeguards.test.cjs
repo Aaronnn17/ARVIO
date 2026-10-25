@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { playerSource } = require('./sources.cjs');
 const root = path.resolve(__dirname, '../..');
 const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 
@@ -32,7 +33,7 @@ test('Android has no direct YouTube extraction implementation', () => {
 });
 
 test('web YouTube player uses an unmodified embed with a separate toolbar', () => {
-  const source = read('web/components/player/PlayerOverlay.tsx');
+  const source = playerSource();
   const embed = read('web/components/player/YouTubeEmbed.tsx');
   const api = read('web/lib/youtubePlayback.ts');
   assert.match(api, /youtube-nocookie\.com\/embed/);

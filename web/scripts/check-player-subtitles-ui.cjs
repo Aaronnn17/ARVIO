@@ -31,7 +31,7 @@ async function main() {
   });
   await new Promise(resolve => relay.listen(0, '127.0.0.1', resolve));
   const relayOrigin = `http://127.0.0.1:${relay.address().port}`;
-  const source = ts.createSourceFile('PlayerOverlay.tsx', fs.readFileSync(path.join(root, 'components/player/PlayerOverlay.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const source = ts.createSourceFile('PlayerOverlay.tsx', require('../tests/sources.cjs').playerSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const player = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name.text === 'VideoPlayer');
   const statements = player.body.statements.map(node => node.getText(source));
   const take = predicate => {

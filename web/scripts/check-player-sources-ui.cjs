@@ -12,7 +12,7 @@ const evidence = path.resolve(root, '../artifacts/player-sources-ui');
 const styles = ['globals.css', 'premium.css', 'tv-guide.css', 'source-setup.css'];
 
 function jsxWithClass(file, className) {
-  const source = ts.createSourceFile(file, fs.readFileSync(path.join(root, file), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const source = ts.createSourceFile(file, require('../tests/sources.cjs').sourceOf(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const matches = [];
   function visit(node) {
     if (ts.isJsxElement(node) && node.openingElement.attributes.properties.some(attr =>
