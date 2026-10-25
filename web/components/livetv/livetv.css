@@ -1,0 +1,144 @@
+/* Live TV (workstream C): guide cells, playlist manager, zap overlays, menus. */
+
+/* Categories pane: provider buttons replace the <select> (a remote dead end). */
+.livetv-providers { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; flex: none; }
+.tv-guide-workspace .livetv-cats .livetv-providers button { width: auto; height: auto; min-height: 36px; padding: 6px 12px; border-radius: 18px; font-size: 14px; border: 1px solid #2c3035; color: #cfd3d8; }
+.tv-guide-workspace .livetv-cats .livetv-providers button.is-active { background: #f2f2f2; color: #0a0a0a; border-color: #f2f2f2; }
+/* Category counts: 4.5:1 on the pane background. */
+.tv-guide-workspace .livetv-cats button em { color: #a3a8ae; }
+
+/* Guide channel cell: sticky number/logo/name button plus a pointer star. */
+.livetv-guide-channel-cell { position: sticky; left: 0; z-index: 3; flex: 0 0 var(--guide-channel-width, 232px); display: flex; min-width: 0; background: #080808; }
+.tv-guide-workspace .livetv-guide-channel-cell .livetv-guide-channel { position: relative; left: auto; flex: 1 1 auto; min-width: 0; margin-inline-end: 4px; padding-inline-end: 30px; }
+.livetv-guide-star { position: absolute; inset-inline-end: 8px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #8a8f96; cursor: pointer; z-index: 1; }
+.livetv-guide-star:hover { color: #fff; background: #ffffff1a; }
+.livetv-guide-star.is-active { color: var(--gold, #f5c518); }
+@media (hover: hover) { .livetv-guide-row:not(:hover) .livetv-guide-star:not(.is-active) { opacity: 0; } }
+.livetv-guide-row.is-playing .livetv-guide-channel { box-shadow: inset 3px 0 0 #56d8c5; }
+.livetv-guide-playing { color: #56d8c5; flex-shrink: 0; }
+
+/* Programme text paints above the now-line; the line still crosses the block. */
+.tv-guide-workspace .livetv-guide-block strong, .tv-guide-workspace .livetv-guide-block small { position: relative; z-index: 2; }
+.tv-guide-workspace .livetv-guide-lane .livetv-guide-nowline { z-index: 1; opacity: 0.75; }
+/* Time bar: labels in their own element so the one under the now pill can hide. */
+.livetv-guide-ticks span b { font-weight: inherit; }
+.livetv-guide-ticks span b.is-covered { visibility: hidden; }
+.tv-guide-workspace .livetv-guide-timebar .livetv-guide-nowline b { left: 0; transform: translateX(-50%); }
+
+/* Placeholder while a row's guide is still loading. */
+.livetv-guide-skeleton { position: absolute; inset: 7px 0; display: flex; gap: 4px; pointer-events: none; }
+.livetv-guide-skeleton i { flex: 0 0 auto; width: 176px; border-radius: 4px; background: linear-gradient(90deg, #141516 0%, #1d1f21 50%, #141516 100%); background-size: 200% 100%; animation: livetv-skeleton 1.4s ease-in-out infinite; }
+.livetv-guide-skeleton i:nth-child(2) { width: 356px; }
+@keyframes livetv-skeleton { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .livetv-guide-skeleton i { animation: none; } }
+:root.is-tv .livetv-guide-skeleton i { animation: none; }
+
+/* Window controls stay on one line at every width. */
+.tv-guide-workspace .guide-window-controls { flex-wrap: nowrap; min-width: 0; }
+.tv-guide-workspace .guide-window-controls span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tv-guide-workspace .guide-window-controls button { flex: none; }
+
+/* Detail pane: what is playing, plus the focused row when it differs. */
+.livetv-detail-playing { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #56d8c5; }
+.livetv-live-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff3b30; }
+.livetv-detail-selected { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 10px; border: 1px solid #25282c; border-radius: 6px; background: #101214; min-width: 0; }
+.livetv-detail-selected > span { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: #a3a8ae; }
+.livetv-detail-selected strong { font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.livetv-detail-selected em { font-style: normal; color: #bfc3ca; font-size: 13px; flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.livetv-detail-selected button { min-height: 34px; padding: 4px 12px; margin-inline-start: auto; }
+
+/* Playlist manager */
+.livetv-manage-head { display: flex; align-items: center; gap: 10px; }
+.livetv-manage-head h3 { margin: 0 auto 0 0; font-size: 18px; }
+.livetv-manage-icon { width: 36px; height: 36px; display: grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 50%; background: #ffffff12; color: #ddd; }
+.livetv-manage-icon:hover { background: #ffffff24; color: #fff; }
+.livetv-manage-name em { overflow-wrap: anywhere; }
+.livetv-manage-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: #e8c4c4; }
+.livetv-manage-confirm button { min-height: 34px; padding: 4px 12px; }
+.livetv-manage-confirm .danger { background: #b3261e; color: #fff; border: 0; border-radius: 8px; }
+.livetv-manage-form { display: grid; gap: 14px; padding: 16px; border: 1px solid #25282c; border-radius: 10px; background: #0d0e10; }
+.livetv-kind { display: flex; flex-wrap: wrap; gap: 6px; }
+.livetv-kind button { min-height: 38px; padding: 6px 14px; border-radius: 19px; border: 1px solid #2c3035; background: transparent; color: #cfd3d8; }
+.livetv-kind button.is-active { background: #f2f2f2; color: #0a0a0a; border-color: #f2f2f2; }
+.livetv-kind button:disabled { opacity: 0.4; }
+.livetv-field { display: grid; gap: 6px; }
+.livetv-field > label { font-size: 13px; font-weight: 650; color: #e6e6e6; }
+.livetv-field input { min-height: 44px; padding: 8px 12px; border-radius: 8px; border: 1px solid #2c3035; background: #131416; color: #fff; font-size: 15px; }
+.livetv-field input:focus { border-color: var(--accent, #2ec4b6); outline: none; }
+.livetv-field small { font-size: 12.5px; color: #a3a8ae; line-height: 1.4; }
+.livetv-form-error { color: #ffb4ab; font-size: 13px; margin: 0; }
+.livetv-test-result { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13.5px; color: #cfd3d8; }
+.livetv-test-result.is-ok { color: #7fe0b0; }
+.livetv-test-result.is-error { color: #ffb4ab; }
+.livetv-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.livetv-form-actions button { min-height: 42px; }
+
+/* Playlist errors: every failing playlist, with a plain cause and next steps. */
+.livetv-playlist-errors { display: grid; gap: 10px; }
+.livetv-playlist-errors > strong { display: flex; align-items: center; gap: 8px; }
+.livetv-playlist-errors ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.livetv-playlist-errors li { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 16px; padding-top: 10px; border-top: 1px solid #ffffff14; }
+.livetv-playlist-errors li > div:first-child { display: grid; gap: 4px; min-width: 0; flex: 1 1 280px; }
+.livetv-playlist-errors b { font-size: 14px; }
+.livetv-playlist-errors details { font-size: 12px; color: #c9c9c9; }
+.livetv-playlist-errors summary { cursor: pointer; }
+.livetv-playlist-errors code { display: block; margin-top: 4px; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 11.5px; color: #bdbdbd; }
+.livetv-playlist-error-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.livetv-playlist-error-actions button { min-height: 36px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 6px; }
+
+/* Channel context menu */
+.livetv-channel-menu { color: #eee; background: #15171a; border: 1px solid #3a3d42; border-radius: 10px; padding: 8px; width: min(360px, 92vw); margin: auto; }
+.livetv-channel-menu::backdrop { background: #0009; }
+.livetv-channel-menu header { display: flex; align-items: center; gap: 8px; padding: 6px 8px 10px; }
+.livetv-channel-menu header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.livetv-channel-menu header button { width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 50%; background: #ffffff14; color: #eee; }
+.livetv-channel-menu [role="menu"] { display: grid; gap: 2px; }
+.livetv-channel-menu [role="menuitem"] { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: #eee; font-size: 15px; text-align: start; }
+.livetv-channel-menu [role="menuitem"]:hover, .livetv-channel-menu [role="menuitem"]:focus-visible { background: #2a2d31; outline: none; }
+.livetv-channel-menu [role="menuitem"]:disabled { opacity: 0.4; }
+
+/* Fullscreen zap overlays sit above the player (z-index 100). */
+.livetv-zap-number { position: fixed; z-index: 140; top: calc(140px + env(safe-area-inset-top)); inset-inline-end: 32px; display: grid; justify-items: end; gap: 2px; padding: 12px 18px; border-radius: 10px; background: #000c; color: #fff; pointer-events: none; }
+.livetv-zap-number strong { font-size: 44px; line-height: 1; font-variant-numeric: tabular-nums; }
+.livetv-zap-number span { font-size: 14px; color: #cfd3d8; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.livetv-zap-info { position: fixed; z-index: 140; inset-inline: max(24px, 6vw); bottom: calc(32px + env(safe-area-inset-bottom)); display: flex; gap: 20px; align-items: center; padding: 18px 22px; border-radius: 12px; background: linear-gradient(180deg, #0b0c0eee, #060708f5); border: 1px solid #ffffff1f; color: #fff; pointer-events: none; }
+.livetv-zap-logo { width: 96px; height: 60px; flex: none; display: grid; }
+.livetv-zap-info > div { min-width: 0; flex: 1; display: grid; gap: 6px; }
+.livetv-zap-info p { margin: 0; }
+.livetv-zap-channel { display: flex; gap: 10px; align-items: baseline; font-size: 15px; color: #cfd3d8; }
+.livetv-zap-channel b { font-size: 20px; color: #fff; font-variant-numeric: tabular-nums; }
+.livetv-zap-now { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+.livetv-zap-now strong { font-size: 22px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.livetv-zap-now em { font-style: normal; color: #bfc3ca; font-size: 14px; }
+.livetv-zap-info .livetv-progress { display: block; width: 100%; max-width: 560px; height: 3px; border-radius: 2px; background: #ffffff26; overflow: hidden; }
+.livetv-zap-info .livetv-progress > span { display: block; height: 100%; background: #56d8c5; }
+.livetv-zap-next { font-size: 14px; color: #cfd3d8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.livetv-zap-next span { font-weight: 700; margin-inline-end: 8px; color: #fff; font-size: 12px; letter-spacing: 0.06em; }
+.livetv-zap-hint { font-size: 12px; color: #9ea3a9; }
+
+/* Tablets: a mini-player big enough to watch. */
+@media (min-width: 701px) and (max-width: 1100px) {
+  .tv-guide-workspace .livetv-detail:has(.has-live-playback) { grid-template-columns: minmax(0, 1fr) minmax(260px, 46%); }
+  .tv-guide-workspace .livetv-detail-art.has-live-playback { width: 100%; max-height: none; }
+}
+
+/* Phones: a narrow number + logo column leaves room for the programmes. */
+@media (max-width: 700px) {
+  .tv-guide-workspace { --guide-channel-width: 104px; }
+  .tv-guide-workspace .livetv-guide-channel-cell .livetv-guide-channel { flex-direction: column; justify-content: center; align-items: center; gap: 2px; padding: 4px 6px; text-align: center; }
+  .tv-guide-workspace .livetv-guide-channel .livetv-row-logo { width: 44px; height: 24px; flex: none; }
+  .tv-guide-workspace .livetv-guide-channel strong { font-size: 11px; line-height: 13px; -webkit-line-clamp: 1; max-width: 100%; }
+  .tv-guide-workspace .livetv-guide-channel .tv-guide-channel-number { font-size: 10px; line-height: 12px; }
+  .livetv-guide-star { inset-inline-end: 2px; top: 4px; transform: none; width: 22px; height: 22px; }
+  .livetv-guide-playing { display: none; }
+  .livetv-zap-info { inset-inline: 12px; bottom: 16px; padding: 12px 14px; gap: 12px; }
+  .livetv-zap-logo { width: 56px; height: 40px; }
+  .livetv-zap-now strong { font-size: 17px; }
+  .livetv-zap-hint { display: none; }
+}
+/* Text buttons in Live TV panels (the global .secondary is a round icon button). */
+:is(.livetv-manage, .livetv-playlist-errors, .livetv-detail-selected, .livetv-empty, .livetv-list-empty) :is(.primary, .secondary) { width: auto; min-width: max-content; padding: 0 16px; border-radius: 999px; gap: 6px; }
+:is(.livetv-manage, .livetv-playlist-errors, .livetv-detail-selected) :is(.primary, .secondary) { min-height: 40px; font-size: 14px; }
+/* Contrast (axe): counts and next-programme lines. */
+.tv-guide-workspace .livetv-list-head > span { color: #a3a8ae; }
+.livetv-row .livetv-row-copy > small { color: #b4b9bf; }

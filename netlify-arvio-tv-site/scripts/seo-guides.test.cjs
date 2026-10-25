@@ -7,7 +7,8 @@ const siteRoot = path.resolve(__dirname, '..');
 const origin = 'https://arvio.tv';
 const routes = [
   { route: '/android-tv-media-hub/', pt: '/pt-br/central-midia-android-tv/', es: '/es/centro-multimedia-android-tv/', updated: '2026-10-04' },
-  { route: '/arvio-web/', pt: '/pt-br/arvio-web/', es: '/es/arvio-web/', updated: '2026-10-04' },
+  { route: '/arvio-web/', pt: '/pt-br/arvio-web/', es: '/es/arvio-web/', updated: '2026-10-24' },
+  { route: '/arvio-iphone-ipad/', updated: '2026-10-24' },
   { route: '/fire-tv-media-player/', pt: '/pt-br/arvio-fire-tv/', es: '/es/arvio-fire-tv/', updated: '2026-10-04' },
   { route: '/jellyfin-android-tv/', pt: '/pt-br/jellyfin-android-tv/', es: '/es/jellyfin-android-tv/', updated: '2026-10-08' },
   { route: '/plex-emby-jellyfin/', pt: '/pt-br/plex-emby-jellyfin/', es: '/es/plex-emby-jellyfin/', updated: '2026-10-08' },

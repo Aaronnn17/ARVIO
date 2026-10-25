@@ -1,4 +1,5 @@
 "use client";
+import { premiumAllows } from "@/lib/premiumGate";
 import { useTranslation } from "@/lib/i18n";
 
 
@@ -119,12 +120,16 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
     // Virtual rows appear after ResizeObserver measures the opened dialog.
     const observer = new MutationObserver(() => focusFirst());
     const focusFirst = () => {
-      const first = dialog.current?.querySelector<HTMLButtonElement>(".tv-event-source:not(:disabled)");
+      const first = dialog.current?.querySelector<HTMLButtonElement>(".tv-event-source:not(:disabled), .tv-addon-source button:not(:disabled)");
       if (first) { first.focus({ preventScroll: true }); observer.disconnect(); }
       return Boolean(first);
     };
     if (!focusFirst() && dialog.current) observer.observe(dialog.current, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    // Nothing playable yet (an upcoming event): start on Close rather than nowhere.
+    const fallback = window.setTimeout(() => {
+      if (!dialog.current?.contains(document.activeElement) || document.activeElement === dialog.current) dialog.current?.querySelector<HTMLButtonElement>("header button")?.focus({ preventScroll: true });
+    }, 400);
+    return () => { observer.disconnect(); window.clearTimeout(fallback); };
   }, [selectedId]);
   const stamp = (event: SportsGuideEvent) => {
     if (isConfirmedLive(event, now) || (event.channelOnly && isOnAir(event, now))) return "LIVE";
@@ -176,7 +181,9 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
       })}</div>
     </section>)}
     <dialog ref={dialog} className="tv-event-picker" style={{ "--source-count": Math.max(1, sourceChannels.length) } as CSSProperties}
-      onCancel={(event) => { event.preventDefault(); close(); }} onClick={(event) => { if (event.target === event.currentTarget) close(); }}>
+      onCancel={(event) => { event.preventDefault(); close(); }} onClick={(event) => { if (event.target === event.currentTarget) close(); }}
+      // TV Back arrives as a synthetic Escape, which never fires "cancel".
+      onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } }}>
       <header>{selected && !failedArtwork.has(selected.id) && (selected.artwork || selected.teamArtwork) && <div className="tv-event-picker-art"><EventArtwork event={selected} /></div>}<div><p>{selected ? `${stamp(selected)} · ${guideSports.find(s => s.id === selected.sportId)!.title}` : translateUi("This event is no longer in the available guide.")}</p><h2>{selected?.title ?? translateUi("Schedule changed")}</h2></div><button type="button" onClick={close} aria-label={translateUi("Close")}><X /></button></header>
       {selected?.fixture && <div className="tv-event-details"><span>{[selected.competition, selected.fixture.venue, selected.fixture.round ? `Round ${selected.fixture.round}` : undefined].filter(Boolean).join(" · ")}</span>
         {selected.fixture.homeScore !== undefined && selected.fixture.awayScore !== undefined && isConfirmedLive(selected, now) && <button type="button" className="secondary" onClick={() => setShowScore(value => !value)}>{showScore ? `${selected.fixture.homeScore} : ${selected.fixture.awayScore}` : translateUi("Show score")}</button>}</div>}
@@ -188,7 +195,7 @@ export function SportsGuidePane({ channels, guide, onPlay, onEnter, onOpenCatego
         }}><span className="tv-source-logo-fallback"><ChannelLogo channel={ch} size={28} /></span><span><strong>{ch.name}</strong><small>{providerNames[ch.id.split(":")[0]] || ch.group}{possibleChannels.some(candidate => candidate.id === ch.id) ? translateUi(" · Possible broadcast") : translateUi(" · Guide match")}</small></span>{ch.qualityLabel && <em>{ch.qualityLabel}</em>}{ch.language && <em>{ch.language.toUpperCase()}</em>}<ChevronRight className="tv-source-arrow" size={22} /><Play className="tv-source-play" size={22} /></button>} />}
       {selected?.addonSources?.map(source => <AddonSourceRow key={`${selected.id}:${source.key}`} event={source} addons={addons} canPlay={isOnAir(selected, now) && (source.startsAt === undefined || source.startsAt <= now)} onPlay={stream => {
         if (!addons.some(a => a.enabled !== false && a.manifestUrl === source.installation)) return;
-        if (stream.external) window.open(stream.url, "_blank", "noopener,noreferrer");
+        if (stream.external) { if (premiumAllows("external")) window.open(stream.url, "_blank", "noopener,noreferrer"); }
         else onPlay({ id: `sports-addon:${source.addonId}:${source.type}:${source.eventId}`, name: source.title, group: source.addonName, streamUrl: stream.url, requestHeaders: stream.headers });
         close();
       }} />)}

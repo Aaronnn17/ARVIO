@@ -1,0 +1,267 @@
+/* Source rows shared by the details source picker and the in-player source
+   panel: one compact line of facts, the left side is the primary action. */
+
+.src-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 4px 2px 2px;
+  overscroll-behavior: contain;
+}
+
+.src-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 10px 2px 2px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.src-group-head:first-child { margin-top: 0; }
+.src-group-head small { font-size: 12px; font-weight: 650; letter-spacing: 0; text-transform: none; color: var(--soft); }
+
+.src-row {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-height: 56px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.src-row.is-active { border-color: rgba(255, 255, 255, 0.5); background: rgba(255, 255, 255, 0.1); }
+.src-row.tier-external { background: rgba(255, 255, 255, 0.025); }
+.src-row:hover { background: rgba(255, 255, 255, 0.08); }
+
+.src-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 7px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.src-row-main:disabled { cursor: not-allowed; opacity: 0.7; }
+.src-row-main:focus-visible,
+.src-action:focus-visible,
+.src-menu button:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: -3px;
+}
+
+.src-rank {
+  flex: 0 0 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.src-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+
+.src-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 750;
+  color: #fff;
+}
+
+.src-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.src-tier {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 2px 8px 2px 6px;
+  font-weight: 780;
+  background: rgba(0, 213, 136, 0.14);
+  color: #5ff0b8;
+}
+
+.tier-conversion .src-tier { background: rgba(255, 205, 60, 0.14); color: #ffd66b; }
+.tier-external .src-tier { background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.8); }
+
+.src-provider { font-weight: 700; color: rgba(255, 255, 255, 0.78); }
+
+.src-badge {
+  border-radius: 6px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  font-weight: 780;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.src-badge.gold { color: #ffd66b; background: rgba(255, 205, 60, 0.12); }
+.src-badge.ok { color: #5ff0b8; background: rgba(0, 213, 136, 0.12); }
+.src-badge.warn { color: #ffb38a; background: rgba(255, 120, 60, 0.14); }
+
+.src-reason {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--soft);
+}
+
+.src-reason svg { vertical-align: -1px; }
+
+.src-play-cue {
+  flex: 0 0 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #fff;
+  color: #000;
+}
+
+.src-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; padding-right: 8px; }
+
+.src-action {
+  min-height: 34px;
+  min-width: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+  padding: 0 11px;
+  font-size: 12.5px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.src-action.icon-only { padding: 0; width: 34px; }
+.src-action:hover { background: rgba(255, 255, 255, 0.16); }
+
+.src-menu-wrap { position: relative; }
+
+.src-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 5;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  background: #15181d;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+}
+
+.src-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #fff;
+  padding: 0 10px;
+  text-align: left;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.src-menu button:hover { background: rgba(255, 255, 255, 0.1); }
+
+/* Source picker frame tweaks (the modal shell itself lives in globals.css). */
+.source-panel.src-panel { gap: 10px; }
+.src-panel .source-panel-head h2 { font-size: clamp(22px, 2.2vw, 34px); }
+.src-panel .source-toolbar { grid-template-columns: minmax(0, 1fr); }
+.src-panel .source-search { min-height: 44px; }
+.src-panel .source-search input { height: 42px; }
+
+.src-filters {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: 0 0 auto;
+  padding: 2px;
+}
+
+.src-filters::-webkit-scrollbar { display: none; }
+
+.src-filters button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.82);
+  padding: 0 13px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.src-filters button[aria-pressed="true"] { background: #fff; color: #000; border-color: #fff; }
+.src-filters button:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+.src-filters .src-filter-sep { flex: 0 0 1px; background: rgba(255, 255, 255, 0.16); margin: 6px 2px; }
+
+.src-panel .source-addon-tabs { height: auto; flex: 0 0 auto; }
+.src-panel .source-addon-tabs button { min-height: 34px; font-size: 13px; padding: 0 12px; }
+
+@media (max-width: 680px) {
+  .src-row { min-height: 52px; }
+  .src-row-main { padding: 6px 8px; gap: 8px; }
+  .src-rank { display: none; }
+  .src-title { font-size: 13.5px; }
+  .src-actions { padding-right: 6px; }
+  .src-action { min-height: 44px; min-width: 44px; }
+  .src-action.icon-only { width: 44px; }
+  .src-play-cue { flex-basis: 28px; height: 28px; }
+  .src-panel .source-panel-head span { display: none; }
+}
+
+@media (pointer: coarse) {
+  .src-action { min-height: 44px; min-width: 44px; }
+  .src-action.icon-only { width: 44px; }
+  .src-menu button { min-height: 44px; }
+}

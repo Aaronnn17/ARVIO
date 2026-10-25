@@ -69,3 +69,27 @@
 #premium .premium-copy>.membership-terms{font-size:12px;color:#acbfb2;line-height:1.7;margin:14px 0 0}
 @media(max-width:850px){.hero-v2 .hero-copy>.hero-membership-terms{margin:5px auto 0}.hero-premium-details{justify-content:center}}
 @media(max-width:520px){.hero-v2 .actions .button{max-width:100%;white-space:normal;text-align:center;justify-content:center;line-height:1.5;min-height:48px}#premium .button{max-width:100%;white-space:normal;line-height:1.5;text-align:center;justify-content:center}}
+
+/* ARVIO Web is the paid product: device-aware hero order and two plans side by side. */
+.hero-v2 .button .hero-label{font-size:inherit}
+#premium .premium h2{font-size:clamp(36px,3.7vw,54px);line-height:1.06}
+#premium .premium-lead{color:#d3ddd7}
+#premium .premium ul{margin:18px 0 26px}
+.plans{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;max-width:480px;margin:0 0 18px}
+.plan{position:relative;display:flex;flex-direction:column;gap:6px;padding:22px 18px 18px;border:1px solid #ffffff1c;border-radius:14px;background:#0b1210cc}
+.plan p{margin:0;line-height:1.45}
+.plan-best{border-color:#9efbd570;background:linear-gradient(165deg,#9efbd517,#0b1210cc 62%)}
+.plan-badge{position:absolute;top:-11px;left:16px;padding:4px 10px;border-radius:20px;background:var(--mint);color:#112018;font-size:10px;font-weight:650;white-space:nowrap}
+.plan-name{font-size:13px;font-weight:550;color:#d6e2db}
+.plan-price strong{font-size:30px;font-weight:600;letter-spacing:-.03em;color:var(--ink)}
+.plan-price span{font-size:12px;color:var(--muted)}
+.plan-note{flex-grow:1;font-size:11px;color:#9aaba1}
+.plan .plan-button{margin-top:10px;width:100%;min-height:44px;padding:11px 12px;gap:10px;font-size:12px;white-space:normal;text-align:center;line-height:1.35}
+#premium .premium-copy>.plan-refund{font-size:12px;color:#c9d6ce;max-width:480px;margin:0}
+#premium .premium-copy>.membership-terms{margin-top:8px}
+#premium .premium-copy>.plan-refund a,#premium .premium-copy>.membership-terms a{color:var(--mint);text-decoration:underline;text-underline-offset:3px}
+#premium .premium-copy>.premium-support{font-size:12px;color:var(--mint);margin:16px 0 0}
+@media(max-width:700px){.plans{max-width:none}#premium .premium h2{font-size:38px}}
+@media(max-width:360px){.plans{gap:8px}.plan{padding:20px 12px 14px}.plan-badge{left:10px;font-size:9px;padding:4px 8px}.plan-price strong{font-size:26px}}
+#premium .premium li{position:relative;padding-left:26px;line-height:1.6;margin-bottom:9px}#premium .premium li:before{position:absolute;left:0;margin:0}
+.plan-price span{white-space:nowrap}.plan-badge{top:auto;bottom:calc(100% - 11px);max-width:calc(100% - 20px);white-space:normal;line-height:1.35}#premium .premium-copy>.membership-terms a{white-space:nowrap}

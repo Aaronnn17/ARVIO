@@ -126,6 +126,8 @@ export interface Category {
   sourceLabel?: string;
   layout?: "landscape" | "poster";
   sourceUrl?: string;
+  /** The source has more titles than the row shows (Home rows stop at HOME_ROW_LIMIT). */
+  hasMore?: boolean;
 }
 
 export type CatalogSourceType =
@@ -305,6 +307,12 @@ export interface Profile {
   avatarImageVersion?: number; // 0 = no custom uploaded photo
   avatarImageStoragePath?: string | null;
   isKidsProfile?: boolean;
+  // KidsAgeLevel name (LITTLE_KIDS | OLDER_KIDS | TEENS); missing reads as the default.
+  kidsAgeLevel?: string | null;
+  // The kids starter rows were added once; a row the parent removed must not come back.
+  kidsStarterRowsAdded?: boolean;
+  // Hashed parent PIN of a kids profile: needed to edit or delete it, never to watch.
+  parentPin?: string | null;
   pin?: string | null;
   isLocked?: boolean;
   createdAt?: number;
@@ -346,6 +354,10 @@ export interface WatchHistoryEntry {
   stream_key?: string | null;
   stream_addon_id?: string | null;
   stream_title?: string | null;
+  /** Android "up next" pointer: the episode after a finished one (progress 0). */
+  is_up_next?: boolean | null;
+  /** Air date of an up-next episode (YYYY-MM-DD); unaired pointers stay hidden. */
+  release_date?: string | null;
 }
 
 export interface IptvPlaylistEntry {
@@ -355,6 +367,10 @@ export interface IptvPlaylistEntry {
   epgUrl?: string;
   epgUrls?: string[];
   enabled: boolean;
+  /** Android/TV: what the app imports from this playlist. Undefined = on (Android's default). */
+  importLiveTv?: boolean;
+  importVod?: boolean;
+  importSeries?: boolean;
 }
 
 export interface IptvTvSession {
@@ -417,6 +433,8 @@ export interface IptvSnapshot {
   hiddenGroups: string[];
   groupOrder: string[];
   playlistWarnings?: string[];
+  /** One entry per playlist (or the Stalker portal, id "stalker") that failed to load. */
+  playlistErrors?: Array<{ playlistId: string; name: string; message: string }>;
   epgWarning?: string;
   loadedAt: number;
   /**
@@ -471,6 +489,11 @@ export interface AppSettings {
   trailerSound: boolean;
   trailerDelaySeconds: number;
   trailerInCards: boolean;
+  /** Android/TV: highest quality and largest file Auto-Play may pick. Undefined = keep the app's value. */
+  autoPlayMaxQuality?: "Unlimited" | "720p" | "1080p" | "4K";
+  autoPlayMaxSizeGb?: number;
+  /** Android/TV: search sources from all integrations at once or one after another. */
+  streamSearchMode: "parallel" | "sequential";
   volumeBoostDb: number;
   includeSpecials: boolean;
   qualityFilterPreset: "off" | "1080p-plus" | "1080p-only" | "720p-plus" | "custom";
@@ -490,11 +513,23 @@ export interface AppSettings {
   subtitleStylized: boolean;
   filterSubtitlesByLanguage: boolean;
   removeHearingImpaired: boolean;
+  /** Android/TV subtitle font (System, Noto Sans, …). */
+  subtitleFont: string;
+  useForcedSubtitles: boolean;
+  /** Android/TV: wait for subtitles before the video starts. */
+  subtitlePreload: boolean;
   // AI subtitles
   aiSubtitlesEnabled: boolean;
+  /** "off" is a legacy value from older web builds; it reads as Groq. */
   aiSubtitleModel: "off" | "groq" | "gemini";
   aiAutoSelect: boolean;
   aiApiKey: string;
+  /** Android/TV: let AI pick the best-synced subtitle from your addons. */
+  aiFindBestMatch: boolean;
+  /** Android/TV: play Dolby Vision releases as HDR10 where the device can't decode them. */
+  dolbyVisionCompat: boolean;
+  /** Android/TV: only search Telegram when its source row is selected. */
+  telegramSearchOnClickOnly: boolean;
   // Playback target: "browser" plays in the built-in player; "vlc"/"infuse"
   // hand the top source straight to that external player on Play (Trakt still
   // syncs via the return-to-app prompt).
@@ -505,6 +540,13 @@ export interface AppSettings {
   oledBlack: boolean;
   clockFormat: "12h" | "24h";
   showBudget: boolean;
+  /** Android/TV home layout. Undefined = keep the app's value. */
+  netflixHomeStyle?: boolean;
+  watchlistOnHome?: boolean;
+  /** Android/TV guide rows: 0 = automatic, 6–10. Undefined = keep the app's value. */
+  guideRowCount?: number;
+  showEpisodeRatings: boolean;
+  animeEpisodeStructuring: "broadcast" | "standard";
   /** Settings > IPTV "Favorite channels on Home" (Android `iptvFavoritesOnHome`). */
   iptvFavoritesOnHome: boolean;
   smoothScrolling: boolean;
@@ -537,6 +579,17 @@ export interface AppSettings {
   /** Read from cloud; locked IPTV groups are not exposed without a PIN flow. */
   lockedIptvGroupIds?: string[];
   groupOrder: string[];
+  /** Manual channel order per category: { "<playlistId>|<group>": [channel ids…] } (iptvByProfile.channelOrder). */
+  iptvChannelOrder?: Record<string, string[]>;
+  /** Android/TV source priority (profileSettingsById). Undefined = keep the app's value. */
+  streamProvidersCustomOrder?: string;
+  streamIntegrationsMacroOrder?: string;
+  streamMacroEnabledMap?: Record<string, boolean>;
+  streamProviderEnabledMap?: Record<string, boolean>;
+  /** Per-row card style the Android app keeps ({ "home:<catalogId>": "Poster" | "Landscape" }). */
+  catalogueRowLayoutModes?: Record<string, string>;
+  /** Read only: plugin repositories installed on the Android app (names for the source list). */
+  androidPluginRepositories?: Array<{ id: string; name: string; enabled: boolean }>;
   // Metadata & API Keys
   customTmdbApiKey: string;
   customTvdbApiKey: string;

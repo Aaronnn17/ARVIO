@@ -48,7 +48,7 @@
 | Where you watch | How to get it |
 | --- | --- |
 | Android TV, Google TV, Fire TV, Android phones and tablets | **Free app.** Install from Google Play where available, or download the signed APK from [GitHub Releases](https://github.com/ProdigyV21/ARVIO/releases/latest). |
-| Desktop, iPhone, iPad and other browsers | Open [ARVIO Web](https://web.arvio.tv). The official hosted service requires [ARVIO Premium](https://arvio.tv/premium/). |
+| Desktop, iPhone, iPad and other browsers | Open [ARVIO Web](https://web.arvio.tv) and sign in with your ARVIO account: your profiles, watchlist and addons are already there. Playback on the official hosted service needs [ARVIO Premium](https://arvio.tv/premium/) ($2.99 a month or $20 for 12 months); you can look around first. |
 | Your own computer or server | **Free self-hosting.** Run the web app with Docker Compose or Node.js and your own integration credentials. [Setup instructions](web/README.md). |
 
 The GitHub APK supports Android 6.0+; the Play build requires Android 7.0+. The standard APK contains ARMv7 and ARM64 builds. Device, codec and service support can vary.
@@ -110,7 +110,7 @@ Self-hosted profiles and settings are local to each browser; this mode does **no
 
 Never post passwords, API keys, tokens, private playlist URLs or unredacted account information in an issue or screenshot.
 
-ARVIO takes ongoing development, testing, hosting and service costs. [Support the project on Ko-fi](https://ko-fi.com/arvio/tiers) to help fund future work. The Android app and self-hosted web app remain free; Premium provides the optional hosted web service, not media subscriptions.
+ARVIO takes ongoing development, testing, hosting and service costs. [ARVIO Premium](https://arvio.tv/premium/) (hosted ARVIO Web for iPhone, iPad and computers) funds that work, and you can also [support the project on Ko-fi](https://ko-fi.com/arvio). The Android app and self-hosted web app remain free; Premium provides the optional hosted web service, not media subscriptions.
 
 ## Build From Source
 

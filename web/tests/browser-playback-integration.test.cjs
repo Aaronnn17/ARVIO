@@ -45,7 +45,7 @@ test('live manifest fallbacks preserve add-on authentication and referer headers
     let forwarded;
     const build = extracted('components/player/PlayerOverlay.tsx', node =>
       ts.isFunctionDeclaration(node) && node.name?.text === name ? node : undefined, {
-        URL, liveTvProxyHeaders: () => ({ Accept: '*/*', 'User-Agent': 'default' }),
+        URL, currentStreamTicket: () => '', liveTvProxyHeaders: () => ({ Accept: '*/*', 'User-Agent': 'default' }),
         proxiedUrl: (url, headers) => { forwarded = headers; return `https://app.example/api/proxy?url=${encodeURIComponent(url)}`; }
       });
     const result = new URL(build('https://media.example/live.m3u8', { Authorization: 'test-token', Referer: 'https://addon.example/', 'User-Agent': 'addon-player' }));
@@ -167,7 +167,11 @@ function extracted(relative, selector, globals) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
   }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(code, { module, Error, Event, DOMException, AbortController, console, ...globals }, { filename });
+  // Player status/hop bookkeeping that these harnesses do not exercise.
+  const playerDefaults = { setBootStatus: () => {}, autoSourceHopsRef: { current: 0 }, sourceListRef: { current: [] },
+    browserAutoplayCandidates: () => [], diagnoseSourceFailure: async () => null, setEnded: () => {},
+    onAdvanceRef: { current: async () => false }, upNextShownRef: { current: false } };
+  vm.runInNewContext(code, { module, Error, Event, DOMException, AbortController, console, ...playerDefaults, ...globals }, { filename });
   return module.exports;
 }
 
@@ -618,6 +622,8 @@ function storeHarness(prepare, report = async () => {}, overrides = {}) {
     isDisabledTelegramSource, TELEGRAM_DISABLED_MESSAGE,
     playbackPreparation: { current: null }, playbackGeneration: { current: 0 }, ownedPlayback: { current: null },
     activeProfileIdRef: { current: 'profile-a' }, settingsRef: { current: settings },
+    // Kids gate (store.tsx): a regular profile, so channel and catchup playback proceed.
+    activeProfileRef: { current: { id: 'profile-a' } }, kidsLevelOf: (profile) => (profile?.isKidsProfile ? 'OLDER_KIDS' : null), premiumAllows: () => true,
     authClient: { session: { userId: 'account-a' } }, selected: { title: 'Fixture' }, activeProfile: { id: 'profile-a' }, selectedEpisode: null,
     prepareBrowserStream: prepare, reportHomeServerPlayback: report,
     busyRef: { current: "" }, streamsRef: { current: [] }, browserAutoplayCandidates: (streams, excluded = new Set()) => streams.filter(s => s.url && !excluded.has(s.originalUrl ?? s.url)), recordBrowserPlaybackFailure: () => {},
@@ -722,16 +728,29 @@ function progressEffect(overrides = {}) {
     emit: (name) => video.dispatchEvent(new Event(name)) };
 }
 
-test('Progress cloud checkpoints are once per minute, not every 15 seconds', () => {
+test('Progress cloud checkpoints are every 30 seconds while playing, not on every time update', () => {
   const h = progressEffect();
   h.emit('timeupdate');
   assert.equal(h.calls.length, 1);
-  for (let n = 0; n < 3; n++) { h.advance(15); h.emit('timeupdate'); }
+  for (let n = 0; n < 5; n++) { h.advance(5); h.emit('timeupdate'); }
   assert.equal(h.calls.length, 1);
-  h.advance(15); h.emit('timeupdate');
+  h.advance(5); h.emit('timeupdate');
   assert.equal(h.calls.length, 2);
   h.cleanup();
   assert.equal(h.calls.length, 2, 'unchanged teardown position is not saved twice');
+});
+
+test('A seek after playback started saves the new position immediately; the resume seek does not', () => {
+  const h = progressEffect();
+  h.video.currentTime = 400; h.emit('seeked');
+  assert.equal(h.calls.length, 0, 'seek before playback (resume) is not a checkpoint');
+  h.video.paused = false; h.emit('playing');
+  h.emit('timeupdate');
+  assert.equal(h.calls.length, 1);
+  h.video.currentTime = 700; h.emit('seeked');
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[1][1].position_seconds, 700);
+  h.cleanup();
 });
 
 test('Pause, background, pagehide, end and close bypass periodic checkpoint throttling', () => {
@@ -1324,6 +1343,93 @@ test('browser resume remains separate from zero-offset home-server negotiation',
   assert.equal(h.calls[0][2].startTime ?? 0, 0);
 });
 
+// advanceEpisode applies the same bounded preferred-source wait as the details
+// Play button (lib/autoplaySelection.ts), with an empty device preference.
+function autoplayPreferenceGlobals(preference = {}) {
+  const selection = load('lib/autoplaySelection.ts');
+  return {
+    loadAutoplayPreference: () => preference,
+    orderByPreference: selection.orderByPreference,
+    isPreferredAutoplaySource: selection.isPreferredAutoplaySource,
+    parseDebridStream: (url) => (String(url).includes('/torbox/') ? { provider: 'torbox' } : null)
+  };
+}
+
+function advanceHarness(sources, preference) {
+  const selected = { id: 42, mediaType: 'tv', seasonNumber: 1, episodeNumber: 3, isWatched: false };
+  const selections = [];
+  const progressive = deferred();
+  const h = storeHarness(async (input) => input, undefined, { selected, selectedEpisode: { season: 1, episode: 3 } });
+  const advance = extracted('lib/store.tsx', (node) => ts.isVariableDeclaration(node)
+    && node.name.getText() === 'advanceEpisode' && ts.isCallExpression(node.initializer)
+    ? node.initializer.arguments[0] : undefined, {
+    ...h.globals,
+    sourceGeneration: { current: 0 }, addonsRef: { current: [] },
+    nextLocalEpisode: (item) => item,
+    getSeasonEpisodes: async () => [{ episodeNumber: 4, name: 'Next episode' }],
+    playbackPlan: () => ({ route: 'here', method: 'direct' }),
+    setSelectedEpisode: () => {}, setSelected: () => {}, setStreams: () => {}, mergeStreams: () => {},
+    // The fast free host answers first; the debrid/preferred addon later.
+    getStreamsProgressive: async (_addons, _item, _season, _episode, publish) => { publish(sources.fast); await progressive.promise; publish(sources.late); return []; },
+    appendHomeServerSources: async () => [], appendVodSources: async () => [], appendTelegramSources: async () => [],
+    ...autoplayPreferenceGlobals(preference),
+    // Like sourcePickerScore: debrid outranks a free host at equal quality.
+    browserAutoplayCandidates: (streams) => [...new Map(streams.map((s) => [s.url, s])).values()]
+      .sort((a, b) => Number(b.url.includes('/torbox/')) - Number(a.url.includes('/torbox/'))),
+    playStream: (stream) => selections.push(stream)
+  });
+  return { advance, selections, progressive, timers: h.state.timers };
+}
+
+test('next episode waits briefly for a debrid source instead of the fastest addon', async () => {
+  const fast = { url: 'https://free.example/e4.mp4', addonId: 'free' };
+  const debrid = { url: 'https://tio.example/torbox/key12345/hash/4', addonId: 'torrentio' };
+  const h = advanceHarness({ fast: [fast], late: [debrid] });
+  const running = h.advance();
+  await flush();
+  assert.equal(h.selections.length, 0, 'the first free-host row must not win by default');
+  h.progressive.resolve();
+  assert.equal(await running, true);
+  assert.equal(h.selections.length, 1);
+  assert.equal(h.selections[0].url, debrid.url);
+});
+
+test('next episode settles on the best available source when the preferred one never arrives', async () => {
+  const fast = { url: 'https://free.example/e4.mp4', addonId: 'free' };
+  const h = advanceHarness({ fast: [fast], late: [] });
+  const running = h.advance();
+  await flush();
+  // The bounded preferred-source window elapses.
+  [...h.timers.values()].forEach((fire) => fire());
+  assert.equal(h.selections.length, 1);
+  assert.equal(h.selections[0].url, fast.url);
+  h.progressive.resolve();
+  assert.equal(await running, true);
+  assert.equal(h.selections.length, 1, 'never starts two sources');
+});
+
+test('after the window, the next arriving source starts at once', async () => {
+  const late = { url: 'https://free.example/late.mp4', addonId: 'free' };
+  const h = advanceHarness({ fast: [], late: [late] });
+  const running = h.advance();
+  await flush();
+  [...h.timers.values()].forEach((fire) => fire());
+  assert.equal(h.selections.length, 0, 'nothing to play yet');
+  h.progressive.resolve();
+  assert.equal(await running, true);
+  assert.equal(h.selections[0].url, late.url);
+});
+
+test('next episode starts immediately with the addon that last played on this device', async () => {
+  const fast = { url: 'https://mine.example/e4.mp4', addonId: 'mine' };
+  const h = advanceHarness({ fast: [fast], late: [] }, { addonId: 'mine' });
+  const running = h.advance();
+  await flush();
+  assert.equal(h.selections.length, 1);
+  h.progressive.resolve();
+  await running;
+});
+
 test('advanceEpisode starts at zero despite playStream retaining the previous episode resume closure', async () => {
   const selected = { id: 42, mediaType: 'tv', seasonNumber: 1, episodeNumber: 3,
     resumePositionSeconds: 1500, isWatched: false };
@@ -1349,6 +1455,7 @@ test('advanceEpisode starts at zero despite playStream retaining the previous ep
     getStreamsProgressive: async () => [],
     appendHomeServerSources: async () => [candidate],
     appendVodSources: async () => [], appendTelegramSources: async () => [],
+    ...autoplayPreferenceGlobals(),
     playStream: (...args) => { selections.push(args); h.play(...args); }
   });
   assert.equal(await advance(), true);

@@ -29,7 +29,7 @@ const withClass = className => node => ts.isJsxElement(node) && node.openingElem
 async function main() {
   const playerTop = extract('components/player/PlayerOverlay.tsx', withClass('player-top'));
   const seasonTabs = extract('components/details/DetailsDrawer.tsx', withClass('season-tabs'));
-  const select = extract('components/settings/SettingsScreen.tsx', node => ts.isFunctionDeclaration(node) && node.name?.text === 'Select');
+  const select = extract('components/settings/ui.tsx', node => ts.isFunctionDeclaration(node) && node.name?.text === 'Select').replace(/^export /, '');
   const stubs = {
     '@/lib/store': `export const useApp = () => ({ activeContextMenu: {
       title: 'Episode options', position: { x: 32, y: 32 }, actions: [

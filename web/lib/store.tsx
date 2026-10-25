@@ -1,6 +1,7 @@
 "use client";
 import { resolveStalkerChannel } from "./stalker";
 import { browserAutoplayCandidates } from "./browserAutoplay";
+import { isPreferredAutoplaySource, loadAutoplayPreference, orderByPreference } from "./autoplaySelection";
 import { recordBrowserPlaybackFailure } from "./streamCompatibility";
 import { queueAddons, hasPendingAddons, flushAddonOutbox, pendingAddonSnapshot } from "./addonOutbox";
 import { applyPendingWatchlist, prepareWatchlistChange, queueWatchlistChange, flushWatchlistOutbox } from "./watchlistOutbox";
@@ -22,6 +23,7 @@ import { cachedDebridDirectUrl, parseDebridStream } from "./debrid";
 import { createPendingExternalPlayback } from "./externalPlayback";
 import { trackPremiumEvent } from "./premiumAnalytics";
 import { externalLaunchMode, openExternalPlayer } from "./externalPlayers";
+import { premiumAllows } from "./premiumGate";
 import { playbackPlan } from "./streamCompatibility";
 import { prepareBrowserStream } from "./prepareBrowserStream";
 import { reportHomeServerPlayback } from "./homeServerPlayback";
@@ -29,9 +31,13 @@ import { loadHomeServerRows } from "./homeserver";
 import { accessibleChannels, buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvChannelIdentities, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { cachedFavoriteChannels, favoriteCopyIsStale, resolveFavoriteChannels, saveFavoriteChannels } from "./favoriteTv";
 import { isCurrentIptvSnapshot, recordTvPlayback } from "./iptvSession";
+import { createIptvRefresher } from "./iptvRefresh";
+import { AddonAlreadyInstalledError, addonInstanceId, addonManifestId, applyAddonInstall, duplicateAddons, isSameInstall, type AddonInstallMode } from "./addonInstall";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId, tmdb } from "./tmdb";
+import { loadDetails } from "@/components/details/detailsLoaders";
+import { resumeFromContinueWatching } from "./playerResume";
 import { verifyProfilePin } from "./profilePin";
 import { hydratedProfileId } from "./profiles";
 import { partnerLoginRedirect } from "./partnerLinks";
@@ -40,6 +46,8 @@ import type { MetadataProviderId, ProviderPriorityConfig } from "./metadata/type
 import { TraktClient, type TraktDeviceCode } from "./trakt";
 import { continueWatchingActivitySignature, createTraktActivityCheck, type TraktActivitySnapshot } from "./traktActivity";
 import { mdblistClient } from "./mdblist";
+import { isAllowedForProfile } from "./kidsGate";
+import { kidsLevelOf } from "./kids";
 import { simklClient, type SimklPinCode } from "./simkl";
 import {
   activeSyncProvider,
@@ -93,6 +101,18 @@ const validateContinueWatchingEpisodes = createEpisodeValidator(async (item) => 
 });
 
 const settingsKey = "arvio.web.settings";
+const MAX_PROFILES = 5;
+
+/** Saved on this device, but ARVIO Cloud did not take it (the other devices won't see it yet). */
+export class ProfileCloudSaveError extends Error {
+  readonly profile: Profile;
+  constructor(profile: Profile, cause?: unknown) {
+    super("Saved on this device, but ARVIO Cloud could not be reached. Try again to sync it to your other devices.");
+    this.name = "ProfileCloudSaveError";
+    this.profile = profile;
+    this.cause = cause;
+  }
+}
 const PROFILES_KEY = "arvio.web.profiles";
 const ACTIVE_PROFILE_KEY = "arvio.web.activeProfileId";
 const AVATAR_IMAGES_KEY = "arvio.web.avatarImages";
@@ -198,6 +218,7 @@ export const defaultSettings: AppSettings = {
   trailerSound: false,
   trailerDelaySeconds: 2,
   trailerInCards: true,
+  streamSearchMode: "parallel",
   volumeBoostDb: 0,
   includeSpecials: false,
   qualityFilterPreset: "off",
@@ -215,16 +236,24 @@ export const defaultSettings: AppSettings = {
   subtitleStylized: false,
   filterSubtitlesByLanguage: false,
   removeHearingImpaired: true,
+  subtitleFont: "System",
+  useForcedSubtitles: false,
+  subtitlePreload: true,
   aiSubtitlesEnabled: false,
-  aiSubtitleModel: "off",
+  aiSubtitleModel: "groq",
   aiAutoSelect: false,
   aiApiKey: "",
+  aiFindBestMatch: false,
+  dolbyVisionCompat: true,
+  telegramSearchOnClickOnly: true,
   defaultPlayer: "browser",
   cardLayoutMode: "landscape",
   deviceModeOverride: "auto",
   oledBlack: false,
   clockFormat: "24h",
   showBudget: true,
+  showEpisodeRatings: false,
+  animeEpisodeStructuring: "broadcast",
   iptvFavoritesOnHome: true,
   smoothScrolling: true,
   spoilerBlur: false,
@@ -500,8 +529,8 @@ export interface AppStore {
   manageMode: boolean;
   setManageMode: (value: boolean) => void;
   selectProfile: (profile: Profile, pin?: string) => Promise<void>;
-  createProfile: (name: string, avatarColor: number, avatarId: number) => Promise<void>;
-  updateProfile: (profile: Profile) => Promise<void>;
+  createProfile: (name: string, avatarColor: number, avatarId: number, extra?: Partial<Profile>) => Promise<Profile>;
+  updateProfile: (profile: Profile) => Promise<Profile>;
   deleteProfile: (id: string) => Promise<void>;
   switchProfile: () => void;
   goToLogin: () => void;
@@ -517,8 +546,6 @@ export interface AppStore {
   watchlist: MediaItem[];
   isWatched: (item: MediaItem, seasonNumber?: number | null, episodeNumber?: number | null) => boolean;
   markWatchedLocally: (item: { mediaType: MediaItem["mediaType"]; id: number; season?: number | null; episode?: number | null }, watched?: boolean) => void;
-  hero: MediaItem | null;
-  setHeroPreview: (item: MediaItem | null) => void;
   selected: MediaItem | null;
   streams: StreamSource[];
   selectedEpisode: { season: number; episode: number } | null;
@@ -560,7 +587,7 @@ export interface AppStore {
   recordChannelPlayback: (channel: IptvChannel) => void;
   playCatchup: (channel: IptvChannel, program: IptvProgram) => void;
   closePlayer: () => void;
-  installAddon: (url: string) => Promise<void>;
+  installAddon: (source: string | InstalledAddon, options?: { mode?: AddonInstallMode }) => Promise<InstalledAddon>;
   removeAddon: (addon: InstalledAddon) => Promise<void>;
   setAddonsState: (next: InstalledAddon[]) => Promise<void>;
   signIn: (email: string, password: string, mode: "sign-in" | "sign-up") => Promise<void>;
@@ -699,7 +726,6 @@ export function AppProvider({
     ownedPlayback.current = null;
     if (owned) void reportHomeServerPlayback(owned.stream, owned.settings, "stop").catch(() => undefined);
   }, []);
-  const iptvRefresh = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const guideRetryAfter = useRef(new Map<string, number>());
 
   const [profiles, setProfiles] = useState<Profile[]>(() => {
@@ -735,9 +761,12 @@ export function AppProvider({
   });
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
+  // Read inside callbacks (openDetails, playChannel) so a gate always sees the profile in use.
+  const activeProfileRef = useRef(activeProfile);
+  activeProfileRef.current = activeProfile;
 
-  const [heroPreview, setHeroPreview] = useState<MediaItem | null>(null);
-  const hero = heroPreview ?? continueWatching[0] ?? categories[0]?.items[0] ?? null;
+  // The Home billboard's preview lives in HomeScreen (lib/homeHero): as store
+  // state, every 8 s rotation and card hover re-rendered almost the whole app.
 
   // Refs so stable callbacks always read the latest values without re-creating.
   const addonsRef = useRef(addons);
@@ -1242,36 +1271,32 @@ export function AppProvider({
 
   // `quiet` is the Home background load for the Favorite TV row: no status text, no
   // error toast — Live TV reports playlist problems when the user opens it.
-  const refreshIptv = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
-    const currentSettings = settingsRef.current;
-    const profileId = activeProfileIdRef.current;
-    const account = authClient.session?.userId;
-    const signature = iptvPlaylistSignature(currentSettings.iptvPlaylists) + (currentSettings.iptvStalkerUrl ? JSON.stringify([currentSettings.iptvStalkerUrl, currentSettings.iptvStalkerMac]) : "");
-    const key = `${account}:${profileId}:${signature}`;
-    if (iptvRefresh.current?.key === key) return iptvRefresh.current.promise;
-    const isCurrent = () => activeProfileIdRef.current === profileId && authClient.session?.userId === account && iptvPlaylistSignature(settingsRef.current.iptvPlaylists) + (settingsRef.current.iptvStalkerUrl ? JSON.stringify([settingsRef.current.iptvStalkerUrl, settingsRef.current.iptvStalkerMac]) : "") === signature;
-    const run = (async () => {
-    if (!quiet) setBusy("Loading TV");
-    try {
-      const loadedIptv = await loadIptvSnapshot(
+  const iptvRefresher = useRef<ReturnType<typeof createIptvRefresher<AppSettings, IptvSnapshot>> | null>(null);
+  const refreshIptv = useCallback(({ quiet = false }: { quiet?: boolean } = {}) => {
+    iptvRefresher.current ??= createIptvRefresher<AppSettings, IptvSnapshot>({
+      read: () => {
+        const current = settingsRef.current;
+        return {
+          scope: `${authClient.session?.userId ?? "local"}:${activeProfileIdRef.current ?? "local"}`,
+          signature: iptvPlaylistSignature(current.iptvPlaylists) + (current.iptvStalkerUrl ? JSON.stringify([current.iptvStalkerUrl, current.iptvStalkerMac]) : ""),
+          settings: current
+        };
+      },
+      load: (currentSettings) => loadIptvSnapshot(
         currentSettings.iptvPlaylists,
         currentSettings.favoriteChannelIds,
         currentSettings.favoriteGroupIds,
         currentSettings.hiddenGroupIds,
         currentSettings.groupOrder,
         { userAgent: currentSettings.customUserAgent, stalkerUrl: currentSettings.iptvStalkerUrl, stalkerMac: currentSettings.iptvStalkerMac }
-      );
+      ),
       // Stamp which playlists this snapshot came from so Live TV can reuse it
       // on re-entry instead of rebuilding ~139k channels every visit.
-      if (isCurrent()) setIptvSnapshot({ ...loadedIptv, signature, scopeKey: `${account ?? "local"}:${profileId ?? "local"}` });
-    } catch (error) {
-      if (isCurrent() && !quiet) setToast(error instanceof Error ? error.message : "Failed to load Live TV");
-    } finally {
-      if (isCurrent() && !quiet) setBusy("");
-    }
-    })();
-    iptvRefresh.current = { key, promise: run };
-    return run.finally(() => { if (iptvRefresh.current?.promise === run) iptvRefresh.current = null; });
+      apply: (loadedIptv, { signature, scope }) => setIptvSnapshot({ ...loadedIptv, signature, scopeKey: scope }),
+      report: (error) => setToast(error instanceof Error ? error.message : "Failed to load Live TV"),
+      setLoading: (loading) => setBusy(current => loading ? "Loading TV" : current === "Loading TV" ? "" : current)
+    });
+    return iptvRefresher.current({ quiet });
   }, []);
 
   useEffect(() => {
@@ -1718,7 +1743,18 @@ export function AppProvider({
     })();
   }, []);
 
+  // openDetails reads the latest rail without re-creating the callback.
+  const continueWatchingRef = useRef(continueWatching);
+  continueWatchingRef.current = continueWatching;
   const openDetails = useCallback(async (item: MediaItem) => {
+    // Kids profiles: a title opens only when its rating fits the profile, whatever the
+    // entry point (card, billboard, Continue Watching, a shared link).
+    if (kidsLevelOf(activeProfileRef.current)) {
+      const gateGeneration = ++sourceGeneration.current;
+      const allowed = await isAllowedForProfile(item, activeProfileRef.current, settingsRef.current.language);
+      if (sourceGeneration.current !== gateGeneration) return;
+      if (!allowed) { setToast("Not available on this kids profile"); return; }
+    }
     const generation = ++sourceGeneration.current;
     const publish = (rows: StreamSource[]) => { if (sourceGeneration.current === generation) mergeStreams(rows); };
     setSelected(item);
@@ -1740,8 +1776,11 @@ export function AppProvider({
     if (sourceGeneration.current !== generation) return;
     if (!resolvedId && !item.isHomeServer) { setBusy(""); setToast("Metadata could not be matched for this title."); return; }
     const detailsTarget = item.isHomeServer && item.tmdbId ? { ...item, id: item.tmdbId } : { ...item, id: resolvedId ?? item.id };
-    const detailed = await getDetails(detailsTarget, priorityConfig).catch(() => item);
+    const detailed = await loadDetails(detailsTarget, priorityConfig).catch(() => item);
     if (sourceGeneration.current !== generation) return;
+    // Resume from ANY entry point: a title opened from search or a rail carries
+    // no progress, but the Continue Watching row for it does (episode, position).
+    const resume = resumeFromContinueWatching(item, continueWatchingRef.current);
     const withResumeEpisode = {
       ...detailed,
       ...(item.isHomeServer ? {
@@ -1754,9 +1793,12 @@ export function AppProvider({
         image: detailed.image || item.image,
         backdrop: detailed.backdrop || item.backdrop
       } : {}),
-      seasonNumber: item.seasonNumber ?? detailed.seasonNumber ?? null,
-      episodeNumber: item.episodeNumber ?? detailed.episodeNumber ?? null,
-      episodeTitle: item.episodeTitle ?? detailed.episodeTitle ?? null
+      seasonNumber: item.seasonNumber ?? resume?.seasonNumber ?? detailed.seasonNumber ?? null,
+      episodeNumber: item.episodeNumber ?? resume?.episodeNumber ?? detailed.episodeNumber ?? null,
+      episodeTitle: item.episodeTitle ?? resume?.episodeTitle ?? detailed.episodeTitle ?? null,
+      progress: item.progress ?? resume?.progress ?? detailed.progress,
+      resumePositionSeconds: item.resumePositionSeconds ?? resume?.resumePositionSeconds ?? detailed.resumePositionSeconds,
+      durationSeconds: item.durationSeconds ?? resume?.durationSeconds ?? detailed.durationSeconds
     };
     setSelected(withResumeEpisode);
     // Movies fetch sources immediately. Continue-watching TV entries already
@@ -1815,6 +1857,13 @@ export function AppProvider({
       setToast(TELEGRAM_DISABLED_MESSAGE);
       return;
     }
+    // Explore mode: hosted ARVIO Web asks for Premium here (and resumes after
+    // payment). Self-hosted builds never register a gate. A source headed for
+    // VLC/Infuse is not resumed automatically: iOS opens an app only from
+    // inside the original tap, so the member presses Play again.
+    const headedExternal = stream.addonId !== "arvio_youtube" && !stream.autoSelect && !options.forceBrowser && !options.forceRemux && !options.forceTranscode
+      && (settingsRef.current.defaultPlayer === "vlc" || settingsRef.current.defaultPlayer === "infuse");
+    if (!premiumAllows("play", headedExternal ? undefined : () => playStream(stream, options))) return;
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     if (!stream.autoSelect) setActiveStream(null);
@@ -1946,9 +1995,20 @@ export function AppProvider({
       const episode = episodes.find((item) => item.episodeNumber === next.episodeNumber);
       if (!episode || (episode.airDate && Date.parse(episode.airDate) > Date.now())) { setToast("The next episode is not available yet."); return false; }
       let started = false;
+      // Same bounded preference as the details Play button: a debrid source or
+      // the addon that last played on this device gets a short window to
+      // arrive before the fastest addon's first row wins by default.
+      const preference = loadAutoplayPreference();
+      // Addon updates are cumulative snapshots while home-server, VOD and
+      // Telegram results arrive once each: keep one entry per source.
+      const arrived = new Map<string, StreamSource>();
+      let settled = false;
       const choose = (rows: StreamSource[]) => {
         if (!isCurrent() || started) return;
-        const candidate = browserAutoplayCandidates(rows)[0];
+        for (const row of rows) arrived.set(`${row.addonId ?? row.addonName ?? ""}|${row.url}`, row);
+        const candidates = orderByPreference(browserAutoplayCandidates([...arrived.values()]), preference, (row) => playbackPlan(row).method);
+        if (!settled && !candidates.some((row) => isPreferredAutoplaySource(row, preference, (entry) => Boolean(parseDebridStream(entry.originalUrl ?? entry.url))))) return;
+        const candidate = candidates[0];
         if (!candidate) return;
         started = true;
         setSelectedEpisode({ season: next.seasonNumber!, episode: next.episodeNumber! });
@@ -1958,6 +2018,7 @@ export function AppProvider({
       };
       setStreams([]);
       const publish = (rows: StreamSource[]) => { if (sourceGeneration.current === generation) { mergeStreams(rows); choose(rows); } };
+      const settleTimer = window.setTimeout(() => { settled = true; choose([]); }, 2500);
       // All source types participate; one unavailable provider does not hold up another.
       await Promise.allSettled([
         getStreamsProgressive(addonsRef.current, selected, next.seasonNumber, next.episodeNumber, publish).then(publish),
@@ -1965,6 +2026,9 @@ export function AppProvider({
         appendVodSources(selected, next.seasonNumber, next.episodeNumber).then(choose),
         appendTelegramSources(selected, next.seasonNumber, next.episodeNumber).then(choose)
       ]);
+      window.clearTimeout(settleTimer);
+      settled = true;
+      choose([]);
       if (!started && isCurrent()) setToast("No browser-playable source for the next episode. Choose a source manually.");
       return started;
     } catch {
@@ -1985,15 +2049,19 @@ export function AppProvider({
       setToast("No trailer available for this title.");
       return;
     }
-    // Trailers are YouTube page URLs — the built-in <video> player can't play
-    // those. Open YouTube directly: the YouTube app on mobile (youtube.com/
-    // youtu.be deep-links into it) or a new browser tab on desktop.
-    if (typeof window !== "undefined") {
-      const videoId = url.match(/(?:v=|youtu\.be\/|embed\/)([\w-]{11})/)?.[1];
-      const target = videoId ? `https://www.youtube.com/watch?v=${videoId}` : url;
-      const opened = window.open(target, "_blank", "noopener,noreferrer");
-      if (!opened) window.location.href = target;
+    // Trailers are YouTube page URLs: play them in the in-app YouTube embed
+    // (PlayerOverlay) instead of window.open, which left the iPhone home-screen
+    // app for Safari/YouTube with no way back.
+    const videoId = url.match(/(?:v=|youtu\.be\/|embed\/)([\w-]{11})/)?.[1];
+    if (!videoId) {
+      if (typeof window !== "undefined") window.open(url, "_blank", "noopener,noreferrer");
+      return;
     }
+    playbackPreparation.current?.abort();
+    stopOwnedPlayback();
+    playbackGeneration.current++;
+    setActiveChannel(null);
+    setActiveStream({ source: "Trailer", addonName: "Trailer", addonId: "arvio_trailer", url: `https://www.youtube.com/watch?v=${videoId}`, resumePositionSeconds: 0 });
   }, [setToast]);
 
   // Hand a live/catch-up stream to VLC/Infuse. Most IPTV is plain-HTTP (mixed
@@ -2025,6 +2093,9 @@ export function AppProvider({
   }, []);
 
   const playChannel = useCallback(async (channel: IptvChannel) => {
+    // Live TV carries no age ratings: a kids profile never plays it.
+    if (kidsLevelOf(activeProfileRef.current)) { setToast("Not available on this kids profile"); return; }
+    if (!premiumAllows("live", () => { void playChannel(channel); })) return;
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     const generation = ++playbackGeneration.current;
@@ -2054,6 +2125,8 @@ export function AppProvider({
   // seekable VOD stream (no activeChannel → scrubber works), but the player
   // still gives it the IPTV proxy ladder via the "Catch-up" addonName marker.
   const playCatchup = useCallback((channel: IptvChannel, program: IptvProgram) => {
+    if (kidsLevelOf(activeProfileRef.current)) { setToast("Not available on this kids profile"); return; }
+    if (!premiumAllows("live", () => playCatchup(channel, program))) return;
     playbackPreparation.current?.abort();
     stopOwnedPlayback();
     playbackGeneration.current++;
@@ -2087,10 +2160,22 @@ export function AppProvider({
 
   const loadCatalogRow = useCallback((catalog: CatalogConfig) => loadCatalog(catalog, settings.language, addonsRef.current, settingsRef.current.homeServers), [settings.language]);
 
-  const installAddon = useCallback(async (url: string) => {
-    const addon = await installAddonManifest(url);
-    const next = [addon, ...addonsRef.current.filter((candidate) => candidate.id !== addon.id)];
-    await persistAddons(next, { addedIds: [addon.id] });
+  // An addon that is already installed (same manifest id or link) is never
+  // replaced silently: without a mode this throws AddonAlreadyInstalledError
+  // and the Addons screen asks "Replace / Keep both" (Android parity).
+  const installAddon = useCallback(async (source: string | InstalledAddon, options: { mode?: AddonInstallMode } = {}) => {
+    const fetched = typeof source === "string" ? await installAddonManifest(source) : source;
+    const current = addonsRef.current;
+    const existing = duplicateAddons(current, fetched);
+    if (existing.length && !options.mode) throw new AddonAlreadyInstalledError(fetched, existing);
+    let candidate = fetched;
+    if (existing.length && options.mode === "keep-both") {
+      if (isSameInstall(current, fetched)) throw new Error("This exact addon link is already installed.");
+      candidate = { ...fetched, id: await addonInstanceId(addonManifestId(fetched), fetched.manifestUrl) };
+    }
+    const { next, removedIds } = applyAddonInstall(current, candidate, existing.length && options.mode ? options.mode : "new");
+    await persistAddons(next, { addedIds: [candidate.id], removedIds });
+    return candidate;
   }, [persistAddons]);
 
   const removeAddon = useCallback(async (addon: InstalledAddon) => {
@@ -2497,7 +2582,10 @@ export function AppProvider({
     setActiveProfileId(activeId);
     saveStored(PROFILES_KEY, next);
     saveStored(ACTIVE_PROFILE_KEY, activeId);
-    void saveCloudProfiles(authClient, next, activeId, deletedIds).catch(() => undefined);
+    // Callers that edit a profile await this to report a failed cloud save.
+    const saved = saveCloudProfiles(authClient, next, activeId, deletedIds);
+    void saved.catch(() => undefined);
+    return saved;
   }, []);
 
   const selectProfile = useCallback(async (profile: Profile, pin?: string) => {
@@ -2540,19 +2628,29 @@ export function AppProvider({
     void refreshData(profile.id);
   }, [profiles, activeProfileId, persistProfiles, refreshData, cloudProfilesHydrated]);
 
-  const createProfile = useCallback(async (name: string, avatarColor: number, avatarId: number) => {
-    const profile = makeProfile(name || "Profile", avatarColor || randomProfileColor(), avatarId);
-    persistProfiles([...profiles, profile], activeProfileId);
+  // Profile edits save on this device first; a failed cloud save rejects with
+  // ProfileCloudSaveError (carrying the saved profile) so the dialog can say so
+  // and offer to retry instead of closing as if it had synced.
+  const createProfile = useCallback(async (name: string, avatarColor: number, avatarId: number, extra?: Partial<Profile>) => {
+    if (profiles.length >= MAX_PROFILES) throw new Error("You can have up to 5 profiles.");
+    const profile = { ...makeProfile(name || "Profile", avatarColor || randomProfileColor(), avatarId), ...extra };
+    try { await persistProfiles([...profiles, profile], activeProfileId); }
+    catch (error) { throw new ProfileCloudSaveError(profile, error); }
+    return profile;
   }, [profiles, activeProfileId, persistProfiles]);
 
   const updateProfileAction = useCallback(async (profile: Profile) => {
     const edited = { ...profile, updatedAt: Date.now() };
-    persistProfiles(profiles.map((p) => (p.id === profile.id ? edited : p)), activeProfileId);
+    try { await persistProfiles(profiles.map((p) => (p.id === profile.id ? edited : p)), activeProfileId); }
+    catch (error) { throw new ProfileCloudSaveError(edited, error); }
+    return edited;
   }, [profiles, activeProfileId, persistProfiles]);
 
   const deleteProfileAction = useCallback(async (id: string) => {
     const next = profiles.filter((p) => p.id !== id);
-    persistProfiles(next, activeProfileId === id ? null : activeProfileId, [id]);
+    const removed = profiles.find((p) => p.id === id);
+    try { await persistProfiles(next, activeProfileId === id ? null : activeProfileId, [id]); }
+    catch (error) { if (removed) throw new ProfileCloudSaveError(removed, error); throw error; }
   }, [profiles, activeProfileId, persistProfiles]);
 
   const switchProfile = useCallback(() => {
@@ -2583,10 +2681,9 @@ export function AppProvider({
   const toggleWatchlist = useCallback(async (item: MediaItem) => {
     const userId = authClient.session?.userId;
     const inWatchlist = watchlist.some((entry) => entry.mediaType === item.mediaType && entry.id === item.id);
-    if (activeSyncProvider() === "none") {
-      setToast("Connect Trakt, Simkl, or MDBList in Settings to use Watchlist.");
-      return;
-    }
+    // Like Android (WatchlistRepository), the watchlist lives in ARVIO Cloud
+    // (watchlistByProfile via the outbox below) and on this device; Trakt,
+    // Simkl and MDBList are optional mirrors written when connected.
     const mutationKey = JSON.stringify([userId, activeProfileId, item.mediaType, item.id]);
     const mutationId = (watchlistMutationRef.current.get(mutationKey) ?? 0) + 1;
     watchlistMutationRef.current.set(mutationKey, mutationId);
@@ -2619,6 +2716,9 @@ export function AppProvider({
         await flushWatchlistOutbox(authClient).catch(() => {
           if (isCurrentAction()) setToast('Watchlist updated. Cloud sync will retry when you reconnect.');
         });
+      } else if (!userId && !authClient.session) {
+        // No ARVIO account: the device-local outbox bucket is the watchlist.
+        queueWatchlistChange(authClient, slim, inWatchlist, activeProfileId, cloudChange);
       }
     } catch (err) {
       if (!isCurrentAction()) return;
@@ -2728,8 +2828,6 @@ export function AppProvider({
     watchlist,
     isWatched,
     markWatchedLocally,
-    hero,
-    setHeroPreview,
     selected,
     streams,
     selectedEpisode,
@@ -2797,7 +2895,7 @@ export function AppProvider({
   }), [
     view, cloudProfilesHydrated, cloudLoginRequired, profiles, activeProfile, activeProfileId, avatarImages, manageMode,
     selectProfile, createProfile, updateProfileAction, deleteProfileAction, switchProfile, goToLogin, backToProfiles,
-    section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, hero, heroPreview, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
+    section, categories, catalogConfigs, loadCatalogRow, homeServerRows, continueWatching, watchlist, isWatched, selected, streams, selectedEpisode, loadEpisodeStreams, advanceEpisode, activeStream, activeChannel,
     addons, addonsReady, iptvSnapshot, query, results, searchState, settingsSyncState, settings, auth, traktConnected, mdblistConnected, simklConnected, trackingPreferences, deviceCode, simklDeviceCode, busy, toast,
     updateSettings, refreshData, openDetails, closeDetails, playStream, playTrailer, playChannel, recordChannelPlayback, playCatchup, closePlayer,
     refreshIptv, loadIptvGuide, favoriteTvChannels,

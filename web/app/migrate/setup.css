@@ -223,3 +223,6 @@
 }
 
 .setup__link:hover { color: var(--text); }
+/* Signed-in account line with sign out / switch account. */
+.setup__account { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-bottom: 12px; font-size: 14px; color: var(--muted, #a3a8ae); }
+.setup__account span { min-width: 0; overflow-wrap: anywhere; }

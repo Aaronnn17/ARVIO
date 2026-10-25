@@ -1,30 +1,47 @@
 "use client";
+import "./player.css";
+import { currentStreamTicket } from "@/lib/streamTicket";
 import { useTranslation } from "@/lib/i18n";
 
 
 import {
+  Airplay,
   ArrowLeft,
   AudioLines,
   Check,
-  Copy,
   ExternalLink,
   Folder,
   Loader2,
   Maximize,
   Minimize,
+  Minus,
   Pause,
+  PictureInPicture2,
   Play,
+  Plus,
   RotateCcw,
   RotateCw,
   Settings,
   SkipForward,
   Subtitles,
+  TriangleAlert,
   Volume2,
   VolumeX,
   X
 } from "lucide-react";
+import { SourceRow } from "@/components/details/SourceRow";
+import { sourceFacts } from "@/components/details/SourcePicker";
+import { loadSeasonEpisodes } from "@/components/details/detailsLoaders";
+import { claimEscape, moveFocusWithin, playerKeyAction, trapTab } from "@/lib/playerKeys";
+import { activeSkipSegment, fetchSkipSegments, isCreditsSegment, skipSegmentLabel, upNextStartTime, type SkipSegment } from "@/lib/playerSkipSegments";
+import { diagnoseSourceFailure } from "@/lib/playerRecovery";
+import { PLAYER_COMMAND_EVENT, type PlayerCommandDetail } from "@/lib/playerCommands";
+import { prefersVideoElementFullscreen, requestVideoFullscreen } from "@/lib/fullscreen";
+import type { EpisodeInfo } from "@/lib/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLivePlayerDock } from "./useLivePlayerDock";
+import { handleLiveZapKey } from "@/lib/liveZap";
+import { HomeScreenTip } from "./HomeScreenTip";
 import { YouTubeEmbed } from "./YouTubeEmbed";
 import { usePlayerEpisodeMetadata } from "./usePlayerEpisodeMetadata";
 import { config } from "@/lib/config";
@@ -32,13 +49,16 @@ import { createPendingExternalPlayback } from "@/lib/externalPlayback";
 import { isLiveStreamOrSportsItem, saveProgress, saveWatchedState } from "@/lib/cloud";
 import { cachedDebridDirectUrl, invalidateDebridDirectUrl, isUncachedDebridStream, parseDebridStream, resolveDebridDirectUrl } from "@/lib/debrid";
 import type { RemuxAudioTrack } from "@/lib/remux";
-import { copyStreamUrl, externalLaunchMode, openExternalPlayer, openInAnyPlayer } from "@/lib/externalPlayers";
+import { copyStreamUrl, externalLaunchMode, externalPlayerOptions, isAppleMobile, openExternalPlayer, openInAnyPlayer, type ExternalPlayerOption } from "@/lib/externalPlayers";
 import { proxiedUrl } from "@/lib/http";
 import { attachPlayback, type PlaybackHandle, type PlaybackTracks, type PlaybackError } from "@/lib/player";
 import { resolverMediaUrl, resolverSubtitleUrl } from "@/lib/resolver";
-import { attachExternalSubtitle, positionSubtitleCues, type SubtitleLoadState } from "@/lib/playerSubtitles";
+import {
+  attachExternalSubtitle, embeddedTextTracks, groupSubtitles, loadTitleSubtitleDelay, positionSubtitleCues, saveTitleSubtitleDelay,
+  stepSubtitleDelay, subtitleLanguageLabel, type SubtitleLoadState
+} from "@/lib/playerSubtitles";
 import { browserAutoplayCandidates } from "@/lib/browserAutoplay";
-import { sourcePickerScore, streamSizeBytes } from "@/lib/sourceRank";
+import { groupSourcesForPlayback, streamSizeBytes } from "@/lib/sourceRank";
 import { playbackPlan, streamPlayability, canTryRemux, canProviderTranscode, hasDolbyVision, recordBrowserPlaybackFailure } from "@/lib/streamCompatibility";
 import { reportHomeServerPlayback, updateHomeServerPlaybackPosition } from "@/lib/homeServerPlayback";
 import {
@@ -51,9 +71,19 @@ import {
   playbackFailureKind,
 } from "@/lib/playerRecovery";
 import { authClient, getPriorityConfig, useApp } from "@/lib/store";
-import { trackPremiumDaily, trackPremiumEvent, trackPremiumMilestone } from "@/lib/premiumAnalytics";
+import { trackPremiumAttempt, trackPremiumDaily, trackPremiumEvent, trackPremiumMilestone } from "@/lib/premiumAnalytics";
+import { playbackAttemptDetail } from "@/lib/playbackTelemetry";
+import { rememberSuccessfulSource } from "@/lib/autoplaySelection";
+import { markHomeScreenTipEligible } from "@/lib/homeScreenTip";
+import {
+  airPlaySupported, airPlayUsable, bindMediaSession, isFullscreenActive, isPipActive, lockLandscape, onFullscreenChange, onPipChange,
+  pipStrategy, showAirPlayPicker, toggleFullscreen as toggleFullscreenFor, togglePictureInPicture, unlockOrientation, updateMediaPosition,
+  watchAirPlayAvailability
+} from "@/lib/playerPlatform";
 import { syncClient } from "@/lib/sync";
 import { SubtitleTranslator, subtitleLanguageName } from "@/lib/subtitleAi";
+import { MediaCard } from "@/components/media/MediaCard";
+import { languageCode, sameLanguage, trackLanguageName } from "@/lib/languages";
 import { getLogoUrl } from "@/lib/tmdb";
 import type { AppSettings, InstalledAddon, MediaItem, StreamSource } from "@/lib/types";
 
@@ -141,6 +171,8 @@ function workerManifestUrl(url: string, headers?: Record<string, string>) {
   // segments via the configured resolver worker with its CORS/header handling.
   const target = new URL(proxiedUrl(url, { ...liveTvProxyHeaders(), ...headers }));
   target.searchParams.set("rewrite", "worker");
+  const ticket = currentStreamTicket();
+  if (ticket) target.searchParams.set("t", ticket);
   return target.toString();
 }
 
@@ -154,13 +186,18 @@ function qualityBadges(stream: StreamSource) {
   ].filter(Boolean);
 }
 
+// The preference is a code ("en") or the Android app's display name
+// ("English", "Portuguese (Brazil)") synced from ARVIO Cloud.
 function defaultSubtitleIndex(stream: StreamSource, language: string) {
-  const desired = language.trim().toLowerCase();
-  if (!desired || desired === "off") return -1;
-  return (stream.subtitles ?? []).findIndex((subtitle) => {
-    const lang = subtitle.lang?.toLowerCase() ?? "";
+  const desired = languageCode(language);
+  if (!desired) return -1;
+  const name = trackLanguageName(language).toLowerCase();
+  const subtitles = stream.subtitles ?? [];
+  const exact = subtitles.findIndex((subtitle) => languageCode(subtitle.lang) === desired);
+  if (exact >= 0) return exact;
+  return subtitles.findIndex((subtitle) => {
     const label = subtitle.label?.toLowerCase() ?? "";
-    return lang.startsWith(desired) || label.includes(desired);
+    return sameLanguage(subtitle.lang, desired) || (name.length > 2 && label.includes(name)) || languageCode(subtitle.label) === desired;
   });
 }
 
@@ -168,7 +205,7 @@ function defaultSubtitleIndex(stream: StreamSource, language: string) {
 // English next, then everything else alphabetically by language name. Each
 // entry keeps its original index in the source's subtitle list.
 function orderedSubtitles(stream: StreamSource, preferred: string) {
-  const pref = preferred.trim().toLowerCase();
+  const pref = languageCode(preferred);
   return (stream.subtitles ?? [])
     .map((subtitle, index) => ({
       subtitle,
@@ -177,9 +214,9 @@ function orderedSubtitles(stream: StreamSource, preferred: string) {
     }))
     .sort((a, b) => {
       const rank = (entry: { subtitle: { lang?: string | null } }) => {
-        const lang = (entry.subtitle.lang ?? "").toLowerCase();
-        if (pref && pref !== "off" && lang.startsWith(pref)) return 0;
-        if (lang.startsWith("en")) return 1;
+        const lang = languageCode(entry.subtitle.lang);
+        if (pref && sameLanguage(lang, pref)) return 0;
+        if (lang === "en") return 1;
         return 2;
       };
       return rank(a) - rank(b) || a.langName.localeCompare(b.langName);
@@ -201,38 +238,30 @@ export function PlayerOverlay() {
     playStream,
     advanceEpisode,
     setToast,
-    closePlayer
+    closePlayer,
+    openDetails
   } = useApp();
 
   const enrichment = streams.find((candidate) => activeStream && (isSameStream(candidate, activeStream) || (candidate.url && candidate.url === activeStream.url)));
   const enrichedStream = useMemo(() => activeStream ? mergeSubtitleTracks(activeStream, enrichment) : null, [activeStream, enrichment]);
-  if (!activeStream?.url || !enrichedStream) return null;
+  // The one-time iOS "Add to Home Screen" tip lives here because this
+  // component is always mounted; it waits until the player is closed.
+  const tip = <HomeScreenTip playerOpen={Boolean(activeStream?.url)} />;
+  if (!activeStream?.url || !enrichedStream) return tip;
 
   const ytId = youTubeId(activeStream.url);
   const title = activeChannel?.name ?? selected?.title ?? activeStream.source;
 
   if (ytId) {
-    return (
-      <section className="player-overlay youtube-player-layout">
-        <YouTubeEmbed videoId={ytId} item={selected} stream={activeStream} />
-        <div className="youtube-player-toolbar">
-          <div className="player-top-left">
-            <button type="button" className="player-icon-btn" onClick={closePlayer} aria-label={translateUi("Back")}><ArrowLeft size={24} /></button>
-            <div>
-              <p className="eyebrow">{activeStream.addonId === "arvio_youtube" ? "YouTube" : translateUi("Trailer")}</p>
-              <h2>{title}</h2>
-            </div>
-          </div>
-          <a className="player-icon-btn" href={`https://www.youtube.com/watch?v=${ytId}`} target="_blank" rel="noopener noreferrer" aria-label={translateUi("Open in YouTube")} title={translateUi("Open in YouTube")}><ExternalLink size={24} /></a>
-          <button type="button" className="player-icon-btn" onClick={closePlayer} aria-label={translateUi("Close")}><X size={24} /></button>
-        </div>
-      </section>
-    );
+    return (<>{tip}
+      <YouTubeLayer videoId={ytId} item={selected} stream={activeStream} title={title} onClose={closePlayer} />
+    </>);
   }
 
   const canAdvance = Boolean(selected?.mediaType === "tv" && selectedEpisode && !activeChannel);
-  return (
+  return (<>{tip}
     <VideoPlayer
+      onOpenDetails={(media) => { closePlayer(); void openDetails(media); }}
       title={title}
       subtitleLabel={selectedEpisode ? `S${selectedEpisode.season} E${selectedEpisode.episode}` : null}
       stream={enrichedStream}
@@ -250,10 +279,63 @@ export function PlayerOverlay() {
       onToast={setToast}
       onClose={closePlayer}
     />
+  </>);
+}
+
+/** In-app YouTube (trailers and the YouTube collection), as a modal layer. */
+function YouTubeLayer({ videoId, item, stream, title, onClose }: { videoId: string; item: MediaItem | null; stream: StreamSource; title: string; onClose: () => void }) {
+  const translateUi = useTranslation();
+  const ref = useRef<HTMLElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const node = ref.current;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && !node?.contains(active)) openerRef.current = active;
+    node?.querySelector<HTMLElement>(".player-icon-btn")?.focus({ preventScroll: true });
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Tab" && ref.current) { trapTab(event, ref.current); return; }
+      if (event.key !== "Escape" || !claimEscape(event)) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      // Only on a real close (React dev re-runs effects without unmounting).
+      window.setTimeout(() => {
+        const opener = openerRef.current;
+        if (node && !node.isConnected && opener?.isConnected) opener.focus({ preventScroll: true });
+      }, 0);
+    };
+  }, [onClose]);
+  const kind = stream.addonId === "arvio_youtube" ? "YouTube" : translateUi("Trailer");
+  return (
+    <section className="player-overlay youtube-player-layout" role="dialog" aria-modal="true" aria-label={`${kind}: ${title}`} ref={ref}>
+      <YouTubeEmbed videoId={videoId} item={item} stream={stream} />
+      <div className="youtube-player-toolbar">
+        <div className="player-top-left">
+          <button type="button" className="player-icon-btn" onClick={onClose} aria-label={translateUi("Back")}><ArrowLeft size={24} /></button>
+          <div>
+            <p className="eyebrow">{kind}</p>
+            <h2>{title}</h2>
+          </div>
+        </div>
+        <a className="player-icon-btn" href={`https://www.youtube.com/watch?v=${videoId}`} target="_blank" rel="noopener noreferrer" aria-label={translateUi("Open in YouTube")} title={translateUi("Open in YouTube")}><ExternalLink size={24} /></a>
+        <button type="button" className="player-icon-btn" onClick={onClose} aria-label={translateUi("Close")}><X size={24} /></button>
+      </div>
+    </section>
   );
 }
 
+/** Skip interval of the on-screen buttons, remote arrows, double-tap and lock screen. */
+const SKIP_SECONDS = 10;
+
+function fetchJson(url: string, signal?: AbortSignal) {
+  return fetch(url, { signal, credentials: "omit" }).then((response) => response.ok ? response.json() : Promise.reject(new Error(String(response.status))));
+}
+
 function VideoPlayer({
+  onOpenDetails,
   title,
   subtitleLabel,
   stream,
@@ -271,6 +353,7 @@ function VideoPlayer({
   onToast,
   onClose: close
 }: {
+  onOpenDetails: (item: MediaItem) => void;
   title: string;
   subtitleLabel: string | null;
   stream: StreamSource;
@@ -305,6 +388,9 @@ function VideoPlayer({
     if (!advanced && video && !video.paused && !video.ended) video.dispatchEvent(new Event("playing"));
     return advanced;
   }, [advance]);
+  const onAdvanceRef = useRef(onAdvance);
+  onAdvanceRef.current = onAdvance;
+  const upNextShownRef = useRef(false);
   const onSelectStream = useCallback((next: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean }) => {
     const video = videoRef.current;
     // A failed probe or destroyed MediaSource has a zero clock, not a new
@@ -329,8 +415,11 @@ function VideoPlayer({
   // AI subtitle translation (same providers/prompt as the Android app).
   const [aiSubsActive, setAiSubsActive] = useState(false);
   const [aiTranslating, setAiTranslating] = useState(false);
-  const aiTargetName = subtitleLanguageName(settings.defaultSubtitle);
-  const aiAvailable = settings.aiSubtitlesEnabled && settings.aiSubtitleModel !== "off" && Boolean(settings.aiApiKey) && Boolean(aiTargetName) && !aiTargetName.toLowerCase().startsWith("engl");
+  // Last translation failure, shown in the subtitle panel (and toasted, at
+  // most every 20 s) instead of silently leaving cues untranslated.
+  const [aiError, setAiError] = useState<string | null>(null);
+  const aiTargetName = subtitleLanguageName(trackLanguageName(settings.defaultSubtitle) || settings.defaultSubtitle);
+  const aiAvailable = settings.aiSubtitlesEnabled && Boolean(settings.aiApiKey) && Boolean(aiTargetName) && Boolean(languageCode(settings.defaultSubtitle)) && languageCode(settings.defaultSubtitle) !== "en";
   const translatorRef = useRef<SubtitleTranslator | null>(null);
   const [playbackRate, setPlaybackRateState] = useState(1);
   const setPlaybackRate = useCallback((rate: number) => {
@@ -354,9 +443,14 @@ function VideoPlayer({
   const [muted, setMuted] = useState(false);
   const [buffering, setBuffering] = useState(true);
   const [showControls, setShowControls] = useState(true);
+  // What the loading screen says it is doing ("Connecting…", "Trying next
+  // source (2 of 4)") — the boot screen used to be a silent logo for up to 20 s.
+  const [bootStatus, setBootStatus] = useState<{ label: string; values?: Record<string, string | number> }>({ label: "Connecting…" });
   const [nextCountdown, setNextCountdown] = useState<number | null>(null);
   const nextDismissed = useRef(false);
-  useEffect(() => { setNextCountdown(null); nextDismissed.current = false; }, [stream.url]);
+  const [upNextDismissed, setUpNextDismissed] = useState(false);
+  const [ended, setEnded] = useState(false);
+  useEffect(() => { setNextCountdown(null); nextDismissed.current = false; setUpNextDismissed(false); setEnded(false); }, [stream.url]);
   useEffect(() => {
     if (nextCountdown === null) return;
     if (nextCountdown <= 0) {
@@ -371,12 +465,21 @@ function VideoPlayer({
   const [error, setError] = useState(false);
   const [errorDetail, setErrorDetail] = useState("");
   const failureDiagnosticRef = useRef<{ failure_kind: string; phase: "startup" | "playback"; transport?: string }>({ failure_kind: "unknown", phase: "startup" });
-  useEffect(() => {
-    if (error) void trackPremiumDaily(authClient, "playback_failed", {
-      playback_type: liveTv ? "live" : "vod", transport: stream.remux ? "remux" : stream.transport ?? "file",
-      ...failureDiagnosticRef.current
+  // One diagnostic per failed attempt (capped per page): platform, method,
+  // container and host type — allow-listed labels, never URLs or titles.
+  // "retried" = this source failed but the player moved on to another one;
+  // "final" = the failure reached the error screen.
+  const reportFailedAttempt = useCallback((failed: StreamSource, outcome: "retried" | "final") => {
+    void trackPremiumAttempt(authClient, "playback_failed", {
+      playback_type: liveTv ? "live" : "vod", transport: failed.remux ? "remux" : failed.transport ?? "file",
+      ...failureDiagnosticRef.current,
+      ...playbackAttemptDetail(failed, { liveTv, debrid: Boolean(parseDebridStream(failed.originalUrl ?? failed.url)) }),
+      outcome
     });
-  }, [error, liveTv, stream.remux, stream.transport]);
+  }, [liveTv]);
+  useEffect(() => {
+    if (error) reportFailedAttempt(currentStreamRef.current, "final");
+  }, [error, reportFailedAttempt]);
   const [activePanel, setActivePanel] = useState<PlayerPanel>(null);
   const [activeSubtitle, setActiveSubtitle] = useState(-1);
   const [subtitleState, setSubtitleState] = useState<SubtitleLoadState>({ status: "off", track: null });
@@ -386,7 +489,9 @@ function VideoPlayer({
     manualSubtitle.current = { source: stream.url, preference: settings.defaultSubtitle, url: stream.subtitles?.[index]?.url ?? null };
     setActiveSubtitle(index);
     setAiSubsActive(false);
+    setEmbeddedChoiceRef.current(null);
   };
+  const setEmbeddedChoiceRef = useRef<(track: TextTrack | null) => void>(() => undefined);
   const [skipOverlay, setSkipOverlay] = useState<number | null>(null);
   const [remuxTracks, setRemuxTracks] = useState<RemuxAudioTrack[]>([]);
   const [remuxAudioIndex, setRemuxAudioIndex] = useState(-1);
@@ -507,6 +612,11 @@ function VideoPlayer({
       onReady();
       void trackPremiumMilestone(authClient, "first_playback", { playback_type: liveTv ? "live" : "vod" });
       void trackPremiumDaily(authClient, "playback_started", { playback_type: liveTv ? "live" : "vod" });
+      if (!liveTv) {
+        // Autoplay waits briefly for this addon next time (see autoplaySelection).
+        rememberSuccessfulSource(currentStreamRef.current);
+        markHomeScreenTipEligible();
+      }
     };
     video.addEventListener("playing", onPlaying);
     video.addEventListener("loadeddata", onReady);
@@ -530,8 +640,8 @@ function VideoPlayer({
         onSelectStream(stream, { forceTranscode: true, forceBrowser: true });
         return;
       }
-      if (tryNextSource()) return;
       failureDiagnosticRef.current = { failure_kind: "format", phase: "playback" };
+      if (tryNextSource()) return;
       setErrorDetail("This browser could not decode video frames from the selected source.");
       setBuffering(false);
       setShowControls(true);
@@ -552,6 +662,17 @@ function VideoPlayer({
     if (!video || !track) return undefined;
     const translator = new SubtitleTranslator(settings.aiApiKey, settings.aiSubtitleModel === "gemini" ? "gemini" : "groq", aiTargetName);
     translator.onTranslatingChanged = setAiTranslating;
+    let lastErrorToast = 0;
+    translator.onError = (failure) => {
+      if (translatorRef.current !== translator) return;
+      setAiError(failure.message);
+      const now = Date.now();
+      if (now - lastErrorToast >= 20_000) {
+        lastErrorToast = now;
+        onToast(failure.message);
+      }
+    };
+    setAiError(null);
     translatorRef.current = translator;
     const originals = new WeakMap<VTTCue, string>();
     const applyToCue = (cue: VTTCue) => {
@@ -641,14 +762,13 @@ function VideoPlayer({
 
   // Same ranked order as the details source picker — the panel and the
   // auto-hop must both walk sources best-first, not raw addon order.
-  const sourceList = useMemo(() => {
+  const sourceGroups = useMemo(() => {
     const playable = streams.filter((candidate) => Boolean(candidate.url));
-    const base = playable.length ? playable : [stream];
-    // Always the browser ordering here: this list is the in-player picker and
-    // the auto-hop fallback, so every candidate has to decode in this browser
-    // no matter what the user's default player is elsewhere.
-    return [...base].sort((a, b) => sourcePickerScore(b, "browser") - sourcePickerScore(a, "browser"));
+    // The exact grouping and order of the details source picker: what plays
+    // in this browser first (direct, then conversion), then external-only.
+    return groupSourcesForPlayback(playable.length ? playable : [stream]);
   }, [streams, stream]);
+  const sourceList = useMemo(() => [...sourceGroups.here, ...sourceGroups.external], [sourceGroups]);
 
   // When a source is truly dead (URL ladder + remux exhausted), hop to the next
   // browser-playable source automatically instead of stranding the viewer on an
@@ -702,11 +822,12 @@ function VideoPlayer({
     });
     const next = pick(true) ?? pick(false);
     if (!next) return false;
+    reportFailedAttempt(current, "retried");
     autoSourceHopsRef.current += 1;
     onToast(`Source failed — trying ${next.source || next.addonName || "the next source"}`);
     onSelectStream({ ...next, autoSelect: true, resumePositionSeconds: resumeAtRef.current }, { forceBrowser: true });
     return true;
-  }, [liveTv, onSelectStream, onToast]);
+  }, [liveTv, onSelectStream, onToast, reportFailedAttempt]);
   const badges = useMemo(() => {
     if (liveTv) return ["LIVE"];
     const base = qualityBadges(stream);
@@ -722,9 +843,9 @@ function VideoPlayer({
     } else {
       manualSubtitle.current = null;
       const preferred = defaultSubtitleIndex(stream, settings.defaultSubtitle);
-      const language = settings.defaultSubtitle.trim().toLowerCase();
-      const english = (stream.subtitles ?? []).findIndex(subtitle => (subtitle.lang ?? "").toLowerCase().startsWith("en"));
-      const translate = !!(aiAvailable && settings.aiAutoSelect && !liveTv && language && language !== "off" && preferred < 0 && english >= 0);
+      const language = languageCode(settings.defaultSubtitle);
+      const english = (stream.subtitles ?? []).findIndex(subtitle => languageCode(subtitle.lang) === "en");
+      const translate = !!(aiAvailable && settings.aiAutoSelect && !liveTv && language && preferred < 0 && english >= 0);
       setActiveSubtitle(translate ? english : preferred);
       setAiSubsActive(translate);
     }
@@ -749,6 +870,7 @@ function VideoPlayer({
       setErrorDetail("");
       failureDiagnosticRef.current = { failure_kind: "unknown", phase: "startup" };
       setBuffering(true);
+      setBootStatus({ label: "Preparing this file for your browser…" });
       setRemuxTracks([]);
       lastSavedRef.current = 0;
       const remuxFailed = (message: string) => {
@@ -840,6 +962,11 @@ function VideoPlayer({
     setErrorDetail("");
     failureDiagnosticRef.current = { failure_kind: "unknown", phase: "startup" };
     setBuffering(true);
+    const hops = autoSourceHopsRef.current;
+    const candidateCount = Math.max(hops + 1, browserAutoplayCandidates(sourceListRef.current).length);
+    setBootStatus(hops > 0
+      ? { label: "Trying next source ({value0} of {value1})", values: { value0: hops + 1, value1: candidateCount } }
+      : stream.transcoded ? { label: "Waiting for the provider's conversion…" } : { label: "Connecting…" });
     lastSavedRef.current = 0;
     const headers = stream.behaviorHints?.proxyHeaders?.request;
     let handlingError = false;
@@ -1020,6 +1147,7 @@ function VideoPlayer({
         const debridInfo = parseDebridStream(stream.originalUrl);
         if (debridInfo) {
           detach?.();
+          setBootStatus({ label: "Refreshing the source link…" });
           void resolveDebridDirectUrl(debridInfo).then((result) => {
             if (cancelled) return;
             if (result.url && result.url !== stream.url) {
@@ -1045,6 +1173,7 @@ function VideoPlayer({
       if (nextUrl) {
         setError(false);
         setBuffering(true);
+        setBootStatus({ label: "Trying another connection ({value0} of {value1})", values: { value0: attemptIndex + 1, value1: uniqueAttempts.length } });
         detach?.();
         detach = attach(nextUrl);
         armStallTimer();
@@ -1085,6 +1214,14 @@ function VideoPlayer({
       setBuffering(false);
       setError(true);
       setShowControls(true);
+      // <video> reports a refused request (503, expired link) as an
+      // unsupported format. Ask the host once for the real reason.
+      if (!liveTv && (!fault || fault.kind !== "media")) {
+        const failedUrl = stream.url;
+        void diagnoseSourceFailure(failedUrl).then((reason) => {
+          if (reason && currentStreamRef.current.url === failedUrl) setErrorDetail(reason);
+        });
+      }
     };
     detach = attach(uniqueAttempts[0]);
     armStallTimer();
@@ -1157,7 +1294,7 @@ function VideoPlayer({
       setBufferAheadSec(bufferedAhead(video.buffered, video.currentTime));
     };
     const onDur = () => setDuration(video.duration || 0);
-    const onPlay = () => { setPlaying(true); setPlayBlocked(false); };
+    const onPlay = () => { setPlaying(true); setPlayBlocked(false); setEnded(false); };
     const onPause = () => setPlaying(false);
     const onWaiting = () => setBuffering(true);
     const onPlaying = () => setBuffering(false);
@@ -1196,15 +1333,53 @@ function VideoPlayer({
   }, [stream]);
 
   const selectedSubtitle = stream.subtitles?.[activeSubtitle];
+  // The media's own text tracks (MP4/WebM text tracks, HLS subtitle
+  // renditions) are listed next to the addon subtitles and can be chosen.
+  const [embeddedTracks, setEmbeddedTracks] = useState<TextTrack[]>([]);
+  const [embeddedChoice, setEmbeddedChoice] = useState<TextTrack | null>(null);
+  setEmbeddedChoiceRef.current = setEmbeddedChoice;
+  useEffect(() => {
+    const video = videoRef.current;
+    setEmbeddedChoice(null);
+    if (!video) return undefined;
+    const refresh = () => setEmbeddedTracks(embeddedTextTracks(video));
+    refresh();
+    video.textTracks.addEventListener("addtrack", refresh);
+    video.textTracks.addEventListener("removetrack", refresh);
+    video.addEventListener("loadedmetadata", refresh);
+    return () => {
+      video.textTracks.removeEventListener("addtrack", refresh);
+      video.textTracks.removeEventListener("removetrack", refresh);
+      video.removeEventListener("loadedmetadata", refresh);
+    };
+  }, [stream.url]);
+  const selectEmbedded = (track: TextTrack) => {
+    manualSubtitle.current = { source: stream.url, preference: settings.defaultSubtitle, url: null };
+    setActiveSubtitle(-1);
+    setAiSubsActive(false);
+    setEmbeddedChoice(track);
+  };
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     return attachExternalSubtitle(video, selectedSubtitle ? {
       url: resolverSubtitleUrl(selectedSubtitle.url), lang: selectedSubtitle.lang, label: selectedSubtitle.label
-    } : null, setSubtitleState);
+    } : null, setSubtitleState, { showTrack: selectedSubtitle ? null : embeddedChoice });
     // Metadata refreshes must not restart the same subtitle download.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream.url, selectedSubtitle?.url, selectedSubtitle?.lang, selectedSubtitle?.label, subtitleRetry]);
+  }, [stream.url, selectedSubtitle?.url, selectedSubtitle?.lang, selectedSubtitle?.label, subtitleRetry, embeddedChoice]);
+
+  // Subtitle delay per title, ±0.1 s from the panel; the global setting is
+  // the starting value for titles never adjusted.
+  const titleKey = item ? `${item.mediaType}:${item.tmdbId ?? item.id}` : null;
+  const [subtitleDelayMs, setSubtitleDelayMs] = useState(() => titleKey ? loadTitleSubtitleDelay(titleKey, settings.subtitleOffsetMs ?? 0) : settings.subtitleOffsetMs ?? 0);
+  useEffect(() => {
+    setSubtitleDelayMs(titleKey ? loadTitleSubtitleDelay(titleKey, settings.subtitleOffsetMs ?? 0) : settings.subtitleOffsetMs ?? 0);
+  }, [titleKey, settings.subtitleOffsetMs]);
+  const changeSubtitleDelay = (next: number) => {
+    setSubtitleDelayMs(next);
+    if (titleKey) saveTitleSubtitleDelay(titleKey, next);
+  };
 
   // Reset the manual remux audio override when the source changes so each new
   // source starts from its own automatic best-track choice.
@@ -1275,9 +1450,10 @@ function VideoPlayer({
       capturePosition();
       if (!lastPosition || !authClient.session || authClient.session.userId !== userId || isLiveStream) return;
       const now = Date.now();
-      // The current backend saves an account snapshot per checkpoint. Bound
-      // periodic traffic while pause/close/background/end still flush immediately.
-      if (force !== true && now - lastSavedRef.current < 60_000) return;
+      // Each checkpoint is one small queued item (lib/progressOutbox). Periodic
+      // saves every 30 s; pause/seek/close/background/end flush immediately.
+      // saveProgress skips plays under 3% and 60 s like Android.
+      if (force !== true && now - lastSavedRef.current < 30_000) return;
       const { position, duration } = lastPosition;
       if (lastQueuedPosition === Math.round(position)) return;
       lastQueuedPosition = Math.round(position);
@@ -1321,14 +1497,24 @@ function VideoPlayer({
     const onEnded = () => {
       stopTracking(100);
       save(true);
-      if (settings.autoPlayNext && canAdvance && !nextDismissed.current) { setShowControls(true); setNextCountdown(10); }
+      setEnded(true);
+      if (settings.autoPlayNext && canAdvance && !nextDismissed.current) {
+        setShowControls(true);
+        // iOS native fullscreen hides every page element, countdown included:
+        // advance straight away rather than wait on a timer nobody can see.
+        if ((video as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean }).webkitDisplayingFullscreen) { void onAdvanceRef.current(); return; }
+        // The "Up next" card has been on screen through the credits already.
+        setNextCountdown(upNextShownRef.current ? 5 : 10);
+      }
     };
     const flush = () => { save(true); onPaused(); };
+    const onSeeked = () => { if (playbackStarted) save(true); };
     const background = () => {
       if (document.visibilityState === "hidden") flush();
       else if (!video.paused && !video.ended && video.readyState >= 2) onPlaying();
     };
     video.addEventListener("timeupdate", save);
+    video.addEventListener("seeked", onSeeked);
     video.addEventListener("pause", flush);
     window.addEventListener("pagehide", onStopped);
     document.addEventListener("visibilitychange", background);
@@ -1340,6 +1526,7 @@ function VideoPlayer({
     return () => {
       flush();
       video.removeEventListener("timeupdate", save);
+      video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("pause", flush);
       window.removeEventListener("pagehide", onStopped);
       document.removeEventListener("visibilitychange", background);
@@ -1350,13 +1537,51 @@ function VideoPlayer({
     };
   }, [item, stream, selectedEpisode, settings.autoPlayNext, activeProfileId, addons, canAdvance, liveTv, onToast]);
 
+  // Controls hide ~3 s after playback starts, after a tap, a key or a mouse
+  // move — not only after mouse movement — and never while paused, with a
+  // panel open, or on an error/end screen.
+  const hideBlockedRef = useRef(false);
+  hideBlockedRef.current = Boolean(activePanel) || error || ended;
+  const hideControlsNow = useCallback(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    setShowControls(false);
+    // Focus must not stay on a hidden button (a remote OK would press it).
+    const container = containerRef.current;
+    if (container && container.contains(document.activeElement) && document.activeElement !== container) container.focus({ preventScroll: true });
+  }, []);
   const flashControls = useCallback(() => {
     setShowControls(true);
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
-      if (videoRef.current && !videoRef.current.paused && !activePanel) setShowControls(false);
+      const video = videoRef.current;
+      if (video && !video.paused && !hideBlockedRef.current) hideControlsNow();
     }, 3000);
-  }, [activePanel]);
+  }, [hideControlsNow]);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+    // Once per source: a rebuffer must not pop the bar back up.
+    const arm = () => flashControls();
+    video.addEventListener("playing", arm, { once: true });
+    return () => video.removeEventListener("playing", arm);
+  }, [flashControls, stream.url]);
+  useEffect(() => () => { if (hideTimer.current) clearTimeout(hideTimer.current); }, []);
+  // A modal player: focus moves in when it opens and back to whatever opened
+  // it (the details Play button) when it closes.
+  const playerOpenerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const node = containerRef.current;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && !node?.contains(active)) playerOpenerRef.current = active;
+    node?.focus({ preventScroll: true });
+    return () => {
+      // Only on a real close (React dev re-runs effects without unmounting).
+      window.setTimeout(() => {
+        const opener = playerOpenerRef.current;
+        if (node && !node.isConnected && opener?.isConnected) opener.focus({ preventScroll: true });
+      }, 0);
+    };
+  }, []);
 
   const retryPlayback = useCallback(() => {
     setError(false); setErrorDetail(""); setBuffering(true);
@@ -1374,6 +1599,7 @@ function VideoPlayer({
     if (video.paused) {
       setError(false);
       setBuffering(true);
+      if (video.ended) video.currentTime = 0;
       const source = video.currentSrc;
       const attempt = video.play();
       void attempt?.catch((reason: unknown) => {
@@ -1406,17 +1632,108 @@ function VideoPlayer({
   }, [flashControls]);
 
   const toggleFullscreen = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    if (!document.fullscreenElement) {
-      void el.requestFullscreen?.().catch(() => {
+    // iPhone Safari has no element fullscreen; this falls back to Apple's
+    // native video player (webkitEnterFullscreen). Subtitles are native
+    // <track>s, so they show there too — in the iOS system caption style.
+    // Vision Pro (and other no-hover Apple WebKit): fullscreen the <video> so
+    // the system player takes over; elsewhere the container, keeping ARVIO's
+    // controls and styled subtitles (lib/fullscreen.ts, workstream D).
+    const request = prefersVideoElementFullscreen() && !isFullscreenActive(videoRef.current)
+      ? requestVideoFullscreen(videoRef.current)
+      : toggleFullscreenFor(containerRef.current, videoRef.current);
+    void request.then((result) => {
+      // Phones turn to landscape in fullscreen where the browser allows a lock.
+      if (result === "entered" && window.matchMedia?.("(pointer: coarse)").matches) lockLandscape();
+      else if (result === "exited") unlockOrientation();
+      if (result === "failed") {
         // Fullscreen demands a real click/tap (transient activation), which
         // controller input can never mint — say so instead of doing nothing.
         onToast("Fullscreen needs a real click or tap first — or press F11.");
-      });
-    }
-    else void document.exitFullscreen?.().catch(() => undefined);
+      } else if (result === "needs-metadata") {
+        onToast("Fullscreen is available once the video starts.");
+      } else if (result === "unsupported") {
+        onToast("This browser does not support fullscreen video.");
+      }
+    });
   }, [onToast]);
+
+  // Picture in picture (standard API, or Safari's presentation mode) and the
+  // AirPlay picker. Each button only renders where the API really exists.
+  const [pipAvailable, setPipAvailable] = useState(false);
+  const [pipActive, setPipActive] = useState(false);
+  const [airPlayAvailable, setAirPlayAvailable] = useState(false);
+  const [airPlayAllowed, setAirPlayAllowed] = useState(false);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+    const refresh = () => {
+      setPipAvailable(pipStrategy(video) !== "none");
+      setPipActive(isPipActive(video));
+      // MediaSource-fed playback (hls.js relay, remux, MPEG-TS) disables
+      // remote playback: AirPlay receivers cannot fetch those bytes.
+      setAirPlayAllowed(airPlayUsable(video));
+    };
+    refresh();
+    const media = ["loadedmetadata", "emptied", "playing"];
+    for (const name of media) video.addEventListener(name, refresh);
+    const stopPip = onPipChange(video, refresh);
+    const stopAirPlay = airPlaySupported() ? watchAirPlayAvailability(video, setAirPlayAvailable) : () => {};
+    return () => {
+      for (const name of media) video.removeEventListener(name, refresh);
+      stopPip();
+      stopAirPlay();
+    };
+  }, []);
+  const togglePip = useCallback(() => {
+    void togglePictureInPicture(videoRef.current).then((ok) => {
+      if (!ok) onToast("Picture in picture is not available for this video.");
+    });
+  }, [onToast]);
+
+  // Lock screen, Control Center, headset and car controls (Media Session).
+  // Handlers read through a ref so seeking/advancing never re-registers them.
+  const sessionActions = useRef({ seekBy, onAdvance, canAdvance, liveTv });
+  sessionActions.current = { seekBy, onAdvance, canAdvance, liveTv };
+  const episodeTitle = item?.episodeTitle ?? null;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+    const line = liveTv ? translateUi("Live TV") : [subtitleLabel, episodeTitle].filter(Boolean).join(" · ") || stream.addonName || "";
+    const unbind = bindMediaSession({
+      title, subtitle: line, album: "ARVIO",
+      poster: item?.image ?? null, backdrop: item?.backdrop ?? null, still: item?.episodeStill ?? null
+    }, {
+      play: () => { void video.play().catch(() => undefined); },
+      pause: () => video.pause(),
+      seekBy: liveTv ? undefined : (delta) => sessionActions.current.seekBy(delta),
+      seekTo: liveTv ? undefined : (seconds, fast) => {
+        const target = Math.max(0, Math.min(video.duration || seconds, seconds));
+        const seekable = video as HTMLVideoElement & { fastSeek?: (time: number) => void };
+        if (fast && typeof seekable.fastSeek === "function") seekable.fastSeek(target);
+        else video.currentTime = target;
+        updateMediaPosition(video);
+      },
+      next: canAdvance ? () => { void sessionActions.current.onAdvance(); } : null,
+      skipSeconds: SKIP_SECONDS
+    });
+    let lastPosition = 0;
+    const position = (event?: Event) => {
+      // timeupdate fires ~4x/s; the lock screen extrapolates between updates.
+      const now = Date.now();
+      if (event?.type === "timeupdate" && now - lastPosition < 5000) return;
+      lastPosition = now;
+      if (!sessionActions.current.liveTv) updateMediaPosition(video);
+    };
+    const names = ["timeupdate", "durationchange", "ratechange", "play", "pause", "seeked", "loadedmetadata"];
+    for (const name of names) video.addEventListener(name, position);
+    position();
+    return () => {
+      for (const name of names) video.removeEventListener(name, position);
+      unbind();
+    };
+    // translateUi only formats the static "Live TV" line.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, subtitleLabel, episodeTitle, item?.image, item?.backdrop, item?.episodeStill, stream.addonName, liveTv, canAdvance]);
 
   const openPanel = useCallback((panel: Exclude<PlayerPanel, null>) => {
     const next = activePanel === panel ? null : panel;
@@ -1487,83 +1804,252 @@ function VideoPlayer({
   }, [onToast]);
 
   useEffect(() => {
-    const onFs = () => setFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+    const video = videoRef.current;
+    if (!video) return undefined;
+    // Standard, webkit-prefixed and iOS native video fullscreen all report here.
+    return onFullscreenChange(video, () => setFullscreen(isFullscreenActive(video)));
   }, []);
+
+  // Focus follows panels: into the list when one opens (the selected row
+  // first), back to its toggle button when it closes.
+  const panelOpenerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+    if (activePanel) {
+      const opener = document.activeElement;
+      if (opener instanceof HTMLElement && !opener.closest(".player-side-panel")) panelOpenerRef.current = opener;
+      const timer = window.setTimeout(() => {
+        const panel = container.querySelector<HTMLElement>(".player-side-panel");
+        const target = panel?.querySelector<HTMLElement>(".is-active button, button.is-active, [aria-current] button, .src-row-main:not([disabled])")
+          ?? panel?.querySelector<HTMLElement>(".player-panel-list button, .player-settings-panel button, .player-panel-list .src-row-main");
+        target?.focus({ preventScroll: false });
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+    const opener = panelOpenerRef.current;
+    panelOpenerRef.current = null;
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
+    return undefined;
+  }, [activePanel]);
+
+  const revealControls = useCallback(() => {
+    flashControls();
+    const container = containerRef.current;
+    if (!container) return;
+    // Land on the most useful control for the current screen.
+    const target = container.querySelector<HTMLElement>(".player-boot-actions button, .player-error-actions button, .player-end-actions button, .player-upnext button")
+      ?? container.querySelector<HTMLElement>(".player-play-btn");
+    window.setTimeout(() => target?.focus({ preventScroll: true }), 0);
+  }, [flashControls]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (dock.docked) return;
-      const target = e.target;
+      const container = containerRef.current;
+      if (!container) return;
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
-      if (e.key !== "Escape" && target instanceof HTMLElement && (
-        target.closest('input, select, textarea, [contenteditable="true"]') ||
-        (target.closest('button, [role="button"]') && e.key === " ") ||
-        (activePanel && e.key.startsWith("Arrow"))
-      )) return;
+      if (e.key === "Tab") { trapTab(e, container); flashControls(); return; }
+      const target = e.target;
+      const inField = target instanceof HTMLElement && target.closest('input:not([type="range"]), select, textarea, [contenteditable="true"]');
+      if (inField && e.key !== "Escape") return;
+      if (e.key === "Escape" && !claimEscape(e)) return;
+      // Live TV zapping (Up/Down, CH+/-, digits, OK info, Back → guide): lib/liveZap.ts.
+      // While the control bar is up and focused, arrows move between its
+      // buttons and Back hides it first; digits and CH+/- still zap.
+      const focusedControl = document.activeElement instanceof HTMLElement && container.contains(document.activeElement)
+        ? document.activeElement.closest(".player-controls, .player-top") : null;
+      const controlBarKey = e.key.startsWith("Arrow") || e.key === "Escape";
+      if (liveTv && !activePanel && !(controlBarKey && showControls && focusedControl) && handleLiveZapKey(e, dock)) return;
       switch (e.key) {
-        case " ":
-        case "k":
+        case "m": { const v = videoRef.current; if (v) v.muted = !v.muted; return; }
+        case "c": openPanel("subtitles"); return;
+        case "s": openPanel("sources"); return;
+        case "f": toggleFullscreen(); return;
+        case "j": e.preventDefault(); seekBy(-SKIP_SECONDS); return;
+        case "l": e.preventDefault(); seekBy(SKIP_SECONDS); return;
+        default: break;
+      }
+      if (e.key === " ") {
+        // A real Space on a focused button presses that button; the
+        // gamepad's synthetic Space (X) has no default and means play/pause.
+        if (e.isTrusted && target instanceof HTMLElement && target.closest("button, [role=\"button\"]")) { flashControls(); return; }
+        e.preventDefault();
+        togglePlay();
+        return;
+      }
+      const active = document.activeElement;
+      const focusInControls = Boolean(active && active !== container && container.contains(active)
+        && (active as HTMLElement).closest(".player-controls, .player-top, .player-side-panel, .player-error, .player-end, .player-upnext, .player-skip, .player-boot, .player-start-prompt"));
+      const action = playerKeyAction(e.key, {
+        controlsVisible: showControls || Boolean(activePanel),
+        panelOpen: Boolean(activePanel),
+        modalState: error || ended || !booted,
+        onSeekBar: active instanceof HTMLInputElement && active.type === "range",
+        focusInControls
+      });
+      const exitFullscreenFirst = () => {
+        // A synthetic Escape (TV Back, gamepad B) can't trigger the browser's
+        // own exit-fullscreen default — do it ourselves first.
+        if (!e.isTrusted && isFullscreenActive(videoRef.current)) { toggleFullscreen(); return true; }
+        return false;
+      };
+      switch (action.type) {
+        case "seek": e.preventDefault(); seekBy(action.seconds); break;
+        case "show-controls": e.preventDefault(); revealControls(); break;
+        case "toggle-play": e.preventDefault(); togglePlay(); break;
+        case "move-focus": {
           e.preventDefault();
-          togglePlay();
-          break;
-        case "ArrowLeft":
-        case "j":
-          e.preventDefault();
-          seekBy(-10);
-          break;
-        case "ArrowRight":
-        case "l":
-          e.preventDefault();
-          seekBy(10);
-          break;
-        case "ArrowUp": {
-          e.preventDefault();
-          const v = videoRef.current;
-          if (v) {
-            v.volume = Math.min(1, v.volume + 0.1);
-            flashControls();
-          }
+          // Panels, the error card and the end screen keep focus to themselves.
+          const layer = activePanel ? ".player-side-panel" : error ? ".player-error" : ended ? ".player-end" : null;
+          const scope = (layer && container.querySelector(layer)) || container;
+          moveFocusWithin(scope, action.direction);
+          flashControls();
           break;
         }
-        case "ArrowDown": {
-          e.preventDefault();
-          const v = videoRef.current;
-          if (v) {
-            v.volume = Math.max(0, v.volume - 0.1);
-            flashControls();
-          }
-          break;
-        }
-        case "m": {
-          const v = videoRef.current;
-          if (v) v.muted = !v.muted;
-          break;
-        }
-        case "c":
-          openPanel("subtitles");
-          break;
-        case "s":
-          openPanel("sources");
-          break;
-        case "f":
-          toggleFullscreen();
-          break;
-        case "Escape":
-          if (activePanel) setActivePanel(null);
-          // A synthetic Escape (gamepad B) can't trigger the browser's own
-          // exit-fullscreen default — do it ourselves, then close next press.
-          else if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
-          else onClose();
-          break;
-        default:
-          break;
+        case "close-panel": e.preventDefault(); setActivePanel(null); break;
+        case "hide-controls": e.preventDefault(); if (!exitFullscreenFirst()) hideControlsNow(); break;
+        case "close": e.preventDefault(); if (!exitFullscreenFirst()) onClose(); break;
+        case "native": flashControls(); break;
+        default: break;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePlay, seekBy, toggleFullscreen, flashControls, onClose, openPanel, activePanel, dock.docked]);
+  }, [togglePlay, seekBy, toggleFullscreen, flashControls, revealControls, hideControlsNow, onClose, openPanel, activePanel, dock.docked, dock, liveTv, showControls, error, ended, booted]);
+
+  // Controller View/Select and long-press Y (lib/gamepadNav via
+  // lib/playerCommands) open the subtitle and source panels.
+  useEffect(() => {
+    const onCommand = (event: Event) => {
+      if (dock.docked) return;
+      const command = (event as CustomEvent<PlayerCommandDetail>).detail?.command;
+      if (command !== "subtitles" && command !== "sources") return;
+      if (liveTv && command === "subtitles") return;
+      event.preventDefault();
+      openPanel(command);
+    };
+    window.addEventListener(PLAYER_COMMAND_EVENT, onCommand);
+    return () => window.removeEventListener(PLAYER_COMMAND_EVENT, onCommand);
+  }, [openPanel, dock.docked, liveTv]);
+
+  // ---------- Skip intro / recap / credits and "Up next" ----------
+  const [skipSegments, setSkipSegments] = useState<SkipSegment[]>([]);
+  const episodeSeason = selectedEpisode?.season ?? item?.seasonNumber ?? null;
+  const episodeNumber = selectedEpisode?.episode ?? item?.episodeNumber ?? null;
+  useEffect(() => {
+    setSkipSegments([]);
+    if (liveTv || item?.mediaType !== "tv" || episodeSeason == null || episodeNumber == null || !item.imdbId) return undefined;
+    const controller = new AbortController();
+    void fetchSkipSegments({ imdbId: item.imdbId, season: episodeSeason, episode: episodeNumber }, {
+      fetchJson, introDbUrl: (url) => proxiedUrl(url), signal: controller.signal
+    }).then((segments) => { if (!controller.signal.aborted) setSkipSegments(segments); }).catch(() => undefined);
+    return () => controller.abort();
+  }, [liveTv, item?.mediaType, item?.imdbId, episodeSeason, episodeNumber]);
+  const activeSkip = !liveTv && booted && !error ? activeSkipSegment(skipSegments, current * 1000) : null;
+  const [skipDismissedKey, setSkipDismissedKey] = useState<string | null>(null);
+  const activeSkipKey = activeSkip ? `${activeSkip.type}:${activeSkip.startMs}` : null;
+  const showSkip = Boolean(activeSkip) && activeSkipKey !== skipDismissedKey && !(isCreditsSegment(activeSkip!) && canAdvance);
+  const skipNow = () => {
+    const video = videoRef.current;
+    if (!video || !activeSkip) return;
+    video.currentTime = Math.min(video.duration || Infinity, activeSkip.endMs / 1000 + 0.5);
+    setSkipDismissedKey(activeSkipKey);
+    flashControls();
+  };
+
+  // The next episode's title and still, for the "Up next" card.
+  const [nextEpisode, setNextEpisode] = useState<{ season: number; episode: number; name: string; still?: string } | null>(null);
+  const metadataPriority2 = metadataPriority;
+  useEffect(() => {
+    setNextEpisode(null);
+    if (!canAdvance || !item || episodeSeason == null || episodeNumber == null) return undefined;
+    let active = true;
+    const tvId = item.tmdbId ?? item.id;
+    const context = { tvdbId: item.tvdbId, anilistId: item.anilistId, isAnime: item.isAnime };
+    void (async () => {
+      const pick = (episodes: EpisodeInfo[], season: number, episode: number) => episodes.find((entry) => entry.seasonNumber === season && entry.episodeNumber === episode);
+      let found = pick(await loadSeasonEpisodes(tvId, episodeSeason, "en-US", metadataPriority2, context).catch(() => []), episodeSeason, episodeNumber + 1);
+      if (!found) {
+        const nextSeason = (item.seasons ?? []).map((entry) => entry.seasonNumber).filter((n) => n > episodeSeason).sort((a, b) => a - b)[0];
+        if (nextSeason != null) found = pick(await loadSeasonEpisodes(tvId, nextSeason, "en-US", metadataPriority2, context).catch(() => []), nextSeason, 1);
+      }
+      if (!active || !found) return;
+      if (found.airDate && Date.parse(found.airDate) > Date.now()) return;
+      setNextEpisode({ season: found.seasonNumber, episode: found.episodeNumber, name: found.name, still: found.still });
+    })();
+    return () => { active = false; };
+  }, [canAdvance, item, episodeSeason, episodeNumber, metadataPriority2]);
+  const upNextAt = upNextStartTime(duration, skipSegments);
+  const showUpNext = canAdvance && Boolean(nextEpisode) && !upNextDismissed && !error && booted
+    && (current >= upNextAt || ended || nextCountdown !== null);
+  useEffect(() => { if (showUpNext) upNextShownRef.current = true; }, [showUpNext]);
+  useEffect(() => { upNextShownRef.current = false; }, [stream.url]);
+  const dismissUpNext = () => {
+    setUpNextDismissed(true);
+    nextDismissed.current = true;
+    setNextCountdown(null);
+  };
+  const playNextNow = () => {
+    setNextCountdown(null);
+    void onAdvance();
+  };
+
+  // ---------- Touch: tap toggles the controls, double-tap seeks ±10 s ----------
+  const lastTap = useRef<{ at: number; x: number } | null>(null);
+  const tapTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(tapTimer.current), []);
+  const onSurfacePointerUp = (event: React.PointerEvent<HTMLVideoElement>) => {
+    if (event.pointerType === "mouse") { togglePlay(); return; }
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = (event.clientX - rect.left) / Math.max(1, rect.width);
+    const now = Date.now();
+    const previous = lastTap.current;
+    if (previous && now - previous.at < 300 && Math.abs(previous.x - x) < 0.2 && (x < 0.38 || x > 0.62)) {
+      window.clearTimeout(tapTimer.current);
+      lastTap.current = null;
+      if (!liveTv) seekBy(x < 0.5 ? -SKIP_SECONDS : SKIP_SECONDS);
+      return;
+    }
+    lastTap.current = { at: now, x };
+    // Decide from the state at the tap, before compatibility mouse events land.
+    const wasVisible = showControlsRef.current;
+    window.clearTimeout(tapTimer.current);
+    tapTimer.current = window.setTimeout(() => {
+      lastTap.current = null;
+      if (wasVisible && !videoRef.current?.paused) hideControlsNow();
+      else flashControls();
+    }, 230);
+  };
+  const showControlsRef = useRef(showControls);
+  showControlsRef.current = showControls;
+
+  // ---------- Platform details ----------
+  const appleMobile = useMemo(() => isAppleMobile(), []);
+  const externalOptions = useMemo(() => externalPlayerOptions(), []);
+  useEffect(() => {
+    const video = videoRef.current as (HTMLVideoElement & { autoPictureInPicture?: boolean }) | null;
+    if (!video) return;
+    // Safari: going home / switching apps continues in picture in picture.
+    video.setAttribute("autopictureinpicture", "");
+    try { video.autoPictureInPicture = true; } catch { /* unsupported */ }
+  }, []);
+  useEffect(() => {
+    if (!fullscreen) unlockOrientation();
+  }, [fullscreen]);
+  // AirPlay sends a URL the receiver fetches itself; a file converted inside
+  // the browser exists only here, so say why AirPlay is off instead of hiding it.
+  const airPlayBlockedReason = airPlayAvailable && !airPlayAllowed
+    ? (stream.remux ? "AirPlay is off while this file is converted in your browser. Open it in Infuse or VLC to AirPlay it, or pick a source that plays directly."
+      : "AirPlay is off for this stream because the browser relays it. Open it in Infuse or VLC to AirPlay it.")
+    : null;
+  const openExternalOption = (option: ExternalPlayerOption, selectedStream: StreamSource) => {
+    if (option.id === "chooser") openAnyPlayer(selectedStream);
+    else openExternal(option.id, selectedStream);
+  };
+  const subtitleGroups = useMemo(() => groupSubtitles(stream.subtitles ?? [], { preferred: settings.defaultSubtitle, releaseName: stream.behaviorHints?.filename ?? stream.description ?? stream.source }),
+    [stream.subtitles, settings.defaultSubtitle, stream.behaviorHints?.filename, stream.description, stream.source]);
+  const showEndScreen = ended && !liveTv && !error && !(canAdvance && nextEpisode && !upNextDismissed);
 
   // Subtitle rendering honours the user's style setting: boxed, outlined,
   // drop-shadowed, or raised — same options as the Android app.
@@ -1582,11 +2068,11 @@ function VideoPlayer({
   useEffect(() => {
     const track = subtitleState.track;
     if (!track) return undefined;
-    const applyLine = () => positionSubtitleCues(track, subtitleLinePercent, settings.subtitleOffsetMs ?? 0);
+    const applyLine = () => positionSubtitleCues(track, subtitleLinePercent, subtitleDelayMs);
     applyLine();
     track.addEventListener("cuechange", applyLine);
     return () => track.removeEventListener("cuechange", applyLine);
-  }, [subtitleState.track, subtitleLinePercent, settings.subtitleOffsetMs]);
+  }, [subtitleState.track, subtitleLinePercent, subtitleDelayMs]);
   // While scrubbing the bar follows the drag, not the (not yet moved) playhead.
   const scrubDisplayTime = scrubTo ?? current;
   const pct = duration > 0 ? (scrubDisplayTime / duration) * 100 : 0;
@@ -1595,12 +2081,16 @@ function VideoPlayer({
   return (
     <section
       ref={containerRef}
-      className={`player-overlay ${dock.docked ? "player-docked" : ""} ${showControls || activePanel ? "controls-on" : "controls-off"}`}
+      className={`player-overlay ${dock.docked ? "player-docked" : ""} ${showControls || activePanel ? "controls-on" : "controls-off"} ${pipAvailable || airPlayAvailable ? "has-platform-actions" : ""} ${!playing && booted && !error ? "is-paused" : ""} ${appleMobile ? "is-apple-mobile" : ""} ${showEndScreen ? "is-ended" : ""}`}
       style={dock.style}
-      onMouseMove={flashControls}
+      onPointerMove={(event) => { if (event.pointerType === "mouse") flashControls(); }}
+      role="dialog"
+      aria-modal={dock.docked ? undefined : true}
+      aria-label={translateUi("Player: {value0}", { value0: title })}
+      tabIndex={-1}
     >
       <style>{cueCss}</style>
-      <video ref={videoRef} autoPlay playsInline preload="auto" onClick={togglePlay} poster={item?.backdrop ?? undefined} />
+      <video ref={videoRef} autoPlay playsInline preload="auto" onPointerUp={onSurfacePointerUp} poster={item?.backdrop ?? undefined} />
       {dock.docked && <div className="player-dock-controls">
         <span role="status">{error ? translateUi("Unavailable") : buffering ? translateUi("Connecting") : playing ? translateUi("LIVE") : translateUi("Paused")}</span>
         <button type="button" onClick={togglePlay} aria-label={playing ? translateUi("Pause") : translateUi("Play")} title={playing ? translateUi("Pause") : translateUi("Play")}>{playing ? <Pause size={20} /> : <Play size={20} />}</button>
@@ -1615,10 +2105,20 @@ function VideoPlayer({
         </button>
       </div>}
       {!booted && !error && !playBlocked && (
-        <div className="player-boot" style={{ backgroundImage: item?.backdrop ? `url(${item.backdrop})` : undefined }} aria-label={translateUi("Loading playback")}>
-          {bootLogo
-            ? <img className="player-boot-logo" src={bootLogo} alt={title} />
-            : <h2 className="player-boot-title">{title}</h2>}
+        <div className="player-boot" style={{ backgroundImage: item?.backdrop ? `url(${item.backdrop})` : undefined }}>
+          <div className="player-boot-actions">
+            <button type="button" className="player-icon-btn" onClick={onClose} aria-label={translateUi("Back")}><ArrowLeft size={24} /></button>
+            <button type="button" className="player-icon-btn" onClick={onClose} aria-label={translateUi("Close")}><X size={22} /></button>
+          </div>
+          <div className="player-boot-center">
+            {bootLogo
+              ? <img className="player-boot-logo" src={bootLogo} alt={title} />
+              : <h2 className="player-boot-title">{title}</h2>}
+            <p className="player-boot-status" role="status" aria-live="polite">
+              <Loader2 size={16} aria-hidden="true" /> {translateUi(bootStatus.label, bootStatus.values)}
+            </p>
+            {subtitleLabel ? <p className="player-boot-sub">{subtitleLabel}{item?.episodeTitle ? ` · ${item.episodeTitle}` : ""}</p> : null}
+          </div>
         </div>
       )}
       {buffering && !error && booted && (
@@ -1630,24 +2130,29 @@ function VideoPlayer({
         </div>
       )}
       {error && (
-        <div className="player-error">
-          <p>{liveTv ? translateUi("This channel could not be played right now.") : translateUi("This source could not be played in the browser.")}</p>
-          <span>
-            {translateUi(errorDetail) || translateUi("The source could not be opened. Its network access, browser permissions or media format may be unsupported. Try another source or an external player.")}
-          </span>
-          <div className="player-error-actions">
-            <button type="button" className="player-error-external" onClick={retryPlayback}>
-              <RotateCw size={15} /> {translateUi("Retry")}</button>
-            {!liveTv && <button type="button" className="player-error-external" onClick={() => openPanel("sources")}>
-              <Folder size={15} /> {translateUi("Sources")}</button>}
-            <button type="button" className="player-error-external" onClick={() => openExternal("vlc", stream)}>
-              <ExternalLink size={15} /> {translateUi(" Open in VLC")}</button>
-            <button type="button" className="player-error-external" onClick={() => openAnyPlayer(stream)}>
-              <ExternalLink size={15} /> {translateUi(" Open in player")}</button>
-            {!liveTv && !stream.transcoded && canProviderTranscode(stream) && (
-              <button type="button" className="player-error-transcode" onClick={() => onSelectStream(stream, { forceTranscode: true })}>
-                <Play size={15} fill="currentColor" /> {translateUi(" Transcode")}</button>
-            )}
+        <div className="player-error" role="alert">
+          <div className="player-error-card">
+            <TriangleAlert size={30} aria-hidden="true" />
+            <p>{liveTv ? translateUi("This channel could not be played right now.") : translateUi("This source could not be played in the browser.")}</p>
+            <span>
+              {translateUi(errorDetail) || translateUi("The source could not be opened. Its network access, browser permissions or media format may be unsupported. Try another source or an external player.")}
+            </span>
+            <div className="player-error-actions">
+              <button type="button" className="player-error-external" onClick={retryPlayback}>
+                <RotateCw size={15} /> {translateUi("Retry")}</button>
+              {!liveTv && <button type="button" className="player-error-external" onClick={() => openPanel("sources")}>
+                <Folder size={15} /> {translateUi("Sources")}</button>}
+              {externalOptions.map((option) => (
+                <button key={option.id} type="button" className="player-error-external" onClick={() => openExternalOption(option, stream)}>
+                  <ExternalLink size={15} /> {option.id === "chooser" ? translateUi("Open in player") : translateUi("Open in {value0}", { value0: translateUi(option.label) })}</button>
+              ))}
+              {!liveTv && !stream.transcoded && canProviderTranscode(stream) && (
+                <button type="button" className="player-error-transcode" onClick={() => onSelectStream(stream, { forceTranscode: true })}>
+                  <Play size={15} fill="currentColor" /> {translateUi(" Transcode")}</button>
+              )}
+              <button type="button" className="player-error-external" onClick={onClose}>
+                <ArrowLeft size={15} /> {translateUi("Back")}</button>
+            </div>
           </div>
         </div>
       )}
@@ -1657,9 +2162,49 @@ function VideoPlayer({
           <strong>{skipOverlay > 0 ? "+" : ""}{skipOverlay}{translateUi("s")}</strong>
         </div>
       )}
-      {!playing && !buffering && !error && (
+      {!playing && !buffering && !error && !showEndScreen && (
         <button type="button" className="player-bigplay" onClick={togglePlay} aria-label={translateUi("Play")}><Play size={48} fill="currentColor" /></button>
       )}
+      {showSkip && activeSkip ? (
+        <div className="player-skip">
+          <button type="button" onClick={skipNow}><SkipForward size={16} /> {translateUi(skipSegmentLabel(activeSkip))}</button>
+        </div>
+      ) : null}
+      {showUpNext && nextEpisode ? (
+        <div className="player-upnext" role="status" aria-live="polite">
+          {nextEpisode.still ? <img src={nextEpisode.still} alt="" /> : null}
+          <div className="player-upnext-text">
+            <small>{nextCountdown !== null ? translateUi("Next episode in {value0}s", { value0: nextCountdown }) : translateUi("Up next")}</small>
+            <strong>{translateUi("S{value0} E{value1}", { value0: nextEpisode.season, value1: nextEpisode.episode })} · {nextEpisode.name}</strong>
+          </div>
+          <div className="player-upnext-actions">
+            <button type="button" className="player-upnext-play" onClick={playNextNow}><Play size={16} fill="currentColor" /> {translateUi("Play now")}</button>
+            <button type="button" className="player-icon-btn" onClick={dismissUpNext} aria-label={translateUi("Cancel next episode")}><X size={18} /></button>
+          </div>
+        </div>
+      ) : null}
+      {showEndScreen ? (
+        <div className="player-end" role="dialog" aria-label={translateUi("Finished: {value0}", { value0: title })}>
+          <div className="player-end-card">
+            <p className="eyebrow">{translateUi("Finished")}</p>
+            <h2>{title}</h2>
+            <div className="player-end-actions">
+              <button type="button" className="player-error-external" onClick={togglePlay}><RotateCcw size={16} /> {translateUi("Watch again")}</button>
+              <button type="button" className="player-error-external" onClick={onClose}><ArrowLeft size={16} /> {translateUi("Back to details")}</button>
+            </div>
+            {item?.related?.length ? (
+              <div className="player-end-related">
+                <p className="eyebrow">{translateUi("More Like This")}</p>
+                <div className="player-end-rail">
+                  {item.related.slice(0, 6).map((related) => (
+                    <MediaCard key={`end-${related.mediaType}-${related.id}`} item={related} onOpen={onOpenDetails} posterMode />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <div className="player-top">
         <div className="player-top-left player-metadata">
@@ -1672,14 +2217,16 @@ function VideoPlayer({
           </div>
         </div>
         <div className="player-top-actions">
-          {nextCountdown !== null && <div className="next-episode-prompt" role="status"><span>{translateUi("Next episode in ")}{nextCountdown}{translateUi("s")}</span><button type="button" className="icon-button" aria-label={translateUi("Cancel next episode")} onClick={() => { nextDismissed.current = true; setNextCountdown(null); }}><X size={20} /></button></div>}
-          {canAdvance && <button type="button" className="player-next" onClick={() => { setNextCountdown(null); void onAdvance(); }}><SkipForward size={18} /> {translateUi(" Next episode")}</button>}
+          {airPlayAvailable && (airPlayAllowed
+            ? <button type="button" className="player-icon-btn player-platform-btn" onClick={() => showAirPlayPicker(videoRef.current)} aria-label={translateUi("AirPlay")} title={translateUi("AirPlay")}><Airplay size={20} /></button>
+            : <button type="button" className="player-icon-btn player-platform-btn is-unavailable" onClick={() => onToast(airPlayBlockedReason ?? "AirPlay is not available for this stream.")} aria-label={translateUi("AirPlay unavailable")} title={translateUi(airPlayBlockedReason ?? "AirPlay is not available for this stream.")}><Airplay size={20} /></button>)}
+          {pipAvailable && <button type="button" className={`player-icon-btn player-platform-btn ${pipActive ? "is-active" : ""}`} onClick={togglePip} aria-label={translateUi("Picture in picture")} title={translateUi("Picture in picture")}><PictureInPicture2 size={20} /></button>}
           <button type="button" className="player-icon-btn" onClick={onClose} aria-label={translateUi("Close")}><X size={22} /></button>
         </div>
       </div>
 
       {activePanel && (
-        <aside className="player-side-panel">
+        <aside className="player-side-panel" aria-label={activePanel === "sources" ? translateUi("Choose Source") : activePanel === "subtitles" ? translateUi("Subtitles") : activePanel === "audio" ? translateUi("Audio") : translateUi("Playback Settings")}>
           <div className="player-panel-head">
             <div>
               {activePanel !== "sources" && activePanel !== "audio" && <p className="eyebrow">{translateUi(activePanel)}</p>}
@@ -1689,39 +2236,29 @@ function VideoPlayer({
           </div>
 
           {activePanel === "sources" && (
-            <div className="player-panel-list">
-              {sourceList.map((candidate, index) => {
-                const active = isSameStream(candidate, stream);
+            <div className="player-panel-list src-list player-source-list">
+              {sourceGroups.here.length > 0 && <h4 className="src-group-head">{translateUi("Plays here")}</h4>}
+              {[...sourceGroups.here, ...sourceGroups.external].map((candidate, index) => {
+                const facts = sourceFacts(candidate);
+                const isActive = isSameStream(candidate, stream) || Boolean(candidate.url && (candidate.url === stream.url || candidate.url === stream.originalUrl));
                 return (
-                  <article
-                    key={`${candidate.addonId ?? candidate.addonName}-${candidate.source}-${index}`}
-                    className={`player-panel-row player-source-row ${active ? "is-active" : ""}`}
-                    aria-current={active ? "true" : undefined}
-                  >
-                    <span className="player-row-icon" aria-hidden="true">{active ? <Check size={17} /> : index + 1}</span>
-                    <div className="player-source-content">
-                      <strong title={candidate.source || candidate.addonName}>{candidate.source || candidate.addonName}</strong>
-                      <em title={streamMeta(candidate)}>{streamMeta(candidate) || translateUi("Direct stream")}</em>
-                    </div>
-                    <div className="player-row-actions">
-                      <button
-                        type="button"
-                        className="player-source-play"
-                        onClick={() => {
-                          onSelectStream(candidate, { forceBrowser: true });
-                          setActivePanel(null);
-                        }}
-                      >
-                        <Play size={13} fill="currentColor" /> {translateUi(" Play")}</button>
-                      <button type="button" onClick={() => openExternal("vlc", candidate)} title={translateUi("Open in VLC")}>
-                        <ExternalLink size={13} /> {translateUi(" VLC")}</button>
-                      <button type="button" onClick={() => openAnyPlayer(candidate)} title={translateUi("Open in player")}>
-                        <ExternalLink size={13} /> {translateUi(" Player")}</button>
-                      <button type="button" className="player-source-copy" onClick={() => void copyUrl(candidate)} aria-label={translateUi("Copy stream URL")} title={translateUi("Copy stream URL")}>
-                        <Copy size={13} />
-                      </button>
-                    </div>
-                  </article>
+                  <div key={`${facts.key}-${index}`} className="player-source-entry">
+                    {index === sourceGroups.here.length && sourceGroups.external.length > 0 ? <h4 className="src-group-head">{translateUi("External player")}</h4> : null}
+                    <SourceRow
+                      rank={index + 1}
+                      title={facts.title}
+                      provider={candidate.addonName}
+                      presentation={facts.presentation}
+                      badges={facts.badges}
+                      externalOptions={externalOptions}
+                      locked={facts.locked}
+                      active={isActive}
+                      compact
+                      onPlay={() => { onSelectStream(candidate, { forceBrowser: true }); setActivePanel(null); }}
+                      onExternal={(option) => openExternalOption(option, candidate)}
+                      onCopy={() => void copyUrl(candidate)}
+                    />
+                  </div>
                 );
               })}
             </div>
@@ -1732,7 +2269,7 @@ function VideoPlayer({
               {transportTracks.audioTracks.length > 0 ? transportTracks.audioTracks.map((track) => (
                 <button type="button" key={track.id} className={`player-panel-row ${transportTracks.selectedAudioTrackId === track.id ? "is-active" : ""}`} onClick={() => transportRef.current?.selectAudioTrack(track.id)}>
                   <span className="player-row-icon">{transportTracks.selectedAudioTrackId === track.id ? <Check size={17} /> : ""}</span>
-                  <span><strong>{translateUi(track.label)}</strong><em>{track.language ?? ""}</em></span>
+                  <span><strong>{translateUi(track.label)}</strong><em>{track.language ? subtitleLanguageLabel(track.language) : ""}</em></span>
                 </button>
               )) : remuxTracks.length > 0 ? (
                 remuxTracks.map((track) => (
@@ -1761,9 +2298,20 @@ function VideoPlayer({
           )}
 
           {activePanel === "subtitles" && (
-            <div className="player-panel-list">
-              <button type="button" className={`player-panel-row ${activeSubtitle < 0 ? "is-active" : ""}`} onClick={() => selectSubtitle(-1)}>
-                <span className="player-row-icon">{activeSubtitle < 0 ? <Check size={17} /> : ""}</span>
+            <div className="player-panel-list player-subtitle-list">
+              <div className="player-subtitle-delay" role="group" aria-label={translateUi("Subtitle delay")}>
+                <span><strong>{translateUi("Subtitle delay")}</strong><em>{translateUi("This title only")}</em></span>
+                <div className="player-setting-stepper">
+                  <button type="button" onClick={() => changeSubtitleDelay(stepSubtitleDelay(subtitleDelayMs, -1))} aria-label={translateUi("Show subtitles 0.1 s earlier")}><Minus size={16} /></button>
+                  <b aria-live="polite">{subtitleDelayMs > 0 ? "+" : ""}{(subtitleDelayMs / 1000).toFixed(1)} s</b>
+                  <button type="button" onClick={() => changeSubtitleDelay(stepSubtitleDelay(subtitleDelayMs, 1))} aria-label={translateUi("Show subtitles 0.1 s later")}><Plus size={16} /></button>
+                </div>
+                {subtitleDelayMs !== (settings.subtitleOffsetMs ?? 0) ? (
+                  <button type="button" className="player-delay-reset" onClick={() => changeSubtitleDelay(settings.subtitleOffsetMs ?? 0)}>{translateUi("Reset")}</button>
+                ) : null}
+              </div>
+              <button type="button" className={`player-panel-row ${activeSubtitle < 0 && !embeddedChoice ? "is-active" : ""}`} onClick={() => selectSubtitle(-1)}>
+                <span className="player-row-icon">{activeSubtitle < 0 && !embeddedChoice ? <Check size={17} /> : ""}</span>
                 <span><strong>{translateUi("Off")}</strong><em>{translateUi("No subtitle track")}</em></span>
               </button>
               {aiAvailable && (
@@ -1787,30 +2335,54 @@ function VideoPlayer({
                   <span className="player-row-icon">{aiSubsActive ? <Check size={17} /> : translateUi("AI")}</span>
                   <span>
                     <strong>{translateUi("AI · ")}{aiTargetName}</strong>
-                    <em>{aiSubsActive ? (aiTranslating ? "Translating…" : "Live-translating English subtitles") : translateUi("Translate English subtitles to {value0}", {value0: aiTargetName})}</em>
+                    <em role={aiSubsActive && aiError ? "alert" : undefined}>{aiSubsActive ? (aiTranslating ? translateUi("Translating…") : aiError ? translateUi(aiError) : translateUi("Live-translating English subtitles")) : translateUi("Translate English subtitles to {value0}", {value0: aiTargetName})}</em>
                   </span>
                 </button>
               )}
-              {orderedSubtitles(stream, settings.defaultSubtitle).map(({ subtitle, index, langName }) => (
-                <button
-                  type="button"
-                  key={subtitle.id || subtitle.url}
-                  className={`player-panel-row ${activeSubtitle === index && !aiSubsActive ? "is-active" : ""}`}
-                  onClick={() => selectSubtitle(index)}
-                >
-                  <span className="player-row-icon">{activeSubtitle === index && !aiSubsActive ? <Check size={17} /> : ""}</span>
+              {embeddedTracks.length > 0 && <h4 className="player-subtitle-group">{translateUi("In this file")}</h4>}
+              {embeddedTracks.map((track, index) => (
+                <button type="button" key={`embedded-${track.id || index}`} className={`player-panel-row ${embeddedChoice === track ? "is-active" : ""}`} onClick={() => selectEmbedded(track)}>
+                  <span className="player-row-icon">{embeddedChoice === track ? <Check size={17} /> : ""}</span>
                   <span>
-                    <strong>{translateUi(langName)}</strong>
-                    <em>{[subtitle.label && subtitle.label !== langName ? subtitle.label : "", subtitle.provider, subtitle.isForced ? "Forced" : ""].filter(Boolean).join(" - ") || translateUi("External subtitle")}</em>
+                    <strong>{subtitleLanguageLabel(track.language || track.label)}</strong>
+                    <em>{[track.label && track.label !== track.language ? track.label : "", track.kind === "captions" ? translateUi("Captions") : "", translateUi("Embedded")].filter(Boolean).join(" · ")}</em>
                   </span>
                 </button>
+              ))}
+              {subtitleGroups.map((group) => (
+                <div key={group.language} className="player-subtitle-language" role="group" aria-label={group.language}>
+                  <h4 className="player-subtitle-group">{translateUi(group.language)} <small>{group.choices.length}</small></h4>
+                  {group.choices.map((choice, rank) => {
+                    const subtitle = stream.subtitles![choice.index];
+                    const selectedRow = activeSubtitle === choice.index && !aiSubsActive;
+                    return (
+                      <button
+                        type="button"
+                        key={subtitle.id || subtitle.url}
+                        className={`player-panel-row ${selectedRow ? "is-active" : ""}`}
+                        onClick={() => selectSubtitle(choice.index)}
+                      >
+                        <span className="player-row-icon">{selectedRow ? <Check size={17} /> : ""}</span>
+                        <span>
+                          <strong>
+                            {choice.release ?? (rank === 0 ? translateUi("Best match") : translateUi("{value0} · option {value1}", { value0: translateUi(group.language), value1: rank + 1 }))}
+                            {choice.hearingImpaired ? <span className="player-sub-flag">{translateUi("SDH")}</span> : null}
+                            {choice.forced ? <span className="player-sub-flag">{translateUi("Forced")}</span> : null}
+                          </strong>
+                          <em>{[choice.provider ?? subtitle.provider, choice.match > 0 && rank === 0 ? translateUi("Matches this release") : ""].filter(Boolean).join(" · ") || translateUi("External subtitle")}</em>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               ))}
               {subtitleState.status === "loading" && <p className="player-panel-empty" role="status">{translateUi("Subtitles")} · {translateUi("Loading")}</p>}
               {subtitleState.status === "failed" && <div className="player-panel-empty" role="alert">
                 <p>{translateUi("Subtitles")} · {translateUi("Unavailable")}</p>
                 <button type="button" className="secondary" onClick={() => setSubtitleRetry(value => value + 1)}>{translateUi("Retry")}</button>
               </div>}
-              {(stream.subtitles?.length ?? 0) === 0 && <p className="player-panel-empty">{translateUi("No external subtitles were returned for this source.")}</p>}
+              {(stream.subtitles?.length ?? 0) === 0 && embeddedTracks.length === 0 && <p className="player-panel-empty">{translateUi("No external subtitles were returned for this source.")}</p>}
+              {stream.remux ? <p className="player-panel-note">{translateUi("Subtitles inside this MKV file can't be shown while it is converted in the browser. Use an addon subtitle or an external player.")}</p> : null}
             </div>
           )}
 
@@ -1962,20 +2534,21 @@ function VideoPlayer({
         )}
         <div className="player-controls-row">
           <div className="player-controls-left">
-            <button type="button" className="player-icon-btn player-play-btn" onClick={togglePlay} aria-label={playing ? translateUi("Pause") : translateUi("Play")}>
-              {playing ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
+            <button type="button" className="player-icon-btn player-play-btn" onClick={togglePlay} aria-label={playing && !error ? translateUi("Pause") : translateUi("Play")}>
+              {playing && !error ? <Pause size={24} fill="currentColor" /> : <Play size={24} fill="currentColor" />}
             </button>
             {!liveTv && (
               <>
-                <button type="button" className="player-icon-btn player-seek-btn" onClick={() => seekBy(-30)} aria-label={translateUi("Back 30 seconds")}>
-                  <RotateCcw size={22} /><span className="player-seek-label">30</span>
+                <button type="button" className="player-icon-btn player-seek-btn" onClick={() => seekBy(-SKIP_SECONDS)} aria-label={translateUi("Back {value0} seconds", { value0: SKIP_SECONDS })}>
+                  <RotateCcw size={22} /><span className="player-seek-label">{SKIP_SECONDS}</span>
                 </button>
-                <button type="button" className="player-icon-btn player-seek-btn" onClick={() => seekBy(30)} aria-label={translateUi("Forward 30 seconds")}>
-                  <RotateCw size={22} /><span className="player-seek-label">30</span>
+                <button type="button" className="player-icon-btn player-seek-btn" onClick={() => seekBy(SKIP_SECONDS)} aria-label={translateUi("Forward {value0} seconds", { value0: SKIP_SECONDS })}>
+                  <RotateCw size={22} /><span className="player-seek-label">{SKIP_SECONDS}</span>
                 </button>
               </>
             )}
-            <div className="player-volume">
+            {/* iOS ignores page volume (hardware buttons only): no dead slider there. */}
+            {!appleMobile && <div className="player-volume">
               <button type="button" className="player-icon-btn" onClick={() => { const v = videoRef.current; if (v) { if (v.volume === 0) v.volume = 1; v.muted = !(v.muted || volume === 0); } }} aria-label={translateUi(muted || volume === 0 ? "Unmute" : "Mute")}>
                 {muted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
               </button>
@@ -1986,6 +2559,7 @@ function VideoPlayer({
                 max={1}
                 step={0.05}
                 value={muted ? 0 : volume}
+                aria-label={translateUi("Volume")}
                 style={{ ["--pct" as string]: `${(muted ? 0 : volume) * 100}%` }}
                 onChange={(e) => {
                   const v = videoRef.current;
@@ -1995,11 +2569,11 @@ function VideoPlayer({
                   }
                 }}
               />
-            </div>
+            </div>}
             {liveTv
               ? <button type="button" className="player-time player-live-indicator" title={translateUi("Return to live")} onClick={() => { if (transportRef.current?.goLive()) void videoRef.current?.play().catch(() => undefined); }}><span className="live-dot" /> {translateUi(" LIVE")}</button>
               : (
-                <span className="player-time">
+                <span className="player-time player-time-readout">
                   {fmt(scrubDisplayTime)} <em>/</em> {fmt(duration)}
                   {duration > 0 && (
                     // "How much is left" is the question people actually ask;
@@ -2015,12 +2589,13 @@ function VideoPlayer({
             </div>
             {!liveTv && (
               <>
-                <button type="button" className={`player-icon-btn ${activePanel === "subtitles" ? "is-active" : ""}`} onClick={() => openPanel("subtitles")} aria-label={translateUi("Subtitles")}><Subtitles size={20} /></button>
-                <button type="button" className={`player-icon-btn ${activePanel === "audio" ? "is-active" : ""}`} onClick={() => openPanel("audio")} aria-label={translateUi("Audio")}><AudioLines size={20} /></button>
+                <button type="button" className={`player-icon-btn ${activePanel === "subtitles" ? "is-active" : ""}`} onClick={() => openPanel("subtitles")} aria-label={translateUi("Subtitles")} aria-expanded={activePanel === "subtitles"}><Subtitles size={20} /></button>
+                <button type="button" className={`player-icon-btn ${activePanel === "audio" ? "is-active" : ""}`} onClick={() => openPanel("audio")} aria-label={translateUi("Audio")} aria-expanded={activePanel === "audio"}><AudioLines size={20} /></button>
               </>
             )}
-            <button type="button" className={`player-icon-btn ${activePanel === "sources" ? "is-active" : ""}`} onClick={() => openPanel("sources")} aria-label={translateUi("Sources")}><Folder size={20} /></button>
-            <button type="button" className={`player-icon-btn ${activePanel === "settings" ? "is-active" : ""}`} onClick={() => openPanel("settings")} aria-label={translateUi("Player settings")}><Settings size={20} /></button>
+            <button type="button" className={`player-icon-btn ${activePanel === "sources" ? "is-active" : ""}`} onClick={() => openPanel("sources")} aria-label={translateUi("Sources")} aria-expanded={activePanel === "sources"}><Folder size={20} /></button>
+            {canAdvance && <button type="button" className="player-icon-btn player-next-inline" onClick={playNextNow} aria-label={translateUi("Next episode")}><SkipForward size={20} /></button>}
+            <button type="button" className={`player-icon-btn ${activePanel === "settings" ? "is-active" : ""}`} onClick={() => openPanel("settings")} aria-label={translateUi("Player settings")} aria-expanded={activePanel === "settings"}><Settings size={20} /></button>
             <button type="button" className="player-icon-btn" onClick={toggleFullscreen} aria-label={translateUi("Fullscreen")}>
               {fullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
             </button>

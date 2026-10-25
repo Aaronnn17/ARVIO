@@ -7,7 +7,7 @@ const read = (name) => fs.readFileSync(path.join(root, name), 'utf8');
 
 test('app, website and web credits retain the required TMDB notice and approved logo', () => {
   const notice = 'This product uses the TMDB API but is not endorsed or certified by TMDB.';
-  for (const file of ['app/src/main/res/values/strings.xml', 'web/components/settings/SettingsScreen.tsx', 'netlify-arvio-tv-site/credits/index.html']) {
+  for (const file of ['app/src/main/res/values/strings.xml', 'web/components/settings/sections/About.tsx', 'netlify-arvio-tv-site/credits/index.html']) {
     assert.ok(read(file).includes(notice), file);
   }
   const logo = read('app/src/main/assets/tmdb-logo.svg');

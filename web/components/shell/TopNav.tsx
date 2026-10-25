@@ -5,11 +5,14 @@ import { useTranslation } from "@/lib/i18n";
 import { BadgeCheck, Bookmark, Home, Search, Settings, Tv } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
+import { kidsLevelOf } from "@/lib/kids";
 import { ProfileAvatarVisual } from "@/components/profile/ProfileAvatar";
 import type { NavSection } from "@/lib/types";
 import { useEntitlement } from "@/lib/entitlementContext";
 import { trialRemainingLabel } from "@/lib/entitlementPolicy";
 import { MembershipCheckout } from "./MembershipCheckout";
+import { screenTitle } from "@/lib/screenTitle";
+import "@/app/topnav.css";
 
 const nav = [
   { id: "home", label: "Home", icon: Home },
@@ -21,7 +24,21 @@ const nav = [
 export function TopNav() {
   const translateUi = useTranslation();
   const { view, section, setSection, switchProfile, activeProfile, avatarImages, settings, closeDetails, selected } = useApp();
+  // Per-screen tab titles ("Home · ARVIO"), so history, tabs and screen
+  // readers say where the user is.
+  useEffect(() => {
+    document.title = screenTitle(section, selected?.title, translateUi);
+  }, [section, selected?.title, translateUi]);
+  const skipToContent = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    const target = document.querySelector<HTMLElement>(".content");
+    if (!target) return;
+    event.preventDefault();
+    if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+    target.focus();
+  };
   const [scrolled, setScrolled] = useState(false);
+  // Live TV carries no age ratings: a kids profile loses the tab (Android KidsNavigation).
+  const visibleNav = kidsLevelOf(activeProfile) ? nav.filter((item) => item.id !== "tv") : nav;
   const entitlement = useEntitlement();
   const [now, setNow] = useState(Date.now);
   const trialLabel = trialRemainingLabel(entitlement, now);
@@ -45,22 +62,27 @@ export function TopNav() {
 
   return (
     <>
-      {/* Desktop/Tablet Sidebar / TopNav */}
-      <aside className={`sidebar ${scrolled ? "is-scrolled" : ""}`} aria-label={translateUi("ARVIO navigation")}>
+      <a className="skip-link" href="#main-content" onClick={skipToContent}>{translateUi("Skip to content")}</a>
+      {/* Desktop/Tablet top bar: a banner landmark with the main navigation. */}
+      <header className={`sidebar ${scrolled ? "is-scrolled" : ""}`}>
         <div className="profile-cluster">
           <button type="button" className="brand" onClick={switchProfile} aria-label={translateUi("Switch profile")}>
             {activeProfile ? <ProfileAvatarVisual profile={activeProfile} avatarImages={avatarImages} /> : <img src="/arvio-logo.svg" alt="" />}
           </button>
           <span className="profile-name-text">{activeProfile?.name ?? ""}</span>
         </div>
-        <nav>
-          {nav.map((item) => {
+        <nav aria-label={translateUi("ARVIO navigation")}>
+          {visibleNav.map((item) => {
             const Icon = item.icon;
+            const current = !selected && section === item.id;
             return (
               <button
                 type="button"
                 key={item.id}
-                className={`nav-item ${!selected && section === item.id ? "is-active" : ""}`}
+                className={`nav-item ${current ? "is-active" : ""}`}
+                // The labels are hidden at 681-980px: the name must not depend on them.
+                aria-label={translateUi(item.label)}
+                aria-current={current ? "page" : undefined}
                 onClick={() => {
                   closeDetails();
                   setSection(item.id);
@@ -91,11 +113,12 @@ export function TopNav() {
               setSection("settings");
             }}
             aria-label={translateUi("Settings")}
+            aria-current={!selected && section === "settings" ? "page" : undefined}
           >
             <Settings size={26} />
           </button>
         </div>
-      </aside>
+      </header>
 
       {/* Mobile Top Header (screen <= 680px) */}
       <header className={`mobile-header ${scrolled ? "is-scrolled" : ""}`}>
@@ -133,12 +156,13 @@ export function TopNav() {
 
       {/* Mobile Bottom Navigation (screen <= 680px) */}
       <nav className="mobile-bottom-nav" aria-label={translateUi("Mobile navigation")}>
-        {nav.map((item) => {
+        {visibleNav.map((item) => {
           const Icon = item.icon;
           return (
             <button
               type="button"
               key={item.id}
+              aria-current={!selected && section === item.id ? "page" : undefined}
               className={`mobile-nav-item ${!selected && section === item.id ? "is-active" : ""}`}
               onClick={() => {
                 closeDetails();
@@ -154,6 +178,7 @@ export function TopNav() {
         <button
           type="button"
           className={`mobile-nav-item ${!selected && section === "settings" ? "is-active" : ""}`}
+          aria-current={!selected && section === "settings" ? "page" : undefined}
           onClick={() => {
             closeDetails();
             setSection("settings");

@@ -1,0 +1,253 @@
+/* Details page: dialog chrome, resume actions, episodes, reviews. */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.details-drawer .detail-back {
+  position: absolute;
+  z-index: 6;
+  top: clamp(84px, 10.5vh, 118px);
+  left: clamp(14px, 2vw, 32px);
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.46);
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+
+.details-drawer .detail-back:hover { background: rgba(255, 255, 255, 0.16); }
+.details-drawer .detail-back:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
+/* The title is the page's h1; keep the established hero size. */
+.details-drawer h1.detail-title-line {
+  margin: 0 0 clamp(14px, 1.4vw, 24px);
+  font: inherit;
+}
+
+.details-drawer .detail-title-text {
+  display: block;
+  max-width: 12ch;
+  font-size: clamp(44px, 5.5vw, 92px);
+  font-weight: 800;
+  line-height: 0.95;
+  text-wrap: balance;
+}
+
+.details-drawer .detail-body h2.detail-section-title {
+  max-width: none;
+  margin: 0 0 16px;
+  font-size: clamp(23px, 1.85vw, 34px);
+  font-weight: 760;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.details-drawer .detail-actions .primary,
+.details-drawer .detail-actions .secondary {
+  white-space: nowrap;
+}
+
+.details-drawer .detail-actions .detail-play[aria-busy="true"] { opacity: 0.86; cursor: progress; }
+.details-drawer .detail-spin { animation: arvio-spin 900ms linear infinite; }
+
+.details-drawer .detail-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.details-drawer .detail-link {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(255, 255, 255, 0.3);
+}
+
+.details-drawer .detail-link:hover,
+.details-drawer .detail-link:focus-visible { color: #fff; text-decoration-color: currentColor; }
+
+/* Episodes header: title, season picker and the season ⋯ menu on one line. */
+.episodes-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 14px;
+}
+
+.details-drawer .episodes-head h2.detail-section-title { margin: 0; }
+
+.season-picker { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }
+
+.season-picker .season-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0;
+  padding: 2px;
+  min-width: 0;
+}
+
+.season-picker .season-tabs::-webkit-scrollbar { display: none; }
+.season-picker .season-tab { flex: 0 0 auto; white-space: nowrap; }
+
+.season-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.season-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 0 40px 0 16px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.season-select svg { position: absolute; right: 14px; pointer-events: none; }
+
+.season-menu-button,
+.episode-menu-button {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+}
+
+.season-menu-button:focus-visible,
+.episode-menu-button:focus-visible,
+.season-select select:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
+.episode-card-wrap { position: relative; min-width: 0; }
+.episode-card-wrap .episode-row { width: 100%; height: 100%; }
+
+.episode-card-wrap .episode-menu-button {
+  position: absolute;
+  z-index: 4;
+  top: 10px;
+  right: 10px;
+  width: 40px;
+  height: 40px;
+  backdrop-filter: blur(10px);
+}
+
+.episode-card-wrap .episode-card-rating { right: 58px !important; }
+
+.episode-progress {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.episode-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent, #e50914);
+}
+
+/* Phones: one column of episodes instead of a sideways rail of one card. */
+.episodes-section.is-narrow .episode-list-vertical {
+  display: flex !important;
+  flex-direction: column;
+  gap: 12px;
+  overflow: visible;
+  padding: 0 !important;
+  margin: 0 !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
+.episodes-section.is-narrow .episode-list-vertical > * { flex: 0 0 auto; }
+.episodes-section.is-narrow .episode-list-vertical .episode-card-wrap .episode-row {
+  display: block !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: auto !important;
+  aspect-ratio: 16 / 9 !important;
+  contain: none;
+}
+
+.episodes-section.is-narrow .episode-list-vertical .episode-row {
+  min-height: 0 !important;
+}
+
+.episodes-section.is-narrow .episode-list-vertical .episode-still {
+  display: block;
+  aspect-ratio: 16 / 9;
+}
+
+.episodes-section.is-narrow .episode-list-vertical .episode-card-overview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.episodes-section.is-narrow .season-picker { flex: 0 1 auto; }
+
+/* Reviews: a few, plain text, each with Read more. */
+.detail-reviews .review-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-line;
+  margin: 0;
+}
+
+.detail-reviews .review-text.is-open { display: block; -webkit-line-clamp: unset; }
+
+.detail-reviews .review-more {
+  margin-top: 8px;
+  border: 0;
+  background: none;
+  color: #fff;
+  font: inherit;
+  font-weight: 750;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+.detail-reviews .review-date { margin-left: auto; color: var(--soft); font-size: 13px; }
+.detail-reviews .review-all { margin-top: 12px; }
+
+@media (max-width: 680px) {
+  .details-drawer .detail-back { top: calc(70px + env(safe-area-inset-top)); left: 12px; width: 42px; height: 42px; }
+  .details-drawer .detail-title-text { font-size: clamp(36px, 10vw, 54px); }
+  .detail-reviews .review-card { padding: 14px; }
+}

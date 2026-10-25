@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -381,8 +382,29 @@ data class IptvCloudProfileState(
     val groupOrderSchema: Int = 0,
     val sortOrder: String = "provider",
     val playlists: List<IptvPlaylistEntry> = emptyList(),
-    val tvSession: IptvTvSessionState = IptvTvSessionState()
+    val tvSession: IptvTvSessionState = IptvTvSessionState(),
+    /**
+     * Manual channel order inside a category, set from ARVIO Web Settings:
+     * `"<playlistId>|<group>"` -> channel ids, listed channels first. Channels
+     * that are not listed keep the configured sort order after them.
+     */
+    val channelOrder: Map<String, List<String>> = emptyMap()
 )
+
+/** Drops blank keys/ids and keys without a playlist part; tolerates Gson nulls from older payloads. */
+internal fun normalizeIptvChannelOrder(raw: Map<String, List<String>>?): Map<String, List<String>> {
+    if (raw.isNullOrEmpty()) return emptyMap()
+    return buildMap {
+        raw.forEach { (key, ids) ->
+            @Suppress("SENSELESS_COMPARISON", "UNNECESSARY_SAFE_CALL")
+            val trimmedKey = key?.trim().orEmpty()
+            if ('|' !in trimmedKey) return@forEach
+            @Suppress("UNNECESSARY_SAFE_CALL")
+            val cleaned = ids?.mapNotNull { it?.trim()?.takeIf(String::isNotBlank) }?.distinct().orEmpty()
+            if (cleaned.isNotEmpty()) put(trimmedKey, cleaned)
+        }
+    }
+}
 
 data class IptvTvSessionState(
     val lastChannelId: String = "",
@@ -1235,6 +1257,12 @@ class IptvRepository @Inject constructor(
         profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
             decodeGroupOrder(prefs)
         }
+
+    /** Manual channel order per category (`playlistId|group` -> channel ids), set from ARVIO Web. */
+    fun observeChannelOrder(): Flow<Map<String, List<String>>> =
+        profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
+            decodeChannelOrder(prefs[channelOrderKey()].orEmpty())
+        }.distinctUntilChanged()
 
     fun observeVodSearchEnabled(): Flow<Boolean> =
         context.settingsDataStore.data.map { prefs ->
@@ -2259,12 +2287,14 @@ class IptvRepository @Inject constructor(
             prefs.remove(groupOrderKey())
             prefs.remove(groupOrderSchemaKey())
             prefs.remove(tvSessionKey())
+            prefs.remove(channelOrderKey())
             IptvCloudFields.stamp(prefs, profileId, org.json.JSONObject()
                 .put("playlists", org.json.JSONArray()).put("m3uUrl", "").put("epgUrl", "")
                 .put("stalkerPortals", org.json.JSONArray()).put("stalkerPortalUrl", "").put("stalkerMacAddress", "")
                 .put("favoriteGroups", org.json.JSONArray()).put("favoriteChannels", org.json.JSONArray())
                 .put("hiddenGroups", org.json.JSONArray()).put("lockedGroups", org.json.JSONArray())
-                .put("groupOrder", org.json.JSONArray()).put("groupOrderSchema", IPTV_GROUP_ORDER_SCHEMA))
+                .put("groupOrder", org.json.JSONArray()).put("groupOrderSchema", IPTV_GROUP_ORDER_SCHEMA)
+                .put("channelOrder", org.json.JSONObject()))
         }
         groupOrderLocallyDirty = true
         cachedStalkerApis = emptyMap()
@@ -4527,6 +4557,9 @@ class IptvRepository @Inject constructor(
         profileManager.profileStringKeyFor(profileId, "iptv_group_order_schema")
     private fun playlistsKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_playlists_json")
+    private fun channelOrderKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_channel_order")
+    private fun channelOrderKeyFor(profileId: String): Preferences.Key<String> =
+        profileManager.profileStringKeyFor(profileId, "iptv_channel_order")
     private fun tvSessionKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_tv_session")
     private fun tvSessionKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_tv_session")
@@ -4648,6 +4681,18 @@ class IptvRepository @Inject constructor(
         }.getOrDefault(emptyList())
     }
 
+    private fun decodeChannelOrder(raw: String): Map<String, List<String>> {
+        if (raw.isBlank()) return emptyMap()
+        return runCatching {
+            val type = TypeToken.getParameterized(
+                Map::class.java,
+                String::class.java,
+                TypeToken.getParameterized(List::class.java, String::class.java).type,
+            ).type
+            normalizeIptvChannelOrder(gson.fromJson<Map<String, List<String>>>(raw, type))
+        }.getOrDefault(emptyMap())
+    }
+
     private fun decodeTvSessionState(prefs: Preferences): IptvTvSessionState =
         decodeTvSessionState(prefs[tvSessionKey()].orEmpty())
 
@@ -4704,6 +4749,7 @@ class IptvRepository @Inject constructor(
         val orderSchema = prefs[groupOrderSchemaKeyFor(safeProfileId)]?.toIntOrNull() ?: 0
         val playlistsRaw = prefs[playlistsKeyFor(safeProfileId)].orEmpty()
         val tvSessionRaw = prefs[tvSessionKeyFor(safeProfileId)].orEmpty()
+        val channelOrderRaw = prefs[channelOrderKeyFor(safeProfileId)].orEmpty()
         val playlists = decodePlaylists(playlistsRaw)
         val stalkerPortals = readStalkerPortalsFor(prefs, safeProfileId)
         val validSourceIds = buildSet {
@@ -4749,7 +4795,8 @@ class IptvRepository @Inject constructor(
             groupOrderSchema = IPTV_GROUP_ORDER_SCHEMA,
             sortOrder = normalizeIptvSortOrder(prefs[sortOrderKeyFor(safeProfileId)]),
             playlists = playlists,
-            tvSession = decodeTvSessionState(tvSessionRaw)
+            tvSession = decodeTvSessionState(tvSessionRaw),
+            channelOrder = decodeChannelOrder(channelOrderRaw)
         )
     }
 
@@ -4812,6 +4859,7 @@ class IptvRepository @Inject constructor(
             .takeIf { state.groupOrderSchema >= IPTV_GROUP_ORDER_SCHEMA }
             .orEmpty()
             .let(::normalizeCloudGroupKeys)
+        val normalizedChannelOrder = normalizeIptvChannelOrder(runCatching { state.channelOrder }.getOrNull())
         val normalizedFavoriteChannels = state.favoriteChannels
             .map(StalkerPortalSupport::migrateLegacyChannelId)
             .filter { it.isNotBlank() }
@@ -4861,6 +4909,8 @@ class IptvRepository @Inject constructor(
             } else {
                 prefs.remove(tvSessionKeyFor(safeProfileId))
             }
+            if (normalizedChannelOrder.isEmpty()) prefs.remove(channelOrderKeyFor(safeProfileId))
+            else prefs[channelOrderKeyFor(safeProfileId)] = gson.toJson(normalizedChannelOrder)
         }
         if (preservedConcurrentEdit) return true
         groupOrderLocallyDirty = false

@@ -31,8 +31,7 @@
     select.setAttribute('aria-label', copy.language);
     for (const element of document.querySelectorAll('[data-copy]')) element.textContent = copy[element.dataset.copy];
     for (const [index, key] of ['tv','library','server','sports'].entries()) document.querySelectorAll('.gallery img')[index].alt = 'ARVIO Web — ' + copy[key];
-    document.querySelector('.hero-image img').alt = 'ARVIO Web — ' + copy.home;
-    document.title = 'ARVIO Premium — ' + copy.hosting.split('. ')[0];
+    document.title = 'ARVIO Premium — ' + copy.headline;
   }
   const initial = match(new URL(location.href).searchParams.get('lang')) || (navigator.languages || [navigator.language]).map(match).find(Boolean) || 'en-US';
   render(initial);

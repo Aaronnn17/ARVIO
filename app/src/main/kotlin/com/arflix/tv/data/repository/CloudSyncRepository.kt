@@ -20,6 +20,9 @@ import com.arflix.tv.ui.components.catalogueRowLayoutPreferencePrefixFor
 import com.arflix.tv.ui.components.normalizeCardLayoutMode
 import com.arflix.tv.ui.components.profileCatalogueRowLayoutModeKey
 import com.arflix.tv.util.LAST_APP_LANGUAGE_KEY
+import com.arflix.tv.util.HOME_PRESENTATION_VERSION
+import com.arflix.tv.util.canMergeHomePresentationSetting
+import com.arflix.tv.util.restoreHomePresentation
 import com.arflix.tv.util.resolveAppLanguage
 import com.arflix.tv.util.IPTV_FAVORITES_ON_HOME
 import com.arflix.tv.util.AppLogger
@@ -303,6 +306,7 @@ class CloudSyncRepository @Inject constructor(
         val autoPlayMinQuality: String = "Any",
         val autoPlayMaxQuality: String? = null,
         val autoPlayMaxSizeGb: Int? = null,
+        val homePresentationVersion: Int = 0,
         val trailerAutoPlay: Boolean = true,
         val trailerSoundEnabled: Boolean = false,
         val trailerDelaySeconds: Int = 1,
@@ -647,6 +651,16 @@ class CloudSyncRepository @Inject constructor(
         val allKeys = LinkedHashSet<String>().apply { addAll(mergeKeysOf(base)); addAll(mergeKeysOf(other)) }
         for (key in allKeys) {
             if (key.startsWith("i:")) continue
+            if (key.startsWith("p:")) {
+                val rest = key.substring(2)
+                val profileId = rest.substringBefore(':')
+                val baseVersion = base.optJSONObject("profileSettingsById")
+                    ?.optJSONObject(profileId)?.optInt("homePresentationVersion", 0) ?: 0
+                val otherVersion = other.optJSONObject("profileSettingsById")
+                    ?.optJSONObject(profileId)?.optInt("homePresentationVersion", 0) ?: 0
+                // A legacy timestamp must not reintroduce pre-2.3 defaults on push or pull.
+                if (!canMergeHomePresentationSetting(rest.substringAfter(':'), baseVersion, otherVersion)) continue
+            }
             val bt = baseTs.optLong(key, 0L)
             val ot = otherTs.optLong(key, 0L)
             if (ot > bt) {
@@ -691,6 +705,7 @@ class CloudSyncRepository @Inject constructor(
                         defaultAudioLanguage = prefs[defaultAudioLanguageKeyFor(profile.id)] ?: "Auto (Original)",
                         contentLanguage = resolveAppLanguage(prefs, profile.id),
 
+                        homePresentationVersion = HOME_PRESENTATION_VERSION,
                         trailerAutoPlay = prefs[trailerAutoPlayKeyFor(profile.id)] ?: true,
                         trailerSoundEnabled = prefs[trailerSoundEnabledKeyFor(profile.id)] ?: false,
                         trailerDelaySeconds = prefs[trailerDelayKeyFor(profile.id)]?.toIntOrNull() ?: 1,
@@ -1654,11 +1669,13 @@ class CloudSyncRepository @Inject constructor(
                                 .edit().putString("locale_tag", state.contentLanguage).apply()
                         }
 
-                        prefs[trailerAutoPlayKeyFor(profileId)] = state.trailerAutoPlay
+                        restoreHomePresentation(
+                            prefs, profileId, state.homePresentationVersion,
+                            state.trailerAutoPlay, state.netflixHomeStyle
+                        )
                         prefs[trailerSoundEnabledKeyFor(profileId)] = state.trailerSoundEnabled
                         prefs[trailerDelayKeyFor(profileId)] = state.trailerDelaySeconds.toString()
                         prefs[trailerInCardsKeyFor(profileId)] = state.trailerInCards
-                        state.netflixHomeStyle?.let { prefs[netflixHomeStyleKeyFor(profileId)] = it }
                         state.watchlistOnHome?.let { prefs[watchlistOnHomeKeyFor(profileId)] = it }
                         prefs[clockFormatKeyFor(profileId)] = state.clockFormat
                         // Older clients omit this field; keep the local preference in that case.

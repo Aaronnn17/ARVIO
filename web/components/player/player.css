@@ -1,0 +1,270 @@
+/* Player overlay additions: loading status + exits, error/end screens,
+   "Up next" card, skip button, subtitle panel grouping, phone layout. */
+
+.player-overlay:focus { outline: none; }
+
+/* ---------- Loading screen: always has a way out and says what it does ---------- */
+.player-overlay .player-boot { display: block; }
+
+.player-boot-actions {
+  position: absolute;
+  z-index: 2;
+  top: max(20px, env(safe-area-inset-top));
+  left: clamp(14px, 3vw, 48px);
+  right: clamp(14px, 3vw, 48px);
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.player-boot-actions button { pointer-events: auto; }
+
+.player-boot-center {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 0 24px;
+  text-align: center;
+}
+
+.player-boot-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  border-radius: 999px;
+  padding: 7px 14px;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.player-boot-status svg { animation: arvio-spin 900ms linear infinite; }
+.player-boot-sub { margin: -6px 0 0; color: rgba(255, 255, 255, 0.72); font-size: 15px; font-weight: 650; }
+
+/* ---------- Error: readable on any backdrop, never under a Pause icon ---------- */
+.player-overlay .player-error {
+  z-index: 6;
+  background: rgba(0, 0, 0, 0.62);
+  place-content: center;
+  padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
+}
+
+.player-error-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(620px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  padding: clamp(18px, 3vw, 28px);
+  background: rgba(14, 16, 20, 0.94);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+}
+
+.player-error-card > svg { color: #ffb38a; }
+.player-overlay .player-error .player-error-card p { margin: 0; font-size: clamp(18px, 2.4vw, 22px); font-weight: 750; }
+.player-overlay .player-error .player-error-card > span { color: rgba(255, 255, 255, 0.82); line-height: 1.45; }
+.player-overlay .player-error-actions { flex-wrap: wrap; justify-content: center; }
+.player-overlay.controls-off .player-error { cursor: default; }
+
+/* ---------- Skip intro / credits ---------- */
+.player-skip {
+  position: absolute;
+  z-index: 5;
+  right: clamp(16px, 3vw, 48px);
+  bottom: clamp(112px, 16vh, 150px);
+}
+
+.player-skip button,
+.player-upnext-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 20px;
+  background: #fff;
+  color: #000;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+}
+
+.player-skip button:focus-visible,
+.player-upnext button:focus-visible,
+.player-end button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+
+/* ---------- Up next ---------- */
+.player-upnext {
+  position: absolute;
+  z-index: 5;
+  right: clamp(16px, 3vw, 48px);
+  bottom: clamp(112px, 16vh, 150px);
+  width: min(420px, calc(100vw - 32px));
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  grid-template-areas: "art text" "art actions";
+  gap: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 18px;
+  padding: 12px;
+  background: rgba(12, 14, 18, 0.92);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+}
+
+.player-upnext img {
+  grid-area: art;
+  width: 132px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.player-upnext-text { grid-area: text; display: grid; gap: 3px; min-width: 0; }
+.player-upnext-text small { color: rgba(255, 255, 255, 0.7); font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.player-upnext-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.player-upnext-actions { grid-area: actions; display: flex; align-items: center; gap: 8px; }
+.player-upnext-play { min-height: 40px; padding: 0 16px; font-size: 14px; }
+.player-upnext:not(:has(img)) { grid-template-columns: minmax(0, 1fr); grid-template-areas: "text" "actions"; }
+
+/* When the bar is hidden, the card and skip button sit lower. */
+.player-overlay.controls-off .player-upnext,
+.player-overlay.controls-off .player-skip { bottom: clamp(24px, 6vh, 56px); }
+
+/* ---------- End screen ---------- */
+.player-end {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.86));
+  overflow-y: auto;
+}
+
+.player-end-card { width: min(980px, 100%); display: grid; gap: 14px; }
+.player-end-card h2 { margin: 0; font-size: clamp(26px, 4vw, 44px); }
+.player-end-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.player-end-related { display: grid; gap: 8px; margin-top: 8px; }
+.player-end-rail { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(120px, 14vw, 160px); gap: 12px; overflow-x: auto; padding-bottom: 6px; }
+.player-end-rail .media-card { width: 100%; }
+
+/* ---------- Pause overview stays readable over a bright frame ---------- */
+.player-overlay.is-paused .player-top {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.78), rgba(0, 0, 0, 0.42) 70%, transparent);
+  padding-bottom: 48px;
+}
+
+.player-overlay.is-paused .player-controls { background: linear-gradient(0deg, rgba(0, 0, 0, 0.7), transparent); }
+.player-overlay .player-overview { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); }
+
+.player-overlay .player-platform-btn.is-unavailable { opacity: 0.5; }
+
+/* ---------- Panels ---------- */
+.player-overlay .player-side-panel { overflow-x: hidden; z-index: 8; }
+.player-overlay .player-source-list { gap: 6px; }
+.player-overlay .player-source-list .src-group-head { margin: 4px 2px 2px; }
+.player-source-entry { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }
+.player-overlay.is-ended .player-top .player-metadata > div { visibility: hidden; }
+
+.player-subtitle-group {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 12px 4px 4px;
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.player-subtitle-group small { font-weight: 650; color: var(--soft); letter-spacing: 0; }
+.player-subtitle-language { display: grid; gap: 6px; }
+
+.player-sub-flag {
+  display: inline-block;
+  margin-left: 8px;
+  border-radius: 6px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 11px;
+  font-weight: 800;
+  vertical-align: 2px;
+}
+
+.player-subtitle-delay {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  margin-bottom: 6px;
+}
+
+.player-subtitle-delay > span { display: grid; flex: 1 1 140px; }
+.player-subtitle-delay em { font-style: normal; color: var(--soft); font-size: 12.5px; }
+.player-subtitle-delay .player-setting-stepper button { display: grid; place-items: center; }
+
+.player-delay-reset {
+  border: 0;
+  background: none;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.player-panel-note { margin: 10px 4px 0; color: var(--soft); font-size: 13px; line-height: 1.4; }
+
+/* Settings rows never push the panel sideways on a phone. */
+.player-overlay .player-settings-panel .player-setting-row,
+.player-overlay .player-settings-panel .player-setting-toggle,
+.player-overlay .player-panel-list > * { flex: 0 0 auto; }
+.player-overlay .player-settings-panel .player-setting-row { flex-wrap: wrap; min-width: 0; row-gap: 8px; }
+.player-overlay .player-settings-panel .player-setting-choices { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.player-overlay .player-settings-panel { min-width: 0; max-width: 100%; overflow-x: hidden; }
+
+.player-overlay .player-icon-btn:focus-visible,
+.player-overlay .scrubber:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
+/* ---------- Phones and touch ---------- */
+@media (max-width: 680px) {
+  /* Elapsed / remaining time stays visible on phones (compact). */
+  .player-overlay .player-controls .player-time.player-time-readout {
+    display: inline-flex !important;
+    align-items: baseline;
+    gap: 2px;
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+
+  .player-overlay .player-controls .player-time-readout .player-time-remaining { margin-left: 6px; }
+  .player-overlay .player-controls-row { flex-wrap: wrap; row-gap: 6px; }
+  .player-upnext { grid-template-columns: 96px minmax(0, 1fr); bottom: calc(176px + env(safe-area-inset-bottom)); right: 16px; }
+  .player-upnext img { width: 96px; }
+  .player-skip { bottom: calc(176px + env(safe-area-inset-bottom)); }
+  .player-error-card { padding: 16px; }
+  .player-overlay .player-side-panel { left: 8px; right: 8px; max-width: calc(100vw - 16px); }
+}
+
+@media (pointer: coarse) {
+  .player-overlay .player-icon-btn { min-width: 44px; min-height: 44px; }
+  .player-overlay .player-panel-row { min-height: 52px; }
+  .player-overlay .player-setting-stepper button,
+  .player-overlay .player-setting-choices button { min-height: 44px; min-width: 44px; }
+}

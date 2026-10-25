@@ -333,13 +333,39 @@ internal fun prepareGuideChannels(
     sortOrder: String,
     hiddenGroups: Set<String>,
     restrictedGroups: Set<String>,
+    channelOrder: Map<String, List<String>> = emptyMap(),
 ): List<EnrichedChannel> {
     val visible = channels.filterNot {
         isHiddenPlaylistGroup(it, hiddenGroups) || isRestrictedPlaylistGroup(it, restrictedGroups) ||
             (categoryId in setOf("all", "fav", "recent") && it.isAdult)
     }.distinctBy { it.id }
     return if (categoryId == "fav" || categoryId == "recent") visible
-        else sortChannelsByConfiguredOrder(visible, sortOrder)
+        else applyManualChannelOrder(sortChannelsByConfiguredOrder(visible, sortOrder), categoryId, channelOrder)
+}
+
+/**
+ * Manual channel order of a playlist category (set in ARVIO Web Settings):
+ * channels listed for the category's `playlistId|group` key come first, in
+ * that order; every other channel keeps the configured sort order after them.
+ * Only playlist categories (`grp:`) are affected; "All", countries and the
+ * global sections keep the sort order.
+ */
+internal fun applyManualChannelOrder(
+    channels: List<EnrichedChannel>,
+    categoryId: String,
+    channelOrder: Map<String, List<String>>,
+): List<EnrichedChannel> {
+    if (channelOrder.isEmpty() || channels.size < 2 || !categoryId.startsWith("grp:")) return channels
+    val ranks = HashMap<String, Map<String, Int>>()
+    fun rankOf(channel: EnrichedChannel): Int {
+        val key = playlistGroupKey(channelPlaylistId(channel.id), channel.source.group)
+        val rank = ranks.getOrPut(key) {
+            channelOrder[key]?.withIndex()?.associate { (index, id) -> id to index }.orEmpty()
+        }
+        return rank[channel.id] ?: Int.MAX_VALUE
+    }
+    if (channels.none { rankOf(it) != Int.MAX_VALUE }) return channels
+    return channels.sortedBy(::rankOf)
 }
 
 internal fun sortChannelsByConfiguredOrder(
