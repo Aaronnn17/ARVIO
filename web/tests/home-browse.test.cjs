@@ -272,7 +272,8 @@ test('hero Play records a one-shot play intent that only the same title consumes
 test('details starts playback from the billboard intent through its normal Play path', () => {
   const source = fs.readFileSync(path.join(__dirname, '../components/details/DetailsDrawer.tsx'), 'utf8');
   assert.match(source, /peekPlayOnOpen\(item\)/);
-  assert.match(source, /if \(item\.mediaType !== "tv"\) playBest\(\);/);
+  assert.match(source, /if \(!isTv\) \{ start\(\(\) => playPrimary\(false\)\); return undefined; \}/, 'movies use the details Play button path');
+  assert.match(source, /plan\.season != null && plan\.episode != null\) \{ start\(\(\) => playPrimary\(false\)\)/, 'series resume through the same plan');
   assert.match(source, /openEpisodeSources\(heroPlayIntent\.season \?\? 1, heroPlayIntent\.episode \?\? 1\)/);
 });
 
