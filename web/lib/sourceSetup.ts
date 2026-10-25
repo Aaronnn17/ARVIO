@@ -1,3 +1,4 @@
+import { liveTvStalkerPortals } from "./stalkerPortals";
 import type { AppSettings, InstalledAddon } from "./types";
 
 export function addonProvidesStreams(addon: Pick<InstalledAddon, "enabled" | "resources">) {
@@ -8,10 +9,11 @@ export function addonProvidesStreams(addon: Pick<InstalledAddon, "enabled" | "re
 
 // Catalog/subtitle addons can fill Home without supplying playable sources.
 // These counts describe configuration, not a guarantee of provider availability.
-export function sourceSetupState(addons: InstalledAddon[], settings: Pick<AppSettings, "homeServers" | "iptvPlaylists"> & Partial<Pick<AppSettings, "iptvStalkerUrl" | "iptvStalkerMac">>) {
+export function sourceSetupState(addons: InstalledAddon[], settings: Pick<AppSettings, "homeServers" | "iptvPlaylists"> & Partial<Pick<AppSettings, "iptvStalkerUrl" | "iptvStalkerMac" | "iptvStalkerPortals">>) {
   const streamAddons = addons.filter(addonProvidesStreams).length;
   const homeServers = settings.homeServers.filter(server => server.enabled && server.url.trim()).length;
-  const liveTvPlaylists = settings.iptvPlaylists.filter(playlist => playlist.enabled && playlist.m3uUrl.trim()).length + (settings.iptvStalkerUrl?.trim() && settings.iptvStalkerMac?.trim() ? 1 : 0);
+  const liveTvPlaylists = settings.iptvPlaylists.filter(playlist => playlist.enabled && playlist.m3uUrl.trim()).length
+    + liveTvStalkerPortals({ iptvStalkerUrl: settings.iptvStalkerUrl ?? "", iptvStalkerMac: settings.iptvStalkerMac ?? "", iptvStalkerPortals: settings.iptvStalkerPortals }).length;
   return {
     streamAddons,
     homeServers,

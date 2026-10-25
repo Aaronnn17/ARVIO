@@ -123,7 +123,7 @@ function preserveIptvFields(existingSnapshot, incomingPayload) {
   if (!previous?.iptvByProfile || !previous?.fieldUpdatedAt) return incomingPayload;
   const fields = new Set(["m3uUrl", "epgUrl", "playlists", "stalkerPortals", "stalkerPortalUrl",
     "stalkerMacAddress", "favoriteGroups", "favoriteChannels", "hiddenGroups", "lockedGroups",
-    "groupOrder", "groupOrderSchema", "sortOrder", "channelOrder"]);
+    "groupOrder", "groupOrderSchema", "sortOrder", "channelOrder", "groupNames"]);
   const profiles = { ...incomingPayload.iptvByProfile };
   const timestamps = { ...incomingPayload.fieldUpdatedAt };
   const activeIds = Array.isArray(incomingPayload.profiles)

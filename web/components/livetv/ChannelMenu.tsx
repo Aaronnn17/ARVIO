@@ -10,8 +10,10 @@ export type ChannelMenuState = { channel: IptvChannel; anchor: HTMLElement | nul
  * Channel context menu (long-press / right-click / menu key), like Android's
  * ChannelContextMenu: favourite, reorder favourites, hide the channel's group.
  */
-export function ChannelMenu({ state, favorite, canMoveUp, canMoveDown, onPlay, onToggleFavorite, onMove, onHideGroup, onClose }: {
+export function ChannelMenu({ state, groupName, favorite, canMoveUp, canMoveDown, onPlay, onToggleFavorite, onMove, onHideGroup, onClose }: {
   state: ChannelMenuState;
+  /** The channel's category as shown on the Live TV page (the user's own name when set). */
+  groupName?: string;
   favorite: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
@@ -32,7 +34,7 @@ export function ChannelMenu({ state, favorite, canMoveUp, canMoveDown, onPlay, o
     return () => { if (anchor?.isConnected) anchor.focus({ preventScroll: true }); };
   }, [state]);
   const run = (action: () => void) => () => { action(); onClose(); };
-  const group = state.channel.group?.trim() || translateUi("Uncategorized");
+  const group = groupName || state.channel.group?.trim() || translateUi("Ungrouped");
   return (
     <dialog ref={dialog} className="livetv-channel-menu" aria-label={translateUi("Channel options for {value0}", { value0: state.channel.name })}
       onCancel={(event) => { event.preventDefault(); onClose(); }}

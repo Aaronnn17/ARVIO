@@ -30,9 +30,15 @@ async function session(url:string,mac:string){
   pending=connect(url,mac);sessions.set(key,pending);
   try{return await pending;}catch(e){sessions.delete(key);throw e;}
 }
-export async function loadStalkerChannels(url:string,mac:string):Promise<IptvChannel[]> {
+/**
+ * Channels of one portal. Ids are Android's `stalker:<portalId>:<channel>` so
+ * favourites, recents and channel order match the TV; the id older ARVIO Web
+ * builds used (`stalker:<encoded url>:<channel>`) stays as a sync alias.
+ */
+export async function loadStalkerChannels(url:string,mac:string,portalId='stalker1'):Promise<IptvChannel[]> {
   const p=await session(url,mac);const genres=await request(p,{type:'itv',action:'get_genres'});
-  const names=new Map<string,string>((Array.isArray(genres)?genres:[]).map((g:any)=>[String(g.id),String(g.title)]));
+  // Same names as StalkerApi.getChannels: a genre without a title is "Unknown", a channel without a genre "Uncategorized".
+  const names=new Map<string,string>((Array.isArray(genres)?genres:[]).filter((g:any)=>g?.id!=null).map((g:any)=>[String(g.id),g.title==null?'Unknown':String(g.title)]));
   const channels:IptvChannel[]=[];const seen=new Set<string>();
   for(let page=1;;page++){
     const response=await request(p,{type:'itv',action:'get_all_channels',p:String(page)});
@@ -43,7 +49,8 @@ export async function loadStalkerChannels(url:string,mac:string):Promise<IptvCha
       if(row.id==null||!row.cmd||seen.has(String(row.id)))continue;seen.add(String(row.id));added++;
       const cmd=String(row.cmd);const direct=String(row.use_http_tmp_link)==='0'&&String(row.wowza_tmp_link??0)==='0'&&String(row.flussonic_tmp_link??0)==='0';
       const stream=cmd.replace(/^ffmpeg\s+/i,'').trim();
-      channels.push({id:`stalker:${encodeURIComponent(url)}:${row.id}`,name:String(row.name||row.id),group:names.get(String(row.tv_genre_id))||'Uncategorized',logo:row.logo||undefined,streamUrl:stream,number:String(row.number||''),
+      const genre=row.tv_genre_id==null?undefined:names.get(String(row.tv_genre_id));
+      channels.push({id:`stalker:${portalId}:${row.id}`,syncAliases:[`stalker:${encodeURIComponent(url)}:${row.id}`],name:String(row.name||row.id),group:genre??'Uncategorized',logo:row.logo||undefined,streamUrl:stream,number:String(row.number||''),
         stalker:{portal:url,mac,cmd,direct:direct&&/^https?:\/\//i.test(stream)}});
     }
     if(!added||!response.total_items||channels.length>=Number(response.total_items))break;
