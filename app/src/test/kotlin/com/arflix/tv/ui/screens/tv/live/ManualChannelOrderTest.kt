@@ -54,7 +54,7 @@ class ManualChannelOrderTest {
         val raw = mapOf(
             "list_1|News" to listOf(" list_1:a ", "", "list_1:a", null),
             "noPlaylistKey" to listOf("x"),
-            "list_1|Empty" to emptyList(),
+            "list_1|Empty" to emptyList<String>(),
         ) as Map<String, List<String>>
         assertThat(normalizeIptvChannelOrder(raw)).containsExactly("list_1|News", listOf("list_1:a"))
         assertThat(normalizeIptvChannelOrder(null)).isEmpty()
