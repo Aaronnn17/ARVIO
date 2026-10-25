@@ -8,6 +8,7 @@ import { ENTITLEMENT_REFRESH_EVENT, fetchEntitlement, kofiSubscribeUrl, type Ent
 import { createPaymentRecovery } from "@/lib/paymentRecovery";
 import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 import { BillingEmailForm } from "./BillingEmailForm";
+import { DISCORD_URL } from "./PremiumPlans";
 
 type MembershipCheckoutProps = {
   children: React.ReactNode; className?: string; entry: string; title?: string;
@@ -73,6 +74,8 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
   useEffect(() => {
     if (!open || !accountId) return;
     dialog.current?.showModal();
+    // Start on the main action (a remote has no pointer to reach it).
+    dialog.current?.querySelector<HTMLElement>(".paywall-primary")?.focus({ preventScroll: true });
     void trackPremiumEvent(authClient, "checkout_recovery_opened", { entry, ...flow });
     return () => { dialog.current?.close(); trigger.current?.focus(); };
   }, [open, accountId, entry]);
@@ -158,7 +161,8 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
       <p>{translateUi("Use this email at checkout")} <strong>{auth.email}</strong></p>
       <button type="button" className="paywall-link-toggle" onClick={() => setOpen(true)}>{translateUi("Already paid? Check access")}</button>
     </div>}
-    {open && auth && <dialog ref={dialog} className="membership-checkout" aria-labelledby={`${id}-title`} onCancel={close}>
+    {open && auth && <dialog ref={dialog} className="membership-checkout" aria-labelledby={`${id}-title`} onCancel={(event) => { event.preventDefault(); close(); }}
+      onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); } }}>
       <button type="button" className="membership-close" aria-label={translateUi("Close")} onClick={close}><X size={20} /></button>
       <h2 id={`${id}-title`}>{translateUi("Finish your membership")}</h2>
       <p>{translateUi("Finish on Ko-fi, then return to this tab. We will check your access automatically. Do not pay again if activation is delayed.")}</p>
@@ -171,7 +175,9 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
       <p role="status" aria-live="polite">
         {status === "checking" && <Loader2 size={16} className="paywall-spinner" />}
         {translateUi(status === "active" ? "Your Premium membership is active." : status === "checking" ? "Checking your payment status…" : status === "error" ? "Could not check access. Your payment status has not changed; please retry." : status === "pending" ? "No paid membership found yet. Check again or link the email on your receipt." : "After payment, come back here to confirm activation.")}
+        {status !== "active" && status !== "error" && <> {translateUi("Activation usually takes under a minute.")}</>}
       </p>
+      {status === "pending" && <p className="membership-support">{translateUi("Paid and still not active after a few minutes?")} <a href={DISCORD_URL} target="_blank" rel="noopener noreferrer">{translateUi("Ask us on Discord")}</a></p>}
       {status !== "active" && <>
         <button type="button" className="paywall-primary" disabled={status === "checking"} onClick={() => { void recovery.current?.retry(); }}>{translateUi("Check payment status")}</button>
         <p>{translateUi("PayPal or Ko-fi may use a different email. You can securely link that email here after paying.")}</p>

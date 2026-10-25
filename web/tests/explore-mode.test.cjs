@@ -29,7 +29,8 @@ test('the hosted app renders for signed-in accounts and asks for Premium only at
   assert.match(store, /premiumAllows\("live", \(\) => playCatchup\(channel, program\)\)/);
   const details = read('components/details/DetailsDrawer.tsx');
   for (const intent of ['play', 'external', 'copy', 'download']) assert.ok(details.includes(`premiumAllows("${intent}"`), `details screen gates ${intent}`);
-  assert.ok(read('components/livetv/LiveTvScreen.tsx').includes('premiumAllows("live")'));
+  // The VLC action resumes itself after paying from the offer.
+  assert.ok(read('components/livetv/LiveTvScreen.tsx').includes('premiumAllows("live", () => openExternally(channel, player))'));
 });
 
 test('grace keeps access until the grace end, then it ends without a reload', () => {
@@ -85,6 +86,7 @@ test('the offer names the device it is opened on', () => {
   assert.equal(deviceName('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 5), 'iPad');
   assert.equal(deviceName('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 0), 'Mac');
   assert.equal(deviceName('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 0), 'computer');
+  assert.equal(deviceName('Mozilla/5.0 (SMART-TV; Linux; Tizen 6.5) AppleWebKit/537.36', 0), 'TV');
 });
 
 test("what's new shows the latest entry once", () => {

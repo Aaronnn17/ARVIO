@@ -7,6 +7,7 @@ import { useApp } from "@/lib/store";
 import type { EntitlementState } from "@/lib/entitlement";
 import { kofiSubscribeUrl } from "@/lib/entitlement";
 import { markWhatsNewSeen, unseenWhatsNew } from "@/lib/whatsNew";
+import { ExitSurvey } from "./PremiumOffer";
 
 const CHECKLIST_DAYS = 14;
 
@@ -80,7 +81,10 @@ export function MemberNotices({ state, account }: { state: EntitlementState | nu
   const { activeStream } = useApp();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  if (!mounted || !state?.entitled || !account || activeStream) return null;
+  if (!mounted || !state || !account || activeStream) return null;
+  // A lapsed member is asked once why they stopped — here, not in the offer
+  // that appears when they press Play.
+  if (!state.entitled) return state.everPaid ? <ExitSurvey state={state} account={account} notice /> : null;
   const started = Date.parse(state.startedAt ?? "");
   const newMember = Number.isFinite(started) && Date.now() - started < CHECKLIST_DAYS * 24 * 60 * 60 * 1000;
   // One card at a time: a missing payment first, then the welcome checklist,

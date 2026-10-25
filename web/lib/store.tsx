@@ -31,6 +31,8 @@ import { loadHomeServerRows } from "./homeserver";
 import { accessibleChannels, buildXtreamCatchupUrl, iptvPlaylistSignature, loadIptvChannelIdentities, loadIptvGuideForChannels, loadIptvSnapshot, loadPlaylists, savePlaylists } from "./iptv";
 import { cachedFavoriteChannels, favoriteCopyIsStale, resolveFavoriteChannels, saveFavoriteChannels } from "./favoriteTv";
 import { isCurrentIptvSnapshot, recordTvPlayback } from "./iptvSession";
+import { createIptvRefresher } from "./iptvRefresh";
+import { AddonAlreadyInstalledError, addonInstanceId, addonManifestId, applyAddonInstall, duplicateAddons, isSameInstall, type AddonInstallMode } from "./addonInstall";
 import { dedupeMedia, historyToItem, hydrateTraktItems, traktItemToMedia, traktPlaybackToMedia, traktUpNextToMedia } from "./mappers";
 import { loadStored, purgeLegacyStorage, removeStored, saveStored } from "./storage";
 import { getDetails, getSeasonEpisodes, loadCatalog, searchMedia, resolveTmdbId, tmdb } from "./tmdb";
@@ -97,6 +99,18 @@ const validateContinueWatchingEpisodes = createEpisodeValidator(async (item) => 
 });
 
 const settingsKey = "arvio.web.settings";
+const MAX_PROFILES = 5;
+
+/** Saved on this device, but ARVIO Cloud did not take it (the other devices won't see it yet). */
+export class ProfileCloudSaveError extends Error {
+  readonly profile: Profile;
+  constructor(profile: Profile, cause?: unknown) {
+    super("Saved on this device, but ARVIO Cloud could not be reached. Try again to sync it to your other devices.");
+    this.name = "ProfileCloudSaveError";
+    this.profile = profile;
+    this.cause = cause;
+  }
+}
 const PROFILES_KEY = "arvio.web.profiles";
 const ACTIVE_PROFILE_KEY = "arvio.web.activeProfileId";
 const AVATAR_IMAGES_KEY = "arvio.web.avatarImages";
@@ -513,8 +527,8 @@ export interface AppStore {
   manageMode: boolean;
   setManageMode: (value: boolean) => void;
   selectProfile: (profile: Profile, pin?: string) => Promise<void>;
-  createProfile: (name: string, avatarColor: number, avatarId: number, extra?: Partial<Profile>) => Promise<void>;
-  updateProfile: (profile: Profile) => Promise<void>;
+  createProfile: (name: string, avatarColor: number, avatarId: number, extra?: Partial<Profile>) => Promise<Profile>;
+  updateProfile: (profile: Profile) => Promise<Profile>;
   deleteProfile: (id: string) => Promise<void>;
   switchProfile: () => void;
   goToLogin: () => void;
@@ -573,7 +587,7 @@ export interface AppStore {
   recordChannelPlayback: (channel: IptvChannel) => void;
   playCatchup: (channel: IptvChannel, program: IptvProgram) => void;
   closePlayer: () => void;
-  installAddon: (url: string) => Promise<void>;
+  installAddon: (source: string | InstalledAddon, options?: { mode?: AddonInstallMode }) => Promise<InstalledAddon>;
   removeAddon: (addon: InstalledAddon) => Promise<void>;
   setAddonsState: (next: InstalledAddon[]) => Promise<void>;
   signIn: (email: string, password: string, mode: "sign-in" | "sign-up") => Promise<void>;
@@ -712,7 +726,6 @@ export function AppProvider({
     ownedPlayback.current = null;
     if (owned) void reportHomeServerPlayback(owned.stream, owned.settings, "stop").catch(() => undefined);
   }, []);
-  const iptvRefresh = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const guideRetryAfter = useRef(new Map<string, number>());
 
   const [profiles, setProfiles] = useState<Profile[]>(() => {
@@ -1258,36 +1271,32 @@ export function AppProvider({
 
   // `quiet` is the Home background load for the Favorite TV row: no status text, no
   // error toast — Live TV reports playlist problems when the user opens it.
-  const refreshIptv = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
-    const currentSettings = settingsRef.current;
-    const profileId = activeProfileIdRef.current;
-    const account = authClient.session?.userId;
-    const signature = iptvPlaylistSignature(currentSettings.iptvPlaylists) + (currentSettings.iptvStalkerUrl ? JSON.stringify([currentSettings.iptvStalkerUrl, currentSettings.iptvStalkerMac]) : "");
-    const key = `${account}:${profileId}:${signature}`;
-    if (iptvRefresh.current?.key === key) return iptvRefresh.current.promise;
-    const isCurrent = () => activeProfileIdRef.current === profileId && authClient.session?.userId === account && iptvPlaylistSignature(settingsRef.current.iptvPlaylists) + (settingsRef.current.iptvStalkerUrl ? JSON.stringify([settingsRef.current.iptvStalkerUrl, settingsRef.current.iptvStalkerMac]) : "") === signature;
-    const run = (async () => {
-    if (!quiet) setBusy("Loading TV");
-    try {
-      const loadedIptv = await loadIptvSnapshot(
+  const iptvRefresher = useRef<ReturnType<typeof createIptvRefresher<AppSettings, IptvSnapshot>> | null>(null);
+  const refreshIptv = useCallback(({ quiet = false }: { quiet?: boolean } = {}) => {
+    iptvRefresher.current ??= createIptvRefresher<AppSettings, IptvSnapshot>({
+      read: () => {
+        const current = settingsRef.current;
+        return {
+          scope: `${authClient.session?.userId ?? "local"}:${activeProfileIdRef.current ?? "local"}`,
+          signature: iptvPlaylistSignature(current.iptvPlaylists) + (current.iptvStalkerUrl ? JSON.stringify([current.iptvStalkerUrl, current.iptvStalkerMac]) : ""),
+          settings: current
+        };
+      },
+      load: (currentSettings) => loadIptvSnapshot(
         currentSettings.iptvPlaylists,
         currentSettings.favoriteChannelIds,
         currentSettings.favoriteGroupIds,
         currentSettings.hiddenGroupIds,
         currentSettings.groupOrder,
         { userAgent: currentSettings.customUserAgent, stalkerUrl: currentSettings.iptvStalkerUrl, stalkerMac: currentSettings.iptvStalkerMac }
-      );
+      ),
       // Stamp which playlists this snapshot came from so Live TV can reuse it
       // on re-entry instead of rebuilding ~139k channels every visit.
-      if (isCurrent()) setIptvSnapshot({ ...loadedIptv, signature, scopeKey: `${account ?? "local"}:${profileId ?? "local"}` });
-    } catch (error) {
-      if (isCurrent() && !quiet) setToast(error instanceof Error ? error.message : "Failed to load Live TV");
-    } finally {
-      if (isCurrent() && !quiet) setBusy("");
-    }
-    })();
-    iptvRefresh.current = { key, promise: run };
-    return run.finally(() => { if (iptvRefresh.current?.promise === run) iptvRefresh.current = null; });
+      apply: (loadedIptv, { signature, scope }) => setIptvSnapshot({ ...loadedIptv, signature, scopeKey: scope }),
+      report: (error) => setToast(error instanceof Error ? error.message : "Failed to load Live TV"),
+      setLoading: (loading) => setBusy(current => loading ? "Loading TV" : current === "Loading TV" ? "" : current)
+    });
+    return iptvRefresher.current({ quiet });
   }, []);
 
   useEffect(() => {
@@ -2138,10 +2147,22 @@ export function AppProvider({
 
   const loadCatalogRow = useCallback((catalog: CatalogConfig) => loadCatalog(catalog, settings.language, addonsRef.current, settingsRef.current.homeServers), [settings.language]);
 
-  const installAddon = useCallback(async (url: string) => {
-    const addon = await installAddonManifest(url);
-    const next = [addon, ...addonsRef.current.filter((candidate) => candidate.id !== addon.id)];
-    await persistAddons(next, { addedIds: [addon.id] });
+  // An addon that is already installed (same manifest id or link) is never
+  // replaced silently: without a mode this throws AddonAlreadyInstalledError
+  // and the Addons screen asks "Replace / Keep both" (Android parity).
+  const installAddon = useCallback(async (source: string | InstalledAddon, options: { mode?: AddonInstallMode } = {}) => {
+    const fetched = typeof source === "string" ? await installAddonManifest(source) : source;
+    const current = addonsRef.current;
+    const existing = duplicateAddons(current, fetched);
+    if (existing.length && !options.mode) throw new AddonAlreadyInstalledError(fetched, existing);
+    let candidate = fetched;
+    if (existing.length && options.mode === "keep-both") {
+      if (isSameInstall(current, fetched)) throw new Error("This exact addon link is already installed.");
+      candidate = { ...fetched, id: await addonInstanceId(addonManifestId(fetched), fetched.manifestUrl) };
+    }
+    const { next, removedIds } = applyAddonInstall(current, candidate, existing.length && options.mode ? options.mode : "new");
+    await persistAddons(next, { addedIds: [candidate.id], removedIds });
+    return candidate;
   }, [persistAddons]);
 
   const removeAddon = useCallback(async (addon: InstalledAddon) => {
@@ -2548,7 +2569,10 @@ export function AppProvider({
     setActiveProfileId(activeId);
     saveStored(PROFILES_KEY, next);
     saveStored(ACTIVE_PROFILE_KEY, activeId);
-    void saveCloudProfiles(authClient, next, activeId, deletedIds).catch(() => undefined);
+    // Callers that edit a profile await this to report a failed cloud save.
+    const saved = saveCloudProfiles(authClient, next, activeId, deletedIds);
+    void saved.catch(() => undefined);
+    return saved;
   }, []);
 
   const selectProfile = useCallback(async (profile: Profile, pin?: string) => {
@@ -2591,19 +2615,29 @@ export function AppProvider({
     void refreshData(profile.id);
   }, [profiles, activeProfileId, persistProfiles, refreshData, cloudProfilesHydrated]);
 
+  // Profile edits save on this device first; a failed cloud save rejects with
+  // ProfileCloudSaveError (carrying the saved profile) so the dialog can say so
+  // and offer to retry instead of closing as if it had synced.
   const createProfile = useCallback(async (name: string, avatarColor: number, avatarId: number, extra?: Partial<Profile>) => {
+    if (profiles.length >= MAX_PROFILES) throw new Error("You can have up to 5 profiles.");
     const profile = { ...makeProfile(name || "Profile", avatarColor || randomProfileColor(), avatarId), ...extra };
-    persistProfiles([...profiles, profile], activeProfileId);
+    try { await persistProfiles([...profiles, profile], activeProfileId); }
+    catch (error) { throw new ProfileCloudSaveError(profile, error); }
+    return profile;
   }, [profiles, activeProfileId, persistProfiles]);
 
   const updateProfileAction = useCallback(async (profile: Profile) => {
     const edited = { ...profile, updatedAt: Date.now() };
-    persistProfiles(profiles.map((p) => (p.id === profile.id ? edited : p)), activeProfileId);
+    try { await persistProfiles(profiles.map((p) => (p.id === profile.id ? edited : p)), activeProfileId); }
+    catch (error) { throw new ProfileCloudSaveError(edited, error); }
+    return edited;
   }, [profiles, activeProfileId, persistProfiles]);
 
   const deleteProfileAction = useCallback(async (id: string) => {
     const next = profiles.filter((p) => p.id !== id);
-    persistProfiles(next, activeProfileId === id ? null : activeProfileId, [id]);
+    const removed = profiles.find((p) => p.id === id);
+    try { await persistProfiles(next, activeProfileId === id ? null : activeProfileId, [id]); }
+    catch (error) { if (removed) throw new ProfileCloudSaveError(removed, error); throw error; }
   }, [profiles, activeProfileId, persistProfiles]);
 
   const switchProfile = useCallback(() => {

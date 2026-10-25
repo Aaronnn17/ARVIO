@@ -21,6 +21,7 @@ type RawManifest = {
   idPrefixes?: string[];
   catalogs?: AddonCatalog[] | Record<string, unknown>;
   resources?: Array<string | { name?: string; types?: string[]; idPrefixes?: string[] }>;
+  behaviorHints?: { adult?: boolean; p2p?: boolean; configurable?: boolean; configurationRequired?: boolean };
 };
 
 type RawStream = {
@@ -243,7 +244,13 @@ export async function installAddon(rawUrl: string) {
         id: String((catalog as { id?: string })?.id ?? ""),
         name: String((catalog as { name?: string })?.name ?? (catalog as { id?: string })?.id ?? "")
       })),
-      behaviorHints: {}
+      // Same booleans as Android's AddonBehaviorHints; "configurable" drives the Configure link.
+      behaviorHints: {
+        adult: manifest.behaviorHints?.adult === true,
+        p2p: manifest.behaviorHints?.p2p === true,
+        configurable: manifest.behaviorHints?.configurable === true,
+        configurationRequired: manifest.behaviorHints?.configurationRequired === true
+      }
     }
   })!;
 }

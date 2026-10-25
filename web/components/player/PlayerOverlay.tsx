@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLivePlayerDock } from "./useLivePlayerDock";
+import { handleLiveZapKey } from "@/lib/liveZap";
 import { HomeScreenTip } from "./HomeScreenTip";
 import { YouTubeEmbed } from "./YouTubeEmbed";
 import { usePlayerEpisodeMetadata } from "./usePlayerEpisodeMetadata";
@@ -1640,6 +1641,8 @@ function VideoPlayer({
         (target.closest('button, [role="button"]') && e.key === " ") ||
         (activePanel && e.key.startsWith("Arrow"))
       )) return;
+      // Live TV zapping (Up/Down, CH+/-, digits, OK info, Back → guide): lib/liveZap.ts.
+      if (liveTv && !activePanel && handleLiveZapKey(e, dock)) return;
       switch (e.key) {
         case " ":
         case "k":
@@ -1701,7 +1704,7 @@ function VideoPlayer({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePlay, seekBy, toggleFullscreen, flashControls, onClose, openPanel, activePanel, dock.docked]);
+  }, [togglePlay, seekBy, toggleFullscreen, flashControls, onClose, openPanel, activePanel, dock.docked, dock, liveTv]);
 
   // Subtitle rendering honours the user's style setting: boxed, outlined,
   // drop-shadowed, or raised — same options as the Android app.
