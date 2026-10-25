@@ -136,3 +136,9 @@
   .livetv-zap-now strong { font-size: 17px; }
   .livetv-zap-hint { display: none; }
 }
+/* Text buttons in Live TV panels (the global .secondary is a round icon button). */
+:is(.livetv-manage, .livetv-playlist-errors, .livetv-detail-selected, .livetv-empty, .livetv-list-empty) :is(.primary, .secondary) { width: auto; min-width: max-content; padding: 0 16px; border-radius: 999px; gap: 6px; }
+:is(.livetv-manage, .livetv-playlist-errors, .livetv-detail-selected) :is(.primary, .secondary) { min-height: 40px; font-size: 14px; }
+/* Contrast (axe): counts and next-programme lines. */
+.tv-guide-workspace .livetv-list-head > span { color: #a3a8ae; }
+.livetv-row .livetv-row-copy > small { color: #b4b9bf; }

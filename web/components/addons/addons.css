@@ -64,3 +64,8 @@
   .addon-item-actions { width: 100%; justify-content: flex-end; }
 }
 @media (prefers-reduced-motion: reduce) { .addon-switch::after { transition: none; } }
+/* Align with the section heading's gutter; text buttons (the global .secondary is a round icon button). */
+.addons-screen > .addon-manager { margin: 24px 3.35vw 48px; }
+@media (max-width: 760px) { .addons-screen > .addon-manager { margin-inline: 16px; } }
+.addon-manager :is(.primary, .secondary) { width: auto; min-width: max-content; min-height: 42px; padding: 0 16px; border-radius: 999px; font-size: 14px; gap: 6px; }
+.addon-switch.is-on::after { background: #0a0a0a; }

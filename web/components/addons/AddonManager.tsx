@@ -43,7 +43,7 @@ function Capabilities({ addon }: { addon: InstalledAddon }) {
   const chips = [
     caps.streams ? translateUi("Streams") : null,
     caps.subtitles ? translateUi("Subtitles") : null,
-    caps.catalogs ? translateUi("{value0} catalogs", { value0: caps.catalogs }) : null,
+    caps.catalogs === 1 ? translateUi("1 catalog") : caps.catalogs ? translateUi("{value0} catalogs", { value0: caps.catalogs }) : null,
     caps.meta ? translateUi("Details") : null
   ].filter(Boolean) as string[];
   return <span className="addon-chips">{(chips.length ? chips : [translateUi("Manifest")]).map((chip) => <span key={chip}>{chip}</span>)}</span>;

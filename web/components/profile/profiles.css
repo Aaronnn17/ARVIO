@@ -6,7 +6,8 @@
 .profile-dialog-error { flex-basis: 100%; margin: 0 0 4px; color: #ffb4ab; font-size: 14px; }
 .profile-delete-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; width: 100%; }
 .profile-delete-confirm p { flex: 1 1 260px; margin: 0; color: #f1d4d0; font-size: 14px; line-height: 1.45; }
-.profile-delete-confirm .primary.danger { background: #b3261e; color: #fff; border-color: #b3261e; }
+.profile-delete-confirm .primary.danger { background: #b3261e; color: #fff !important; border-color: #b3261e; }
+.profile-delete-confirm .primary.danger svg { color: #fff; }
 
 /* Collapsible avatar groups. */
 .profile-edit-dialog details.avatar-category > summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 0 4px; cursor: pointer; list-style: none; border-radius: 8px; font-size: 14px; }

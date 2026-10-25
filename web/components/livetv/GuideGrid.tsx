@@ -297,7 +297,7 @@ const GuideRow = memo(function GuideRow({ channel, favorite, guide, settled, sel
         })}
         {programs.length === 0 && (settled || guide
           ? <span className="livetv-guide-empty">{translateUi("No guide data")}</span>
-          : <span className="livetv-guide-skeleton" aria-label={translateUi("Loading guide")}><i /><i /><i /></span>)}
+          : <span className="livetv-guide-skeleton" aria-hidden="true"><i /><i /><i /></span>)}
         {nowOffset >= 0 && nowOffset <= totalWidth && <i className="livetv-guide-nowline" style={{ left: `${nowOffset}px` }} />}
       </div>
     </div>
