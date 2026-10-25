@@ -167,7 +167,7 @@ export function AddonInstaller() {
       <div className="addon-install-row">
         <input id={inputId} value={url} onChange={(event) => { setUrl(event.target.value); setError(null); setPreview(null); }} autoCapitalize="none" autoCorrect="off" spellCheck={false}
           inputMode="url" placeholder="https://addon.example.com/manifest.json" aria-describedby={`${inputId}-help`} aria-invalid={Boolean(error)} />
-        <button type="submit" className="primary" disabled={loading || !url.trim()}>{loading && !preview ? translateUi("Checking…") : translateUi("Continue")}</button>
+        <button type="submit" className="primary" disabled={loading || !url.trim()}>{loading && !preview ? translateUi("Checking...") : translateUi("Continue")}</button>
       </div>
       <small id={`${inputId}-help`}>{translateUi("Paste a Stremio-compatible addon link. You'll see what it provides before anything is installed.")}</small>
       {error && <p className="addon-error" role="alert">{errorText(error)}</p>}
