@@ -291,3 +291,15 @@ html.no-hover .tv-sports-row-heading select {
     padding-right: max(clamp(20px, 3vw, 48px), env(safe-area-inset-right));
   }
 }
+
+/* ============ Announced-only focus targets ============ */
+/* After a view change (lib/tvNav focusAfterViewChange) and via the skip link,
+   focus lands on the screen's heading or main region so it is announced. They
+   are not controls, so they show no ring (Chrome treats that programmatic
+   focus as :focus-visible and drew a white box round the landing title). */
+h1[tabindex="-1"]:focus,
+h2[tabindex="-1"]:focus,
+main[tabindex="-1"]:focus,
+.content[tabindex="-1"]:focus {
+  outline: none !important;
+}
