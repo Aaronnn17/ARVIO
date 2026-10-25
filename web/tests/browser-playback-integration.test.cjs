@@ -167,7 +167,11 @@ function extracted(relative, selector, globals) {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
   }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(code, { module, Error, Event, DOMException, AbortController, console, ...globals }, { filename });
+  // Player status/hop bookkeeping that these harnesses do not exercise.
+  const playerDefaults = { setBootStatus: () => {}, autoSourceHopsRef: { current: 0 }, sourceListRef: { current: [] },
+    browserAutoplayCandidates: () => [], diagnoseSourceFailure: async () => null, setEnded: () => {},
+    onAdvanceRef: { current: async () => false }, upNextShownRef: { current: false } };
+  vm.runInNewContext(code, { module, Error, Event, DOMException, AbortController, console, ...playerDefaults, ...globals }, { filename });
   return module.exports;
 }
 

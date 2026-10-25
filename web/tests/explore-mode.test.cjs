@@ -27,7 +27,8 @@ test('the hosted app renders for signed-in accounts and asks for Premium only at
   assert.match(store, /premiumAllows\("play", headedExternal \? undefined : \(\) => playStream\(stream, options\)\)/);
   assert.match(store, /premiumAllows\("live", \(\) => \{ void playChannel\(channel\); \}\)/);
   assert.match(store, /premiumAllows\("live", \(\) => playCatchup\(channel, program\)\)/);
-  const details = read('components/details/DetailsDrawer.tsx');
+  // The source picker (play/external/copy/download) lives beside the details view.
+  const details = read('components/details/DetailsDrawer.tsx') + read('components/details/SourcePicker.tsx');
   for (const intent of ['play', 'external', 'copy', 'download']) assert.ok(details.includes(`premiumAllows("${intent}"`), `details screen gates ${intent}`);
   // The VLC action resumes itself after paying from the offer.
   assert.ok(read('components/livetv/LiveTvScreen.tsx').includes('premiumAllows("live", () => openExternally(channel, player))'));

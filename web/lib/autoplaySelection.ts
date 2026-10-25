@@ -92,7 +92,28 @@ export function orderByPreference(candidates: StreamSource[], preference: Autopl
 }
 
 /** true = verified playable, false = verified NOT playable, null = unknown. */
-export type CandidateVerifier = (candidates: StreamSource[], budgetMs: number, signal: AbortSignal) => Promise<Map<StreamSource, boolean | null>>;
+export type CandidateVerifier = (
+  candidates: StreamSource[],
+  budgetMs: number,
+  signal: AbortSignal,
+  /** Optional progressive report: each candidate's verdict as soon as it is known. */
+  onVerdict?: (stream: StreamSource, verdict: boolean | null) => void
+) => Promise<Map<StreamSource, boolean | null>>;
+
+/**
+ * The candidate to start, given the verdicts known so far, or undefined while
+ * that is still open: walk the order best-first, skip verified failures, stop
+ * at the first candidate that passed or is inconclusive. A pending verdict
+ * ahead of it means "wait" — a lower-ranked pass never jumps the queue.
+ */
+export function decidedCandidate(head: StreamSource[], verdicts: Map<StreamSource, boolean | null>) {
+  for (const stream of head) {
+    if (!verdicts.has(stream)) return undefined;
+    if (verdicts.get(stream) === false) continue;
+    return stream;
+  }
+  return null;
+}
 
 export type AutoplaySelectionOptions = {
   /** Current browser autoplay candidates, best first (re-read on every poll). */
@@ -180,10 +201,20 @@ export async function chooseAutoplaySource(options: AutoplaySelectionOptions): P
   const probe = new AbortController();
   const abortProbe = () => probe.abort();
   signal?.addEventListener("abort", abortProbe, { once: true });
+  const progressive = new Map<StreamSource, boolean | null>();
+  // Resolves the moment the best-ranked candidate is decided (it passed, or
+  // everything ahead of it failed): no waiting for slower probes or the budget.
+  let decide: (() => void) | undefined;
+  const decided = new Promise<void>((resolve) => { decide = resolve; });
+  const onVerdict = (stream: StreamSource, verdict: boolean | null) => {
+    progressive.set(stream, verdict);
+    if (decidedCandidate(head, progressive) !== undefined) decide?.();
+  };
   try {
     verdicts = await Promise.race([
-      options.verify(head, budget, probe.signal).catch(() => new Map<StreamSource, boolean | null>()),
-      sleep(budget + 250, probe.signal).then(() => new Map<StreamSource, boolean | null>())
+      options.verify(head, budget, probe.signal, onVerdict).catch(() => new Map<StreamSource, boolean | null>()),
+      decided.then(() => new Map(progressive)),
+      sleep(budget + 250, probe.signal).then(() => new Map(progressive))
     ]);
   } finally {
     // Never leave probes holding connections once playback is about to start.

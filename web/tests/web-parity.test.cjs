@@ -15,7 +15,7 @@ test('addon outboxes are account scoped and refuse a false saved state when stor
  assert.throws(()=>broken.queueAddons(a,[],'p'),/storage is full/);
 });
 test('browser autoplay rejects external and uncached sources and prefers direct playback',()=>{
- const api=load('lib/browserAutoplay.ts',{'./debrid':{isUncachedDebridStream:s=>s.uncached},'./streamCompatibility':{playbackPlan:s=>({route:s.external?'external':'here',method:s.method??'direct'})},'./sourceRank':{sourcePickerScore:s=>s.score??0}});
+ const api=load('lib/browserAutoplay.ts',{'./debrid':{isUncachedDebridStream:s=>s.uncached},'./streamCompatibility':{playbackPlan:s=>({route:s.external?'external':'here',method:s.method??'direct'})},'./sourceRank':load('lib/sourceRank.ts',{'./debrid':{parseDebridStream:()=>null,isUncachedDebridStream:s=>!!s.uncached},'./streamCompatibility':{playbackPlan:s=>({route:s.external?'external':'here',method:s.method??'direct'}),audioDecodableForDevice:()=>true,videoDecodableForDevice:()=>true,isDirectPlayableStream:()=>true,isBrowserPlayableStream:()=>true}})});
  const sources=[{url:'transcode',method:'transcode',score:100},{url:'external',external:true},{url:'torrent',uncached:true},{url:'direct'},{url:'remux',method:'remux'},{url:'direct'}];
  assert.equal(Array.from(api.browserAutoplayCandidates(sources),s=>s.url).join(','),'direct,remux,transcode');
  assert.equal(Array.from(api.browserAutoplayCandidates(sources,new Set(['direct'])),s=>s.url).join(','),'remux,transcode');
