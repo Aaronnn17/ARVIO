@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { appCss } = require('./app-styles.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
@@ -39,7 +40,7 @@ async function main() {
       build.onResolve({ filter: /^@\// }, args => ({ path: path.join(root, args.path.slice(2) + '.ts') }));
     } }]
   });
-  const css = fs.readFileSync(path.join(root, 'app/globals.css'));
+  const css = appCss(root);
   const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', req.url === '/app.js' ? 'text/javascript' : req.url === '/style.css' ? 'text/css' : 'text/html');
     res.end(req.url === '/app.js' ? built.outputFiles[0].contents : req.url === '/style.css' ? css

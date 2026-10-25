@@ -1,4 +1,5 @@
 const path = require('node:path');
+const { appCss } = require('./app-styles.cjs');
 const fs = require('node:fs');
 const http = require('node:http');
 const assert = require('node:assert/strict');
@@ -32,7 +33,7 @@ const { chromium } = require('@playwright/test');
       catch { res.writeHead(502); return res.end('{}'); }
     }
     if (req.url === '/app.js') { res.setHeader('content-type', 'application/javascript'); return res.end(fs.readFileSync(path.join(out, 'app.js'))); }
-    if (req.url === '/globals.css') { res.setHeader('content-type', 'text/css'); return res.end(fs.readFileSync(path.join(root, 'app/globals.css'))); }
+    if (req.url === '/globals.css') { res.setHeader('content-type', 'text/css'); return res.end(appCss(root)); }
     if (req.url.startsWith('/api/tmdb/')) {
       const url = new URL(req.url, 'http://localhost'); const page = Number(url.searchParams.get('page') || 1); const tv = url.pathname.includes('/tv');
       res.setHeader('content-type', 'application/json');

@@ -1,3 +1,29 @@
+/* Addons screen and addon manager. Imported by AddonsScreen.tsx and
+   AddonManager.tsx. */
+
+.section-heading .eyebrow {
+  margin-bottom: 6px;
+  color: var(--soft);
+  font-size: 20px;
+}
+@media (max-width: 680px) {
+
+  .section-heading {
+    padding: 16px var(--phone-gutter) 16px;
+  }
+
+  .section-heading .eyebrow {
+    font-size: 13px;
+    margin-bottom: 4px;
+    letter-spacing: 0.02em;
+  }
+}
+.source-setup-panel { margin: 0 64px 24px; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface, #111); }
+.addon-install-help { margin: 8px 64px 24px; color: var(--muted); font-size: 13px; }
+@media (max-width: 900px) {
+  .source-setup-panel, .addon-install-help { margin-inline: 24px; }
+}
+
 /* Addon manager (Addons screen; reusable from Settings). */
 .addon-manager { display: grid; gap: 22px; max-width: 920px; }
 .addons-intro { margin: 6px 0 0; color: #a8adb3; font-size: 14px; line-height: 1.5; max-width: 640px; }

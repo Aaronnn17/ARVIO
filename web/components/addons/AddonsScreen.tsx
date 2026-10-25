@@ -1,4 +1,5 @@
 "use client";
+import "./addons.css";
 import { useTranslation } from "@/lib/i18n";
 
 import { Server, Tv } from "lucide-react";

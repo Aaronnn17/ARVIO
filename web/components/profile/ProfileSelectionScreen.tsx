@@ -1,4 +1,5 @@
 "use client";
+import "./profiles.css";
 import { useTranslation } from "@/lib/i18n";
 
 

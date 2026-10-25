@@ -1,4 +1,5 @@
 "use client";
+import "@/app/premium.css";
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Sparkles, X } from "lucide-react";

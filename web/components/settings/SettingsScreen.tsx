@@ -2,6 +2,7 @@
 // Settings. Grouped sections, a search across every setting, and a badge on
 // each row saying where it applies, so ARVIO Web can be used to set up the
 // Android and TV app too (settings sync through ARVIO Cloud).
+import "@/app/settings.css";
 
 import {
   Bot,
