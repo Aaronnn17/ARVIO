@@ -100,6 +100,20 @@ class IptvCloudFieldsTest {
         assertEquals(400, JSONObject(prefs[stringPreferencesKey("cloud_sync_field_ts")]!!).getInt("i:p1:channelOrder"))
     }
 
+    @Test fun webCategoryNamesAreATimestampedFieldThatSurvivesAStalePush() {
+        val names = JSONObject().put("list_1|News", "Headlines")
+        val web = payload(listOf("a"), 100)
+        web.getJSONObject("iptvByProfile").getJSONObject("p1").put("groupNames", names)
+        web.getJSONObject("fieldUpdatedAt").put("i:p1:groupNames", 300)
+        assertTrue("i:p1:groupNames" in IptvCloudFields.keys(web))
+        val stale = payload(listOf("a"), 100)
+        assertEquals(setOf("i:p1:groupNames"), IptvCloudFields.merge(stale, web))
+        assertEquals(names.toString(), IptvCloudFields.value(stale, "i:p1:groupNames").toString())
+        val prefs = mutablePreferencesOf()
+        IptvCloudFields.stamp(prefs, "p1", JSONObject().put("groupNames", JSONObject()), 400)
+        assertEquals(400, JSONObject(prefs[stringPreferencesKey("cloud_sync_field_ts")]!!).getInt("i:p1:groupNames"))
+    }
+
     private fun payload(ids: List<String>, time: Long) = JSONObject()
         .put("iptvByProfile", JSONObject().put("p1", JSONObject().put("playlists", JSONArray(ids))))
         .put("fieldUpdatedAt", JSONObject().put("i:p1:playlists", time))

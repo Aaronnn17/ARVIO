@@ -613,7 +613,7 @@ private fun GroupPlankTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val displayLabel = liveCategoryLabel(category.playlistGroupName ?: category.label)
+    val displayLabel = liveCategoryDisplayLabel(category, category.playlistGroupName ?: category.label)
     val channelsSubtitle = stringResource(R.string.live_channels_count, category.count)
     val plankDescription = "$displayLabel, $channelsSubtitle"
 
