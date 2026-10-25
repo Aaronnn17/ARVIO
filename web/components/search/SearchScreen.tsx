@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, History, LoaderCircle, RotateCw, Search, User, X } from 'lucide-react';
 import { useTranslation } from '@/lib/i18n';
-import { useApp } from '@/lib/store';
+import { useAppPick } from '@/lib/store';
 import { useKidsFilter } from '@/lib/useKids';
 import { loadStored, saveStored } from '@/lib/storage';
 import { discoverTitlesPage, getPersonDetails, searchTitlesPage, tmdb, mapTmdbItem, type SearchPerson } from '@/lib/tmdb';
@@ -71,7 +71,7 @@ function loadDiscoverRows(language: string) {
 
 export function SearchScreen() {
   const translateUi = useTranslation();
-  const { query, setQuery, openDetails, settings, activeProfile } = useApp();
+  const { query, setQuery, openDetails, settings, activeProfile } = useAppPick("query", "setQuery", "openDetails", "settings", "activeProfile");
   const kids = useKidsFilter();
   const phone = usePhone();
   const posterMode = settings.cardLayoutMode === 'poster' || phone;

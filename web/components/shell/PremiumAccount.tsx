@@ -3,7 +3,7 @@ import { useTranslation } from "@/lib/i18n";
 
 import { BadgeCheck, Copy, ExternalLink, Gift } from "lucide-react";
 import { useEffect, useState } from "react";
-import { authClient, useApp } from "@/lib/store";
+import { authClient, useAppPick } from "@/lib/store";
 import { useEntitlement } from "@/lib/entitlementContext";
 import { ENTITLEMENT_REFRESH_EVENT, fetchReferralStatus, kofiYearlyUrl, type EntitlementState, type ReferralStatus } from "@/lib/entitlement";
 import { accessEndsAt } from "@/lib/entitlementPolicy";
@@ -14,7 +14,7 @@ import { MembershipCheckout } from "./MembershipCheckout";
 // "Give a month, get a month": the account's invite link.
 function InviteFriends() {
   const translateUi = useTranslation();
-  const { auth } = useApp();
+  const { auth } = useAppPick("auth");
   const [status, setStatus] = useState<ReferralStatus | null>(null);
   const [failed, setFailed] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -46,7 +46,7 @@ function InviteFriends() {
 
 export function PremiumAccount() {
   const translateUi = useTranslation();
-  const { auth } = useApp();
+  const { auth } = useAppPick("auth");
   const entitlement = useEntitlement();
   const [state, setState] = useState(entitlement);
   const [message, setMessage] = useState("");

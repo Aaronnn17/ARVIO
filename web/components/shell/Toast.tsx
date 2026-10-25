@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useTranslation } from "@/lib/i18n";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { toastPoliteness } from "@/lib/toastPoliteness";
 
 /**
@@ -12,7 +12,7 @@ import { toastPoliteness } from "@/lib/toastPoliteness";
  */
 export function Toast() {
   const translateUi = useTranslation();
-  const { toast, setToast } = useApp();
+  const { toast, setToast } = useAppPick("toast", "setToast");
   useEffect(() => {
     if (!toast) return undefined;
     const timer = window.setTimeout(() => setToast(null), toastPoliteness(toast) === "assertive" ? 6000 : 3200);

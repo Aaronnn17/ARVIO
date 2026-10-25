@@ -13,7 +13,7 @@ import {
   addonServesStreams, effectiveProviderOrder, integrationOrder, knownProviders, parseIdList,
   providerOrderForAddons, resortProviderOrder, serializeIdList, type IntegrationType, type SourceProvider,
 } from "@/lib/sourceOrder";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import type { InstalledAddon } from "@/lib/types";
 import { SortableList } from "../SortableList";
 import { Empty, Group, ScopeBadge, SectionHeader, Toggle, safeArray } from "../ui";
@@ -27,7 +27,7 @@ function addonTags(addon: InstalledAddon) {
 
 export function AddonsSection() {
   const translateUi = useTranslation();
-  const { addons, removeAddon, setAddonsState, setToast, settings, updateSettings } = useApp();
+  const { addons, removeAddon, setAddonsState, setToast, settings, updateSettings } = useAppPick("addons", "removeAddon", "setAddonsState", "setToast", "settings", "updateSettings");
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const list = safeArray(addons);
 

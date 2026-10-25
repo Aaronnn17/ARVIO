@@ -4,7 +4,7 @@ import { ChevronRight } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
 import { defaultCatalogs } from "@/lib/catalogs";
 import type { Category, MediaItem } from "@/lib/types";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { useKidsFilter } from "@/lib/useKids";
 import { MediaCard } from "./MediaCard";
 import { RailScroller } from "./RailScroller";
@@ -27,7 +27,7 @@ export function MediaRail({ category, onOpen, onFocus, posterMode, onViewAll }: 
   /** Shown when the row has more titles than it displays: opens the full grid. */
   onViewAll?: () => void;
 }) {
-  const { settings } = useApp();
+  const { settings } = useAppPick("settings");
   const kids = useKidsFilter();
   const translateUi = useTranslation();
   // Kids profiles: only titles rated for the profile's age; a row nothing survives in is hidden.

@@ -12,7 +12,7 @@ const evidence = path.resolve(root, '../artifacts/ui-refinement-web');
 const { APP_SHEETS: styles } = require('./app-styles.cjs');
 
 function extract(file, predicate) {
-  const source = ts.createSourceFile(file, fs.readFileSync(path.join(root, file), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const source = ts.createSourceFile(file, require('../tests/sources.cjs').sourceOf(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const matches = [];
   function visit(node) {
     if (predicate(node)) matches.push(node);
@@ -31,7 +31,7 @@ async function main() {
   const seasonTabs = extract('components/details/DetailsDrawer.tsx', withClass('season-tabs'));
   const select = extract('components/settings/ui.tsx', node => ts.isFunctionDeclaration(node) && node.name?.text === 'Select').replace(/^export /, '');
   const stubs = {
-    '@/lib/store': `export const useApp = () => ({ activeContextMenu: {
+    '@/lib/store': `export const useAppPick = () => useApp(); export const useAppSelector = (select) => select(useApp()); export const useApp = () => ({ activeContextMenu: {
       title: 'Episode options', position: { x: 32, y: 32 }, actions: [
         { id: 'play', label: 'Play Episode', action: () => window.actions.push('menu-play') },
         { id: 'watched', label: 'Mark as Watched', action: () => window.actions.push('watched') }

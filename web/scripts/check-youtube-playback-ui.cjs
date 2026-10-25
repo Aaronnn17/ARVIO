@@ -35,7 +35,7 @@ async function main() {
     plugins: [{ name: 'isolated-test-account', setup(build) {
       build.onResolve({ filter: /^@\/lib\/(store|cloud)$/ }, args => ({ path: args.path, namespace: 'mock' }));
       build.onLoad({ filter: /.*/, namespace: 'mock' }, args => ({ contents: args.path.endsWith('store')
-        ? `export const authClient = { session: { userId: 'test-account' } }; export const useApp = () => ({ activeProfile: { id: 'test-profile' }, addons: [] });`
+        ? `export const authClient = { session: { userId: 'test-account' } }; export const useApp = () => ({ activeProfile: { id: 'test-profile' }, addons: [] }); export const useAppPick = () => useApp(); export const useAppSelector = (select) => select(useApp());`
         : `export async function saveProgress(auth, entry, profileId) { window.saved.push({ entry, profileId }); }` }));
       build.onResolve({ filter: /^@\// }, args => ({ path: path.join(root, args.path.slice(2) + '.ts') }));
     } }]
