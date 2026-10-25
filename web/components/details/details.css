@@ -2123,3 +2123,16 @@
   .details-drawer .detail-title-text { font-size: clamp(36px, 10vw, 54px); }
   .detail-reviews .review-card { padding: 14px; }
 }
+
+/* Phones: long translations (German, Finnish, ...) wrap inside the action
+   buttons instead of running out of them. */
+@media (max-width: 680px) {
+  .details-drawer .detail-actions .primary,
+  .details-drawer .detail-actions .secondary {
+    min-width: 0;
+    white-space: normal;
+    line-height: 1.2;
+    text-align: center;
+  }
+  .details-drawer .detail-actions .secondary span { white-space: normal; }
+}

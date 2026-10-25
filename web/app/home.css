@@ -429,3 +429,18 @@
 .view-all-page .view-all-grid .media-card,
 .view-all-page .view-all-grid .media-card.is-poster { width: 100%; min-width: 0; max-width: none; }
 .view-all-page .collection-page-body { overflow-y: auto; }
+
+/* Long translations: "View all" never breaks across lines, and on phones the
+   billboard buttons wrap their label instead of running into their edge. */
+.rail-head .rail-view-all-link { flex-shrink: 0; white-space: nowrap; }
+.rail-head h3 { min-width: 0; }
+@media (max-width: 680px) {
+  .home-screen .hero-actions .primary,
+  .home-screen .hero-actions .secondary {
+    min-width: 0;
+    white-space: normal;
+    line-height: 1.15;
+    text-align: center;
+  }
+  .home-screen .hero-actions .secondary span { white-space: normal; }
+}
