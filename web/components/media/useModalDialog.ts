@@ -38,8 +38,10 @@ export function useModalDialog(ref: RefObject<HTMLDialogElement | null>, { open,
     dialog.addEventListener("focusin", remember);
     if (open) {
       closing.current = false;
-      if (!dialog.open) dialog.showModal();
+      // Read before showModal: the browser's own initial focus (sometimes the
+      // scroll container) fires focusin and would be mistaken for the user's.
       const previous = lastInside.current;
+      if (!dialog.open) dialog.showModal();
       const target = previous?.isConnected && dialog.contains(previous)
         ? previous
         : dialog.querySelector<HTMLElement>("[data-autofocus]") ?? dialog.querySelector<HTMLElement>("button, [href], [tabindex]:not([tabindex='-1'])");
