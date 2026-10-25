@@ -75,7 +75,11 @@
   font-weight: 600;
   cursor: pointer;
 }
-.livetv-chipbtn:hover { background: rgba(255, 255, 255, 0.1); }
+@media (hover: hover) and (pointer: fine) {
+  .livetv-chipbtn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+}
 .is-spinning { animation: livetv-spin 1s linear infinite; }
 
 /* Playlist management */
@@ -127,7 +131,12 @@
   color: rgba(255, 255, 255, 0.6);
   cursor: pointer;
 }
-.livetv-manage-remove:hover { background: rgba(229, 9, 20, 0.25); color: #fff; }
+@media (hover: hover) and (pointer: fine) {
+  .livetv-manage-remove:hover {
+    background: rgba(229, 9, 20, 0.25);
+    color: #fff;
+  }
+}
 .livetv-warning {
   display: flex;
   flex-direction: column;
@@ -187,7 +196,12 @@
   text-align: left;
   cursor: pointer;
 }
-.livetv-cats button:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
+@media (hover: hover) and (pointer: fine) {
+  .livetv-cats button:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+  }
+}
 .livetv-cats button.is-active { background: rgba(255, 255, 255, 0.12); color: #fff; font-weight: 700; }
 .livetv-cats button span {
   flex: 1;
@@ -203,9 +217,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 34px;
 }
-.livetv-list-head h3 { font-size: 17px; font-weight: 700; }
+.livetv-list-head h3 { font-weight: 700; }
 .livetv-list-head > span { font-size: 12.5px; color: rgba(255, 255, 255, 0.45); }
 .livetv-group-actions { display: flex; gap: 6px; margin-left: auto; }
 .livetv-group-actions button {
@@ -233,17 +246,20 @@
   display: flex;
   align-items: stretch;
   gap: 4px;
-  border-radius: 12px;
   transition: background 0.12s ease;
 }
-.livetv-row:hover, .livetv-row.is-selected { background: rgba(255, 255, 255, 0.06); }
+.livetv-row.is-selected { background: rgba(255, 255, 255, 0.06); }
+@media (hover: hover) and (pointer: fine) {
+  .livetv-row:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
 .livetv-row-main {
   display: flex;
   align-items: center;
   gap: 12px;
   flex: 1;
   min-width: 0;
-  min-height: 62px;
   padding: 8px 10px;
   border: 0;
   border-radius: 12px;
@@ -258,12 +274,10 @@
   place-items: center;
   width: 52px;
   height: 40px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
   color: rgba(255, 255, 255, 0.4);
   overflow: hidden;
 }
-.livetv-row-logo img { width: 100%; height: 100%; object-fit: contain; padding: 3px; }
+.livetv-row-logo img { width: 100%; height: 100%; padding: 3px; }
 .livetv-row-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .livetv-quality {
   flex: 0 0 auto;
@@ -327,7 +341,11 @@
   color: rgba(255, 255, 255, 0.35);
   cursor: pointer;
 }
-.livetv-row-star:hover { color: #fff; }
+@media (hover: hover) and (pointer: fine) {
+  .livetv-row-star:hover {
+    color: #fff;
+  }
+}
 .livetv-row-star.is-active { color: var(--gold, #f5c518); }
 
 /* Detail panel */
@@ -379,13 +397,9 @@
 .livetv-detail-actions { display: flex; gap: 8px; margin-top: 4px; }
 .livetv-detail-actions .primary,
 .livetv-detail-actions .secondary {
-  flex: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-height: 44px;
-  border-radius: 12px;
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
@@ -571,11 +585,7 @@
   display: flex;
   align-items: center;
   padding: 0 10px;
-  border-radius: 8px;
   background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 12.5px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -628,7 +638,11 @@
   text-align: left;
   cursor: pointer;
 }
-.livetv-catchup-row:hover { background: rgba(255, 255, 255, 0.09); }
+@media (hover: hover) and (pointer: fine) {
+  .livetv-catchup-row:hover {
+    background: rgba(255, 255, 255, 0.09);
+  }
+}
 .livetv-catchup-row > svg:first-child { flex: 0 0 auto; color: rgba(255, 255, 255, 0.45); }
 .livetv-catchup-row > svg:last-child { flex: 0 0 auto; opacity: 0.6; }
 .livetv-catchup-row span { flex: 1; min-width: 0; }
@@ -868,7 +882,6 @@
   .tv-guide-workspace .livetv-detail h2 { font-size: 22px; }
   .tv-guide-workspace .livetv-detail { padding: 8px 4px 12px; }
   .tv-guide-workspace .livetv-detail { height: auto; }
-  .tv-guide-workspace .livetv-guide-channel strong { font-size: 13px; }
   .tv-guide-workspace .livetv-detail-art { display: block; grid-column: 1; grid-row: auto; width: 100%; max-height: 210px; }
   .tv-guide-workspace .livetv-detail-art:not(.has-live-playback) { display: none; }
   .tv-sports h2 { font-size: 24px; padding-inline: 12px; }
@@ -916,9 +929,14 @@
 .livetv-guide-channel-cell { position: sticky; left: 0; z-index: 3; flex: 0 0 var(--guide-channel-width, 232px); display: flex; min-width: 0; background: #080808; }
 .tv-guide-workspace .livetv-guide-channel-cell .livetv-guide-channel { position: relative; left: auto; flex: 1 1 auto; min-width: 0; margin-inline-end: 4px; padding-inline-end: 30px; }
 .livetv-guide-star { position: absolute; inset-inline-end: 8px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #8a8f96; cursor: pointer; z-index: 1; }
-.livetv-guide-star:hover { color: #fff; background: #ffffff1a; }
+@media (hover: hover) and (pointer: fine) {
+  .livetv-guide-star:hover {
+    color: #fff;
+    background: #ffffff1a;
+  }
+}
 .livetv-guide-star.is-active { color: var(--gold, #f5c518); }
-@media (hover: hover) { .livetv-guide-row:not(:hover) .livetv-guide-star:not(.is-active) { opacity: 0; } }
+@media (hover: hover) and (pointer: fine) { .livetv-guide-row:not(:hover) .livetv-guide-star:not(.is-active) { opacity: 0; } }
 .livetv-guide-row.is-playing .livetv-guide-channel { box-shadow: inset 3px 0 0 #56d8c5; }
 .livetv-guide-playing { color: #56d8c5; flex-shrink: 0; }
 
@@ -956,7 +974,12 @@
 .livetv-manage-head { display: flex; align-items: center; gap: 10px; }
 .livetv-manage-head h3 { margin: 0 auto 0 0; font-size: 18px; }
 .livetv-manage-icon { width: 36px; height: 36px; display: grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 50%; background: #ffffff12; color: #ddd; }
-.livetv-manage-icon:hover { background: #ffffff24; color: #fff; }
+@media (hover: hover) and (pointer: fine) {
+  .livetv-manage-icon:hover {
+    background: #ffffff24;
+    color: #fff;
+  }
+}
 .livetv-manage-name em { overflow-wrap: anywhere; }
 .livetv-manage-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: #e8c4c4; }
 .livetv-manage-confirm button { min-height: 34px; padding: 4px 12px; }
@@ -999,7 +1022,13 @@
 .livetv-channel-menu header button { width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 50%; background: #ffffff14; color: #eee; }
 .livetv-channel-menu [role="menu"] { display: grid; gap: 2px; }
 .livetv-channel-menu [role="menuitem"] { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: #eee; font-size: 15px; text-align: start; }
-.livetv-channel-menu [role="menuitem"]:hover, .livetv-channel-menu [role="menuitem"]:focus-visible { background: #2a2d31; outline: none; }
+.livetv-channel-menu [role="menuitem"]:focus-visible { background: #2a2d31; outline: none; }
+@media (hover: hover) and (pointer: fine) {
+  .livetv-channel-menu [role="menuitem"]:hover {
+    background: #2a2d31;
+    outline: none;
+  }
+}
 .livetv-channel-menu [role="menuitem"]:disabled { opacity: 0.4; }
 
 /* Fullscreen zap overlays sit above the player (z-index 100). */

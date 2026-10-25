@@ -14,7 +14,11 @@
 .calendar-source-menu small { opacity:.7; font-size:13px; }
 .calendar-menu-source-icon,.calendar-menu-check { display:grid; place-items:center; width:22px; height:22px; flex-shrink:0; }
 .calendar-menu-source-icon img { width:22px; height:22px; object-fit:contain; }
-.library-calendar .calendar-source-menu button:hover:not(:focus) { background:#292c30; }
+@media (hover: hover) and (pointer: fine) {
+  .library-calendar .calendar-source-menu button:hover:not(:focus) {
+    background:#292c30;
+  }
+}
 .library-calendar .calendar-source-trigger:focus-visible,.library-calendar .calendar-source-menu button:focus { background:#fff; color:#080808; outline:0; }
 .calendar-month-controls:dir(rtl) svg { transform:scaleX(-1); }
 .calendar-source-legend { display:flex; align-items:center; gap:18px; color:var(--calendar-muted); font-size:16px; }
@@ -146,7 +150,7 @@
  .calendar-day-entries { display:none; }
  .calendar-day-count { display:block; align-self:flex-end; font-size:10px; font-weight:600; padding:1px 5px; border-radius:10px; background:rgba(0,0,0,.6); color:#fff; }
  .calendar-day.is-selected.has-releases { background:#fff; }
- .calendar-day.is-selected .calendar-day-count { color:#080808; background:#dce6ec; }
+ .calendar-day.is-selected .calendar-day-count { color:#080808; }
  .calendar-day-selected-art { display:block; position:absolute; bottom:4px; left:4px; width:calc(100% - 8px); height:30px; border-radius:3px; object-fit:cover; }
  .calendar-day.is-selected .calendar-day-count { position:absolute; inset-inline-end:4px; bottom:4px; background:#fff; }
  .calendar-day-art,.calendar-day:dir(rtl) .calendar-day-art { width:100%; mask-image:linear-gradient(to bottom,transparent,#000); }

@@ -18,7 +18,15 @@
 
 /* The quiet entry point left after dismissing the banner (in the billboard). */
 .add-source-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 16px; border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 999px; background: rgba(0, 0, 0, 0.35); color: rgba(255, 255, 255, 0.9); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
-.add-source-chip:hover, .add-source-chip:focus-visible { border-color: #fff; color: #fff; outline: none; box-shadow: 0 0 0 3px var(--accent, #fff); }
+.add-source-chip:focus-visible { border-color: #fff; color: #fff; outline: none; box-shadow: 0 0 0 3px var(--accent, #fff); }
+@media (hover: hover) and (pointer: fine) {
+  .add-source-chip:hover {
+    border-color: #fff;
+    color: #fff;
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent, #fff);
+  }
+}
 .source-setup-warning { color: var(--text) !important; }
 
 /* Tablets: the billboard copy sits at the bottom, so the banner spans the top. */

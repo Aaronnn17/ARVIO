@@ -37,7 +37,11 @@
   font-size: 15px;
   cursor: pointer;
 }
-.login-back:hover { color: #fff; }
+@media (hover: hover) and (pointer: fine) {
+  .login-back:hover {
+    color: #fff;
+  }
+}
 .login-hero {
   position: relative;
   width: min(1180px, 100%);
@@ -109,11 +113,9 @@
   flex-direction: column;
   gap: 16px;
   padding: clamp(24px, 3vw, 34px);
-  border-radius: 20px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.07));
   border: 1px solid rgba(255, 255, 255, 0.16);
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.56);
-  backdrop-filter: blur(26px);
 }
 .login-error {
   margin: 0;

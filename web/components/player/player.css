@@ -8,7 +8,6 @@
   padding: max(28px, env(safe-area-inset-top)) 48px 28px;
   display: flex;
   justify-content: space-between;
-  background: none;
   pointer-events: none;
 }
 .player-top button {
@@ -67,10 +66,15 @@
   pointer-events: auto;
   transition: background 160ms ease, transform 160ms ease;
 }
-.player-icon-btn:hover,
 .player-icon-btn.is-active {
   background: rgba(255, 255, 255, 0.22);
   transform: scale(1.06);
+}
+@media (hover: hover) and (pointer: fine) {
+  .player-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.22);
+    transform: scale(1.06);
+  }
 }
 
 /* Center states */
@@ -112,7 +116,12 @@
   z-index: 2;
   transition: transform 160ms ease, background 160ms ease;
 }
-.player-bigplay:hover { transform: scale(1.08); background: rgba(0, 0, 0, 0.66); }
+@media (hover: hover) and (pointer: fine) {
+  .player-bigplay:hover {
+    transform: scale(1.08);
+    background: rgba(0, 0, 0, 0.66);
+  }
+}
 
 /* Bottom controls */
 .player-controls {
@@ -122,15 +131,9 @@
   bottom: 0;
   z-index: 3;
   padding: 24px clamp(20px, 3vw, 48px) max(clamp(16px, 2vh, 28px), env(safe-area-inset-bottom));
-  background: none;
   transition: opacity 250ms ease;
   display: grid;
   gap: 10px;
-}
-.player-controls-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
 }
 .player-time {
   font-size: 14px;
@@ -280,7 +283,6 @@
     linear-gradient(180deg, rgba(25, 30, 38, 0.95), rgba(5, 8, 12, 0.96)),
     rgba(0, 0, 0, 0.88);
   box-shadow: 0 26px 90px rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(22px);
   padding: 18px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -336,10 +338,15 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.player-panel-row:hover,
 .player-panel-row.is-active {
   border-color: color-mix(in srgb, var(--accent, #fff) 62%, transparent);
   background: rgba(255, 255, 255, 0.14);
+}
+@media (hover: hover) and (pointer: fine) {
+  .player-panel-row:hover {
+    border-color: color-mix(in srgb, var(--accent, #fff) 62%, transparent);
+    background: rgba(255, 255, 255, 0.14);
+  }
 }
 .player-row-icon {
   width: 32px;
@@ -530,8 +537,10 @@
   cursor: pointer;
   transition: background-color 0.18s ease;
 }
-.player-error-transcode:hover {
-  background: rgba(96, 205, 255, 0.24);
+@media (hover: hover) and (pointer: fine) {
+  .player-error-transcode:hover {
+    background: rgba(96, 205, 255, 0.24);
+  }
 }
 .player-panel-row.is-disabled {
   opacity: 0.45;
@@ -566,9 +575,13 @@
 
 /* Hovering anywhere in the (much taller) track wrapper grows the bar and
    reveals the thumb — the 3px bar itself is an awkward pointer target. */
-.player-controls .scrubber:hover,
-.scrubber-track:hover .scrubber,
 .scrubber-track:focus-within .scrubber { --scrubber-track-height: 9px; }
+@media (hover: hover) and (pointer: fine) {
+  .player-controls .scrubber:hover,
+  .scrubber-track:hover .scrubber {
+    --scrubber-track-height: 9px;
+  }
+}
 
 /* iOS renders the native track unless it is explicitly zeroed out. */
 .player-controls .scrubber::-webkit-slider-runnable-track {
@@ -594,17 +607,25 @@
   opacity: 1;
   transition: transform 0.12s ease, margin-top 0.12s ease;
 }
-.player-controls .scrubber:hover::-webkit-slider-thumb,
 .player-controls .scrubber:active::-webkit-slider-thumb,
-.scrubber-track:hover .scrubber::-webkit-slider-thumb,
 .scrubber-track:focus-within .scrubber::-webkit-slider-thumb { transform: scale(1.35); }
+@media (hover: hover) and (pointer: fine) {
+  .player-controls .scrubber:hover::-webkit-slider-thumb,
+  .scrubber-track:hover .scrubber::-webkit-slider-thumb {
+    transform: scale(1.35);
+  }
+}
 .player-controls .scrubber::-moz-range-track { background: transparent; height: 100%; border: 0; }
 .player-controls .scrubber::-moz-range-thumb {
   width: var(--scrubber-thumb-size); height: var(--scrubber-thumb-size); border: 0; border-radius: 999px; background: #fff;
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.6); opacity: 1;
 }
-.player-controls .scrubber:hover::-moz-range-thumb,
 .player-controls .scrubber:active::-moz-range-thumb { transform: scale(1.35); }
+@media (hover: hover) and (pointer: fine) {
+  .player-controls .scrubber:hover::-moz-range-thumb {
+    transform: scale(1.35);
+  }
+}
 
 /* Keyboard focus needs a visible ring — the thumb alone is not an indicator. */
 .player-controls .scrubber:focus-visible {
@@ -664,8 +685,12 @@
   text-align: left;
   cursor: pointer;
 }
-.player-setting-toggle:hover,
-.player-setting-row:hover { background: rgba(255, 255, 255, 0.05); }
+@media (hover: hover) and (pointer: fine) {
+  .player-setting-toggle:hover,
+  .player-setting-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+}
 .player-setting-toggle strong,
 .player-setting-row strong { display: block; font-size: 15px; font-weight: 600; }
 .player-setting-toggle em { display: block; font-size: 13px; color: rgba(255, 255, 255, 0.5); font-style: normal; margin-top: 2px; }
@@ -798,7 +823,11 @@
   font-size: 14px;
   cursor: pointer;
 }
-.player-error-external:hover { background: rgba(255, 255, 255, 0.16); }
+@media (hover: hover) and (pointer: fine) {
+  .player-error-external:hover {
+    background: rgba(255, 255, 255, 0.16);
+  }
+}
 .player-start-prompt{position:absolute;inset:0;z-index:15;display:grid;place-items:center;background:#0006;pointer-events:none}
 .player-start-prompt button{pointer-events:auto;min-width:140px;min-height:64px;font-size:20px;background:var(--accent,#fff);color:#000;border:0;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:12px}
 .player-overlay.player-docked { z-index: 40; border-radius: 4px; overflow: hidden; background: #080808; }

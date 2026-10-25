@@ -6,10 +6,7 @@
   inset: 0;
   z-index: 120;
   display: grid;
-  align-items: start;
-  justify-items: center;
   padding: clamp(12px, 2.2vh, 24px) clamp(14px, 3vw, 42px);
-  overflow: hidden;
 }
 .source-modal-bg {
   position: absolute;
@@ -30,36 +27,29 @@
   flex-direction: column;
   gap: 16px;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 22px;
   background:
     linear-gradient(180deg, rgba(27, 31, 38, 0.96), rgba(5, 7, 10, 0.98)),
     #050505;
   box-shadow: 0 34px 120px rgba(0, 0, 0, 0.68);
   padding: clamp(18px, 2.4vw, 30px);
-  overflow: hidden;
 }
 .source-panel-head {
   display: flex;
-  align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
 }
 .source-panel-head h2 {
   margin: 4px 0 6px;
   font-size: clamp(26px, 2.5vw, 42px);
-  line-height: 1.05;
 }
 .source-panel-head span {
   color: var(--muted);
   font-weight: 650;
 }
 .source-toolbar {
-  display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
 }
 .source-search {
-  min-width: 0;
   min-height: 50px;
   display: flex;
   align-items: center;
@@ -93,16 +83,9 @@
 }
 @media (max-width: 680px) {
 
-  .source-modal {
-    align-items: end;
-    padding: 0;
-  }
-
   .source-panel {
-    width: 100%;
     max-height: 88vh;
     height: 88vh;
-    border-radius: 22px 22px 0 0;
     padding: 18px 14px 16px;
   }
 }
@@ -124,17 +107,12 @@
 @media (max-width: 680px) {
 
   .source-panel {
-    width: 100%;
     height: 88dvh;
     max-height: 88dvh;
   }
 
   .source-panel-head {
     align-items: flex-start;
-  }
-
-  .source-panel-head span {
-    font-size: 12px;
   }
 }
 
@@ -153,10 +131,6 @@
     height: 94dvh;
     max-height: 94dvh;
     padding: 16px 12px 14px;
-  }
-
-  .source-panel-head h2 {
-    max-width: calc(100vw - 86px);
   }
 }
 
@@ -177,14 +151,8 @@
 .source-panel-head {
   align-items: flex-start !important;
 }
-.source-panel-head > div {
-  min-width: 0;
-}
 .source-panel-head h2 {
   max-width: min(1040px, calc(100vw - 160px)) !important;
-}
-.source-toolbar {
-  align-items: center;
 }
 @media (max-width: 980px) {
   .source-panel {
@@ -197,21 +165,11 @@
   }
 }
 @media (max-width: 680px) {
-  .source-modal {
-    align-items: end !important;
-    padding: 0 !important;
-  }
 
   .source-panel {
-    width: 100% !important;
     height: 92dvh !important;
     max-height: 92dvh !important;
-    border-radius: 22px 22px 0 0 !important;
     padding: 16px 12px 14px !important;
-  }
-
-  .source-panel-head h2 {
-    max-width: calc(100vw - 78px) !important;
   }
 }
 .source-modal {
@@ -346,7 +304,11 @@
 
 .src-row.is-active { border-color: rgba(255, 255, 255, 0.5); background: rgba(255, 255, 255, 0.1); }
 .src-row.tier-external { background: rgba(255, 255, 255, 0.025); }
-.src-row:hover { background: rgba(255, 255, 255, 0.08); }
+@media (hover: hover) and (pointer: fine) {
+  .src-row:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+}
 
 .src-row-main {
   flex: 1 1 auto;
@@ -476,7 +438,11 @@
 }
 
 .src-action.icon-only { padding: 0; width: 34px; }
-.src-action:hover { background: rgba(255, 255, 255, 0.16); }
+@media (hover: hover) and (pointer: fine) {
+  .src-action:hover {
+    background: rgba(255, 255, 255, 0.16);
+  }
+}
 
 .src-menu-wrap { position: relative; }
 
@@ -512,7 +478,11 @@
   cursor: pointer;
 }
 
-.src-menu button:hover { background: rgba(255, 255, 255, 0.1); }
+@media (hover: hover) and (pointer: fine) {
+  .src-menu button:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+}
 
 /* Source picker frame tweaks (the modal shell itself lives in globals.css). */
 .source-panel.src-panel { gap: 10px; }

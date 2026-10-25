@@ -23,7 +23,11 @@
   font-size: 15px;
   text-decoration: none;
 }
-.paywall-primary:hover { filter: brightness(1.06); }
+@media (hover: hover) and (pointer: fine) {
+  .paywall-primary:hover {
+    filter: brightness(1.06);
+  }
+}
 .paywall-trial,
 .paywall-link-toggle {
   display: inline-flex;
@@ -45,7 +49,11 @@
   font-weight: 650;
   font-size: 14px;
 }
-.paywall-trial:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); }
+@media (hover: hover) and (pointer: fine) {
+  .paywall-trial:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
 .paywall-trial:disabled { opacity: 0.6; cursor: default; }
 .paywall-link-toggle {
   margin-top: 18px;
@@ -96,7 +104,11 @@
   font-size: 13px;
   cursor: pointer;
 }
-.vlc-setup-hint button:hover { filter: brightness(1.06); }
+@media (hover: hover) and (pointer: fine) {
+  .vlc-setup-hint button:hover {
+    filter: brightness(1.06);
+  }
+}
 .login-card-title {
   margin: 0 0 8px;
   font-size: clamp(20px, 1.7vw, 26px);
@@ -198,7 +210,11 @@
 .membership-inline-hint strong { display: block; color: #ddd; overflow-wrap: anywhere; font-weight: 500; }
 .membership-inline-hint .paywall-link-toggle { margin: 4px 0; }
 .membership-return-link { display: flex; align-items: center; justify-content: center; gap: 6px; color: #bbb; font-size: 13px; margin-top: 18px; padding: 8px; }
-.membership-return-link:hover { color: #fff; }
+@media (hover: hover) and (pointer: fine) {
+  .membership-return-link:hover {
+    color: #fff;
+  }
+}
 .membership-checkout h2 { font-size: 23px; padding-right: 24px; margin-bottom: 16px; }
 .membership-checkout p { color: #bbb; font-size: 14px; line-height: 1.6; margin: 16px 0; overflow-wrap: anywhere; }
 .membership-checkout [role="status"] { display: flex; gap: 8px; align-items: center; }
@@ -219,7 +235,7 @@
 .premium-offer h2 { margin: 0 0 10px; padding-right: 28px; font-size: 22px; line-height: 1.3; letter-spacing: -.02em; }
 .premium-offer-eyebrow { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; color: #9adebf; font-size: 11px; font-weight: 600; letter-spacing: .14em; }
 .premium-offer-lead { margin: 0 0 16px; color: #aab0b6; font-size: 14px; line-height: 1.6; }
-.premium-offer-video { display: block; width: 100%; aspect-ratio: 16 / 9; margin: 0 0 18px; border: 1px solid #2e3337; border-radius: 10px; background: #000; object-fit: cover; }
+.premium-offer-video { display: block; width: 100%; aspect-ratio: 16 / 9; border: 1px solid #2e3337; border-radius: 10px; background: #000; object-fit: cover; }
 .premium-offer-plans { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .premium-offer-plans.single { grid-template-columns: minmax(0, 1fr); }
 .premium-offer-plan { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 16px; border: 1px solid #33383c; border-radius: 12px; background: #15191b; }

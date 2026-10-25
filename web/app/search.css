@@ -1,10 +1,3 @@
-/* Search screen. Imported by components/search/SearchScreen.tsx. */
-
-.search-hero {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent),
-    radial-gradient(circle at 74% 0%, rgba(0, 213, 136, 0.1), transparent 35%);
-}
 @media (max-width: 680px) {
 
   .search-hero {
@@ -116,7 +109,14 @@
   transform: translateY(-50%);
   cursor: pointer;
 }
-.search-screen .search-clear:hover, .search-screen .search-clear:focus-visible { background: rgba(255, 255, 255, 0.24); outline: none; box-shadow: 0 0 0 3px var(--accent, #fff); }
+.search-screen .search-clear:focus-visible { background: rgba(255, 255, 255, 0.24); outline: none; box-shadow: 0 0 0 3px var(--accent, #fff); }
+@media (hover: hover) and (pointer: fine) {
+  .search-screen .search-clear:hover {
+    background: rgba(255, 255, 255, 0.24);
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent, #fff);
+  }
+}
 
 /* Filter row: button pickers instead of native <select>s. */
 .search-screen .search-chips {
@@ -159,7 +159,11 @@
 }
 .search-screen .search-chip.is-set { background: #fff; color: #000; border-color: #fff; }
 .search-screen .search-chip .search-chip-label { opacity: 0.7; font-weight: 500; }
-.search-screen .search-chip:hover { border-color: rgba(255, 255, 255, 0.5); }
+@media (hover: hover) and (pointer: fine) {
+  .search-screen .search-chip:hover {
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+}
 .search-screen .search-chip:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent, #fff); }
 .search-screen .search-reset { background: none; color: rgba(255, 255, 255, 0.8); }
 

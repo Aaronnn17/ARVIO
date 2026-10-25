@@ -54,10 +54,6 @@ button {
 }
 .app-shell {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 72% 18%, rgba(255, 255, 255, 0.12), transparent 22%),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.94) 0%, rgba(0, 0, 0, 0.74) 34%, rgba(0, 0, 0, 0.26) 70%, rgba(0, 0, 0, 0.08) 100%),
-    #050505;
   overflow-x: hidden;
   width: 100%;
 }
@@ -90,13 +86,11 @@ button {
 .sidebar {
   position: fixed;
   inset: 0 0 auto;
-  z-index: 60;
   height: clamp(74px, 9.1vh, 98px);
   padding: 0 3.35vw;
   display: grid;
   grid-template-columns: minmax(150px, 16vw) 1fr minmax(92px, 10vw);
   align-items: center;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.74), rgba(0, 0, 0, 0.36), transparent);
   pointer-events: none;
 }
 .profile-cluster,
@@ -114,9 +108,7 @@ button {
   width: clamp(38px, 3.05vw, 58px);
   height: clamp(38px, 3.05vw, 58px);
   padding: 0;
-  border: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -152,19 +144,29 @@ button {
   width: clamp(19px, 1.45vw, 28px);
   height: clamp(19px, 1.45vw, 28px);
 }
-.nav-item:hover,
 .nav-item:focus-visible,
 .nav-item.is-active {
   outline: none;
   color: #fff;
   background: var(--chip-focus);
 }
+@media (hover: hover) and (pointer: fine) {
+  .nav-item:hover {
+    outline: none;
+    color: #fff;
+    background: var(--chip-focus);
+  }
+}
 
 /* Scale is a hover affordance only — a persistently scaled active tab would
    sit 1-2px off against its siblings. */
-.nav-item:hover,
 .nav-item:focus-visible {
   transform: scale(1.045);
+}
+@media (hover: hover) and (pointer: fine) {
+  .nav-item:hover {
+    transform: scale(1.045);
+  }
 }
 .top-right {
   justify-self: end;
@@ -184,13 +186,20 @@ button {
   cursor: pointer;
   transition: transform 160ms ease, background 160ms ease, color 160ms ease;
 }
-.settings-gear:hover,
 .settings-gear:focus-visible,
 .settings-gear.is-active {
   outline: none;
   color: #fff;
   background: var(--chip-focus);
   transform: scale(1.045);
+}
+@media (hover: hover) and (pointer: fine) {
+  .settings-gear:hover {
+    outline: none;
+    color: #fff;
+    background: var(--chip-focus);
+    transform: scale(1.045);
+  }
 }
 .content {
   min-height: 100vh;
@@ -244,17 +253,11 @@ button {
   display: flex;
   align-items: center;
   padding: clamp(140px, 16vh, 195px) 3.35vw clamp(145px, 20.2vh, 218px);
-  background-size: cover;
-  background-position: center right;
   overflow: hidden;
 }
 .hero::before {
   content: "";
   position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(90deg, rgba(0, 0, 0, 0.96) 0%, rgba(0, 0, 0, 0.76) 33%, rgba(0, 0, 0, 0.22) 72%, transparent),
-    linear-gradient(0deg, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.28) 32%, rgba(0, 0, 0, 0.06) 80%);
 }
 .eyebrow {
   margin: 0 0 clamp(8px, 1.7vh, 18px);
@@ -306,10 +309,8 @@ p {
   cursor: pointer;
   font-size: clamp(17px, 1.3vw, 25px);
   font-weight: 620;
-  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
 }
 .primary {
-  background: #fff;
   color: #050505;
 }
 .secondary {
@@ -330,10 +331,12 @@ p {
 .secondary {
   transition: transform 180ms ease, box-shadow 200ms ease, background 180ms ease;
 }
-.primary:hover,
-.secondary:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+@media (hover: hover) and (pointer: fine) {
+  .primary:hover,
+  .secondary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+  }
 }
 .primary:focus-visible,
 .secondary:focus-visible {
@@ -347,7 +350,6 @@ p {
   z-index: 5;
   width: 100%;
   min-width: 0;
-  overflow: hidden;
   /* Skip layout/paint for rails far from the viewport — the single biggest win
      for smooth vertical scrolling with many rails. The intrinsic-size estimate
      keeps the scrollbar stable before a rail has been rendered. */
@@ -452,7 +454,6 @@ p {
 .rail-arrow-right {
   right: clamp(12px, 3vw, 54px);
 }
-.rail-arrow:hover,
 .rail-arrow:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--accent, #fff) 62%, transparent);
@@ -463,13 +464,33 @@ p {
     0 0 0 2px color-mix(in srgb, var(--accent, #fff) 40%, transparent),
     0 20px 58px rgba(0, 0, 0, 0.58);
 }
-.rail-arrow-left:hover,
+@media (hover: hover) and (pointer: fine) {
+  .rail-arrow:hover {
+    outline: none;
+    border-color: color-mix(in srgb, var(--accent, #fff) 62%, transparent);
+    background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.11)),
+    rgba(0, 0, 0, 0.74);
+    box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent, #fff) 40%, transparent),
+    0 20px 58px rgba(0, 0, 0, 0.58);
+  }
+}
 .rail-arrow-left:focus-visible {
   transform: translateY(-50%) translateX(-2px);
 }
-.rail-arrow-right:hover,
+@media (hover: hover) and (pointer: fine) {
+  .rail-arrow-left:hover {
+    transform: translateY(-50%) translateX(-2px);
+  }
+}
 .rail-arrow-right:focus-visible {
   transform: translateY(-50%) translateX(2px);
+}
+@media (hover: hover) and (pointer: fine) {
+  .rail-arrow-right:hover {
+    transform: translateY(-50%) translateX(2px);
+  }
 }
 .rail-arrow:disabled {
   opacity: 0;
@@ -493,11 +514,9 @@ p {
   border-radius: clamp(12px, 0.94vw, 18px);
   overflow: hidden;
   background: linear-gradient(135deg, #242735, #0b0b10);
-  border: 0;
   display: grid;
   place-items: center;
   position: relative;
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
   transition: transform 260ms cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 260ms ease;
   transform-origin: center bottom;
   will-change: transform;
@@ -515,20 +534,21 @@ p {
 }
 
 /* Hover: lift + zoom the poster only (title text stays put) */
-.media-card:hover {
-  z-index: 6;
-}
-.media-card:hover .poster {
-  transform: scale(1.05);
-  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.62);
-}
-.media-card:hover .poster img {
-  transform: scale(1.06);
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover {
+    z-index: 6;
+  }
+  .media-card:hover .poster {
+    transform: scale(1.05);
+    box-shadow: 0 24px 50px rgba(0, 0, 0, 0.62);
+  }
+  .media-card:hover .poster img {
+    transform: scale(1.06);
+  }
 }
 
 /* Keyboard / remote focus: accent ring on the poster */
 .media-card:focus-visible {
-  outline: none;
   z-index: 6;
 }
 .media-card:focus-visible .poster {
@@ -538,8 +558,10 @@ p {
 .media-card strong {
   transition: color 160ms ease;
 }
-.media-card:hover strong {
-  color: #fff;
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover strong {
+    color: #fff;
+  }
 }
 .poster svg {
   color: rgba(255, 255, 255, 0.62);
@@ -561,8 +583,6 @@ p {
 .media-card strong {
   margin-top: clamp(10px, 1.5vh, 16px);
   font-size: clamp(20px, 1.6vw, 31px);
-  line-height: 1.08;
-  font-weight: 460;
 }
 .media-card span {
   color: rgba(255, 255, 255, 0.76);
@@ -625,7 +645,6 @@ input:focus {
 .detail-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
   margin: 0 0 28px;
 }
 .mini-strip {
@@ -678,12 +697,19 @@ input:focus {
   line-height: 1.25;
   transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
-.trial-membership-link:hover,
 .trial-membership-link:focus-visible {
   outline: none;
   border-color: #fff;
   background: rgba(255, 255, 255, 0.15);
   transform: scale(1.035);
+}
+@media (hover: hover) and (pointer: fine) {
+  .trial-membership-link:hover {
+    outline: none;
+    border-color: #fff;
+    background: rgba(255, 255, 255, 0.15);
+    transform: scale(1.035);
+  }
 }
 .mobile-header-actions {
   display: flex;
@@ -772,7 +798,6 @@ input:focus {
   transform: translateX(-50%);
   z-index: 120;
   max-width: min(720px, calc(100vw - 32px));
-  border: 0;
   border-radius: 12px;
   background: rgba(18, 18, 18, 0.96);
   color: var(--text);
@@ -784,20 +809,17 @@ input:focus {
   .sidebar {
     height: 86px;
     padding: 0 18px;
-    grid-template-columns: 76px 1fr auto;
   }
 }
 @media (max-width: 980px) {
 
   .sidebar nav {
-    justify-content: flex-start;
     overflow-x: auto;
     gap: 8px;
   }
 
   .nav-item {
     min-height: 50px;
-    padding: 0 15px;
     font-size: 17px;
   }
 
@@ -865,7 +887,6 @@ input:focus {
    ============================================================ */
 .profile-name-text {
   font-size: clamp(14px, 1vw, 18px);
-  font-weight: 600;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -915,11 +936,17 @@ input:focus {
   color: var(--muted);
   cursor: pointer;
 }
-.no-addons-close:hover,
 .no-addons-close:focus-visible {
   border-color: var(--line);
   background: rgba(255, 255, 255, 0.06);
   color: var(--text);
+}
+@media (hover: hover) and (pointer: fine) {
+  .no-addons-close:hover {
+    border-color: var(--line);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text);
+  }
 }
 
 /* ============================================================
@@ -931,7 +958,6 @@ input:focus {
   object-fit: contain;
   object-position: left bottom;
   margin: 0 0 clamp(12px, 2vh, 22px);
-  filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.6));
 }
 
 /* Card title-treatment logo overlay (landscape) */
@@ -1052,7 +1078,6 @@ input:focus {
   }
 }
 .episode-list {
-  display: grid;
   gap: 12px;
 }
 .episode-row {
@@ -1066,12 +1091,18 @@ input:focus {
   cursor: pointer;
   transition: background 150ms ease, box-shadow 150ms ease;
 }
-.episode-row:hover,
 .episode-row:focus-visible,
 .episode-row.is-active {
   outline: none;
   background: rgba(255, 255, 255, 0.12);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+@media (hover: hover) and (pointer: fine) {
+  .episode-row:hover {
+    outline: none;
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  }
 }
 .review-card {
   border-radius: 14px;
@@ -1170,10 +1201,12 @@ input:focus {
   border: 2px solid transparent;
   background-clip: padding-box;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(237, 237, 237, 0.4); background-clip: padding-box; }
-
-/* Crisper card titles (closer to Android's medium weight) */
-.media-card strong { font-weight: 560; }
+@media (hover: hover) and (pointer: fine) {
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(237, 237, 237, 0.4);
+    background-clip: padding-box;
+  }
+}
 
 /* ============================================================
    Premium UI pass - shared polish across web ARVIO
@@ -1194,12 +1227,6 @@ input,
 select {
   -webkit-tap-highlight-color: transparent;
 }
-.app-shell {
-  background:
-    radial-gradient(circle at 82% 8%, rgba(0, 213, 136, 0.12), transparent 25%),
-    radial-gradient(circle at 12% 22%, rgba(120, 170, 255, 0.1), transparent 24%),
-    linear-gradient(180deg, #050607 0%, #000 58%, #020202 100%);
-}
 .sidebar {
   height: clamp(76px, 8.6vh, 96px);
   background:
@@ -1219,15 +1246,21 @@ select {
 .settings-gear {
   border: 1px solid transparent;
 }
-.nav-item:hover,
 .nav-item:focus-visible,
 .nav-item.is-active,
-.settings-gear:hover,
 .settings-gear:focus-visible,
 .settings-gear.is-active {
   background: rgba(255, 255, 255, 0.13);
   border-color: rgba(255, 255, 255, 0.14);
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+}
+@media (hover: hover) and (pointer: fine) {
+  .nav-item:hover,
+  .settings-gear:hover {
+    background: rgba(255, 255, 255, 0.13);
+    border-color: rgba(255, 255, 255, 0.14);
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.34);
+  }
 }
 .nav-item.is-active,
 .settings-gear.is-active {
@@ -1238,12 +1271,6 @@ select {
 }
 .hero {
   min-height: min(100vh, 920px);
-  background-position: center right;
-}
-.hero::before {
-  background:
-    linear-gradient(90deg, rgba(0, 0, 0, 0.97) 0%, rgba(0, 0, 0, 0.82) 29%, rgba(0, 0, 0, 0.28) 72%, rgba(0, 0, 0, 0.06)),
-    linear-gradient(0deg, #000 0%, rgba(0, 0, 0, 0.84) 10%, rgba(0, 0, 0, 0.12) 58%, rgba(0, 0, 0, 0.4) 100%);
 }
 .hero-logo {
   filter: drop-shadow(0 20px 42px rgba(0, 0, 0, 0.72));
@@ -1279,12 +1306,14 @@ select {
   border: 1px solid rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(14px);
 }
-.primary:hover,
-.secondary:hover,
-.icon-button:hover,
-.pill:hover,
-.text-button:hover {
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.5);
+@media (hover: hover) and (pointer: fine) {
+  .primary:hover,
+  .secondary:hover,
+  .icon-button:hover,
+  .pill:hover,
+  .text-button:hover {
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.5);
+  }
 }
 .primary:focus-visible,
 .secondary:focus-visible,
@@ -1320,10 +1349,6 @@ select {
 .media-card {
   width: clamp(245px, 20.5vw, 392px);
   border-radius: 18px;
-  transition: transform 180ms ease;
-}
-.media-card:hover {
-  transform: translateY(-3px);
 }
 .poster {
   border-radius: 16px;
@@ -1338,9 +1363,13 @@ select {
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.58), transparent);
   pointer-events: none;
 }
-.media-card:hover .poster,
 .media-card:focus-visible .poster {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 28px 64px rgba(0, 0, 0, 0.64);
+}
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover .poster {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16), 0 28px 64px rgba(0, 0, 0, 0.64);
+  }
 }
 .media-card strong {
   margin-top: 12px;
@@ -1350,10 +1379,6 @@ select {
   color: rgba(255, 255, 255, 0.94);
 }
 .card-meta-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
   margin-top: 5px;
 }
 .card-meta-row span {
@@ -1445,9 +1470,11 @@ select:focus {
 .player-panel-row {
   transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 180ms ease;
 }
-.episode-row:hover,
-.player-panel-row:hover {
-  transform: translateY(-1px);
+@media (hover: hover) and (pointer: fine) {
+  .episode-row:hover,
+  .player-panel-row:hover {
+    transform: translateY(-1px);
+  }
 }
 .toast {
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1520,7 +1547,6 @@ select:focus {
   font-size: clamp(15px, 1.05vw, 18px);
 }
 .episode-list {
-  max-width: 1040px;
   gap: 14px;
 }
 @media (max-width: 720px) {
@@ -1612,7 +1638,6 @@ button,
   scroll-snap-type: x proximity;
   scrollbar-width: none;
 }
-.episode-row:hover,
 .episode-row:focus-visible,
 .episode-row.is-active {
   transform: translateY(-3px);
@@ -1620,6 +1645,15 @@ button,
   box-shadow:
     0 18px 54px rgba(0, 0, 0, 0.42),
     inset 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  .episode-row:hover {
+    transform: translateY(-3px);
+    border-color: color-mix(in srgb, var(--accent, #fff) 64%, transparent) !important;
+    box-shadow:
+    0 18px 54px rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+  }
 }
 
 /* ============================================================
@@ -1629,7 +1663,6 @@ button,
 .mini-strip,
 .episode-list,
 .person-known-rail {
-  padding-top: 12px;
   padding-bottom: 26px;
 }
 .media-card {
@@ -1638,31 +1671,40 @@ button,
     transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
     filter 220ms ease;
 }
-.media-card:hover {
-  transform: translateY(-5px) !important;
-  filter: brightness(1.05);
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover {
+    filter: brightness(1.05);
+  }
 }
-.media-card:hover .poster,
 .media-card:focus-visible .poster {
   transform: none !important;
   box-shadow:
     0 0 0 2px color-mix(in srgb, var(--accent, #fff) 76%, transparent),
     0 18px 52px rgba(0, 0, 0, 0.58) !important;
 }
-.media-card:hover .poster img,
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover .poster {
+    transform: none !important;
+    box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent, #fff) 76%, transparent),
+    0 18px 52px rgba(0, 0, 0, 0.58) !important;
+  }
+}
 .media-card:focus-visible .poster img {
   transform: scale(1.045) !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover .poster img {
+    transform: scale(1.045) !important;
+  }
 }
 .media-card:focus-visible {
   outline: none;
   transform: translateY(-5px);
 }
-.episode-row:hover,
 .episode-row:focus-visible,
 .episode-row.is-active,
-.mini-card:hover,
 .mini-card:focus-visible,
-.person-known-card:hover,
 .person-known-card:focus-visible {
   transform: translateY(-5px) !important;
   border-color: color-mix(in srgb, var(--accent, #fff) 60%, transparent) !important;
@@ -1671,6 +1713,19 @@ button,
     0 18px 52px rgba(0, 0, 0, 0.5) !important;
   filter: brightness(1.05);
   outline: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .episode-row:hover,
+  .mini-card:hover,
+  .person-known-card:hover {
+    transform: translateY(-5px) !important;
+    border-color: color-mix(in srgb, var(--accent, #fff) 60%, transparent) !important;
+    box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.07),
+    0 18px 52px rgba(0, 0, 0, 0.5) !important;
+    filter: brightness(1.05);
+    outline: none;
+  }
 }
 .person-close {
   position: absolute;
@@ -1687,10 +1742,15 @@ button,
   place-items: center;
   cursor: pointer;
 }
-.person-close:hover,
 .person-close:focus-visible {
   background: rgba(255, 255, 255, 0.18);
   outline: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .person-close:hover {
+    background: rgba(255, 255, 255, 0.18);
+    outline: none;
+  }
 }
 
 /* ============================================================
@@ -1855,25 +1915,15 @@ button,
   .hero {
     min-height: 620px;
     padding: 86px var(--phone-gutter) 156px;
-    align-items: flex-end;
-    background-position: center top;
-  }
-
-  .hero::before {
-    background:
-      linear-gradient(0deg, #000 0%, rgba(0, 0, 0, 0.88) 28%, rgba(0, 0, 0, 0.2) 68%, rgba(0, 0, 0, 0.72) 100%),
-      linear-gradient(90deg, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.18));
   }
 }
 @media (max-width: 680px) {
 
   .hero-logo {
     max-width: min(72vw, 280px);
-    max-height: 112px;
   }
 
   .hero h2 {
-    max-width: 11ch;
     font-size: clamp(42px, 14vw, 64px);
   }
 }
@@ -1907,23 +1957,14 @@ button,
     margin-top: -112px;
   }
 
-  .rail-head {
-    margin-bottom: 7px;
-  }
-
   .rail-head h3,
   .section-heading h2,
   .detail-section h3 {
     font-size: 24px;
   }
 
-  .rail-head span {
-    font-size: 14px;
-  }
-
   .rail-strip {
     grid-auto-columns: minmax(250px, 78vw);
-    gap: 12px;
     padding: 8px var(--phone-gutter) 22px 0;
   }
 
@@ -1938,40 +1979,11 @@ button,
   .media-card.is-poster {
     width: min(42vw, 176px);
   }
-
-  .media-card strong {
-    margin-top: 9px;
-    font-size: 14px;
-  }
-
-  .card-meta-row,
-  .media-card span {
-    font-size: 12px;
-  }
 }
 @media (max-width: 680px) {
 
   .rail-arrow {
-    width: 38px;
-    height: 38px;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
-  }
-
-  .rail-arrow-left {
-    left: 2px;
-  }
-
-  .rail-arrow-right,
-  .detail-wide .rail-arrow-right,
-  .episodes-section .rail-arrow-right,
-  .person-content .rail-arrow-right {
-    right: 2px;
-  }
-
-  .rail-scroll-shell::before,
-  .rail-scroll-shell::after {
-    bottom: 16px;
-    width: 54px;
   }
 }
 @media (max-width: 680px) {
@@ -1993,23 +2005,24 @@ button,
   transform: none !important;
 }
 @media (hover: none) and (pointer: coarse) {
-  .media-card:hover,
-  .episode-row:hover,
-  .mini-card:hover,
-  .person-known-card:hover,
-  .primary:hover,
-  .secondary:hover,
-  .text-button:hover,
-  .pill:hover {
-    transform: none !important;
-    filter: none;
-  }
-
-  .media-card:hover .poster,
-  .episode-row:hover,
-  .mini-card:hover,
-  .person-known-card:hover {
-    box-shadow: none;
+  @media (hover: hover) and (pointer: fine) {
+    .media-card:hover,
+    .episode-row:hover,
+    .mini-card:hover,
+    .person-known-card:hover,
+    .primary:hover,
+    .secondary:hover,
+    .text-button:hover,
+    .pill:hover {
+      transform: none !important;
+      filter: none;
+    }
+    .media-card:hover .poster,
+    .episode-row:hover,
+    .mini-card:hover,
+    .person-known-card:hover {
+      box-shadow: none;
+    }
   }
 }
 
@@ -2019,21 +2032,24 @@ button,
 .sidebar {
   z-index: 120;
 }
-.rail-scroll-shell {
-  overflow: visible;
-}
 .rail-strip,
 .episode-list,
 .mini-strip,
 .person-known-rail {
   scroll-padding-inline: 16px;
 }
-.media-card:hover {
-  transform: translateY(-4px) !important;
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover {
+    transform: translateY(-4px) !important;
+  }
 }
-.media-card:hover .poster,
 .media-card:focus-visible .poster {
   overflow: hidden;
+}
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover .poster {
+    overflow: hidden;
+  }
 }
 
 /* ============================================================
@@ -2047,7 +2063,6 @@ button,
   .hero {
     min-height: 520px;
     padding: 78px var(--phone-gutter) 118px;
-    background-position: center top;
   }
 }
 @media (max-width: 680px) {
@@ -2075,7 +2090,6 @@ button,
   }
 
   .rail-head {
-    margin-bottom: 4px;
     padding-right: var(--phone-gutter);
   }
 
@@ -2089,7 +2103,6 @@ button,
 
   .rail-strip {
     grid-auto-columns: minmax(178px, 46vw) !important;
-    gap: 10px;
     padding: 7px var(--phone-gutter) 18px 0;
   }
 
@@ -2099,17 +2112,6 @@ button,
 
   .media-card .poster {
     border-radius: 12px;
-  }
-
-  .media-card strong {
-    margin-top: 7px;
-    font-size: 13px;
-    line-height: 1.15;
-  }
-
-  .media-card span,
-  .card-meta-row {
-    font-size: 11px;
   }
 
   .media-card .poster .card-logo {
@@ -2222,14 +2224,12 @@ button,
 .external-playback-actions button,
 .external-progress-grid button,
 .external-back {
-  min-height: 48px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 0 16px;
   font-weight: 820;
   cursor: pointer;
 }
@@ -2248,15 +2248,21 @@ button,
   background: transparent;
   color: rgba(255, 255, 255, 0.72);
 }
-.external-playback-actions button:hover,
 .external-playback-actions button:focus-visible,
-.external-progress-grid button:hover,
 .external-progress-grid button:focus-visible,
-.external-back:hover,
 .external-back:focus-visible {
   outline: none;
   border-color: color-mix(in srgb, var(--accent, #fff) 62%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #fff) 30%, transparent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .external-playback-actions button:hover,
+  .external-progress-grid button:hover,
+  .external-back:hover {
+    outline: none;
+    border-color: color-mix(in srgb, var(--accent, #fff) 62%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #fff) 30%, transparent);
+  }
 }
 .external-progress-grid {
   display: grid;
@@ -2373,30 +2379,13 @@ button,
    Cinematic hero integration - softer image exits and page blend
    ============================================================ */
 .hero {
-  isolation: isolate;
   min-height: clamp(780px, 98vh, 1080px);
-  background-position: center right;
   box-shadow:
     inset 0 -260px 220px rgba(0, 0, 0, 0.96),
     inset 0 120px 160px rgba(0, 0, 0, 0.48);
 }
-.hero::before {
-  z-index: 0;
-  background:
-    radial-gradient(ellipse at 78% 38%, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.08) 34%, rgba(0, 0, 0, 0.72) 82%, #000 100%),
-    linear-gradient(90deg, #000 0%, rgba(0, 0, 0, 0.92) 25%, rgba(0, 0, 0, 0.44) 58%, rgba(0, 0, 0, 0.16) 100%),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.7) 0%, rgba(0, 0, 0, 0.06) 30%, rgba(0, 0, 0, 0.48) 60%, #000 100%);
-}
 .hero::after {
-  content: "";
-  position: absolute;
-  z-index: 1;
-  pointer-events: none;
-  inset: auto 0 0;
   height: min(56vh, 560px);
-  background:
-    linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.34) 24%, rgba(0, 0, 0, 0.9) 70%, #000 100%),
-    linear-gradient(90deg, #000 0%, rgba(0, 0, 0, 0.74) 24%, rgba(0, 0, 0, 0.16) 64%, transparent 100%);
 }
 .hero-logo,
 .detail-clearlogo {
@@ -2405,8 +2394,6 @@ button,
 .hero + .rail,
 .hero + .rail-skeleton {
   margin-top: clamp(-430px, -46vh, -310px);
-  position: relative;
-  z-index: 3;
 }
 @media (max-width: 980px) {
   .hero {
@@ -2423,7 +2410,6 @@ button,
 }
 @media (max-width: 560px) {
   .hero {
-    min-height: 640px;
     padding-bottom: 148px;
     background-position: center top;
   }
@@ -2437,41 +2423,19 @@ button,
   .hero::after {
     height: 360px;
   }
-
-  .hero + .rail,
-  .hero + .rail-skeleton {
-    margin-top: -142px;
-  }
 }
 
 /* Final premium hero/metadata pass */
 .hero {
   min-height: clamp(760px, 94vh, 1060px);
-  background-position: center right;
   box-shadow: inset 0 -300px 230px rgba(0, 0, 0, 0.98);
 }
-.hero::before {
-  background:
-    radial-gradient(ellipse at 76% 34%, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.16) 40%, rgba(0, 0, 0, 0.88) 90%, #000 100%),
-    linear-gradient(90deg, #000 0%, rgba(0, 0, 0, 0.92) 25%, rgba(0, 0, 0, 0.38) 62%, rgba(0, 0, 0, 0.08) 100%),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0.08) 32%, rgba(0, 0, 0, 0.5) 64%, #000 100%);
-}
 .hero::after {
-  content: "";
-  position: absolute;
-  inset: auto 0 0;
   height: min(58vh, 620px);
-  pointer-events: none;
-  background:
-    linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.42) 30%, rgba(0, 0, 0, 0.93) 76%, #000 100%),
-    linear-gradient(90deg, #000 0%, rgba(0, 0, 0, 0.66) 28%, transparent 72%);
-  z-index: 1;
 }
 .hero + .rail,
 .hero + .rail-skeleton {
   margin-top: clamp(-250px, -27vh, -166px);
-  position: relative;
-  z-index: 3;
 }
 @media (max-width: 980px) {
   .hero {
@@ -2669,13 +2633,21 @@ button,
   padding-top: 12px;
   scroll-padding-inline: 3.35vw;
 }
-.media-card:hover .poster,
 .media-card:focus-visible .poster {
   transform: translateY(-2px) scale(1.025);
 }
-.media-card:hover .poster img,
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover .poster {
+    transform: translateY(-2px) scale(1.025);
+  }
+}
 .media-card:focus-visible .poster img {
   transform: scale(1.04);
+}
+@media (hover: hover) and (pointer: fine) {
+  .media-card:hover .poster img {
+    transform: scale(1.04);
+  }
 }
 .media-card strong,
 .media-card span,
@@ -2894,21 +2866,23 @@ html { background: #000; }
 }
 
 /* Mouse hover — visible ring + lift so the pointer target is obvious. */
-.detail-actions .primary:hover,
-.detail-actions .secondary:hover,
-.detail-actions .text-button:hover,
-.hero-actions .primary:hover,
-.hero-actions .secondary:hover {
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 4px rgba(255, 255, 255, 0.9);
-  transform: translateY(-1px);
-}
-.detail-actions .primary:hover,
-.hero-actions .primary:hover {
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 4px var(--accent, #fff);
-}
-.detail-actions .secondary:hover,
-.hero-actions .secondary:hover {
-  background: rgba(255, 255, 255, 0.22);
+@media (hover: hover) and (pointer: fine) {
+  .detail-actions .primary:hover,
+  .detail-actions .secondary:hover,
+  .detail-actions .text-button:hover,
+  .hero-actions .primary:hover,
+  .hero-actions .secondary:hover {
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 4px rgba(255, 255, 255, 0.9);
+    transform: translateY(-1px);
+  }
+  .detail-actions .primary:hover,
+  .hero-actions .primary:hover {
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 4px var(--accent, #fff);
+  }
+  .detail-actions .secondary:hover,
+  .hero-actions .secondary:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
 }
 
 /* Keyboard / remote focus — stronger ring. */
@@ -3077,27 +3051,36 @@ html { background: #000; }
   padding: 12px 14px;
   background: transparent;
   border: none;
-  border-radius: 10px;
   color: rgba(255, 255, 255, 0.9);
   font-size: 0.95rem;
   font-weight: 500;
   cursor: pointer;
-  transition: background 150ms ease, color 150ms ease, transform 100ms ease;
   text-align: left;
 }
-.context-menu-action-btn:hover,
 .context-menu-action-btn:focus-visible {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
   outline: none;
 }
+@media (hover: hover) and (pointer: fine) {
+  .context-menu-action-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    outline: none;
+  }
+}
 .context-menu-action-btn.is-danger {
   color: #ef4444;
 }
-.context-menu-action-btn.is-danger:hover,
 .context-menu-action-btn.is-danger:focus-visible {
   background: rgba(239, 68, 68, 0.15);
   color: #f87171;
+}
+@media (hover: hover) and (pointer: fine) {
+  .context-menu-action-btn.is-danger:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+  }
 }
 .context-menu-icon {
   display: inline-flex;
@@ -3199,7 +3182,12 @@ html { background: #000; }
 .web-preview-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 26px; margin-top: 20px; border-top: 1px solid #ffffff12; color: #87919a; font-size: 11px; }
 .web-preview-footer a { display: inline-flex; align-items: center; min-height: 44px; color: #acb5bc; }
 .web-feature-preview button, .web-feature-preview a { cursor: pointer; }
-.web-feature-preview button:hover, .web-preview-signin:hover { filter: brightness(1.12); }
+@media (hover: hover) and (pointer: fine) {
+  .web-feature-preview button:hover,
+  .web-preview-signin:hover {
+    filter: brightness(1.12);
+  }
+}
 .web-feature-preview button:focus-visible, .web-feature-preview a:focus-visible { outline: 2px solid #e0eee8; outline-offset: 4px; }
 @media (max-width: 1000px) {
   .web-feature-preview { padding-inline: 24px; }
@@ -3290,8 +3278,13 @@ html:has(.st-shell), body:has(.st-shell), .app-shell:has(.st-shell), .content:ha
 .context-menu-card.is-floating { border-radius: 8px; background: #171717; }
 .context-menu-card.is-bottom-sheet { border-radius: 8px 8px 0 0; }
 .context-menu-action-btn { border-radius: 4px; min-height: 44px; transition: background 100ms ease; }
-.context-menu-action-btn:is(:hover, :focus-visible),
-.context-menu-action-btn.is-danger:is(:hover, :focus-visible) { background: #fff; color: #111; }
+@media (hover: hover) and (pointer: fine) {
+  .context-menu-action-btn:is(:hover, :focus-visible),
+  .context-menu-action-btn.is-danger:is(:hover, :focus-visible) {
+    background: #fff;
+    color: #111;
+  }
+}
 .context-menu-title, .context-menu-subtitle { white-space: normal; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) {
   .episodes-section.detail-wide .episode-art-card, .context-menu-action-btn { transition: none; }

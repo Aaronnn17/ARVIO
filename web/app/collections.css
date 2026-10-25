@@ -37,7 +37,14 @@
 .collection-grid-row .poster { border-radius: 6px; }
 .collection-grid-row .media-card strong { font-size: 15px; line-height: 22px; }
 .collection-grid-row .media-card .card-meta-row { font-size: 12px; }
-.collection-grid-row .media-card:hover .poster, .collection-grid-row .media-card:focus-visible .poster { transform: none; outline: 2px solid white; outline-offset: 2px; }
+.collection-grid-row .media-card:focus-visible .poster { transform: none; outline: 2px solid white; outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .collection-grid-row .media-card:hover .poster {
+    transform: none;
+    outline: 2px solid white;
+    outline-offset: 2px;
+  }
+}
 .collection-load-state { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 90px; gap: 12px; padding-bottom: 20px; }
 .collection-load-state > span, .collection-load-state button { display: flex; align-items: center; gap: 8px; }
 .collection-load-state button { min-height: 44px; padding: 10px 18px; border-radius: 6px; }

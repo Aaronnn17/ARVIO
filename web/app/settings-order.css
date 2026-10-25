@@ -23,7 +23,12 @@
   border: 0; border-radius: 9px; background: transparent; color: var(--st-soft);
   cursor: grab; touch-action: none;
 }
-.st-sort-handle:hover { color: var(--st-text); background: rgba(255, 255, 255, 0.05); }
+@media (hover: hover) and (pointer: fine) {
+  .st-sort-handle:hover {
+    color: var(--st-text);
+    background: rgba(255, 255, 255, 0.05);
+  }
+}
 .st-sort-handle[aria-pressed="true"] { color: var(--st-text); background: rgba(255, 255, 255, 0.1); }
 .st-sort-row.is-dragging .st-sort-handle { cursor: grabbing; }
 
@@ -45,7 +50,12 @@
   border: 1px solid var(--st-line-strong); background: #070808; color: var(--st-muted);
   font: inherit; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; cursor: pointer;
 }
-.st-pos:hover { color: var(--st-text); border-color: var(--st-accent); }
+@media (hover: hover) and (pointer: fine) {
+  .st-pos:hover {
+    color: var(--st-text);
+    border-color: var(--st-accent);
+  }
+}
 .st-shell input.st-pos-input { width: 64px; height: 28px; padding: 0 6px; font-size: 12.5px; }
 .st-icon-btn.is-on { color: #ffd166; border-color: rgba(255, 209, 102, 0.35); }
 .st-icon-btn.is-on svg { fill: currentColor; }

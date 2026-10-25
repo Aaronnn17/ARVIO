@@ -30,7 +30,6 @@
   object-fit: contain;
 }
 .avatar-letter span {
-  font-size: 0.42em;
   font-weight: 800;
   color: #fff;
 }
@@ -69,10 +68,8 @@
 .avatar-tile {
   width: clamp(96px, 8.5vw, 132px);
   height: clamp(96px, 8.5vw, 132px);
-  border-radius: 10px;
   overflow: hidden;
   position: relative;
-  border: 3px solid transparent;
   transition: transform 150ms ease, border-color 150ms ease;
   background: var(--bg-elevated);
 }
@@ -87,15 +84,25 @@
   background: rgba(255, 255, 255, 0.08);
   border: 2px solid rgba(255, 255, 255, 0.28);
 }
-.profile-pick:hover .avatar-tile,
 .profile-pick:focus-visible .avatar-tile {
   transform: scale(1.07);
   border-color: #fff;
   outline: none;
 }
-.profile-pick:hover,
+@media (hover: hover) and (pointer: fine) {
+  .profile-pick:hover .avatar-tile {
+    transform: scale(1.07);
+    border-color: #fff;
+    outline: none;
+  }
+}
 .profile-pick:focus-visible {
   color: #fff;
+}
+@media (hover: hover) and (pointer: fine) {
+  .profile-pick:hover {
+    color: #fff;
+  }
 }
 .profile-pick span {
   font-size: clamp(14px, 1.1vw, 18px);
@@ -121,11 +128,17 @@
   cursor: pointer;
   transition: background 150ms ease, border-color 150ms ease;
 }
-.manage-profiles-btn:hover,
 .manage-profiles-btn:focus-visible {
   outline: none;
   background: rgba(255, 255, 255, 0.12);
   border-color: #fff;
+}
+@media (hover: hover) and (pointer: fine) {
+  .manage-profiles-btn:hover {
+    outline: none;
+    background: rgba(255, 255, 255, 0.12);
+    border-color: #fff;
+  }
 }
 .cloud-connect-btn {
   margin-top: 22px;
@@ -142,11 +155,17 @@
   cursor: pointer;
   transition: background 150ms ease, color 150ms ease;
 }
-.cloud-connect-btn:hover,
 .cloud-connect-btn:focus-visible {
   outline: none;
   background: rgba(255, 255, 255, 0.16);
   color: #fff;
+}
+@media (hover: hover) and (pointer: fine) {
+  .cloud-connect-btn:hover {
+    outline: none;
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+  }
 }
 
 /* ---- Profile add/edit dialog ---- */
@@ -248,9 +267,13 @@
   border-radius: 18px;
   padding: 12px;
 }
-.profile-pick:hover,
 .profile-pick:focus-visible {
   background: rgba(255, 255, 255, 0.055);
+}
+@media (hover: hover) and (pointer: fine) {
+  .profile-pick:hover {
+    background: rgba(255, 255, 255, 0.055);
+  }
 }
 .avatar-tile {
   border: 1px solid rgba(255, 255, 255, 0.09);
@@ -315,9 +338,13 @@
   height: 100%;
   animation: avatar-pending-pulse 1.4s ease-in-out infinite;
 }
-.profile-pick:hover .avatar-tile,
 .profile-pick:focus-visible .avatar-tile {
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(255, 255, 255, 0.12) inset;
+}
+@media (hover: hover) and (pointer: fine) {
+  .profile-pick:hover .avatar-tile {
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(255, 255, 255, 0.12) inset;
+  }
 }
 .pin-dialog { color: #f5f5f5; background: #181818; border: 1px solid #444; border-radius: 8px; max-width: min(420px, calc(100vw - 32px)); margin: auto; }
 .pin-dialog::backdrop { background: #000b; }
