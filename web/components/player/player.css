@@ -172,7 +172,7 @@
 .player-overlay .player-platform-btn.is-unavailable { opacity: 0.5; }
 
 /* ---------- Panels ---------- */
-.player-overlay .player-side-panel { overflow-x: hidden; }
+.player-overlay .player-side-panel { overflow-x: hidden; z-index: 8; }
 .player-overlay .player-source-list { gap: 6px; }
 .player-overlay .player-source-list .src-group-head { margin: 4px 2px 2px; }
 .player-source-entry { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; min-width: 0; }

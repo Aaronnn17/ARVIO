@@ -1888,7 +1888,9 @@ function VideoPlayer({
         case "toggle-play": e.preventDefault(); togglePlay(); break;
         case "move-focus": {
           e.preventDefault();
-          const scope = activePanel ? container.querySelector(".player-side-panel") ?? container : container;
+          // Panels, the error card and the end screen keep focus to themselves.
+          const layer = activePanel ? ".player-side-panel" : error ? ".player-error" : ended ? ".player-end" : null;
+          const scope = (layer && container.querySelector(layer)) || container;
           moveFocusWithin(scope, action.direction);
           flashControls();
           break;
