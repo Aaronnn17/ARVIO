@@ -102,8 +102,7 @@
     linear-gradient(180deg, #000 0%, #00000059 12%, transparent 25%, #0000002e 55%, #000000b8 78%, #000 100%);
 }
 [dir="rtl"] .oled-library-content.has-preview .collection-page-backdrop::after {
-  background: linear-gradient(270deg, #000 0%, #000 25%, #000000e0 40%, #00000073 65%, transparent 92%, #000 100%),
-    linear-gradient(180deg, #000 0%, #00000059 12%, transparent 25%, #0000002e 55%, #000000b8 78%, #000 100%);
+  background-image: linear-gradient(270deg, #000 0%, #000 25%, #000000e0 40%, #00000073 65%, transparent 92%, #000 100%), linear-gradient(180deg, #000 0%, #00000059 12%, transparent 25%, #0000002e 55%, #000000b8 78%, #000 100%);
 }
 .oled-library-content.has-preview .oled-grid-viewport { height:auto; min-height:0; flex:1; }
 @media(max-width:650px) {

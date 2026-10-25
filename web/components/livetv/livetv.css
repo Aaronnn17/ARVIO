@@ -890,6 +890,7 @@
   .tv-guide-workspace.sports-active { grid-template-rows: auto; }
   .tv-guide-workspace.sports-active .livetv-list { overflow: visible; }
   .tv-guide-workspace .livetv-cats { position: fixed; z-index: 55; inset: calc(56px + env(safe-area-inset-top)) auto calc(62px + env(safe-area-inset-bottom)) 0; width: min(300px, 86vw); max-height: none; box-shadow: 10px 0 35px #0009; transition: transform 200ms ease, opacity 150ms ease; }
+  [dir="rtl"] .tv-guide-workspace .livetv-cats { left: auto; right: 0; box-shadow: -10px 0 35px #0009; }
   .tv-drawer-scrim { display: block; position: fixed; z-index: 54; inset: 56px 0 62px; width: 100%; border: 0; border-radius: 0; background: #0008; }
   .tv-guide-workspace .livetv-cats { height: auto; background: #101112; }
   .tv-guide-workspace .livetv-cats { flex-direction: column; }
@@ -973,7 +974,7 @@
 /* Placeholder while a row's guide is still loading. */
 .livetv-guide-skeleton { position: absolute; inset: 7px 0; display: flex; gap: 4px; pointer-events: none; }
 .livetv-guide-skeleton i { flex: 0 0 auto; width: 176px; border-radius: 4px; background: linear-gradient(90deg, #141516 0%, #1d1f21 50%, #141516 100%); background-size: 200% 100%; animation: livetv-skeleton 1.4s ease-in-out infinite; }
-[dir="rtl"] .livetv-guide-skeleton i { background: linear-gradient(270deg, #141516 0%, #1d1f21 50%, #141516 100%); }
+[dir="rtl"] .livetv-guide-skeleton i { background-image: linear-gradient(270deg, #141516 0%, #1d1f21 50%, #141516 100%); }
 .livetv-guide-skeleton i:nth-child(2) { width: 356px; }
 @keyframes livetv-skeleton { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .livetv-guide-skeleton i { animation: none; } }

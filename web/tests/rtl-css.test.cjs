@@ -58,7 +58,13 @@ test('every directional left/right offset has a right-to-left twin', () => {
       if (rule.parent.type === 'atrule' && /keyframes$/.test(rule.parent.name)) return;
       if (rule.selectors.some((s) => s.includes('[dir="rtl"]')) || physicalRule(rule)) return;
       let left = null, right = null, transform = null;
-      rule.each((d) => { if (d.type !== 'decl') return; if (d.prop === 'left') left = d.value; if (d.prop === 'right') right = d.value; if (d.prop === 'transform') transform = d.value; });
+      rule.each((d) => {
+        if (d.type !== 'decl') return;
+        if (d.prop === 'left') left = d.value;
+        if (d.prop === 'right') right = d.value;
+        if (d.prop === 'transform') transform = d.value;
+        if (d.prop === 'inset') { const v = postcss.list.space(d.value); if (v.length === 4) { right = v[1]; left = v[3]; } else if (v.length >= 2) { right = v[1]; left = v[1]; } else { left = right = v[0]; } }
+      });
       if (left === null && right === null) return;
       if (left !== null && left === right) return; // symmetric
       if (left === '50%' && /translate(X)?\(\s*-50%/.test(transform || '')) return; // centred

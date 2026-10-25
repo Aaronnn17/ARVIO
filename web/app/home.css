@@ -236,7 +236,7 @@
 
 .home-hero.is-empty { background: radial-gradient(ellipse 90% 80% at 75% 35%, #15171b 0%, #08090b 60%, #000 100%); }
 .home-hero .hero-skeleton { display: block; height: 0.9em; margin: 0.3em 0; border-radius: 8px; background: linear-gradient(90deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06)); background-size: 200% 100%; animation: home-shimmer 1.6s ease-in-out infinite; }
-[dir="rtl"] .home-hero .hero-skeleton { background: linear-gradient(270deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06)); }
+[dir="rtl"] .home-hero .hero-skeleton { background-image: linear-gradient(270deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06)); }
 .home-hero .hero-skeleton.is-short { width: 55%; }
 .home-hero .hero-skeleton.hero-skeleton-title { width: 70%; height: 70%; margin: 0; border-radius: 12px; }
 .home-hero .hero-skeleton.hero-skeleton-meta { width: 240px; height: 18px; margin: 5px 0; }

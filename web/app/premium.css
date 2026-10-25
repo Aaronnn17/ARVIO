@@ -24,7 +24,7 @@
   text-decoration: none;
 }
 [dir="rtl"] .paywall-primary {
-  background: linear-gradient(270deg, #00d588, #09b3f0);
+  background-image: linear-gradient(270deg, #00d588, #09b3f0);
 }
 @media (hover: hover) and (pointer: fine) {
   .paywall-primary:hover {
@@ -108,7 +108,7 @@
   cursor: pointer;
 }
 [dir="rtl"] .vlc-setup-hint button {
-  background: linear-gradient(270deg, #00d588, #09b3f0);
+  background-image: linear-gradient(270deg, #00d588, #09b3f0);
 }
 @media (hover: hover) and (pointer: fine) {
   .vlc-setup-hint button:hover {
