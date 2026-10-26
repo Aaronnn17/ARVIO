@@ -112,9 +112,13 @@ test('old iPhones play the HLS form of an Xtream channel and say why a raw TS ch
   assert.match(failure.message, /iOS 17\.1/);
 });
 
-test('opaque live URLs are tried as raw TS first, then as HLS', () => {
+test('opaque live URLs are tried as raw TS first, then as HLS, and never through the app backend', () => {
+  // /api/proxy only refuses media it can recognise; an opaque URL could be a
+  // raw TS stream, which must not run through hosting bandwidth.
   assert.deepEqual(summary(live.planLiveAttempts({ url: 'https://cdn.example/channel?token=abc' }, CHROME, routes)),
-    ['direct:mpegts:original', 'direct:hls/mse:original', 'direct:file:original', 'relay:mpegts:original', 'relay:hls/mse:original', 'relay:file:original', 'manifest-relay:hls/mse:original']);
+    ['direct:mpegts:original', 'direct:hls/mse:original', 'direct:file:original', 'relay:mpegts:original', 'relay:hls/mse:original', 'relay:file:original']);
+  const ts = live.planLiveAttempts({ url: 'http://p.example/channel/ch1.ts' }, CHROME, routes);
+  assert.ok(ts.attempts.every((a) => a.route !== 'manifest-relay'));
 });
 
 test('a second engine for a request the provider already refused is skipped', () => {

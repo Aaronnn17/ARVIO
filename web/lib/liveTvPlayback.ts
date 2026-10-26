@@ -204,9 +204,10 @@ export function planLiveAttempts(source: { url: string; headers?: Record<string,
     if (relayed) for (const choice of target.choices) add({ url: relayed, ...choice, route: "relay", target: target.url, variant: target.variant });
   }
   // 3. HLS playlists through the app backend (providers that block Cloudflare).
+  //    Known playlists only: the backend must never be handed an opaque URL
+  //    that may turn out to be a raw TS stream (hosting bandwidth).
   if (routes.manifestRelay) for (const target of targets) {
-    const shape = liveStreamShape(target.url);
-    if (shape !== "hls" && shape !== "unknown") continue;
+    if (liveStreamShape(target.url) !== "hls") continue;
     const relayed = routes.manifestRelay(target.url);
     const choice = engineChoices("hls", env)[0];
     if (relayed && choice) add({ url: relayed, ...choice, route: "manifest-relay", target: target.url, variant: target.variant });
