@@ -333,8 +333,10 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
         const position = fault?.positionSeconds ?? video.currentTime;
         if (!liveTv && position > 0) resumeAtRef.current = position + (stream.playbackSession?.startOffset ?? 0);
         const decodeFailure = fault ? fault.kind === "media" || fault.kind === "unsupported" : classifyMediaError(video.error?.code) === "fatal";
-        if (decodeFailure) {
-          if (!liveTv && !stream.transcoded && canProviderTranscode(stream)) {
+        // Live: a decoder error mid-stream (a corrupt packet, a track change)
+        // gets the same one reconnect, then the plan and its explanation.
+        if (decodeFailure && !liveTv) {
+          if (!stream.transcoded && canProviderTranscode(stream)) {
             cancelled = true;
             onSelectStream(stream, { forceBrowser: true, forceTranscode: true });
             detach?.();
@@ -346,7 +348,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
           onToast("This source stopped decoding partway through. Try another source or open it in VLC.");
           return;
         }
-        if (!retriedInterruption && fault?.retryable !== false) {
+        if (!retriedInterruption && (fault?.retryable !== false || (liveTv && decodeFailure))) {
           retriedInterruption = true;
           lastRecoveryAt = Date.now();
           handlingError = true;

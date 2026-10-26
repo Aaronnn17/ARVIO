@@ -324,6 +324,20 @@ test('player: an expired Stalker link is re-resolved once and the channel plays 
   cleanup();
 });
 
+test('player: a decoder error after the channel played reconnects once, then ends on the explanation (not the VOD message)', async () => {
+  const h = liveHarness({ url: 'http://p.example/channel/sd.ts' });
+  const cleanup = h.setup();
+  const playing = () => { h.video.readyState = 4; h.video.dispatchEvent(new Event('playing')); };
+  playing();
+  const rungs = h.state.attached.length;
+  h.fail({ transport: 'mpegts', kind: 'media', fatal: true, retryable: false, message: 'MPEG-TS playback failed.', code: 'MediaMSEError' });
+  assert.equal(h.state.attached.length, rungs, 'first: an in-place reconnect, not a new rung');
+  for (let i = 0; i < 8 && !h.state.liveFailure; i++) { playing(); h.fail({ transport: h.last().transport, kind: 'media', fatal: true, retryable: false, message: 'x', code: 'MediaMSEError' }); }
+  assert.equal(h.state.liveFailure.kind, 'codec');
+  assert.equal(h.state.toasts.includes('This source stopped decoding partway through. Try another source or open it in VLC.'), false);
+  cleanup();
+});
+
 test('player: a plan that cannot run explains itself immediately', () => {
   const h = liveHarness({ url: 'http://p.example/channel/ch1.ts', env: IPHONE_OLD });
   const cleanup = h.setup();
