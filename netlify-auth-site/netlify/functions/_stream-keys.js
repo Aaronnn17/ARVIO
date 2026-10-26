@@ -34,18 +34,28 @@ async function load(record) {
   return { kid: record.kid, privateKey, publicJwk: publicPart(record.publicJwk) };
 }
 
+async function readRecord(store) {
+  // Lambda-style functions have no uncached edge URL, so strong reads are not
+  // available; eventual reads are fine for a key that never changes.
+  return store.get(KEY_NAME, { type: "json" });
+}
+
 /** The key pair, created on first use. Concurrent first calls agree on one key. */
 async function signingKey(store) {
   if (cached) return cached;
-  let record = await store.get(KEY_NAME, { type: "json", consistency: "strong" });
+  let record = await readRecord(store);
   if (!record) {
     const pair = await webcrypto.subtle.generateKey(ALGORITHM, true, ["sign", "verify"]);
     const privateJwk = await webcrypto.subtle.exportKey("jwk", pair.privateKey);
     const publicJwk = publicPart(await webcrypto.subtle.exportKey("jwk", pair.publicKey));
     const fresh = { kid: await keyId(publicJwk), privateJwk, publicJwk, createdAt: new Date().toISOString() };
-    await store.setJSON(KEY_NAME, fresh, { onlyIfNew: true });
-    // Whoever won the race, everyone uses the stored key.
-    record = await store.get(KEY_NAME, { type: "json", consistency: "strong" });
+    const result = await store.setJSON(KEY_NAME, fresh, { onlyIfNew: true });
+    if (result && result.modified) record = fresh;
+    // Another instance created it first: use theirs (it may take a moment to read back).
+    for (let attempt = 0; !record && attempt < 5; attempt += 1) {
+      record = await readRecord(store);
+      if (!record) await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+    }
   }
   if (!record || !record.privateJwk || !record.publicJwk) throw new Error("stream ticket key unavailable");
   cached = await load(record);
