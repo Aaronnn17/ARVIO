@@ -333,7 +333,7 @@ function conversionRecoveryHarness(overrides = {}) {
     xtreamHlsVariant: () => null, resolverMediaUrl: () => null, liveTvProxyHeaders: () => ({}), isLikelyHlsUrl: () => false,
     // Live TV plans its own attempts (lib/liveTvPlayback.ts); this file's live
     // cases use an https file, which the plan plays directly like before.
-    ...liveTvPlayback, setLiveFailure: noop, notify: noop, refreshLiveSource: undefined,
+    ...liveTvPlayback, setLiveFailure: noop, notify: noop, refreshLiveSource: undefined, liveSourceOverrideRef: { current: null }, liveXtreamOrigin: null, directManifestUrl: () => null,
     getMediaCapabilities: () => capabilities, preferNativeHls: () => false, mediaSourceConstructor: () => undefined, currentStreamTicket: () => '',
     workerManifestUrl: () => null, proxiedUrl: (url) => url, navigator: { userAgent: 'Chrome' }, document: { createElement: () => ({ canPlayType: () => '' }) },
     selectStream: (next, opts) => state.selections.push({ next, options: opts }),

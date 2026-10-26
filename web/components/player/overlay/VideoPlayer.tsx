@@ -50,6 +50,7 @@ export function VideoPlayer({
   updateSettings,
   activeProfileId,
   liveTv,
+  liveXtreamOrigin,
   refreshLiveSource,
   canAdvance,
   onSelectStream: selectStream,
@@ -71,6 +72,8 @@ export function VideoPlayer({
   liveTv: boolean;
   /** Live TV: fetch a fresh link for a channel whose links expire (Stalker portals). */
   refreshLiveSource?: () => Promise<{ url: string; headers?: Record<string, string> } | null>;
+  /** Live TV: origin of the channel's Xtream server (see liveStreamShape). */
+  liveXtreamOrigin?: string | null;
   canAdvance: boolean;
   onSelectStream: (stream: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean }) => void;
   onAdvance: () => Promise<boolean>;
@@ -178,6 +181,14 @@ export function VideoPlayer({
   // Live channels reconnect after a mid-play stall instead of pointing at a
   // source list Live TV does not have; bounded per channel.
   const liveStallRestartsRef = useRef(0);
+  // A refreshed Stalker link replaces the stale one for restarts, outside
+  // players and Copy link while the channel is the same stream.
+  const liveSourceOverrideRef = useRef<{ from: string; url: string; headers?: Record<string, string> } | null>(null);
+  const withLiveLink = useCallback((selected: StreamSource): StreamSource => {
+    const fresh = liveSourceOverrideRef.current;
+    if (!liveTv || !fresh || selected.url !== fresh.from) return selected;
+    return { ...selected, url: fresh.url, behaviorHints: { ...selected.behaviorHints, proxyHeaders: { ...selected.behaviorHints?.proxyHeaders, request: fresh.headers } } };
+  }, [liveTv]);
   useEffect(() => { liveStallRestartsRef.current = 0; }, [stream.url]);
   const failureDiagnosticRef = useRef<{ failure_kind: string; phase: "startup" | "playback"; transport?: string }>({ failure_kind: "unknown", phase: "startup" });
   // One diagnostic per failed attempt (capped per page): platform, method,
@@ -528,7 +539,7 @@ export function VideoPlayer({
     }
   }, [stream.subtitles, stream.url, settings.defaultSubtitle, aiAvailable, settings.aiAutoSelect, liveTv]);
 
-  usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failureDiagnosticRef, lastSavedRef, liveTv, notify, onSelectStream, onToast, playbackIdentity, playbackRate, refreshLiveSource, remuxAudioIndexRef, remuxRestartKey, resumeAtRef, setBootStatus, setBuffering, setError, setErrorDetail, setLiveFailure, setPlayBlocked, setRemuxAudioIndex, setRemuxTracks, setShowControls, settings, setTransportTracks, sourceListRef, stream, transportRef, tryNextSource, videoRef });
+  usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failureDiagnosticRef, lastSavedRef, liveSourceOverrideRef, liveTv, liveXtreamOrigin, notify, onSelectStream, onToast, playbackIdentity, playbackRate, refreshLiveSource, remuxAudioIndexRef, remuxRestartKey, resumeAtRef, setBootStatus, setBuffering, setError, setErrorDetail, setLiveFailure, setPlayBlocked, setRemuxAudioIndex, setRemuxTracks, setShowControls, settings, setTransportTracks, sourceListRef, stream, transportRef, tryNextSource, videoRef });
 
   useEffect(() => {
     const video = videoRef.current;
@@ -720,7 +731,8 @@ export function VideoPlayer({
     setShowControls(true);
   }, [activePanel, audioProbeState, remuxTracks.length, transportTracks.audioTracks.length, probeAudioTracks]);
 
-  const openExternal = useCallback((player: "vlc" | "infuse", selectedStream: StreamSource) => {
+  const openExternal = useCallback((player: "vlc" | "infuse", chosenStream: StreamSource) => {
+    const selectedStream = withLiveLink(chosenStream);
     if (!selectedStream.url) {
       onToast("This source has no direct URL for an external player.");
       return;
@@ -750,10 +762,11 @@ export function VideoPlayer({
     // preferred language so VLC/Infuse pick the right one.
     openExternalPlayer(player, target, title, settings.defaultSubtitle);
     void trackPremiumEvent(authClient, "external_playback_requested", { player, entry: "player" }, true);
-  }, [activeProfileId, item, onToast, selectedEpisode, title, settings.defaultSubtitle]);
+  }, [activeProfileId, item, onToast, selectedEpisode, title, settings.defaultSubtitle, withLiveLink]);
 
   // Android: open in whichever installed player the user picks (system chooser).
-  const openAnyPlayer = useCallback((selectedStream: StreamSource) => {
+  const openAnyPlayer = useCallback((chosenStream: StreamSource) => {
+    const selectedStream = withLiveLink(chosenStream);
     if (!selectedStream.url) {
       onToast("This source has no direct URL for an external player.");
       return;
@@ -772,12 +785,12 @@ export function VideoPlayer({
     });
     openInAnyPlayer(target, title, settings.defaultSubtitle);
     void trackPremiumEvent(authClient, "external_playback_requested", { player: "chooser", entry: "player" }, true);
-  }, [activeProfileId, item, onToast, selectedEpisode, title, settings.defaultSubtitle]);
+  }, [activeProfileId, item, onToast, selectedEpisode, title, settings.defaultSubtitle, withLiveLink]);
 
   const copyUrl = useCallback(async (selectedStream: StreamSource) => {
-    const copied = await copyStreamUrl(selectedStream).catch(() => false);
+    const copied = await copyStreamUrl(withLiveLink(selectedStream)).catch(() => false);
     onToast(copied ? "Stream URL copied." : "Could not copy this stream URL.");
-  }, [onToast]);
+  }, [onToast, withLiveLink]);
 
   useEffect(() => {
     const video = videoRef.current;

@@ -8,6 +8,7 @@ import { isSameStream, mergeSubtitleTracks, youTubeId } from "./overlay/helpers"
 import { YouTubeLayer } from "./overlay/YouTubeLayer";
 import { VideoPlayer } from "./overlay/VideoPlayer";
 import { resolveStalkerChannel } from "@/lib/stalker";
+import { xtreamInfoFromUrl } from "@/lib/iptv";
 
 // The player overlay. PlayerOverlay picks what to play from the store; the
 // player itself is split into modules under ./overlay:
@@ -54,6 +55,14 @@ export function PlayerOverlay() {
       return { url: fresh.streamUrl, headers: fresh.requestHeaders };
     };
   }, [activeChannel]);
+  // The channel's Xtream server: /user/pass/<id> links there are Xtream ids
+  // (with a .ts/.m3u8 twin); the same path shape elsewhere is just a path.
+  const liveXtreamOrigin = useMemo(() => {
+    const playlistId = activeChannel?.id.split(":")[0];
+    const playlist = playlistId ? settings.iptvPlaylists?.find((entry) => entry.id === playlistId) : undefined;
+    const info = playlist ? xtreamInfoFromUrl(playlist.m3uUrl) : null;
+    try { return info ? new URL(info.baseUrl).origin : null; } catch { return null; }
+  }, [activeChannel?.id, settings.iptvPlaylists]);
   const enrichment = streams.find((candidate) => activeStream && (isSameStream(candidate, activeStream) || (candidate.url && candidate.url === activeStream.url)));
   const enrichedStream = useMemo(() => activeStream ? mergeSubtitleTracks(activeStream, enrichment) : null, [activeStream, enrichment]);
   // The one-time iOS "Add to Home Screen" tip lives here because this
@@ -86,6 +95,7 @@ export function PlayerOverlay() {
       activeProfileId={activeProfile?.id ?? null}
       liveTv={Boolean(activeChannel)}
       refreshLiveSource={refreshLiveSource}
+      liveXtreamOrigin={liveXtreamOrigin}
       canAdvance={canAdvance}
       onSelectStream={playStream}
       onAdvance={advanceEpisode}

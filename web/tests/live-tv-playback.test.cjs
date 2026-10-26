@@ -30,7 +30,8 @@ test('channel URL shapes match Android: HLS, raw TS, numeric Xtream ids, Stalker
     'http://p.example:8080/live/u/p/123.m3u8': 'hls',
     'http://p.example:8080/live/u/p/123.ts': 'mpegts',
     'http://p.example:8080/live/u/p/123': 'mpegts',
-    'http://p.example:8080/u/p/123': 'mpegts',
+    'http://p.example:8080/u/p/123': 'unknown', // a short Xtream id only on the playlist's own server (below)
+    'https://cdn.example/tv/hd/101': 'unknown',
     'http://p.example/play/live.php?mac=00:1A:79:00:00:01&stream=9&extension=ts&play_token=x': 'mpegts',
     'http://p.example/play/live.php?stream=9&extension=m3u8': 'hls',
     'http://p.example/get.php?username=u&password=p&output=m3u8': 'hls',
@@ -42,13 +43,17 @@ test('channel URL shapes match Android: HLS, raw TS, numeric Xtream ids, Stalker
     'not a url': 'unknown'
   };
   for (const [url, shape] of Object.entries(cases)) assert.equal(live.liveStreamShape(url), shape, url);
+  assert.equal(live.liveStreamShape('http://p.example:8080/u/p/123', 'http://p.example:8080'), 'mpegts');
+  assert.equal(live.liveStreamShape('https://cdn.example/tv/hd/101', 'http://p.example:8080'), 'unknown');
 });
 
 test('Xtream channels have a twin in the other output format, both ways, keeping the query', () => {
   assert.equal(live.xtreamTwinUrl('http://p.example:8080/live/u/p/123.ts'), 'http://p.example:8080/live/u/p/123.m3u8');
   assert.equal(live.xtreamTwinUrl('http://p.example:8080/live/u/p/123.m3u8?token=1'), 'http://p.example:8080/live/u/p/123.ts?token=1');
   assert.equal(live.xtreamTwinUrl('http://p.example:8080/live/u/p/123'), 'http://p.example:8080/live/u/p/123.m3u8');
-  assert.equal(live.xtreamTwinUrl('http://p.example:8080/u/p/123'), 'http://p.example:8080/live/u/p/123.m3u8');
+  assert.equal(live.xtreamTwinUrl('http://p.example:8080/u/p/123', 'http://p.example:8080'), 'http://p.example:8080/live/u/p/123.m3u8');
+  assert.equal(live.xtreamTwinUrl('http://p.example:8080/u/p/123'), null, 'not the playlist\'s Xtream server');
+  assert.equal(live.xtreamTwinUrl('https://cdn.example/tv/hd/101', 'http://p.example:8080'), null);
   assert.equal(live.xtreamTwinUrl('http://p.example:8080/movie/u/p/123.mkv'), null);
   assert.equal(live.xtreamTwinUrl('http://p.example:8080/series/u/p/123'), null);
   assert.equal(live.xtreamTwinUrl('https://cdn.example/hls/a/b.m3u8'), null);
@@ -107,9 +112,16 @@ test('old iPhones play the HLS form of an Xtream channel and say why a raw TS ch
   assert.deepEqual(summary(plan), ['relay:hls/native:twin', 'manifest-relay:hls/native:twin']);
   const raw = live.planLiveAttempts({ url: 'http://p.example/channel/ch1.ts' }, IPHONE_OLD, routes);
   assert.equal(raw.blocked, 'no-engine');
-  const failure = live.classifyLiveFailure([], { browser: 'Safari', insecureSource: true, relayAvailable: true, relayTicket: true, played: false }, raw.blocked);
+  const failure = live.classifyLiveFailure([], { browser: 'Safari', insecureSource: true, relayAvailable: true, relayTicket: true, played: false }, raw.blocked, raw.shape);
   assert.equal(failure.kind, 'unsupported-browser');
   assert.match(failure.message, /iOS 17\.1/);
+  // Only a TS channel is called raw MPEG-TS.
+  const dash = live.planLiveAttempts({ url: 'https://cdn.example/live.mpd' }, IPHONE_OLD, routes);
+  const other = live.classifyLiveFailure([], { browser: 'Safari', insecureSource: false, relayAvailable: true, relayTicket: true, played: false }, dash.blocked, dash.shape);
+  assert.equal(other.kind, 'unsupported-browser');
+  assert.doesNotMatch(other.message, /MPEG-TS/);
+  // A numeric CDN path is not an Xtream id: old iPhones still try it natively.
+  assert.deepEqual(summary(live.planLiveAttempts({ url: 'https://cdn.example/tv/hd/101' }, IPHONE_OLD, {})), ['direct:hls/native:original', 'direct:file:original']);
 });
 
 test('opaque live URLs are tried as raw TS first, then as HLS, and never through the app backend', () => {
@@ -196,7 +208,10 @@ test('notices once a channel plays: missing picture, undecodable audio, silence 
   const dolby = live.liveMediaNotice({ picture: true, sound: null, info: { audioCodec: 'ac-3' } }, ctx);
   assert.equal(dolby.values.value0, 'Dolby Digital (AC-3)');
   assert.match(live.liveMediaNotice({ picture: true, sound: false }, context({ browser: 'Firefox' })).message, /No sound/);
-  assert.equal(live.liveMediaNotice({ picture: true, sound: false }, context({ browser: 'Safari' })), null);
+  assert.equal(live.liveMediaNotice({ picture: true, sound: false }, context({ browser: 'Safari', appleWebKit: true })), null);
+  // Chrome on iPhone is WebKit: no "Safari plays it with sound" advice there either.
+  assert.equal(live.liveMediaNotice({ picture: true, sound: false, info: { audioCodec: 'ac-3' } }, context({ browser: 'Chrome', appleWebKit: true })), null);
+  assert.match(live.liveMediaNotice({ picture: false, sound: true }, context({ browser: 'Chrome', appleWebKit: true })).message, /No picture/);
   assert.equal(live.liveMediaNotice({ picture: true, sound: true, info: { audioCodec: 'mp4a.40.2' } }, ctx), null);
 });
 
@@ -245,7 +260,7 @@ function effect(globals) {
 
 const flush = () => new Promise(setImmediate);
 
-function liveHarness({ url, headers, refresh, env = CHROME } = {}) {
+function liveHarness({ url, headers, refresh, env = CHROME, ticket = 'v1.ticket', paywall = true, xtreamOrigin = null, overrideRef = { current: null } } = {}) {
   const state = { attached: [], liveFailure: null, errors: [], toasts: [], refreshes: 0 };
   const video = Object.assign(new EventTarget(), { readyState: 0, currentTime: 0, duration: NaN, paused: true, ended: false, videoWidth: 0,
     pause() { this.paused = true; }, play() { this.paused = false; return Promise.resolve(); }, removeAttribute() {}, load() {} });
@@ -256,7 +271,7 @@ function liveHarness({ url, headers, refresh, env = CHROME } = {}) {
   const handles = [];
   const globals = {
     stream, settings: {}, videoRef: { current: video }, resumeAtRef: { current: 0 }, transportRef: { current: null }, liveTv: true, playbackRate: 1,
-    config: { allowNetlifyMediaProxy: false, resolverUrl: 'https://relay.example' },
+    config: { allowNetlifyMediaProxy: false, resolverUrl: 'https://relay.example', paywallEnabled: paywall },
     setError: (value) => state.errors.push(value), setErrorDetail: noop, setBuffering: noop, setShowControls: noop, setPlayBlocked: noop,
     setRemuxTracks: noop, setRemuxAudioIndex: noop, setTransportTracks: noop, setBootStatus: noop, setLiveFailure: (value) => { state.liveFailure = value; },
     lastSavedRef: { current: 0 }, remuxAudioIndexRef: { current: -1 }, failureDiagnosticRef: { current: {} }, autoSourceHopsRef: { current: 0 }, sourceListRef: { current: [] },
@@ -266,15 +281,15 @@ function liveHarness({ url, headers, refresh, env = CHROME } = {}) {
     canProviderTranscode: () => false, canTryRemux: () => false, hasDolbyVision: () => false, recordBrowserPlaybackFailure: noop,
     parseDebridStream: () => null, invalidateDebridDirectUrl: noop, resolveDebridDirectUrl: async () => ({}),
     classifyMediaError: load('lib/playerRecovery.ts').classifyMediaError, playbackFailureKind: load('lib/playerRecovery.ts').playbackFailureKind,
-    xtreamHlsVariant: () => null, isLikelyHlsUrl: () => false, needsBrowserHeaderRelay: () => false, directManifestUrl: () => 'unused',
+    xtreamHlsVariant: () => null, isLikelyHlsUrl: () => false, needsBrowserHeaderRelay: () => false,
     liveTvProxyHeaders: () => ({ 'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20' }),
     resolverMediaUrl: (target) => `https://relay.example/media?url=${encodeURIComponent(target)}`,
     workerManifestUrl: (target) => `https://app.example/api/proxy?rewrite=worker&url=${encodeURIComponent(target)}`,
+    directManifestUrl: (target) => `https://app.example/api/proxy?rewrite=direct&url=${encodeURIComponent(target)}`,
     proxiedUrl: (target) => `https://app.example/api/proxy?url=${encodeURIComponent(target)}`,
-    planLiveAttempts: live.planLiveAttempts, attemptIsPointless: live.attemptIsPointless, classifyLiveFailure: live.classifyLiveFailure,
-    liveMediaNotice: live.liveMediaNotice, browserName: live.browserName, decodeCheck: live.decodeCheck, isInsecureForPage: live.isInsecureForPage,
+    ...live, liveSourceOverrideRef: overrideRef, liveXtreamOrigin: xtreamOrigin,
     getMediaCapabilities: () => ({ mse: env.mse, nativeHls: env.nativeHls }), preferNativeHls: () => env.preferNativeHls,
-    mediaSourceConstructor: () => ({ isTypeSupported: () => true }), currentStreamTicket: () => 'v1.ticket',
+    mediaSourceConstructor: () => ({ isTypeSupported: () => true }), currentStreamTicket: () => ticket,
     navigator: { userAgent: 'Mozilla/5.0 Chrome/126.0 Safari/537.36' }, document: { createElement: () => ({ canPlayType: () => '' }) },
     attachPlayback: (_video, attachedUrl, options) => {
       const handle = Object.assign(() => {}, { url: attachedUrl, options, reload: noop, goLive: () => true });
@@ -286,7 +301,8 @@ function liveHarness({ url, headers, refresh, env = CHROME } = {}) {
       setInterval: () => 0, clearInterval: noop }
   };
   const setup = effect(globals);
-  return { state, video, setup, fail: (fault) => handles.at(-1).options.onError(fault), last: () => state.attached.at(-1) };
+  return { state, video, setup, overrideRef, fail: (fault) => handles.at(-1).options.onError(fault), last: () => state.attached.at(-1),
+    playing: () => { video.readyState = 4; video.dispatchEvent(new Event('playing')); } };
 }
 
 test('player: an http:// Xtream channel starts on the relay and walks to the .ts twin when HLS is refused', async () => {
@@ -307,7 +323,7 @@ test('player: every attempt refused ends on a specific explanation, not a generi
   for (let i = 0; i < 6 && !h.state.liveFailure; i++) h.fail({ transport: h.last().transport, kind: 'network', fatal: true, retryable: false, message: 'x', httpStatus: 404 });
   assert.equal(h.state.liveFailure.kind, 'offline');
   assert.equal(h.state.errors.at(-1), true);
-  assert.ok(h.state.attached.length <= 3, `bounded attempts, got ${h.state.attached.length}`);
+  assert.ok(h.state.attached.length <= 4, `bounded attempts, got ${h.state.attached.length}`);
   cleanup();
 });
 
@@ -344,4 +360,156 @@ test('player: a plan that cannot run explains itself immediately', () => {
   assert.equal(h.state.attached.length, 0);
   assert.equal(h.state.liveFailure.kind, 'unsupported-browser');
   cleanup();
+});
+
+// ---- Review fixes ----
+
+const relayRoutes = { ...routes, manifestDirect: (url) => `https://app.example/api/proxy?rewrite=direct&url=${encodeURIComponent(url)}` };
+
+test('playlists also go through the backend with segments straight from the provider, with or without a relay', () => {
+  // https HLS without CORS on a provider that blocks Cloudflare: backend playlist, direct segments.
+  assert.deepEqual(summary(live.planLiveAttempts({ url: 'https://cdn.example/live.m3u8' }, CHROME, relayRoutes)),
+    ['direct:hls/mse:original', 'relay:hls/mse:original', 'manifest-relay:hls/mse:original', 'manifest-direct:hls/mse:original']);
+  // Self-hosted without a resolver: the backend route still exists.
+  assert.deepEqual(summary(live.planLiveAttempts({ url: 'https://cdn.example/live.m3u8' }, CHROME, { manifestRelay: routes.manifestRelay, manifestDirect: relayRoutes.manifestDirect })),
+    ['direct:hls/mse:original', 'manifest-direct:hls/mse:original']);
+  // The Xtream twin's playlist too.
+  assert.ok(summary(live.planLiveAttempts({ url: 'https://cdn.example/live/u/p/7.ts' }, CHROME, relayRoutes)).includes('manifest-direct:hls/mse:twin'));
+});
+
+test('only paths the backend itself treats as playlists reach its manifest routes', () => {
+  for (const url of ['https://cdn.example/hls/channel/index', 'http://p.example/play/live.php?stream=9&extension=m3u8', 'https://cdn.example/channel?token=abc']) {
+    assert.ok(Array.from(live.planLiveAttempts({ url }, CHROME, relayRoutes).attempts).every((a) => !a.route.startsWith('manifest')), url);
+  }
+});
+
+test('a browser HLS player attempt that would need headers is skipped where hls.js can send them, sent without them where it cannot', () => {
+  const headers = { Authorization: 'Bearer t' };
+  assert.deepEqual(summary(live.planLiveAttempts({ url: 'https://cdn.example/live.m3u8', headers }, SAFARI_MAC, {})), ['direct:hls/mse:original']);
+  const oldIphone = live.planLiveAttempts({ url: 'https://cdn.example/live.m3u8', headers }, IPHONE_OLD, {});
+  assert.deepEqual(summary(oldIphone), ['direct:hls/native:original']);
+  assert.equal(oldIphone.attempts[0].headers, undefined);
+});
+
+test('isDecodeFault: a segment that failed to parse is not blamed on the codec', () => {
+  const hls = relayAttempt({ transport: 'hls', hlsEngine: 'mse' });
+  assert.equal(live.classifyLiveFailure([{ attempt: hls, fault: { kind: 'media', code: 'fragParsingError' } }], context()).kind, 'network');
+  assert.equal(live.classifyLiveFailure([{ attempt: hls, fault: { kind: 'media', code: 'bufferAppendError' } }], context()).kind, 'codec');
+  assert.equal(live.classifyLiveFailure([{ attempt: hls, fault: { kind: 'media', code: 'fragParsingError', mediaInfo: { audioCodec: 'ac-3' } } }], context()).kind, 'codec-audio');
+});
+
+test('after the provider limits or refuses the channel, the plan stops pressing on', () => {
+  const plan = live.planLiveAttempts({ url: 'https://cdn.example/live/u/p/7.ts' }, CHROME, relayRoutes);
+  const [directTs, directTwin, relayTs, relayTwin, manifestRelayTwin, manifestDirectTwin] = plan.attempts;
+  const ctx = { relayTicket: true, relayNeedsTicket: true };
+  const limited = [{ attempt: directTs, fault: { kind: 'network', httpStatus: 429 } }];
+  assert.equal(live.providerRefusal(limited, ctx), 429);
+  assert.ok([directTwin, relayTs, relayTwin, manifestRelayTwin].every((a) => !live.attemptAllowed(a, limited, ctx)));
+  assert.equal(live.mayRefreshChannel(limited, ctx), false);
+  assert.equal(live.mayRetryChannel(limited, ctx), false);
+  // 401/403: the twin once, nothing else, no second pass; the single Stalker refresh stays allowed.
+  const refused = [{ attempt: relayTs, fault: { kind: 'network', httpStatus: 403 } }];
+  assert.equal(live.attemptAllowed(directTwin, refused, ctx), true);
+  assert.equal(live.attemptAllowed(manifestRelayTwin, refused, ctx), false);
+  assert.equal(live.attemptAllowed(manifestDirectTwin, refused, ctx), false);
+  const afterTwin = [...refused, { attempt: directTwin, fault: { kind: 'network', code: 'Exception' } }];
+  assert.equal(live.attemptAllowed(relayTwin, afterTwin, ctx), false, 'the twin only once');
+  assert.equal(live.mayRefreshChannel(refused, ctx), true);
+  assert.equal(live.mayRetryChannel(refused, ctx), false);
+  // A twin's own refusal does not stop the channel itself.
+  assert.equal(live.providerRefusal([{ attempt: relayTwin, fault: { kind: 'network', httpStatus: 403 } }], ctx), null);
+});
+
+test('after the relay refused the session, nothing else goes through the relay', () => {
+  const plan = live.planLiveAttempts({ url: 'http://p.example/live/u/p/1.m3u8' }, CHROME, relayRoutes);
+  const [relayHls, relayTwin, manifestRelay, manifestDirect] = plan.attempts;
+  const ctx = { relayTicket: true, relayNeedsTicket: true };
+  const denied = [{ attempt: relayHls, fault: { kind: 'network', httpStatus: 402 } }];
+  assert.equal(live.attemptAllowed(relayTwin, denied, ctx), false);
+  assert.equal(live.attemptAllowed(manifestRelay, denied, ctx), false);
+  assert.equal(manifestDirect.route, 'manifest-direct');
+  assert.equal(live.attemptAllowed(manifestDirect, denied, ctx), true, 'the backend route does not use the relay');
+  assert.equal(live.providerRefusal(denied, ctx), null);
+});
+
+test('until the 402 worker is deployed, a ticketless relay 403 reads as the relay refusing the session, not the subscription', () => {
+  const fault = [{ attempt: relayAttempt(), fault: { kind: 'network', httpStatus: 403 } }];
+  assert.equal(live.classifyLiveFailure(fault, context({ relayTicket: false, relayNeedsTicket: true })).kind, 'relay-denied');
+  assert.equal(live.providerRefusal(fault, { relayTicket: false, relayNeedsTicket: true }), null);
+  // With a ticket, or on a build whose relay needs none (self-hosted), it is the provider's 403.
+  assert.equal(live.classifyLiveFailure(fault, context({ relayTicket: true, relayNeedsTicket: true })).kind, 'provider-refused');
+  assert.equal(live.classifyLiveFailure(fault, context({ relayTicket: false, relayNeedsTicket: false })).kind, 'provider-refused');
+  // A direct 403 is always the provider's.
+  assert.equal(live.classifyLiveFailure([{ attempt: relayAttempt({ route: 'direct' }), fault: { kind: 'network', httpStatus: 403 } }], context({ relayTicket: false, relayNeedsTicket: true })).kind, 'provider-refused');
+});
+
+test('Apple WebKit gets no "try Safari" advice; TV and console WebKit is not Safari', () => {
+  const iosChrome = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/126.0 Mobile/15E148 Safari/604.1';
+  assert.equal(live.isAppleWebKit(iosChrome), true);
+  assert.equal(live.isAppleWebKit('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15'), true);
+  assert.equal(live.isAppleWebKit('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'), false);
+  for (const ua of ['Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/538.2 (KHTML, like Gecko) Large Screen Safari/538.2 LG Browser/7.00.00(LGE; 60UH6550-UB; 03.00.15; 1; DTV_W16N); webOS.TV-2016; LG NetCast.TV-2013 Compatible (LGE, 60UH6550-UB, wireless)',
+    'Mozilla/5.0 (PlayStation 4 9.00) AppleWebKit/605.1.15 (KHTML, like Gecko)']) {
+    assert.equal(live.isAppleWebKit(ua), false, ua);
+    assert.equal(live.browserName(ua), 'this browser', ua);
+  }
+  const fault = [{ attempt: relayAttempt(), fault: { kind: 'media', code: 'MediaMSEError' } }];
+  assert.doesNotMatch(live.classifyLiveFailure(fault, context({ browser: 'Chrome', appleWebKit: true })).message, /Try Safari/);
+  assert.match(live.classifyLiveFailure(fault, context({ browser: 'Chrome', appleWebKit: false })).message, /Try Safari/);
+  const hevc = [{ attempt: relayAttempt(), fault: { kind: 'media', code: 'bufferAddCodecError', mediaInfo: { videoCodec: 'hvc1.1.6.L93.B0' } } }];
+  assert.doesNotMatch(live.classifyLiveFailure(hevc, context({ browser: 'Firefox', appleWebKit: true, canDecode: () => false })).message, /Try Safari/);
+});
+
+test('player: an old fault from before the channel played does not explain a later drop or skip URLs on the next pass', async () => {
+  const h = liveHarness({ url: 'http://p.example:8080/live/u/p/1.ts' });
+  const cleanup = h.setup();
+  // First rung: a decoder error, then the next rung (the .m3u8 twin) plays.
+  h.fail({ transport: 'mpegts', kind: 'media', fatal: true, retryable: false, message: 'x', code: 'MediaMSEError' });
+  h.playing();
+  // Later the connection drops on every rung.
+  for (let i = 0; i < 12 && !h.state.liveFailure; i++) { h.fail({ transport: h.last().transport, kind: 'network', fatal: true, retryable: true, message: 'x', code: 'Exception' }); }
+  assert.equal(h.state.liveFailure.kind, 'stopped', 'not "a format Chrome can\'t decode"');
+  cleanup();
+});
+
+test('player: a provider 429 stops at once: no relay retries, no refresh, no second pass', async () => {
+  let refreshes = 0;
+  const h = liveHarness({ url: 'https://cdn.example/live/u/p/7.ts', refresh: () => { refreshes++; return { url: 'https://cdn.example/live/u/p/7.ts?fresh=1' }; } });
+  const cleanup = h.setup();
+  h.fail({ transport: 'mpegts', kind: 'network', fatal: true, retryable: true, message: 'x', httpStatus: 429 });
+  await flush();
+  assert.equal(h.state.attached.length, 1);
+  assert.equal(h.state.liveFailure.kind, 'provider-busy');
+  assert.equal(refreshes, 0);
+  cleanup();
+});
+
+test('player: after a provider 403 only the twin is tried once, then the explanation', async () => {
+  const h = liveHarness({ url: 'http://p.example:8080/live/u/p/1.ts' });
+  const cleanup = h.setup();
+  h.fail({ transport: 'mpegts', kind: 'network', fatal: true, retryable: false, message: 'x', httpStatus: 403 });
+  assert.match(decodeURIComponent(h.last().url), /1\.m3u8/);
+  h.fail({ transport: 'hls', kind: 'network', fatal: true, retryable: false, message: 'x', code: 'manifestLoadError' });
+  await flush();
+  assert.equal(h.state.attached.length, 2);
+  assert.equal(h.state.liveFailure.kind, 'provider-refused');
+  cleanup();
+});
+
+test('player: a refreshed Stalker link is kept for restarts and external players', async () => {
+  const overrideRef = { current: null };
+  const stale = 'http://portal.example/play/live.php?stream=9&extension=ts&play_token=old';
+  const h = liveHarness({ url: stale, headers: { 'User-Agent': 'MAG200' }, overrideRef,
+    refresh: () => ({ url: 'http://portal.example/play/live.php?stream=9&extension=ts&play_token=new', headers: { 'User-Agent': 'MAG200' } }) });
+  const cleanup = h.setup();
+  for (let i = 0; i < 4 && h.state.refreshes === 0; i++) h.fail({ transport: h.last().transport, kind: 'network', fatal: true, retryable: false, message: 'x', httpStatus: 410 });
+  await flush(); await flush();
+  assert.equal(overrideRef.current.from, stale);
+  assert.match(overrideRef.current.url, /play_token=new/);
+  cleanup();
+  // A restart (Retry, stall reconnect) starts from the fresh link.
+  const again = liveHarness({ url: stale, overrideRef });
+  const cleanupAgain = again.setup();
+  assert.match(decodeURIComponent(again.last().url), /play_token=new/);
+  cleanupAgain();
 });

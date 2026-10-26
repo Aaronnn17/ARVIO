@@ -4,7 +4,7 @@ import { playbackFailureKind, classifyMediaError, diagnoseSourceFailure } from "
 import { canProviderTranscode, hasDolbyVision, recordBrowserPlaybackFailure, canTryRemux } from "@/lib/streamCompatibility";
 import { browserAutoplayCandidates } from "@/lib/browserAutoplay";
 import { type PlaybackHandle, attachPlayback, type PlaybackError, type PlaybackTracks, type PlaybackTransport, type PlaybackMediaInfo, preferNativeHls } from "@/lib/player";
-import { planLiveAttempts, attemptIsPointless, classifyLiveFailure, liveMediaNotice, browserName, decodeCheck, isInsecureForPage, type LiveAttempt, type LiveFailure, type LiveFault, type LivePlan } from "@/lib/liveTvPlayback";
+import { planLiveAttempts, attemptAllowed, providerRefusal, mayRefreshChannel, mayRetryChannel, classifyLiveFailure, liveMediaNotice, browserName, isAppleWebKit, decodeCheck, isInsecureForPage, type LiveAttempt, type LiveFailure, type LiveFault, type LivePlan } from "@/lib/liveTvPlayback";
 import { getMediaCapabilities, mediaSourceConstructor } from "@/lib/capabilities";
 import { currentStreamTicket } from "@/lib/streamTicket";
 import { resolverMediaUrl } from "@/lib/resolver";
@@ -16,11 +16,15 @@ import type { StreamSource, AppSettings } from "@/lib/types";
 import type { RemuxAudioTrack } from "@/lib/remux";
 
 /** Attaches the source to the <video>: the remux path, the URL ladder (direct, relays, debrid link refresh) and the escalation to remux, provider conversion or the next source. */
-export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failureDiagnosticRef, lastSavedRef, liveTv, notify, onSelectStream, onToast, playbackIdentity, playbackRate, refreshLiveSource, remuxAudioIndexRef, remuxRestartKey, resumeAtRef, setBootStatus, setBuffering, setError, setErrorDetail, setLiveFailure, setPlayBlocked, setRemuxAudioIndex, setRemuxTracks, setShowControls, settings, setTransportTracks, sourceListRef, stream, transportRef, tryNextSource, videoRef }: { autoSourceHopsRef: RefObject<number>;
+export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failureDiagnosticRef, lastSavedRef, liveSourceOverrideRef, liveTv, liveXtreamOrigin, notify, onSelectStream, onToast, playbackIdentity, playbackRate, refreshLiveSource, remuxAudioIndexRef, remuxRestartKey, resumeAtRef, setBootStatus, setBuffering, setError, setErrorDetail, setLiveFailure, setPlayBlocked, setRemuxAudioIndex, setRemuxTracks, setShowControls, settings, setTransportTracks, sourceListRef, stream, transportRef, tryNextSource, videoRef }: { autoSourceHopsRef: RefObject<number>;
   /** A translated toast with values (Live TV notices). */
   notify?: (message: string, values?: Record<string, string | number>) => void;
   /** Re-resolve an expiring channel link (Stalker create_link); null when nothing changed. */
   refreshLiveSource?: () => Promise<{ url: string; headers?: Record<string, string> } | null>;
+  /** A refreshed channel link, kept for restarts, external players and Copy link while `from` is still the stream's URL. */
+  liveSourceOverrideRef?: RefObject<{ from: string; url: string; headers?: Record<string, string> } | null>;
+  /** Origin of the channel's Xtream server, which makes /user/pass/<id> links Xtream ids. */
+  liveXtreamOrigin?: string | null;
   setLiveFailure?: Dispatch<SetStateAction<LiveFailure | null>>; currentStreamRef: RefObject<StreamSource>; failureDiagnosticRef: RefObject<{ failure_kind: string; phase: "startup" | "playback"; transport?: string; }>; lastSavedRef: RefObject<number>; liveTv: boolean; onSelectStream: (next: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean; }) => void; onToast: (message: string) => void; playbackIdentity: string; playbackRate: number; remuxAudioIndexRef: RefObject<number>; remuxRestartKey: number; resumeAtRef: RefObject<number>; setBootStatus: Dispatch<SetStateAction<{ label: string; values?: Record<string, string | number>; }>>; setBuffering: Dispatch<SetStateAction<boolean>>; setError: Dispatch<SetStateAction<boolean>>; setErrorDetail: Dispatch<SetStateAction<string>>; setPlayBlocked: Dispatch<SetStateAction<boolean>>; setRemuxAudioIndex: Dispatch<SetStateAction<number>>; setRemuxTracks: Dispatch<SetStateAction<RemuxAudioTrack[]>>; setShowControls: Dispatch<SetStateAction<boolean>>; settings: AppSettings; setTransportTracks: Dispatch<SetStateAction<PlaybackTracks>>; sourceListRef: RefObject<StreamSource[]>; stream: StreamSource; transportRef: RefObject<PlaybackHandle | null>; tryNextSource: () => boolean; videoRef: RefObject<HTMLVideoElement | null> }) {
   useEffect(() => {
     const video = videoRef.current;
@@ -234,14 +238,17 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       const caps = getMediaCapabilities();
       return { pageProtocol: window.location.protocol, mse: caps.mse, nativeHls: caps.nativeHls, preferNativeHls: preferNativeHls() };
     };
-    const livePlanFor = (url: string, requestHeaders?: Record<string, string>): LivePlan => planLiveAttempts({ url, headers: requestHeaders }, liveEnvironment(), {
+    const livePlanFor = (url: string, requestHeaders?: Record<string, string>): LivePlan => planLiveAttempts({ url, headers: requestHeaders, xtreamOrigin: liveXtreamOrigin }, liveEnvironment(), {
       relay: (target) => resolverMediaUrl(target, { ...liveTvProxyHeaders(), ...requestHeaders }),
-      manifestRelay: config.resolverUrl ? (target) => workerManifestUrl(target, requestHeaders) : undefined,
+      manifestRelay: (target) => workerManifestUrl(target, requestHeaders),
+      manifestDirect: (target) => directManifestUrl(target, requestHeaders),
       appProxy: config.allowNetlifyMediaProxy ? (target) => proxiedUrl(target, { ...liveTvProxyHeaders(), ...requestHeaders }) : undefined
     });
     const rungsOf = (plan: LivePlan): Rung[] => plan.attempts.map((attempt) => ({ url: attempt.url, transport: attempt.transport, hlsEngine: attempt.hlsEngine, headers: attempt.headers, startupMs: attempt.startupMs, live: attempt }));
-    let liveSource = { url: stream.url, headers };
-    let livePlan: LivePlan | null = liveTv ? livePlanFor(stream.url, headers) : null;
+    // A link refreshed earlier for this same stream (Stalker) outlives restarts.
+    const override = liveTv && liveSourceOverrideRef?.current?.from === stream.url ? liveSourceOverrideRef.current : null;
+    let liveSource = override ? { url: override.url, headers: override.headers } : { url: stream.url, headers };
+    let livePlan: LivePlan | null = liveTv ? livePlanFor(liveSource.url, liveSource.headers) : null;
     let ladder: Rung[] = livePlan ? rungsOf(livePlan)
       : uniqueAttempts.map((url) => url === stream.url ? { url, transport: stream.transport, headers } : { url });
     const liveFaults: LiveFault[] = [];
@@ -255,6 +262,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
         browser: browserName(navigator.userAgent),
         canDecode: decodeCheck((type) => { try { return !!MediaSourceType?.isTypeSupported(type) || probe.canPlayType(type) !== ""; } catch { return false; } }),
         insecureSource: isInsecureForPage(liveSource.url, window.location.protocol),
+        appleWebKit: isAppleWebKit(navigator.userAgent), relayNeedsTicket: config.paywallEnabled,
         relayAvailable: !!config.resolverUrl, relayTicket: !!currentStreamTicket(), played: hasEverPlayed
       };
     }
@@ -321,7 +329,11 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
         setErrorDetail(fault.message);
         failureDiagnosticRef.current = { failure_kind: playbackFailureKind(fault), phase: hasEverPlayed ? "playback" : "startup", transport: fault.transport };
       }
-      if (currentRung.live) liveFaults.push({ attempt: currentRung.live, fault });
+      if (currentRung.live) {
+        liveFaults.push({ attempt: currentRung.live, fault });
+        // The provider is limiting connections: every further request makes it worse.
+        if (providerRefusal(liveFaults, liveContext()) === 429) { failLive(); return; }
+      }
       // A live channel that has played a good while since its last
       // reconnect earns another in-place reconnect (providers drop
       // connections every few minutes); VOD keeps the single recovery.
@@ -401,7 +413,11 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       }
       attemptIndex += 1;
       // Skip engines that would only repeat an HTTP refusal for the same request.
-      while (ladder[attemptIndex]?.live && attemptIsPointless(ladder[attemptIndex].live!, liveFaults)) attemptIndex += 1;
+      // Skip what the current pass already ruled out: a request the provider
+      // refused, the relay after it refused the session, anything but the
+      // Xtream twin after the provider refused the channel.
+      const passContext = liveContext();
+      while (ladder[attemptIndex]?.live && !attemptAllowed(ladder[attemptIndex].live!, liveFaults, passContext)) attemptIndex += 1;
       const next = ladder[attemptIndex];
       if (next) {
         setError(false);
@@ -416,7 +432,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       }
       if (liveTv && livePlan) {
         // Expiring portal links: fetch a fresh one once and walk the plan again.
-        if (refreshLiveSource && !liveRefreshed) {
+        if (refreshLiveSource && !liveRefreshed && mayRefreshChannel(liveFaults, liveContext())) {
           liveRefreshed = true;
           detach?.();
           setBootStatus({ label: "Refreshing the channel link…" });
@@ -424,6 +440,8 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
             if (cancelled) return;
             if (!fresh?.url || fresh.url === liveSource.url) { handlingError = false; restartOrFail(); return; }
             liveSource = { url: fresh.url, headers: fresh.headers };
+            // Restarts, VLC and Copy link use the fresh link from now on.
+            if (liveSourceOverrideRef && stream.url) liveSourceOverrideRef.current = { from: stream.url, url: fresh.url, headers: fresh.headers };
             startPlan(livePlanFor(fresh.url, fresh.headers));
           }).catch(() => { if (!cancelled) { handlingError = false; restartOrFail(); } });
           return;
@@ -476,6 +494,9 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
     // Live: begin the plan again (fresh link, or one reconnect after a drop).
     function startPlan(plan: LivePlan) {
       livePlan = plan;
+      // Each pass is judged on its own faults: an old 404 must not skip URLs
+      // now, an old recovered decoder error must not explain a later drop.
+      liveFaults.length = 0;
       ladder = rungsOf(plan);
       attemptIndex = 0;
       hasPlayed = false;
@@ -490,7 +511,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       requestPlayback();
     }
     function restartOrFail() {
-      if (hasEverPlayed && !liveRestarted) {
+      if (hasEverPlayed && !liveRestarted && mayRetryChannel(liveFaults, liveContext())) {
         liveRestarted = true;
         notify?.("Reconnecting to the channel…");
         startPlan(livePlanFor(liveSource.url, liveSource.headers));
@@ -506,7 +527,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       setBuffering(false);
       setError(true);
       setShowControls(true);
-      const failure = classifyLiveFailure(liveFaults, liveContext(), livePlan?.blocked);
+      const failure = classifyLiveFailure(liveFaults, liveContext(), livePlan?.blocked, livePlan?.shape);
       setLiveFailure?.(failure);
       setErrorDetail(failure.message);
     }
@@ -550,6 +571,8 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
     const onFirstPlaying = () => {
       if (video.readyState < 3) return;
       const first = !hasPlayed;
+      // Faults from before this (re)start played are history now.
+      if (first) liveFaults.length = 0;
       hasPlayed = true;
       hasEverPlayed = true;
       window.clearTimeout(stallTimer);
