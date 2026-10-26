@@ -94,12 +94,14 @@ export function usePortalProblemText() {
     : translateUi("Enter the MAC address as six pairs, e.g. 00:1A:79:12:34:56.");
 }
 
-export function PlaylistManager({ playlists, hiddenGroups, groupNames, portals, userAgent, editRequest, onSavePlaylist, onRemovePlaylist, onTogglePlaylist, onSavePortals, onShowGroup, onClose }: {
+export function PlaylistManager({ playlists, hiddenGroups, groupNames, portals, reservedPortalIds = [], userAgent, editRequest, onSavePlaylist, onRemovePlaylist, onTogglePlaylist, onSavePortals, onShowGroup, onClose }: {
   playlists: IptvPlaylistEntry[];
   hiddenGroups: string[];
   groupNames?: Record<string, string>;
   /** Every Stalker portal, enabled or not (Android's stalkerPortals list). */
   portals: StalkerPortalEntry[];
+  /** Portal ids settings still refer to (referencedStalkerPortalIds); a new portal does not take one. */
+  reservedPortalIds?: string[];
   userAgent?: string;
   /** A playlist id to open for editing (from the error panel), or "new". */
   editRequest: { id: string; at: number } | null;
@@ -149,7 +151,7 @@ export function PlaylistManager({ playlists, hiddenGroups, groupNames, portals, 
       const problem = portalDraftProblem(draft.portal, draft.mac);
       if (problem) { setFormError(portalProblemText(problem)); return; }
       setTest({ state: "testing" });
-      const id = isPortal(editing) ? editing! : nextStalkerPortalId(portals.map((portal) => portal.id)) ?? "stalker1";
+      const id = isPortal(editing) ? editing! : nextStalkerPortalId(portals.map((portal) => portal.id), reservedPortalIds) ?? "stalker1";
       const [candidatePortal] = upsertStalkerPortal([], { name: draft.name, portalUrl: draft.portal, macAddress: draft.mac });
       const result = await testIptvPlaylist(null, { stalkerPortals: [{ ...candidatePortal, id }], userAgent });
       if (run !== testRun.current) return;
@@ -170,7 +172,7 @@ export function PlaylistManager({ playlists, hiddenGroups, groupNames, portals, 
       const problem = portalDraftProblem(draft.portal, draft.mac);
       if (problem) { setFormError(portalProblemText(problem)); return; }
       if (!isPortal(editing) && portalsFull) { setFormError(translateUi("You can add up to {value0} portals.", { value0: MAX_STALKER_PORTALS })); return; }
-      onSavePortals(upsertStalkerPortal(portals, { id: isPortal(editing) ? editing! : undefined, name: draft.name, portalUrl: draft.portal, macAddress: draft.mac }), true);
+      onSavePortals(upsertStalkerPortal(portals, { id: isPortal(editing) ? editing! : undefined, name: draft.name, portalUrl: draft.portal, macAddress: draft.mac }, reservedPortalIds), true);
     } else {
       const entry = candidate();
       if (!entry) return;

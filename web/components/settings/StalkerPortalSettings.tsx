@@ -11,7 +11,7 @@ import { testIptvPlaylist } from "@/lib/iptv";
 import { playlistErrorCause } from "@/lib/iptvGuide";
 import { maskedUrl } from "@/lib/maskUrl";
 import { moveIndex } from "@/lib/ordering";
-import { MAX_STALKER_PORTALS, nextStalkerPortalId, portalDraftProblem, stalkerPortalsOf, stalkerPortalsPatch, upsertStalkerPortal } from "@/lib/stalkerPortals";
+import { MAX_STALKER_PORTALS, nextStalkerPortalId, portalDraftProblem, referencedStalkerPortalIds, stalkerPortalsOf, stalkerPortalsPatch, upsertStalkerPortal } from "@/lib/stalkerPortals";
 import type { AppSettings, StalkerPortalEntry } from "@/lib/types";
 import { usePlaylistErrorText, usePortalProblemText } from "@/components/livetv/PlaylistManager";
 import { SortableList } from "./SortableList";
@@ -86,7 +86,8 @@ export function StalkerPortalSettings({ settings, updateSettings }: {
       </Group>
       <Group title="Add a Stalker portal" description={full ? translateUi("You can add up to {value0} portals.", { value0: MAX_STALKER_PORTALS }) : undefined}>
         {!full && <PortalForm portals={portals} userAgent={settings.customUserAgent} submitLabel={translateUi("Add portal")} resetOnSubmit
-          onSubmit={(draft) => save(upsertStalkerPortal(portals, { name: draft.name, portalUrl: draft.url, macAddress: draft.mac }))} />}
+          // A new portal never reuses the id of a removed one that settings still refer to.
+          onSubmit={(draft) => save(upsertStalkerPortal(portals, { name: draft.name, portalUrl: draft.url, macAddress: draft.mac }, referencedStalkerPortalIds(settings)))} />}
       </Group>
     </>
   );

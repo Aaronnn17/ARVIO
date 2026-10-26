@@ -10,7 +10,8 @@ import { discardPendingProgress, flushProgressOutbox, installProgressRetry, pend
 import { mergeTvSessions, normalizeTvSession } from "./iptvSession";
 import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
 import { normalizeGroupNames } from "./iptvGroups";
-import { legacyStalkerFields, migrateLegacyStalkerKeyMap, migrateLegacyStalkerKeys, normalizeStalkerPortals, portalsFromCloud } from "./stalkerPortals";
+import { legacyStalkerFields, mergeStalkerPortalEdits, migrateIptvCloudState, migrateLegacyStalkerChannelIds, migrateLegacyStalkerKeys, normalizeStalkerPortals, portalsFromCloud } from "./stalkerPortals";
+import type { StalkerPortalEntry } from "./types";
 import { tmdbImageUrl } from "./mediaImages";
 import { applyRowLayoutModes, normalizedRowLayoutModes } from "./homeRows";
 import type { TraktToken } from "./trakt";
@@ -609,9 +610,16 @@ function booleanMap(value: unknown): Record<string, boolean> {
   return Object.fromEntries(Object.entries(objectRecord(value)).filter(([key, enabled]) => key.trim() && typeof enabled === "boolean")) as Record<string, boolean>;
 }
 
+/** The portals a synced IPTV profile has, by Android's import rule (the list, else the single-portal fields). */
+function cloudPortals(state: Record<string, unknown>, rootState: RawPayload = {}): StalkerPortalEntry[] {
+  return portalsFromCloud(state.stalkerPortals, state.stalkerPortalUrl ?? rootState.iptvStalkerUrl, state.stalkerMacAddress ?? rootState.iptvStalkerMac);
+}
+
 function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings> {
-  const state = objectRecord(value) as AndroidIptvProfileState;
   const rootState = root ?? {};
+  const stalkerPortals = cloudPortals(objectRecord(value), rootState);
+  // Category keys and channel ids of single-portal builds (`stalker|…`) belong to Portal 1, as on Android.
+  const state = migrateIptvCloudState(objectRecord(value), stalkerPortals) as AndroidIptvProfileState;
   const rootSettings = objectRecord(rootState.settings);
   const profilePlaylists = normalizeIptvPlaylists(state.playlists, "cloud-profile");
   const rootSettingsPlaylists = normalizeIptvPlaylists(rootSettings.iptvPlaylists, "cloud-settings");
@@ -635,21 +643,17 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
     ...rootPlaylists,
     ...legacyPlaylists
   ]);
-  // Android's import rule: the portal list when it has entries, else the single-portal fields as Portal 1.
-  const stalkerPortals = portalsFromCloud(state.stalkerPortals, state.stalkerPortalUrl ?? rootState.iptvStalkerUrl,
-    state.stalkerMacAddress ?? rootState.iptvStalkerMac);
   const legacyStalker = legacyStalkerFields(stalkerPortals);
-  // Category keys from single-portal builds (`stalker|…`) belong to Portal 1, as on Android.
   return {
     iptvPlaylists: playlists,
-    favoriteChannelIds: value !== undefined ? stringArray(state.favoriteChannels) : stringArray(rootState.iptvFavoriteChannels),
+    favoriteChannelIds: value !== undefined ? stringArray(state.favoriteChannels) : migrateLegacyStalkerChannelIds(stringArray(rootState.iptvFavoriteChannels), stalkerPortals),
     iptvTvSession: normalizeTvSession((state as Record<string, unknown>).tvSession),
-    favoriteGroupIds: migrateLegacyStalkerKeys(value !== undefined ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups)),
-    hiddenGroupIds: migrateLegacyStalkerKeys(stringArray(state.hiddenGroups)),
-    lockedIptvGroupIds: migrateLegacyStalkerKeys(stringArray(state.lockedGroups)),
-    groupOrder: migrateLegacyStalkerKeys((state.groupOrderSchema ?? 0) >= 3 ? stringArray(state.groupOrder) : []),
-    iptvChannelOrder: migrateLegacyStalkerKeyMap(normalizeChannelOrder(state.channelOrder)),
-    iptvGroupNames: migrateLegacyStalkerKeyMap(normalizeGroupNames(state.groupNames)),
+    favoriteGroupIds: value !== undefined ? stringArray(state.favoriteGroups) : migrateLegacyStalkerKeys(stringArray(rootState.iptvFavoriteGroups)),
+    hiddenGroupIds: stringArray(state.hiddenGroups),
+    lockedIptvGroupIds: stringArray(state.lockedGroups),
+    groupOrder: (state.groupOrderSchema ?? 0) >= 3 ? stringArray(state.groupOrder) : [],
+    iptvChannelOrder: normalizeChannelOrder(state.channelOrder),
+    iptvGroupNames: normalizeGroupNames(state.groupNames),
     iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
     iptvStalkerPortals: stalkerPortals,
     iptvStalkerUrl: legacyStalker.stalkerPortalUrl,
@@ -1067,14 +1071,26 @@ function mergeCatalogEdits(remote: AppSettings["catalogs"], local: AppSettings["
   ];
 }
 
-export function mergeIptvSettings(existing: Record<string, unknown>, settings: AppSettings, baseline?: AppSettings | null) {
+export function mergeIptvSettings(cloudState: Record<string, unknown>, settings: AppSettings, baseline?: AppSettings | null) {
   const incoming = androidIptvSettings(settings);
   const base = baseline ? androidIptvSettings(baseline) : null;
+  // What the cloud holds, in the current key shape: a legacy `stalker|…` twin
+  // left in the payload would otherwise bring back what this edit undid.
+  const remotePortals = cloudPortals(cloudState);
+  const existing = migrateIptvCloudState(cloudState, [...(settings.iptvStalkerPortals ?? []), ...remotePortals]);
   const merged = { ...existing };
+  let portalsMerged = false;
   for (const [field, value] of Object.entries(incoming)) {
     if (base && sameIptvField(field, value, base[field])) continue;
     if (field === "tvSession") {
       merged[field] = mergeTvSessions(existing[field], value);
+      continue;
+    }
+    if (field === "stalkerPortals") {
+      // Per portal and field, so a portal added or edited on the TV since this browser read the list survives.
+      merged[field] = base ? normalizeStalkerPortals(mergeStalkerPortalEdits(remotePortals, normalizeStalkerPortals(value),
+        normalizeStalkerPortals(base[field]))) : value;
+      portalsMerged = true;
       continue;
     }
     if (field === "channelOrder" || field === "groupNames") {
@@ -1112,6 +1128,8 @@ export function mergeIptvSettings(existing: Record<string, unknown>, settings: A
       ? mergeFavoriteEdits(stringArray(existing[field]), stringArray(value), stringArray(base[field]))
       : value;
   }
+  // Older apps read the single-portal fields: they follow the merged list.
+  if (portalsMerged) Object.assign(merged, legacyStalkerFields(merged.stalkerPortals as StalkerPortalEntry[]));
   return merged;
 }
 

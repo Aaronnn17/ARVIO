@@ -63,7 +63,7 @@ export interface AppStore {
   setToast: (value: string | null) => void;
 
   refreshData: (profileIdOverride?: string | null) => Promise<void>;
-  refreshIptv: (options?: { quiet?: boolean }) => Promise<void>;
+  refreshIptv: (options?: { quiet?: boolean; fresh?: boolean }) => Promise<void>;
   loadIptvGuide: (channels: IptvChannel[]) => Promise<void>;
   /** The Home "Favorite TV" row's channels, in the user's favorite order. */
   favoriteTvChannels: IptvChannel[];

@@ -27,7 +27,8 @@ export function useIptvState(store: StoreCore) {
   // `quiet` is the Home background load for the Favorite TV row: no status text, no
   // error toast — Live TV reports playlist problems when the user opens it.
   const iptvRefresher = useRef<ReturnType<typeof createIptvRefresher<AppSettings, IptvSnapshot>> | null>(null);
-  const refreshIptv = useCallback(({ quiet = false }: { quiet?: boolean } = {}) => {
+  // `fresh` (a Refresh / Retry button): portals are asked again instead of answering from their recent list.
+  const refreshIptv = useCallback(({ quiet = false, fresh = false }: { quiet?: boolean; fresh?: boolean } = {}) => {
     iptvRefresher.current ??= createIptvRefresher<AppSettings, IptvSnapshot>({
       read: () => {
         const current = settingsRef.current;
@@ -37,13 +38,13 @@ export function useIptvState(store: StoreCore) {
           settings: current
         };
       },
-      load: (currentSettings) => loadIptvSnapshot(
+      load: (currentSettings, { fresh: freshPortals }) => loadIptvSnapshot(
         currentSettings.iptvPlaylists,
         currentSettings.favoriteChannelIds,
         currentSettings.favoriteGroupIds,
         currentSettings.hiddenGroupIds,
         currentSettings.groupOrder,
-        { userAgent: currentSettings.customUserAgent, stalkerPortals: liveTvStalkerPortals(currentSettings) }
+        { userAgent: currentSettings.customUserAgent, stalkerPortals: liveTvStalkerPortals(currentSettings), freshPortals }
       ),
       // Stamp which playlists this snapshot came from so Live TV can reuse it
       // on re-entry instead of rebuilding ~139k channels every visit.
@@ -51,7 +52,7 @@ export function useIptvState(store: StoreCore) {
       report: (error) => setToast(error instanceof Error ? error.message : "Failed to load Live TV"),
       setLoading: (loading) => setBusy(current => loading ? "Loading TV" : current === "Loading TV" ? "" : current)
     });
-    return iptvRefresher.current({ quiet });
+    return iptvRefresher.current({ quiet, fresh });
   }, []);
 
   useEffect(() => {
