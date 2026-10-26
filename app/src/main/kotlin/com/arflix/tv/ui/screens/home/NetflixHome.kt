@@ -1220,7 +1220,7 @@ private fun NetflixFeaturedCard(
                             .fillMaxWidth(0.6f)
                     )
                 }
-                if (showProgress && item.progress > 0) {
+                if (showProgress && item.progress > 0 && !item.isWatched) {
                     Box(
                         Modifier
                             .align(Alignment.BottomStart)
@@ -1240,7 +1240,7 @@ private fun NetflixFeaturedCard(
                     WatchedBadge(
                         Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(end = 12.dp, bottom = if (showProgress && item.progress > 0) 14.dp else 12.dp)
+                            .padding(end = 12.dp, bottom = 12.dp)
                             .testTag("netflix_watched_${item.mediaType}_${item.id}"),
                         size = 18.dp
                     )
