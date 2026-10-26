@@ -323,6 +323,8 @@ function isDecodeFault({ attempt, fault }: LiveFault) {
 
 /** The single most useful explanation for a channel whose attempts all failed. */
 export function classifyLiveFailure(faults: LiveFault[], context: LiveFailureContext, blocked?: LivePlan["blocked"]): LiveFailure {
+  // Every engine the plan chose turned out to be missing at run time.
+  if (!blocked && faults.length && faults.every(({ fault }) => fault?.code === "TRANSPORT_UNSUPPORTED")) blocked = "no-engine";
   if (blocked === "no-engine") return { kind: "unsupported-browser", title: translateUi("Not playable in this browser"), values: { value0: context.browser },
     message: translateUi("This channel is sent as a raw MPEG-TS stream, which {value0} on this device can't play (on iPhone it needs iOS 17.1 or later). Update the system, or watch it in the ARVIO app.") };
   if (blocked === "insecure") return { kind: "insecure", title: translateUi("Blocked by browser security"),
@@ -350,8 +352,11 @@ export function classifyLiveFailure(faults: LiveFault[], context: LiveFailureCon
         : translateUi("This channel uses a video or audio format {value0} can't decode. Try Safari, or watch it in the ARVIO app.") };
   }
   if (statuses.length) {
-    // Prefer what the provider said through the relay over CORS-era direct noise.
-    const { status } = statuses.find(({ attempt }) => attempt.route !== "direct") ?? statuses[0];
+    // What the provider said about the channel itself outranks its other
+    // output format (a panel may refuse .m3u8 for an offline .ts channel),
+    // and the relay's answer outranks a CORS-limited direct request.
+    const rank = ({ attempt }: { attempt: LiveAttempt }) => (attempt.variant === "original" ? 0 : 2) + (attempt.route === "direct" ? 1 : 0);
+    const { status } = [...statuses].sort((a, b) => rank(a) - rank(b))[0];
     if (status === 404 || status === 410) return { kind: "offline", title: translateUi("Channel offline"), values: { value0: status },
       message: translateUi("The provider says this channel isn't available right now (HTTP {value0}). It may be offline or moved; try again later or refresh the playlist in Settings.") };
     if (status === 429) return { kind: "provider-busy", title: translateUi("Too many connections"), values: { value0: status },

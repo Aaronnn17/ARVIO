@@ -151,6 +151,13 @@ test('failures are explained by what the provider said', () => {
     { attempt: relayAttempt({ route: 'direct' }), fault: { kind: 'network', httpStatus: 500 } },
     { attempt: relayAttempt(), fault: { kind: 'network', httpStatus: 404 } }], context());
   assert.equal(mixed.kind, 'offline');
+  // The channel's own answer outranks its twin's (panels refuse .m3u8 for an offline .ts).
+  const twin = live.classifyLiveFailure([
+    { attempt: relayAttempt({ transport: 'hls', hlsEngine: 'mse', variant: 'twin' }), fault: { kind: 'network', httpStatus: 403 } },
+    { attempt: relayAttempt(), fault: { kind: 'network', httpStatus: 404 } }], context());
+  assert.equal(twin.kind, 'offline');
+  // Engines missing at run time read as "not playable in this browser", not as a network fault.
+  assert.equal(live.classifyLiveFailure([{ attempt: relayAttempt(), fault: { kind: 'unsupported', code: 'TRANSPORT_UNSUPPORTED' } }], context()).kind, 'unsupported-browser');
 });
 
 test('codec failures name the format and the browser; a refused twin does not hide them', () => {
