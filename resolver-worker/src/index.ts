@@ -449,7 +449,9 @@ async function media(request: Request, env: Env) {
   if (!raw) return json({ error: "Missing url" }, request, env, 400);
   const ticketSecret = env.STREAM_TICKET_SECRET ?? "";
   if (ticketSecret.length >= 32 && !(await validStreamTicket(ticketSecret, input.searchParams.get("t")))) {
-    return json({ error: "ARVIO Premium is required for this stream." }, request, env, 403);
+    // 402, not 403: the player must tell "the relay refused this session"
+    // apart from "the IPTV provider refused the channel" (which passes through).
+    return json({ error: "ARVIO Premium is required for this stream." }, request, env, 402);
   }
   let target: URL;
   try {

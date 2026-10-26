@@ -59,8 +59,14 @@ export async function loadStalkerChannels(url:string,mac:string,portalId='stalke
   }
   return channels;
 }
-export async function resolveStalkerChannel(channel:IptvChannel):Promise<IptvChannel>{
+/**
+ * A playable URL for a Stalker channel (create_link for temporary links).
+ * `fresh` starts a new portal session first: the player asks for that when a
+ * link stopped working, which is usually an expired play token or session.
+ */
+export async function resolveStalkerChannel(channel:IptvChannel,options:{fresh?:boolean}={}):Promise<IptvChannel>{
   const config=channel.stalker;if(!config)return channel;
+  if(options.fresh)sessions.delete(JSON.stringify([config.portal,config.mac]));
   const p=await session(config.portal,config.mac);
   let url=channel.streamUrl;
   if(!config.direct){const result=await request(p,{type:'itv',action:'create_link',cmd:config.cmd,series:'0',forced_storage:'undefined',disable_ad:'0',download:'0'});url=String(result.cmd||'').replace(/^ffmpeg\s+/i,'').trim();}

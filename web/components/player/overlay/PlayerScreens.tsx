@@ -4,13 +4,22 @@ import { canProviderTranscode } from "@/lib/streamCompatibility";
 import { MediaCard } from "@/components/media/MediaCard";
 import type { ExternalPlayerOption } from "@/lib/externalPlayers";
 import type { MediaItem, StreamSource } from "@/lib/types";
+import type { LiveFailure } from "@/lib/liveTvPlayback";
+import "./liveFailure.css";
 import type { PlayerPanel } from "./helpers";
 import { useTranslation } from "@/lib/i18n";
 import { memo } from "react";
 
 /** Tap-to-play prompt, boot screen, buffering spinner, error card, skip flash and the big play button. */
-export function PlayerStatusLayers({ booted, bootLogo, bootStatus, bufferAheadSec, buffering, error, errorDetail, externalOptions, item, liveTv, onClose, onSelectStream, openExternalOption, openPanel, playBlocked, playing, retryPlayback, showEndScreen, skipOverlay, stream, subtitleLabel, title, togglePlay }: { booted: boolean; bootLogo: string | null; bootStatus: { label: string; values?: Record<string, string | number>; }; bufferAheadSec: number; buffering: boolean; error: boolean; errorDetail: string; externalOptions: ExternalPlayerOption[]; item: MediaItem | null; liveTv: boolean; onClose: () => void; onSelectStream: (next: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean; }) => void; openExternalOption: (option: ExternalPlayerOption, selectedStream: StreamSource) => void; openPanel: (panel: Exclude<PlayerPanel, null>) => void; playBlocked: boolean; playing: boolean; retryPlayback: () => void; showEndScreen: boolean; skipOverlay: number | null; stream: StreamSource; subtitleLabel: string | null; title: string; togglePlay: () => void }) {
+export function PlayerStatusLayers({ booted, bootLogo, bootStatus, bufferAheadSec, buffering, error, errorDetail, externalOptions, item, liveFailure, liveTv, onClose, onSelectStream, openExternalOption, openPanel, playBlocked, playing, retryPlayback, showEndScreen, skipOverlay, stream, subtitleLabel, title, togglePlay }: { booted: boolean; bootLogo: string | null; bootStatus: { label: string; values?: Record<string, string | number>; }; bufferAheadSec: number; buffering: boolean; error: boolean; errorDetail: string; externalOptions: ExternalPlayerOption[]; item: MediaItem | null; liveFailure?: LiveFailure | null; liveTv: boolean; onClose: () => void; onSelectStream: (next: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean; }) => void; openExternalOption: (option: ExternalPlayerOption, selectedStream: StreamSource) => void; openPanel: (panel: Exclude<PlayerPanel, null>) => void; playBlocked: boolean; playing: boolean; retryPlayback: () => void; showEndScreen: boolean; skipOverlay: number | null; stream: StreamSource; subtitleLabel: string | null; title: string; togglePlay: () => void }) {
   const translateUi = useTranslation();
+  // Values such as "this browser" are UI words too.
+  const failureValues = liveFailure?.values && Object.fromEntries(Object.entries(liveFailure.values)
+    .map(([key, value]) => [key, typeof value === "string" ? translateUi(value) : value]));
+  const externalButtons = externalOptions.map((option) => (
+    <button key={option.id} type="button" className="player-error-external" onClick={() => openExternalOption(option, stream)}>
+      <ExternalLink size={15} /> {option.id === "chooser" ? translateUi("Open in player") : translateUi("Open in {value0}", { value0: translateUi(option.label) })}</button>
+  ));
   return (<>
       {playBlocked && !error && <div className="player-start-prompt">
         <button type="button" className="player-error-external" onClick={togglePlay}>
@@ -46,19 +55,17 @@ export function PlayerStatusLayers({ booted, bootLogo, bootStatus, bufferAheadSe
         <div className="player-error" role="alert">
           <div className="player-error-card">
             <TriangleAlert size={30} aria-hidden="true" />
-            <p>{liveTv ? translateUi("This channel could not be played right now.") : translateUi("This source could not be played in the browser.")}</p>
+            <p>{liveFailure ? translateUi(liveFailure.title) : liveTv ? translateUi("This channel could not be played right now.") : translateUi("This source could not be played in the browser.")}</p>
             <span>
-              {translateUi(errorDetail) || translateUi("The source could not be opened. Its network access, browser permissions or media format may be unsupported. Try another source or an external player.")}
+              {liveFailure ? translateUi(liveFailure.message, failureValues)
+                : translateUi(errorDetail) || translateUi("The source could not be opened. Its network access, browser permissions or media format may be unsupported. Try another source or an external player.")}
             </span>
             <div className="player-error-actions">
               <button type="button" className="player-error-external" onClick={retryPlayback}>
                 <RotateCw size={15} /> {translateUi("Retry")}</button>
               {!liveTv && <button type="button" className="player-error-external" onClick={() => openPanel("sources")}>
                 <Folder size={15} /> {translateUi("Sources")}</button>}
-              {externalOptions.map((option) => (
-                <button key={option.id} type="button" className="player-error-external" onClick={() => openExternalOption(option, stream)}>
-                  <ExternalLink size={15} /> {option.id === "chooser" ? translateUi("Open in player") : translateUi("Open in {value0}", { value0: translateUi(option.label) })}</button>
-              ))}
+              {!liveTv && externalButtons}
               {!liveTv && !stream.transcoded && canProviderTranscode(stream) && (
                 <button type="button" className="player-error-transcode" onClick={() => onSelectStream(stream, { forceTranscode: true })}>
                   <Play size={15} fill="currentColor" /> {translateUi(" Transcode")}</button>
@@ -66,6 +73,13 @@ export function PlayerStatusLayers({ booted, bootLogo, bootStatus, bufferAheadSe
               <button type="button" className="player-error-external" onClick={onClose}>
                 <ArrowLeft size={15} /> {translateUi("Back")}</button>
             </div>
+            {/* Live TV plays in the browser first; outside players are the fallback, not the answer. */}
+            {liveTv && externalButtons.length > 0 && (
+              <div className="player-error-secondary">
+                <small>{translateUi("Other ways to watch")}</small>
+                <div className="player-error-actions">{externalButtons}</div>
+              </div>
+            )}
           </div>
         </div>
       )}

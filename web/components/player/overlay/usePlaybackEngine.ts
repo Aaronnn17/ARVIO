@@ -3,7 +3,10 @@ import { useEffect, type RefObject, type Dispatch, type SetStateAction } from "r
 import { playbackFailureKind, classifyMediaError, diagnoseSourceFailure } from "@/lib/playerRecovery";
 import { canProviderTranscode, hasDolbyVision, recordBrowserPlaybackFailure, canTryRemux } from "@/lib/streamCompatibility";
 import { browserAutoplayCandidates } from "@/lib/browserAutoplay";
-import { type PlaybackHandle, attachPlayback, type PlaybackError, type PlaybackTracks } from "@/lib/player";
+import { type PlaybackHandle, attachPlayback, type PlaybackError, type PlaybackTracks, type PlaybackTransport, type PlaybackMediaInfo, preferNativeHls } from "@/lib/player";
+import { planLiveAttempts, attemptIsPointless, classifyLiveFailure, liveMediaNotice, browserName, decodeCheck, isInsecureForPage, type LiveAttempt, type LiveFailure, type LiveFault, type LivePlan } from "@/lib/liveTvPlayback";
+import { getMediaCapabilities, mediaSourceConstructor } from "@/lib/capabilities";
+import { currentStreamTicket } from "@/lib/streamTicket";
 import { resolverMediaUrl } from "@/lib/resolver";
 import { config } from "@/lib/config";
 import { proxiedUrl } from "@/lib/http";
@@ -13,7 +16,12 @@ import type { StreamSource, AppSettings } from "@/lib/types";
 import type { RemuxAudioTrack } from "@/lib/remux";
 
 /** Attaches the source to the <video>: the remux path, the URL ladder (direct, relays, debrid link refresh) and the escalation to remux, provider conversion or the next source. */
-export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failureDiagnosticRef, lastSavedRef, liveTv, onSelectStream, onToast, playbackIdentity, playbackRate, remuxAudioIndexRef, remuxRestartKey, resumeAtRef, setBootStatus, setBuffering, setError, setErrorDetail, setPlayBlocked, setRemuxAudioIndex, setRemuxTracks, setShowControls, settings, setTransportTracks, sourceListRef, stream, transportRef, tryNextSource, videoRef }: { autoSourceHopsRef: RefObject<number>; currentStreamRef: RefObject<StreamSource>; failureDiagnosticRef: RefObject<{ failure_kind: string; phase: "startup" | "playback"; transport?: string; }>; lastSavedRef: RefObject<number>; liveTv: boolean; onSelectStream: (next: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean; }) => void; onToast: (message: string) => void; playbackIdentity: string; playbackRate: number; remuxAudioIndexRef: RefObject<number>; remuxRestartKey: number; resumeAtRef: RefObject<number>; setBootStatus: Dispatch<SetStateAction<{ label: string; values?: Record<string, string | number>; }>>; setBuffering: Dispatch<SetStateAction<boolean>>; setError: Dispatch<SetStateAction<boolean>>; setErrorDetail: Dispatch<SetStateAction<string>>; setPlayBlocked: Dispatch<SetStateAction<boolean>>; setRemuxAudioIndex: Dispatch<SetStateAction<number>>; setRemuxTracks: Dispatch<SetStateAction<RemuxAudioTrack[]>>; setShowControls: Dispatch<SetStateAction<boolean>>; settings: AppSettings; setTransportTracks: Dispatch<SetStateAction<PlaybackTracks>>; sourceListRef: RefObject<StreamSource[]>; stream: StreamSource; transportRef: RefObject<PlaybackHandle | null>; tryNextSource: () => boolean; videoRef: RefObject<HTMLVideoElement | null> }) {
+export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failureDiagnosticRef, lastSavedRef, liveTv, notify, onSelectStream, onToast, playbackIdentity, playbackRate, refreshLiveSource, remuxAudioIndexRef, remuxRestartKey, resumeAtRef, setBootStatus, setBuffering, setError, setErrorDetail, setLiveFailure, setPlayBlocked, setRemuxAudioIndex, setRemuxTracks, setShowControls, settings, setTransportTracks, sourceListRef, stream, transportRef, tryNextSource, videoRef }: { autoSourceHopsRef: RefObject<number>;
+  /** A translated toast with values (Live TV notices). */
+  notify?: (message: string, values?: Record<string, string | number>) => void;
+  /** Re-resolve an expiring channel link (Stalker create_link); null when nothing changed. */
+  refreshLiveSource?: () => Promise<{ url: string; headers?: Record<string, string> } | null>;
+  setLiveFailure?: Dispatch<SetStateAction<LiveFailure | null>>; currentStreamRef: RefObject<StreamSource>; failureDiagnosticRef: RefObject<{ failure_kind: string; phase: "startup" | "playback"; transport?: string; }>; lastSavedRef: RefObject<number>; liveTv: boolean; onSelectStream: (next: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean; }) => void; onToast: (message: string) => void; playbackIdentity: string; playbackRate: number; remuxAudioIndexRef: RefObject<number>; remuxRestartKey: number; resumeAtRef: RefObject<number>; setBootStatus: Dispatch<SetStateAction<{ label: string; values?: Record<string, string | number>; }>>; setBuffering: Dispatch<SetStateAction<boolean>>; setError: Dispatch<SetStateAction<boolean>>; setErrorDetail: Dispatch<SetStateAction<string>>; setPlayBlocked: Dispatch<SetStateAction<boolean>>; setRemuxAudioIndex: Dispatch<SetStateAction<number>>; setRemuxTracks: Dispatch<SetStateAction<RemuxAudioTrack[]>>; setShowControls: Dispatch<SetStateAction<boolean>>; settings: AppSettings; setTransportTracks: Dispatch<SetStateAction<PlaybackTracks>>; sourceListRef: RefObject<StreamSource[]>; stream: StreamSource; transportRef: RefObject<PlaybackHandle | null>; tryNextSource: () => boolean; videoRef: RefObject<HTMLVideoElement | null> }) {
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !stream.url) return undefined;
@@ -123,6 +131,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
 
     setError(false);
     setErrorDetail("");
+    setLiveFailure?.(null);
     failureDiagnosticRef.current = { failure_kind: "unknown", phase: "startup" };
     setBuffering(true);
     const hops = autoSourceHopsRef.current;
@@ -137,7 +146,26 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
     let detach: PlaybackHandle | undefined;
     let clearAttemptStart = () => {};
     setTransportTracks({ audioTracks: [], qualities: [], selectedAudioTrackId: null, selectedQualityId: null });
-    const attach = (url: string) => {
+    type Rung = { url: string; transport?: PlaybackTransport; hlsEngine?: "native" | "mse"; headers?: Record<string, string>; startupMs?: number; live?: LiveAttempt };
+    let currentRung: Rung = { url: stream.url };
+    let noticeShown = false;
+    let pendingInfo: PlaybackMediaInfo | null = null;
+    let noticeTimer: number | undefined;
+    // A few seconds into a live channel, say so when the picture or the sound
+    // is missing because this browser cannot decode it (engines drop such
+    // tracks silently): never a black screen or silence without a reason.
+    const checkLiveMedia = () => {
+      if (cancelled || noticeShown || !hasPlayed) return;
+      const element = video as HTMLVideoElement & { webkitAudioDecodedByteCount?: number; mozHasAudio?: boolean };
+      const sound = typeof element.mozHasAudio === "boolean" ? element.mozHasAudio
+        : typeof element.webkitAudioDecodedByteCount === "number" ? element.webkitAudioDecodedByteCount > 0 : null;
+      const notice = liveMediaNotice({ picture: video.videoWidth > 0, sound, info: pendingInfo }, liveContext());
+      if (notice) { noticeShown = true; notify?.(notice.message, notice.values); }
+    };
+    const attach = (rung: Rung) => {
+      currentRung = rung;
+      const url = rung.url;
+      pendingInfo = null;
       clearAttemptStart();
       // URL refreshes/relay fallbacks need their own resume listeners. Keeping
       // one persistent canplay handler would also resume a user's paused seek.
@@ -149,9 +177,11 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       };
       const handle = attachPlayback(video, url, {
         onError: handlePlaybackError, live: liveTv,
-        transport: url === stream.url ? stream.transport : undefined,
-        requestHeaders: url === stream.url ? headers : undefined,
-        onTracks: (tracks) => { if (!cancelled) setTransportTracks(tracks); }
+        transport: rung.transport, hlsEngine: rung.hlsEngine,
+        requestHeaders: rung.headers,
+        onTracks: (tracks) => { if (!cancelled) setTransportTracks(tracks); },
+        // Notices wait for real frames: a track list alone is not playback.
+        onMediaInfo: liveTv ? (info) => { pendingInfo = info; } : undefined
       });
       transportRef.current = handle;
       return handle;
@@ -168,7 +198,8 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
     // Catch-up recordings come from the same IPTV panels as live channels, so
     // they get the live relay hops — but keep VOD controls (seekable).
     const iptvVod = stream.addonId === "iptv_xtream_vod";
-    const iptvRelay = liveTv || stream.addonName === "Catch-up" || iptvVod;
+    // Live channels walk their own plan (planLiveAttempts below).
+    const iptvRelay = !liveTv && (stream.addonName === "Catch-up" || iptvVod);
     if (iptvRelay) {
       const hlsTwin = iptvVod ? null : xtreamHlsVariant(stream.url);
       if (hlsTwin) attempts.push(hlsTwin);
@@ -198,6 +229,35 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
     }
     const uniqueAttempts = [...new Set(attempts)];
     let attemptIndex = 0;
+    // Live TV: shape-aware engines and routes, see lib/liveTvPlayback.ts.
+    const liveEnvironment = () => {
+      const caps = getMediaCapabilities();
+      return { pageProtocol: window.location.protocol, mse: caps.mse, nativeHls: caps.nativeHls, preferNativeHls: preferNativeHls() };
+    };
+    const livePlanFor = (url: string, requestHeaders?: Record<string, string>): LivePlan => planLiveAttempts({ url, headers: requestHeaders }, liveEnvironment(), {
+      relay: (target) => resolverMediaUrl(target, { ...liveTvProxyHeaders(), ...requestHeaders }),
+      manifestRelay: config.resolverUrl ? (target) => workerManifestUrl(target, requestHeaders) : undefined,
+      appProxy: config.allowNetlifyMediaProxy ? (target) => proxiedUrl(target, { ...liveTvProxyHeaders(), ...requestHeaders }) : undefined
+    });
+    const rungsOf = (plan: LivePlan): Rung[] => plan.attempts.map((attempt) => ({ url: attempt.url, transport: attempt.transport, hlsEngine: attempt.hlsEngine, headers: attempt.headers, startupMs: attempt.startupMs, live: attempt }));
+    let liveSource = { url: stream.url, headers };
+    let livePlan: LivePlan | null = liveTv ? livePlanFor(stream.url, headers) : null;
+    let ladder: Rung[] = livePlan ? rungsOf(livePlan)
+      : uniqueAttempts.map((url) => url === stream.url ? { url, transport: stream.transport, headers } : { url });
+    const liveFaults: LiveFault[] = [];
+    let liveRefreshed = false;
+    let liveRestarted = false;
+    let lastRecoveryAt = 0;
+    function liveContext() {
+      const MediaSourceType = mediaSourceConstructor();
+      const probe = document.createElement("video");
+      return {
+        browser: browserName(navigator.userAgent),
+        canDecode: decodeCheck((type) => { try { return !!MediaSourceType?.isTypeSupported(type) || probe.canPlayType(type) !== ""; } catch { return false; } }),
+        insecureSource: isInsecureForPage(liveSource.url, window.location.protocol),
+        relayAvailable: !!config.resolverUrl, relayTicket: !!currentStreamTicket(), played: hasEverPlayed
+      };
+    }
     // Some sources hang forever without ever firing an "error" event (the CDN
     // accepts the connection but never delivers a playable moov/metadata). A
     // plain error-based ladder can't recover from that. Arm a per-attempt stall
@@ -212,17 +272,17 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       // data) need a shorter leash than VOD so the ladder keeps moving.
       stallTimer = window.setTimeout(() => {
         if (cancelled) return;
-        if (video.readyState < 1) handlePlaybackError({ transport: stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source." });
+        if (video.readyState < 1) handlePlaybackError({ transport: currentRung.transport ?? stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source." });
         // A cold debrid link has to be fetched and cached by the provider
         // before the first byte arrives, which regularly exceeds the VOD
         // budget — condemning sources that were about to work.
-      }, liveTv ? 10000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 25000 : 13000));
+      }, currentRung.startupMs ?? (liveTv ? 10000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 25000 : 13000)));
       // Metadata can arrive without a playable frame. Give each fallback its
       // own frame deadline; the original attempt must not cancel a new relay.
       playableWatchdog = window.setTimeout(() => {
         if (cancelled || hasPlayed || video.readyState >= 2) return;
-        handlePlaybackError({ transport: stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source." });
-      }, liveTv ? 15000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 38000 : 20000));
+        handlePlaybackError({ transport: currentRung.transport ?? stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source." });
+      }, liveTv ? (currentRung.startupMs ?? 10000) + 5000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 38000 : 20000));
     };
     let awaitingGesture = false;
     const requestPlayback = () => {
@@ -261,6 +321,11 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
         setErrorDetail(fault.message);
         failureDiagnosticRef.current = { failure_kind: playbackFailureKind(fault), phase: hasEverPlayed ? "playback" : "startup", transport: fault.transport };
       }
+      if (currentRung.live) liveFaults.push({ attempt: currentRung.live, fault });
+      // A live channel that has played a good while since its last
+      // reconnect earns another in-place reconnect (providers drop
+      // connections every few minutes); VOD keeps the single recovery.
+      if (liveTv && retriedInterruption && Date.now() - lastRecoveryAt > 60_000) retriedInterruption = false;
       // Transport teardown may pause the element. Recover an interrupted
       // connection explicitly: a watchdog that ignores user-paused playback
       // cannot detect that case. This also covers live streams.
@@ -268,8 +333,10 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
         const position = fault?.positionSeconds ?? video.currentTime;
         if (!liveTv && position > 0) resumeAtRef.current = position + (stream.playbackSession?.startOffset ?? 0);
         const decodeFailure = fault ? fault.kind === "media" || fault.kind === "unsupported" : classifyMediaError(video.error?.code) === "fatal";
-        if (decodeFailure) {
-          if (!liveTv && !stream.transcoded && canProviderTranscode(stream)) {
+        // Live: a decoder error mid-stream (a corrupt packet, a track change)
+        // gets the same one reconnect, then the plan and its explanation.
+        if (decodeFailure && !liveTv) {
+          if (!stream.transcoded && canProviderTranscode(stream)) {
             cancelled = true;
             onSelectStream(stream, { forceBrowser: true, forceTranscode: true });
             detach?.();
@@ -281,8 +348,9 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
           onToast("This source stopped decoding partway through. Try another source or open it in VLC.");
           return;
         }
-        if (!retriedInterruption && fault?.retryable !== false) {
+        if (!retriedInterruption && (fault?.retryable !== false || (liveTv && decodeFailure))) {
           retriedInterruption = true;
+          lastRecoveryAt = Date.now();
           handlingError = true;
           hasPlayed = false;
           setBuffering(true);
@@ -316,7 +384,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
             if (result.url && result.url !== stream.url) {
               setError(false);
               setBuffering(true);
-              detach = attach(result.url);
+              detach = attach({ url: result.url });
               armStallTimer();
               requestPlayback();
               handlingError = false;
@@ -332,16 +400,35 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
         }
       }
       attemptIndex += 1;
-      const nextUrl = uniqueAttempts[attemptIndex];
-      if (nextUrl) {
+      // Skip engines that would only repeat an HTTP refusal for the same request.
+      while (ladder[attemptIndex]?.live && attemptIsPointless(ladder[attemptIndex].live!, liveFaults)) attemptIndex += 1;
+      const next = ladder[attemptIndex];
+      if (next) {
         setError(false);
         setBuffering(true);
-        setBootStatus({ label: "Trying another connection ({value0} of {value1})", values: { value0: attemptIndex + 1, value1: uniqueAttempts.length } });
+        setBootStatus({ label: "Trying another connection ({value0} of {value1})", values: { value0: attemptIndex + 1, value1: ladder.length } });
         detach?.();
-        detach = attach(nextUrl);
+        detach = attach(next);
         armStallTimer();
         requestPlayback();
         handlingError = false;
+        return;
+      }
+      if (liveTv && livePlan) {
+        // Expiring portal links: fetch a fresh one once and walk the plan again.
+        if (refreshLiveSource && !liveRefreshed) {
+          liveRefreshed = true;
+          detach?.();
+          setBootStatus({ label: "Refreshing the channel link…" });
+          void refreshLiveSource().then((fresh) => {
+            if (cancelled) return;
+            if (!fresh?.url || fresh.url === liveSource.url) { handlingError = false; restartOrFail(); return; }
+            liveSource = { url: fresh.url, headers: fresh.headers };
+            startPlan(livePlanFor(fresh.url, fresh.headers));
+          }).catch(() => { if (!cancelled) { handlingError = false; restartOrFail(); } });
+          return;
+        }
+        restartOrFail();
         return;
       }
       // Direct attempts exhausted. For a VOD source the browser couldn't decode
@@ -386,7 +473,48 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
         });
       }
     };
-    detach = attach(uniqueAttempts[0]);
+    // Live: begin the plan again (fresh link, or one reconnect after a drop).
+    function startPlan(plan: LivePlan) {
+      livePlan = plan;
+      ladder = rungsOf(plan);
+      attemptIndex = 0;
+      hasPlayed = false;
+      handlingError = false;
+      if (!ladder.length) { failLive(); return; }
+      setError(false);
+      setBuffering(true);
+      setBootStatus({ label: "Connecting…" });
+      detach?.();
+      detach = attach(ladder[0]);
+      armStallTimer();
+      requestPlayback();
+    }
+    function restartOrFail() {
+      if (hasEverPlayed && !liveRestarted) {
+        liveRestarted = true;
+        notify?.("Reconnecting to the channel…");
+        startPlan(livePlanFor(liveSource.url, liveSource.headers));
+        return;
+      }
+      failLive();
+    }
+    function failLive() {
+      cancelled = true;
+      window.clearTimeout(stallTimer);
+      window.clearTimeout(playableWatchdog);
+      detach?.();
+      setBuffering(false);
+      setError(true);
+      setShowControls(true);
+      const failure = classifyLiveFailure(liveFaults, liveContext(), livePlan?.blocked);
+      setLiveFailure?.(failure);
+      setErrorDetail(failure.message);
+    }
+    if (livePlan && !ladder.length) {
+      failLive();
+      return () => { cancelled = true; };
+    }
+    detach = attach(ladder[0]);
     armStallTimer();
     function onReadyToStart() {
       if (cancelled || !video) return;
@@ -421,10 +549,12 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
     // can prove it is delivering playable media again.
     const onFirstPlaying = () => {
       if (video.readyState < 3) return;
+      const first = !hasPlayed;
       hasPlayed = true;
       hasEverPlayed = true;
       window.clearTimeout(stallTimer);
       window.clearTimeout(playableWatchdog);
+      if (first && liveTv && !noticeShown) { window.clearTimeout(noticeTimer); noticeTimer = window.setTimeout(checkLiveMedia, 3000); }
     };
     video.addEventListener("playing", onFirstPlaying);
     // `playing` can be missed when a source starts already-buffered; a moving
@@ -433,6 +563,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
     return () => {
       cancelled = true;
       window.clearTimeout(startTimer);
+      window.clearTimeout(noticeTimer);
       window.clearTimeout(stallTimer);
       window.clearTimeout(playableWatchdog);
       video.removeEventListener("play", onUserPlay);

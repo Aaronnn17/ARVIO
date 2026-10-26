@@ -7,6 +7,7 @@ import { useAppPick } from "@/lib/store";
 import { isSameStream, mergeSubtitleTracks, youTubeId } from "./overlay/helpers";
 import { YouTubeLayer } from "./overlay/YouTubeLayer";
 import { VideoPlayer } from "./overlay/VideoPlayer";
+import { resolveStalkerChannel } from "@/lib/stalker";
 
 // The player overlay. PlayerOverlay picks what to play from the store; the
 // player itself is split into modules under ./overlay:
@@ -43,6 +44,16 @@ export function PlayerOverlay() {
     openDetails
   } = useAppPick("activeStream", "activeChannel", "selected", "selectedEpisode", "settings", "addons", "updateSettings", "activeProfile", "streams", "playStream", "advanceEpisode", "setToast", "closePlayer", "openDetails");
 
+  // Stalker portals hand out short-lived play tokens: the player asks for a
+  // fresh link when every connection to the current one failed.
+  const refreshLiveSource = useMemo(() => {
+    const channel = activeChannel;
+    if (!channel?.stalker || channel.stalker.direct) return undefined;
+    return async () => {
+      const fresh = await resolveStalkerChannel(channel, { fresh: true });
+      return { url: fresh.streamUrl, headers: fresh.requestHeaders };
+    };
+  }, [activeChannel]);
   const enrichment = streams.find((candidate) => activeStream && (isSameStream(candidate, activeStream) || (candidate.url && candidate.url === activeStream.url)));
   const enrichedStream = useMemo(() => activeStream ? mergeSubtitleTracks(activeStream, enrichment) : null, [activeStream, enrichment]);
   // The one-time iOS "Add to Home Screen" tip lives here because this
@@ -74,6 +85,7 @@ export function PlayerOverlay() {
       updateSettings={updateSettings}
       activeProfileId={activeProfile?.id ?? null}
       liveTv={Boolean(activeChannel)}
+      refreshLiveSource={refreshLiveSource}
       canAdvance={canAdvance}
       onSelectStream={playStream}
       onAdvance={advanceEpisode}

@@ -275,7 +275,7 @@ test('each live playback fallback receives a fresh frame deadline', () => {
   const arm = extracted('components/player/PlayerOverlay.tsx', node =>
     ts.isVariableDeclaration(node) && node.name.getText() === 'armStallTimer'
       ? node.initializer : undefined, {
-    stallTimer: undefined, playableWatchdog: undefined, cancelled: false, hasPlayed: false,
+    stallTimer: undefined, playableWatchdog: undefined, cancelled: false, hasPlayed: false, currentRung: { url: '' },
     liveTv: true, video, stream: {}, parseDebridStream: () => null,
     handlePlaybackError: () => failures++,
     window: {
@@ -300,6 +300,7 @@ test('each live playback fallback receives a fresh frame deadline', () => {
   assert.equal(failures, 1, 'playable media is not failed by the startup deadline');
 });
 
+const liveTvPlayback = load('lib/liveTvPlayback.ts');
 function conversionRecoveryHarness(overrides = {}) {
   const state = { errors: [], details: [], selections: [], hops: 0, destroyed: 0, resolutions: 0, reloads: [] };
   const video = Object.assign(new EventTarget(), { readyState: 4, currentTime: 420, duration: 3600, paused: false, ended: false, seeking: false,
@@ -330,6 +331,11 @@ function conversionRecoveryHarness(overrides = {}) {
     playbackFailureKind: load('lib/playerRecovery.ts').playbackFailureKind,
     failureDiagnosticRef: { current: {} },
     xtreamHlsVariant: () => null, resolverMediaUrl: () => null, liveTvProxyHeaders: () => ({}), isLikelyHlsUrl: () => false,
+    // Live TV plans its own attempts (lib/liveTvPlayback.ts); this file's live
+    // cases use an https file, which the plan plays directly like before.
+    ...liveTvPlayback, setLiveFailure: noop, notify: noop, refreshLiveSource: undefined,
+    getMediaCapabilities: () => capabilities, preferNativeHls: () => false, mediaSourceConstructor: () => undefined, currentStreamTicket: () => '',
+    workerManifestUrl: () => null, proxiedUrl: (url) => url, navigator: { userAgent: 'Chrome' }, document: { createElement: () => ({ canPlayType: () => '' }) },
     selectStream: (next, opts) => state.selections.push({ next, options: opts }),
     attachPlayback: (_video, _url, opts) => {
       transport = opts;
@@ -337,7 +343,7 @@ function conversionRecoveryHarness(overrides = {}) {
         state.reloads.push(position); video.removeAttribute('src'); video.paused = true;
       } });
     },
-    window: { setInterval: (fn) => { timers.set(fn, 'interval'); return fn; }, clearInterval: (fn) => timers.delete(fn),
+    window: { location: { protocol: 'https:' }, setInterval: (fn) => { timers.set(fn, 'interval'); return fn; }, clearInterval: (fn) => timers.delete(fn),
       setTimeout: (fn) => { timers.set(fn, 'timeout'); return fn; }, clearTimeout: (fn) => timers.delete(fn) },
     require(name) {
       assert.equal(name, '@/lib/remux');
@@ -558,8 +564,8 @@ test('raw video errors do not bypass adaptive engine recovery or walk the fallba
   cleanup();
 });
 
-test('silent live stalls use live-edge recovery and never select an unrelated lighter VOD source', () => {
-  const calls = { live: 0, reloads: [], errors: [], selections: 0 };
+test('silent live stalls use live-edge recovery, reconnect the channel twice, and never select an unrelated lighter VOD source', () => {
+  const calls = { live: 0, reloads: [], errors: [], selections: 0, restarts: 0, failure: null };
   let recovery;
   const effect = extracted('components/player/PlayerOverlay.tsx', (node, source) =>
     ts.isCallExpression(node) && node.expression.getText(source) === 'useEffect'
@@ -572,15 +578,22 @@ test('silent live stalls use live-edge recovery and never select an unrelated li
     streamSizeBytes: () => { throw new Error('Live recovery must not rank VOD replacements'); },
     failureDiagnosticRef: { current: {} }, setErrorDetail: () => {},
     setError: value => calls.errors.push(value), setBuffering: () => {}, setShowControls: () => {},
-    onToast: () => {}, onSelectStream: () => calls.selections++
+    onToast: () => {}, onSelectStream: () => calls.selections++,
+    liveStallRestartsRef: { current: 0 }, setRemuxRestartKey: () => calls.restarts++, setLiveFailure: value => { calls.failure = value; }
   });
   const cleanup = effect();
   assert.ok(recovery, 'live playback installs the silent-stall monitor');
   assert.equal(recovery.live, true, 'live reloads may reset the timestamp window');
-  recovery.nudge(123); recovery.reload(123); recovery.onFailure();
+  recovery.nudge(123); recovery.reload(123);
+  // A live channel has no other sources: reconnect it (twice), then explain.
+  recovery.onFailure(); recovery.onFailure();
+  assert.equal(calls.restarts, 2);
+  assert.deepEqual(calls.errors, []);
+  recovery.onFailure();
   assert.equal(calls.live, 1);
   assert.deepEqual(calls.reloads, [undefined]);
   assert.deepEqual(calls.errors, [true]);
+  assert.equal(calls.failure.kind, 'stopped');
   assert.equal(calls.selections, 0);
   cleanup();
 });
