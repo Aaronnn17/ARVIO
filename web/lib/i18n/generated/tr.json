@@ -1291,6 +1291,7 @@
   "This channel uses a video or audio format {value0} can't decode. Watch it in the ARVIO app or VLC.": "Bu kanal, {value0} tarafından çözülemeyen bir video veya ses biçimi kullanıyor. ARVIO uygulamasında veya VLC'de izleyin.",
   "This channel's audio is {value0}, which {value1} can't decode. It plays with sound in Safari and in the ARVIO app.": "Bu kanalın sesi {value0} ve {value1} bunu çözemiyor. Safari'de ve ARVIO uygulamasında sesli oynatılır.",
   "This channel's audio is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "Bu kanalın sesi {value0} ve {value1} bunu çözemiyor. ARVIO uygulamasında veya VLC'de izleyin.",
+  "This channel's stream format can't be played by {value0} on this device. Watch it in the ARVIO app or VLC.": "{value0}, bu kanalın yayın biçimini bu cihazda oynatamıyor. Kanalı ARVIO uygulamasında veya VLC'de izleyin.",
   "This channel's video is MPEG-2, which no web browser can decode. Watch it in the ARVIO app or VLC.": "Bu kanalın videosu MPEG-2 ve hiçbir web tarayıcısı bunu çözemiyor. ARVIO uygulamasında veya VLC'de izleyin.",
   "This channel's video is {value0}, which {value1} can't decode on this device. Try Safari, or watch it in the ARVIO app.": "Bu kanalın videosu {value0} ve {value1} bunu bu cihazda çözemiyor. Safari'yi deneyin ya da ARVIO uygulamasında izleyin.",
   "This channel's video is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "Bu kanalın videosu {value0} ve {value1} bunu çözemiyor. ARVIO uygulamasında veya VLC'de izleyin.",

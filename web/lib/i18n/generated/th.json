@@ -1291,6 +1291,7 @@
   "This channel uses a video or audio format {value0} can't decode. Watch it in the ARVIO app or VLC.": "ช่องนี้ใช้รูปแบบวิดีโอหรือเสียงที่ {value0} ถอดรหัสไม่ได้ รับชมในแอป ARVIO หรือ VLC",
   "This channel's audio is {value0}, which {value1} can't decode. It plays with sound in Safari and in the ARVIO app.": "เสียงของช่องนี้เป็น {value0} ซึ่ง {value1} ถอดรหัสไม่ได้ ช่องนี้เล่นพร้อมเสียงได้ใน Safari และในแอป ARVIO",
   "This channel's audio is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "เสียงของช่องนี้เป็น {value0} ซึ่ง {value1} ถอดรหัสไม่ได้ รับชมในแอป ARVIO หรือ VLC",
+  "This channel's stream format can't be played by {value0} on this device. Watch it in the ARVIO app or VLC.": "{value0} บนอุปกรณ์นี้เล่นรูปแบบสตรีมของช่องนี้ไม่ได้ ดูในแอป ARVIO หรือ VLC",
   "This channel's video is MPEG-2, which no web browser can decode. Watch it in the ARVIO app or VLC.": "วิดีโอของช่องนี้เป็น MPEG-2 ซึ่งไม่มีเว็บเบราว์เซอร์ใดถอดรหัสได้ รับชมในแอป ARVIO หรือ VLC",
   "This channel's video is {value0}, which {value1} can't decode on this device. Try Safari, or watch it in the ARVIO app.": "วิดีโอของช่องนี้เป็น {value0} ซึ่ง {value1} ถอดรหัสบนอุปกรณ์นี้ไม่ได้ ลองใช้ Safari หรือรับชมในแอป ARVIO",
   "This channel's video is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "วิดีโอของช่องนี้เป็น {value0} ซึ่ง {value1} ถอดรหัสไม่ได้ รับชมในแอป ARVIO หรือ VLC",

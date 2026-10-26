@@ -1293,6 +1293,7 @@
   "This channel uses a video or audio format {value0} can't decode. Watch it in the ARVIO app or VLC.": "Šis kanāls izmanto video vai audio formātu, ko {value0} nevar dekodēt. Skatieties to ARVIO lietotnē vai VLC.",
   "This channel's audio is {value0}, which {value1} can't decode. It plays with sound in Safari and in the ARVIO app.": "Šī kanāla audio ir {value0}, un {value1} to nevar dekodēt. Ar skaņu tas tiek atskaņots Safari un ARVIO lietotnē.",
   "This channel's audio is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "Šī kanāla audio ir {value0}, un {value1} to nevar dekodēt. Skatieties to ARVIO lietotnē vai VLC.",
+  "This channel's stream format can't be played by {value0} on this device. Watch it in the ARVIO app or VLC.": "{value0} šajā ierīcē nevar atskaņot šī kanāla straumes formātu. Skatieties to lietotnē ARVIO vai VLC.",
   "This channel's video is MPEG-2, which no web browser can decode. Watch it in the ARVIO app or VLC.": "Šī kanāla video ir MPEG-2, ko nevar dekodēt neviens tīmekļa pārlūks. Skatieties to ARVIO lietotnē vai VLC.",
   "This channel's video is {value0}, which {value1} can't decode on this device. Try Safari, or watch it in the ARVIO app.": "Šī kanāla video ir {value0}, un {value1} to šajā ierīcē nevar dekodēt. Izmēģiniet Safari vai skatieties to ARVIO lietotnē.",
   "This channel's video is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "Šī kanāla video ir {value0}, un {value1} to nevar dekodēt. Skatieties to ARVIO lietotnē vai VLC.",

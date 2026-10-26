@@ -1291,6 +1291,7 @@
   "This channel uses a video or audio format {value0} can't decode. Watch it in the ARVIO app or VLC.": "تستخدم هذه القناة تنسيق فيديو أو صوت لا يستطيع {value0} فك ترميزه. شاهدها في تطبيق ARVIO أو في VLC.",
   "This channel's audio is {value0}, which {value1} can't decode. It plays with sound in Safari and in the ARVIO app.": "صوت هذه القناة {value0}، ولا يستطيع {value1} فك ترميزه. تعمل بالصوت في Safari وفي تطبيق ARVIO.",
   "This channel's audio is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "صوت هذه القناة {value0}، ولا يستطيع {value1} فك ترميزه. شاهدها في تطبيق ARVIO أو في VLC.",
+  "This channel's stream format can't be played by {value0} on this device. Watch it in the ARVIO app or VLC.": "لا يستطيع {value0} تشغيل تنسيق بث هذه القناة على هذا الجهاز. شاهدها في تطبيق ARVIO أو VLC.",
   "This channel's video is MPEG-2, which no web browser can decode. Watch it in the ARVIO app or VLC.": "فيديو هذه القناة بتنسيق MPEG-2، الذي لا يستطيع أي متصفح ويب فك ترميزه. شاهدها في تطبيق ARVIO أو في VLC.",
   "This channel's video is {value0}, which {value1} can't decode on this device. Try Safari, or watch it in the ARVIO app.": "فيديو هذه القناة {value0}، ولا يستطيع {value1} فك ترميزه على هذا الجهاز. جرّب Safari، أو شاهدها في تطبيق ARVIO.",
   "This channel's video is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "فيديو هذه القناة {value0}، ولا يستطيع {value1} فك ترميزه. شاهدها في تطبيق ARVIO أو في VLC.",

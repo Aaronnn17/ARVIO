@@ -1291,6 +1291,7 @@
   "This channel uses a video or audio format {value0} can't decode. Watch it in the ARVIO app or VLC.": "यह चैनल ऐसा वीडियो या ऑडियो फ़ॉर्मेट इस्तेमाल करता है जिसे {value0} डिकोड नहीं कर सकता। इसे ARVIO ऐप या VLC में देखें।",
   "This channel's audio is {value0}, which {value1} can't decode. It plays with sound in Safari and in the ARVIO app.": "इस चैनल का ऑडियो {value0} है, जिसे {value1} डिकोड नहीं कर सकता। Safari और ARVIO ऐप में यह आवाज़ के साथ चलता है।",
   "This channel's audio is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "इस चैनल का ऑडियो {value0} है, जिसे {value1} डिकोड नहीं कर सकता। इसे ARVIO ऐप या VLC में देखें।",
+  "This channel's stream format can't be played by {value0} on this device. Watch it in the ARVIO app or VLC.": "इस डिवाइस पर {value0} इस चैनल का स्ट्रीम फ़ॉर्मेट नहीं चला सकता। इसे ARVIO ऐप या VLC में देखें।",
   "This channel's video is MPEG-2, which no web browser can decode. Watch it in the ARVIO app or VLC.": "इस चैनल का वीडियो MPEG-2 है, जिसे कोई भी वेब ब्राउज़र डिकोड नहीं कर सकता। इसे ARVIO ऐप या VLC में देखें।",
   "This channel's video is {value0}, which {value1} can't decode on this device. Try Safari, or watch it in the ARVIO app.": "इस चैनल का वीडियो {value0} है, जिसे इस डिवाइस पर {value1} डिकोड नहीं कर सकता। Safari आज़माएँ, या इसे ARVIO ऐप में देखें।",
   "This channel's video is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "इस चैनल का वीडियो {value0} है, जिसे {value1} डिकोड नहीं कर सकता। इसे ARVIO ऐप या VLC में देखें।",

@@ -1290,6 +1290,7 @@
   "This channel uses a video or audio format {value0} can't decode. Watch it in the ARVIO app or VLC.": "ఈ ఛానెల్ {value0} డీకోడ్ చేయలేని వీడియో లేదా ఆడియో ఫార్మాట్‌ను ఉపయోగిస్తుంది. దీన్ని ARVIO యాప్‌లో లేదా VLCలో చూడండి.",
   "This channel's audio is {value0}, which {value1} can't decode. It plays with sound in Safari and in the ARVIO app.": "ఈ ఛానెల్ ఆడియో {value0}, దీన్ని {value1} డీకోడ్ చేయలేదు. Safariలో మరియు ARVIO యాప్‌లో ఇది ధ్వనితో ప్లే అవుతుంది.",
   "This channel's audio is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "ఈ ఛానెల్ ఆడియో {value0}, దీన్ని {value1} డీకోడ్ చేయలేదు. దీన్ని ARVIO యాప్‌లో లేదా VLCలో చూడండి.",
+  "This channel's stream format can't be played by {value0} on this device. Watch it in the ARVIO app or VLC.": "ఈ పరికరంలో {value0} ఈ ఛానెల్ స్ట్రీమ్ ఫార్మాట్‌ను ప్లే చేయలేదు. దీన్ని ARVIO యాప్ లేదా VLCలో చూడండి.",
   "This channel's video is MPEG-2, which no web browser can decode. Watch it in the ARVIO app or VLC.": "ఈ ఛానెల్ వీడియో MPEG-2, దీన్ని ఏ వెబ్ బ్రౌజర్ కూడా డీకోడ్ చేయలేదు. దీన్ని ARVIO యాప్‌లో లేదా VLCలో చూడండి.",
   "This channel's video is {value0}, which {value1} can't decode on this device. Try Safari, or watch it in the ARVIO app.": "ఈ ఛానెల్ వీడియో {value0}, దీన్ని ఈ పరికరంలో {value1} డీకోడ్ చేయలేదు. Safariని ప్రయత్నించండి, లేదా దీన్ని ARVIO యాప్‌లో చూడండి.",
   "This channel's video is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "ఈ ఛానెల్ వీడియో {value0}, దీన్ని {value1} డీకోడ్ చేయలేదు. దీన్ని ARVIO యాప్‌లో లేదా VLCలో చూడండి.",

@@ -1292,6 +1292,7 @@
   "This channel uses a video or audio format {value0} can't decode. Watch it in the ARVIO app or VLC.": "Denne kanalen bruker et video- eller lydformat som {value0} ikke kan dekode. Se den i ARVIO-appen eller VLC.",
   "This channel's audio is {value0}, which {value1} can't decode. It plays with sound in Safari and in the ARVIO app.": "Lyden på denne kanalen er {value0}, som {value1} ikke kan dekode. Den spilles av med lyd i Safari og i ARVIO-appen.",
   "This channel's audio is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "Lyden på denne kanalen er {value0}, som {value1} ikke kan dekode. Se den i ARVIO-appen eller VLC.",
+  "This channel's stream format can't be played by {value0} on this device. Watch it in the ARVIO app or VLC.": "{value0} kan ikke spille av strømformatet til denne kanalen på denne enheten. Se den i ARVIO-appen eller VLC.",
   "This channel's video is MPEG-2, which no web browser can decode. Watch it in the ARVIO app or VLC.": "Videoen på denne kanalen er MPEG-2, som ingen nettlesere kan dekode. Se den i ARVIO-appen eller VLC.",
   "This channel's video is {value0}, which {value1} can't decode on this device. Try Safari, or watch it in the ARVIO app.": "Videoen på denne kanalen er {value0}, som {value1} ikke kan dekode på denne enheten. Prøv Safari, eller se den i ARVIO-appen.",
   "This channel's video is {value0}, which {value1} can't decode. Watch it in the ARVIO app or VLC.": "Videoen på denne kanalen er {value0}, som {value1} ikke kan dekode. Se den i ARVIO-appen eller VLC.",
