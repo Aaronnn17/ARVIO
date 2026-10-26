@@ -2164,8 +2164,10 @@
   }
   /* Scrolled: a soft fade behind the bar so the profile and tabs stay
      readable over the page, without a solid band (the bar stays immersive). */
+  /* !important: the immersive pass turns every .sidebar pseudo off with !important. */
   .app-shell:has(.details-drawer) .sidebar.is-scrolled::before {
-    content: "";
+    content: "" !important;
+    display: block !important;
     position: absolute;
     inset: 0 0 -28px;
     z-index: -1;
