@@ -13,7 +13,8 @@ export type IptvRefreshState<S> = { scope: string; signature: string; settings: 
 export type IptvRefreshDeps<S, T> = {
   /** Current account/profile scope, playlist signature and settings. */
   read: () => IptvRefreshState<S>;
-  load: (settings: S) => Promise<T>;
+  /** `fresh`: the user asked for a refresh, so sources must not answer from a recent copy. */
+  load: (settings: S, options: { fresh: boolean }) => Promise<T>;
   /** Only called when the result still matches the current scope and playlists. */
   apply: (result: T, state: IptvRefreshState<S>) => void;
   /** Only called for a visible (non-quiet) load that is still current. */
@@ -24,7 +25,7 @@ export type IptvRefreshDeps<S, T> = {
 export function createIptvRefresher<S, T>(deps: IptvRefreshDeps<S, T>) {
   let inFlight: { key: string; promise: Promise<void> } | null = null;
   let visibleRuns = 0;
-  const refresh = ({ quiet = false }: { quiet?: boolean } = {}): Promise<void> => {
+  const refresh = ({ quiet = false, fresh = false }: { quiet?: boolean; fresh?: boolean } = {}): Promise<void> => {
     const start = deps.read();
     const key = `${start.scope}\n${start.signature}`;
     if (inFlight?.key === key) return inFlight.promise;
@@ -39,7 +40,7 @@ export function createIptvRefresher<S, T>(deps: IptvRefreshDeps<S, T>) {
     }
     const run = (async () => {
       try {
-        const result = await deps.load(start.settings);
+        const result = await deps.load(start.settings, { fresh });
         if (isCurrent()) deps.apply(result, start);
       } catch (error) {
         if (isCurrent() && !quiet) deps.report(error);

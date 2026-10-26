@@ -7,7 +7,7 @@ import { ArrowDown, ArrowUp, PanelLeft, CalendarClock, ChevronDown, ExternalLink
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { externalLaunchMode, openExternalPlayer } from "@/lib/externalPlayers";
 import { applyChannelOrder, groupNameOf, isFavoriteGroup, toggleFavoriteGroup } from "@/lib/iptvGroups";
-import { channelPlaylistId, liveTvStalkerPortals, stalkerPortalsOf, stalkerPortalsPatch, stalkerSourceSignature } from "@/lib/stalkerPortals";
+import { channelPlaylistId, liveTvStalkerPortals, referencedStalkerPortalIds, stalkerPortalsOf, stalkerPortalsPatch, stalkerSourceSignature } from "@/lib/stalkerPortals";
 import { accessibleChannels, groupKey, loadXtreamCatchup, type CatchupProgram } from "@/lib/iptv";
 import { VirtualList } from "@/components/ui/VirtualList";
 import { SportsGuidePane } from "@/components/livetv/SportsGuidePane";
@@ -477,7 +477,7 @@ export function LiveTvScreen() {
         <div className="livetv-topbar-actions">
           <button type="button" className="livetv-chipbtn" onClick={() => setManaging((value) => !value)} aria-expanded={managing}>
             <ListVideo size={17} /> {translateUi("Playlists")}</button>
-          {(playlists.length > 0 || portals.length > 0) && <button type="button" className="livetv-chipbtn" onClick={() => void refreshIptv()} disabled={isLoadingTv} aria-label={translateUi("Refresh channels")}>
+          {(playlists.length > 0 || portals.length > 0) && <button type="button" className="livetv-chipbtn" onClick={() => void refreshIptv({ fresh: true })} disabled={isLoadingTv} aria-label={translateUi("Refresh channels")}>
             <RefreshCw size={17} className={isLoadingTv ? "is-spinning" : ""} /> {isLoadingTv ? translateUi("Refreshing") : translateUi("Refresh")}
           </button>}
         </div>
@@ -488,6 +488,7 @@ export function LiveTvScreen() {
         hiddenGroups={hiddenGroups}
         groupNames={groupNames}
         portals={portals}
+        reservedPortalIds={referencedStalkerPortalIds(settings)}
         userAgent={settings.customUserAgent}
         editRequest={editRequest}
         onSavePlaylist={savePlaylist}
@@ -498,7 +499,7 @@ export function LiveTvScreen() {
         onClose={() => setManaging(false)}
       />}
 
-      <PlaylistErrors errors={playlistErrors} retrying={isLoadingTv} onEdit={openEditor} onRetry={() => void refreshIptv()} onOpenSettings={openSettings} />
+      <PlaylistErrors errors={playlistErrors} retrying={isLoadingTv} onEdit={openEditor} onRetry={() => void refreshIptv({ fresh: true })} onOpenSettings={openSettings} />
 
       {!playlists.length && !portals.length && !channels.length && !managing && !hasSportsAddons && (
         <section className="livetv-empty">
@@ -538,7 +539,7 @@ export function LiveTvScreen() {
             <div className="tv-sidebar-destinations">{categories.filter(category => !category.id.startsWith("group:")).map(category => <div key={category.id}>{renderCategory(category)}</div>)}</div>
             <div className="tv-sidebar-group-heading"><span>{translateUi("Categories")}</span>
               <button type="button" title={translateUi("Manage playlists")} aria-label={translateUi("Manage playlists")} onClick={() => setManaging(value => !value)} aria-expanded={managing}><ListVideo size={18} /></button>
-              <button type="button" title={translateUi("Refresh channels")} aria-label={translateUi("Refresh channels")} disabled={isLoadingTv} onClick={() => void refreshIptv()}><RefreshCw size={16} className={isLoadingTv ? "is-spinning" : ""} /></button>
+              <button type="button" title={translateUi("Refresh channels")} aria-label={translateUi("Refresh channels")} disabled={isLoadingTv} onClick={() => void refreshIptv({ fresh: true })}><RefreshCw size={16} className={isLoadingTv ? "is-spinning" : ""} /></button>
             </div>
             <VirtualList items={categories.filter(category => category.id.startsWith("group:"))} estimate={56} itemKey={rowKey} label={translateUi("Categories")} renderItem={renderCategory} />
           </nav>
@@ -680,7 +681,7 @@ export function LiveTvScreen() {
           <ChevronDown size={36} className={isLoadingTv ? "is-spinning" : ""} />
           <h3>{isLoadingTv ? translateUi("Loading channels…") : translateUi("No channels yet")}</h3>
           <p>{isLoadingTv ? translateUi("Big playlists can take a few seconds.") : translateUi("Refresh, or double-check the playlist details with your provider.")}</p>
-          {!isLoadingTv && <button type="button" className="secondary" onClick={() => void refreshIptv()}><RefreshCw size={16} /> {translateUi("Refresh")}</button>}
+          {!isLoadingTv && <button type="button" className="secondary" onClick={() => void refreshIptv({ fresh: true })}><RefreshCw size={16} /> {translateUi("Refresh")}</button>}
         </section>
       )}
 

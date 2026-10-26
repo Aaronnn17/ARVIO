@@ -52,7 +52,7 @@ export function LiveTvSection() {
   return (
     <>
       <SectionHeader title="Live TV" description="IPTV playlists, programme guides and portals for this profile. They sync to the Live TV page on every ARVIO app.">
-        <button type="button" className="st-btn" disabled={isLoadingTv} onClick={() => void refreshIptv()}>
+        <button type="button" className="st-btn" disabled={isLoadingTv} onClick={() => void refreshIptv({ fresh: true })}>
           <RefreshCw size={16} className={isLoadingTv ? "spin" : undefined} /> {translateUi(isLoadingTv ? "Refreshing..." : "Refresh channels")}
         </button>
       </SectionHeader>
