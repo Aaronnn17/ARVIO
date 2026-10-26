@@ -1,0 +1,19 @@
+/* Live TV error card: outside players sit below the main actions, as a fallback. */
+.player-error-secondary {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  width: 100%;
+}
+.player-error-secondary > small {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.player-error-secondary .player-error-external {
+  opacity: 0.86;
+}
+.player-overlay.player-docked .player-error-secondary { display: none; }

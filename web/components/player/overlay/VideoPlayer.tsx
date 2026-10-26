@@ -6,6 +6,7 @@ import { getPriorityConfig, authClient } from "@/lib/store";
 import { usePlayerEpisodeMetadata } from "../usePlayerEpisodeMetadata";
 import { useLivePlayerDock } from "../useLivePlayerDock";
 import type { PlaybackHandle, PlaybackTracks } from "@/lib/player";
+import type { LiveFailure } from "@/lib/liveTvPlayback";
 import { subtitleLanguageName, SubtitleTranslator } from "@/lib/subtitleAi";
 import { trackLanguageName, languageCode } from "@/lib/languages";
 import { trackPremiumAttempt, trackPremiumDaily, trackPremiumMilestone, trackPremiumEvent } from "@/lib/premiumAnalytics";
@@ -49,6 +50,7 @@ export function VideoPlayer({
   updateSettings,
   activeProfileId,
   liveTv,
+  refreshLiveSource,
   canAdvance,
   onSelectStream: selectStream,
   onAdvance: advance,
@@ -67,6 +69,8 @@ export function VideoPlayer({
   updateSettings: (patch: Partial<AppSettings>) => void;
   activeProfileId: string | null;
   liveTv: boolean;
+  /** Live TV: fetch a fresh link for a channel whose links expire (Stalker portals). */
+  refreshLiveSource?: () => Promise<{ url: string; headers?: Record<string, string> } | null>;
   canAdvance: boolean;
   onSelectStream: (stream: StreamSource, options?: { forceTranscode?: boolean; forceRemux?: boolean; forceBrowser?: boolean }) => void;
   onAdvance: () => Promise<boolean>;
@@ -166,6 +170,15 @@ export function VideoPlayer({
   const [fullscreen, setFullscreen] = useState(false);
   const [error, setError] = useState(false);
   const [errorDetail, setErrorDetail] = useState("");
+  // Live TV: why the channel failed, in plain words (lib/liveTvPlayback.ts).
+  const [liveFailure, setLiveFailure] = useState<LiveFailure | null>(null);
+  const notify = useCallback((message: string, values?: Record<string, string | number>) => {
+    onToast(translateUi(message, values && Object.fromEntries(Object.entries(values).map(([key, value]) => [key, typeof value === "string" ? translateUi(value) : value]))));
+  }, [onToast, translateUi]);
+  // Live channels reconnect after a mid-play stall instead of pointing at a
+  // source list Live TV does not have; bounded per channel.
+  const liveStallRestartsRef = useRef(0);
+  useEffect(() => { liveStallRestartsRef.current = 0; }, [stream.url]);
   const failureDiagnosticRef = useRef<{ failure_kind: string; phase: "startup" | "playback"; transport?: string }>({ failure_kind: "unknown", phase: "startup" });
   // One diagnostic per failed attempt (capped per page): platform, method,
   // container and host type — allow-listed labels, never URLs or titles.
@@ -383,6 +396,12 @@ export function VideoPlayer({
       nudge: liveTv ? () => { transportRef.current?.goLive(); } : undefined,
       onRecover: () => onToast("Playback stalled — trying to recover…"),
       onFailure: () => {
+        if (liveTv && liveStallRestartsRef.current < 2) {
+          liveStallRestartsRef.current += 1;
+          onToast("Reconnecting to the channel…");
+          setRemuxRestartKey((key) => key + 1);
+          return;
+        }
         const lighter = liveTv ? undefined : lighterSource();
         if (lighter && currentStreamRef.current.autoSelect) {
           onToast("Your connection can't keep up with this version — switching to a lighter one.");
@@ -392,6 +411,12 @@ export function VideoPlayer({
         // Nothing lighter: surface the failure instead of buffering silently so
         // the source list (and the external-player options) are reachable.
         failureDiagnosticRef.current = { failure_kind: "timeout", phase: "playback" };
+        if (liveTv) {
+          setLiveFailure({ kind: "stopped", title: "The channel stopped", message: "The channel stopped sending video and could not be reconnected. Retry, or try again later." });
+          setErrorDetail("The channel stopped sending video and could not be reconnected. Retry, or try again later.");
+          setBuffering(false); setError(true); setShowControls(true);
+          return;
+        }
         setErrorDetail("This source stopped responding. Pick another source to continue.");
         setBuffering(false);
         setError(true);
@@ -503,7 +528,7 @@ export function VideoPlayer({
     }
   }, [stream.subtitles, stream.url, settings.defaultSubtitle, aiAvailable, settings.aiAutoSelect, liveTv]);
 
-  usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failureDiagnosticRef, lastSavedRef, liveTv, onSelectStream, onToast, playbackIdentity, playbackRate, remuxAudioIndexRef, remuxRestartKey, resumeAtRef, setBootStatus, setBuffering, setError, setErrorDetail, setPlayBlocked, setRemuxAudioIndex, setRemuxTracks, setShowControls, settings, setTransportTracks, sourceListRef, stream, transportRef, tryNextSource, videoRef });
+  usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failureDiagnosticRef, lastSavedRef, liveTv, notify, onSelectStream, onToast, playbackIdentity, playbackRate, refreshLiveSource, remuxAudioIndexRef, remuxRestartKey, resumeAtRef, setBootStatus, setBuffering, setError, setErrorDetail, setLiveFailure, setPlayBlocked, setRemuxAudioIndex, setRemuxTracks, setShowControls, settings, setTransportTracks, sourceListRef, stream, transportRef, tryNextSource, videoRef });
 
   useEffect(() => {
     const video = videoRef.current;
@@ -896,7 +921,7 @@ export function VideoPlayer({
       <video ref={videoRef} autoPlay playsInline preload="auto" onPointerUp={onSurfacePointerUp} poster={item?.backdrop ?? undefined} />
       <LiveDockControls buffering={buffering} dock={dock} error={error} onClose={onClose} playing={playing} togglePlay={togglePlay} />
 
-      <PlayerStatusLayers booted={booted} bootLogo={bootLogo} bootStatus={bootStatus} bufferAheadSec={bufferAheadSec} buffering={buffering} error={error} errorDetail={errorDetail} externalOptions={externalOptions} item={item} liveTv={liveTv} onClose={onClose} onSelectStream={onSelectStream} openExternalOption={openExternalOption} openPanel={openPanel} playBlocked={playBlocked} playing={playing} retryPlayback={retryPlayback} showEndScreen={showEndScreen} skipOverlay={skipOverlay} stream={stream} subtitleLabel={subtitleLabel} title={title} togglePlay={togglePlay} />
+      <PlayerStatusLayers booted={booted} bootLogo={bootLogo} bootStatus={bootStatus} bufferAheadSec={bufferAheadSec} buffering={buffering} error={error} errorDetail={errorDetail} externalOptions={externalOptions} item={item} liveFailure={liveTv ? liveFailure : null} liveTv={liveTv} onClose={onClose} onSelectStream={onSelectStream} openExternalOption={openExternalOption} openPanel={openPanel} playBlocked={playBlocked} playing={playing} retryPlayback={retryPlayback} showEndScreen={showEndScreen} skipOverlay={skipOverlay} stream={stream} subtitleLabel={subtitleLabel} title={title} togglePlay={togglePlay} />
       <PlayerSkipUpNext activeSkip={activeSkip} dismissUpNext={dismissUpNext} nextCountdown={nextCountdown} nextEpisode={nextEpisode} playNextNow={playNextNow} showSkip={showSkip} showUpNext={showUpNext} skipNow={skipNow} />
       <PlayerEndScreen item={item} onClose={onClose} onOpenDetails={onOpenDetails} showEndScreen={showEndScreen} title={title} togglePlay={togglePlay} />
 
