@@ -250,6 +250,15 @@
 .premium-account .premium-invite-link input { flex: 1 1 auto; width: auto; min-width: 0; }
 .premium-account .premium-invite-link button { flex: 0 0 auto; width: auto; display: inline-flex; align-items: center; gap: 6px; padding-inline: 14px; white-space: nowrap; }
 
+/* Shared panel surface (used to override the base rule above from globals.css). */
+.settings-panel {
+  border-color: rgba(255, 255, 255, 0.095);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035)),
+    rgba(8, 9, 11, 0.72);
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.26);
+}
+
 /* Settings screen. Scoped to .st-* so the older, layered settings rules in
    globals.css cannot reach it. */
 .st-shell {

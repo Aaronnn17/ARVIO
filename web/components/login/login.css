@@ -213,6 +213,34 @@ a.login-submit {
   }
 }
 
+/* Surfaces and phone sizing that used to override the base rules above from
+   globals.css. They must stay after them (and before the rules below). */
+.login-proof span {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(12px);
+}
+.login-card {
+  border-color: rgba(255, 255, 255, 0.095);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035)),
+    rgba(8, 9, 11, 0.72);
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.26);
+}
+.login-shell {
+  background:
+    radial-gradient(circle at 50% 0%, rgba(0, 213, 136, 0.13), transparent 28%),
+    radial-gradient(circle at 20% 72%, rgba(117, 161, 255, 0.12), transparent 30%),
+    linear-gradient(180deg, #06080a, #000 68%);
+}
+@media (max-width: 680px) {
+  .login-shell {
+    min-height: 100dvh;
+    padding: 20px var(--phone-gutter);
+    overflow-y: auto;
+  }
+}
+
 /* Handing over to the ARVIO auth portal: a calm centred card, no Back button flash. */
 .login-shell.login-redirecting { display: grid; place-items: center; min-height: 100dvh; padding: 24px; }
 .login-redirecting .login-card { display: grid; justify-items: center; gap: 14px; text-align: center; max-width: 360px; }

@@ -1841,6 +1841,14 @@
   .episodes-section.detail-wide .episode-art-card .episode-info strong { font-size: 16px; }
 }
 
+/* Phone section headings (used to override the base sizes above from globals.css). */
+@media (max-width: 680px) {
+  .detail-section h3 {
+    font-size: clamp(21px, 6vw, 25px);
+    line-height: 1.12;
+  }
+}
+
 /* Details page: dialog chrome, resume actions, episodes, reviews. */
 
 .sr-only {
