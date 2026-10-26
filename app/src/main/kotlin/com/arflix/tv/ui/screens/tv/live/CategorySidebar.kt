@@ -604,7 +604,7 @@ fun CategorySidebar(
                         categoryFocusRequesters = categoryFocusRequesters,
                     )
                     SidebarRow(
-                        label = liveCategoryLabel(cat.label),
+                        label = liveCategoryDisplayLabel(cat),
                         count = cat.count,
                         icon = iconFor(cat),
                         active = selectedId == cat.id,
@@ -640,7 +640,7 @@ fun CategorySidebar(
                                 categoryFocusRequesters = categoryFocusRequesters,
                             )
                             SidebarRow(
-                                label = liveCategoryLabel(child.label),
+                                label = liveCategoryDisplayLabel(child),
                                 count = child.count,
                                 icon = iconFor(child),
                                 flagEmoji = child.flagEmoji,
@@ -670,7 +670,7 @@ fun CategorySidebar(
                                         categoryFocusRequesters = categoryFocusRequesters,
                                     )
                                     SidebarRow(
-                                        label = liveCategoryLabel(grandchild.label),
+                                        label = liveCategoryDisplayLabel(grandchild),
                                         count = grandchild.count,
                                         icon = iconFor(grandchild),
                                         active = selectedId == grandchild.id,
@@ -743,7 +743,7 @@ fun CategorySidebar(
                                     categoryFocusRequesters = categoryFocusRequesters,
                                 )
                                 SidebarRow(
-                                    label = liveCategoryLabel(cat.playlistGroupName ?: cat.label),
+                                    label = liveCategoryDisplayLabel(cat, cat.playlistGroupName ?: cat.label),
                                     count = cat.count,
                                     icon = iconFor(cat),
                                     active = selectedId == cat.id,
@@ -775,7 +775,7 @@ fun CategorySidebar(
                             categoryFocusRequesters = categoryFocusRequesters,
                         )
                         SidebarRow(
-                            label = liveCategoryLabel(cat.label),
+                            label = liveCategoryDisplayLabel(cat),
                             count = cat.count,
                             icon = iconFor(cat),
                             active = selectedId == cat.id,
@@ -808,7 +808,7 @@ fun CategorySidebar(
                             categoryFocusRequesters = categoryFocusRequesters,
                         )
                         SidebarRow(
-                            label = liveCategoryLabel(country.label),
+                            label = liveCategoryDisplayLabel(country),
                             count = country.count,
                             icon = null,
                             leadingCode = country.id,
@@ -847,7 +847,7 @@ fun CategorySidebar(
                                     categoryFocusRequesters = categoryFocusRequesters,
                                 )
                                 SidebarRow(
-                                    label = liveCategoryLabel(child.label),
+                                    label = liveCategoryDisplayLabel(child),
                                     count = child.count,
                                     icon = null,
                                     active = selectedId == child.id,
@@ -879,7 +879,7 @@ fun CategorySidebar(
                             categoryFocusRequesters = categoryFocusRequesters,
                         )
                         SidebarRow(
-                            label = liveCategoryLabel(cat.label),
+                            label = liveCategoryDisplayLabel(cat),
                             count = cat.count,
                             icon = Icons.Filled.Lock,
                             active = selectedId == cat.id,

@@ -8,7 +8,7 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { moveIndex } from "@/lib/ordering";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import type { HomeServerCollectionConfig, HomeServerConfig } from "@/lib/types";
 import { SortableList } from "../SortableList";
 import { Empty, Group, ScopeBadge, SectionHeader, Segmented, Toggle, safeArray } from "../ui";
@@ -28,7 +28,7 @@ function draftOf(server: HomeServerConfig): Draft {
 
 export function HomeServerSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings, setToast } = useApp();
+  const { settings, updateSettings, setToast } = useAppPick("settings", "updateSettings", "setToast");
   const [type, setType] = useState<HomeServerConfig["type"]>("jellyfin");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -202,7 +202,7 @@ function EditServer({ server, onSave, onClose, notify }: {
       <div className="st-form">
         <input className="st-input" value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder={translateUi("Name")} aria-label={translateUi("Name")} />
         <input className="st-input" value={draft.url} onChange={(e) => set({ url: e.target.value })} placeholder="https://server:8096" aria-label={translateUi("Server address")} inputMode="url" />
-        <input className="st-input" type="password" value={draft.token} onChange={(e) => set({ token: e.target.value })} aria-label={translateUi("Access token")} autoComplete="off"
+        <input className="st-input" type="password" value={draft.token} onChange={(e) => set({ token: e.target.value })} aria-label={translateUi("Access token")} autoComplete="new-password" data-1p-ignore="" data-lpignore="true"
           placeholder={server.type === "plex" ? translateUi("X-Plex-Token (required)") : translateUi("API token (optional)")} />
         {server.type !== "plex" && <input className="st-input" value={draft.username} onChange={(e) => set({ username: e.target.value })} placeholder={translateUi("Username (optional)")} aria-label={translateUi("Username")} autoComplete="off" />}
         {server.type !== "plex" && <input className="st-input" value={draft.password} onChange={(e) => set({ password: e.target.value })} placeholder={translateUi("New password (optional)")} aria-label={translateUi("Password")} type="password" autoComplete="new-password" />}

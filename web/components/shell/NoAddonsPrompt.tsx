@@ -3,7 +3,7 @@
 import { Plus, Puzzle, Server, Tv, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "@/lib/i18n";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { requestSourceSettings, sourceSetupState } from "@/lib/sourceSetup";
 import { isSourcePromptDismissed, isSourcePromptExpected, setSourcePromptDismissed, setSourcePromptExpected, SOURCE_PROMPT_EVENT } from "@/lib/sourcePrompt";
 
@@ -14,7 +14,7 @@ import { isSourcePromptDismissed, isSourcePromptExpected, setSourcePromptDismiss
  * quieter "Add a source" entry point on Home.
  */
 function useSourcePrompt() {
-  const { view, section, activeProfile, addons, addonsReady, settings } = useApp();
+  const { view, section, activeProfile, addons, addonsReady, settings } = useAppPick("view", "section", "activeProfile", "addons", "addonsReady", "settings");
   const profileId = activeProfile?.id ?? "";
   const [dismissal, setDismissal] = useState<{ profileId: string; dismissed: boolean } | null>(null);
 
@@ -43,7 +43,7 @@ function useSourcePrompt() {
 
 export function NoAddonsPrompt() {
   const translateUi = useTranslation();
-  const { setSection } = useApp();
+  const { setSection } = useAppPick("setSection");
   const { eligible, dismissed, sources, setDismissed } = useSourcePrompt();
   if (!eligible || dismissed) return null;
 

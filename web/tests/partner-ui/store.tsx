@@ -13,6 +13,8 @@ type FixtureStore = Pick<AppStore, "view" | "partnerLinkReady" | "auth" | "activ
   "toggleWatchlist" | "mdblistConnected" | "openContextMenu" | "toggleWatched">;
 const Context = createContext<FixtureStore | null>(null);
 export function useApp() { const value = useContext(Context); if (!value) throw new Error("Missing fixture store"); return value; }
+export function useAppPick(..._keys: string[]) { return useApp(); }
+export function useAppSelector<T>(select: (store: FixtureStore) => T) { return select(useApp()); }
 export const authClient = { session: null };
 export const traktClient = { isConnected: false };
 export const getPriorityConfig = () => ({ movieProviders: ["tmdb"], tvProviders: ["tmdb"], animeProviders: ["tmdb"] });

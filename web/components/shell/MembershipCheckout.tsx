@@ -1,9 +1,10 @@
 "use client";
+import "@/app/premium.css";
 
 import { useEffect, useId, useRef, useState } from "react";
 import { Copy, ExternalLink, Loader2, X } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
-import { authClient, useApp } from "@/lib/store";
+import { authClient, useAppPick } from "@/lib/store";
 import { ENTITLEMENT_REFRESH_EVENT, fetchEntitlement, kofiSubscribeUrl, type EntitlementState } from "@/lib/entitlement";
 import { createPaymentRecovery } from "@/lib/paymentRecovery";
 import { trackPremiumEvent } from "@/lib/premiumAnalytics";
@@ -21,7 +22,7 @@ type MembershipCheckoutProps = {
 };
 
 export function MembershipCheckout(props: MembershipCheckoutProps) {
-  const { auth } = useApp();
+  const { auth } = useAppPick("auth");
   // Reset synchronously on identity changes. An effect-only reset would let
   // the previous account's open dialog emit events for the next account first.
   return <MembershipCheckoutSession key={auth?.userId ?? "signed-out"} {...props} />;
@@ -33,7 +34,7 @@ function MembershipCheckoutSession({ children, className, entry, title, onEntitl
   const checkoutUrl = href || kofiSubscribeUrl();
   const flow = { flow_version: entry === "feature_preview" ? "paid_only_v1" : entry.startsWith("explore") ? "explore_v1" : "direct_v2" };
   const translateUi = useTranslation();
-  const { auth, goToLogin } = useApp();
+  const { auth, goToLogin } = useAppPick("auth", "goToLogin");
   const [open, setOpen] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const [status, setStatus] = useState<"idle" | "checking" | "pending" | "active" | "error">("idle");

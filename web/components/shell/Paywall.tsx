@@ -1,4 +1,5 @@
 "use client";
+import "@/app/premium.css";
 import { useTranslation } from "@/lib/i18n";
 
 
@@ -10,7 +11,7 @@ import {
   fetchEntitlement,
   type EntitlementState
 } from "@/lib/entitlement";
-import { authClient, useApp } from "@/lib/store";
+import { authClient, useAppPick } from "@/lib/store";
 import { capturePremiumAttribution, trackPremiumEvent, trackPremiumMilestone, TRIAL_INTENT_KEY } from "@/lib/premiumAnalytics";
 import { currentEntitlement, entitlementCheckDelay } from "@/lib/entitlementPolicy";
 import { EntitlementContext } from "@/lib/entitlementContext";
@@ -28,7 +29,7 @@ import { captureReferralCode, claimPendingReferral } from "@/lib/referral";
 // still-valid cached membership survives transient backend errors, and access
 // ending mid-film never stops the film: the next play asks again.
 export function EntitlementGate({ children }: { children: React.ReactNode }) {
-  const { auth } = useApp();
+  const { auth } = useAppPick("auth");
   const accountId = auth?.userId ?? null;
   const [state, setState] = useState<EntitlementState | null>(() => cachedEntitlement(authClient));
   const [status, setStatus] = useState<"loading" | "ready" | "error">(state ? "ready" : "loading");

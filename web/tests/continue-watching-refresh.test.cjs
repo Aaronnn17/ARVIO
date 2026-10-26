@@ -5,6 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 const { load, storage } = require('./load.cjs');
+const { sourceOf, storeSource } = require('./sources.cjs');
 
 const cw = load('lib/continueWatching.ts');
 const availability = load('lib/episodeAvailability.ts');
@@ -26,7 +27,7 @@ function deferred() {
 // Execute the production store callback; rendering and external services are fixtures.
 function extracted(name, globals) {
   const filename = path.resolve(__dirname, '../lib/store.tsx');
-  const source = ts.createSourceFile(filename, fs.readFileSync(filename, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const source = ts.createSourceFile(filename, storeSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let match;
   const visit = (node) => {
     if (ts.isFunctionDeclaration(node) && node.name?.text === name) match = node;
@@ -35,7 +36,7 @@ function extracted(name, globals) {
   };
   visit(source);
   assert.ok(match, name);
-  const code = ts.transpileModule(`module.exports = (${match.getText(source)});`, {
+  const code = ts.transpileModule(`module.exports = (${match.getText(source).replace(/^export /, '')});`, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
   }).outputText;
   const module = { exports: {} };

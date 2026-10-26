@@ -1,4 +1,5 @@
 "use client";
+import "./sources.css";
 import { useTranslation } from "@/lib/i18n";
 
 import { Search, X } from "lucide-react";
@@ -19,7 +20,7 @@ import { cachedDebridDirectUrl, isUncachedDebridStream, parseDebridStream, prefe
 import { groupSourcesForPlayback } from "@/lib/sourceRank";
 import { playbackCompatibilityRevision, playbackPlan, subscribePlaybackCompatibility } from "@/lib/streamCompatibility";
 import { claimEscape, isTopmostLayer, trapTab } from "@/lib/playerKeys";
-import { authClient, useApp } from "@/lib/store";
+import { authClient, useAppPick } from "@/lib/store";
 import type { InstalledAddon, MediaItem, StreamSource, SubtitleTrack } from "@/lib/types";
 import { isCachedSource, matchesSourceFilter, sourceBadges, sourcePlaybackPresentation, sourceQuality, sourceTitle, type SourceFilter } from "./sourcePlaybackPresentation";
 import { SourceRow } from "./SourceRow";
@@ -94,7 +95,7 @@ export function SourcePickerModal({
   loading: boolean;
 }) {
   const translateUi = useTranslation();
-  const { settings, playStream } = useApp();
+  const { settings, playStream } = useAppPick("settings", "playStream");
   // Recompute visible plans after selected-source failures without probing the result list.
   useSyncExternalStore(subscribePlaybackCompatibility, playbackCompatibilityRevision, () => 0);
   const [addonFilter, setAddonFilter] = useState("all");

@@ -24,12 +24,37 @@
 let sheetBuilt = false;
 let exitInstalled = false;
 
+/** The guard every hover rule sits in, so a tap on a touch screen cannot leave
+ *  a lift or zoom stuck on (the stylesheets wrap :hover rules in it). */
+export const HOVER_GUARD = "(hover: hover) and (pointer: fine)";
+const GUARD_PATTERN = /^\(\s*hover:\s*hover\s*\)\s+and\s+\(\s*pointer:\s*fine\s*\)$/i;
+const GUARD_SUFFIX = /\s+and\s+\(\s*hover:\s*hover\s*\)\s+and\s+\(\s*pointer:\s*fine\s*\)$/i;
+
+/**
+ * A wrapper's media condition for the focus twin: the hover guard removed.
+ * Focus twins must apply on every key-driven device, and TV remotes, gamepads
+ * and keyboards on touch tablets report no hover-capable pointer. Returns null
+ * when nothing is left to wrap (the condition was only the guard).
+ */
+export function parityCondition(condition: string): string | null {
+  const parts = condition.split(",").map((part) => part.trim());
+  const kept: string[] = [];
+  for (const part of parts) {
+    if (GUARD_PATTERN.test(part)) return null; // one branch always applies
+    kept.push(part.replace(GUARD_SUFFIX, ""));
+  }
+  return kept.join(", ");
+}
+
 /** Conditional wrappers (`@media …`, `@supports …`) around a nested rule. */
 function wrappers(rule: CSSRule): string[] {
   const out: string[] = [];
   let parent: CSSRule | null = rule.parentRule;
   while (parent) {
-    if (parent instanceof CSSMediaRule) out.unshift(`@media ${parent.conditionText}`);
+    if (parent instanceof CSSMediaRule) {
+      const condition = parityCondition(parent.conditionText);
+      if (condition) out.unshift(`@media ${condition}`);
+    }
     else if (typeof CSSSupportsRule !== "undefined" && parent instanceof CSSSupportsRule) {
       out.unshift(`@supports ${parent.conditionText}`);
     }
@@ -54,8 +79,7 @@ function twinSelector(selectorText: string): string | null {
     // twin it would unblur every synopsis the D-pad merely passes over,
     // silently defeating the setting — suppression rules don't get twins.
     .filter((p) => !p.includes(".spoiler-blur"))
-    // Touch-device hover neutralisers (app/app-foundations.css) exist to
-    // cancel sticky hover — a focus twin would cancel focus styling instead.
+    // Touch-only rules (html.no-hover) never need a keyboard twin.
     .filter((p) => !p.includes(".no-hover"))
     .map((p) => `html.kbd-nav ${p.split(":hover").join(":focus-within")}`);
   return parts.length > 0 ? parts.join(", ") : null;

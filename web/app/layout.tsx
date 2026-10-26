@@ -2,14 +2,10 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { UpdateWatcher } from "@/components/shell/UpdateWatcher";
 import { DEVICE_CLASS_SCRIPT } from "@/lib/deviceClass";
+// Shared sheets only: tokens, resets, shell, top nav, cards, rails, dialogs.
+// Screen sheets are imported by their screen components (code-split with them).
 import "./globals.css";
-import "./premium.css";
-import "./settings.css";
-import "./tv-guide.css";
 import "./source-setup.css";
-import "./calendar.css";
-import "./ui-refinements.css";
-import "./player-platform.css";
 import "./app-foundations.css";
 
 export const metadata: Metadata = {

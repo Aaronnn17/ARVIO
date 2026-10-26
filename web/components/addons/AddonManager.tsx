@@ -7,7 +7,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { installAddon as fetchAddonManifest } from "@/lib/addons";
 import { AddonAlreadyInstalledError, addonCapabilities, addonConfigureUrl, duplicateAddons, isSameInstall, type AddonInstallMode } from "@/lib/addonInstall";
 import { maskedUrl } from "@/lib/maskUrl";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import type { InstalledAddon } from "@/lib/types";
 
 export type AddonErrorKind = "invalid" | "not-found" | "html" | "unreachable" | "not-addon" | "other";
@@ -72,7 +72,7 @@ function InstallPreview({ addon, existing, busy, onInstall, onCancel }: {
 }) {
   const translateUi = useTranslation();
   const configure = addonConfigureUrl(addon);
-  const { addons } = useApp();
+  const { addons } = useAppPick("addons");
   const sameLink = isSameInstall(addons, addon);
   const primary = useRef<HTMLButtonElement>(null);
   useEffect(() => { primary.current?.focus({ preventScroll: true }); }, [existing.length]);
@@ -107,7 +107,7 @@ function InstallPreview({ addon, existing, busy, onInstall, onCancel }: {
 /** Install by link with a preview, then the full list. Reused by Settings → Addons. */
 export function AddonInstaller() {
   const translateUi = useTranslation();
-  const { addons, installAddon, setToast } = useApp();
+  const { addons, installAddon, setToast } = useAppPick("addons", "installAddon", "setToast");
   const inputId = useId();
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -179,7 +179,7 @@ export function AddonInstaller() {
 /** Installed addons: enable/disable, order, configure, remove (with confirm). */
 export function AddonList() {
   const translateUi = useTranslation();
-  const { addons, setAddonsState, removeAddon, setToast } = useApp();
+  const { addons, setAddonsState, removeAddon, setToast } = useAppPick("addons", "setAddonsState", "removeAddon", "setToast");
   const [confirm, setConfirm] = useState<string | null>(null);
   const save = (next: InstalledAddon[]) => void setAddonsState(next).catch((error) => setToast(error instanceof Error ? error.message : "Could not save addons."));
   const move = (index: number, direction: -1 | 1) => {

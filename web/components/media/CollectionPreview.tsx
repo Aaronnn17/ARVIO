@@ -1,4 +1,5 @@
 "use client";
+import "@/app/collections.css";
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from '@/lib/i18n';

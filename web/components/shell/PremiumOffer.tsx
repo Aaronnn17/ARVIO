@@ -1,9 +1,10 @@
 "use client";
+import "@/app/premium.css";
 
 import { useEffect, useId, useRef, useState } from "react";
 import { BadgeCheck, ExternalLink, Loader2, RefreshCw, X } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
-import { authClient, useApp } from "@/lib/store";
+import { authClient, useAppPick } from "@/lib/store";
 import { EXIT_REASONS, fetchEntitlement, kofiYearlyUrl, submitExitSurvey, type EntitlementState, type ExitReason } from "@/lib/entitlement";
 import type { PremiumIntent } from "@/lib/premiumGate";
 import { config } from "@/lib/config";
@@ -90,7 +91,7 @@ export function PremiumOffer({ intent, state, status, account, onClose, onRetry,
   onEntitled: (next: EntitlementState) => void;
 }) {
   const translateUi = useTranslation();
-  const { auth } = useApp();
+  const { auth } = useAppPick("auth");
   const dialog = useRef<HTMLDialogElement>(null);
   const id = useId();
   const yearly = kofiYearlyUrl();

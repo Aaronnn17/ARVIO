@@ -1,8 +1,9 @@
 "use client";
+import "@/app/calendar.css";
 
 import { CalendarDays, ChevronLeft, ChevronRight, LayoutGrid, List } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
-import { useApp, authClient, traktClient } from "@/lib/store";
+import { authClient, traktClient, useAppPick } from "@/lib/store";
 import { useTranslation } from "@/lib/i18n";
 import { pullCloudWatchlist } from "@/lib/cloud";
 import { applyPendingWatchlist } from "@/lib/watchlistOutbox";
@@ -38,13 +39,13 @@ function ReleaseCard({ release, locale, onOpen }: { release: CalendarRelease; lo
 }
 
 export function CalendarScreen() {
-  const { auth, activeProfile } = useApp();
+  const { auth, activeProfile } = useAppPick("auth", "activeProfile");
   return <CalendarContent key={`${auth?.userId ?? "local"}:${activeProfile?.id ?? "default"}`} />;
 }
 
 function CalendarContent() {
   const translateUi = useTranslation();
-  const { watchlist, auth, activeProfile, traktConnected, simklConnected, mdblistConnected, settings, openDetails } = useApp();
+  const { watchlist, auth, activeProfile, traktConnected, simklConnected, mdblistConnected, settings, openDetails } = useAppPick("watchlist", "auth", "activeProfile", "traktConnected", "simklConnected", "mdblistConnected", "settings", "openDetails");
   const scope = `${auth?.userId ?? "local"}:${activeProfile?.id ?? "default"}`;
   const saved = views.get(scope);
   const [month, setMonth] = useState(() => parseCalendarDate(saved?.month) ?? new Date());

@@ -1,10 +1,11 @@
 "use client";
+import "@/app/collections.css";
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, LoaderCircle, RotateCw } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { useKidsFilter } from "@/lib/useKids";
 import type { CatalogConfig, Category, MediaItem } from "@/lib/types";
 import { MediaCard } from "./MediaCard";
@@ -23,7 +24,7 @@ export function CategoryViewAll({ catalog, preview, onBack, onOpen }: {
   onOpen: (item: MediaItem) => void;
 }) {
   const translateUi = useTranslation();
-  const { loadCatalogRow, selected, settings } = useApp();
+  const { loadCatalogRow, selected, settings } = useAppPick("loadCatalogRow", "selected", "settings");
   const kids = useKidsFilter();
   const dialog = useRef<HTMLDialogElement>(null);
   const { onKeyDown, onCancel } = useModalDialog(dialog, { open: !selected, onClose: onBack });

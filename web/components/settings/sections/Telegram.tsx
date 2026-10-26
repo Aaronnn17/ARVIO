@@ -3,7 +3,7 @@ import { LogOut, Send } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { config } from "@/lib/config";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { Empty, Group, Row, SectionHeader, Status, Toggle } from "../ui";
 
 // Lazily-loaded shape of @/lib/telegram. GramJS is a large browser-only bundle,
@@ -14,7 +14,7 @@ type TgAuthState = import("@/lib/telegram").TgAuthState;
 
 export function TelegramSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings, setToast } = useApp();
+  const { settings, updateSettings, setToast } = useAppPick("settings", "updateSettings", "setToast");
   const [mod, setMod] = useState<TgModule | null>(null);
   const [authState, setAuthState] = useState<TgAuthState>({ k: "idle" });
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
@@ -162,7 +162,7 @@ export function TelegramSection() {
 
         {authState.k === "waitPassword" && (
           <div className="st-form">
-            <input className="st-input" value={password} type="password" aria-label={translateUi("2FA password")} placeholder={translateUi("2FA password")} onChange={(e) => setPassword(e.target.value)} />
+            <input className="st-input" value={password} type="password" autoComplete="new-password" data-1p-ignore="" data-lpignore="true" aria-label={translateUi("2FA password")} placeholder={translateUi("2FA password")} onChange={(e) => setPassword(e.target.value)} />
             <div className="st-form-actions">
               <button type="button" className="st-btn is-primary" onClick={() => { if (password) mod.submitPassword(password); setPassword(""); }}>{translateUi("Confirm")}</button>
             </div>

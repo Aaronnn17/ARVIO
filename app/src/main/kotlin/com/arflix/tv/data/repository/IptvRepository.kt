@@ -388,8 +388,35 @@ data class IptvCloudProfileState(
      * `"<playlistId>|<group>"` -> channel ids, listed channels first. Channels
      * that are not listed keep the configured sort order after them.
      */
-    val channelOrder: Map<String, List<String>> = emptyMap()
+    val channelOrder: Map<String, List<String>> = emptyMap(),
+    /**
+     * Category display names set in ARVIO Web Settings: `"<playlistId>|<group>"`
+     * -> name. Keys use the playlist's own group name, like [hiddenGroups] and
+     * [channelOrder]; only the label shown in Live TV changes.
+     */
+    val groupNames: Map<String, String> = emptyMap()
 )
+
+/** Longest category display name kept (matches ARVIO Web). */
+internal const val MAX_IPTV_GROUP_NAME_LENGTH = 60
+
+/**
+ * Drops keys without a playlist part, blank names and names equal to the
+ * playlist's own; collapses whitespace. Tolerates Gson nulls from older payloads.
+ */
+internal fun normalizeIptvGroupNames(raw: Map<String, String>?): Map<String, String> {
+    if (raw.isNullOrEmpty()) return emptyMap()
+    return buildMap {
+        raw.forEach { (key, value) ->
+            @Suppress("SENSELESS_COMPARISON", "UNNECESSARY_SAFE_CALL")
+            val trimmedKey = key?.trim().orEmpty()
+            if ('|' !in trimmedKey) return@forEach
+            @Suppress("UNNECESSARY_SAFE_CALL")
+            val name = value?.replace(Regex("\\s+"), " ")?.trim()?.take(MAX_IPTV_GROUP_NAME_LENGTH).orEmpty()
+            if (name.isNotEmpty() && name != trimmedKey.substringAfter('|')) put(trimmedKey, name)
+        }
+    }
+}
 
 /** Drops blank keys/ids and keys without a playlist part; tolerates Gson nulls from older payloads. */
 internal fun normalizeIptvChannelOrder(raw: Map<String, List<String>>?): Map<String, List<String>> {
@@ -1262,6 +1289,12 @@ class IptvRepository @Inject constructor(
     fun observeChannelOrder(): Flow<Map<String, List<String>>> =
         profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
             decodeChannelOrder(prefs[channelOrderKey()].orEmpty())
+        }.distinctUntilChanged()
+
+    /** Category display names (`playlistId|group` -> name), set from ARVIO Web. */
+    fun observeGroupNames(): Flow<Map<String, String>> =
+        profileManager.activeProfileId.combine(context.settingsDataStore.data) { _, prefs ->
+            decodeGroupNames(prefs[groupNamesKey()].orEmpty())
         }.distinctUntilChanged()
 
     fun observeVodSearchEnabled(): Flow<Boolean> =
@@ -2288,13 +2321,14 @@ class IptvRepository @Inject constructor(
             prefs.remove(groupOrderSchemaKey())
             prefs.remove(tvSessionKey())
             prefs.remove(channelOrderKey())
+            prefs.remove(groupNamesKey())
             IptvCloudFields.stamp(prefs, profileId, org.json.JSONObject()
                 .put("playlists", org.json.JSONArray()).put("m3uUrl", "").put("epgUrl", "")
                 .put("stalkerPortals", org.json.JSONArray()).put("stalkerPortalUrl", "").put("stalkerMacAddress", "")
                 .put("favoriteGroups", org.json.JSONArray()).put("favoriteChannels", org.json.JSONArray())
                 .put("hiddenGroups", org.json.JSONArray()).put("lockedGroups", org.json.JSONArray())
                 .put("groupOrder", org.json.JSONArray()).put("groupOrderSchema", IPTV_GROUP_ORDER_SCHEMA)
-                .put("channelOrder", org.json.JSONObject()))
+                .put("channelOrder", org.json.JSONObject()).put("groupNames", org.json.JSONObject()))
         }
         groupOrderLocallyDirty = true
         cachedStalkerApis = emptyMap()
@@ -4560,6 +4594,9 @@ class IptvRepository @Inject constructor(
     private fun channelOrderKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_channel_order")
     private fun channelOrderKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_channel_order")
+    private fun groupNamesKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_group_names")
+    private fun groupNamesKeyFor(profileId: String): Preferences.Key<String> =
+        profileManager.profileStringKeyFor(profileId, "iptv_group_names")
     private fun tvSessionKey(): Preferences.Key<String> = profileManager.profileStringKey("iptv_tv_session")
     private fun tvSessionKeyFor(profileId: String): Preferences.Key<String> =
         profileManager.profileStringKeyFor(profileId, "iptv_tv_session")
@@ -4693,6 +4730,14 @@ class IptvRepository @Inject constructor(
         }.getOrDefault(emptyMap())
     }
 
+    private fun decodeGroupNames(raw: String): Map<String, String> {
+        if (raw.isBlank()) return emptyMap()
+        return runCatching {
+            val type = TypeToken.getParameterized(Map::class.java, String::class.java, String::class.java).type
+            normalizeIptvGroupNames(gson.fromJson<Map<String, String>>(raw, type))
+        }.getOrDefault(emptyMap())
+    }
+
     private fun decodeTvSessionState(prefs: Preferences): IptvTvSessionState =
         decodeTvSessionState(prefs[tvSessionKey()].orEmpty())
 
@@ -4750,6 +4795,7 @@ class IptvRepository @Inject constructor(
         val playlistsRaw = prefs[playlistsKeyFor(safeProfileId)].orEmpty()
         val tvSessionRaw = prefs[tvSessionKeyFor(safeProfileId)].orEmpty()
         val channelOrderRaw = prefs[channelOrderKeyFor(safeProfileId)].orEmpty()
+        val groupNamesRaw = prefs[groupNamesKeyFor(safeProfileId)].orEmpty()
         val playlists = decodePlaylists(playlistsRaw)
         val stalkerPortals = readStalkerPortalsFor(prefs, safeProfileId)
         val validSourceIds = buildSet {
@@ -4796,7 +4842,8 @@ class IptvRepository @Inject constructor(
             sortOrder = normalizeIptvSortOrder(prefs[sortOrderKeyFor(safeProfileId)]),
             playlists = playlists,
             tvSession = decodeTvSessionState(tvSessionRaw),
-            channelOrder = decodeChannelOrder(channelOrderRaw)
+            channelOrder = decodeChannelOrder(channelOrderRaw),
+            groupNames = decodeGroupNames(groupNamesRaw)
         )
     }
 
@@ -4860,6 +4907,9 @@ class IptvRepository @Inject constructor(
             .orEmpty()
             .let(::normalizeCloudGroupKeys)
         val normalizedChannelOrder = normalizeIptvChannelOrder(runCatching { state.channelOrder }.getOrNull())
+        // Same Portal 1 migration as the other category keys.
+        val normalizedGroupNames = normalizeIptvGroupNames(runCatching { state.groupNames }.getOrNull())
+            .mapKeys { (key, _) -> StalkerPortalSupport.migrateLegacyPlaylistGroupKey(key) }
         val normalizedFavoriteChannels = state.favoriteChannels
             .map(StalkerPortalSupport::migrateLegacyChannelId)
             .filter { it.isNotBlank() }
@@ -4911,6 +4961,8 @@ class IptvRepository @Inject constructor(
             }
             if (normalizedChannelOrder.isEmpty()) prefs.remove(channelOrderKeyFor(safeProfileId))
             else prefs[channelOrderKeyFor(safeProfileId)] = gson.toJson(normalizedChannelOrder)
+            if (normalizedGroupNames.isEmpty()) prefs.remove(groupNamesKeyFor(safeProfileId))
+            else prefs[groupNamesKeyFor(safeProfileId)] = gson.toJson(normalizedGroupNames)
         }
         if (preservedConcurrentEdit) return true
         groupOrderLocallyDirty = false

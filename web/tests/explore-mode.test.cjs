@@ -3,8 +3,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { load } = require('./load.cjs');
+const { sourceOf, storeSource } = require('./sources.cjs');
 
-const read = (file) => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
+const read = (file) => sourceOf(file);
 
 test('without a registered gate (self-hosted, signed out) everything may play', () => {
   const gate = load('lib/premiumGate.ts');

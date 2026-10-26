@@ -1,8 +1,9 @@
 "use client";
+import "./addons.css";
 import { useTranslation } from "@/lib/i18n";
 
 import { Server, Tv } from "lucide-react";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { requestSourceSettings, sourceSetupState } from "@/lib/sourceSetup";
 import { AddonManager } from "./AddonManager";
 
@@ -12,7 +13,7 @@ import { AddonManager } from "./AddonManager";
  */
 export function AddonsScreen() {
   const translateUi = useTranslation();
-  const { addons, addonsReady, settings, setSection } = useApp();
+  const { addons, addonsReady, settings, setSection } = useAppPick("addons", "addonsReady", "settings", "setSection");
   const sources = sourceSetupState(addons, settings);
   const openSettings = (target: "homeserver" | "tv") => {
     requestSourceSettings(target);

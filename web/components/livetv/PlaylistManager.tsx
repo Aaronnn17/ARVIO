@@ -5,7 +5,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import { normalizeIptvInput, testIptvPlaylist, xtreamInfoFromUrl } from "@/lib/iptv";
 import { playlistErrorCause, xtreamPlaylistUrls, type PlaylistErrorCause } from "@/lib/iptvGuide";
 import { maskedUrl } from "@/lib/maskUrl";
-import type { IptvPlaylistEntry } from "@/lib/types";
+import { groupDisplayName } from "@/lib/iptvGroups";
+import { MAX_STALKER_PORTALS, nextStalkerPortalId, portalDraftProblem, upsertStalkerPortal, type PortalDraftProblem } from "@/lib/stalkerPortals";
+import type { IptvPlaylistEntry, StalkerPortalEntry } from "@/lib/types";
 
 export type PlaylistError = { playlistId: string; name: string; message: string };
 
@@ -48,7 +50,7 @@ export function PlaylistErrors({ errors, retrying, onEdit, onRetry, onOpenSettin
               <details><summary>{translateUi("Details")}</summary><code>{error.message}</code></details>
             </div>
             <div className="livetv-playlist-error-actions">
-              {error.playlistId !== "stalker" && <button type="button" className="secondary" onClick={() => onEdit(error.playlistId)}><Pencil size={15} /> {translateUi("Edit")}</button>}
+              {error.playlistId !== "stalker" && !error.playlistId.startsWith("warning-") && <button type="button" className="secondary" onClick={() => onEdit(error.playlistId)}><Pencil size={15} /> {translateUi("Edit")}</button>}
               <button type="button" className="secondary" onClick={onRetry} disabled={retrying}><RefreshCw size={15} className={retrying ? "is-spinning" : ""} /> {translateUi("Retry")}</button>
               <button type="button" className="secondary" onClick={onOpenSettings}><Settings size={15} /> {translateUi("Open in Settings")}</button>
             </div>
@@ -84,25 +86,40 @@ export function playlistFromDraft(draft: Pick<Draft, "kind" | "name" | "url" | "
   return { id, name: draft.name.trim() || "Playlist", m3uUrl: url, epgUrl: draft.epg.trim(), enabled: true };
 }
 
-export function PlaylistManager({ playlists, hiddenGroups, stalkerUrl, stalkerMac, userAgent, editRequest, onSavePlaylist, onRemovePlaylist, onTogglePlaylist, onSaveStalker, onShowGroup, onClose }: {
+/** Message for a portal the user typed that cannot be saved or tested yet. */
+export function usePortalProblemText() {
+  const translateUi = useTranslation();
+  return (problem: PortalDraftProblem) => problem === "missing" ? translateUi("Enter the portal address and MAC address.")
+    : problem === "bad-url" ? translateUi("The portal address must start with http:// or https://.")
+    : translateUi("Enter the MAC address as six pairs, e.g. 00:1A:79:12:34:56.");
+}
+
+export function PlaylistManager({ playlists, hiddenGroups, groupNames, portals, reservedPortalIds = [], userAgent, editRequest, onSavePlaylist, onRemovePlaylist, onTogglePlaylist, onSavePortals, onShowGroup, onClose }: {
   playlists: IptvPlaylistEntry[];
   hiddenGroups: string[];
-  stalkerUrl: string;
-  stalkerMac: string;
+  groupNames?: Record<string, string>;
+  /** Every Stalker portal, enabled or not (Android's stalkerPortals list). */
+  portals: StalkerPortalEntry[];
+  /** Portal ids settings still refer to (referencedStalkerPortalIds); a new portal does not take one. */
+  reservedPortalIds?: string[];
   userAgent?: string;
   /** A playlist id to open for editing (from the error panel), or "new". */
   editRequest: { id: string; at: number } | null;
   onSavePlaylist: (playlist: IptvPlaylistEntry) => void;
   onRemovePlaylist: (id: string) => void;
   onTogglePlaylist: (id: string) => void;
-  onSaveStalker: (url: string, mac: string) => void;
+  /** Save the whole portal list; `closeManager` after adding or editing a portal. */
+  onSavePortals: (portals: StalkerPortalEntry[], closeManager: boolean) => void;
   onShowGroup: (id: string) => void;
   onClose: () => void;
 }) {
   const translateUi = useTranslation();
   const causeText = usePlaylistErrorText();
+  const portalProblemText = usePortalProblemText();
   const formId = useId();
-  const [editing, setEditing] = useState<string | null>(playlists.length || stalkerUrl ? null : "new");
+  const [editing, setEditing] = useState<string | null>(playlists.length || portals.length ? null : "new");
+  const isPortal = (id: string | null) => Boolean(id && portals.some((portal) => portal.id === id));
+  const portalsFull = portals.length >= MAX_STALKER_PORTALS;
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [test, setTest] = useState<{ state: "idle" } | { state: "testing" } | { state: "ok"; channels: number } | { state: "error"; text: string }>({ state: "idle" });
@@ -114,7 +131,8 @@ export function PlaylistManager({ playlists, hiddenGroups, stalkerUrl, stalkerMa
 
   const open = (id: string) => {
     const playlist = playlists.find((item) => item.id === id);
-    setDraft(id === "stalker" ? { ...emptyDraft, kind: "stalker", portal: stalkerUrl, mac: stalkerMac } : playlist ? draftFor(playlist) : emptyDraft);
+    const portal = portals.find((item) => item.id === id);
+    setDraft(portal ? { ...emptyDraft, kind: "stalker", name: portal.name, portal: portal.portalUrl, mac: portal.macAddress } : playlist ? draftFor(playlist) : emptyDraft);
     setEditing(id);
     setTest({ state: "idle" });
     setFormError("");
@@ -130,9 +148,12 @@ export function PlaylistManager({ playlists, hiddenGroups, stalkerUrl, stalkerMa
   const runTest = async () => {
     const run = ++testRun.current;
     if (draft.kind === "stalker") {
-      if (!draft.portal.trim() || !draft.mac.trim()) { setFormError(translateUi("Enter the portal address and MAC address.")); return; }
+      const problem = portalDraftProblem(draft.portal, draft.mac);
+      if (problem) { setFormError(portalProblemText(problem)); return; }
       setTest({ state: "testing" });
-      const result = await testIptvPlaylist(null, { stalkerUrl: draft.portal.trim(), stalkerMac: draft.mac.trim(), userAgent });
+      const id = isPortal(editing) ? editing! : nextStalkerPortalId(portals.map((portal) => portal.id), reservedPortalIds) ?? "stalker1";
+      const [candidatePortal] = upsertStalkerPortal([], { name: draft.name, portalUrl: draft.portal, macAddress: draft.mac });
+      const result = await testIptvPlaylist(null, { stalkerPortals: [{ ...candidatePortal, id }], userAgent });
       if (run !== testRun.current) return;
       setTest(result.ok ? { state: "ok", channels: result.channels } : { state: "error", text: causeText(playlistErrorCause(result.message)) });
       return;
@@ -148,8 +169,10 @@ export function PlaylistManager({ playlists, hiddenGroups, stalkerUrl, stalkerMa
 
   const save = () => {
     if (draft.kind === "stalker") {
-      if (!draft.portal.trim() || !draft.mac.trim()) { setFormError(translateUi("Enter the portal address and MAC address.")); return; }
-      onSaveStalker(draft.portal.trim(), draft.mac.trim());
+      const problem = portalDraftProblem(draft.portal, draft.mac);
+      if (problem) { setFormError(portalProblemText(problem)); return; }
+      if (!isPortal(editing) && portalsFull) { setFormError(translateUi("You can add up to {value0} portals.", { value0: MAX_STALKER_PORTALS })); return; }
+      onSavePortals(upsertStalkerPortal(portals, { id: isPortal(editing) ? editing! : undefined, name: draft.name, portalUrl: draft.portal, macAddress: draft.mac }, reservedPortalIds), true);
     } else {
       const entry = candidate();
       if (!entry) return;
@@ -180,20 +203,21 @@ export function PlaylistManager({ playlists, hiddenGroups, stalkerUrl, stalkerMa
         <button type="button" className="secondary" onClick={() => open("new")}><Plus size={16} /> {translateUi("Add playlist")}</button>
         <button type="button" className="livetv-chipbtn" onClick={onClose} aria-label={translateUi("Close playlists")}><X size={17} /></button>
       </header>
-      {hiddenGroups.length > 0 && <div className="hidden-groups"><strong>{translateUi("Hidden categories")}</strong>{hiddenGroups.map((group) => <button type="button" key={group} className="secondary" onClick={() => onShowGroup(group)} aria-label={translateUi("Show {value0}", { value0: group.includes("|") ? group.slice(group.indexOf("|") + 1) : group })}><Eye size={16} />{group.includes("|") ? group.slice(group.indexOf("|") + 1) : group}</button>)}</div>}
-      {[...playlists.map((playlist) => ({ id: playlist.id, name: playlist.name, detail: maskedUrl(playlist.m3uUrl), epg: Boolean(playlist.epgUrl || playlist.epgUrls?.length), enabled: playlist.enabled })),
-        ...(stalkerUrl ? [{ id: "stalker", name: translateUi("Stalker portal"), detail: maskedUrl(stalkerUrl), epg: true, enabled: true }] : [])].map((row) => (
+      {hiddenGroups.length > 0 && <div className="hidden-groups"><strong>{translateUi("Hidden categories")}</strong>{hiddenGroups.map((group) => <button type="button" key={group} className="secondary" onClick={() => onShowGroup(group)} aria-label={translateUi("Show {value0}", { value0: groupDisplayName(groupNames, group) })}><Eye size={16} />{groupDisplayName(groupNames, group)}</button>)}</div>}
+      {[...playlists.map((playlist) => ({ id: playlist.id, portal: false, name: playlist.name, detail: maskedUrl(playlist.m3uUrl), epg: Boolean(playlist.epgUrl || playlist.epgUrls?.length), enabled: playlist.enabled })),
+        ...portals.map((portal) => ({ id: portal.id, portal: true, name: portal.name, detail: maskedUrl(portal.portalUrl), epg: true, enabled: portal.enabled !== false }))].map((row) => (
         <div className="livetv-manage-row" key={row.id}>
-          {row.id !== "stalker" && <button type="button" className={`livetv-switch ${row.enabled ? "is-on" : ""}`} role="switch" aria-checked={row.enabled}
-            onClick={() => onTogglePlaylist(row.id)} aria-label={row.enabled ? translateUi("Disable {value0}", { value0: row.name }) : translateUi("Enable {value0}", { value0: row.name })} />}
+          <button type="button" className={`livetv-switch ${row.enabled ? "is-on" : ""}`} role="switch" aria-checked={row.enabled}
+            onClick={() => row.portal ? onSavePortals(portals.map((portal) => portal.id === row.id ? { ...portal, enabled: !row.enabled } : portal), false) : onTogglePlaylist(row.id)}
+            aria-label={row.enabled ? translateUi("Disable {value0}", { value0: row.name }) : translateUi("Enable {value0}", { value0: row.name })} />
           <span className="livetv-manage-name">
             <strong>{row.name}</strong>
-            <em>{row.detail} · {row.epg ? translateUi("Playlist + EPG") : translateUi("Playlist")}</em>
+            <em>{row.detail} · {row.portal ? translateUi("Stalker portal") : row.epg ? translateUi("Playlist + EPG") : translateUi("Playlist")}</em>
           </span>
           {confirmRemove === row.id ? (
             <span className="livetv-manage-confirm" role="group" aria-label={translateUi("Remove {value0}?", { value0: row.name })}>
               <span>{translateUi("Remove from all your devices?")}</span>
-              <button type="button" className="danger" autoFocus onClick={() => { setConfirmRemove(null); if (row.id === "stalker") onSaveStalker("", ""); else onRemovePlaylist(row.id); }}>{translateUi("Remove")}</button>
+              <button type="button" className="danger" autoFocus onClick={() => { setConfirmRemove(null); if (row.portal) onSavePortals(portals.filter((portal) => portal.id !== row.id), false); else onRemovePlaylist(row.id); }}>{translateUi("Remove")}</button>
               <button type="button" className="secondary" onClick={() => setConfirmRemove(null)}>{translateUi("Cancel")}</button>
             </span>
           ) : <>
@@ -207,11 +231,12 @@ export function PlaylistManager({ playlists, hiddenGroups, stalkerUrl, stalkerMa
           <div className="livetv-kind" role="group" aria-label={translateUi("Playlist type")}>
             {([["m3u", "M3U link"], ["xtream", "Xtream Codes"], ["stalker", "Stalker portal"]] as const).map(([kind, label]) => (
               <button type="button" key={kind} aria-pressed={draft.kind === kind} className={draft.kind === kind ? "is-active" : ""}
-                disabled={editing !== "new" && (editing === "stalker" ? kind !== "stalker" : kind === "stalker")}
+                disabled={editing !== "new" ? (isPortal(editing) ? kind !== "stalker" : kind === "stalker") : kind === "stalker" && portalsFull}
+                title={editing === "new" && kind === "stalker" && portalsFull ? translateUi("You can add up to {value0} portals.", { value0: MAX_STALKER_PORTALS }) : undefined}
                 onClick={() => set({ kind })}>{translateUi(label)}</button>
             ))}
           </div>
-          {draft.kind !== "stalker" && field("name", translateUi("Name"), translateUi("Shown in the Live TV categories, e.g. your provider's name."), { first: true, placeholder: translateUi("My provider") })}
+          {field("name", translateUi("Name"), translateUi("Shown in the Live TV categories, e.g. your provider's name."), { first: true, placeholder: draft.kind === "stalker" ? translateUi("Portal 1") : translateUi("My provider") })}
           {draft.kind === "m3u" && <>
             {field("url", translateUi("Playlist link (M3U)"), translateUi("The M3U or M3U8 link from your provider. Xtream get.php links work too."), { type: "url", placeholder: "https://provider.example/playlist.m3u" })}
             {field("epg", translateUi("Guide link (XMLTV, optional)"), translateUi("Leave empty to use the guide named inside the playlist."), { type: "url", placeholder: "https://provider.example/epg.xml" })}
@@ -222,7 +247,7 @@ export function PlaylistManager({ playlists, hiddenGroups, stalkerUrl, stalkerMa
             {field("password", translateUi("Password"), translateUi("ARVIO builds the playlist and guide links from these and syncs them to your other devices."), { type: "password", autoComplete: "current-password" })}
           </>}
           {draft.kind === "stalker" && <>
-            {field("portal", translateUi("Portal address"), translateUi("The portal URL from your provider, e.g. http://portal.example/c/"), { type: "url", first: true, placeholder: "http://portal.example/c/" })}
+            {field("portal", translateUi("Portal address"), translateUi("The portal URL from your provider, e.g. http://portal.example/c/"), { type: "url", placeholder: "http://portal.example/c/" })}
             {field("mac", translateUi("MAC address"), translateUi("The MAC address registered with your provider, e.g. 00:1A:79:12:34:56"), { placeholder: "00:1A:79:00:00:00" })}
           </>}
           {formError && <p className="livetv-form-error" role="alert">{formError}</p>}

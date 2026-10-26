@@ -4,11 +4,13 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "@/lib/i18n";
 import { iptvPlaylistSignature } from "@/lib/iptv";
 import { moveIndex } from "@/lib/ordering";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import type { IptvPlaylistEntry } from "@/lib/types";
+import { hasStalkerPortals, stalkerPortalsOf, stalkerSourceSignature } from "@/lib/stalkerPortals";
 import { IptvGroupSettings } from "../IptvGroupSettings";
+import { StalkerPortalSettings } from "../StalkerPortalSettings";
 import { SortableList } from "../SortableList";
-import { Empty, Group, Row, ScopeBadge, SecretInput, Select, SectionHeader, SettingAnchor, Status, TextInput, Toggle, safeArray } from "../ui";
+import { Empty, Group, Row, ScopeBadge, SecretInput, Select, SectionHeader, SettingAnchor, Status, Toggle, safeArray } from "../ui";
 
 // Moved to their own files; re-exported so existing imports keep working.
 export { AddonsSection } from "./Addons";
@@ -19,13 +21,13 @@ export { HomeServerSection } from "./HomeServer";
 
 export function LiveTvSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings, refreshIptv, setToast, busy, iptvSnapshot, activeProfile, auth } = useApp();
+  const { settings, updateSettings, refreshIptv, setToast, busy, iptvSnapshot, activeProfile, auth } = useAppPick("settings", "updateSettings", "refreshIptv", "setToast", "busy", "iptvSnapshot", "activeProfile", "auth");
   const activeProfileId = activeProfile?.id;
   const groupScope = `${auth?.userId ?? "local"}:${activeProfileId ?? "local"}`;
-  const playlistSignature = iptvPlaylistSignature(settings.iptvPlaylists) + (settings.iptvStalkerUrl ? JSON.stringify([settings.iptvStalkerUrl, settings.iptvStalkerMac]) : "");
+  const playlistSignature = iptvPlaylistSignature(settings.iptvPlaylists) + stalkerSourceSignature(settings);
   const groupsLoaded = iptvSnapshot.scopeKey === groupScope && iptvSnapshot.signature === playlistSignature;
   useEffect(() => {
-    if (!groupsLoaded && (settings.iptvPlaylists.length || settings.iptvStalkerUrl)) void refreshIptv();
+    if (!groupsLoaded && (settings.iptvPlaylists.length || hasStalkerPortals(settings))) void refreshIptv();
   }, [groupScope, playlistSignature, groupsLoaded, refreshIptv, settings.iptvPlaylists.length]);
   const [name, setName] = useState("");
   const [m3uUrl, setM3uUrl] = useState("");
@@ -50,7 +52,7 @@ export function LiveTvSection() {
   return (
     <>
       <SectionHeader title="Live TV" description="IPTV playlists, programme guides and portals for this profile. They sync to the Live TV page on every ARVIO app.">
-        <button type="button" className="st-btn" disabled={isLoadingTv} onClick={() => void refreshIptv()}>
+        <button type="button" className="st-btn" disabled={isLoadingTv} onClick={() => void refreshIptv({ fresh: true })}>
           <RefreshCw size={16} className={isLoadingTv ? "spin" : undefined} /> {translateUi(isLoadingTv ? "Refreshing..." : "Refresh channels")}
         </button>
       </SectionHeader>
@@ -118,7 +120,7 @@ export function LiveTvSection() {
         </Row>
       </Group>
 
-      {(playlists.length > 0 || Boolean(settings.iptvStalkerUrl)) && (
+      {(playlists.length > 0 || stalkerPortalsOf(settings).length > 0) && (
         <Group title={translateUi("Layout")} description={translateUi("Arrange categories and channels, hide what you don't watch, and order your favourites. The Live TV page on every ARVIO app follows it.")}>
           <SettingAnchor id="iptv-layout">
             <IptvGroupSettings key={groupScope} settings={settings} updateSettings={updateSettings} notify={setToast} channels={groupsLoaded ? iptvSnapshot.allChannels ?? iptvSnapshot.channels : []} />
@@ -126,14 +128,9 @@ export function LiveTvSection() {
         </Group>
       )}
 
-      <Group title="Stalker portal" description="For providers that give you a portal address and a MAC address instead of a playlist.">
-        <Row id="stalker-url" label="Portal URL" scope="all" stack>
-          <TextInput label="Stalker portal URL" wide value={settings.iptvStalkerUrl} onChange={(v) => updateSettings({ iptvStalkerUrl: v })} placeholder="http://portal.example.com/c/" inputMode="url" />
-        </Row>
-        <Row id="stalker-mac" label="MAC address" scope="all" stack>
-          <TextInput label="Stalker MAC address" wide value={settings.iptvStalkerMac} onChange={(v) => updateSettings({ iptvStalkerMac: v })} placeholder="00:1A:79:00:00:00" />
-        </Row>
-      </Group>
+      <SettingAnchor id="stalker-url">
+        <StalkerPortalSettings settings={settings} updateSettings={updateSettings} />
+      </SettingAnchor>
     </>
   );
 }
@@ -142,7 +139,7 @@ export function LiveTvSection() {
 
 export function MetadataSection() {
   const translateUi = useTranslation();
-  const { settings, updateSettings: set } = useApp();
+  const { settings, updateSettings: set } = useAppPick("settings", "updateSettings");
   const chain = (value: string[] | undefined, fallback: string[]) => (value?.length ? value : fallback).map((p) => p.toUpperCase()).join(" → ");
   const tvdbActive = Boolean(settings.customTvdbApiKey?.trim());
   return (

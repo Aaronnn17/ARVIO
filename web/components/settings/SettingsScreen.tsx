@@ -2,6 +2,7 @@
 // Settings. Grouped sections, a search across every setting, and a badge on
 // each row saying where it applies, so ARVIO Web can be used to set up the
 // Android and TV app too (settings sync through ARVIO Cloud).
+import "@/app/settings.css";
 
 import {
   Bot,
@@ -31,7 +32,7 @@ import { useTranslation } from "@/lib/i18n";
 import { config } from "@/lib/config";
 import { trackLanguageName } from "@/lib/languages";
 import { useEntitlement } from "@/lib/entitlementContext";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { clearSourceSettingsRequest, requestedSourceSettings, SOURCE_SETTINGS_EVENT } from "@/lib/sourceSetup";
 import { SETTINGS_INDEX, type SettingsSectionId } from "./settingsIndex";
 import { AccountSection, PremiumSection, ProfilesSection, ServicesSection } from "./sections/Account";
@@ -81,7 +82,7 @@ function isSection(value: unknown): value is SectionId {
 /** One-line current value shown next to a section on phones. */
 function useSummaries(): Partial<Record<SectionId, string>> {
   const translateUi = useTranslation();
-  const { auth, settings, addons, traktConnected, simklConnected, mdblistConnected, activeProfile } = useApp();
+  const { auth, settings, addons, traktConnected, simklConnected, mdblistConnected, activeProfile } = useAppPick("auth", "settings", "addons", "traktConnected", "simklConnected", "mdblistConnected", "activeProfile");
   const entitlement = useEntitlement();
   return useMemo(() => {
     const services = [traktConnected && "Trakt", simklConnected && "Simkl", mdblistConnected && "MDBList"].filter(Boolean).join(", ");
@@ -102,12 +103,13 @@ function useSummaries(): Partial<Record<SectionId, string>> {
 
 export function SettingsScreen() {
   const translateUi = useTranslation();
-  const { settingsSyncState, auth } = useApp();
+  const { settingsSyncState, auth } = useAppPick("settingsSyncState", "auth");
   const requested = requestedSourceSettings();
   const [section, setSectionState] = useState<SectionId>(() => requested ?? "account");
   // Phones show the list of sections first; a deep link opens its section.
   const [detail, setDetail] = useState(() => Boolean(requested));
   const [query, setQuery] = useState("");
+  const [searchLocked, setSearchLocked] = useState(true);
   const pushedHistory = useRef(false);
   const mainRef = useRef<HTMLDivElement>(null);
   const summaries = useSummaries();
@@ -190,7 +192,12 @@ export function SettingsScreen() {
         <p className={`st-sync ${sync.tone}`} role="status" aria-live="polite"><span className="st-sync-dot" aria-hidden="true" />{translateUi(sync.text)}</p>
         <div className="st-search">
           <Search size={16} aria-hidden="true" />
-          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={translateUi("Search settings")} aria-label={translateUi("Search settings")}
+          {/* Browsers' password managers fill a saved e-mail into the text field
+              before any password/key field on the page; this box is not a login
+              field: no autocomplete, and read-only until the person focuses it. */}
+          <input type="search" name="arvio-settings-search" autoComplete="off" autoCorrect="off" spellCheck={false} data-1p-ignore="" data-lpignore="true" data-form-type="other"
+            readOnly={searchLocked} onFocus={() => setSearchLocked(false)} onPointerDown={() => setSearchLocked(false)}
+            value={query} onChange={(e) => setQuery(e.target.value)} placeholder={translateUi("Search settings")} aria-label={translateUi("Search settings")}
             onKeyDown={(e) => { if (e.key === "Escape" && query) { e.stopPropagation(); setQuery(""); } }} />
           {query && <button type="button" className="st-search-clear" aria-label={translateUi("Clear search")} onClick={() => setQuery("")}><X size={16} /></button>}
         </div>

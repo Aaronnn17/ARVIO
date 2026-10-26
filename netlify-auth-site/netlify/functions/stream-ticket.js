@@ -1,13 +1,18 @@
 // GET /stream-ticket → { ticket, expiresAt } for an account with Premium.
 //
-// ARVIO Web attaches the ticket to the resolver worker's /media URLs. When the
-// worker has the same STREAM_TICKET_SECRET, it relays video only for valid,
-// unexpired tickets, so the relay serves paying members and nobody else.
-// Format: v1.<expiry, unix seconds>.<account tag>.<HMAC-SHA256, base64url>, valid 14 days.
+// ARVIO Web attaches the ticket to the resolver worker's /media URLs, and the
+// worker relays video only for valid, unexpired tickets, so the relay serves
+// paying members and nobody else.
+// v2 (default): ECDSA-signed with a key this site creates and keeps itself
+// (_stream-keys.js); the worker verifies with the public key from
+// /stream-ticket-key, so no shared secret has to be copied anywhere.
+// v1 (legacy, only when STREAM_TICKET_SECRET is set): HMAC with a secret shared
+// with the worker. Both are valid 14 days.
 // The account tag is a short keyed hash for logs; it reveals no address.
 const crypto = require("crypto");
 const { json, options, resolveIdentity, normalizeEmail, sha256, privacyHash } = require("./_backend");
 const { entitlementsStore, readEntitlement, evaluateEntitlement } = require("./_entitlements");
+const { streamKeysStore, signTicketV2 } = require("./_stream-keys");
 
 // Long enough for a paused download or a tab left open for days; refreshed by
 // the web app well before it runs out.
@@ -41,7 +46,6 @@ exports.handler = async (event) => {
   if (cors) return cors;
   if (event.httpMethod !== "GET") return json(405, { error: "method_not_allowed" });
   const secret = ticketSecret();
-  if (!secret) return json(503, { error: "not_configured" });
   let identity;
   try { identity = await resolveIdentity(event); } catch (error) { return json(401, { error: "unauthorized", message: error.message }); }
   const email = normalizeEmail(identity.email);
@@ -54,7 +58,9 @@ exports.handler = async (event) => {
       state = evaluateEntitlement(await readEntitlement(store, sha256(normalizeEmail(record.linkedFrom))));
     }
     if (!state.entitled) return json(403, { error: "premium_required" });
-    return json(200, signTicket(secret, privacyHash("stream-ticket", email).slice(0, 10)));
+    const accountTag = privacyHash("stream-ticket", email).slice(0, 10);
+    if (secret) return json(200, signTicket(secret, accountTag));
+    return json(200, await signTicketV2(streamKeysStore(event), accountTag, TICKET_TTL_SECONDS));
   } catch (error) {
     console.error("stream-ticket failed", error && error.message);
     return json(500, { error: "stream_ticket_failed" });

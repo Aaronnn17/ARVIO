@@ -373,6 +373,25 @@ export interface IptvPlaylistEntry {
   importSeries?: boolean;
 }
 
+/**
+ * One Stalker/Ministra portal, in the Android app's shape
+ * (iptvByProfile.<id>.stalkerPortals[], IptvRepository.StalkerPortalEntry).
+ * Fields ARVIO Web does not know are kept when the list is written back.
+ */
+export interface StalkerPortalEntry {
+  /** "stalker1", "stalker2", … Channel ids are `stalker:<id>:<channel>`, category keys `<id>|<group>`. */
+  id: string;
+  name: string;
+  portalUrl: string;
+  macAddress: string;
+  enabled: boolean;
+  /** Android/TV: what the app imports from this portal. Undefined = on. */
+  importLiveTv?: boolean;
+  importVod?: boolean;
+  importSeries?: boolean;
+  [field: string]: unknown;
+}
+
 export interface IptvTvSession {
   lastChannelId: string;
   lastGroupName: string;
@@ -570,8 +589,11 @@ export interface AppSettings {
   homeServers: HomeServerConfig[];
   // IPTV
   iptvPlaylists: IptvPlaylistEntry[];
+  /** Legacy single-portal fields; kept equal to the first enabled portal for older apps. */
   iptvStalkerUrl: string;
   iptvStalkerMac: string;
+  /** Every Stalker portal (iptvByProfile.stalkerPortals). Undefined = never read: use the legacy fields. */
+  iptvStalkerPortals?: StalkerPortalEntry[];
   favoriteChannelIds: string[];
   iptvTvSession?: IptvTvSession;
   favoriteGroupIds: string[];
@@ -581,6 +603,8 @@ export interface AppSettings {
   groupOrder: string[];
   /** Manual channel order per category: { "<playlistId>|<group>": [channel ids…] } (iptvByProfile.channelOrder). */
   iptvChannelOrder?: Record<string, string[]>;
+  /** Category display names: { "<playlistId>|<group>": "<name>" } (iptvByProfile.groupNames). Keys keep the playlist's name. */
+  iptvGroupNames?: Record<string, string>;
   /** Android/TV source priority (profileSettingsById). Undefined = keep the app's value. */
   streamProvidersCustomOrder?: string;
   streamIntegrationsMacroOrder?: string;

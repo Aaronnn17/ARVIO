@@ -1,5 +1,5 @@
 "use client";
-import { useTranslation } from "@/lib/i18n";
+import { useDirection, useTranslation } from "@/lib/i18n";
 import { ChevronLeft, ChevronRight, Play, Star } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { VirtualList } from "@/components/ui/VirtualList";
@@ -19,6 +19,8 @@ export type GuideCallbacks = {
   onCatchup: (channel: IptvChannel, program: IptvProgram) => void;
   onToggleFavorite: (channel: IptvChannel) => void;
   onMenu: (channel: IptvChannel, anchor: HTMLElement) => void;
+  /** The category name to show for a channel (the user's own name when set). */
+  groupName?: (channel: IptvChannel) => string;
 };
 
 /**
@@ -94,6 +96,9 @@ export function GuideGrid({ channels, favorites, nowNext, settled, selectedId, p
   callbacks: GuideCallbacks;
 }) {
   const translateUi = useTranslation();
+  // Right-to-left mirrors the time axis like the Android guide: programmes are
+  // placed from the right edge and the later-in-time key is ArrowLeft.
+  const rtl = useDirection() === "rtl";
   const [clock, setClock] = useState(0);
   const [manualStart, setManualStart] = useState<number | null>(null);
   const currentStart = Math.floor(clock / HALF_HOUR) * HALF_HOUR;
@@ -144,7 +149,8 @@ export function GuideGrid({ channels, favorites, nowNext, settled, selectedId, p
     const cells = Array.from(row.querySelectorAll<HTMLElement>(".livetv-guide-channel, .livetv-guide-block"));
     const index = cells.indexOf(target);
     if (index < 0) return;
-    const right = event.key === "ArrowRight";
+    // "right" = later in time, whichever way the axis runs.
+    const right = event.key === (rtl ? "ArrowLeft" : "ArrowRight");
     const next = cells[index + (right ? 1 : -1)];
     const isBlock = target.classList.contains("livetv-guide-block");
     const blockStart = Number(target.dataset.start ?? windowStart);
@@ -223,7 +229,7 @@ export function GuideGrid({ channels, favorites, nowNext, settled, selectedId, p
             const covered = showNow && nowOffset > offset - 34 && nowOffset < offset + 96;
             return <span key={tick} style={{ width: `${30 * GUIDE_PX_PER_MIN}px` }}><b className={covered ? "is-covered" : undefined}>{formatGuideTime(tick, clockFormat)}</b></span>;
           })}
-          {showNow && <i className="livetv-guide-nowline" style={{ left: `${nowOffset}px` }}><b>{formatGuideTime(clock, clockFormat)}</b></i>}
+          {showNow && <i className="livetv-guide-nowline" style={{ [rtl ? "right" : "left"]: `${nowOffset}px` }}><b>{formatGuideTime(clock, clockFormat)}</b></i>}
         </div>
       </div>} renderItem={renderRow} />
     </div>
@@ -245,6 +251,7 @@ const GuideRow = memo(function GuideRow({ channel, favorite, guide, settled, sel
   callbacks: GuideCallbacks;
 }) {
   const translateUi = useTranslation();
+  const side = useDirection() === "rtl" ? "right" : "left";
   const rowRef = useRef<HTMLDivElement | null>(null);
   useVisibility(rowRef, channel.id, () => callbacks.onVisible(channel), "300px");
   const press = usePressHandlers(channel, callbacks);
@@ -285,7 +292,7 @@ const GuideRow = memo(function GuideRow({ channel, favorite, guide, settled, sel
               data-start={program.startUtcMillis}
               data-end={program.endUtcMillis}
               className={`livetv-guide-block ${live ? "is-live" : ""}`}
-              style={{ left: `${left}px`, width: `${Math.max(14, right - left - 2)}px` }}
+              style={{ [side]: `${left}px`, width: `${Math.max(14, right - left - 2)}px` }}
               aria-disabled={!live && !archived}
               aria-label={`${program.title}, ${span}, ${status}`}
               onClick={() => { if (live) callbacks.onPlay(channel); else if (archived) callbacks.onCatchup(channel, program); }}
@@ -298,7 +305,7 @@ const GuideRow = memo(function GuideRow({ channel, favorite, guide, settled, sel
         {programs.length === 0 && (settled || guide
           ? <span className="livetv-guide-empty">{translateUi("No guide data")}</span>
           : <span className="livetv-guide-skeleton" aria-hidden="true"><i /><i /><i /></span>)}
-        {nowOffset >= 0 && nowOffset <= totalWidth && <i className="livetv-guide-nowline" style={{ left: `${nowOffset}px` }} />}
+        {nowOffset >= 0 && nowOffset <= totalWidth && <i className="livetv-guide-nowline" style={{ [side]: `${nowOffset}px` }} />}
       </div>
     </div>
   );
@@ -337,7 +344,7 @@ export const ChannelRow = memo(function ChannelRow({ channel, guide, favorite, s
               <span className="livetv-progress"><span style={{ width: `${progress}%` }} /></span>
             </span>
           ) : (
-            <span className="livetv-row-now"><em className="is-muted">{channel.group || translateUi("Live TV")}</em></span>
+            <span className="livetv-row-now"><em className="is-muted">{callbacks.groupName?.(channel) || channel.group || translateUi("Live TV")}</em></span>
           )}
           {next?.title && <small>{formatGuideTime(next.startUtcMillis, clockFormat)} · {next.title}</small>}
         </span>

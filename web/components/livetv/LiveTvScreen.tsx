@@ -6,7 +6,8 @@ import "./livetv.css";
 import { ArrowDown, ArrowUp, PanelLeft, CalendarClock, ChevronDown, ExternalLink, Eye, EyeOff, History, LayoutGrid, List, ListVideo, Play, Plus, RefreshCw, Search, Star, Trophy, Tv, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { externalLaunchMode, openExternalPlayer } from "@/lib/externalPlayers";
-import { applyChannelOrder, isFavoriteGroup, toggleFavoriteGroup } from "@/lib/iptvGroups";
+import { applyChannelOrder, groupNameOf, isFavoriteGroup, toggleFavoriteGroup } from "@/lib/iptvGroups";
+import { channelPlaylistId, liveTvStalkerPortals, referencedStalkerPortalIds, stalkerPortalsOf, stalkerPortalsPatch, stalkerSourceSignature } from "@/lib/stalkerPortals";
 import { accessibleChannels, groupKey, loadXtreamCatchup, type CatchupProgram } from "@/lib/iptv";
 import { VirtualList } from "@/components/ui/VirtualList";
 import { SportsGuidePane } from "@/components/livetv/SportsGuidePane";
@@ -25,7 +26,7 @@ import { appendChannelDigit, DIGIT_COMMIT_MS, exactChannelNumber, keepLivePlayer
 import { requestSourceSettings } from "@/lib/sourceSetup";
 import { playerIsOpen } from "@/lib/tvNav";
 import { loadStored, saveStored } from "@/lib/storage";
-import { authClient, useApp } from "@/lib/store";
+import { authClient, useAppPick } from "@/lib/store";
 import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 import type { IptvChannel } from "@/lib/types";
 
@@ -34,10 +35,6 @@ const GUIDE_BATCH_DELAY_MS = 500;
 const SEARCH_DEBOUNCE_MS = 150;
 const INFO_VISIBLE_MS = 5000;
 const rowKey = (item: { id: string }) => item.id;
-
-function groupLabel(group: string) {
-  return group.trim() || "Uncategorized";
-}
 
 /** Categories start collapsed below tablet-landscape width (phones and portrait tablets). */
 export function categoriesOpenByDefault(width: number) {
@@ -56,7 +53,7 @@ function blurIntoPlayer() {
 
 export function LiveTvScreen() {
   const translateUi = useTranslation();
-  const { iptvSnapshot, settings, updateSettings, playChannel, recordChannelPlayback, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth, activeProfile, activeChannel, addons, setSection } = useApp();
+  const { iptvSnapshot, settings, updateSettings, playChannel, recordChannelPlayback, playCatchup, setToast, refreshIptv, loadIptvGuide, busy, auth, activeProfile, activeChannel, addons, setSection } = useAppPick("iptvSnapshot", "settings", "updateSettings", "playChannel", "recordChannelPlayback", "playCatchup", "setToast", "refreshIptv", "loadIptvGuide", "busy", "auth", "activeProfile", "activeChannel", "addons", "setSection");
   const lastChannelKey = `${LAST_CHANNEL_KEY}:${auth?.userId ?? "local"}:${activeProfile?.id ?? "local"}`;
   const listRef = useRef<HTMLElement>(null);
   const pointerNavigation = useRef(false);
@@ -85,6 +82,10 @@ export function LiveTvScreen() {
   }, [setToast, settings.defaultSubtitle, recordChannelPlayback]);
 
   const playlists = settings.iptvPlaylists;
+  const portals = useMemo(() => stalkerPortalsOf(settings), [settings.iptvStalkerPortals, settings.iptvStalkerUrl, settings.iptvStalkerMac]); // eslint-disable-line react-hooks/exhaustive-deps
+  const livePortals = useMemo(() => liveTvStalkerPortals(settings), [settings.iptvStalkerPortals, settings.iptvStalkerUrl, settings.iptvStalkerMac]); // eslint-disable-line react-hooks/exhaustive-deps
+  const groupNames = settings.iptvGroupNames;
+  const hasGroupNames = Boolean(groupNames && Object.keys(groupNames).length);
   const favorites = settings.favoriteChannelIds;
   const favoriteGroups = settings.favoriteGroupIds;
   const hiddenGroups = settings.hiddenGroupIds;
@@ -92,8 +93,8 @@ export function LiveTvScreen() {
   const [activeCategory, setActiveCategory] = useState("all");
   const hasSportsAddons = addons.some(addon => sportsEventCatalogs(addon).length > 0);
   useEffect(() => {
-    if (hasSportsAddons && !settings.iptvPlaylists.length && !settings.iptvStalkerUrl) setActiveCategory("sports");
-  }, [hasSportsAddons, settings.iptvPlaylists.length, settings.iptvStalkerUrl]);
+    if (hasSportsAddons && !settings.iptvPlaylists.length && !portals.length) setActiveCategory("sports");
+  }, [hasSportsAddons, settings.iptvPlaylists.length, portals.length]);
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   useEffect(() => {
@@ -115,7 +116,7 @@ export function LiveTvScreen() {
   const tvSession = useMemo(() => normalizeTvSession(settings.iptvTvSession), [settings.iptvTvSession]);
 
   const allChannels = iptvSnapshot.allChannels ?? iptvSnapshot.channels;
-  const providerChannels = useMemo(() => provider === "all" ? allChannels : allChannels.filter((ch) => ch.id.startsWith(`${provider}:`)), [allChannels, provider]);
+  const providerChannels = useMemo(() => provider === "all" ? allChannels : allChannels.filter((ch) => channelPlaylistId(ch.id) === provider), [allChannels, provider]);
   const channels = useMemo(() => accessibleChannels(providerChannels, [...hiddenGroups, ...(settings.lockedIptvGroupIds ?? [])]), [providerChannels, hiddenGroups, settings.lockedIptvGroupIds]);
   const groups = useMemo(() => {
     const result: Record<string, IptvChannel[]> = {};
@@ -124,10 +125,13 @@ export function LiveTvScreen() {
   }, [channels]);
   const channelById = useMemo(() => channelIdentityIndex(channels), [channels]);
   const enabledPlaylists = useMemo(() => playlists.filter((playlist) => playlist.enabled && playlist.m3uUrl.trim()), [playlists]);
-  const sourceCount = enabledPlaylists.length + (settings.iptvStalkerUrl ? 1 : 0);
+  const sourceCount = enabledPlaylists.length + livePortals.length;
   useEffect(() => {
-    if (provider !== "all" && provider !== "stalker" && !enabledPlaylists.some(playlist => playlist.id === provider)) setProvider("all");
-  }, [enabledPlaylists, provider]);
+    if (provider !== "all" && !enabledPlaylists.some(playlist => playlist.id === provider) && !livePortals.some(portal => portal.id === provider)) setProvider("all");
+  }, [enabledPlaylists, livePortals, provider]);
+  /** A category's name on screen: the user's own name, else the playlist's. */
+  const groupNameFor = useCallback((channel: IptvChannel) => (hasGroupNames ? groupNames?.[groupKey(channel)] : undefined) || channel.group,
+    [groupNames, hasGroupNames]);
   const favoriteChannels = useMemo(() => resolveChannelReferences(favorites, channelById), [favorites, channelById]);
   const favoriteIds = useMemo(() => new Set(favoriteChannels.map(channel => channel.id)), [favoriteChannels]);
   const recentChannels = useMemo(() => resolveChannelReferences([...tvSession.recentChannelIds].reverse(), channelById), [tvSession, channelById]);
@@ -140,7 +144,7 @@ export function LiveTvScreen() {
     && (favorites.length > favoriteChannels.length || tvSession.recentChannelIds.length > recentChannels.length);
   // Same helper the store stamps onto the snapshot, so both sides agree on when
   // a cached channel list still matches the configured playlists.
-  const playlistSignature = iptvPlaylistSignature(playlists) + (settings.iptvStalkerUrl ? JSON.stringify([settings.iptvStalkerUrl, settings.iptvStalkerMac]) : "");
+  const playlistSignature = iptvPlaylistSignature(playlists) + stalkerSourceSignature(settings);
 
   // Re-entering Live TV used to rebuild the whole snapshot every time — with a
   // large provider that is ~139k channels re-parsed and re-grouped on each
@@ -148,7 +152,7 @@ export function LiveTvScreen() {
   // is already cached). Reuse the snapshot that is still in memory and only
   // rebuild when the playlists actually changed, or when it has gone stale.
   useEffect(() => {
-    if (!playlists.length && !settings.iptvStalkerUrl) return;
+    if (!playlists.length && !livePortals.length) return;
     const snapshotMatchesPlaylists = iptvSnapshot.channels.length > 0
       && iptvSnapshot.signature === playlistSignature;
     const age = Date.now() - (iptvSnapshot.loadedAt ?? 0);
@@ -167,7 +171,9 @@ export function LiveTvScreen() {
     const groupRows = Object.entries(groups)
       .map(([group, items]) => ({
         id: `group:${group}`,
-        label: groupLabel(items[0]?.group ?? group),
+        // Keys keep the playlist's name; the label is the name the user gave the category, if any.
+        label: groupNames?.[group] || groupNameOf(group),
+        custom: Boolean(groupNames?.[group]),
         count: items.length,
         favorite: isFavoriteGroup(favoriteGroups, group) || Boolean(items[0] && isFavoriteGroup(favoriteGroups, groupKey(items[0]))),
         hidden: hiddenGroups.includes(group) || Boolean(items[0] && hiddenGroups.includes(groupKey(items[0]))),
@@ -182,13 +188,13 @@ export function LiveTvScreen() {
         return 0;
       });
     return [
-      { id: "favorites", label: "Favorites", count: favoriteChannels.length, favorite: true, hidden: false },
-      { id: "recent", label: "Recently Watched", count: recentChannels.length, favorite: false, hidden: false },
-      { id: "all", label: "All Channels", count: channels.length, favorite: false, hidden: false },
-      { id: "sports", label: "Sports", count: 0, favorite: false, hidden: false },
+      { id: "favorites", label: "Favorites", custom: false, count: favoriteChannels.length, favorite: true, hidden: false },
+      { id: "recent", label: "Recently Watched", custom: false, count: recentChannels.length, favorite: false, hidden: false },
+      { id: "all", label: "All Channels", custom: false, count: channels.length, favorite: false, hidden: false },
+      { id: "sports", label: "Sports", custom: false, count: 0, favorite: false, hidden: false },
       ...groupRows
     ];
-  }, [channels.length, favoriteChannels.length, recentChannels.length, favoriteGroups, groups, hiddenGroups, settings.groupOrder, settings.iptvSortOrder]);
+  }, [channels.length, favoriteChannels.length, recentChannels.length, favoriteGroups, groups, hiddenGroups, settings.groupOrder, settings.iptvSortOrder, groupNames]);
 
   const categoryChannels = useMemo(() => {
     const base = activeCategory === "favorites"
@@ -216,8 +222,8 @@ export function LiveTvScreen() {
   const nowNext = iptvSnapshot.nowNext;
   const needle = query.trim().toLowerCase();
   const visibleChannels = useMemo(() => needle
-    ? categoryChannels.filter((channel) => channelMatchesQuery(channel, needle, nowNext[channel.id]))
-    : categoryChannels, [categoryChannels, needle, nowNext]);
+    ? categoryChannels.filter((channel) => channelMatchesQuery(channel, needle, nowNext[channel.id], hasGroupNames ? groupNames?.[groupKey(channel)] : undefined))
+    : categoryChannels, [categoryChannels, needle, nowNext, groupNames, hasGroupNames]);
 
   useEffect(() => {
     if (!categories.some((category) => category.id === activeCategory)) setActiveCategory("all");
@@ -354,8 +360,9 @@ export function LiveTvScreen() {
     onPlay: (channel) => watchRef.current(channel),
     onCatchup: (channel, program) => playCatchupRef.current(channel, program),
     onToggleFavorite: (channel) => toggleFavorite(channel.id),
-    onMenu: (channel, anchor) => setMenu({ channel, anchor })
-  }), [requestGuide, toggleFavorite]);
+    onMenu: (channel, anchor) => setMenu({ channel, anchor }),
+    groupName: groupNameFor
+  }), [requestGuide, toggleFavorite, groupNameFor]);
 
   // Fullscreen zapping (keys arrive from the player via lib/liveZap.ts).
   const zapState = useRef({ list: renderedChannels, all: channels, active: activeChannel, lastZapAt: 0, digits: "", digitsAt: 0, info: null as IptvChannel | null });
@@ -443,15 +450,18 @@ export function LiveTvScreen() {
     setManaging(false);
   };
 
-  const activeCategoryLabel = categories.find((category) => category.id === activeCategory)?.label ?? "All Channels";
+  const activeCategoryEntry = categories.find((category) => category.id === activeCategory);
+  // Names the user typed are shown as typed; built-in labels and playlist names go through translation as before.
+  const categoryText = (category: { label: string; custom: boolean }) => category.custom ? category.label : translateUi(category.label);
+  const activeCategoryLabel = activeCategoryEntry ? categoryText(activeCategoryEntry) : translateUi("All Channels");
   const renderCategory = (category: typeof categories[number]) => <button type="button"
-    className={activeCategory === category.id ? "is-active" : ""} title={translateUi(category.label)} aria-current={activeCategory === category.id ? "true" : undefined}
+    className={activeCategory === category.id ? "is-active" : ""} title={categoryText(category)} aria-current={activeCategory === category.id ? "true" : undefined}
     onClick={() => {
       setActiveCategory(category.id); setSelectedChannelId(null);
       if (window.matchMedia("(max-width: 760px)").matches) setGroupsOpen(false);
     }}>
     {category.id === "favorites" ? <Star size={20} /> : category.id === "recent" ? <History size={20} /> : category.id === "sports" ? <Trophy size={20} /> : <LayoutGrid size={20} />}
-    <span>{translateUi(category.label)}</span>{category.id !== "sports" && <em>{resolvingSavedChannels && ["favorites", "recent"].includes(category.id) && !category.count ? <RefreshCw size={14} className="is-spinning" aria-label={translateUi("Loading saved channels")} /> : category.count.toLocaleString()}</em>}
+    <span>{categoryText(category)}</span>{category.id !== "sports" && <em>{resolvingSavedChannels && ["favorites", "recent"].includes(category.id) && !category.count ? <RefreshCw size={14} className="is-spinning" aria-label={translateUi("Loading saved channels")} /> : category.count.toLocaleString()}</em>}
   </button>;
   const openCategories = () => { setGroupsOpen(true); requestAnimationFrame(() => document.querySelector<HTMLElement>(".livetv-cats button.is-active")?.focus()); };
   const hasContent = channels.length > 0 || hasSportsAddons;
@@ -467,7 +477,7 @@ export function LiveTvScreen() {
         <div className="livetv-topbar-actions">
           <button type="button" className="livetv-chipbtn" onClick={() => setManaging((value) => !value)} aria-expanded={managing}>
             <ListVideo size={17} /> {translateUi("Playlists")}</button>
-          {(playlists.length > 0 || settings.iptvStalkerUrl) && <button type="button" className="livetv-chipbtn" onClick={() => void refreshIptv()} disabled={isLoadingTv} aria-label={translateUi("Refresh channels")}>
+          {(playlists.length > 0 || portals.length > 0) && <button type="button" className="livetv-chipbtn" onClick={() => void refreshIptv({ fresh: true })} disabled={isLoadingTv} aria-label={translateUi("Refresh channels")}>
             <RefreshCw size={17} className={isLoadingTv ? "is-spinning" : ""} /> {isLoadingTv ? translateUi("Refreshing") : translateUi("Refresh")}
           </button>}
         </div>
@@ -476,21 +486,22 @@ export function LiveTvScreen() {
       {managing && <PlaylistManager
         playlists={playlists}
         hiddenGroups={hiddenGroups}
-        stalkerUrl={settings.iptvStalkerUrl}
-        stalkerMac={settings.iptvStalkerMac}
+        groupNames={groupNames}
+        portals={portals}
+        reservedPortalIds={referencedStalkerPortalIds(settings)}
         userAgent={settings.customUserAgent}
         editRequest={editRequest}
         onSavePlaylist={savePlaylist}
         onRemovePlaylist={(id) => updateSettings({ iptvPlaylists: settingsRef.current.iptvPlaylists.filter((item) => item.id !== id) })}
         onTogglePlaylist={(id) => updateSettings({ iptvPlaylists: settingsRef.current.iptvPlaylists.map((item) => item.id === id ? { ...item, enabled: !item.enabled } : item) })}
-        onSaveStalker={(url, mac) => { updateSettings({ iptvStalkerUrl: url, iptvStalkerMac: mac }); if (url) setManaging(false); }}
+        onSavePortals={(next, closeManager) => { updateSettings(stalkerPortalsPatch(next)); if (closeManager) setManaging(false); }}
         onShowGroup={(id) => updateSettings({ hiddenGroupIds: settingsRef.current.hiddenGroupIds.filter((item) => item !== id) })}
         onClose={() => setManaging(false)}
       />}
 
-      <PlaylistErrors errors={playlistErrors} retrying={isLoadingTv} onEdit={openEditor} onRetry={() => void refreshIptv()} onOpenSettings={openSettings} />
+      <PlaylistErrors errors={playlistErrors} retrying={isLoadingTv} onEdit={openEditor} onRetry={() => void refreshIptv({ fresh: true })} onOpenSettings={openSettings} />
 
-      {!playlists.length && !settings.iptvStalkerUrl && !channels.length && !managing && !hasSportsAddons && (
+      {!playlists.length && !portals.length && !channels.length && !managing && !hasSportsAddons && (
         <section className="livetv-empty">
           <Tv size={44} />
           <h3>{translateUi("Add your IPTV playlist")}</h3>
@@ -516,19 +527,40 @@ export function LiveTvScreen() {
             }
           }}>
             {sourceCount > 1 && <div className="livetv-providers" role="group" aria-label={translateUi("Playlist provider")}>
-              {[{ id: "all", name: translateUi("All playlists") }, ...(settings.iptvStalkerUrl ? [{ id: "stalker", name: "Stalker" }] : []), ...enabledPlaylists.map((playlist) => ({ id: playlist.id, name: playlist.name }))].map((item) => (
+              {[{ id: "all", name: translateUi("All playlists") }, ...livePortals.map((portal) => ({ id: portal.id, name: portal.name })), ...enabledPlaylists.map((playlist) => ({ id: playlist.id, name: playlist.name }))].map((item) => (
                 <button type="button" key={item.id} aria-pressed={provider === item.id} className={provider === item.id ? "is-active" : ""}
                   onClick={() => { setProvider(item.id); setActiveCategory("all"); }}>{item.name}</button>
               ))}
             </div>}
             <div className="livetv-search"><Search size={18} />
-              <input value={queryInput} onChange={event => setQueryInput(event.target.value)} placeholder={translateUi("Search channels")} aria-label={translateUi("Search channels")} />
+              <input value={queryInput} onChange={event => setQueryInput(event.target.value)} placeholder={translateUi("Search channels")} aria-label={translateUi("Search channels")}
+                onKeyDown={event => {
+                  // Remote / keyboard: Down goes to the first destination below the box,
+                  // Enter (or Right at the end of the text) jumps into the results.
+                  const input = event.currentTarget;
+                  const atEnd = input.selectionStart === input.value.length && input.selectionEnd === input.value.length;
+                  if (event.key === "ArrowDown") {
+                    const next = input.closest(".livetv-cats")?.querySelector<HTMLElement>(".tv-sidebar-destinations button, .tv-sidebar-destinations [role='button']");
+                    if (next) { event.preventDefault(); event.stopPropagation(); next.focus({ preventScroll: false }); }
+                  } else if (event.key === "Enter" || (event.key === "ArrowRight" && atEnd && input.value)) {
+                    const first = listRef.current?.querySelector<HTMLElement>('[data-virtual-index] .livetv-guide-channel, [data-virtual-index] .livetv-row-main, .livetv-guide-channel, .livetv-row-main');
+                    if (first) { event.preventDefault(); event.stopPropagation(); first.focus({ preventScroll: false }); }
+                  }
+                }} />
               {queryInput && <button type="button" onClick={() => setQueryInput("")} aria-label={translateUi("Clear search")}><X size={16} /></button>}
             </div>
-            <div className="tv-sidebar-destinations">{categories.filter(category => !category.id.startsWith("group:")).map(category => <div key={category.id}>{renderCategory(category)}</div>)}</div>
+            <div className="tv-sidebar-destinations" onKeyDown={event => {
+              // Up from the first destination returns to the channel search box.
+              if (event.key !== "ArrowUp") return;
+              const items = [...event.currentTarget.querySelectorAll<HTMLElement>("button, [role='button']")];
+              if (items[0] && items[0] === document.activeElement) {
+                const input = event.currentTarget.closest(".livetv-cats")?.querySelector<HTMLInputElement>(".livetv-search input");
+                if (input) { event.preventDefault(); event.stopPropagation(); input.focus(); }
+              }
+            }}>{categories.filter(category => !category.id.startsWith("group:")).map(category => <div key={category.id}>{renderCategory(category)}</div>)}</div>
             <div className="tv-sidebar-group-heading"><span>{translateUi("Categories")}</span>
               <button type="button" title={translateUi("Manage playlists")} aria-label={translateUi("Manage playlists")} onClick={() => setManaging(value => !value)} aria-expanded={managing}><ListVideo size={18} /></button>
-              <button type="button" title={translateUi("Refresh channels")} aria-label={translateUi("Refresh channels")} disabled={isLoadingTv} onClick={() => void refreshIptv()}><RefreshCw size={16} className={isLoadingTv ? "is-spinning" : ""} /></button>
+              <button type="button" title={translateUi("Refresh channels")} aria-label={translateUi("Refresh channels")} disabled={isLoadingTv} onClick={() => void refreshIptv({ fresh: true })}><RefreshCw size={16} className={isLoadingTv ? "is-spinning" : ""} /></button>
             </div>
             <VirtualList items={categories.filter(category => category.id.startsWith("group:"))} estimate={56} itemKey={rowKey} label={translateUi("Categories")} renderItem={renderCategory} />
           </nav>
@@ -544,7 +576,7 @@ export function LiveTvScreen() {
             }
           }}>
             {activeCategory === "sports" ? <SportsGuidePane key={activeProfile?.id ?? "local"} clockFormat={settings.clockFormat} channels={channels} guide={nowNext} addons={addons}
-              providerNames={Object.fromEntries(playlists.map((playlist) => [playlist.id, playlist.name]))}
+              providerNames={Object.fromEntries([...playlists.map((playlist) => [playlist.id, playlist.name]), ...portals.map((portal) => [portal.id, portal.name])])}
               onPlay={channel => channel.id.startsWith("sports-addon:") ? void playChannel(channel) : watchChannel(channel)} onEnter={() => { if (!pointerNavigation.current && !categoriesOpenByDefault(window.innerWidth)) setGroupsOpen(false); }}
               onOpenCategories={openCategories} /> : <>
             <div className="livetv-list-head">
@@ -613,7 +645,7 @@ export function LiveTvScreen() {
                   {!activeChannel && <button type="button" className="livetv-preview-play" aria-label={translateUi("Play {value0}", { value0: heroChannel.name })} title={translateUi("Play {value0}", { value0: heroChannel.name })} onClick={() => watchChannel(heroChannel)}><Play size={28} fill="currentColor" /></button>}
                 </div>
                 {activeChannel && <p className="livetv-detail-playing"><span className="livetv-live-dot" />{translateUi("Playing")}</p>}
-                <p className="livetv-detail-group">{heroChannel.group || translateUi("Live TV")}</p>
+                <p className="livetv-detail-group">{groupNameFor(heroChannel) || translateUi("Live TV")}</p>
                 <ChannelProgramInfo channel={heroChannel} guide={heroGuide} formatTime={(ms) => formatGuideTime(ms, settings.clockFormat)} />
                 {secondaryChannel && <div className="livetv-detail-selected">
                   <span>{translateUi("Selected")}</span>
@@ -665,17 +697,18 @@ export function LiveTvScreen() {
         </div>
       )}
 
-      {(playlists.length > 0 || settings.iptvStalkerUrl) && !channels.length && !hasWarnings && activeCategory !== "sports" && (
+      {(playlists.length > 0 || portals.length > 0) && !channels.length && !hasWarnings && activeCategory !== "sports" && (
         <section className="livetv-empty">
           <ChevronDown size={36} className={isLoadingTv ? "is-spinning" : ""} />
           <h3>{isLoadingTv ? translateUi("Loading channels…") : translateUi("No channels yet")}</h3>
           <p>{isLoadingTv ? translateUi("Big playlists can take a few seconds.") : translateUi("Refresh, or double-check the playlist details with your provider.")}</p>
-          {!isLoadingTv && <button type="button" className="secondary" onClick={() => void refreshIptv()}><RefreshCw size={16} /> {translateUi("Refresh")}</button>}
+          {!isLoadingTv && <button type="button" className="secondary" onClick={() => void refreshIptv({ fresh: true })}><RefreshCw size={16} /> {translateUi("Refresh")}</button>}
         </section>
       )}
 
       {menu && <ChannelMenu
         state={menu}
+        groupName={groupNameFor(menu.channel)}
         favorite={favoriteIds.has(menu.channel.id)}
         canMoveUp={menuFavoriteIndex > 0}
         canMoveDown={menuFavoriteIndex >= 0 && menuFavoriteIndex < favorites.length - 1}

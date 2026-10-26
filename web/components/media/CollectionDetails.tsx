@@ -1,10 +1,11 @@
 "use client";
+import "@/app/collections.css";
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowLeft, LoaderCircle, RotateCw } from 'lucide-react';
-import { useApp } from '@/lib/store';
+import { useAppPick } from '@/lib/store';
 import { useTranslation } from '@/lib/i18n';
 import { collectionMediaTypes } from '@/lib/collectionPresentation';
 import { createCollectionLoader } from '@/lib/collectionLoader';
@@ -15,7 +16,7 @@ import { MediaCard } from './MediaCard';
 import { useModalDialog } from './useModalDialog';
 
 export function CollectionDetails({ catalog, onBack, onOpen }: { catalog: CatalogConfig; onBack: () => void; onOpen: (item: MediaItem) => void }) {
-  const { settings, addons, selected } = useApp();
+  const { settings, addons, selected } = useAppPick("settings", "addons", "selected");
   const types = collectionMediaTypes(catalog);
   const [type, setType] = useState<MediaType>(types[0] || 'movie');
   const dialog = useRef<HTMLDialogElement>(null);

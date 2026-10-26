@@ -15,6 +15,10 @@
   transform: translateY(-160%);
   transition: transform 120ms ease;
 }
+[dir="rtl"] .skip-link {
+  left: auto;
+  right: 8px;
+}
 .skip-link:focus,
 .skip-link:focus-visible { transform: none; outline: 3px solid var(--accent, #000); outline-offset: 2px; }
 .content:focus { outline: none; }

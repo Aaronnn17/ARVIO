@@ -2,6 +2,7 @@ package com.arflix.tv.ui.screens.tv.live
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import com.arflix.tv.R
@@ -411,6 +412,26 @@ fun liveCategoryLabel(raw: String): String = when (raw) {
     "Music" -> stringResource(R.string.live_cat_music)
     else -> raw
 }
+
+/**
+ * Category display names set in ARVIO Web Settings (iptvByProfile.groupNames:
+ * `playlistId|group` -> name). Provided by [LiveTvScreen] for the sidebar and
+ * the group home; everything else keeps working on the playlist's own name.
+ */
+val LocalLiveGroupNames = staticCompositionLocalOf<Map<String, String>> { emptyMap() }
+
+/** The name the user gave this playlist category in ARVIO Web, or null (also for non-playlist categories). */
+internal fun customGroupName(category: LiveCategory, names: Map<String, String>): String? {
+    if (names.isEmpty()) return null
+    val playlistId = category.playlistId?.removePrefix("source:")?.takeIf { it.isNotBlank() } ?: return null
+    val group = category.playlistGroupName ?: return null
+    return names[playlistGroupKey(playlistId, group)]
+}
+
+/** The label shown for a category: the user's own name for a playlist category, else [fallback] localized. */
+@Composable
+fun liveCategoryDisplayLabel(category: LiveCategory, fallback: String = category.label): String =
+    customGroupName(category, LocalLiveGroupNames.current) ?: liveCategoryLabel(fallback)
 
 /** Display-localization for [LiveSection.label] section headers. Unknown headers pass through. */
 @Composable

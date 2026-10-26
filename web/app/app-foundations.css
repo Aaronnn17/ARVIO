@@ -105,7 +105,10 @@ html.kbd-nav .recover-btn:focus { outline: 3px solid #fff; outline-offset: 3px; 
   gap: 12px;
   max-width: min(640px, calc(100vw - 32px));
   box-sizing: border-box;
-  padding: 10px 10px 10px 18px;
+  padding-top: 10px;
+  padding-inline-end: 10px;
+  padding-bottom: 10px;
+  padding-inline-start: 18px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px;
   background: rgba(18, 18, 18, 0.97);
@@ -114,7 +117,7 @@ html.kbd-nav .recover-btn:focus { outline: 3px solid #fff; outline-offset: 3px; 
 }
 /* Bottom, above the toast and the phone tab bar — the top is the nav bar. */
 .update-banner { bottom: calc(88px + env(safe-area-inset-bottom)); }
-.xbox-tip { bottom: 24px; padding-left: 16px; }
+.xbox-tip { bottom: 24px; padding-inline-start: 16px; }
 .xbox-tip p { margin: 0; line-height: 1.4; }
 .offline-banner { top: max(14px, env(safe-area-inset-top)); padding: 10px 18px; }
 .update-banner button,
@@ -210,34 +213,12 @@ html.is-tv *:focus-visible {
 }
 
 /* ============ Touch-first devices (iPhone, iPad, Apple Vision Pro) ============ */
-/* `no-hover` is set before paint when the primary pointer is coarse and can't
-   hover (lib/deviceClass.ts). :hover "sticks" after a tap there, leaving cards
-   lifted and zoomed. Neutralise the lift/zoom transforms on the main card and
-   button families; focus-visible skins are untouched. */
-html.no-hover .media-card:hover,
-html.no-hover .oled-library .media-card:hover,
-html.no-hover .media-card:hover .poster,
-html.no-hover .media-card:hover .poster img,
-html.no-hover .collection-grid-row .media-card:hover .poster,
-html.no-hover .profile-pick:hover .avatar-tile,
-html.no-hover .player-bigplay:hover,
-html.no-hover .primary:hover,
-html.no-hover .secondary:hover,
-html.no-hover .text-button:hover,
-html.no-hover .pill:hover,
-html.no-hover .mini-card:hover img,
-html.no-hover .person-known-card:hover,
-html.no-hover .trailer-link:hover,
-html.no-hover .rail-arrow-left:hover,
-html.no-hover .rail-arrow-right:hover {
-  transform: none !important;
-  filter: none !important;
-}
-html.no-hover .media-card:hover .poster,
-html.no-hover .primary:hover,
-html.no-hover .secondary:hover {
-  box-shadow: none !important;
-}
+/* Sticky hover: every :hover lift, zoom or colour change in the app sheets sits
+   inside `@media (hover: hover) and (pointer: fine)`, so a tap on iPhone, iPad
+   or Vision Pro never leaves a card lifted. Hover REVEALS (play buttons,
+   spoiler text) stay unguarded: a tap is how touch users reach them. Keyboard
+   and remote focus get the same effects through lib/hoverParity. `no-hover`
+   (set before paint, lib/deviceClass.ts) still drives the touch sizing below. */
 
 /* Custom controls announce themselves to pointer/gaze (visionOS highlights
    elements with a pointer cursor). */

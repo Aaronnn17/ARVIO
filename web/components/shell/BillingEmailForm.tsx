@@ -1,4 +1,5 @@
 "use client";
+import "@/app/premium.css";
 import { useTranslation } from "@/lib/i18n";
 
 
@@ -6,7 +7,7 @@ import { Loader2 } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { linkKofiEmail, type EntitlementState } from "@/lib/entitlement";
 import { HttpError } from "@/lib/http";
-import { authClient, useApp } from "@/lib/store";
+import { authClient, useAppPick } from "@/lib/store";
 import { trackPremiumEvent } from "@/lib/premiumAnalytics";
 
 /** The emailed code: 8 digits ("1234 5678"); older emails had 16 hex characters. */
@@ -17,7 +18,7 @@ export function normalizeBillingCode(value: string): string | null {
 
 export function BillingEmailForm({ onEntitled, initiallyOpen = false }: { onEntitled: (state: EntitlementState) => void; initiallyOpen?: boolean }) {
   const translateUi = useTranslation();
-  const { auth, goToLogin } = useApp();
+  const { auth, goToLogin } = useAppPick("auth", "goToLogin");
   const [open, setOpen] = useState(initiallyOpen);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");

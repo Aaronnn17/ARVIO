@@ -9,6 +9,9 @@ import { findNextEpisode, type SeasonEpisodesLookup } from "./nextEpisode";
 import { discardPendingProgress, flushProgressOutbox, installProgressRetry, pendingProgress, queueProgress, type ProgressItem, type ProgressOperation, type ProgressSendResult } from "./progressOutbox";
 import { mergeTvSessions, normalizeTvSession } from "./iptvSession";
 import { normalizeIptvPlaylist as normalizeRuntimeIptvPlaylist } from "./iptv";
+import { normalizeGroupNames } from "./iptvGroups";
+import { legacyStalkerFields, mergeStalkerPortalEdits, migrateIptvCloudState, migrateLegacyStalkerChannelIds, migrateLegacyStalkerKeys, normalizeStalkerPortals, portalsFromCloud } from "./stalkerPortals";
+import type { StalkerPortalEntry } from "./types";
 import { tmdbImageUrl } from "./mediaImages";
 import { applyRowLayoutModes, normalizedRowLayoutModes } from "./homeRows";
 import type { TraktToken } from "./trakt";
@@ -64,6 +67,8 @@ interface AndroidIptvProfileState {
   playlists?: IptvPlaylistEntry[];
   stalkerPortalUrl?: string;
   stalkerMacAddress?: string;
+  /** Android's portal list (StalkerPortalEntry[]); authoritative when it has entries. */
+  stalkerPortals?: unknown[];
   favoriteChannels?: string[];
   favoriteGroups?: string[];
   hiddenGroups?: string[];
@@ -72,6 +77,8 @@ interface AndroidIptvProfileState {
   sortOrder?: string;
   /** { "<playlistId>|<group>": [channel ids…] } — manual channel order inside a category. */
   channelOrder?: Record<string, string[]>;
+  /** { "<playlistId>|<group>": "<display name>" } — category names set by the user. */
+  groupNames?: Record<string, string>;
 }
 
 function canUseBackendSync(auth: AuthClient) {
@@ -603,9 +610,16 @@ function booleanMap(value: unknown): Record<string, boolean> {
   return Object.fromEntries(Object.entries(objectRecord(value)).filter(([key, enabled]) => key.trim() && typeof enabled === "boolean")) as Record<string, boolean>;
 }
 
+/** The portals a synced IPTV profile has, by Android's import rule (the list, else the single-portal fields). */
+function cloudPortals(state: Record<string, unknown>, rootState: RawPayload = {}): StalkerPortalEntry[] {
+  return portalsFromCloud(state.stalkerPortals, state.stalkerPortalUrl ?? rootState.iptvStalkerUrl, state.stalkerMacAddress ?? rootState.iptvStalkerMac);
+}
+
 function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings> {
-  const state = objectRecord(value) as AndroidIptvProfileState;
   const rootState = root ?? {};
+  const stalkerPortals = cloudPortals(objectRecord(value), rootState);
+  // Category keys and channel ids of single-portal builds (`stalker|…`) belong to Portal 1, as on Android.
+  const state = migrateIptvCloudState(objectRecord(value), stalkerPortals) as AndroidIptvProfileState;
   const rootSettings = objectRecord(rootState.settings);
   const profilePlaylists = normalizeIptvPlaylists(state.playlists, "cloud-profile");
   const rootSettingsPlaylists = normalizeIptvPlaylists(rootSettings.iptvPlaylists, "cloud-settings");
@@ -629,18 +643,21 @@ function iptvFromAndroid(value: unknown, root?: RawPayload): Partial<AppSettings
     ...rootPlaylists,
     ...legacyPlaylists
   ]);
+  const legacyStalker = legacyStalkerFields(stalkerPortals);
   return {
     iptvPlaylists: playlists,
-    favoriteChannelIds: value !== undefined ? stringArray(state.favoriteChannels) : stringArray(rootState.iptvFavoriteChannels),
+    favoriteChannelIds: value !== undefined ? stringArray(state.favoriteChannels) : migrateLegacyStalkerChannelIds(stringArray(rootState.iptvFavoriteChannels), stalkerPortals),
     iptvTvSession: normalizeTvSession((state as Record<string, unknown>).tvSession),
-    favoriteGroupIds: value !== undefined ? stringArray(state.favoriteGroups) : stringArray(rootState.iptvFavoriteGroups),
+    favoriteGroupIds: value !== undefined ? stringArray(state.favoriteGroups) : migrateLegacyStalkerKeys(stringArray(rootState.iptvFavoriteGroups)),
     hiddenGroupIds: stringArray(state.hiddenGroups),
     lockedIptvGroupIds: stringArray(state.lockedGroups),
     groupOrder: (state.groupOrderSchema ?? 0) >= 3 ? stringArray(state.groupOrder) : [],
     iptvChannelOrder: normalizeChannelOrder(state.channelOrder),
+    iptvGroupNames: normalizeGroupNames(state.groupNames),
     iptvSortOrder: state.sortOrder === "number" || state.sortOrder === "name" ? state.sortOrder : "provider",
-    iptvStalkerUrl: stringValue(state.stalkerPortalUrl ?? rootState.iptvStalkerUrl),
-    iptvStalkerMac: stringValue(state.stalkerMacAddress ?? rootState.iptvStalkerMac)
+    iptvStalkerPortals: stalkerPortals,
+    iptvStalkerUrl: legacyStalker.stalkerPortalUrl,
+    iptvStalkerMac: legacyStalker.stalkerMacAddress
   };
 }
 
@@ -1000,12 +1017,17 @@ export async function saveCloudAddons(
 }
 
 function androidIptvSettings(settings: AppSettings): Record<string, unknown> {
+  // Older apps only read the single-portal fields: they carry the first enabled portal.
+  const legacyStalker = settings.iptvStalkerPortals
+    ? legacyStalkerFields(settings.iptvStalkerPortals)
+    : { stalkerPortalUrl: settings.iptvStalkerUrl, stalkerMacAddress: settings.iptvStalkerMac };
   return {
     m3uUrl: settings.iptvPlaylists[0]?.m3uUrl ?? "",
     epgUrl: settings.iptvPlaylists[0]?.epgUrl ?? "",
     playlists: settings.iptvPlaylists,
-    stalkerPortalUrl: settings.iptvStalkerUrl,
-    stalkerMacAddress: settings.iptvStalkerMac,
+    ...legacyStalker,
+    // Only once known, so a browser that never read the list cannot blank the TV's portals.
+    ...(settings.iptvStalkerPortals !== undefined ? { stalkerPortals: settings.iptvStalkerPortals } : {}),
     favoriteChannels: settings.favoriteChannelIds,
     tvSession: normalizeTvSession(settings.iptvTvSession),
     favoriteGroups: settings.favoriteGroupIds,
@@ -1013,15 +1035,17 @@ function androidIptvSettings(settings: AppSettings): Record<string, unknown> {
     groupOrder: settings.groupOrder,
     sortOrder: settings.iptvSortOrder ?? "provider",
     // Only once known, so a browser that never read it cannot blank the TV's.
-    ...(settings.iptvChannelOrder !== undefined ? { channelOrder: settings.iptvChannelOrder } : {})
+    ...(settings.iptvChannelOrder !== undefined ? { channelOrder: settings.iptvChannelOrder } : {}),
+    ...(settings.iptvGroupNames !== undefined ? { groupNames: settings.iptvGroupNames } : {})
   };
 }
 
-/** A missing channel order and an empty one mean the same thing. */
+/** A missing channel order / name map / portal list and an empty one mean the same thing. */
 function sameIptvField(field: string, a: unknown, b: unknown) {
-  return field === "channelOrder"
-    ? sameFieldValue(normalizeChannelOrder(a), normalizeChannelOrder(b))
-    : sameFieldValue(a, b);
+  if (field === "channelOrder") return sameFieldValue(normalizeChannelOrder(a), normalizeChannelOrder(b));
+  if (field === "groupNames") return sameFieldValue(normalizeGroupNames(a), normalizeGroupNames(b));
+  if (field === "stalkerPortals") return sameFieldValue(normalizeStalkerPortals(a), normalizeStalkerPortals(b));
+  return sameFieldValue(a, b);
 }
 
 function mergeFavoriteEdits(remote: string[], local: string[], baseline: string[]): string[] {
@@ -1047,24 +1071,37 @@ function mergeCatalogEdits(remote: AppSettings["catalogs"], local: AppSettings["
   ];
 }
 
-export function mergeIptvSettings(existing: Record<string, unknown>, settings: AppSettings, baseline?: AppSettings | null) {
+export function mergeIptvSettings(cloudState: Record<string, unknown>, settings: AppSettings, baseline?: AppSettings | null) {
   const incoming = androidIptvSettings(settings);
   const base = baseline ? androidIptvSettings(baseline) : null;
+  // What the cloud holds, in the current key shape: a legacy `stalker|…` twin
+  // left in the payload would otherwise bring back what this edit undid.
+  const remotePortals = cloudPortals(cloudState);
+  const existing = migrateIptvCloudState(cloudState, [...(settings.iptvStalkerPortals ?? []), ...remotePortals]);
   const merged = { ...existing };
+  let portalsMerged = false;
   for (const [field, value] of Object.entries(incoming)) {
     if (base && sameIptvField(field, value, base[field])) continue;
     if (field === "tvSession") {
       merged[field] = mergeTvSessions(existing[field], value);
       continue;
     }
-    if (field === "channelOrder") {
-      // Per category: only the categories this browser reordered (or reset) change.
-      const local = normalizeChannelOrder(value);
-      const previous = base ? normalizeChannelOrder(base[field]) : {};
-      const next = base ? normalizeChannelOrder(existing[field]) : {};
+    if (field === "stalkerPortals") {
+      // Per portal and field, so a portal added or edited on the TV since this browser read the list survives.
+      merged[field] = base ? normalizeStalkerPortals(mergeStalkerPortalEdits(remotePortals, normalizeStalkerPortals(value),
+        normalizeStalkerPortals(base[field]))) : value;
+      portalsMerged = true;
+      continue;
+    }
+    if (field === "channelOrder" || field === "groupNames") {
+      // Per category: only the categories this browser reordered / renamed (or reset) change.
+      const normalize = (input: unknown): Record<string, unknown> => field === "channelOrder" ? normalizeChannelOrder(input) : normalizeGroupNames(input);
+      const local = normalize(value);
+      const previous = base ? normalize(base[field]) : {};
+      const next = base ? normalize(existing[field]) : {};
       for (const key of new Set([...Object.keys(local), ...Object.keys(previous)])) {
         if (base && sameFieldValue(local[key], previous[key])) continue;
-        if (local[key]?.length) next[key] = local[key];
+        if (local[key] !== undefined) next[key] = local[key];
         else delete next[key];
       }
       merged[field] = next;
@@ -1091,6 +1128,8 @@ export function mergeIptvSettings(existing: Record<string, unknown>, settings: A
       ? mergeFavoriteEdits(stringArray(existing[field]), stringArray(value), stringArray(base[field]))
       : value;
   }
+  // Older apps read the single-portal fields: they follow the merged list.
+  if (portalsMerged) Object.assign(merged, legacyStalkerFields(merged.stalkerPortals as StalkerPortalEntry[]));
   return merged;
 }
 

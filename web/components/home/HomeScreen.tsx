@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createHeroController } from "@/lib/homeHero";
 import { HOME_WATCHLIST_ROW_ID, withHomeWatchlistRow } from "@/lib/homeRows";
 import { requestPlayOnOpen } from "@/lib/playIntent";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import { useKidsFilter } from "@/lib/useKids";
 import { LazyRail } from "@/components/media/LazyRail";
 import { CustomCollectionRail } from "@/components/media/CustomCollectionRail";
@@ -22,7 +22,7 @@ import "@/app/home.css";
 type ViewAll = { catalog: CatalogConfig | null; category: Category };
 
 export function HomeScreen({ onCollectionOpenChange }: { onCollectionOpenChange?: (open: boolean) => void }) {
-  const { categories, catalogConfigs, homeServerRows, continueWatching, watchlist, openDetails, settings } = useApp();
+  const { categories, catalogConfigs, homeServerRows, continueWatching, watchlist, openDetails, settings } = useAppPick("categories", "catalogConfigs", "homeServerRows", "continueWatching", "watchlist", "openDetails", "settings");
   const posterMode = settings.cardLayoutMode === "poster";
   const kids = useKidsFilter();
   const kidsAllows = useRef(kids.allows);

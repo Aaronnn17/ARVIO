@@ -1,9 +1,10 @@
 "use client";
+import "@/app/premium.css";
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, Check, Sparkles, X } from "lucide-react";
 import { useTranslation } from "@/lib/i18n";
-import { useApp } from "@/lib/store";
+import { useAppPick } from "@/lib/store";
 import type { EntitlementState } from "@/lib/entitlement";
 import { kofiSubscribeUrl } from "@/lib/entitlement";
 import { markWhatsNewSeen, unseenWhatsNew } from "@/lib/whatsNew";
@@ -27,7 +28,7 @@ function isStandalone() {
 // The first days after paying: three steps that make ARVIO Web work well.
 function MemberChecklist({ state, account }: { state: EntitlementState; account: string }) {
   const translateUi = useTranslation();
-  const { addons, settings, setSection } = useApp();
+  const { addons, settings, setSection } = useAppPick("addons", "settings", "setSection");
   const key = `arvio.member.checklist:${account}`;
   const [hidden, setHidden] = useState(() => Boolean(stored(key)));
   const started = Date.parse(state.startedAt ?? "");
@@ -78,7 +79,7 @@ function GraceBanner({ state }: { state: EntitlementState }) {
  *  otherwise a short "What's new in Premium" note. Never shown while a video
  *  plays. */
 export function MemberNotices({ state, account }: { state: EntitlementState | null; account: string | null }) {
-  const { activeStream } = useApp();
+  const { activeStream } = useAppPick("activeStream");
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   if (!mounted || !state || !account || activeStream) return null;
