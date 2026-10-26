@@ -533,10 +533,31 @@ export function LiveTvScreen() {
               ))}
             </div>}
             <div className="livetv-search"><Search size={18} />
-              <input value={queryInput} onChange={event => setQueryInput(event.target.value)} placeholder={translateUi("Search channels")} aria-label={translateUi("Search channels")} />
+              <input value={queryInput} onChange={event => setQueryInput(event.target.value)} placeholder={translateUi("Search channels")} aria-label={translateUi("Search channels")}
+                onKeyDown={event => {
+                  // Remote / keyboard: Down goes to the first destination below the box,
+                  // Enter (or Right at the end of the text) jumps into the results.
+                  const input = event.currentTarget;
+                  const atEnd = input.selectionStart === input.value.length && input.selectionEnd === input.value.length;
+                  if (event.key === "ArrowDown") {
+                    const next = input.closest(".livetv-cats")?.querySelector<HTMLElement>(".tv-sidebar-destinations button, .tv-sidebar-destinations [role='button']");
+                    if (next) { event.preventDefault(); event.stopPropagation(); next.focus({ preventScroll: false }); }
+                  } else if (event.key === "Enter" || (event.key === "ArrowRight" && atEnd && input.value)) {
+                    const first = listRef.current?.querySelector<HTMLElement>('[data-virtual-index] .livetv-guide-channel, [data-virtual-index] .livetv-row-main, .livetv-guide-channel, .livetv-row-main');
+                    if (first) { event.preventDefault(); event.stopPropagation(); first.focus({ preventScroll: false }); }
+                  }
+                }} />
               {queryInput && <button type="button" onClick={() => setQueryInput("")} aria-label={translateUi("Clear search")}><X size={16} /></button>}
             </div>
-            <div className="tv-sidebar-destinations">{categories.filter(category => !category.id.startsWith("group:")).map(category => <div key={category.id}>{renderCategory(category)}</div>)}</div>
+            <div className="tv-sidebar-destinations" onKeyDown={event => {
+              // Up from the first destination returns to the channel search box.
+              if (event.key !== "ArrowUp") return;
+              const items = [...event.currentTarget.querySelectorAll<HTMLElement>("button, [role='button']")];
+              if (items[0] && items[0] === document.activeElement) {
+                const input = event.currentTarget.closest(".livetv-cats")?.querySelector<HTMLInputElement>(".livetv-search input");
+                if (input) { event.preventDefault(); event.stopPropagation(); input.focus(); }
+              }
+            }}>{categories.filter(category => !category.id.startsWith("group:")).map(category => <div key={category.id}>{renderCategory(category)}</div>)}</div>
             <div className="tv-sidebar-group-heading"><span>{translateUi("Categories")}</span>
               <button type="button" title={translateUi("Manage playlists")} aria-label={translateUi("Manage playlists")} onClick={() => setManaging(value => !value)} aria-expanded={managing}><ListVideo size={18} /></button>
               <button type="button" title={translateUi("Refresh channels")} aria-label={translateUi("Refresh channels")} disabled={isLoadingTv} onClick={() => void refreshIptv({ fresh: true })}><RefreshCw size={16} className={isLoadingTv ? "is-spinning" : ""} /></button>

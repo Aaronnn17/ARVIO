@@ -1102,3 +1102,19 @@
 /* Contrast (axe): counts and next-programme lines. */
 .tv-guide-workspace .livetv-list-head > span { color: #a3a8ae; }
 .livetv-row .livetv-row-copy > small { color: #b4b9bf; }
+
+/* Channel search box. The category-button rules above (.livetv-cats button,
+   and the guide workspace's full-width 56px buttons) must not reach the clear
+   button inside the box: they stretched it and squeezed the text field to a
+   sliver while typing. Focus is shown on the whole box, not on the input. */
+.livetv-cats .livetv-search button,
+.tv-guide-workspace .livetv-cats .livetv-search button {
+  flex: none; width: 28px; height: 28px; min-height: 0; padding: 0;
+  border-radius: 50%; font-size: inherit; background: rgba(255, 255, 255, 0.12); color: #fff;
+}
+.livetv-cats .livetv-search > svg { flex: none; width: 18px; height: 18px; }
+.livetv-cats .livetv-search input { flex: 1 1 auto; min-width: 0; width: auto; height: 100%; font-size: 15px; }
+.livetv-search input:focus,
+.livetv-search input:focus-visible { outline: none !important; box-shadow: none !important; }
+.livetv-search:focus-within { border-color: var(--accent, #fff); box-shadow: 0 0 0 1px var(--accent, #fff); color: #fff; }
+html.is-tv .livetv-search:focus-within { box-shadow: 0 0 0 3px var(--accent, #fff); }
