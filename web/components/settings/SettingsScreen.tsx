@@ -109,6 +109,7 @@ export function SettingsScreen() {
   // Phones show the list of sections first; a deep link opens its section.
   const [detail, setDetail] = useState(() => Boolean(requested));
   const [query, setQuery] = useState("");
+  const [searchLocked, setSearchLocked] = useState(true);
   const pushedHistory = useRef(false);
   const mainRef = useRef<HTMLDivElement>(null);
   const summaries = useSummaries();
@@ -191,7 +192,12 @@ export function SettingsScreen() {
         <p className={`st-sync ${sync.tone}`} role="status" aria-live="polite"><span className="st-sync-dot" aria-hidden="true" />{translateUi(sync.text)}</p>
         <div className="st-search">
           <Search size={16} aria-hidden="true" />
-          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={translateUi("Search settings")} aria-label={translateUi("Search settings")}
+          {/* Browsers' password managers fill a saved e-mail into the text field
+              before any password/key field on the page; this box is not a login
+              field: no autocomplete, and read-only until the person focuses it. */}
+          <input type="search" name="arvio-settings-search" autoComplete="off" autoCorrect="off" spellCheck={false} data-1p-ignore="" data-lpignore="true" data-form-type="other"
+            readOnly={searchLocked} onFocus={() => setSearchLocked(false)} onPointerDown={() => setSearchLocked(false)}
+            value={query} onChange={(e) => setQuery(e.target.value)} placeholder={translateUi("Search settings")} aria-label={translateUi("Search settings")}
             onKeyDown={(e) => { if (e.key === "Escape" && query) { e.stopPropagation(); setQuery(""); } }} />
           {query && <button type="button" className="st-search-clear" aria-label={translateUi("Clear search")} onClick={() => setQuery("")}><X size={16} /></button>}
         </div>

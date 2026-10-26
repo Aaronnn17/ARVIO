@@ -307,16 +307,21 @@ export function SecretInput({ value, onChange, placeholder, label }: { value: st
   const translateUi = useTranslation();
   const [shown, setShown] = useState(false);
   const id = useId();
+  const maskWithCss = typeof CSS !== "undefined" && CSS.supports?.("-webkit-text-security", "disc");
   return (
     <div className="st-secret">
       <input
         id={id}
         className="st-input is-wide"
-        type={shown ? "text" : "password"}
+        // A key, not a login password: masked text where the browser can mask
+        // it, so password managers neither fill nor offer to save it.
+        type={shown || maskWithCss ? "text" : "password"}
+        style={!shown && maskWithCss ? { WebkitTextSecurity: "disc" } as React.CSSProperties : undefined}
         value={value}
         aria-label={translateUi(label)}
         placeholder={placeholder ? translateUi(placeholder) : undefined}
-        autoComplete="off"
+        autoComplete={maskWithCss ? "off" : "new-password"}
+        data-1p-ignore="" data-lpignore="true" data-form-type="other"
         spellCheck={false}
         onChange={(event) => onChange(event.target.value.trim())}
       />

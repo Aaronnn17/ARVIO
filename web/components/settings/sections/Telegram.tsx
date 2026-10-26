@@ -162,7 +162,7 @@ export function TelegramSection() {
 
         {authState.k === "waitPassword" && (
           <div className="st-form">
-            <input className="st-input" value={password} type="password" aria-label={translateUi("2FA password")} placeholder={translateUi("2FA password")} onChange={(e) => setPassword(e.target.value)} />
+            <input className="st-input" value={password} type="password" autoComplete="new-password" data-1p-ignore="" data-lpignore="true" aria-label={translateUi("2FA password")} placeholder={translateUi("2FA password")} onChange={(e) => setPassword(e.target.value)} />
             <div className="st-form-actions">
               <button type="button" className="st-btn is-primary" onClick={() => { if (password) mod.submitPassword(password); setPassword(""); }}>{translateUi("Confirm")}</button>
             </div>

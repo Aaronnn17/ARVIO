@@ -241,7 +241,7 @@ export function ServicesSection() {
           <div className="st-group-foot"><button type="button" className="st-btn is-danger" onClick={disconnectMdblist}>{translateUi("Disconnect MDBList")}</button></div>
         ) : (
           <div className="st-form">
-            <input className="st-input" type="password" placeholder={translateUi("MDBList API key")} aria-label={translateUi("MDBList API key")} value={mdblistKey} onChange={(e) => setMdblistKey(e.target.value)} autoComplete="off" />
+            <input className="st-input" type="password" placeholder={translateUi("MDBList API key")} aria-label={translateUi("MDBList API key")} value={mdblistKey} onChange={(e) => setMdblistKey(e.target.value)} autoComplete="new-password" data-1p-ignore="" data-lpignore="true" />
             <div className="st-form-actions">
               <button type="button" className="st-btn is-primary" disabled={mdblistBusy || !mdblistKey.trim()} onClick={async () => {
                 setMdblistBusy(true); setMdblistError(null);
