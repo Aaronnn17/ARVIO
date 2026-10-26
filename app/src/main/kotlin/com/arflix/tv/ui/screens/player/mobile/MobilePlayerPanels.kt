@@ -65,7 +65,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
-import androidx.compose.ui.res.stringResource
 import com.arflix.tv.R
 import com.arflix.tv.data.model.Episode
 import com.arflix.tv.data.model.StreamSource
@@ -92,6 +91,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.gestures.detectDragGestures
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -746,7 +746,7 @@ fun MobileSubtitlesSheet(
     val title = when {
         currentView == "subdelay" -> stringResource(R.string.mplayer_subtitle_delay)
         currentView == "fonts" -> stringResource(R.string.subtitle_font)
-        currentView == "tracks" -> selectedLanguageName?.let { stringResource(R.string.mplayer_language_subtitles, it) }
+        currentView == "tracks" -> selectedLanguageName?.let { stringResource(R.string.mplayer_language_subtitles, subtitleLanguageDisplayName(it)) }
             ?: stringResource(R.string.subtitles)
         currentView == "substyle" -> stringResource(R.string.subtitle_settings_title)
         else -> stringResource(R.string.subtitles)
@@ -858,7 +858,7 @@ fun MobileSubtitlesSheet(
                 ) {
                     itemsIndexed(tracksForLang, key = { index, sub -> "${index}_${sub.id}_${sub.url}" }) { index, sub ->
                         val isActive = selectedSubtitle?.id == sub.id
-                        val trackTitle = sub.label.ifBlank { stringResource(R.string.mplayer_language_track, currentLang.orEmpty(), index + 1) }
+                        val trackTitle = sub.label.ifBlank { stringResource(R.string.mplayer_language_track, subtitleLanguageDisplayName(currentLang.orEmpty()), index + 1) }
                         val isSdh = trackTitle.contains("sdh", ignoreCase = true) ||
                             trackTitle.contains("cc", ignoreCase = true) ||
                             trackTitle.contains("hearing", ignoreCase = true)
@@ -1031,7 +1031,7 @@ fun MobileSubtitlesSheet(
 
                     item {
                         Spacer(modifier = Modifier.height(6.dp))
-                        SectionHeader(stringResource(R.string.mplayer_section_languages))
+                        SectionHeader(stringResource(R.string.settings_section_languages))
                     }
 
                     if (subtitleGroups.isEmpty()) {
@@ -1079,7 +1079,7 @@ fun MobileSubtitlesSheet(
                                     }
                                     Column {
                                         Text(
-                                            text = langName,
+                                            text = subtitleLanguageDisplayName(langName),
                                             color = if (isLangActive) MobilePlayerTokens.InkPrimary else MobilePlayerTokens.InkSecondary,
                                             fontSize = 13.5.sp,
                                             fontWeight = if (isLangActive) FontWeight.SemiBold else FontWeight.Normal
@@ -1703,7 +1703,7 @@ fun MobileMoreSettingsSheet(
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     // Playback Section
-                    item { SectionHeader(stringResource(R.string.mplayer_section_playback)) }
+                    item { SectionHeader(stringResource(R.string.settings_section_playback)) }
                     item {
                         ToggleRow(
                             label = stringResource(R.string.mplayer_autoplay_next_episode),
@@ -2342,6 +2342,11 @@ private fun formatBytes(bytes: Long): String {
 }
 
 internal fun formatLanguageDisplayName(code: String?): String = getFullLanguageName(code)
+
+/** "Unknown" stays the grouping key; only the shown label is translated. */
+@Composable
+private fun subtitleLanguageDisplayName(name: String): String =
+    if (name == "Unknown") stringResource(R.string.mplayer_unknown_language) else name
 
 /** Aspect labels stay English as stored keys; this only translates what is shown. */
 @Composable

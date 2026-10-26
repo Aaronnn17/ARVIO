@@ -452,7 +452,6 @@ fun ArvioMobilePlayer(
     val skipRecapLabel = stringResource(R.string.player_skip_recap)
     val skipIntroLabel = stringResource(R.string.player_skip_intro)
     val skipEndingLabel = stringResource(R.string.player_skip_ending)
-    val skipOutroLabel = stringResource(R.string.mplayer_skip_outro)
 
     // Automatic progression belongs to the shared STATE_ENDED prompt, not timeline position.
     val promptState = remember(
@@ -526,8 +525,7 @@ fun ArvioMobilePlayer(
             }
             if (currentPositionMs in upNextEndMs until activeSkip.endMs) {
                 val label = when (activeSkip.type.lowercase()) {
-                    "ed", "mixed-ed" -> skipEndingLabel
-                    else -> skipOutroLabel
+                    else -> skipEndingLabel
                 }
                 val totalMs = (activeSkip.endMs - activeSkip.startMs).coerceAtLeast(1000L)
                 val progress = ((activeSkip.endMs - currentPositionMs).toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)

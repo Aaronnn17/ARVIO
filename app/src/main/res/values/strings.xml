@@ -1150,7 +1150,6 @@
     <string name="player_cd_setup">Setup</string>
     <string name="player_cd_error">Error</string>
     <!-- Mobile player -->
-    <string name="mplayer_skip_outro">Skip Outro</string>
     <string name="mplayer_audio_track_number">Audio %1$d</string>
     <string name="mplayer_cd_unlock">Unlock</string>
     <string name="mplayer_tap_to_unlock">Tap to unlock</string>
@@ -1189,7 +1188,6 @@
     <string name="mplayer_badge_auto_sync">Auto Sync</string>
     <string name="mplayer_ai_translation_language">AI Translation (%1$s)</string>
     <string name="mplayer_ai_translation">AI Translation</string>
-    <string name="mplayer_section_languages">LANGUAGES</string>
     <string name="mplayer_no_subtitles">No subtitles found</string>
     <string name="mplayer_track_active">Track active</string>
     <string name="mplayer_subtitle_settings_meta">Size, style, font &amp; more</string>
@@ -1213,7 +1211,6 @@
     <string name="mplayer_aspect_fit_screen">Fit to Screen</string>
     <string name="mplayer_aspect_stretch">Stretch</string>
     <string name="mplayer_aspect_crop">Crop</string>
-    <string name="mplayer_section_playback">PLAYBACK</string>
     <string name="mplayer_autoplay_next_episode">Autoplay next episode</string>
     <string name="mplayer_auto_skip_intro">Automatically skip intro</string>
     <string name="mplayer_auto_skip_outro">Automatically skip outro</string>
@@ -1229,6 +1226,8 @@
     <string name="mplayer_drag_subtitle_hint">Drag up/down anywhere to move • %1$d%% from bottom</string>
     <string name="mplayer_reset">Reset</string>
     <string name="mplayer_sample_subtitle">Sample Subtitle</string>
+    <string name="mplayer_unknown_language">Unknown</string>
+    <string name="mplayer_speed_chip">%1$s Speed</string>
     <string name="player_addon_setup_required">Addon Setup Required</string>
     <string name="player_addon_setup_hint">Configure and install video addons in Settings to stream content</string>
     <string name="player_season_episode_short">S%1$d E%2$d</string>

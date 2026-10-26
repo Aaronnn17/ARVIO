@@ -3,7 +3,7 @@
     <string name="settings_preference_save_failed">Diese Einstellung konnte nicht gespeichert werden. Bitte versuche es erneut.</string>
     <string name="stream_source_cached">Zwischengespeichert</string>
     <string name="live_sports_source_count">Quellen: %1$d</string>
-    <string name="live_sports_addon_sources">Übertragung vom Addon gelistet</string>
+    <string name="live_sports_addon_sources">Vom Addon gelistete Übertragung</string>
     <string name="live_sports_addon_retry">Keine Quellen gefunden. Auswählen, um es erneut zu versuchen.</string>
     <string name="live_sports_external_source">Öffnet im Browser</string>
     <string name="home">Start</string>
@@ -143,8 +143,7 @@
     <string name="player_cd_setup">Einrichtung</string>
     <string name="player_cd_error">Fehler</string>
     <!-- Mobile player -->
-    <string name="mplayer_skip_outro">Outro überspringen</string>
-    <string name="mplayer_audio_track_number">Tonspur %1$d</string>
+    <string name="mplayer_audio_track_number">Audiospur %1$d</string>
     <string name="mplayer_cd_unlock">Entsperren</string>
     <string name="mplayer_tap_to_unlock">Zum Entsperren tippen</string>
     <string name="mplayer_error_no_streams_title">Keine abspielbaren Streams</string>
@@ -154,22 +153,22 @@
     <string name="mplayer_reload_streams">Streams neu laden</string>
     <string name="mplayer_cd_lock_controls">Bedienung sperren</string>
     <string name="mplayer_more_settings">Weitere Einstellungen</string>
-    <string name="mplayer_playing_next_in">NÄCHSTE FOLGE IN %1$d S</string>
+    <string name="mplayer_playing_next_in">NÄCHSTE EPISODE IN %1$d S</string>
     <string name="mplayer_up_next">ALS NÄCHSTES</string>
     <string name="mplayer_subtitles_off">Untertitel aus</string>
     <string name="mplayer_subtitles_track">Untertitel: %1$s</string>
     <string name="mplayer_this_season">Diese Staffel</string>
     <string name="mplayer_source">Quelle</string>
     <string name="mplayer_no_sources">Keine Quellen verfügbar</string>
-    <string name="mplayer_audio_delay">Tonverzögerung</string>
-    <string name="mplayer_audio_settings">Ton-Einstellungen</string>
+    <string name="mplayer_audio_delay">Audioverzögerung</string>
+    <string name="mplayer_audio_settings">Audio-Einstellungen</string>
     <string name="mplayer_audio_settings_meta">Verbesserungen &amp; Synchronisierung</string>
     <string name="mplayer_section_enhancements">VERBESSERUNGEN</string>
     <string name="mplayer_section_tracks">SPUREN</string>
     <string name="mplayer_section_settings">EINSTELLUNGEN</string>
     <string name="mplayer_volume_normalization">Lautstärke angleichen</string>
     <string name="mplayer_gemini_live_translation">Gemini-Live-Sprachübersetzung</string>
-    <string name="mplayer_default_audio_track">Standard-Tonspur</string>
+    <string name="mplayer_default_audio_track">Standard-Audiospur</string>
     <string name="mplayer_subtitle_delay">Untertitelverzögerung</string>
     <string name="mplayer_language_subtitles">Untertitel: %1$s</string>
     <string name="mplayer_language_track">%1$s – Spur %2$d</string>
@@ -182,7 +181,6 @@
     <string name="mplayer_badge_auto_sync">Auto-Sync</string>
     <string name="mplayer_ai_translation_language">KI-Übersetzung (%1$s)</string>
     <string name="mplayer_ai_translation">KI-Übersetzung</string>
-    <string name="mplayer_section_languages">SPRACHEN</string>
     <string name="mplayer_no_subtitles">Keine Untertitel gefunden</string>
     <string name="mplayer_track_active">Spur aktiv</string>
     <string name="mplayer_subtitle_settings_meta">Größe, Stil, Schrift &amp; mehr</string>
@@ -200,16 +198,15 @@
     <string name="mplayer_stylized_subtitles">Stilisierte Untertitel (ASS / SSA)</string>
     <string name="mplayer_section_general">ALLGEMEIN</string>
     <string name="mplayer_filter_by_app_language">Nach App-Sprache filtern</string>
-    <string name="mplayer_remove_sdh">Hinweise für Hörgeschädigte entfernen (SDH)</string>
+    <string name="mplayer_remove_sdh">Hörgeschädigten-Text entfernen (SDH)</string>
     <string name="mplayer_playback_speed">Wiedergabegeschwindigkeit</string>
     <string name="mplayer_aspect_ratio">Seitenverhältnis</string>
-    <string name="mplayer_aspect_fit_screen">An Bildschirm anpassen</string>
+    <string name="mplayer_aspect_fit_screen">Einpassen</string>
     <string name="mplayer_aspect_stretch">Strecken</string>
     <string name="mplayer_aspect_crop">Zuschneiden</string>
-    <string name="mplayer_section_playback">WIEDERGABE</string>
     <string name="mplayer_autoplay_next_episode">Nächste Episode automatisch abspielen</string>
     <string name="mplayer_auto_skip_intro">Vorspann automatisch überspringen</string>
-    <string name="mplayer_auto_skip_outro">Outro automatisch überspringen</string>
+    <string name="mplayer_auto_skip_outro">Abspann automatisch überspringen</string>
     <string name="mplayer_section_video">VIDEO</string>
     <string name="mplayer_delay_dialog_hint">Versatz in Millisekunden eingeben (negativ = früher, positiv = später):</string>
     <string name="mplayer_apply">Übernehmen</string>
@@ -222,6 +219,8 @@
     <string name="mplayer_drag_subtitle_hint">Zum Verschieben irgendwo nach oben/unten ziehen • %1$d %% vom unteren Rand</string>
     <string name="mplayer_reset">Zurücksetzen</string>
     <string name="mplayer_sample_subtitle">Beispiel-Untertitel</string>
+    <string name="mplayer_unknown_language">Unbekannt</string>
+    <string name="mplayer_speed_chip">Tempo %1$s</string>
     <string name="player_addon_setup_required">Addon-Einrichtung erforderlich</string>
     <string name="player_addon_setup_hint">Richte in den Einstellungen Video-Addons ein, um Inhalte zu streamen</string>
     <string name="player_season_episode_short">S%1$d E%2$d</string>

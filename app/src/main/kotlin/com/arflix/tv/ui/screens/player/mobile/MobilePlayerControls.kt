@@ -852,7 +852,7 @@ fun MobilePlayerBottomSection(
                 )
                 val speedLabel = if (currentPlaybackSpeed == 1f) "1x" else "${currentPlaybackSpeed}x"
                 Text(
-                    text = "$speedLabel Speed",
+                    text = stringResource(R.string.mplayer_speed_chip, speedLabel),
                     color = MobilePlayerTokens.InkSecondary,
                     fontSize = 12.5.sp,
                     style = androidx.compose.ui.text.TextStyle(
