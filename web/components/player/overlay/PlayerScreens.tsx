@@ -53,7 +53,7 @@ export function PlayerStatusLayers({ booted, bootLogo, bootStatus, bufferAheadSe
       )}
       {error && (
         <div className="player-error" role="alert">
-          <div className="player-error-card">
+          <div className="player-error-card" data-failure={liveFailure?.kind}>
             <TriangleAlert size={30} aria-hidden="true" />
             <p>{liveFailure ? translateUi(liveFailure.title) : liveTv ? translateUi("This channel could not be played right now.") : translateUi("This source could not be played in the browser.")}</p>
             <span>

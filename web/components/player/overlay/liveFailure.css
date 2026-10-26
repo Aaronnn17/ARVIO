@@ -31,3 +31,9 @@
   font-size: 12px;
   line-height: 1.35;
 }
+/* The "allow insecure content" steps are the whole point of that card: show
+   them in full, also in the docked player (scrolling if they don't fit). */
+.player-error-card[data-failure="insecure-media"] > span { max-width: 560px; text-align: start; line-height: 1.45; }
+.player-overlay.player-docked .player-error .player-error-card[data-failure="insecure-media"] > span {
+  display: block; -webkit-line-clamp: unset; overflow: auto; max-height: 9.5em; font-size: 13px;
+}

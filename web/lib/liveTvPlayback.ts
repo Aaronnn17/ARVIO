@@ -55,7 +55,7 @@ export type LiveAttempt = {
 export type LivePlan = { attempts: LiveAttempt[]; blocked?: "insecure" | "no-engine"; /** The channel's shape, for the "no engine" explanation. */ shape?: LiveShape };
 
 export type LiveFailureKind =
-  | "insecure" | "relay-denied" | "provider-refused" | "provider-busy" | "offline" | "provider-down"
+  | "insecure" | "insecure-media" | "relay-denied" | "provider-refused" | "provider-busy" | "offline" | "provider-down"
   | "codec-audio" | "codec-video" | "codec" | "unsupported-browser" | "no-data" | "network" | "stopped";
 
 export type LiveFailure = {
@@ -278,6 +278,31 @@ function isRelayDenial(fault: LiveFault, context: RelayContext) {
   const status = statusOf(fault);
   return throughRelay(fault.attempt) && (status === 402 || (status === 403 && !!context.relayNeedsTicket && !context.relayTicket));
 }
+/**
+ * The channel's video (playlist or segments) comes from a plain http:// server
+ * addressed by IP. Browsers block that inside the secure page (mixed content),
+ * and the Cloudflare relay cannot fetch IP addresses at all (its error 1003),
+ * so only the viewer's own browser can load it, once they allow insecure
+ * content for web.arvio.tv. Relay / proxy URLs are unwrapped to their target.
+ */
+export function isInsecureIpMedia(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    let target = new URL(url);
+    const inner = target.searchParams.get("url");
+    if (inner && /^https?:/i.test(inner)) target = new URL(inner);
+    if (target.protocol !== "http:") return false;
+    const host = target.hostname.replace(/^\[|\]$/g, "");
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(":");
+  } catch {
+    return false;
+  }
+}
+
+export function insecureIpMediaFault(faults: LiveFault[]): boolean {
+  return faults.some(({ fault }) => isInsecureIpMedia(fault?.resourceUrl));
+}
+
 export function relayDenied(faults: LiveFault[], context: RelayContext) {
   return faults.some((fault) => isRelayDenial(fault, context));
 }
@@ -288,7 +313,9 @@ export function relayDenied(faults: LiveFault[], context: RelayContext) {
  * or token. Pressing on from there risks the subscriber's account.
  */
 export function providerRefusal(faults: LiveFault[], context: RelayContext): 401 | 403 | 429 | null {
-  const refused = faults.filter((fault) => fault.attempt.variant === "original" && !isRelayDenial(fault, context))
+  // An http:// IP-address segment the relay could not fetch (Cloudflare 1003)
+  // is not the provider refusing anything.
+  const refused = faults.filter((fault) => fault.attempt.variant === "original" && !isRelayDenial(fault, context) && !isInsecureIpMedia(fault.fault?.resourceUrl))
     .map(statusOf).filter((status) => status === 401 || status === 403 || status === 429);
   return refused.includes(429) ? 429 : (refused[0] as 401 | 403 | undefined) ?? null;
 }
@@ -435,6 +462,14 @@ export function classifyLiveFailure(faults: LiveFault[], context: LiveFailureCon
       : translateUi("This channel's stream format can't be played by {value0} on this device. Watch it in the ARVIO app or VLC.") };
   if (blocked === "insecure") return { kind: "insecure", title: translateUi("Blocked by browser security"),
     message: translateUi("This channel is only offered over an insecure http:// connection, which browsers don't load inside a secure page, and the ARVIO stream relay isn't available here. Watch it in the ARVIO app or VLC.") };
+  // Video from an http:// IP address: blocked by the browser, unreachable for
+  // the relay. Tell the viewer how to allow it (not "subscription expired").
+  if (insecureIpMediaFault(faults)) {
+    return { kind: "insecure-media", title: translateUi("Your browser blocked this channel"),
+      message: context.appleWebKit
+        ? translateUi("This channel's video comes from an insecure http:// server. Safari and the browsers on iPhone and iPad block that inside a secure page, and there is no setting to allow it. Watch it in Chrome or Edge on a computer, in the ARVIO app, or in VLC.")
+        : translateUi("This channel's video comes from an insecure http:// server, which browsers block inside a secure page. Allow insecure content for web.arvio.tv and the video comes straight from your provider to your computer, for free. Chrome or Edge: click the icon left of the address, then Site settings, set Insecure content to Allow, then reload. Firefox: click the shield or lock icon in the address bar and turn off protection for this site. Then press Retry.") };
+  }
   const statuses = faults.flatMap((entry) => statusOf(entry) ? [{ status: statusOf(entry), attempt: entry.attempt }] : []);
   // The relay refusing the session itself (402, or a ticketless 403 from a
   // relay that requires tickets): never blame the subscription for it.
