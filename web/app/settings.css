@@ -322,7 +322,27 @@
     color: var(--st-text);
   }
 }
-.st-nav-item.is-active { background: rgba(255, 255, 255, 0.09); color: var(--st-text); box-shadow: inset 3px 0 0 var(--st-accent); }
+.st-nav-item { position: relative; }
+/* Selected section: a filled pill with a short accent marker inside it (the
+   old inset bar bent round the pill's rounded corner). */
+.st-nav-item.is-active { background: rgba(255, 255, 255, 0.085); color: var(--st-text); font-weight: 650; }
+.st-nav-item.is-active svg { opacity: 1; color: var(--st-accent); }
+.st-nav-item.is-active::before {
+  content: ""; position: absolute; left: 4px; top: 50%; width: 3px; height: 16px;
+  margin-top: -8px; border-radius: 3px; background: var(--st-accent);
+}
+[dir="rtl"] .st-nav-item.is-active::before { left: auto; right: 4px; }
+/* Keyboard / remote focus: one soft ring that follows the pill's corners,
+   instead of the global white outline stacked on the selected state. */
+.st-shell .st-nav-item:focus-visible,
+html.kbd-nav .st-shell .st-nav-item:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.11);
+  color: var(--st-text);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.07), 0 0 0 2px var(--st-accent) inset;
+}
+html.is-tv .st-shell .st-nav-item:focus { box-shadow: 0 0 0 3px var(--st-accent) inset; transform: none; }
+.st-nav-item:focus:not(:focus-visible) { outline: none; }
 .st-nav-item .st-nav-label { flex: 1; min-width: 0; }
 .st-nav-item .st-nav-summary { display: none; }
 .st-nav-chevron { display: none; }
@@ -519,7 +539,9 @@
   .st-nav-heading { margin: 0; padding: 14px 16px 6px; }
   .st-nav-item { border-radius: 0; min-height: 56px; padding: 10px 16px; color: var(--st-text); font-size: 15.5px; }
   .st-nav-item + .st-nav-item { border-top: 1px solid var(--st-line); }
-  .st-nav-item.is-active { background: transparent; box-shadow: none; }
+  .st-nav-item.is-active { background: transparent; box-shadow: none; font-weight: 560; }
+  .st-nav-item.is-active::before { display: none; }
+  .st-nav-item.is-active svg { color: inherit; opacity: 0.85; }
   .st-nav-item .st-nav-summary { display: block; color: var(--st-soft); font-size: 13px; font-weight: 500; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .st-nav-chevron { display: block; color: var(--st-soft); }
   .st-back { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; margin-inline-end: 0; margin-bottom: 8px; margin-inline-start: -6px; height: 36px; padding-top: 0; padding-inline-end: 10px; padding-bottom: 0; padding-inline-start: 4px; border: 0; background: transparent; color: var(--st-text); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
