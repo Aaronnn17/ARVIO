@@ -1364,7 +1364,6 @@ select {
 }
 .hero-meta > span,
 .chips span,
-.login-proof span,
 .player-quality {
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(0, 0, 0, 0.42);
@@ -1508,8 +1507,6 @@ select:focus {
   outline: none;
   box-shadow: var(--focus-glow);
 }
-.settings-panel,
-.login-card,
 .profile-dialog,
 .review-card,
 .episode-row {
@@ -1519,8 +1516,7 @@ select:focus {
     rgba(8, 9, 11, 0.72);
   box-shadow: 0 20px 58px rgba(0, 0, 0, 0.26);
 }
-.profile-shell,
-.login-shell {
+.profile-shell {
   background:
     radial-gradient(circle at 50% 0%, rgba(0, 213, 136, 0.13), transparent 28%),
     radial-gradient(circle at 20% 72%, rgba(117, 161, 255, 0.12), transparent 30%),
@@ -2041,8 +2037,7 @@ button,
   }
 
   .rail-head h3,
-  .section-heading h2,
-  .detail-section h3 {
+  .section-heading h2 {
     font-size: 24px;
   }
 
@@ -2075,7 +2070,6 @@ button,
 @media (max-width: 680px) {
 
 
-  .login-shell,
   .profile-shell {
     min-height: 100dvh;
     padding: 20px var(--phone-gutter);
@@ -2791,8 +2785,7 @@ button,
   }
 
   .rail-head h3,
-  .section-heading h2,
-  .detail-section h3 {
+  .section-heading h2 {
     font-size: clamp(21px, 6vw, 25px);
     line-height: 1.12;
   }

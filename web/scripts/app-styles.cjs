@@ -20,6 +20,7 @@ const APP_SHEETS = [
   'app/calendar.css',
   'app/settings.css',
   'app/settings-order.css',
+  'components/settings/liveTvSettings.css',
   'components/details/details.css',
   'components/details/sources.css',
   'components/player/player.css',
