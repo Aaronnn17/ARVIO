@@ -11,6 +11,11 @@ type Env = {
   // STREAM_TICKET_SECRET), /media relays only requests that carry a valid,
   // unexpired ARVIO Premium stream ticket in the `t` parameter.
   STREAM_TICKET_SECRET?: string;
+  // "required": /media relays only requests with a valid v2 ticket, verified
+  // with the auth site's PUBLIC key (no shared secret). Anything else: off.
+  STREAM_TICKET_MODE?: string;
+  // Where the public key comes from (default: the ARVIO auth site).
+  STREAM_TICKET_KEYS_URL?: string;
 };
 
 // Stream tickets are minted by the auth site's /stream-ticket function:
@@ -29,6 +34,77 @@ async function validStreamTicket(secret: string, ticket: string | null, nowSecon
     return false;
   }
   return crypto.subtle.verify("HMAC", key, signature, new TextEncoder().encode(parts.slice(0, 3).join(".")));
+}
+
+// v2 tickets: v2.<expiry>.<account tag>.<key id>.<ECDSA P-256 SHA-256 signature, base64url>
+// signed by the auth site with a key it created itself; verified here with
+// its public key from /stream-ticket-key. The key is kept in memory and in KV,
+// so a brief auth-site outage does not stop playback.
+const DEFAULT_TICKET_KEYS_URL = "https://auth.arvio.tv/.netlify/functions/stream-ticket-key";
+const TICKET_KEYS_KV = "stream-ticket-keys:v1";
+type TicketJwk = JsonWebKey & { kid?: string };
+let ticketKeys: { keys: TicketJwk[]; fetchedAt: number } | null = null;
+
+function base64UrlBytes(value: string): Uint8Array | null {
+  try {
+    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+    return Uint8Array.from(atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4)), (char) => char.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+async function streamTicketKeys(env: Env, wantKid: string): Promise<TicketJwk[]> {
+  const fresh = ticketKeys && Date.now() - ticketKeys.fetchedAt < 10 * 60 * 1000;
+  if (fresh && ticketKeys!.keys.some((key) => key.kid === wantKid)) return ticketKeys!.keys;
+  try {
+    const response = await fetch(env.STREAM_TICKET_KEYS_URL || DEFAULT_TICKET_KEYS_URL, { cf: { cacheTtl: 300 } } as RequestInit);
+    if (response.ok) {
+      const body = await response.json<{ keys?: TicketJwk[] }>();
+      const keys = (body.keys ?? []).filter((key) => key && key.kty === "EC" && key.crv === "P-256" && key.x && key.y && key.kid);
+      if (keys.length) {
+        const known = ticketKeys?.keys.map((key) => key.kid).join(",");
+        ticketKeys = { keys, fetchedAt: Date.now() };
+        if (env.RESOLVER_KV && known !== keys.map((key) => key.kid).join(",")) {
+          await env.RESOLVER_KV.put(TICKET_KEYS_KV, JSON.stringify(keys)).catch(() => undefined);
+        }
+        return keys;
+      }
+    }
+  } catch {
+    // Fall back to the last key we knew.
+  }
+  if (ticketKeys) return ticketKeys.keys;
+  const stored = env.RESOLVER_KV ? await env.RESOLVER_KV.get(TICKET_KEYS_KV, "json").catch(() => null) as TicketJwk[] | null : null;
+  if (stored?.length) ticketKeys = { keys: stored, fetchedAt: 0 };
+  return stored ?? [];
+}
+
+async function validStreamTicketV2(env: Env, ticket: string | null, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const parts = String(ticket ?? "").split(".");
+  if (parts.length !== 5 || parts[0] !== "v2") return false;
+  const expiry = Number(parts[1]);
+  if (!Number.isInteger(expiry) || expiry < nowSeconds) return false;
+  const signature = base64UrlBytes(parts[4]);
+  if (!signature) return false;
+  const jwk = (await streamTicketKeys(env, parts[3])).find((key) => key.kid === parts[3]);
+  if (!jwk) return false;
+  try {
+    const key = await crypto.subtle.importKey("jwk", { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y }, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+    return await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, signature, new TextEncoder().encode(parts.slice(0, 4).join(".")));
+  } catch {
+    return false;
+  }
+}
+
+/** Whether /media must see a Premium ticket, and whether this one passes. */
+async function mediaTicketAllowed(env: Env, ticket: string | null) {
+  const secret = env.STREAM_TICKET_SECRET ?? "";
+  const legacy = secret.length >= 32;
+  const required = legacy || (env.STREAM_TICKET_MODE ?? "").trim().toLowerCase() === "required";
+  if (!required) return true;
+  if (legacy && (await validStreamTicket(secret, ticket))) return true;
+  return validStreamTicketV2(env, ticket);
 }
 
 // Trakt device-token exchange from the Worker. The Netlify backend's egress IP
@@ -447,8 +523,7 @@ async function media(request: Request, env: Env) {
   const input = new URL(request.url);
   const raw = input.searchParams.get("url");
   if (!raw) return json({ error: "Missing url" }, request, env, 400);
-  const ticketSecret = env.STREAM_TICKET_SECRET ?? "";
-  if (ticketSecret.length >= 32 && !(await validStreamTicket(ticketSecret, input.searchParams.get("t")))) {
+  if (!(await mediaTicketAllowed(env, input.searchParams.get("t")))) {
     // 402, not 403: the player must tell "the relay refused this session"
     // apart from "the IPTV provider refused the channel" (which passes through).
     return json({ error: "ARVIO Premium is required for this stream." }, request, env, 402);
