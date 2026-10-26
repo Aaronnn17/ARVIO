@@ -16,6 +16,6 @@ test('key and token fields are not offered to password managers', () => {
   const ui = read('components/settings/ui.tsx');
   assert.match(ui, /WebkitTextSecurity: "disc"/);
   for (const f of ['components/settings/sections/Account.tsx', 'components/settings/sections/HomeServer.tsx', 'components/settings/sections/Telegram.tsx']) {
-    for (const m of read(f).matchAll(/<input[^>]*type="password"[^>]*>/g)) assert.match(m[0], /autoComplete="new-password"/, f);
+    for (const m of read(f).matchAll(/<input[\s\S]*?\/>/g)) { if (/type="password"/.test(m[0])) assert.match(m[0], /autoComplete="new-password"/, f); }
   }
 });
