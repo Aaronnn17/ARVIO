@@ -5264,8 +5264,8 @@ data class ContinueWatchingItem(
                 (effectiveDurationSeconds * (100L - progress) / 100L).coerceAtLeast(0L)
             else -> 0L
         }
-        val timeRemainingLabel = if (showPlaybackProgress) {
-            formatTimeRemainingCompact(timeRemainingSeconds)
+        val timeRemainingMinutes = if (showPlaybackProgress) {
+            wholeMinutesRemaining(timeRemainingSeconds)
         } else {
             null
         }
@@ -5295,7 +5295,7 @@ data class ContinueWatchingItem(
             nextEpisode = nextEp,
             totalEpisodes = totalEpisodeCount,
             watchedEpisodes = watchedEpisodeCount,
-            timeRemainingLabel = timeRemainingLabel,
+            timeRemainingMinutes = timeRemainingMinutes,
             showPlaybackProgress = showPlaybackProgress,
             addonNativeId = addonNativeId,
             addonNativeAddonId = addonNativeAddonId,
@@ -5369,20 +5369,11 @@ private fun formatResumeClock(totalSeconds: Long): String {
         "%d:%02d".format(minutes, seconds)
     }
 }
-/**
- * Format seconds to a compact human-readable time remaining string.
- * e.g., "45min left", "1hr 15min left", "2hr left"
- */
-private fun formatTimeRemainingCompact(totalSeconds: Long): String? {
+/** Whole minutes left for the Continue Watching badge; null under a minute. */
+private fun wholeMinutesRemaining(totalSeconds: Long): Int? {
     val safe = totalSeconds.coerceAtLeast(0L)
     if (safe < 60) return null // Less than a minute
-    val hours = safe / 3600
-    val minutes = (safe % 3600) / 60
-    return when {
-        hours > 0 && minutes > 0 -> "${hours}hr ${minutes}min left"
-        hours > 0 -> "${hours}hr left"
-        else -> "${minutes}min left"
-    }
+    return (safe / 60).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 }
 
 private fun parseRuntimeLabelSeconds(label: String): Long {

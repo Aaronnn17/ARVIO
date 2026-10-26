@@ -227,6 +227,13 @@
     <string name="component_label_media">Medien</string>
     <string name="component_media_logo">%1$s-Logo</string>
     <string name="component_badge_new_episode">Neue Episode</string>
+    <string name="component_badge_new_episode_short">Neu</string>
+    <string name="component_time_left_minutes">Noch %1$d Min.</string>
+    <string name="component_time_left_hours">Noch %1$d Std.</string>
+    <string name="component_time_left_hours_minutes">Noch %1$d:%2$02d h</string>
+    <string name="component_time_left_minutes_short">%1$d Min.</string>
+    <string name="component_time_left_hours_short">%1$d Std.</string>
+    <string name="component_time_left_hours_minutes_short">%1$d:%2$02d h</string>
     <string name="component_ep_left_one">Noch 1 Episode</string>
     <string name="component_eps_left">Noch %1$d Episoden</string>
     <string name="component_season_episode_marker">S%1$d • E%2$d</string>
