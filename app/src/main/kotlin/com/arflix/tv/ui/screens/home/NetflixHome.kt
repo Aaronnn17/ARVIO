@@ -110,6 +110,7 @@ import com.arflix.tv.ui.components.AppTopBarHeight
 import com.arflix.tv.ui.components.CardLayoutMode
 import com.arflix.tv.ui.components.CardClearLogo
 import com.arflix.tv.ui.components.TrailerPlayer
+import com.arflix.tv.ui.components.WatchedBadge
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
 import com.arflix.tv.ui.theme.ArflixTypography
@@ -1234,6 +1235,15 @@ private fun NetflixFeaturedCard(
                                 .background(Color(0xFFE50914))
                         )
                     }
+                }
+                if (item.isWatched) {
+                    WatchedBadge(
+                        Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 12.dp, bottom = if (showProgress && item.progress > 0) 14.dp else 12.dp)
+                            .testTag("netflix_watched_${item.mediaType}_${item.id}"),
+                        size = 18.dp
+                    )
                 }
             }
         }
