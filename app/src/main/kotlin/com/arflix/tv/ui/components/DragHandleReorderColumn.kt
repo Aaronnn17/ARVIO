@@ -1,6 +1,6 @@
 package com.arflix.tv.ui.components
 
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
@@ -38,8 +39,16 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.arflix.tv.R
+import com.arflix.tv.util.withItemMoved
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -74,7 +83,7 @@ import kotlin.math.roundToInt
  *     items = rows, key = { it.id }, pageScrollState = pageScroll,
  *     onDrop = { row, from, to -> viewModel.moveBy(row.id, to - from) },
  *     heldBackground = BackgroundElevated, heldAccent = accent
- * ) { row, index, handle, isHeld ->
+ * ) { row, index, previous, handle, isHeld ->
  *     Row { /* ... */ Icon(Icons.Default.DragHandle, null, Modifier.then(handle)) }
  * }
  * ```
@@ -116,10 +125,28 @@ class DragHandleReorderState internal constructor(
 
     fun isDragging(key: Any): Boolean = draggedKey == key
 
-    /** How far the held row has to be shifted from where the column laid it out. Read while drawing. */
-    internal fun translationFor(key: Any): Float = floatingTop - (tops[key] ?: return 0f)
+    /**
+     * How far the held row has to be shifted from where the column lays it out. Read while drawing.
+     *
+     * 🔴 The row's laid-out top is worked out from the shown order, not read from the last layout.
+     * The drawing is redone as soon as the order changes, which is before the column has placed the
+     * row in its new slot; a top read from the layout at that moment is the OLD slot's, and the row
+     * would be drawn a whole row away from the finger until the finger moved again.
+     */
+    internal fun translationFor(key: Any): Float {
+        val order = localOrder
+        val laidOutTop = if (order != null && key in order) {
+            order.takeWhile { it != key }.sumOf { sizes[it] ?: 0 }
+        } else {
+            tops[key] ?: return 0f
+        }
+        return floatingTop - laidOutTop
+    }
 
     internal fun onDragStart(key: Any) {
+        // A row dropped a moment ago is still waiting for the stored order. Picking up another one
+        // now would count its move from an order the store does not have yet.
+        if (draggedKey != null || localOrder != null) return
         val keys = shownKeys
         val index = keys.indexOf(key)
         if (index < 0) return
@@ -155,6 +182,19 @@ class DragHandleReorderState internal constructor(
     }
 
     /**
+     * Ends a drag whose gesture went away without finishing - the handle left the screen, the row
+     * was removed, the selection mode took the handle away. Nothing is stored, the list shows what
+     * it is given, and above all the edge scrolling stops: it runs for as long as a row is held.
+     */
+    internal fun cancelDrag(key: Any) {
+        if (draggedKey != key) return
+        draggedKey = null
+        pickUpIndex = -1
+        localOrder = null
+        orderAtPickUp = null
+    }
+
+    /**
      * Called whenever the list is handed a new order. Once that order differs from the one the row
      * was picked up from, the store has answered - with the move, or with something else that
      * happened meanwhile - and from then on the list shows what it is given again.
@@ -178,6 +218,9 @@ class DragHandleReorderState internal constructor(
     private fun applyMove() {
         val key = draggedKey ?: return
         val order = localOrder ?: return
+        // A row can change height while it is held (a catalog gains or loses its pack header as its
+        // neighbour changes), so its height is read afresh rather than remembered from the pick-up.
+        floatingSize = sizes[key] ?: floatingSize
         val slots = contiguousSlots(order.map { sizes[it] ?: 0 })
         val target = reorderTargetIndex(slots, floatingTop + floatingSize / 2f, order.size) ?: return
         val current = order.indexOf(key)
@@ -248,7 +291,7 @@ fun <T> DragHandleReorderColumn(
     modifier: Modifier = Modifier,
     pageScrollState: ScrollState? = null,
     enabled: Boolean = true,
-    row: @Composable (item: T, index: Int, handle: Modifier, isHeld: Boolean) -> Unit
+    row: @Composable (item: T, index: Int, previous: T?, handle: Modifier, isHeld: Boolean) -> Unit
 ) {
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
@@ -291,28 +334,44 @@ fun <T> DragHandleReorderColumn(
         }
     }
 
+    val dragLabel = stringResource(R.string.settings_cd_drag_reorder)
+    val moveUpLabel = stringResource(R.string.live_menu_move_up)
+    val moveDownLabel = stringResource(R.string.live_menu_move_down)
+
     Column(modifier = modifier.onGloballyPositioned { state.columnCoordinates = it }) {
         shownKeys.forEachIndexed { index, itemKey ->
             val item = itemsByKey[itemKey] ?: return@forEachIndexed
+            val previous = shownKeys.getOrNull(index - 1)?.let { itemsByKey[it] }
             // Keyed, so that a row which moves keeps its composition - and with it the gesture
             // that is moving it. Without the key the gesture would end at the first step.
             key(itemKey) {
                 val isHeld = state.isDragging(itemKey)
                 val scope = rememberCoroutineScope()
-                val slide = remember { Animatable(0f) }
+                // Plain state, set during layout: the drawing of the same frame already sees it, so
+                // a row making room never shows for a frame in its new place before sliding there.
+                var slide by remember { mutableFloatStateOf(0f) }
+                val slideJob = remember { arrayOfNulls<Job>(1) }
                 val lastTop = remember { IntArray(1) { Int.MIN_VALUE } }
+                DisposableEffect(itemKey) {
+                    onDispose { state.cancelDrag(itemKey) }
+                }
                 val handle = if (enabled) {
                     Modifier
                         .pointerInput(itemKey) {
-                            detectVerticalDragGestures(
-                                onDragStart = { state.onDragStart(itemKey) },
-                                onDragEnd = { state.onDragStop() },
-                                onDragCancel = { state.onDragStop() },
-                                onVerticalDrag = { change, amount ->
-                                    change.consume()
-                                    state.onDrag(amount)
-                                }
-                            )
+                            try {
+                                detectVerticalDragGestures(
+                                    onDragStart = { state.onDragStart(itemKey) },
+                                    onDragEnd = { state.onDragStop() },
+                                    onDragCancel = { state.onDragStop() },
+                                    onVerticalDrag = { change, amount ->
+                                        change.consume()
+                                        state.onDrag(amount)
+                                    }
+                                )
+                            } finally {
+                                // A gesture cut off from outside reports neither end nor cancel.
+                                state.cancelDrag(itemKey)
+                            }
                         }
                         // A tap on the handle does nothing - and, above all, does not fall through
                         // to the row, where it would edit, toggle or start the selection mode.
@@ -321,6 +380,22 @@ fun <T> DragHandleReorderColumn(
                             indication = null,
                             onClick = {}
                         )
+                        // Dragging is no use to a screen reader: it gets "move up" and "move down".
+                        .clearAndSetSemantics {
+                            contentDescription = dragLabel
+                            customActions = buildList {
+                                if (index > 0) {
+                                    add(CustomAccessibilityAction(moveUpLabel) {
+                                        state.onDrop(itemKey, index, index - 1); true
+                                    })
+                                }
+                                if (index < shownKeys.lastIndex) {
+                                    add(CustomAccessibilityAction(moveDownLabel) {
+                                        state.onDrop(itemKey, index, index + 1); true
+                                    })
+                                }
+                            }
+                        }
                 } else {
                     Modifier
                 }
@@ -332,15 +407,18 @@ fun <T> DragHandleReorderColumn(
                             val top = coordinates.positionInParent().y.roundToInt()
                             state.tops[itemKey] = top
                             state.sizes[itemKey] = coordinates.size.height
-                            val previous = lastTop[0]
+                            val previousTop = lastTop[0]
                             lastTop[0] = top
                             // The rows that make room slide into their new place instead of jumping.
-                            if (previous != Int.MIN_VALUE && previous != top &&
+                            if (previousTop != Int.MIN_VALUE && previousTop != top &&
                                 state.draggedKey != null && !state.isDragging(itemKey)
                             ) {
-                                scope.launch {
-                                    slide.snapTo(slide.value + (previous - top))
-                                    slide.animateTo(0f, tween(SLIDE_MS))
+                                slide += (previousTop - top)
+                                slideJob[0]?.cancel()
+                                slideJob[0] = scope.launch {
+                                    animate(slide, 0f, animationSpec = tween(SLIDE_MS)) { value, _ ->
+                                        slide = value
+                                    }
                                 }
                             }
                         }
@@ -358,11 +436,11 @@ fun <T> DragHandleReorderColumn(
                                     .background(heldAccent.copy(alpha = 0.20f))
                                     .border(2.dp, heldAccent, RoundedCornerShape(handleDraggedCorner))
                             } else {
-                                Modifier.graphicsLayer { translationY = slide.value }
+                                Modifier.graphicsLayer { translationY = slide }
                             }
                         )
                 ) {
-                    row(item, index, handle, isHeld)
+                    row(item, index, previous, handle, isHeld)
                 }
             }
         }
@@ -375,14 +453,6 @@ internal fun contiguousSlots(sizes: List<Int>): List<ReorderSlot> {
     return sizes.mapIndexed { index, size ->
         ReorderSlot(index, top, size).also { top += size }
     }
-}
-
-/** This list with the element at [from] taken out and put back in at [to]. */
-fun <T> List<T>.withItemMoved(from: Int, to: Int): List<T> {
-    if (from !in indices || to !in indices || from == to) return this
-    val result = toMutableList()
-    result.add(to, result.removeAt(from))
-    return result
 }
 
 private const val LOCAL_ORDER_TIMEOUT_MS = 3_000L

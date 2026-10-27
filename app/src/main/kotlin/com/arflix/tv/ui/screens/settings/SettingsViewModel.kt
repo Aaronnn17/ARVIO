@@ -82,7 +82,6 @@ import com.arflix.tv.data.repository.SyncStatus
 import com.arflix.tv.data.repository.SyncResult
 import com.arflix.tv.ui.components.CARD_LAYOUT_MODE_LANDSCAPE
 import com.arflix.tv.ui.components.normalizeCardLayoutMode
-import com.arflix.tv.ui.components.withItemMoved
 import com.arflix.tv.updater.ApkDownloader
 import com.arflix.tv.updater.ApkInstaller
 import com.arflix.tv.updater.AppUpdate
@@ -96,6 +95,7 @@ import com.arflix.tv.util.IPTV_EPG_VOD_ACTIONS_ENABLED_KEY
 import com.arflix.tv.util.IPTV_VOD_SEARCH_ENABLED_KEY
 import com.arflix.tv.util.IPTV_FALLBACK_LOGOS_ENABLED_KEY
 import com.arflix.tv.util.settingsDataStore
+import com.arflix.tv.util.withItemMoved
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.lifecycle.HiltViewModel

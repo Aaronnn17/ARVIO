@@ -250,7 +250,7 @@ private fun MobileStreamIntegrationsContent(
                         heldAccent = accentColor,
                         pageScrollState = pageScrollState,
                         enabled = showReorder
-                    ) { item, index, handle, isHeld ->
+                    ) { item, index, _, handle, isHeld ->
                         Column {
                             ProviderRowMobile(
                                 item = item,

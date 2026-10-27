@@ -49,7 +49,6 @@ import com.arflix.tv.BuildConfig
 import com.arflix.tv.util.Constants
 import androidx.compose.foundation.background
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.border
@@ -2222,8 +2221,7 @@ fun SettingsScreen(
                             focusedActionIndex = integrationActionIndex,
                             onToggle = { viewModel.toggleStreamProvider(it.id) },
                             onMoveUp = { viewModel.moveStreamProviderUp(it.id) },
-                            onMoveDown = { viewModel.moveStreamProviderDown(it.id) },
-                            onMoveBy = { item, steps -> viewModel.moveStreamProviderBy(item.id, steps) }
+                            onMoveDown = { viewModel.moveStreamProviderDown(it.id) }
                         )
                         "iptv" -> if (showIptvCategoriesSettings) {
                             IptvCategoriesSettings(
@@ -2331,8 +2329,6 @@ fun SettingsScreen(
                             onFallbackChannelLogosToggle = viewModel::setFallbackChannelLogosEnabled,
                             favoritesOnHomeEnabled = uiState.iptvFavoritesOnHome,
                             onFavoritesOnHomeToggle = viewModel::setIptvFavoritesOnHome,
-                            onMovePlaylistBy = { id, steps -> viewModel.moveIptvPlaylistBy(id, steps) },
-                            onMoveStalkerPortalBy = { id, steps -> viewModel.onMoveStalkerPortalBy(id, steps) },
                         )
                         "TV" -> IptvSettings(
                             playlists = uiState.iptvPlaylists,
@@ -2397,8 +2393,6 @@ fun SettingsScreen(
                             onFallbackChannelLogosToggle = viewModel::setFallbackChannelLogosEnabled,
                             favoritesOnHomeEnabled = uiState.iptvFavoritesOnHome,
                             onFavoritesOnHomeToggle = viewModel::setIptvFavoritesOnHome,
-                            onMovePlaylistBy = { id, steps -> viewModel.moveIptvPlaylistBy(id, steps) },
-                            onMoveStalkerPortalBy = { id, steps -> viewModel.onMoveStalkerPortalBy(id, steps) },
                         )
                         "home_server" -> HomeServerSettings(
                             connections = uiState.homeServerConnections,
@@ -2460,8 +2454,7 @@ fun SettingsScreen(
                                     viewModel.removeCatalog(catalog.id)
                                 }
                             },
-                            onUnpackCatalog = { catalog -> viewModel.unpackCatalog(catalog.id) },
-                            onMoveCatalogBy = { catalog, steps -> viewModel.moveCatalogBy(catalog.id, steps) }
+                            onUnpackCatalog = { catalog -> viewModel.unpackCatalog(catalog.id) }
                         )
                         "stremio" -> StremioAddonsSettings(
                             addons = stremioAddons,
@@ -8656,7 +8649,7 @@ private fun IptvSettings(
                     heldAccent = heldAccent,
                     pageScrollState = pageScrollState,
                     enabled = !selectionMode && playlists.size > 1
-                ) { playlist, shownIndex, handle, isHeld ->
+                ) { playlist, shownIndex, _, handle, isHeld ->
                     // The callbacks below address playlists by their place in the stored list; while
                     // a dropped row waits for the stored order the shown place can differ from it.
                     val index = playlists.indexOf(playlist)
@@ -8718,7 +8711,7 @@ private fun IptvSettings(
                         heldAccent = heldAccent,
                         pageScrollState = pageScrollState,
                         enabled = !selectionMode && stalkerPortals.size > 1
-                    ) { portal, shownIndex, handle, isHeld ->
+                    ) { portal, shownIndex, _, handle, isHeld ->
                     val index = stalkerPortals.indexOf(portal)
                     val isSelected = selectedIndices.contains(index)
                     Column {
@@ -9950,13 +9943,13 @@ private fun CatalogsSettings(
                         heldAccent = heldAccent,
                         pageScrollState = pageScrollState,
                         enabled = !selectionMode && catalogs.size > 1
-                    ) { catalog, shownIndex, handle, isHeld ->
-                        // Pack headers follow the stored order; a held row carries none.
-                        val index = catalogs.indexOf(catalog)
+                    ) { catalog, shownIndex, previousCatalog, handle, isHeld ->
+                        // Pack headers follow the order as shown, so they stay right while a row is held.
+                        val index = shownIndex
                         val title = if (catalog.isPreinstalled && catalog.collectionRailKey == null) { when (catalog.kind) { CatalogKind.COLLECTION -> stringResource(R.string.settings_title_builtin_collection, catalog.title); CatalogKind.COLLECTION_RAIL -> stringResource(R.string.settings_title_builtin_rail, catalog.title); else -> stringResource(R.string.settings_title_builtin, catalog.title) } } else catalog.title
                         val currentPackId = catalog.packId
-                        val prevPackId = if (index > 0) catalogs[index - 1].packId else null
-                        val showPackHeader = currentPackId != null && currentPackId != prevPackId && catalog.isBulkDeletablePack && !isHeld
+                        val prevPackId = previousCatalog?.packId
+                        val showPackHeader = currentPackId != null && currentPackId != prevPackId && catalog.isBulkDeletablePack
                         val collectionFallback = stringResource(R.string.settings_collection_fallback)
                         val addonFallback = stringResource(R.string.settings_source_addon)
                         val subtitle = run {

@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.components
 
+import com.arflix.tv.util.withItemMoved
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -78,5 +79,40 @@ class DragHandleReorderColumnTest {
         // It has: from now on the list shows what it is given.
         state.forgetLocalOrderIfStale(listOf("c", "a", "b"))
         assertNull(state.localOrder)
+    }
+
+    @Test
+    fun noSecondRowCanBePickedUpWhileTheFirstDropIsStillUnanswered() {
+        val drops = mutableListOf<Triple<Any, Int, Int>>()
+        val state = stateWith(listOf("a" to 60, "b" to 60, "c" to 60), drops)
+        state.onDragStart("a")
+        state.onDrag(70f)
+        state.onDragStop()
+        state.onDragStart("c")
+        assertNull(state.draggedKey)
+    }
+
+    @Test
+    fun aGestureCutOffFromOutsideReleasesTheRowWithoutStoringAnything() {
+        val drops = mutableListOf<Triple<Any, Int, Int>>()
+        val state = stateWith(listOf("a" to 60, "b" to 60, "c" to 60), drops)
+        state.onDragStart("a")
+        state.onDrag(70f)
+        state.cancelDrag("a")
+        assertNull(state.draggedKey)
+        assertNull(state.localOrder)
+        assertEquals(emptyList<Triple<Any, Int, Int>>(), drops)
+    }
+
+    @Test
+    fun theHeldRowIsDrawnFromTheShownOrderBeforeTheColumnHasPlacedIt() {
+        val drops = mutableListOf<Triple<Any, Int, Int>>()
+        val state = stateWith(listOf("a" to 60, "b" to 100, "c" to 40), drops)
+        state.onDragStart("a")
+        state.onDrag(80f)
+        // "a" now comes after "b" in the shown order, so it is laid out at 100 - even though the
+        // last layout still has it at 0. The finger put its top at 80.
+        assertEquals(listOf("b", "a", "c"), state.localOrder)
+        assertEquals(-20f, state.translationFor("a"), 0.001f)
     }
 }
