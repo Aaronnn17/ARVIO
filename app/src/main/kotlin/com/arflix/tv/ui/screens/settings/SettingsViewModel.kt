@@ -4761,6 +4761,8 @@ class SettingsViewModel @Inject constructor(
                 val message: SettingsMessage = when (e) {
                     is retrofit2.HttpException -> if (e.code() == 429) {
                         SettingsMessage.Res(R.string.settings_trakt_rate_limited)
+                    } else if (e.code() in 500..599) {
+                        SettingsMessage.Res(R.string.settings_trakt_unavailable)
                     } else SettingsMessage.Res(
                         R.string.settings_trakt_activation_failed_code,
                         listOf(e.code())
@@ -4887,7 +4889,11 @@ class SettingsViewModel @Inject constructor(
                     // Only the poll itself is retried (pollForToken also stores the token): once
                     // the token is saved, asking again would report the code as already used.
                     if (!tokenSaved && com.arflix.tv.data.repository.isTransientTraktPollFailure(e)) {
-                        networkFailure = e.message.orMessage(SettingsMessage.Res(R.string.settings_trakt_auth_failed))
+                        networkFailure = if (httpError != null) SettingsMessage.Res(R.string.settings_trakt_unavailable)
+                            else e.message.orMessage(SettingsMessage.Res(R.string.settings_trakt_auth_failed))
+                        pollDelayMs = com.arflix.tv.data.repository.traktRetryDelayMs(
+                            httpError?.response()?.headers()?.get("Retry-After"), maxOf(pollDelayMs, 15_000L)
+                        )
                         continue
                     }
 

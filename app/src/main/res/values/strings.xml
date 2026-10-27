@@ -1669,6 +1669,7 @@
     <!-- SettingsViewModel messages: Trakt, Simkl and sign-out -->
     <string name="settings_trakt_activation_failed_code">Trakt activation failed (%1$d)</string>
     <string name="settings_trakt_activation_failed">Trakt activation failed</string>
+    <string name="settings_trakt_unavailable">Trakt is temporarily unavailable. Please try again later.</string>
     <string name="settings_trakt_connected_toast">Trakt connected successfully</string>
     <string name="settings_trakt_code_invalid">Trakt activation code is invalid</string>
     <string name="settings_trakt_code_used">Trakt activation code was already used</string>

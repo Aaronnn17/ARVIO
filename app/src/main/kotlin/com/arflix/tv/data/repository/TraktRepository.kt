@@ -296,7 +296,7 @@ class TraktRepository @Inject constructor(
                 newToken.accessToken
             } catch (e: HttpException) {
                 val code = e.code()
-                if (code == 401 || code == 403) {
+                if (code == 401) {
                     // A rejected refresh token cannot recover automatically.
                     // Keeping it made the UI report Trakt as connected while
                     // Continue Watching silently fell back to an old snapshot.
@@ -1724,10 +1724,10 @@ class TraktRepository @Inject constructor(
             // the breaker instead of the next one retrying straight into it.
             val rateLimited = java.util.concurrent.atomic.AtomicBoolean(false)
 
-            // Helper: detect HTTP 401/403 from Retrofit exceptions
+            // A forbidden request (403) does not prove the token was revoked.
             fun isAuthError(e: Exception): Boolean {
                 val httpEx = e as? retrofit2.HttpException ?: return false
-                return httpEx.code() in setOf(401, 403)
+                return httpEx.code() == 401
             }
             // Re-acquire auth if the original token was stale
             val authHolder = arrayOf(auth)
