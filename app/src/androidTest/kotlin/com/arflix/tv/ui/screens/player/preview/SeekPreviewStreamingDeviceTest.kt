@@ -182,9 +182,9 @@ class SeekPreviewStreamingDeviceTest {
                             val before = pts
                             val generation = provider.sourceGeneration
                             launch(Dispatchers.Main) {
-                                val bitmap = withTimeoutOrNull(500) { captureRenderedSeekPreview(surface, 320, 180) }
+                                val bitmap = withTimeoutOrNull(RENDERED_PREVIEW_COPY_TIMEOUT_MS) { captureRenderedSeekPreview(surface, 320, 180) }
                                 if (bitmap != null) {
-                                    if (kotlin.math.abs(renderedPts.get() - before) <= 250 && p.isPlaying) {
+                                    if (renderedPreviewCopyIsCurrent(before, renderedPts.get(), p.currentPosition) && p.isPlaying) {
                                         if (provider.rememberRenderedFrame(before, bitmap, generation) != null) captured++
                                         else bitmap.recycle()
                                     } else bitmap.recycle()

@@ -2045,11 +2045,11 @@ private fun DetailsContent(
 
         // Unified hero metadata and action buttons positioned safely below the top bar
         val heroStartPadding = 36.dp
-        val heroEndPadding = 400.dp
         val configuration = LocalConfiguration.current
         val isCompactHeight = configuration.screenHeightDp < 720
         val hasEpisodeRail = item.mediaType == MediaType.TV && (episodes.isNotEmpty() || isSeasonLoading)
         val compactEpisodeHero = isCompactHeight && hasEpisodeRail
+        val heroEndPadding = if (compactEpisodeHero) 240.dp else 400.dp
         val heroTopPadding = if (compactEpisodeHero) AppTopBarHeight else
             AppTopBarContentTopInset + if (isCompactHeight) 10.dp else 16.dp
 
@@ -2067,8 +2067,8 @@ private fun DetailsContent(
         )
         val heroAlpha = 1f - 0.65f * railExpansionProgress
 
-        val minRestingRowHeight = if (hasEpisodeRail) 240.dp else if (hasPosterDetailRails) 226.dp else 210.dp
-        val maxRestingRowHeight = if (hasEpisodeRail) 260.dp else if (hasPosterDetailRails) 246.dp else 226.dp
+        val minRestingRowHeight = if (hasEpisodeRail) 252.dp else if (hasPosterDetailRails) 226.dp else 210.dp
+        val maxRestingRowHeight = if (hasEpisodeRail) 272.dp else if (hasPosterDetailRails) 246.dp else 226.dp
         val restingRowHeight = if (isCompactHeight) {
             minRestingRowHeight
         } else {
@@ -2079,12 +2079,13 @@ private fun DetailsContent(
         }
         val expandedRowHeight = restingRowHeight + shiftAmount
 
-        val contentRowBottomPadding = 0.dp
+        val contentRowBottomPadding = if (hasEpisodeRail) 12.dp else 0.dp
 
         DetailsTvHeroLayout(
             restingRowsHeight = restingRowHeight,
             expandedRowsHeight = expandedRowHeight,
             expansionProgress = railExpansionProgress,
+            heroGap = if (compactEpisodeHero) 8.dp else 12.dp,
             modifier = Modifier.fillMaxSize(),
         ) {
             Column(
@@ -2177,7 +2178,7 @@ private fun DetailsContent(
                 val hasSecondaryMetadata = primaryNetworkLogo != null ||
                     hasRatingMetadata ||
                     hasBudgetMetadata
-                val overviewMaxHeight = if (isCompactHeight) 78.dp else 88.dp
+                val overviewMaxHeight = if (compactEpisodeHero) 60.dp else if (isCompactHeight) 78.dp else 88.dp
 
                 val separatorStyle = ArflixTypography.caption.copy(
                     fontSize = 13.sp,
@@ -2341,8 +2342,8 @@ private fun DetailsContent(
                             shadow = textShadow
                         ),
                         color = Color.White,
-                        // Four lines at this width; still fits overviewMaxHeight.
-                        maxLines = 4,
+                        // Reserve a complete season/episode rail on compact-height TVs.
+                        maxLines = if (compactEpisodeHero) 3 else 4,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

@@ -102,3 +102,28 @@ lookup P95 was 0.291 ms. Playback resumed after seeking with zero player errors.
 Both live runs used the real low-memory policy, preserving playback over speculative
 future decoding. Higher-memory-device background decoding remains guarded, but
 these runs do not benchmark that path on physical high-end hardware.
+
+## Physical TV timeout correction (27 October)
+
+The TCL Android 14 TV reproduced a failure not seen on the emulators: copying
+its 3840x1632 HEVC HDR surface succeeded (PixelCopy result 0), but completed in
+approximately 560–650 ms. The previous 500 ms coroutine deadline discarded every
+copy. The separate 250 ms frame-advance check would also reject those copies.
+
+The deadline is now 1,500 ms. Validation accepts continuous renderer advancement
+within that interval and checks the latest presentation timestamp against the
+current player position. Source-generation checks, cancellation during seeking,
+and bitmap cleanup remain intact. Regression cases cover the measured TV delay,
+forward/backward discontinuities, frozen timestamps and expired copies. The
+streaming-device harness uses the same production timing rules.
+
+The TV details hero also uses a wider, three-line overview on compact-height TVs,
+a smaller hero-to-rail gap and more reserved season/episode space with bottom
+padding. The top bar is unchanged.
+
+The user requested no further TV interaction after diagnosis. Final validation
+therefore uses automated checks and release-package verification; the final
+corrected build has not been visually re-tested on the physical TV. Installation
+is authorized, but launching or further navigation is not. Heavy 4K sources on
+low-memory TVs still use captured rewind frames; unseen forward positions are
+not guaranteed to have thumbnails, to avoid competing with playback decoding.

@@ -259,6 +259,8 @@ import com.arflix.tv.ui.screens.player.preview.SeekPreviewFilmstrip
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewPlaybackGuard
 import com.arflix.tv.ui.screens.player.preview.seekPreviewWindow
 import com.arflix.tv.ui.screens.player.preview.captureRenderedSeekPreview
+import com.arflix.tv.ui.screens.player.preview.RENDERED_PREVIEW_COPY_TIMEOUT_MS
+import com.arflix.tv.ui.screens.player.preview.renderedPreviewCopyIsCurrent
 import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
 import com.arflix.tv.ui.screens.player.preview.seekPreviewOverlay
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
@@ -1861,23 +1863,25 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                 format.width <= 0 || format.height <= 0 || format.rotationDegrees != 0 ||
                 format.pixelWidthHeightRatio != 1f) continue
             val pts = lastRenderedVideoFrameUs.get() / 1_000L
+            if (com.arflix.tv.BuildConfig.DEBUG) android.util.Log.d("SeekPreviewCapture",
+                "candidate position=$position pts=$pts size=${format.width}x${format.height} sar=${format.pixelWidthHeightRatio} generation=${seekPreviewProvider.sourceGeneration}")
             if (pts < 0 || kotlin.math.abs(pts - position) > 500L) continue
             lastBucket = bucket
             if (seekPreviewProvider.memoryFrameAt(pts) != null) continue
             val generation = seekPreviewProvider.sourceGeneration
             val width = 320
             val height = (width.toLong() * format.height / format.width).toInt().coerceIn(1, 320)
-            val bitmap = kotlinx.coroutines.withTimeoutOrNull(500L) {
+            val bitmap = kotlinx.coroutines.withTimeoutOrNull(RENDERED_PREVIEW_COPY_TIMEOUT_MS) {
                 captureRenderedSeekPreview(surface, width, height)
             } ?: continue
             // Discard copies crossing a seek, surface replacement, or delayed render.
             val afterPts = lastRenderedVideoFrameUs.get() / 1_000L
             if (latestSeekBrowsing || generation != seekPreviewProvider.sourceGeneration ||
-                !exoPlayer.isPlaying || kotlin.math.abs(afterPts - pts) > 250L ||
-                kotlin.math.abs(exoPlayer.currentPosition - pts) > 500L) {
+                !exoPlayer.isPlaying || !renderedPreviewCopyIsCurrent(pts, afterPts, exoPlayer.currentPosition)) {
                 bitmap.recycle()
             } else {
                 val retained = seekPreviewProvider.rememberRenderedFrame(pts, bitmap, generation)
+                if (com.arflix.tv.BuildConfig.DEBUG) android.util.Log.d("SeekPreviewCapture", "retained=${retained != null} pts=$pts")
                 if (retained?.bitmap !== bitmap) bitmap.recycle()
             }
         }
