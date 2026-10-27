@@ -8611,6 +8611,27 @@ private fun IptvSettings(
 
     if (isMobile) {
         val heldAccent = resolveAccentColor(fallback = Pink)
+        // A tap on a playlist or portal opens its menu; these name the one whose menu is open.
+        var menuPlaylistId by remember { mutableStateOf<String?>(null) }
+        var menuPortalId by remember { mutableStateOf<String?>(null) }
+        playlists.firstOrNull { it.id == menuPlaylistId }?.let { playlist ->
+            MobileSourceMenuSheet(
+                title = playlist.name,
+                onDismiss = { menuPlaylistId = null },
+                onCategories = { onManageCategories(playlist.id) },
+                onEdit = { playlists.indexOf(playlist).takeIf { it >= 0 }?.let(onEditPlaylist) },
+                onDelete = { playlists.indexOf(playlist).takeIf { it >= 0 }?.let(onDeletePlaylist) }
+            )
+        }
+        stalkerPortals.firstOrNull { it.id == menuPortalId }?.let { portal ->
+            MobileSourceMenuSheet(
+                title = portal.name,
+                onDismiss = { menuPortalId = null },
+                onCategories = { onManageStalkerCategories(portal.id) },
+                onEdit = { onEditStalkerPortal(portal) },
+                onDelete = { onRemoveStalkerPortal(portal.id) }
+            )
+        }
         Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
             if (selectionMode) {
                 Row(
@@ -8660,7 +8681,7 @@ private fun IptvSettings(
                             modifier = Modifier.fillMaxWidth()
                                 .background(if (isSelected) Pink.copy(alpha = 0.15f) else Color.Transparent)
                                 .then(Modifier.combinedClickable(
-                                    onClick = { if (selectionMode) { selectedIndices = if (isSelected) selectedIndices - index else selectedIndices + index; if (selectedIndices.isEmpty()) selectionMode = false } else onEditPlaylist(index) },
+                                    onClick = { if (selectionMode) { selectedIndices = if (isSelected) selectedIndices - index else selectedIndices + index; if (selectedIndices.isEmpty()) selectionMode = false } else menuPlaylistId = playlist.id },
                                     onLongClick = { if (!selectionMode) { selectionSection = "m3u"; selectionMode = true; selectedIndices = setOf(index) } }
                                 ))
                                 .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -8674,20 +8695,15 @@ private fun IptvSettings(
                                 Spacer(modifier = Modifier.width(16.dp))
                             }
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(playlist.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist), fallback = playlist.m3uUrl.take(56), suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
+                                MobileSourceRowTitle(name = playlist.name, showMenuHint = !selectionMode)
+                                // Only the account state (days left, streams): the address is set in the editor.
+                                val fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist)
+                                if (accountInfo[playlist.id]?.sourceFingerprint == fingerprint) {
+                                    IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = fingerprint, fallback = "", suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
+                                }
                             }
                             if (!selectionMode) {
-                                Icon(
-                                    imageVector = Icons.Default.List,
-                                    contentDescription = stringResource(R.string.settings_cd_manage_categories),
-                                    tint = TextSecondary,
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clickable { onManageCategories(playlist.id) }
-                                        .padding(6.dp)
-                                )
-                                Spacer(modifier = Modifier.width(16.dp))
+                                MobileSourceRowDivider()
                                 // Toggle chip
                                 Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (playlist.enabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).clickable { onTogglePlaylist(index) }.padding(3.dp), contentAlignment = if (playlist.enabled) Alignment.CenterEnd else Alignment.CenterStart) {
                                     Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
@@ -8719,7 +8735,7 @@ private fun IptvSettings(
                             modifier = Modifier.fillMaxWidth()
                                 .background(if (isSelected) Pink.copy(alpha = 0.15f) else Color.Transparent)
                                 .then(Modifier.combinedClickable(
-                                    onClick = { if (selectionMode) { selectedIndices = if (isSelected) selectedIndices - index else selectedIndices + index; if (selectedIndices.isEmpty()) selectionMode = false } else onEditStalkerPortal(portal) },
+                                    onClick = { if (selectionMode) { selectedIndices = if (isSelected) selectedIndices - index else selectedIndices + index; if (selectedIndices.isEmpty()) selectionMode = false } else menuPortalId = portal.id },
                                     onLongClick = { if (!selectionMode) { selectionSection = "stalker"; selectionMode = true; selectedIndices = setOf(index) } }
                                 ))
                                 .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -8733,20 +8749,14 @@ private fun IptvSettings(
                                 Spacer(modifier = Modifier.width(16.dp))
                             }
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal), fallback = portal.portalUrl.take(56), suffix = "", textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
+                                MobileSourceRowTitle(name = portal.name, showMenuHint = !selectionMode)
+                                val fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal)
+                                if (accountInfo[portal.id]?.sourceFingerprint == fingerprint) {
+                                    IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = fingerprint, fallback = "", suffix = "", textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
+                                }
                             }
                             if (!selectionMode) {
-                                Icon(
-                                    imageVector = Icons.Default.List,
-                                    contentDescription = stringResource(R.string.settings_cd_manage_stalker_categories),
-                                    tint = TextSecondary,
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clickable { onManageStalkerCategories(portal.id) }
-                                        .padding(6.dp)
-                                )
-                                Spacer(modifier = Modifier.width(16.dp))
+                                MobileSourceRowDivider()
                                 Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (portal.enabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).clickable { onToggleStalkerPortal(portal.id) }.padding(3.dp), contentAlignment = if (portal.enabled) Alignment.CenterEnd else Alignment.CenterStart) {
                                     Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
                                 }
@@ -13657,6 +13667,96 @@ private fun MobileIptvCategoryReorderList(
                 )
             }
         }
+    }
+}
+
+/**
+ * The name of a playlist or portal on the phone, with a small arrow after it that says the row opens
+ * something: a tap brings up [MobileSourceMenuSheet]. Hidden in the selection mode, where a tap
+ * selects instead.
+ */
+@Composable
+private fun MobileSourceRowTitle(name: String, showMenuHint: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            name,
+            style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
+            color = TextPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        if (showMenuHint) {
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = TextSecondary,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+/** A short upright line between the part of a row that opens its menu and the switch and handle. */
+@Composable
+private fun MobileSourceRowDivider() {
+    Box(modifier = Modifier.padding(horizontal = 12.dp).width(1.dp).height(28.dp).background(Color.White.copy(alpha = 0.08f)))
+}
+
+/**
+ * What a tap on a playlist or portal opens on the phone: its categories, the editor (name, address,
+ * MAC) and delete. Deleting asks for a second tap, as one tap in a menu is too easy to hit by mistake.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun MobileSourceMenuSheet(
+    title: String,
+    onDismiss: () -> Unit,
+    onCategories: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var deleteArmed by remember { mutableStateOf(false) }
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = BackgroundElevated,
+        contentColor = TextPrimary
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp)) {
+            Text(
+                title,
+                style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
+                color = TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp)
+            )
+            MobileSourceMenuItem(Icons.Default.List, stringResource(R.string.settings_source_menu_categories), TextPrimary) {
+                onDismiss(); onCategories()
+            }
+            MobileSourceMenuItem(Icons.Default.Edit, stringResource(R.string.settings_source_menu_edit), TextPrimary) {
+                onDismiss(); onEdit()
+            }
+            MobileSourceMenuItem(
+                Icons.Default.Delete,
+                stringResource(if (deleteArmed) R.string.settings_source_menu_delete_confirm else R.string.delete),
+                Color(0xFFFF8A8A)
+            ) {
+                if (deleteArmed) { onDismiss(); onDelete() } else deleteArmed = true
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileSourceMenuItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, color: Color, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(imageVector = icon, contentDescription = null, tint = color, modifier = Modifier.size(22.dp))
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(label, style = ArflixTypography.body.copy(fontSize = 15.sp), color = color)
     }
 }
 

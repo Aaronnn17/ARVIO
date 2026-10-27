@@ -696,6 +696,9 @@
     <string name="settings_test">Test</string>
     <string name="settings_cd_qr_code">QR Code</string>
     <string name="settings_cd_drag_reorder">Drag to reorder</string>
+    <string name="settings_source_menu_categories">Categories</string>
+    <string name="settings_source_menu_edit">Edit</string>
+    <string name="settings_source_menu_delete_confirm">Tap again to delete</string>
     <string name="settings_cd_manage_categories">Manage Categories</string>
     <string name="settings_progress_format">%1$s (%2$d%%)</string>
     <string name="settings_refreshing_channels_epg">Refreshing channels and EPG...</string>
