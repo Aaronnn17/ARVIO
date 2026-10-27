@@ -513,3 +513,21 @@ test('player: a refreshed Stalker link is kept for restarts and external players
   assert.match(decodeURIComponent(again.last().url), /play_token=new/);
   cleanupAgain();
 });
+
+test('a 403 seen only through ARVIO servers still lets the viewer\'s own connection try once', () => {
+  const plan = live.planLiveAttempts({ url: 'https://panel.example/live/u/p/9.m3u8', headers: { 'User-Agent': 'VLC' } }, CHROME, relayRoutes);
+  const relay = plan.attempts.find((a) => a.route === 'relay');
+  const direct = plan.attempts.find((a) => a.route === 'direct' && a.variant === 'original');
+  assert.ok(relay && direct, 'header channels try the relay first, then directly');
+  assert.ok(plan.attempts.indexOf(relay) < plan.attempts.indexOf(direct));
+  const ctx = { relayTicket: true, relayNeedsTicket: true };
+  const walled = [{ attempt: relay, fault: { kind: 'network', httpStatus: 403 } }];
+  assert.equal(live.attemptAllowed(direct, walled, ctx), true);
+  // The direct answer is the provider's own: after a direct 403, stop.
+  const refusedHere = [...walled, { attempt: direct, fault: { kind: 'network', httpStatus: 403 } }];
+  const other = plan.attempts.find((a) => a.route === 'direct' && a !== direct && a.variant === 'original');
+  if (other) assert.equal(live.attemptAllowed(other, refusedHere, ctx), false);
+  // Its http:// IP video server is then explained, not "subscription expired".
+  const blocked = [...walled, { attempt: direct, fault: { kind: 'network', resourceUrl: 'http://185.245.1.253/hls/a.ts' } }];
+  assert.equal(live.classifyLiveFailure(blocked, { browser: 'Chrome', relayAvailable: true, relayTicket: true }).kind, 'insecure-media');
+});

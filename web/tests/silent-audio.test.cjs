@@ -56,12 +56,13 @@ const overlay = fs.readFileSync(path.join(__dirname, '../components/player/Playe
 test('silent direct playback switches to audio conversion at the same position', () => {
   const block = player.slice(player.indexOf('return monitorAudioDecode(video'));
   assert.match(block, /if \(playhead > 5\) resumeAtRef\.current = playhead;/);
-  assert.match(block, /canTryRemux\(stream\)[\s\S]*?onSelectStream\(\{ \.\.\.stream \}, \{ forceRemux: true, forceBrowser: true \}\)/);
+  assert.match(block, /canTryRemux\(stream\)[\s\S]*?onSelectStream\(\{ \.\.\.stream, convertAudio: true \}, \{ forceRemux: true, forceBrowser: true \}\)/);
   assert.match(block, /tryNextSource\(\)/);
 });
 
 test('a probe that already saw undecodable audio starts in the converting path', () => {
-  assert.match(playback, /needsAudioConversion\(candidate\) \? \{ forceRemux: true \}/);
+  assert.match(playback, /!needsAudioConversion\(candidate\)\s*\? candidate : \{ \.\.\.candidate, convertAudio: true \}/);
+  assert.match(playback, /next\.convertAudio \? \{ forceRemux: true \}/);
 });
 
 test('relay and browser lookups publish one merged list, all rows with subtitles', () => {

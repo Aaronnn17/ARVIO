@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 import { MediaCard } from "@/components/media/MediaCard";
 import { RailScroller } from "@/components/media/RailScroller";
 import { premiumAllows } from "@/lib/premiumGate";
+import { simklRedirectUrl, traktSearchUrl, traktTitleUrl } from "@/lib/externalLinks";
 import { getContinueWatching, saveWatchedState } from "@/lib/cloud";
 import { parseDebridStream } from "@/lib/debrid";
 import { clearPlayOnOpen, peekPlayOnOpen } from "@/lib/playIntent";
@@ -152,6 +153,17 @@ function DetailsView({ item }: { item: MediaItem }) {
     return () => window.clearTimeout(timer);
   }, [starting, activeStream]);
   const [logo, setLogo] = useState<string | null>(null);
+  // Trakt's page is found by id (its old /search/<id> links no longer resolve);
+  // until then, and without a Trakt key, the link searches by title.
+  const [traktPage, setTraktPage] = useState<string | null>(null);
+  useEffect(() => {
+    setTraktPage(null);
+    let active = true;
+    void traktTitleUrl({ id: item.id, imdbId: detailsItem?.imdbId ?? item.imdbId, mediaType: item.mediaType })
+      .then((url) => { if (active) setTraktPage(url); });
+    return () => { active = false; };
+  }, [item.id, item.mediaType, item.imdbId, detailsItem?.imdbId]);
+
   const displayItem = detailsItem ?? item;
   const priorityConfig = useMemo(() => getPriorityConfig(settings), [settings]);
 
@@ -417,15 +429,12 @@ function DetailsView({ item }: { item: MediaItem }) {
   const simklIds = simklClient.findItemIds(displayItem.id, displayItem.mediaType === "movie" ? "movie" : "tv")
     ?? (displayItem as unknown as { ids?: Parameters<typeof getSimklItemUrl>[0] })?.ids;
   const simklUrl = getSimklItemUrl(simklIds, displayItem.mediaType === "movie" ? "movie" : "tv")
-    ?? `https://simkl.com/search?q=${encodeURIComponent(displayItem.title)}`;
-  // Trakt opens the title's own page straight from its TMDB/IMDb id.
-  const traktKind = displayItem.mediaType === "movie" ? "movie" : "show";
-  const traktUrl = displayItem.imdbId
-    ? `https://trakt.tv/search/imdb/${encodeURIComponent(displayItem.imdbId)}?id_type=${traktKind}`
-    : `https://trakt.tv/search/tmdb/${displayItem.id}?id_type=${traktKind}`;
+    ?? simklRedirectUrl(displayItem);
   const busyPlaying = Boolean(autoplayRequest) || starting;
   const playLabel = busyPlaying
-    ? (busy === "Finding sources" || streams.length === 0 ? translateUi("Finding sources…") : translateUi("Starting…"))
+    // Finding sources → checking the best ones → opening the player.
+    ? (busy === "Finding sources" && streams.length === 0 ? translateUi("Finding sources…")
+      : autoplayRequest ? translateUi("Picking the best source…") : translateUi("Starting…"))
     : translateUi(plan.label, plan.labelValues);
 
   return (
@@ -493,7 +502,7 @@ function DetailsView({ item }: { item: MediaItem }) {
           </div>
           <div className="detail-links">
             <a href={simklUrl} target="_blank" rel="noopener noreferrer" className="detail-link">{translateUi("View on Simkl")}</a>
-            <a href={traktUrl} target="_blank" rel="noopener noreferrer" className="detail-link">{translateUi("View on Trakt")}</a>
+            <a href={traktPage ?? traktSearchUrl(displayItem.title)} target="_blank" rel="noopener noreferrer" className="detail-link">{translateUi("View on Trakt")}</a>
           </div>
           {!streams.length && !isTv && busy !== "Finding sources" && (
             <p className="detail-action-hint">{translateUi("Sources will appear here when an installed addon returns results.")}</p>

@@ -45,7 +45,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       setErrorDetail("");
       failureDiagnosticRef.current = { failure_kind: "unknown", phase: "startup" };
       setBuffering(true);
-      setBootStatus({ label: "Preparing this file for your browser…" });
+      setBootStatus({ label: stream.convertAudio ? "Converting the audio for your browser…" : "Preparing this file for your browser…" });
       setRemuxTracks([]);
       lastSavedRef.current = 0;
       const remuxFailed = (message: string) => {

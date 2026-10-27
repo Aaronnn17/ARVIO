@@ -1554,5 +1554,10 @@
   "· Guide match": "· Trận đấu hướng dẫn",
   "· Possible broadcast": "· Có thể phát sóng",
   "· {value0}d archive": "· {value0}d lưu trữ",
-  "View on Trakt": "Xem trên Trakt"
+  "View on Trakt": "Xem trên Trakt",
+  "This file's audio can't play directly in this browser. Converting the audio…": "Âm thanh của tệp này không thể phát trực tiếp trong trình duyệt này. Đang chuyển đổi âm thanh…",
+  "This file's audio can't play in this browser. Requesting provider conversion…": "Âm thanh của tệp này không thể phát trong trình duyệt này. Đang yêu cầu nhà cung cấp chuyển đổi…",
+  "This source's audio can't play in this browser. Choose another source or use an external player.": "Âm thanh của nguồn này không thể phát trong trình duyệt này. Hãy chọn nguồn khác hoặc dùng trình phát bên ngoài.",
+  "Converting the audio for your browser…": "Đang chuyển đổi âm thanh cho trình duyệt của bạn…",
+  "Picking the best source…": "Đang chọn nguồn tốt nhất…"
 }

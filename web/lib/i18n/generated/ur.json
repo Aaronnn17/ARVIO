@@ -1552,5 +1552,10 @@
   "· Guide match": "· گائیڈ میچ",
   "· Possible broadcast": "· ممکنہ نشریات",
   "· {value0}d archive": "· {value0}d محفوظ شدہ دستاویزات",
-  "View on Trakt": "Trakt پر دیکھیں"
+  "View on Trakt": "Trakt پر دیکھیں",
+  "This file's audio can't play directly in this browser. Converting the audio…": "اس فائل کی آڈیو اس براؤزر میں براہ راست نہیں چل سکتی۔ آڈیو تبدیل کی جا رہی ہے…",
+  "This file's audio can't play in this browser. Requesting provider conversion…": "اس فائل کی آڈیو اس براؤزر میں نہیں چل سکتی۔ فراہم کنندہ سے تبدیلی کی درخواست کی جا رہی ہے…",
+  "This source's audio can't play in this browser. Choose another source or use an external player.": "اس ذریعہ کی آڈیو اس براؤزر میں نہیں چل سکتی۔ کوئی دوسرا ذریعہ منتخب کریں یا بیرونی پلیئر استعمال کریں۔",
+  "Converting the audio for your browser…": "آپ کے براؤزر کے لیے آڈیو تبدیل کی جا رہی ہے…",
+  "Picking the best source…": "بہترین ذریعہ منتخب کیا جا رہا ہے…"
 }

@@ -312,10 +312,11 @@ export function relayDenied(faults: LiveFault[], context: RelayContext) {
  * through the relay): 429 = connection limit, 401/403 = subscription, account
  * or token. Pressing on from there risks the subscriber's account.
  */
-export function providerRefusal(faults: LiveFault[], context: RelayContext): 401 | 403 | 429 | null {
+export function providerRefusal(faults: LiveFault[], context: RelayContext, routes?: LiveRoute[]): 401 | 403 | 429 | null {
   // An http:// IP-address segment the relay could not fetch (Cloudflare 1003)
   // is not the provider refusing anything.
-  const refused = faults.filter((fault) => fault.attempt.variant === "original" && !isRelayDenial(fault, context) && !isInsecureIpMedia(fault.fault?.resourceUrl))
+  const refused = faults.filter((fault) => fault.attempt.variant === "original" && !isRelayDenial(fault, context) && !isInsecureIpMedia(fault.fault?.resourceUrl)
+    && (!routes || routes.includes(fault.attempt.route)))
     .map(statusOf).filter((status) => status === 401 || status === 403 || status === 429);
   return refused.includes(429) ? 429 : (refused[0] as 401 | 403 | undefined) ?? null;
 }
@@ -331,8 +332,15 @@ export function attemptAllowed(attempt: LiveAttempt, faults: LiveFault[], contex
   if (throughRelay(attempt) && relayDenied(faults, context)) return false;
   const refusal = providerRefusal(faults, context);
   if (refusal === 429) return false;
-  if (refusal) return attempt.variant === "twin" && (attempt.route === "direct" || attempt.route === "relay")
-    && !faults.some((fault) => fault.attempt.variant === "twin");
+  if (refusal) {
+    // A 401/403 seen only through ARVIO's servers (the relay or the app
+    // backend) is often the provider's anti-bot wall refusing a datacenter
+    // address, not the subscription: the viewer's own connection still gets
+    // its one try (it then explains itself, e.g. an http:// video server).
+    if (attempt.route === "direct" && !providerRefusal(faults, context, ["direct"])) return true;
+    return attempt.variant === "twin" && (attempt.route === "direct" || attempt.route === "relay")
+      && !faults.some((fault) => fault.attempt.variant === "twin");
+  }
   return true;
 }
 

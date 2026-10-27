@@ -1398,5 +1398,10 @@
   "· Guide match": "· Guide-Match",
   "· Possible broadcast": "· Mögliche Ausstrahlung",
   "· {value0}d archive": "· {value0}d-Archiv",
-  "View on Trakt": "Anzeigen am Trakt"
+  "View on Trakt": "Anzeigen am Trakt",
+  "This file's audio can't play directly in this browser. Converting the audio…": "Der Ton dieser Datei kann in diesem Browser nicht direkt abgespielt werden. Audio wird konvertiert…",
+  "This file's audio can't play in this browser. Requesting provider conversion…": "Der Ton dieser Datei kann in diesem Browser nicht abgespielt werden. Anbieterkonvertierung wird angefordert…",
+  "This source's audio can't play in this browser. Choose another source or use an external player.": "Der Ton dieser Quelle kann in diesem Browser nicht abgespielt werden. Wähle eine andere Quelle oder nutze einen externen Player.",
+  "Converting the audio for your browser…": "Audio wird für deinen Browser konvertiert…",
+  "Picking the best source…": "Beste Quelle wird gewählt…"
 }
