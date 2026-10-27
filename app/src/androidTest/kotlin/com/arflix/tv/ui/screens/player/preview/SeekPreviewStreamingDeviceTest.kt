@@ -19,6 +19,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -67,7 +69,8 @@ class SeekPreviewStreamingDeviceTest {
         File(context.getExternalFilesDir(null), "seek-cold-report.json").delete()
         SeekPreviewFrameProvider(context, client, 256).use { provider ->
             val headers = config.optJSONObject("headers")?.let { o -> o.keys().asSequence().associateWith { o.getString(it) } }.orEmpty()
-            provider.configure(SeekPreviewSource(config.getString("url"), headers, "cold-live-${SystemClock.elapsedRealtime()}", 3_000_000, false, false))
+            provider.configure(SeekPreviewSource(config.getString("url"), headers, "cold-live-${SystemClock.elapsedRealtime()}", 3_000_000, false, false,
+                useNativeKeyframes = config.optBoolean("nativeKeyframes", false)))
             try {
                 val start = SystemClock.elapsedRealtime()
                 val frame = provider.frameAt(120_000)
@@ -77,6 +80,18 @@ class SeekPreviewStreamingDeviceTest {
                 }
                 if (frame != null) assertTrue(provider.matchesTarget(frame, 120_000))
                 report.put("actualMs", frame?.actualPositionMs).put("completedWithoutCrash", true)
+                if (config.optBoolean("nativeKeyframes", false)) {
+                    val samples = JSONArray()
+                    for (target in listOf(600_000L, 1_200_000L, 1_800_000L)) {
+                        val began = SystemClock.elapsedRealtime()
+                        val next = provider.frameAt(target)
+                        samples.put(JSONObject().put("targetMs", target).put("ms", SystemClock.elapsedRealtime() - began)
+                            .put("available", next != null).put("actualMs", next?.actualPositionMs))
+                        report.put("unwatchedPositions", samples)
+                        assertNotNull("Unwatched remote position $target must decode", next)
+                        assertTrue(provider.matchesTarget(next, target))
+                    }
+                }
             } finally {
                 report.put("requests", JSONArray(observations.toList()))
                 File(context.getExternalFilesDir(null), "seek-cold-report.json").writeText(report.toString(2))
@@ -91,6 +106,9 @@ class SeekPreviewStreamingDeviceTest {
         assumeTrue("Supply a private live-stream fixture on the emulator", input.exists())
         val config = JSONObject(input.readText())
         val url = config.getString("url")
+        val previewUrl = config.optString("previewUrl", url)
+        val separatePreviewSource = previewUrl != url
+        val nativeKeyframes = config.optBoolean("nativeKeyframes", false)
         val headers = config.optJSONObject("headers")?.let { o -> o.keys().asSequence().associateWith { o.getString(it) } }.orEmpty()
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         var player: ExoPlayer? = null
@@ -105,12 +123,18 @@ class SeekPreviewStreamingDeviceTest {
         val selectedPosition = mutableStateOf(120_000L)
         val provider = SeekPreviewFrameProvider(context, OkHttpClient(), 256)
         val report = JSONObject()
+        report.put("previewStreamSeparateFromPlayback", separatePreviewSource)
         File(context.getExternalFilesDir(null), "seek-stream-report.json").delete()
         suspend fun <T> main(block: () -> T): T = withContext(Dispatchers.Main) { block() }
         try {
             scenario.onActivity { activity ->
                 val http = DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers)
-                player = ExoPlayer.Builder(activity).setMediaSourceFactory(DefaultMediaSourceFactory(http)).build().also { p ->
+                val renderers = DefaultRenderersFactory(activity).setEnableDecoderFallback(true)
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+                    .forceDisableMediaCodecAsynchronousQueueing()
+                if (config.optBoolean("preferSoftwareVideo", false)) renderers.setMediaCodecSelector(MediaCodecSelector.PREFER_SOFTWARE)
+                player = ExoPlayer.Builder(activity).setRenderersFactory(renderers)
+                    .setMediaSourceFactory(DefaultMediaSourceFactory(http)).build().also { p ->
                     p.setVideoFrameMetadataListener { pts, _, _, _ -> renderedPts.set(pts / 1_000L) }
                     p.addListener(object : Player.Listener {
                         override fun onPlayerError(error: PlaybackException) { errors++ }
@@ -140,9 +164,13 @@ class SeekPreviewStreamingDeviceTest {
                 }
             }
             withTimeout(60_000) { while (!main { player!!.isPlaying && player!!.currentPosition > 2_000 }) delay(250) }
+            report.put("renderedPtsMs", renderedPts.get())
+            report.put("videoMime", main { player!!.videoFormat?.sampleMimeType })
+            assertTrue("Playback comparison requires actual rendered video, not an audio-only clock", renderedPts.get() >= 0)
             val duration = main { player!!.duration }
             assertTrue("The live file must have a seekable duration", duration > 180_000)
-            provider.configure(SeekPreviewSource(url, headers, "live-test-${SystemClock.elapsedRealtime()}", duration, false, false))
+            provider.configure(SeekPreviewSource(previewUrl, headers, "live-test-${SystemClock.elapsedRealtime()}", duration, false, false,
+                useNativeKeyframes = nativeKeyframes))
             main { measuring = true }
             val baselineStart = main { player!!.currentPosition }
             val dropsStart = main { dropped }
@@ -155,12 +183,13 @@ class SeekPreviewStreamingDeviceTest {
             val guard = SeekPreviewPlaybackGuard()
             var job: Job? = null
             var turns = 0
+            var warmed = 0
             var captured = 0
             var lastBucket = -1L
             val activityManager = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
             val isTv = context.packageManager.hasSystemFeature("android.software.leanback")
-            val resourceSafe = !activityManager.isLowRamDevice && activityManager.memoryClass >= 256 &&
-                !(isTv && activityManager.memoryClass <= 384)
+            val resourceSafe = !activityManager.isLowRamDevice && (nativeKeyframes ||
+                (activityManager.memoryClass >= 256 && !(isTv && activityManager.memoryClass <= 384)))
             report.put("memoryClassMb", activityManager.memoryClass).put("backgroundDecodeAllowed", resourceSafe)
             var nextAt = 0L
             val end = SystemClock.elapsedRealtime() + 45_000
@@ -171,7 +200,7 @@ class SeekPreviewStreamingDeviceTest {
                         player!!.playbackState == Player.STATE_READY, player!!.totalBufferedDuration,
                         false, true, resourceSafe) }
                     // Exercise the same no-extra-decoder path used on constrained devices.
-                    main {
+                    if (!separatePreviewSource) main {
                         val p = player!!
                         val pts = renderedPts.get()
                         val bucket = quantizeSeekPreviewPosition(p.currentPosition, duration)
@@ -197,25 +226,34 @@ class SeekPreviewStreamingDeviceTest {
                         val position = main { player!!.currentPosition }
                         nextAt = now + 8_000
                         turns++
-                        job = launch { provider.warmNext(position) }
+                        job = launch {
+                            val targets = seekPreviewWarmTargets(position, duration)
+                            val missing = targets.filter { provider.memoryFrameAt(it) == null }
+                            provider.warmNext(position)
+                            if (missing.any { provider.memoryFrameAt(it) != null }) warmed++
+                        }
                     }
                     delay(250)
                 }
             } finally { job?.cancelAndJoin(); provider.cancelPending() }
             report.put("previewsEnabled", JSONObject().put("positionAdvancedMs", main { player!!.currentPosition } - enabledStart)
                 .put("rebuffers", main { rebuffers }).put("droppedFrames", main { dropped } - enabledDrops)
-                .put("warmTurns", turns).put("renderedFramesCaptured", captured))
+                .put("warmTurns", turns).put("warmFramesProduced", warmed).put("renderedFramesCaptured", captured))
+            if (nativeKeyframes) assertTrue("Comparison must actually decode previews during playback", warmed > 0)
             main { measuring = false; player!!.pause() }
-            val target = (main { player!!.currentPosition } / 10_000L * 10_000L - 20_000L).coerceAtLeast(0)
+            val target = if (nativeKeyframes) 600_000L else
+                (main { player!!.currentPosition } / 10_000L * 10_000L - 20_000L).coerceAtLeast(0)
             selectedPosition.value = target
             val coldStart = SystemClock.elapsedRealtime()
-            val frame = provider.memoryFrameAt(target)
+            val frame = if (nativeKeyframes) provider.frameAt(target) else provider.memoryFrameAt(target)
             report.put("renderedPreviewMs", SystemClock.elapsedRealtime() - coldStart).put("previewAvailable", frame != null)
-            assertNotNull("Played debrid video must yield a validated renderer preview", frame)
+            assertNotNull("Debrid video must yield a validated preview", frame)
             assertTrue(provider.matchesTarget(frame, target))
             selected.value = frame
+            if (nativeKeyframes) provider.warmWindow(target)
             neighbors.value = seekPreviewWindow(target, duration).mapNotNull { provider.memoryFrameAt(it) }
             report.put("readyWindowFrames", neighbors.value.size)
+            if (nativeKeyframes) assertTrue("Paused browsing should fill neighboring thumbnails", neighbors.value.size >= 3)
             val times = (0 until 100).map {
                 val start = System.nanoTime()
                 assertNotNull(provider.memoryFrameAt(target))

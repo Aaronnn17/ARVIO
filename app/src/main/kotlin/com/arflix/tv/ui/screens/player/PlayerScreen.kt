@@ -261,6 +261,7 @@ import com.arflix.tv.ui.screens.player.preview.seekPreviewWindow
 import com.arflix.tv.ui.screens.player.preview.captureRenderedSeekPreview
 import com.arflix.tv.ui.screens.player.preview.RENDERED_PREVIEW_COPY_TIMEOUT_MS
 import com.arflix.tv.ui.screens.player.preview.renderedPreviewCopyIsCurrent
+import com.arflix.tv.ui.screens.player.preview.supportsNativeKeyframes
 import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
 import com.arflix.tv.ui.screens.player.preview.seekPreviewOverlay
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
@@ -1755,10 +1756,15 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             }
     }
 
+    val useNativeSeekKeyframes = uiState.selectedStreamUrl?.let {
+        it.startsWith("https://", ignoreCase = true) || it.startsWith("http://", ignoreCase = true)
+    } == true &&
+        supportsNativeKeyframes(previewVideoFormat?.width ?: 0,
+        previewVideoFormat?.height ?: 0, previewVideoFormat?.sampleMimeType)
     val allowSecondarySeekPreviewDecoder = allowSecondarySeekPreviewExtraction(
         playbackMemoryClassMb, uiState.selectedStream?.addonId
-    ) && seekPreviewDecodeFitsMemory(playbackMemoryClassMb, isLowRamPlaybackDevice,
-        previewVideoFormat?.width ?: 0, previewVideoFormat?.height ?: 0, previewVideoFormat?.sampleMimeType)
+    ) && (useNativeSeekKeyframes || seekPreviewDecodeFitsMemory(playbackMemoryClassMb, isLowRamPlaybackDevice,
+        previewVideoFormat?.width ?: 0, previewVideoFormat?.height ?: 0, previewVideoFormat?.sampleMimeType))
     val previewStatus by seekPreviewProvider.status.collectAsState()
     val previewCacheRevision by seekPreviewProvider.cacheRevision.collectAsState()
     LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce) {
@@ -1768,7 +1774,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     }
     LaunchedEffect(
         uiState.selectedStreamUrl, uiState.streamSelectionNonce, duration, args.isLiveStream,
-        uiState.selectedStream?.preview, allowSecondarySeekPreviewDecoder,
+        uiState.selectedStream?.preview, allowSecondarySeekPreviewDecoder, useNativeSeekKeyframes,
     ) {
         val url = uiState.selectedStreamUrl
         val selected = uiState.selectedStream
@@ -1790,6 +1796,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                     allowExtraction = allowSecondarySeekPreviewDecoder,
                     maxWidthPx = if (isConstrainedPlaybackDevice) 480 else 640,
                     preview = selected?.preview,
+                    useNativeKeyframes = useNativeSeekKeyframes,
                 )
             }
         )
@@ -1909,7 +1916,8 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                 val now = android.os.SystemClock.elapsedRealtime()
                 val format = exoPlayer.videoFormat
                 val imageOnly = uiState.selectedStream?.preview != null
-                val resourceSafe = imageOnly || (!isLowRamPlaybackDevice && !isConstrainedPlaybackDevice && playbackMemoryClassMb >= 256 &&
+                val nativeSafe = useNativeSeekKeyframes && allowSecondarySeekPreviewDecoder && !isLowRamPlaybackDevice
+                val resourceSafe = imageOnly || nativeSafe || (!isLowRamPlaybackDevice && !isConstrainedPlaybackDevice && playbackMemoryClassMb >= 256 &&
                     !isLikelyHeavyStream(uiState.selectedStream) && format != null &&
                     format.width in 1..1920 && format.height in 1..1080 &&
                     format.sampleMimeType == MimeTypes.VIDEO_H264)

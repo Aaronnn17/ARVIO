@@ -83,6 +83,7 @@ data class SeekPreviewSource(
     val allowExtraction: Boolean = true,
     val maxWidthPx: Int = 480,
     val preview: StreamPreviewMetadata? = null,
+    val useNativeKeyframes: Boolean = false,
 )
 
 enum class SeekPreviewCapability { AVAILABLE, UNAVAILABLE }
@@ -250,6 +251,8 @@ class SeekPreviewFrameProvider internal constructor(
     @Volatile private var closed = false
     private var generation = 0L
     private val decoderHandler = Handler(Looper.getMainLooper())
+    private val keyframeWorkerDelegate = lazy { KeyframeWorkerClient(appContext) }
+    private val keyframeWorker by keyframeWorkerDelegate
     private val decoderSession = SeekPreviewDecoderSession<FrameExtractor.Frame>(
         CoroutineScope(scope.coroutineContext + Dispatchers.Main.immediate),
         Executor { command -> decoderHandler.post(command) },
@@ -430,7 +433,8 @@ class SeekPreviewFrameProvider internal constructor(
                         source.extractionBudgetBytes = if (background && !playbackPaused) BACKGROUND_PREVIEW_NETWORK_BYTES else MAX_EXTRACTION_NETWORK_BYTES
                         origin = SeekPreviewOrigin.DECODER
                         image = decoderOverride?.invoke(source.source, decodePosition(source, target))
-                            ?: extractWithMedia3(source, target)
+                            ?: if (source.source.useNativeKeyframes) extractNativeKeyframe(source, target)
+                            else extractWithMedia3(source, target)
                     }
                     currentCoroutineContext().ensureActive()
                     if (image == null && source.images != null) {
@@ -473,6 +477,10 @@ class SeekPreviewFrameProvider internal constructor(
                 null
             } catch (failure: Exception) {
                 currentCoroutineContext().ensureActive()
+                if (com.arflix.tv.BuildConfig.DEBUG) {
+                    val site = failure.stackTrace.firstOrNull { it.className.startsWith("com.arflix") }
+                    Log.d("SeekPreview", "failureType=${failure.javaClass.simpleName} at=$site")
+                }
                 val reason = if (failure is UnsupportedPreviewException) "Unsupported preview path" else "Preview extraction failed"
                 // Speculative work has a smaller budget; failing it must not disable a user request.
                 if (!background) fail(source, reason, failure is UnsupportedPreviewException, requestId, false)
@@ -606,6 +614,16 @@ class SeekPreviewFrameProvider internal constructor(
         }
     }
 
+    private suspend fun extractNativeKeyframe(source: ActiveSource, target: Long): SeekPreviewImage {
+        val uri = localDecoderUri(source)
+        source.proxy?.beginRequest(source.extractionBudgetBytes)
+        return try {
+            keyframeWorker.frameAt(uri.toString(), decodePosition(source, target))?.let {
+                SeekPreviewImage(it.bitmap, actualPositionMs = it.positionMs)
+            } ?: throw IOException("Native preview unavailable")
+        } finally { source.proxy?.endRequest() }
+    }
+
     private suspend fun extractWithMedia3(source: ActiveSource, target: Long): SeekPreviewImage {
         val uri = localDecoderUri(source)
         return withContext(Dispatchers.Main.immediate) {
@@ -721,6 +739,7 @@ class SeekPreviewFrameProvider internal constructor(
         // close queues release behind existing Media3 work, without submitting another decode.
         CoroutineScope(Dispatchers.Main.immediate).launch {
             decoderSession.close()
+            if (keyframeWorkerDelegate.isInitialized()) keyframeWorker.close()
         }
     }
 }

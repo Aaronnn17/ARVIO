@@ -18,6 +18,11 @@ internal fun seekPreviewDecodeFitsMemory(memoryClassMb: Int, lowRam: Boolean, wi
     return memoryClassMb >= 192 && width.toLong() * height <= maxPixels
 }
 
+/** Native software extraction runs outside the player heap and never reserves a video codec. */
+internal fun supportsNativeKeyframes(width: Int, height: Int, mime: String?): Boolean =
+    width > 0 && height > 0 && width.toLong() * height <= 3840L * 2160L &&
+        mime in setOf("video/avc", "video/hevc", "video/dolby-vision", "video/x-vnd.on2.vp9")
+
 /** A cancelled decoder request is a missing frame, not a cancelled UI loading effect. */
 internal suspend fun loadSeekPreviewFrame(provider: SeekPreviewFrameProvider, targetMs: Long): SeekPreviewFrame? =
     try {
