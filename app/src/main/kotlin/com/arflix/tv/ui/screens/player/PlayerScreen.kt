@@ -255,10 +255,16 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.content.ContextCompat
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrame
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewFilmstrip
+import com.arflix.tv.ui.screens.player.preview.SeekPreviewPlaybackGuard
+import com.arflix.tv.ui.screens.player.preview.seekPreviewWindow
+import com.arflix.tv.ui.screens.player.preview.captureRenderedSeekPreview
+import com.arflix.tv.ui.screens.player.preview.quantizeSeekPreviewPosition
 import com.arflix.tv.ui.screens.player.preview.seekPreviewOverlay
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewFrameProvider
 import com.arflix.tv.ui.screens.player.preview.SeekPreviewSource
 import com.arflix.tv.ui.screens.player.preview.allowSecondarySeekPreviewExtraction
+import com.arflix.tv.ui.screens.player.preview.seekPreviewDecodeFitsMemory
 import com.arflix.tv.ui.screens.player.preview.SeekInteraction
 import com.arflix.tv.ui.screens.player.preview.SeekSurface
 import com.arflix.tv.ui.screens.player.preview.SeekPhase
@@ -537,6 +543,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     var showSourceMenu by remember { mutableStateOf(false) }
 
     var seekPreviewFrame by remember { mutableStateOf<SeekPreviewFrame?>(null) }
+    var previewVideoFormat by remember { mutableStateOf<androidx.media3.common.Format?>(null) }
     var trackbarFocused by remember { mutableStateOf(false) }
     var unavailablePreviewTarget by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     // Post-episode "Up Next" prompt (issue #86). Shown on STATE_ENDED for TV shows:
@@ -1303,6 +1310,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                         decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?,
                     ) {
                         playbackFrameRate.onInputFormat(format.frameRate)
+                        previewVideoFormat = format
                     }
                 })
 
@@ -1747,11 +1755,14 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
 
     val allowSecondarySeekPreviewDecoder = allowSecondarySeekPreviewExtraction(
         playbackMemoryClassMb, uiState.selectedStream?.addonId
-    )
+    ) && seekPreviewDecodeFitsMemory(playbackMemoryClassMb, isLowRamPlaybackDevice,
+        previewVideoFormat?.width ?: 0, previewVideoFormat?.height ?: 0, previewVideoFormat?.sampleMimeType)
     val previewStatus by seekPreviewProvider.status.collectAsState()
+    val previewCacheRevision by seekPreviewProvider.cacheRevision.collectAsState()
     LaunchedEffect(uiState.selectedStreamUrl, uiState.streamSelectionNonce) {
         seekInteraction = SeekInteraction()
         seekPreviewFrame = null
+        previewVideoFormat = null
     }
     LaunchedEffect(
         uiState.selectedStreamUrl, uiState.streamSelectionNonce, duration, args.isLiveStream,
@@ -1786,12 +1797,16 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     val previewTarget = if (seekInteraction.phase != SeekPhase.Idle) seekInteraction.targetMs else currentPosition
     val previewRequested = !isCasting && !args.isLiveStream && hasPlaybackStarted && duration > 0L &&
         seekInteraction.browsing
-    val previewAvailable = previewStatus.capability != SeekPreviewCapability.UNAVAILABLE &&
-        unavailablePreviewTarget != (previewStatus.sourceGeneration to previewTarget)
-    val showQuickSeekPreview = seekInteraction.previewSession &&
-        seekInteraction.surface == SeekSurface.Quick && previewAvailable
     val previewFrameForTarget = seekPreviewFrame?.takeIf {
         seekPreviewProvider.matchesTarget(it, previewTarget)
+    }
+    val previewAvailable = previewFrameForTarget != null || (previewStatus.capability != SeekPreviewCapability.UNAVAILABLE &&
+        unavailablePreviewTarget != (previewStatus.sourceGeneration to previewTarget))
+    val showQuickSeekPreview = seekInteraction.previewSession &&
+        seekInteraction.surface == SeekSurface.Quick && previewAvailable
+    val previewNeighbors = remember(previewTarget, previewCacheRevision, previewStatus.sourceGeneration, previewRequested) {
+        if (!previewRequested) emptyList() else seekPreviewWindow(previewTarget, duration)
+            .mapNotNull { seekPreviewProvider.memoryFrameAt(it) }
     }
     LaunchedEffect(previewRequested, previewTarget, previewFrameForTarget) {
         if (previewRequested && previewFrameForTarget != null) {
@@ -1805,31 +1820,113 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         previewRequested, previewTarget, previewStatus.sourceGeneration, previewStatus.capability,
         uiState.selectedStreamUrl, uiState.streamSelectionNonce,
     ) {
-        if (!previewRequested || previewStatus.capability == SeekPreviewCapability.UNAVAILABLE) return@LaunchedEffect
+        if (!previewRequested) return@LaunchedEffect
         unavailablePreviewTarget = null
         seekPreviewProvider.memoryFrameAt(previewTarget)?.let { frame ->
             if (seekPreviewProvider.matchesTarget(frame, previewTarget)) seekPreviewFrame = frame
         }
-        if (seekPreviewProvider.matchesTarget(seekPreviewFrame, previewTarget)) return@LaunchedEffect
+        if (seekPreviewProvider.matchesTarget(seekPreviewFrame, previewTarget)) {
+            seekPreviewProvider.warmWindow(previewTarget)
+            return@LaunchedEffect
+        }
+        if (previewStatus.capability == SeekPreviewCapability.UNAVAILABLE) return@LaunchedEffect
         delay(SEEK_PREVIEW_DEBOUNCE_MS)
         val frame = loadSeekPreviewFrame(seekPreviewProvider, previewTarget)
         if (frame != null && seekPreviewProvider.matchesTarget(frame, previewTarget)) {
             seekPreviewFrame = frame
+            seekPreviewProvider.warmWindow(previewTarget)
         } else {
             unavailablePreviewTarget = previewStatus.sourceGeneration to previewTarget
         }
     }
 
-    // Warm only after playback is stable. Foreground requests preempt this bounded work.
-    LaunchedEffect(hasPlaybackStarted, isBuffering, isPlaying, seekInteraction.phase, previewStatus.sourceGeneration) {
-        if (!hasPlaybackStarted || isBuffering || !isPlaying || seekInteraction.browsing || args.isLiveStream) {
-            return@LaunchedEffect
+    // Monitor continuously: a previously healthy buffer is not permission to keep downloading.
+    val latestSeekBrowsing by rememberUpdatedState(seekInteraction.browsing)
+    // Low-memory TVs and heavy remuxes also accumulate rewind previews, without a second
+    // video connection or decoder. Only cache a copy tied to a renderer timestamp.
+    LaunchedEffect(hasPlaybackStarted, isPlaying, isBuffering, seekInteraction.phase,
+        previewStatus.sourceGeneration, frameRateSurface, isCasting) {
+        val surface = frameRateSurface
+        if (Build.VERSION.SDK_INT < 24 || surface == null || !hasPlaybackStarted || !isPlaying ||
+            isBuffering || seekInteraction.browsing || isCasting || args.isLiveStream) return@LaunchedEffect
+        var lastBucket = -1L
+        while (!playerReleased && surface.isValid) {
+            delay(500L)
+            val position = exoPlayer.currentPosition
+            val bucket = quantizeSeekPreviewPosition(position, duration)
+            val format = exoPlayer.videoFormat ?: continue
+            if (bucket == lastBucket || kotlin.math.abs(position - bucket) > 750L || !exoPlayer.isPlaying ||
+                exoPlayer.playbackState != Player.STATE_READY ||
+                !lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) ||
+                format.width <= 0 || format.height <= 0 || format.rotationDegrees != 0 ||
+                format.pixelWidthHeightRatio != 1f) continue
+            val pts = lastRenderedVideoFrameUs.get() / 1_000L
+            if (pts < 0 || kotlin.math.abs(pts - position) > 500L) continue
+            lastBucket = bucket
+            if (seekPreviewProvider.memoryFrameAt(pts) != null) continue
+            val generation = seekPreviewProvider.sourceGeneration
+            val width = 320
+            val height = (width.toLong() * format.height / format.width).toInt().coerceIn(1, 320)
+            val bitmap = kotlinx.coroutines.withTimeoutOrNull(500L) {
+                captureRenderedSeekPreview(surface, width, height)
+            } ?: continue
+            // Discard copies crossing a seek, surface replacement, or delayed render.
+            val afterPts = lastRenderedVideoFrameUs.get() / 1_000L
+            if (latestSeekBrowsing || generation != seekPreviewProvider.sourceGeneration ||
+                !exoPlayer.isPlaying || kotlin.math.abs(afterPts - pts) > 250L ||
+                kotlin.math.abs(exoPlayer.currentPosition - pts) > 500L) {
+                bitmap.recycle()
+            } else {
+                val retained = seekPreviewProvider.rememberRenderedFrame(pts, bitmap, generation)
+                if (retained?.bitmap !== bitmap) bitmap.recycle()
+            }
         }
-        if (uiState.selectedStream?.preview == null &&
-            (isConstrainedPlaybackDevice || isLikelyHeavyStream(uiState.selectedStream))) return@LaunchedEffect
-        delay(2_000L)
-        if (!playerReleased && exoPlayer.totalBufferedDuration >= 15_000L) {
-            seekPreviewProvider.warmAround(exoPlayer.currentPosition)
+    }
+    LaunchedEffect(hasPlaybackStarted, isBuffering, isPlaying, seekInteraction.phase,
+        previewStatus.sourceGeneration, isCasting) {
+        if (!hasPlaybackStarted || isBuffering || !isPlaying || seekInteraction.browsing ||
+            args.isLiveStream || isCasting) return@LaunchedEffect
+        val guard = SeekPreviewPlaybackGuard()
+        val previewPlaybackListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+            override fun onDroppedVideoFrames(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                droppedFrames: Int, elapsedMs: Long) {
+                if (droppedFrames >= 3) guard.onPlaybackStrain(android.os.SystemClock.elapsedRealtime())
+            }
+            override fun onAudioUnderrun(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {
+                guard.onPlaybackStrain(android.os.SystemClock.elapsedRealtime())
+            }
+        }
+        exoPlayer.addAnalyticsListener(previewPlaybackListener)
+        var warming: Job? = null
+        var nextWarmAt = 0L
+        try {
+            while (!playerReleased) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val format = exoPlayer.videoFormat
+                val imageOnly = uiState.selectedStream?.preview != null
+                val resourceSafe = imageOnly || (!isLowRamPlaybackDevice && !isConstrainedPlaybackDevice && playbackMemoryClassMb >= 256 &&
+                    !isLikelyHeavyStream(uiState.selectedStream) && format != null &&
+                    format.width in 1..1920 && format.height in 1..1080 &&
+                    format.sampleMimeType == MimeTypes.VIDEO_H264)
+                val safe = guard.mayWarm(now, exoPlayer.isPlaying,
+                    exoPlayer.playbackState == Player.STATE_READY && exoPlayer.playerError == null,
+                    exoPlayer.totalBufferedDuration, latestSeekBrowsing,
+                    lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED), resourceSafe)
+                if (!safe && warming?.isActive == true) {
+                    warming?.cancel()
+                    seekPreviewProvider.cancelPending()
+                } else if (safe && warming?.isActive != true && now >= nextWarmAt) {
+                    nextWarmAt = now + 8_000L
+                    warming = launch { seekPreviewProvider.warmNext(exoPlayer.currentPosition) }
+                }
+                delay(250L)
+            }
+        } finally {
+            warming?.cancel()
+            exoPlayer.removeAnalyticsListener(previewPlaybackListener)
+            // A new foreground request owns cancellation while entering paused browsing.
+            if (!latestSeekBrowsing) seekPreviewProvider.cancelPending()
         }
     }
 
@@ -4579,7 +4676,11 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                                 val progress = (controlsPreviewPosition.toFloat() / duration).coerceIn(0f, 1f)
                                 val offset = (maxWidth * progress - previewWidth / 2f)
                                     .coerceIn(0.dp, (maxWidth - previewWidth).coerceAtLeast(0.dp))
-                                com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
+                                if (!isTouchDevice) SeekPreviewFilmstrip(
+                                    frame = previewFrameForTarget, neighbors = previewNeighbors,
+                                    positionMs = controlsPreviewPosition,
+                                    sourceGeneration = previewStatus.sourceGeneration,
+                                ) else com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
                                     frame = previewFrameForTarget,
                                     positionMs = controlsPreviewPosition,
                                     sourceGeneration = previewStatus.sourceGeneration,
@@ -4954,7 +5055,11 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                           Box(
                             modifier = Modifier.fillMaxWidth().seekPreviewOverlay().height(previewHeight + 2.dp),
                           ) {
-                            com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
+                            if (!isTouchDevice) SeekPreviewFilmstrip(
+                                frame = previewFrameForTarget, neighbors = previewNeighbors,
+                                positionMs = previewPosition,
+                                sourceGeneration = previewStatus.sourceGeneration,
+                            ) else com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
                                 frame = previewFrameForTarget,
                                 positionMs = previewPosition,
                                 sourceGeneration = previewStatus.sourceGeneration,

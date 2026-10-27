@@ -702,9 +702,13 @@ fun MobilePlayerBottomSection(
                 )
 
                 // Floating seek thumbnail preview card
-                val previewCardWidth = 150.dp
-                val previewCardHeight = previewCardWidth * 9f / 16f
                 val previewDensity = LocalDensity.current
+                // Narrow portrait layouts can offer less than 150dp. Position using the
+                // actual card width so the preview keeps the same gap above the playhead.
+                val previewCardWidth = if (trackWidthPx > 0) {
+                    with(previewDensity) { trackWidthPx.toDp().coerceAtMost(150.dp) }
+                } else 150.dp
+                val previewCardHeight = previewCardWidth * 9f / 16f
                 val previewCardWidthPx = with(previewDensity) { previewCardWidth.toPx() }
                 val previewOffsetY = with(previewDensity) {
                     (scrubberHeight / 2f - needleHeight / 2f - 4.dp - previewCardHeight).roundToPx()
