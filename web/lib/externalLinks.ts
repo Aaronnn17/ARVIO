@@ -18,31 +18,28 @@ export function traktSearchUrl(title: string): string {
   return `https://trakt.tv/search?query=${encodeURIComponent(title)}`;
 }
 
-const traktPages = new Map<string, Promise<string | null>>();
+/**
+ * The title's Trakt page. The relay looks it up by IMDb/TMDB id and redirects
+ * (the browser build has no Trakt key and Trakt blocks the app backend);
+ * without a relay, or when Trakt doesn't know the id, it opens a title search.
+ */
+export function traktLinkUrl(item: Ids & { title: string }, relayHasLink: boolean): string {
+  const relay = (config.resolverUrl || "").replace(/\/+$/, "");
+  if (!relayHasLink || !/^https?:/.test(relay)) return traktSearchUrl(item.title);
+  const params = new URLSearchParams({ type: item.mediaType === "movie" ? "movie" : "show", title: item.title });
+  if (item.imdbId) params.set("imdb", item.imdbId);
+  else params.set("tmdb", String(item.id));
+  return `${relay}/trakt/link?${params.toString()}`;
+}
 
-/** The title's Trakt page (trakt.tv/shows/<slug>), looked up by id once. */
-export function traktTitleUrl(item: Ids): Promise<string | null> {
-  if (!config.traktClientId) return Promise.resolve(null);
-  const kind = item.mediaType === "movie" ? "movie" : "show";
-  const [source, id] = item.imdbId ? ["imdb", item.imdbId] : ["tmdb", String(item.id)];
-  const key = `${kind}:${source}:${id}`;
-  const known = traktPages.get(key);
-  if (known) return known;
-  const lookup = (async () => {
-    try {
-      const response = await fetch(`https://api.trakt.tv/search/${source}/${encodeURIComponent(id)}?type=${kind}`, {
-        headers: { "trakt-api-version": "2", "trakt-api-key": config.traktClientId },
-        signal: typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(8000) : undefined
-      });
-      if (!response.ok) return null;
-      const results = await response.json() as Array<{ type?: string; movie?: { ids?: { slug?: string } }; show?: { ids?: { slug?: string } } }>;
-      const slug = results.find((result) => result.type === kind)?.[kind]?.ids?.slug;
-      return slug ? `https://trakt.tv/${kind === "movie" ? "movies" : "shows"}/${encodeURIComponent(slug)}` : null;
-    } catch {
-      return null;
-    }
-  })();
-  traktPages.set(key, lookup);
-  void lookup.then((url) => { if (!url) traktPages.delete(key); });
-  return lookup;
+let traktLinkSupport: Promise<boolean> | null = null;
+/** Whether the deployed relay has the /trakt/link redirect (its /health lists it). */
+export function relaySupportsTraktLink(): Promise<boolean> {
+  const relay = (config.resolverUrl || "").replace(/\/+$/, "");
+  if (!/^https?:/.test(relay)) return Promise.resolve(false);
+  traktLinkSupport ??= fetch(`${relay}/health`, { cache: "no-store" })
+    .then((response) => response.ok ? response.json() as Promise<{ features?: string[] }> : null)
+    .then((health) => Boolean(health?.features?.includes("trakt-link")))
+    .catch(() => false);
+  return traktLinkSupport;
 }

@@ -24,11 +24,15 @@ test('TMDB: no retry on 4xx, title 404s remembered for a day', () => {
 test('View on Simkl / Trakt open the title page', () => {
   const links = read('lib/externalLinks.ts');
   assert.match(links, /https:\/\/api\.simkl\.com\/redirect\?/);
-  assert.match(links, /https:\/\/api\.trakt\.tv\/search\/\$\{source\}/);
-  assert.match(links, /https:\/\/trakt\.tv\/\$\{kind === "movie" \? "movies" : "shows"\}/);
+  assert.match(links, /\$\{relay\}\/trakt\/link\?/);
+  const worker = read('../resolver-worker/src/index.ts');
+  assert.match(worker, /url\.pathname === "\/trakt\/link"/);
+  assert.match(worker, /https:\/\/api\.trakt\.tv\/search\/\$\{source\}/);
+  assert.match(worker, /https:\/\/trakt\.tv\/\$\{kind === "movie" \? "movies" : "shows"\}/);
   const drawer = read('components/details/DetailsDrawer.tsx');
   assert.match(drawer, /\?\? simklRedirectUrl\(displayItem\)/);
-  assert.match(drawer, /href=\{traktPage \?\? traktSearchUrl\(displayItem\.title\)\}/);
+  assert.match(drawer, /href=\{traktLinkUrl\(displayItem, relayTraktLink\)\}/);
+  assert.match(worker, /features: \["trakt-link"\]/);
 });
 
 test('Play shows each startup step', () => {
