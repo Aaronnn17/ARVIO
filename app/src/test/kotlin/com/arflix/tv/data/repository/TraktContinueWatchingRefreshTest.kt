@@ -67,7 +67,7 @@ class TraktContinueWatchingRefreshTest {
         coEvery { tmdb.getTvDetails(any(), any(), any(), any()) } throws IllegalStateException("No artwork in fixture")
         repository = TraktRepository(RuntimeEnvironment.getApplication(), api, tmdb, OkHttpClient(),
             Provider { mockk(relaxed = true) }, profiles, mockk(relaxed = true), providers,
-            mockk(relaxed = true), ContinueWatchingUpdates())
+            mockk(relaxed = true), mockk(relaxed = true), ContinueWatchingUpdates())
         coEvery { api.getLastActivities(any(), any(), any()) } returns mockk<TraktLastActivities>(relaxed = true) {
             every { episodes } returns TraktActivityTimestamps(watchedAt = stamp)
             every { shows } returns null

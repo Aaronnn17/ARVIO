@@ -85,7 +85,7 @@ class TraktLocalWatchedSnapshotTest {
         }
         repository = TraktRepository(RuntimeEnvironment.getApplication(), mockk(relaxed = true), mockk(),
             OkHttpClient(), Provider { syncService }, profiles, mockk(relaxed = true), providers,
-            mockk(relaxed = true), ContinueWatchingUpdates())
+            mockk(relaxed = true), mockk(relaxed = true), ContinueWatchingUpdates())
     }
 
     @After fun tearDown() {

@@ -68,7 +68,7 @@ class TraktWatchedCacheLoadTest {
         coEvery { syncService.getWatchedEpisodes() } returns emptySet()
         repository = TraktRepository(RuntimeEnvironment.getApplication(), api, mockk(), OkHttpClient(),
             Provider { syncService }, profiles, mockk(relaxed = true), providers,
-            mockk(relaxed = true), ContinueWatchingUpdates())
+            mockk(relaxed = true), mockk(relaxed = true), ContinueWatchingUpdates())
     }
 
     @After fun tearDown() {

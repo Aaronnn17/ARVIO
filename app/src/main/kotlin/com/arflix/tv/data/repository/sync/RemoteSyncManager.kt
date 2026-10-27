@@ -24,12 +24,14 @@ class RemoteSyncManager @Inject constructor(
     private val store: SyncProviderStore,
     private val traktProvider: TraktRemoteProvider,
     private val mdbListProvider: MdbListRemoteProvider,
-    private val simklProvider: SimklRemoteProvider
+    private val simklProvider: SimklRemoteProvider,
+    private val wetrakrProvider: com.arflix.tv.data.repository.wetrakr.WeTrakrRemoteProvider? = null
 ) {
     private fun providerFor(provider: SyncProvider): RemoteSyncProvider? = when (provider) {
         SyncProvider.TRAKT -> traktProvider
         SyncProvider.MDBLIST -> mdbListProvider
         SyncProvider.SIMKL -> simklProvider
+        SyncProvider.WETRAKR -> wetrakrProvider
         SyncProvider.NONE -> null
     }
 

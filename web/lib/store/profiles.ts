@@ -1,3 +1,4 @@
+import { weTrakrClient } from "../wetrakr";
 // App store (lib/store.tsx): Profiles: helpers, the cloud pull / local save effects and select, create, edit, delete.
 import { applyPendingWatchlist } from "../watchlistOutbox";
 import { useCallback, useEffect } from "react";
@@ -162,6 +163,7 @@ export function useProfileActions(store: StoreCore & Pick<ReturnType<typeof useR
     traktClient.setProfile(profile.id);
     mdblistClient.setProfile(profile.id);
     simklClient.setProfile(profile.id);
+    weTrakrClient.setProfile(profile.id);
     setTraktConnected(traktClient.isConnected);
     setMdblistConnected(mdblistClient.isConnected);
     setSimklConnected(simklClient.isConnected);

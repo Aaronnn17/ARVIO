@@ -283,6 +283,10 @@ data class SettingsUiState(
     val showMdbListApiKeyDialog: Boolean = false,
     val mdbListConnecting: Boolean = false,
     // Simkl (alternative remote sync provider)
+    val isWeTrakrConnected: Boolean = false,
+    val weTrakrBusy: Boolean = false,
+    val weTrakrCode: com.arflix.tv.data.repository.wetrakr.WeTrakrDeviceCode? = null,
+    val trackingWriteToWeTrakr: Boolean = false,
     val isSimklConnected: Boolean = false,
     val isSimklAuthStarting: Boolean = false,
     val isSimklPolling: Boolean = false,
@@ -447,6 +451,7 @@ class SettingsViewModel @Inject constructor(
     private val mdbListRepository: com.arflix.tv.data.repository.MdbListRepository,
     private val syncProviderStore: com.arflix.tv.data.repository.sync.SyncProviderStore,
     private val watchHistoryRepository: com.arflix.tv.data.repository.WatchHistoryRepository,
+    private val weTrakr: com.arflix.tv.data.repository.wetrakr.WeTrakrRepository,
     private val simklAuthManager: com.arflix.tv.data.repository.simkl.SimklAuthManager,
     private val simklSyncService: com.arflix.tv.data.repository.simkl.SimklSyncService,
     private val streamIntegrationRepository: StreamIntegrationRepository,
@@ -900,12 +905,15 @@ class SettingsViewModel @Inject constructor(
                 mdbListCode = null,
                 mdbListUrl = null,
                 mdbListUsername = null,
+                isWeTrakrConnected = weTrakr.isConnected(),
+                weTrakrBusy = false, weTrakrCode = null,
                 isSimklConnected = isSimkl,
                 simklUsername = null,
                 trackingWatchlistReadMode = trackingPreferences.watchlistReadMode,
                 trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
                 trackingWatchedReadMode = trackingPreferences.watchedReadMode,
                 trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                trackingWriteToWeTrakr = trackingPreferences.writeToWeTrakr == true,
                 trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                 lastSyncTime = null,
                 syncedMovies = 0,
@@ -4835,6 +4843,7 @@ class SettingsViewModel @Inject constructor(
                         trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
                         trackingWatchedReadMode = trackingPreferences.watchedReadMode,
                         trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                        trackingWriteToWeTrakr = trackingPreferences.writeToWeTrakr == true,
                         trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                         toastMessage = SettingsMessage.Res(R.string.settings_trakt_connected_toast),
                         toastType = ToastType.SUCCESS
@@ -4957,6 +4966,7 @@ class SettingsViewModel @Inject constructor(
                 trackingContinueReadMode = preferences.continueWatchingReadMode,
                 trackingWatchedReadMode = preferences.watchedReadMode,
                 trackingWriteToTrakt = false,
+                trackingWriteToWeTrakr = preferences.writeToWeTrakr == true,
                 trackingWriteToSimkl = preferences.writeToSimkl == true,
                 toastMessage = SettingsMessage.Res(R.string.settings_trakt_disconnected),
                 toastType = ToastType.SUCCESS
@@ -5014,6 +5024,7 @@ class SettingsViewModel @Inject constructor(
                 trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
                 trackingWatchedReadMode = trackingPreferences.watchedReadMode,
                 trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                trackingWriteToWeTrakr = trackingPreferences.writeToWeTrakr == true,
                 trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                 toastMessage = SettingsMessage.Res(R.string.mdblist_connected),
                 toastType = ToastType.SUCCESS
@@ -5117,6 +5128,7 @@ class SettingsViewModel @Inject constructor(
                         trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
                         trackingWatchedReadMode = trackingPreferences.watchedReadMode,
                         trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                        trackingWriteToWeTrakr = trackingPreferences.writeToWeTrakr == true,
                         trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                         toastMessage = SettingsMessage.Res(R.string.mdblist_connected),
                         toastType = ToastType.SUCCESS
@@ -5200,6 +5212,7 @@ class SettingsViewModel @Inject constructor(
                 trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
                 trackingWatchedReadMode = trackingPreferences.watchedReadMode,
                 trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                trackingWriteToWeTrakr = trackingPreferences.writeToWeTrakr == true,
                 trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                 toastMessage = SettingsMessage.Res(R.string.mdblist_disconnected),
                 toastType = ToastType.SUCCESS
@@ -5273,6 +5286,7 @@ class SettingsViewModel @Inject constructor(
                             trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
                             trackingWatchedReadMode = trackingPreferences.watchedReadMode,
                             trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                            trackingWriteToWeTrakr = trackingPreferences.writeToWeTrakr == true,
                             trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                             toastMessage = SettingsMessage.Res(R.string.settings_simkl_connected),
                             toastType = ToastType.SUCCESS
@@ -5330,6 +5344,7 @@ class SettingsViewModel @Inject constructor(
                         trackingContinueReadMode = trackingPreferences.continueWatchingReadMode,
                         trackingWatchedReadMode = trackingPreferences.watchedReadMode,
                         trackingWriteToTrakt = trackingPreferences.writeToTrakt == true,
+                        trackingWriteToWeTrakr = trackingPreferences.writeToWeTrakr == true,
                         trackingWriteToSimkl = trackingPreferences.writeToSimkl == true,
                         toastMessage = SettingsMessage.Res(R.string.settings_simkl_connected),
                         toastType = ToastType.SUCCESS
@@ -5386,6 +5401,45 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    private var weTrakrJob: kotlinx.coroutines.Job? = null
+    fun toggleWeTrakr() {
+        val profile = profileManager.getProfileIdSync()
+        val cancel = _uiState.value.weTrakrBusy
+        weTrakrJob?.cancel()
+        weTrakrJob = viewModelScope.launch {
+            try {
+                if (cancel) { weTrakr.cancel(profile); return@launch }
+                if (weTrakr.isConnected(profile)) {
+                    weTrakr.disconnect(profile)
+                    syncProviderStore.onProviderDisconnected(com.arflix.tv.data.repository.sync.SyncProvider.WETRAKR, profile)
+                } else {
+                    _uiState.value = _uiState.value.copy(weTrakrBusy = true)
+                    val code = weTrakr.start(profile)
+                    if (profileManager.getProfileIdSync() != profile) return@launch
+                    _uiState.value = _uiState.value.copy(weTrakrCode = code)
+                    while (System.currentTimeMillis() < code.expiresAt && profileManager.getProfileIdSync() == profile) {
+                        delay(code.interval * 1000)
+                        if (weTrakr.poll(profile)) {
+                            syncProviderStore.onProviderConnected(com.arflix.tv.data.repository.sync.SyncProvider.WETRAKR, profile)
+                            break
+                        }
+                    }
+                    if (!weTrakr.isConnected(profile)) throw com.arflix.tv.data.repository.wetrakr.WeTrakrError(410, "expired_token")
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (profileManager.getProfileIdSync() == profile) _uiState.value = _uiState.value.copy(toastMessage = SettingsMessage.Raw(e.message ?: "WeTrakr unavailable"), toastType = ToastType.ERROR)
+            } finally {
+                if (profileManager.getProfileIdSync() == profile) {
+                    val prefs = syncProviderStore.getTrackingPreferences()
+                    _uiState.value = _uiState.value.copy(weTrakrBusy = false, weTrakrCode = null, isWeTrakrConnected = weTrakr.isConnected(profile),
+                        trackingWriteToWeTrakr = prefs.writeToWeTrakr == true, trackingWatchlistReadMode = prefs.watchlistReadMode,
+                        trackingContinueReadMode = prefs.continueWatchingReadMode, trackingWatchedReadMode = prefs.watchedReadMode)
+                }
+            }
+        }
+    }
+
     fun setTrackingReadMode(
         feature: com.arflix.tv.data.repository.sync.TrackingFeature,
         mode: com.arflix.tv.data.repository.sync.TrackingReadMode
@@ -5408,6 +5462,7 @@ class SettingsViewModel @Inject constructor(
             val preferences = syncProviderStore.getTrackingPreferences()
             _uiState.value = _uiState.value.copy(
                 trackingWriteToTrakt = preferences.writeToTrakt == true,
+                trackingWriteToWeTrakr = preferences.writeToWeTrakr == true,
                 trackingWriteToSimkl = preferences.writeToSimkl == true
             )
             syncLocalStateToCloud(silent = true, force = true)
