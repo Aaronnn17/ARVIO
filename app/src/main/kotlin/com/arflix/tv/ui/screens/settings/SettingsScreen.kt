@@ -256,6 +256,7 @@ import com.arflix.tv.ui.skin.resolveAccentColor
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.appBackgroundDark
 import com.arflix.tv.ui.theme.BackgroundElevated
+import com.arflix.tv.ui.theme.ErrorRed
 import com.arflix.tv.ui.theme.contrastingContentColor
 import com.arflix.tv.ui.theme.Pink
 import com.arflix.tv.ui.theme.SuccessGreen
@@ -8681,6 +8682,8 @@ private fun IptvSettings(
                             modifier = Modifier.fillMaxWidth()
                                 .background(if (isSelected) Pink.copy(alpha = 0.15f) else Color.Transparent)
                                 .then(Modifier.combinedClickable(
+                                    onClickLabel = stringResource(R.string.settings_source_menu_open),
+                                    onLongClickLabel = stringResource(R.string.settings_source_menu_select),
                                     onClick = { if (selectionMode) { selectedIndices = if (isSelected) selectedIndices - index else selectedIndices + index; if (selectedIndices.isEmpty()) selectionMode = false } else menuPlaylistId = playlist.id },
                                     onLongClick = { if (!selectionMode) { selectionSection = "m3u"; selectionMode = true; selectedIndices = setOf(index) } }
                                 ))
@@ -8698,8 +8701,11 @@ private fun IptvSettings(
                                 MobileSourceRowTitle(name = playlist.name, showMenuHint = !selectionMode)
                                 // Only the account state (days left, streams): the address is set in the editor.
                                 val fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist)
+                                val epgSuffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }
                                 if (accountInfo[playlist.id]?.sourceFingerprint == fingerprint) {
-                                    IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = fingerprint, fallback = "", suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
+                                    IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = fingerprint, fallback = "", suffix = epgSuffix, textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
+                                } else if (epgSuffix.isNotEmpty()) {
+                                    Text(epgSuffix.removePrefix(" • "), style = ArflixTypography.caption.copy(fontSize = 13.sp), color = TextSecondary, maxLines = 1, modifier = Modifier.padding(top = 4.dp))
                                 }
                             }
                             if (!selectionMode) {
@@ -8735,6 +8741,8 @@ private fun IptvSettings(
                             modifier = Modifier.fillMaxWidth()
                                 .background(if (isSelected) Pink.copy(alpha = 0.15f) else Color.Transparent)
                                 .then(Modifier.combinedClickable(
+                                    onClickLabel = stringResource(R.string.settings_source_menu_open),
+                                    onLongClickLabel = stringResource(R.string.settings_source_menu_select),
                                     onClick = { if (selectionMode) { selectedIndices = if (isSelected) selectedIndices - index else selectedIndices + index; if (selectedIndices.isEmpty()) selectionMode = false } else menuPortalId = portal.id },
                                     onLongClick = { if (!selectionMode) { selectionSection = "stalker"; selectionMode = true; selectedIndices = setOf(index) } }
                                 ))
@@ -13717,12 +13725,19 @@ private fun MobileSourceMenuSheet(
     onDelete: () -> Unit
 ) {
     var deleteArmed by remember { mutableStateOf(false) }
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    // Slides the sheet down before acting, as a swipe or a tap beside it does.
+    fun closeThen(action: () -> Unit) {
+        scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss(); action() }
+    }
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = BackgroundElevated,
         contentColor = TextPrimary
     ) {
-        Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
             Text(
                 title,
                 style = ArflixTypography.cardTitle.copy(fontSize = 16.sp),
@@ -13732,17 +13747,17 @@ private fun MobileSourceMenuSheet(
                 modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp)
             )
             MobileSourceMenuItem(Icons.Default.List, stringResource(R.string.settings_source_menu_categories), TextPrimary) {
-                onDismiss(); onCategories()
+                closeThen(onCategories)
             }
             MobileSourceMenuItem(Icons.Default.Edit, stringResource(R.string.settings_source_menu_edit), TextPrimary) {
-                onDismiss(); onEdit()
+                closeThen(onEdit)
             }
             MobileSourceMenuItem(
                 Icons.Default.Delete,
                 stringResource(if (deleteArmed) R.string.settings_source_menu_delete_confirm else R.string.delete),
-                Color(0xFFFF8A8A)
+                ErrorRed
             ) {
-                if (deleteArmed) { onDismiss(); onDelete() } else deleteArmed = true
+                if (deleteArmed) closeThen(onDelete) else deleteArmed = true
             }
         }
     }
