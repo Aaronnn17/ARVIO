@@ -1417,6 +1417,7 @@
     <string name="component_media_logo">%1$s logo</string>
     <string name="component_badge_new_episode">New Episode</string>
     <string name="component_badge_new_episode_short">New</string>
+    <string name="component_next_season_episode">Next: S%1$dE%2$d</string>
     <string name="component_time_left_minutes">%1$dmin left</string>
     <string name="component_time_left_hours">%1$dhr left</string>
     <string name="component_time_left_hours_minutes">%1$dhr %2$dmin left</string>

@@ -5252,7 +5252,9 @@ data class ContinueWatchingItem(
                 id = 0,
                 seasonNumber = season,
                 episodeNumber = episode,
-                name = episodeTitle ?: "Episode $episode"
+                name = episodeTitle ?: "Episode $episode",
+                displaySeason = displaySeason,
+                displayEpisode = displayEpisode
             )
         } else null
 

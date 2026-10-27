@@ -321,6 +321,7 @@
     <string name="component_media_logo">%1$s-Logo</string>
     <string name="component_badge_new_episode">Neue Episode</string>
     <string name="component_badge_new_episode_short">Neu</string>
+    <string name="component_next_season_episode">Nächste Folge: S%1$dE%2$d</string>
     <string name="component_time_left_minutes">Noch %1$d Min.</string>
     <string name="component_time_left_hours">Noch %1$d Std.</string>
     <string name="component_time_left_hours_minutes">Noch %1$d:%2$02d h</string>

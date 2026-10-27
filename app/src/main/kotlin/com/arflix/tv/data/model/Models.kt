@@ -104,7 +104,10 @@ data class NextEpisode(
     val seasonNumber: Int,
     val episodeNumber: Int,
     val name: String,
-    val overview: String = ""
+    val overview: String = "",
+    // Presentation numbers can differ from the canonical episode used for playback (anime).
+    val displaySeason: Int? = null,
+    val displayEpisode: Int? = null
 ) : Serializable
 
 /**

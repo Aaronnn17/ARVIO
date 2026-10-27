@@ -504,8 +504,8 @@ fun MediaCard(
                             Text(
                                 text = stringResource(
                                     R.string.component_season_episode_marker,
-                                    nextEpisode.seasonNumber,
-                                    nextEpisode.episodeNumber
+                                    nextEpisode.displaySeason ?: nextEpisode.seasonNumber,
+                                    nextEpisode.displayEpisode ?: nextEpisode.episodeNumber
                                 ),
                                 style = ArvioSkin.typography.badge,
                                 color = ArvioSkin.colors.textPrimary,
@@ -586,7 +586,7 @@ private val CONTINUE_WATCHING_FULL_BADGE_MIN_WIDTH = 140.dp
 
 /** Remaining time for the Continue Watching badge, e.g. "25min left", or "25m" when [compact]. */
 @Composable
-private fun timeRemainingBadgeLabel(totalMinutes: Int, compact: Boolean): String {
+internal fun timeRemainingBadgeLabel(totalMinutes: Int, compact: Boolean): String {
     val hours = totalMinutes / 60
     val minutes = totalMinutes % 60
     return when {
