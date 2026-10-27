@@ -376,29 +376,11 @@ fun MediaCard(
 
                 // Subtle green watched badge
                 if (item.isWatched) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                        .padding(bottom = 6.dp, end = 6.dp)
-                        .size(14.dp)
-                        .background(
-                            color = ArvioSkin.colors.watchedGreen.copy(alpha = 0.2f),
-                            shape = CircleShape
-                        )
-                        .border(
-                            width = 1.dp,
-                            color = ArvioSkin.colors.watchedGreen,
-                            shape = CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        tint = ArvioSkin.colors.watchedGreen,
-                        modifier = Modifier.size(8.dp)
+                    WatchedBadge(
+                        Modifier.align(Alignment.BottomEnd)
+                            .padding(bottom = 6.dp, end = 6.dp)
+                            .testTag("media_watched_${item.mediaType}_${item.id}")
                     )
-                }
                 }
 
                 // Subtle playback progress bar for Continue Watching.
@@ -887,7 +869,34 @@ fun FeaturedMediaCard(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .padding(start = 10.dp, end = if (item.isWatched) 36.dp else 10.dp, top = 8.dp, bottom = 8.dp)
+        )
+        if (item.isWatched) {
+            WatchedBadge(
+                Modifier.align(Alignment.BottomEnd)
+                    .padding(bottom = 8.dp, end = 10.dp)
+                    .testTag("featured_watched_${item.mediaType}_${item.id}"),
+                size = 18.dp
+            )
+        }
+    }
+}
+
+/** The green tick on a watched title. Every card that shows a title draws this one. */
+@Composable
+fun WatchedBadge(modifier: Modifier = Modifier, size: Dp = 14.dp) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .background(color = ArvioSkin.colors.watchedGreen.copy(alpha = 0.2f), shape = CircleShape)
+            .border(width = 1.dp, color = ArvioSkin.colors.watchedGreen, shape = CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.Check,
+            contentDescription = null,
+            tint = ArvioSkin.colors.watchedGreen,
+            modifier = Modifier.size(size * (8f / 14f))
         )
     }
 }

@@ -61,6 +61,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import com.arflix.tv.ui.components.WatchedBadge
 import com.arflix.tv.ui.components.LocalBottomBarInset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
@@ -4400,27 +4401,7 @@ internal fun SeasonButton(
         )
 
         if (isFullyWatched) {
-            Box(
-                modifier = Modifier
-                    .size(14.dp)
-                    .background(
-                        color = ArvioSkin.colors.watchedGreen.copy(alpha = 0.2f),
-                        shape = CircleShape
-                    )
-                    .border(
-                        width = 1.dp,
-                        color = ArvioSkin.colors.watchedGreen,
-                        shape = CircleShape
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = null,
-                    tint = ArvioSkin.colors.watchedGreen,
-                    modifier = Modifier.size(8.dp)
-                )
-            }
+            WatchedBadge()
         }
         }
         Box(Modifier.fillMaxWidth().height(2.dp).background(if (isSelected) targetTextColor else Color.Transparent))
