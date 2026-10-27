@@ -478,7 +478,13 @@ export function classifyLiveFailure(faults: LiveFault[], context: LiveFailureCon
         ? translateUi("This channel's video comes from an insecure http:// server. Safari and the browsers on iPhone and iPad block that inside a secure page, and there is no setting to allow it. Watch it in Chrome or Edge on a computer, in the ARVIO app, or in VLC.")
         : translateUi("This channel's video comes from an insecure http:// server, which browsers block inside a secure page. Allow insecure content for web.arvio.tv and the video comes straight from your provider to your computer, for free. Chrome or Edge: click the icon left of the address, then Site settings, set Insecure content to Allow, then reload. Firefox: click the shield or lock icon in the address bar and turn off protection for this site. Then press Retry.") };
   }
-  const statuses = faults.flatMap((entry) => statusOf(entry) ? [{ status: statusOf(entry), attempt: entry.attempt }] : []);
+  // A 401/403 from ARVIO's own backend hop is usually the provider's anti-bot
+  // wall refusing a datacenter address. When the viewer's own connection got
+  // through without an HTTP refusal, it says nothing about the subscription.
+  const backendHop = (attempt: LiveAttempt) => attempt.route === "manifest-relay" || attempt.route === "manifest-direct" || attempt.route === "app-proxy";
+  const directReached = faults.some((entry) => entry.attempt.route === "direct" && !statusOf(entry));
+  const statuses = faults.flatMap((entry) => statusOf(entry) ? [{ status: statusOf(entry), attempt: entry.attempt }] : [])
+    .filter(({ status, attempt }) => !(directReached && backendHop(attempt) && (status === 401 || status === 403)));
   // The relay refusing the session itself (402, or a ticketless 403 from a
   // relay that requires tickets): never blame the subscription for it.
   if (relayDenied(faults, context)) {

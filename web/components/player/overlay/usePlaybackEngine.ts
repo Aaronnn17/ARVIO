@@ -273,14 +273,19 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
     // treat it as a failure and escalate down the ladder (next URL, then remux).
     let stallTimer: number | undefined;
     let playableWatchdog: number | undefined;
+    // The last request the engine saw fail during this attempt (see player.ts).
+    let lastFailedResource: string | undefined;
+    const onResourceError = (event: Event) => { lastFailedResource = (event as CustomEvent<{ url?: string }>).detail?.url ?? lastFailedResource; };
+    video.addEventListener("arvio-resource-error", onResourceError);
     const armStallTimer = () => {
+      lastFailedResource = undefined;
       window.clearTimeout(stallTimer);
       window.clearTimeout(playableWatchdog);
       // Live channels that hang (provider accepts the connection but never sends
       // data) need a shorter leash than VOD so the ladder keeps moving.
       stallTimer = window.setTimeout(() => {
         if (cancelled) return;
-        if (video.readyState < 1) handlePlaybackError({ transport: currentRung.transport ?? stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source." });
+        if (video.readyState < 1) handlePlaybackError({ transport: currentRung.transport ?? stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source.", ...(lastFailedResource ? { resourceUrl: lastFailedResource } : {}) });
         // A cold debrid link has to be fetched and cached by the provider
         // before the first byte arrives, which regularly exceeds the VOD
         // budget — condemning sources that were about to work.
@@ -289,7 +294,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       // own frame deadline; the original attempt must not cancel a new relay.
       playableWatchdog = window.setTimeout(() => {
         if (cancelled || hasPlayed || video.readyState >= 2) return;
-        handlePlaybackError({ transport: currentRung.transport ?? stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source." });
+        handlePlaybackError({ transport: currentRung.transport ?? stream.transport ?? "file", kind: "network", fatal: true, retryable: true, code: "STARTUP_TIMEOUT", message: "The source did not respond. Please try again or choose another source.", ...(lastFailedResource ? { resourceUrl: lastFailedResource } : {}) });
       }, liveTv ? (currentRung.startupMs ?? 10000) + 5000 : (parseDebridStream(stream.originalUrl ?? stream.url) ? 38000 : 20000));
     };
     let awaitingGesture = false;
@@ -600,6 +605,7 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       window.clearTimeout(stallTimer);
       window.clearTimeout(playableWatchdog);
       video.removeEventListener("play", onUserPlay);
+      video.removeEventListener("arvio-resource-error", onResourceError);
       video.removeEventListener("playing", onFirstPlaying);
       video.removeEventListener("timeupdate", onFirstPlaying);
       clearAttemptStart();

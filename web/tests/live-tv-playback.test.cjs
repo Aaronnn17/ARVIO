@@ -531,3 +531,17 @@ test('a 403 seen only through ARVIO servers still lets the viewer\'s own connect
   const blocked = [...walled, { attempt: direct, fault: { kind: 'network', resourceUrl: 'http://185.245.1.253/hls/a.ts' } }];
   assert.equal(live.classifyLiveFailure(blocked, { browser: 'Chrome', relayAvailable: true, relayTicket: true }).kind, 'insecure-media');
 });
+
+test('Strong8K-style failure: timeouts directly, 403 only at the app backend, http:// IP segments', () => {
+  const a = (route, variant, transport, hlsEngine) => ({ url: 'x', route, variant, transport, hlsEngine, target: 'x' });
+  const faults = [
+    { attempt: a('direct', 'original', 'hls', 'mse'), fault: { kind: 'network', code: 'STARTUP_TIMEOUT', resourceUrl: 'http://185.245.1.253/hls/a.ts' } },
+    { attempt: a('direct', 'twin', 'mpegts'), fault: { kind: 'unsupported', code: 'FormatUnsupported' } },
+    { attempt: a('manifest-relay', 'original', 'hls', 'mse'), fault: { kind: 'network', httpStatus: 403, code: 'manifestLoadError' } }
+  ];
+  const ctx = { browser: 'Chrome', relayAvailable: true, relayTicket: true };
+  assert.equal(live.classifyLiveFailure(faults, ctx).kind, 'insecure-media');
+  // Without the segment address: not "your subscription", just unreachable.
+  const unknown = faults.map((f, i) => i === 0 ? { ...f, fault: { kind: 'network', code: 'STARTUP_TIMEOUT' } } : f);
+  assert.notEqual(live.classifyLiveFailure(unknown, ctx).kind, 'provider-refused');
+});
