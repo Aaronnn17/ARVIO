@@ -6,7 +6,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -68,7 +68,9 @@ import kotlin.math.roundToInt
  *
  *  1. **It is the handle that is held, not the row.** These rows already use a long press for the
  *     selection mode (bulk delete) and a tap for editing; the handle is the one place on the row
- *     that has no other meaning, so the drag starts there at once, without waiting for a long press.
+ *     that has no other meaning. Like the IPTV categories it is held for a moment first: the phone
+ *     vibrates and the row is framed, so the move is announced before the finger travels. A drag
+ *     that started on the first movement gave no sign of its start at all.
  *  2. **The order is kept locally while the row is held and stored once, on release.** The stores
  *     behind these lists read the order, change it and write it back; several moves fired within
  *     one frame would each read the same old order and undo one another. One move per drop, of as
@@ -359,13 +361,13 @@ fun <T> DragHandleReorderColumn(
                     Modifier
                         .pointerInput(itemKey) {
                             try {
-                                detectVerticalDragGestures(
+                                detectDragGesturesAfterLongPress(
                                     onDragStart = { state.onDragStart(itemKey) },
                                     onDragEnd = { state.onDragStop() },
                                     onDragCancel = { state.onDragStop() },
-                                    onVerticalDrag = { change, amount ->
+                                    onDrag = { change, amount ->
                                         change.consume()
-                                        state.onDrag(amount)
+                                        state.onDrag(amount.y)
                                     }
                                 )
                             } finally {
