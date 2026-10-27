@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import { MediaCard } from "@/components/media/MediaCard";
 import { RailScroller } from "@/components/media/RailScroller";
 import { premiumAllows } from "@/lib/premiumGate";
-import { relaySupportsTraktLink, simklRedirectUrl, traktLinkUrl } from "@/lib/externalLinks";
+import { relaySupportsTraktLink, simklRedirectUrl, traktLinkUrl, traktPageViaSimkl } from "@/lib/externalLinks";
 import { getContinueWatching, saveWatchedState } from "@/lib/cloud";
 import { parseDebridStream } from "@/lib/debrid";
 import { clearPlayOnOpen, peekPlayOnOpen } from "@/lib/playIntent";
@@ -155,6 +155,16 @@ function DetailsView({ item }: { item: MediaItem }) {
   const [logo, setLogo] = useState<string | null>(null);
   const [relayTraktLink, setRelayTraktLink] = useState(false);
   useEffect(() => { let active = true; void relaySupportsTraktLink().then((ok) => { if (active) setRelayTraktLink(ok); }); return () => { active = false; }; }, []);
+  // Trakt's own page, found through Simkl's id mapping; the relay redirect and
+  // a title search remain the fallbacks.
+  const [traktPage, setTraktPage] = useState<string | null>(null);
+  const traktImdb = detailsItem?.imdbId ?? item.imdbId ?? null;
+  useEffect(() => {
+    setTraktPage(null);
+    let active = true;
+    void traktPageViaSimkl({ id: item.id, imdbId: traktImdb, mediaType: item.mediaType }).then((url) => { if (active) setTraktPage(url); });
+    return () => { active = false; };
+  }, [item.id, item.mediaType, traktImdb]);
 
   const displayItem = detailsItem ?? item;
   const priorityConfig = useMemo(() => getPriorityConfig(settings), [settings]);
@@ -494,7 +504,7 @@ function DetailsView({ item }: { item: MediaItem }) {
           </div>
           <div className="detail-links">
             <a href={simklUrl} target="_blank" rel="noopener noreferrer" className="detail-link">{translateUi("View on Simkl")}</a>
-            <a href={traktLinkUrl(displayItem, relayTraktLink)} target="_blank" rel="noopener noreferrer" className="detail-link">{translateUi("View on Trakt")}</a>
+            <a href={traktPage ?? traktLinkUrl(displayItem, relayTraktLink)} target="_blank" rel="noopener noreferrer" className="detail-link">{translateUi("View on Trakt")}</a>
           </div>
           {!streams.length && !isTv && busy !== "Finding sources" && (
             <p className="detail-action-hint">{translateUi("Sources will appear here when an installed addon returns results.")}</p>

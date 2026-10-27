@@ -31,7 +31,8 @@ test('View on Simkl / Trakt open the title page', () => {
   assert.match(worker, /https:\/\/trakt\.tv\/\$\{kind === "movie" \? "movies" : "shows"\}/);
   const drawer = read('components/details/DetailsDrawer.tsx');
   assert.match(drawer, /\?\? simklRedirectUrl\(displayItem\)/);
-  assert.match(drawer, /href=\{traktLinkUrl\(displayItem, relayTraktLink\)\}/);
+  assert.match(drawer, /href=\{traktPage \?\? traktLinkUrl\(displayItem, relayTraktLink\)\}/);
+  assert.match(links, /ids\?\.traktslug/);
   assert.match(worker, /features: \["trakt-link"\]/);
 });
 

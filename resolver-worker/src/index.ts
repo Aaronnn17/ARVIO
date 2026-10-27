@@ -124,8 +124,13 @@ async function traktLink(url: URL, env: Env): Promise<Response> {
   if (known) return go(known, 86400);
   try {
     const response = await fetch(`https://api.trakt.tv/search/${source}/${encodeURIComponent(id)}?type=${kind}`, {
-      headers: { "trakt-api-version": "2", "trakt-api-key": env.TRAKT_CLIENT_ID, "user-agent": "ARVIO/1.0" }
+      headers: { "content-type": "application/json", "trakt-api-version": "2", "trakt-api-key": env.TRAKT_CLIENT_ID, "user-agent": "ARVIO/1.0" }
     });
+    // ?debug=1: the lookup's own status, for support (no keys or tokens).
+    if (url.searchParams.get("debug") === "1") {
+      const body = await response.clone().text().catch(() => "");
+      return new Response(JSON.stringify({ status: response.status, sample: body.slice(0, 160) }), { headers: { "content-type": "application/json" } });
+    }
     if (response.ok) {
       const results = await response.json<Array<Record<string, { ids?: { slug?: string } } | string | undefined>>>();
       const match = results.find((result) => result.type === kind)?.[kind] as { ids?: { slug?: string } } | undefined;

@@ -43,3 +43,34 @@ export function relaySupportsTraktLink(): Promise<boolean> {
     .catch(() => false);
   return traktLinkSupport;
 }
+
+const traktViaSimkl = new Map<string, Promise<string | null>>();
+/**
+ * The title's Trakt page from Simkl's id mapping (Simkl records Trakt's slug).
+ * Runs in the browser: Simkl answers CORS with the public client id, while
+ * Trakt itself rate-limits Cloudflare egress and blocks the app backend.
+ */
+export function traktPageViaSimkl(item: Ids): Promise<string | null> {
+  if (!config.simklClientId) return Promise.resolve(null);
+  const key = `${item.mediaType}:${item.imdbId ?? `tmdb${item.id}`}`;
+  const known = traktViaSimkl.get(key);
+  if (known) return known;
+  const client = encodeURIComponent(config.simklClientId);
+  const lookup = (async () => {
+    try {
+      const query = item.imdbId ? `imdb=${encodeURIComponent(item.imdbId)}` : `tmdb=${item.id}&type=${item.mediaType === "movie" ? "movie" : "show"}`;
+      const found = await fetch(`https://api.simkl.com/search/id?${query}&client_id=${client}`).then((r) => r.ok ? r.json() : null) as Array<{ type?: string; ids?: { simkl?: number } }> | null;
+      const hit = found?.find((entry) => entry.ids?.simkl) ?? null;
+      if (!hit?.ids?.simkl) return null;
+      const section = hit.type === "movie" ? "movies" : hit.type === "anime" ? "anime" : "tv";
+      const full = await fetch(`https://api.simkl.com/${section}/${hit.ids.simkl}?extended=full&client_id=${client}`).then((r) => r.ok ? r.json() : null) as { ids?: { traktslug?: string } } | null;
+      const slug = full?.ids?.traktslug;
+      return slug ? `https://trakt.tv/${section === "movies" ? "movies" : "shows"}/${encodeURIComponent(slug)}` : null;
+    } catch {
+      return null;
+    }
+  })();
+  traktViaSimkl.set(key, lookup);
+  void lookup.then((url) => { if (!url) traktViaSimkl.delete(key); });
+  return lookup;
+}
