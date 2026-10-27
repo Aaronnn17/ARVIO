@@ -418,6 +418,11 @@ function DetailsView({ item }: { item: MediaItem }) {
     ?? (displayItem as unknown as { ids?: Parameters<typeof getSimklItemUrl>[0] })?.ids;
   const simklUrl = getSimklItemUrl(simklIds, displayItem.mediaType === "movie" ? "movie" : "tv")
     ?? `https://simkl.com/search?q=${encodeURIComponent(displayItem.title)}`;
+  // Trakt opens the title's own page straight from its TMDB/IMDb id.
+  const traktKind = displayItem.mediaType === "movie" ? "movie" : "show";
+  const traktUrl = displayItem.imdbId
+    ? `https://trakt.tv/search/imdb/${encodeURIComponent(displayItem.imdbId)}?id_type=${traktKind}`
+    : `https://trakt.tv/search/tmdb/${displayItem.id}?id_type=${traktKind}`;
   const busyPlaying = Boolean(autoplayRequest) || starting;
   const playLabel = busyPlaying
     ? (busy === "Finding sources" || streams.length === 0 ? translateUi("Finding sources…") : translateUi("Starting…"))
@@ -488,6 +493,7 @@ function DetailsView({ item }: { item: MediaItem }) {
           </div>
           <div className="detail-links">
             <a href={simklUrl} target="_blank" rel="noopener noreferrer" className="detail-link">{translateUi("View on Simkl")}</a>
+            <a href={traktUrl} target="_blank" rel="noopener noreferrer" className="detail-link">{translateUi("View on Trakt")}</a>
           </div>
           {!streams.length && !isTv && busy !== "Finding sources" && (
             <p className="detail-action-hint">{translateUi("Sources will appear here when an installed addon returns results.")}</p>

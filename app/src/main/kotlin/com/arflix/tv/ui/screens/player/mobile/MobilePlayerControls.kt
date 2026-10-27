@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.annotation.DrawableRes
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import com.arflix.tv.R
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -110,13 +111,13 @@ fun MobilePlayerTopBar(
         ) {
             MobileIconButton(
                 iconRes = R.drawable.ic_huge_arrow_left,
-                contentDescription = "Back",
+                contentDescription = stringResource(R.string.back),
                 onClick = onClose,
                 size = 24.dp
             )
             MobileIconButton(
                 iconRes = R.drawable.ic_huge_lock,
-                contentDescription = "Lock Controls",
+                contentDescription = stringResource(R.string.mplayer_cd_lock_controls),
                 onClick = onLock
             )
         }
@@ -129,21 +130,21 @@ fun MobilePlayerTopBar(
             if (showPipButton) {
                 MobileIconButton(
                     iconRes = R.drawable.ic_huge_pip,
-                    contentDescription = "Picture in Picture",
+                    contentDescription = stringResource(R.string.player_cd_pip),
                     onClick = onPip
                 )
             }
             if (showCastButton) {
                 MobileIconButton(
                     iconRes = if (isCasting) R.drawable.ic_huge_cast_connected else R.drawable.ic_huge_cast,
-                    contentDescription = "Cast",
+                    contentDescription = stringResource(R.string.player_cd_cast_to_tv),
                     tint = if (isCasting) Color(0xFF66D9FF) else MobilePlayerTokens.InkPrimary,
                     onClick = onCast
                 )
             }
             MobileIconButton(
                 iconRes = R.drawable.ic_huge_more_horizontal,
-                contentDescription = "More Settings",
+                contentDescription = stringResource(R.string.mplayer_more_settings),
                 onClick = onOpenMoreSettings
             )
         }
@@ -183,7 +184,7 @@ fun MobilePlayerCenterControls(
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_huge_replay_10),
-                contentDescription = "Rewind 10 seconds",
+                contentDescription = stringResource(R.string.player_cd_rewind),
                 tint = MobilePlayerTokens.InkPrimary,
                 modifier = Modifier.size(34.dp)
             )
@@ -206,7 +207,7 @@ fun MobilePlayerCenterControls(
             if (!isBuffering) {
                 Icon(
                     painter = painterResource(if (isPlaying) R.drawable.ic_huge_pause else R.drawable.ic_huge_play),
-                    contentDescription = if (isPlaying) "Pause" else "Play",
+                    contentDescription = stringResource(if (isPlaying) R.string.player_cd_pause else R.string.play),
                     tint = MobilePlayerTokens.InkPrimary,
                     modifier = Modifier.size(if (isPlaying) 38.dp else 42.dp)
                 )
@@ -229,7 +230,7 @@ fun MobilePlayerCenterControls(
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_huge_forward_10),
-                contentDescription = "Forward 10 seconds",
+                contentDescription = stringResource(R.string.player_cd_forward),
                 tint = MobilePlayerTokens.InkPrimary,
                 modifier = Modifier.size(34.dp)
             )
@@ -412,7 +413,11 @@ private fun UpNextPromptCard(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = if (isAutoplay) "PLAYING NEXT IN ${countdownSeconds}S" else "UP NEXT",
+                text = if (isAutoplay) {
+                    stringResource(R.string.mplayer_playing_next_in, countdownSeconds)
+                } else {
+                    stringResource(R.string.mplayer_up_next)
+                },
                 color = MobilePlayerTokens.InkTertiary,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
@@ -446,7 +451,7 @@ private fun UpNextPromptCard(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Cancel",
+                    text = stringResource(R.string.cancel),
                     color = MobilePlayerTokens.InkPrimary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold
@@ -549,14 +554,14 @@ fun MobilePlayerBottomSection(
             ) {
                 MobileIconButton(
                     iconRes = R.drawable.ic_huge_film,
-                    contentDescription = "Sources",
+                    contentDescription = stringResource(R.string.sources),
                     size = 20.dp,
                     onClick = onOpenSources
                 )
                 if (isEpisodeListAvailable) {
                     MobileIconButton(
                         iconRes = R.drawable.ic_huge_list_video,
-                        contentDescription = "Episodes",
+                        contentDescription = stringResource(R.string.episodes),
                         size = 20.dp,
                         onClick = onOpenEpisodes
                     )
@@ -769,7 +774,7 @@ fun MobilePlayerBottomSection(
                     modifier = Modifier.size(15.dp)
                 )
                 Text(
-                    text = currentAudioTrack.ifBlank { "Audio" },
+                    text = currentAudioTrack.ifBlank { stringResource(R.string.audio) },
                     color = MobilePlayerTokens.InkSecondary,
                     fontSize = 12.5.sp,
                     style = androidx.compose.ui.text.TextStyle(
@@ -806,7 +811,11 @@ fun MobilePlayerBottomSection(
                     modifier = Modifier.size(15.dp)
                 )
                 Text(
-                    text = if (isSubtitleOff) "Subtitles Off" else "Subtitles: $currentSubtitleTrack",
+                    text = if (isSubtitleOff) {
+                        stringResource(R.string.mplayer_subtitles_off)
+                    } else {
+                        stringResource(R.string.mplayer_subtitles_track, currentSubtitleTrack)
+                    },
                     color = MobilePlayerTokens.InkSecondary,
                     fontSize = 12.5.sp,
                     style = androidx.compose.ui.text.TextStyle(
@@ -843,7 +852,7 @@ fun MobilePlayerBottomSection(
                 )
                 val speedLabel = if (currentPlaybackSpeed == 1f) "1x" else "${currentPlaybackSpeed}x"
                 Text(
-                    text = "$speedLabel Speed",
+                    text = stringResource(R.string.mplayer_speed_chip, speedLabel),
                     color = MobilePlayerTokens.InkSecondary,
                     fontSize = 12.5.sp,
                     style = androidx.compose.ui.text.TextStyle(

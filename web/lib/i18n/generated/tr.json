@@ -1552,5 +1552,6 @@
   "{value0}% · watched": "%{value0} · izlendi",
   "· Guide match": "· Rehber maçı",
   "· Possible broadcast": "· Olası yayın",
-  "· {value0}d archive": "· {value0}d arşivi"
+  "· {value0}d archive": "· {value0}d arşivi",
+  "View on Trakt": "Trakt'de görüntüle"
 }

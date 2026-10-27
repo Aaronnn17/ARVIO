@@ -26,10 +26,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.arflix.tv.R
 
 /**
  * Vertical edge HUD indicator for Brightness (Left) and Volume (Right).
@@ -118,7 +120,7 @@ fun MobileEdgeIndicator(
 
             // Percentage or "Auto" value label
             Text(
-                text = if (isAuto) "Auto" else "${(levelPct * 100).toInt()}%",
+                text = if (isAuto) stringResource(R.string.auto) else "${(levelPct * 100).toInt()}%",
                 color = activeColor,
                 fontSize = 11.sp,
                 fontWeight = if (isBoost) FontWeight.Bold else FontWeight.SemiBold,

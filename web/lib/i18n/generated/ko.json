@@ -1552,5 +1552,6 @@
   "{value0}% · watched": "{value0}% · 시청함",
   "· Guide match": "· 가이드 매치",
   "· Possible broadcast": "· 방송가능",
-  "· {value0}d archive": "· {value0}d 아카이브"
+  "· {value0}d archive": "· {value0}d 아카이브",
+  "View on Trakt": "Trakt에서 보기"
 }

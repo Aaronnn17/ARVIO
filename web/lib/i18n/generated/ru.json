@@ -1552,5 +1552,6 @@
   "{value0}% · watched": "{value0}% · просмотрено",
   "· Guide match": "· Ведущий матч",
   "· Possible broadcast": "· Возможна трансляция",
-  "· {value0}d archive": "· {value0}d архив"
+  "· {value0}d archive": "· {value0}d архив",
+  "View on Trakt": "Посмотреть на Trakt"
 }
