@@ -528,6 +528,16 @@ export function usePlaybackEngine({ autoSourceHopsRef, currentStreamRef, failure
       setError(true);
       setShowControls(true);
       const failure = classifyLiveFailure(liveFaults, liveContext(), livePlan?.blocked, livePlan?.shape);
+      // Support diagnostics without credentials: which routes failed and how
+      // (status, error code, the failing host). Read from the console as
+      // window.__arvioLiveDiagnostics.
+      try {
+        const hostOf = (url?: string) => { try { const parsed = new URL(url ?? ""); const inner = parsed.searchParams.get("url"); return inner ? `${parsed.host}→${new URL(inner).protocol}//${new URL(inner).host}` : `${parsed.protocol}//${parsed.host}`; } catch { return ""; } };
+        (window as unknown as { __arvioLiveDiagnostics?: unknown }).__arvioLiveDiagnostics = { kind: failure.kind, attempts: liveFaults.map(({ attempt, fault }) => ({
+          route: attempt.route, variant: attempt.variant, transport: attempt.transport, engine: attempt.hlsEngine,
+          status: fault?.httpStatus, code: fault?.code, kind: fault?.kind, resource: hostOf(fault?.resourceUrl)
+        })) };
+      } catch { /* diagnostics are best-effort */ }
       setLiveFailure?.(failure);
       setErrorDetail(failure.message);
     }
