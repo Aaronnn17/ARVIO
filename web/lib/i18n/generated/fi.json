@@ -1554,5 +1554,6 @@
   "{value0}% · watched": "{value0} % · katsottu",
   "· Guide match": "· Opasottelu",
   "· Possible broadcast": "· Mahdollinen lähetys",
-  "· {value0}d archive": "· {value0}d arkisto"
+  "· {value0}d archive": "· {value0}d arkisto",
+  "View on Trakt": "Näytä Trakt"
 }
