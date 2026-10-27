@@ -391,7 +391,7 @@ export function VideoPlayer({
       if (playhead > 5) resumeAtRef.current = playhead;
       if (canTryRemux(stream)) {
         onToast("This file's audio can't play directly in this browser. Converting the audio…");
-        onSelectStream({ ...stream }, { forceRemux: true, forceBrowser: true });
+        onSelectStream({ ...stream, convertAudio: true }, { forceRemux: true, forceBrowser: true });
         return;
       }
       if (canProviderTranscode(stream)) {

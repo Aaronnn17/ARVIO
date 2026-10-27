@@ -1148,6 +1148,7 @@
     <string name="component_label_media">Medios</string>
     <string name="component_media_logo">Logo de %1$s</string>
     <string name="component_badge_new_episode">Nuevo Episodio</string>
+    <string name="component_badge_new_episode_short">Nuevo</string>
     <string name="component_ep_left_one">Queda 1 ep</string>
     <string name="component_eps_left">Quedan %1$d eps</string>
     <string name="component_season_episode_marker">T%1$d • E%2$d</string>

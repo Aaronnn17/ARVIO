@@ -829,6 +829,7 @@
     <string name="component_label_media">Média</string>
     <string name="component_media_logo">Logo %1$s</string>
     <string name="component_badge_new_episode">Nouvel épisode</string>
+    <string name="component_badge_new_episode_short">Nouveau</string>
     <string name="component_ep_left_one">1 ép restant</string>
     <string name="component_eps_left">%1$d ép restants</string>
     <string name="component_season_episode_marker">S%1$d • E%2$d</string>

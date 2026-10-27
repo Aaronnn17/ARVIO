@@ -104,9 +104,13 @@ export function usePlaybackActions(store: StoreCore & Pick<ReturnType<typeof use
         let timer: number | undefined;
         try {
           const prepared = await Promise.race([
-            // A probe already showed this file's audio would be dropped here
-            // (E-AC-3/DTS on Chromium): start in the audio-converting path.
-            prepareBrowserStream(candidate, settingsRef.current, { ...options, ...(!options.forceTranscode && !candidate.homeServer && needsAudioConversion(candidate) ? { forceRemux: true } : {}), signal: attempt.signal }).then(result => {
+            prepareBrowserStream(...(() => {
+              // A probe already showed this file's audio would be dropped here
+              // (E-AC-3/DTS on Chromium): start in the audio-converting path.
+              const next = options.forceTranscode || candidate.convertAudio || candidate.homeServer || candidate.transcoded || !needsAudioConversion(candidate)
+                ? candidate : { ...candidate, convertAudio: true };
+              return [next, settingsRef.current, { ...options, ...(next.convertAudio ? { forceRemux: true } : {}), signal: attempt.signal }] as const;
+            })()).then(result => {
               if (attempt.signal.aborted) {
                 void reportHomeServerPlayback(result, settingsRef.current, "stop").catch(() => undefined);
                 throw new Error("Playback cancelled");
