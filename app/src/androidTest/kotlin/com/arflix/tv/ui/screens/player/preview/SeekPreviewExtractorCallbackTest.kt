@@ -53,4 +53,3 @@ class SeekPreviewExtractorCallbackTest {
         bitmap.recycle()
     }
 }
-

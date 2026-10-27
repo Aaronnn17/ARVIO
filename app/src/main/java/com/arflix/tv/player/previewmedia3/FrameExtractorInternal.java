@@ -819,4 +819,3 @@ public final class FrameExtractorInternal {
     }
   }
 }
-

@@ -282,4 +282,3 @@ public final class FrameExtractor implements AutoCloseable {
     return FrameExtractorInternal.getInstance().getDecoderCounters();
   }
 }
-
