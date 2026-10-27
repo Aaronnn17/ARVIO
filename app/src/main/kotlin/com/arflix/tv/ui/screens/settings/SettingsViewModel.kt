@@ -82,6 +82,7 @@ import com.arflix.tv.data.repository.SyncStatus
 import com.arflix.tv.data.repository.SyncResult
 import com.arflix.tv.ui.components.CARD_LAYOUT_MODE_LANDSCAPE
 import com.arflix.tv.ui.components.normalizeCardLayoutMode
+import com.arflix.tv.ui.components.withItemMoved
 import com.arflix.tv.updater.ApkDownloader
 import com.arflix.tv.updater.ApkInstaller
 import com.arflix.tv.updater.AppUpdate
@@ -2373,6 +2374,14 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun moveStreamProviderBy(id: String, steps: Int) {
+        viewModelScope.launch {
+            if (streamIntegrationRepository.moveProviderItemBy(id, steps)) {
+                syncLocalStateToCloud(silent = true)
+            }
+        }
+    }
+
     fun toggleStreamProvider(id: String) {
         viewModelScope.launch {
             streamIntegrationRepository.toggleProviderItem(id)
@@ -3176,6 +3185,14 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun moveCatalogBy(catalogId: String, steps: Int) {
+        viewModelScope.launch {
+            if (catalogRepository.moveCatalogBy(catalogId, steps)) {
+                syncLocalStateToCloud(silent = true)
+            }
+        }
+    }
+
     fun saveIptvConfig(m3uUrl: String, epgUrl: String) {
         viewModelScope.launch {
             val trimmedM3u = m3uUrl.trim()
@@ -3327,6 +3344,25 @@ class SettingsViewModel @Inject constructor(
         val item = current.removeAt(idx)
         current.add(idx + 1, item)
         persistStalkerPortals(current)
+    }
+
+    fun onMoveStalkerPortalBy(portalId: String, steps: Int) {
+        val current = _uiState.value.iptvStalkerPortals
+        val idx = current.indexOfFirst { it.id == portalId }
+        if (idx < 0) return
+        val updated = current.withItemMoved(idx, (idx + steps).coerceIn(0, current.lastIndex))
+        if (updated == current) return
+        persistStalkerPortals(updated)
+    }
+
+    /** Moves a playlist several places at once - one save, so one reload, for a row dragged on the phone. */
+    fun moveIptvPlaylistBy(playlistId: String, steps: Int) {
+        val current = _uiState.value.iptvPlaylists
+        val idx = current.indexOfFirst { it.id == playlistId }
+        if (idx < 0) return
+        val updated = current.withItemMoved(idx, (idx + steps).coerceIn(0, current.lastIndex))
+        if (updated == current) return
+        saveIptvPlaylists(updated)
     }
 
     fun onRemoveStalkerPortal(portalId: String) {

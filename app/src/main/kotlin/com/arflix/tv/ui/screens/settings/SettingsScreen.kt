@@ -59,6 +59,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -152,6 +153,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.activity.compose.BackHandler
 import androidx.compose.material3.Icon
 import com.arflix.tv.ui.components.LoadingIndicator
+import com.arflix.tv.ui.components.DragHandleReorderColumn
 import com.arflix.tv.ui.components.dragReorderItem
 import com.arflix.tv.ui.components.rememberDragReorderState
 import com.arflix.tv.ui.components.MobileSettingsCategory
@@ -2220,7 +2222,8 @@ fun SettingsScreen(
                             focusedActionIndex = integrationActionIndex,
                             onToggle = { viewModel.toggleStreamProvider(it.id) },
                             onMoveUp = { viewModel.moveStreamProviderUp(it.id) },
-                            onMoveDown = { viewModel.moveStreamProviderDown(it.id) }
+                            onMoveDown = { viewModel.moveStreamProviderDown(it.id) },
+                            onMoveBy = { item, steps -> viewModel.moveStreamProviderBy(item.id, steps) }
                         )
                         "iptv" -> if (showIptvCategoriesSettings) {
                             IptvCategoriesSettings(
@@ -2328,6 +2331,8 @@ fun SettingsScreen(
                             onFallbackChannelLogosToggle = viewModel::setFallbackChannelLogosEnabled,
                             favoritesOnHomeEnabled = uiState.iptvFavoritesOnHome,
                             onFavoritesOnHomeToggle = viewModel::setIptvFavoritesOnHome,
+                            onMovePlaylistBy = { id, steps -> viewModel.moveIptvPlaylistBy(id, steps) },
+                            onMoveStalkerPortalBy = { id, steps -> viewModel.onMoveStalkerPortalBy(id, steps) },
                         )
                         "TV" -> IptvSettings(
                             playlists = uiState.iptvPlaylists,
@@ -2392,6 +2397,8 @@ fun SettingsScreen(
                             onFallbackChannelLogosToggle = viewModel::setFallbackChannelLogosEnabled,
                             favoritesOnHomeEnabled = uiState.iptvFavoritesOnHome,
                             onFavoritesOnHomeToggle = viewModel::setIptvFavoritesOnHome,
+                            onMovePlaylistBy = { id, steps -> viewModel.moveIptvPlaylistBy(id, steps) },
+                            onMoveStalkerPortalBy = { id, steps -> viewModel.onMoveStalkerPortalBy(id, steps) },
                         )
                         "home_server" -> HomeServerSettings(
                             connections = uiState.homeServerConnections,
@@ -2453,7 +2460,8 @@ fun SettingsScreen(
                                     viewModel.removeCatalog(catalog.id)
                                 }
                             },
-                            onUnpackCatalog = { catalog -> viewModel.unpackCatalog(catalog.id) }
+                            onUnpackCatalog = { catalog -> viewModel.unpackCatalog(catalog.id) },
+                            onMoveCatalogBy = { catalog, steps -> viewModel.moveCatalogBy(catalog.id, steps) }
                         )
                         "stremio" -> StremioAddonsSettings(
                             addons = stremioAddons,
@@ -5770,7 +5778,9 @@ private fun MobileSettingsSubPage(
                     onSearchModeChange = { viewModel.setStreamSearchMode(it) },
                     onToggle = { viewModel.toggleStreamProvider(it.id) },
                     onMoveUp = { viewModel.moveStreamProviderUp(it.id) },
-                    onMoveDown = { viewModel.moveStreamProviderDown(it.id) }
+                    onMoveDown = { viewModel.moveStreamProviderDown(it.id) },
+                    onMoveBy = { item, steps -> viewModel.moveStreamProviderBy(item.id, steps) },
+                    pageScrollState = scrollState
                 )
             }
             "Playback & Controls" -> {
@@ -6211,7 +6221,9 @@ private fun MobileSettingsSubPage(
                     onMoveCatalogUp = { viewModel.moveCatalogUp(it.id) },
                     onMoveCatalogDown = { viewModel.moveCatalogDown(it.id) },
                     onDeleteCatalog = onDeleteCatalogClick,
-                    onUnpackCatalog = { viewModel.unpackCatalog(it.id) }
+                    onUnpackCatalog = { viewModel.unpackCatalog(it.id) },
+                    onMoveCatalogBy = { catalog, steps -> viewModel.moveCatalogBy(catalog.id, steps) },
+                    pageScrollState = scrollState
                 )
             }
             "TV" -> {
@@ -6281,6 +6293,9 @@ private fun MobileSettingsSubPage(
                     onFallbackChannelLogosToggle = viewModel::setFallbackChannelLogosEnabled,
                     favoritesOnHomeEnabled = uiState.iptvFavoritesOnHome,
                     onFavoritesOnHomeToggle = viewModel::setIptvFavoritesOnHome,
+                    onMovePlaylistBy = { id, steps -> viewModel.moveIptvPlaylistBy(id, steps) },
+                    onMoveStalkerPortalBy = { id, steps -> viewModel.onMoveStalkerPortalBy(id, steps) },
+                    pageScrollState = scrollState,
                 )
             }
             "Home Server" -> {
@@ -8582,6 +8597,10 @@ private fun IptvSettings(
     onFallbackChannelLogosToggle: (Boolean) -> Unit = {},
     favoritesOnHomeEnabled: Boolean = true,
     onFavoritesOnHomeToggle: (Boolean) -> Unit = {},
+    // Touch only: a row dragged by its handle moves several places in one go.
+    onMovePlaylistBy: (playlistId: String, steps: Int) -> Unit = { _, _ -> },
+    onMoveStalkerPortalBy: (portalId: String, steps: Int) -> Unit = { _, _ -> },
+    pageScrollState: ScrollState? = null,
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     var selectionMode by remember { mutableStateOf(false) }
@@ -8598,6 +8617,7 @@ private fun IptvSettings(
     }
 
     if (isMobile) {
+        val heldAccent = resolveAccentColor(fallback = Pink)
         Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
             if (selectionMode) {
                 Row(
@@ -8628,7 +8648,18 @@ private fun IptvSettings(
             }
             MobileSettingsCategory(title = stringResource(R.string.settings_section_playlists)) {
                 MobileSettingsRow(icon = Icons.Default.Add, title = stringResource(R.string.add_playlist), subtitle = if (playlists.isEmpty()) stringResource(R.string.settings_add_tv_lists_hint) else stringResource(R.string.settings_create_another_tv), value = if (playlists.size >= MAX_IPTV_PLAYLISTS) stringResource(R.string.settings_badge_full_short) else "", isFocused = false, showDivider = true, onClick = onConfigure)
-                playlists.forEachIndexed { index, playlist ->
+                DragHandleReorderColumn(
+                    items = playlists,
+                    key = { it.id },
+                    onDrop = { playlist, from, to -> onMovePlaylistBy(playlist.id, to - from) },
+                    heldBackground = BackgroundElevated,
+                    heldAccent = heldAccent,
+                    pageScrollState = pageScrollState,
+                    enabled = !selectionMode && playlists.size > 1
+                ) { playlist, shownIndex, handle, isHeld ->
+                    // The callbacks below address playlists by their place in the stored list; while
+                    // a dropped row waits for the stored order the shown place can differ from it.
+                    val index = playlists.indexOf(playlist)
                     val isSelected = selectedIndices.contains(index)
                     val epgSourceCount = playlist.settingsEpgInput().lineSequence().count { it.isNotBlank() }
                     Column {
@@ -8653,12 +8684,7 @@ private fun IptvSettings(
                                 Text(playlist.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 IptvAccountSubtitle(info = accountInfo[playlist.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(playlist), fallback = playlist.m3uUrl.take(56), suffix = buildString { when { epgSourceCount > 1 -> append(" • $epgSourceCount EPGs"); epgSourceCount == 1 -> append(" • EPG") } }, textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
                             }
-                            if (selectionMode && selectedIndices.size == 1 && isSelected) {
-                                Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
-                                    var dragOffset = 0f; val itemHeight = 64.dp.toPx()
-                                    detectVerticalDragGestures(onDragEnd = { dragOffset = 0f }, onDragCancel = { dragOffset = 0f }) { change, dragAmount -> change.consume(); dragOffset += dragAmount; if (dragOffset > itemHeight) { onMovePlaylistDown(index); dragOffset -= itemHeight } else if (dragOffset < -itemHeight) { onMovePlaylistUp(index); dragOffset += itemHeight } }
-                                })
-                            } else if (!selectionMode) {
+                            if (!selectionMode) {
                                 Icon(
                                     imageVector = Icons.Default.List,
                                     contentDescription = stringResource(R.string.settings_cd_manage_categories),
@@ -8673,9 +8699,10 @@ private fun IptvSettings(
                                 Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (playlist.enabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).clickable { onTogglePlaylist(index) }.padding(3.dp), contentAlignment = if (playlist.enabled) Alignment.CenterEnd else Alignment.CenterStart) {
                                     Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
                                 }
+                                if (playlists.size > 1) MobileReorderHandle(handle = handle, isHeld = isHeld, accent = heldAccent)
                             }
                         }
-                        if (index < playlists.size - 1) {
+                        if (shownIndex < playlists.size - 1 && !isHeld) {
                             Box(modifier = Modifier.fillMaxWidth().height(1.dp).padding(horizontal = 16.dp).background(Color.White.copy(alpha = 0.05f)))
                         }
                     }
@@ -8683,7 +8710,16 @@ private fun IptvSettings(
             }
             if (stalkerPortals.isNotEmpty()) {
                 MobileSettingsCategory(title = stringResource(R.string.settings_section_stalker_portals)) {
-                    stalkerPortals.forEachIndexed { index, portal ->
+                    DragHandleReorderColumn(
+                        items = stalkerPortals,
+                        key = { it.id },
+                        onDrop = { portal, from, to -> onMoveStalkerPortalBy(portal.id, to - from) },
+                        heldBackground = BackgroundElevated,
+                        heldAccent = heldAccent,
+                        pageScrollState = pageScrollState,
+                        enabled = !selectionMode && stalkerPortals.size > 1
+                    ) { portal, shownIndex, handle, isHeld ->
+                    val index = stalkerPortals.indexOf(portal)
                     val isSelected = selectedIndices.contains(index)
                     Column {
                         Row(
@@ -8707,12 +8743,7 @@ private fun IptvSettings(
                                 Text(portal.name, style = ArflixTypography.cardTitle.copy(fontSize = 16.sp), color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 IptvAccountSubtitle(info = accountInfo[portal.id], fingerprint = com.arflix.tv.data.repository.IptvAccountInfoParser.fingerprint(portal), fallback = portal.portalUrl.take(56), suffix = "", textColor = TextSecondary, stacked = true, modifier = Modifier.padding(top = 4.dp))
                             }
-                            if (selectionMode && selectedIndices.size == 1 && isSelected) {
-                                Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(index) {
-                                    var dragOffset = 0f; val itemHeight = 64.dp.toPx()
-                                    detectVerticalDragGestures(onDragEnd = { dragOffset = 0f }, onDragCancel = { dragOffset = 0f }) { change, dragAmount -> change.consume(); dragOffset += dragAmount; if (dragOffset > itemHeight) { onMoveStalkerPortalDown(portal.id); dragOffset -= itemHeight } else if (dragOffset < -itemHeight) { onMoveStalkerPortalUp(portal.id); dragOffset += itemHeight } }
-                                })
-                            } else if (!selectionMode) {
+                            if (!selectionMode) {
                                 Icon(
                                     imageVector = Icons.Default.List,
                                     contentDescription = stringResource(R.string.settings_cd_manage_stalker_categories),
@@ -8726,9 +8757,10 @@ private fun IptvSettings(
                                 Box(modifier = Modifier.width(44.dp).height(24.dp).background(color = if (portal.enabled) SuccessGreen else Color.White.copy(alpha = 0.2f), shape = RoundedCornerShape(13.dp)).clickable { onToggleStalkerPortal(portal.id) }.padding(3.dp), contentAlignment = if (portal.enabled) Alignment.CenterEnd else Alignment.CenterStart) {
                                     Box(modifier = Modifier.size(18.dp).background(color = Color.White, shape = RoundedCornerShape(10.dp)))
                                 }
+                                if (stalkerPortals.size > 1) MobileReorderHandle(handle = handle, isHeld = isHeld, accent = heldAccent)
                             }
                         }
-                        if (index < stalkerPortals.size - 1) {
+                        if (shownIndex < stalkerPortals.size - 1 && !isHeld) {
                             Box(modifier = Modifier.fillMaxWidth().height(1.dp).padding(horizontal = 16.dp).background(Color.White.copy(alpha = 0.05f)))
                         }
                     }
@@ -9876,13 +9908,17 @@ private fun CatalogsSettings(
     onMoveCatalogDown: (CatalogConfig) -> Unit,
     onDeleteCatalog: (CatalogConfig) -> Unit,
     onUnpackCatalog: (CatalogConfig) -> Unit,
-    header: @Composable () -> Unit = {}
+    header: @Composable () -> Unit = {},
+    // Touch only: a row dragged by its handle moves several places in one go.
+    onMoveCatalogBy: (CatalogConfig, Int) -> Unit = { _, _ -> },
+    pageScrollState: ScrollState? = null
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
 
     if (isMobile) {
+        val heldAccent = resolveAccentColor(fallback = Pink)
         Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
             if (selectionMode) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -9906,11 +9942,21 @@ private fun CatalogsSettings(
             }
             if (catalogs.isNotEmpty()) {
                 MobileSettingsCategory(title = stringResource(R.string.settings_section_my_catalogs)) {
-                    catalogs.forEachIndexed { index, catalog ->
+                    DragHandleReorderColumn(
+                        items = catalogs,
+                        key = { it.id },
+                        onDrop = { catalog, from, to -> onMoveCatalogBy(catalog, to - from) },
+                        heldBackground = BackgroundElevated,
+                        heldAccent = heldAccent,
+                        pageScrollState = pageScrollState,
+                        enabled = !selectionMode && catalogs.size > 1
+                    ) { catalog, shownIndex, handle, isHeld ->
+                        // Pack headers follow the stored order; a held row carries none.
+                        val index = catalogs.indexOf(catalog)
                         val title = if (catalog.isPreinstalled && catalog.collectionRailKey == null) { when (catalog.kind) { CatalogKind.COLLECTION -> stringResource(R.string.settings_title_builtin_collection, catalog.title); CatalogKind.COLLECTION_RAIL -> stringResource(R.string.settings_title_builtin_rail, catalog.title); else -> stringResource(R.string.settings_title_builtin, catalog.title) } } else catalog.title
                         val currentPackId = catalog.packId
                         val prevPackId = if (index > 0) catalogs[index - 1].packId else null
-                        val showPackHeader = currentPackId != null && currentPackId != prevPackId && catalog.isBulkDeletablePack
+                        val showPackHeader = currentPackId != null && currentPackId != prevPackId && catalog.isBulkDeletablePack && !isHeld
                         val collectionFallback = stringResource(R.string.settings_collection_fallback)
                         val addonFallback = stringResource(R.string.settings_source_addon)
                         val subtitle = run {
@@ -10006,14 +10052,11 @@ private fun CatalogsSettings(
                                         Spacer(modifier = Modifier.width(8.dp))
                                     }
                                 }
-                                if (selectionMode && selectedIds.size == 1 && isSelected) {
-                                    Icon(imageVector = Icons.Default.DragHandle, contentDescription = stringResource(R.string.settings_cd_drag_reorder), tint = TextSecondary, modifier = Modifier.size(24.dp).pointerInput(catalog.id) {
-                                        var dragOffset = 0f; val itemHeight = 64.dp.toPx()
-                                        detectVerticalDragGestures(onDragEnd = { dragOffset = 0f }, onDragCancel = { dragOffset = 0f }) { change, dragAmount -> change.consume(); dragOffset += dragAmount; if (dragOffset > itemHeight) { onMoveCatalogDown(catalog); dragOffset -= itemHeight } else if (dragOffset < -itemHeight) { onMoveCatalogUp(catalog); dragOffset += itemHeight } }
-                                    })
+                                if (!selectionMode && catalogs.size > 1) {
+                                    MobileReorderHandle(handle = handle, isHeld = isHeld, accent = heldAccent)
                                 }
                             }
-                            if (index < catalogs.size - 1) {
+                            if (shownIndex < catalogs.size - 1 && !isHeld) {
                                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).padding(horizontal = 16.dp).background(Color.White.copy(alpha = 0.05f)))
                             }
                         }
@@ -13621,6 +13664,24 @@ private fun MobileIptvCategoryReorderList(
                 )
             }
         }
+    }
+}
+
+/**
+ * The handle at the end of a phone row that is held and dragged to move the row - see
+ * [DragHandleReorderColumn]. 40dp, so a thumb finds it; the icon inside stays the size of the
+ * others on the row.
+ */
+@Composable
+private fun MobileReorderHandle(handle: Modifier, isHeld: Boolean, accent: Color) {
+    Spacer(modifier = Modifier.width(8.dp))
+    Box(modifier = Modifier.size(40.dp).then(handle), contentAlignment = Alignment.Center) {
+        Icon(
+            imageVector = Icons.Default.DragHandle,
+            contentDescription = stringResource(R.string.settings_cd_drag_reorder),
+            tint = if (isHeld) accent else TextSecondary,
+            modifier = Modifier.size(22.dp)
+        )
     }
 }
 

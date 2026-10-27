@@ -1,5 +1,6 @@
 package com.arflix.tv.ui.screens.settings
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Widgets
@@ -44,6 +46,7 @@ import com.arflix.tv.data.model.StreamIntegrationConfig
 import com.arflix.tv.data.model.StreamIntegrationType
 import com.arflix.tv.data.model.StreamProviderItem
 import com.arflix.tv.data.model.StreamSearchMode
+import com.arflix.tv.ui.components.DragHandleReorderColumn
 import com.arflix.tv.ui.skin.resolveAccentColor
 import com.arflix.tv.ui.theme.ArflixTypography
 import com.arflix.tv.ui.theme.BackgroundElevated
@@ -63,7 +66,10 @@ fun StreamIntegrationsScreen(
     onToggle: (StreamProviderItem) -> Unit = {},
     onMoveUp: (StreamProviderItem) -> Unit = {},
     onMoveDown: (StreamProviderItem) -> Unit = {},
-    onConfigure: (StreamProviderItem) -> Unit = {}
+    onConfigure: (StreamProviderItem) -> Unit = {},
+    // Touch only: a row dragged by its handle moves several places in one go, see ProviderRowMobile.
+    onMoveBy: (StreamProviderItem, Int) -> Unit = { _, _ -> },
+    pageScrollState: ScrollState? = null
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
 
@@ -73,8 +79,8 @@ fun StreamIntegrationsScreen(
             searchMode = searchMode,
             onSearchModeChange = onSearchModeChange,
             onToggle = onToggle,
-            onMoveUp = onMoveUp,
-            onMoveDown = onMoveDown
+            onMoveBy = onMoveBy,
+            pageScrollState = pageScrollState
         )
     } else {
         TvStreamIntegrationsContent(
@@ -99,8 +105,8 @@ private fun MobileStreamIntegrationsContent(
     searchMode: StreamSearchMode,
     onSearchModeChange: (StreamSearchMode) -> Unit,
     onToggle: (StreamProviderItem) -> Unit,
-    onMoveUp: (StreamProviderItem) -> Unit,
-    onMoveDown: (StreamProviderItem) -> Unit
+    onMoveBy: (StreamProviderItem, Int) -> Unit,
+    pageScrollState: ScrollState?
 ) {
     val accentColor = resolveAccentColor(fallback = Pink)
 
@@ -236,23 +242,33 @@ private fun MobileStreamIntegrationsContent(
                     }
                 } else {
                     val showReorder = items.size > 1
-                    items.forEachIndexed { index, item ->
-                        ProviderRowMobile(
-                            item = item,
-                            showReorder = showReorder,
-                            onToggle = { onToggle(item) },
-                            onMoveUp = { onMoveUp(item) },
-                            onMoveDown = { onMoveDown(item) }
-                        )
-
-                        if (index < items.size - 1) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(1.dp)
-                                    .padding(horizontal = 16.dp)
-                                    .background(Color.White.copy(alpha = 0.05f))
+                    DragHandleReorderColumn(
+                        items = items,
+                        key = { it.id },
+                        onDrop = { item, from, to -> onMoveBy(item, to - from) },
+                        heldBackground = BackgroundElevated,
+                        heldAccent = accentColor,
+                        pageScrollState = pageScrollState,
+                        enabled = showReorder
+                    ) { item, index, handle, isHeld ->
+                        Column {
+                            ProviderRowMobile(
+                                item = item,
+                                showReorder = showReorder,
+                                isHeld = isHeld,
+                                handle = handle,
+                                onToggle = { onToggle(item) }
                             )
+
+                            if (index < items.size - 1 && !isHeld) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                        .padding(horizontal = 16.dp)
+                                        .background(Color.White.copy(alpha = 0.05f))
+                                )
+                            }
                         }
                     }
                 }
@@ -264,15 +280,18 @@ private fun MobileStreamIntegrationsContent(
 /**
  * Mobile Provider Row matching Addons section: 16dp horizontal & 14dp vertical padding,
  * 24dp icon tinted TextSecondary, 16sp title, 13sp subtitle,
- * standard 44x24dp toggle switch with 18dp thumb, and 32x32dp squircle Up/Down buttons.
+ * standard 44x24dp toggle switch with 18dp thumb, and a drag handle at the end.
+ *
+ * The handle replaced a pair of up/down buttons: one tap moved a source one place, so putting the
+ * last of ten sources first took nine taps. It is held and dragged like the IPTV categories.
  */
 @Composable
 private fun ProviderRowMobile(
     item: StreamProviderItem,
     showReorder: Boolean,
-    onToggle: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit
+    isHeld: Boolean,
+    handle: Modifier,
+    onToggle: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -332,44 +351,19 @@ private fun ProviderRowMobile(
             )
         }
 
-        // Reorder buttons matching addon section (32x32dp squircle Up / Down)
         if (showReorder) {
-            Spacer(modifier = Modifier.width(12.dp))
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clickable(enabled = item.canMoveUp) { onMoveUp() }
-                    .background(
-                        Color.White.copy(alpha = if (item.canMoveUp) 0.1f else 0.04f),
-                        RoundedCornerShape(8.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Default.ArrowUpward,
-                    contentDescription = stringResource(R.string.stream_integration_move_up),
-                    tint = TextSecondary.copy(alpha = if (item.canMoveUp) 1f else 0.35f),
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-
             Spacer(modifier = Modifier.width(8.dp))
-
             Box(
                 modifier = Modifier
-                    .size(32.dp)
-                    .clickable(enabled = item.canMoveDown) { onMoveDown() }
-                    .background(
-                        Color.White.copy(alpha = if (item.canMoveDown) 0.1f else 0.04f),
-                        RoundedCornerShape(8.dp)
-                    ),
+                    .size(40.dp)
+                    .then(handle),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    Icons.Default.ArrowDownward,
-                    contentDescription = stringResource(R.string.stream_integration_move_down),
-                    tint = TextSecondary.copy(alpha = if (item.canMoveDown) 1f else 0.35f),
-                    modifier = Modifier.size(18.dp)
+                    Icons.Default.DragHandle,
+                    contentDescription = stringResource(R.string.settings_cd_drag_reorder),
+                    tint = if (isHeld) resolveAccentColor(fallback = Pink) else TextSecondary,
+                    modifier = Modifier.size(22.dp)
                 )
             }
         }
