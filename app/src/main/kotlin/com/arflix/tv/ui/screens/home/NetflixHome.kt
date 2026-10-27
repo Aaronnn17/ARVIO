@@ -112,7 +112,9 @@ import com.arflix.tv.ui.components.CardClearLogo
 import com.arflix.tv.ui.components.TrailerPlayer
 import com.arflix.tv.ui.components.MediaCard
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
+import com.arflix.tv.ui.components.timeRemainingBadgeLabel
 import com.arflix.tv.ui.theme.ArflixTypography
+import com.arflix.tv.util.Constants
 import com.arflix.tv.util.TmdbImageSizing
 import com.arflix.tv.util.parseRatingValue
 import com.arflix.tv.ui.components.ImdbSvgRatingBadge
@@ -1219,13 +1221,33 @@ private fun NetflixFeaturedCard(
                             .fillMaxWidth(0.6f)
                     )
                 }
-                if (showProgress && item.progress > 0) {
+                if (showProgress) {
+                    netflixContinueWatchingLabel(item)?.let { label ->
+                        Text(
+                            text = label,
+                            style = ArflixTypography.caption.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(12.dp)
+                                .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .testTag("netflix_continue_status_${item.mediaType}_${item.id}")
+                        )
+                    }
+                }
+                if (showProgress && item.showPlaybackProgress && !item.isWatched &&
+                    item.progress in 1 until Constants.WATCHED_THRESHOLD
+                ) {
                     Box(
                         Modifier
                             .align(Alignment.BottomStart)
                             .fillMaxWidth()
                             .height(4.dp)
                             .background(Color.White.copy(alpha = 0.25f))
+                            .testTag("netflix_continue_progress_${item.mediaType}_${item.id}")
                     ) {
                         Box(
                             Modifier
@@ -1237,6 +1259,23 @@ private fun NetflixFeaturedCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun netflixContinueWatchingLabel(item: MediaItem): String? {
+    if (item.isWatched) return null
+    if (item.mediaType == MediaType.TV) {
+        val episode = item.nextEpisode ?: return null
+        return stringResource(
+            if (item.showPlaybackProgress && item.progress > 0) R.string.continue_season_episode
+            else R.string.component_next_season_episode,
+            episode.displaySeason ?: episode.seasonNumber,
+            episode.displayEpisode ?: episode.episodeNumber
+        )
+    }
+    return item.timeRemainingMinutes?.takeIf { it > 0 }?.let {
+        timeRemainingBadgeLabel(it, compact = false)
     }
 }
 
