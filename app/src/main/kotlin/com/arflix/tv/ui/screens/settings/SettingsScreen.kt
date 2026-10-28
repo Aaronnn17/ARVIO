@@ -1963,29 +1963,8 @@ fun SettingsScreen(
                         .padding(vertical = 18.dp, horizontal = 10.dp)
                 ) {
                     val availableUpdate = uiState.updateStatus as? com.arflix.tv.updater.UpdateStatus.UpdateAvailable
-                    Text(
-                        text = stringResource(R.string.settings),
-                        style = ArflixTypography.cardTitle.copy(fontSize = 19.sp),
-                        color = TextPrimary,
-                        modifier = Modifier
-                            .padding(start = 8.dp)
-                            .padding(bottom = if (availableUpdate != null) 4.dp else 14.dp)
-                    )
-                    // Visible from every section, so an update isn't missed when the Home
-                    // popup is turned off (quiet update notifications).
-                    if (availableUpdate != null) {
-                        Text(
-                            text = stringResource(
-                                R.string.settings_sidebar_update_available,
-                                availableUpdate.update.tag
-                            ),
-                            style = ArflixTypography.caption,
-                            color = Color(0xFF34D399),
-                            modifier = Modifier
-                                .padding(start = 8.dp, end = 4.dp)
-                                .padding(bottom = 12.dp)
-                        )
-                    }
+                    val awaitingCompilation = com.arflix.tv.ui.components.rememberAwaitingProfileCompilation()
+                    SettingsSidebarHeader(availableUpdate?.update?.tag, awaitingCompilation)
 
                     Column(
                         modifier = Modifier
