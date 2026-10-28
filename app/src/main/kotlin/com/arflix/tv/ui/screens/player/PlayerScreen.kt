@@ -806,6 +806,8 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     // The source the player has actually been handed. Until the switch effect prepares a new
     // selection, ExoPlayer still reports the previous video's state and length.
     var loadedSource by remember { mutableStateOf<String?>(null) }
+    // The source already reported as a real, working video (after it started and passed the check).
+    var confirmedSource by remember { mutableStateOf<String?>(null) }
     fun selectedSourceKey(): String? =
         latestUiState.selectedStreamUrl?.let { "${latestUiState.streamSelectionNonce}|$it" }
     // Position, progress and "finished" belong to the selected source only once the player has
@@ -3065,11 +3067,16 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                     }
                     // Picked by hand, or nothing left to switch to: the clip itself says what is
                     // going on (often "downloading"), so it keeps playing with the reason on top.
-                    viewModel.onSelectedStreamPlaybackFailure()
+                    viewModel.onSelectedStreamPlaybackFailure(reportError = false)
                     android.widget.Toast.makeText(
                         context, R.string.player_toast_placeholder_video, android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
+            }
+
+            if (hasPlaybackStarted && playingCheckedRealSource() && confirmedSource != checkedSource) {
+                confirmedSource = checkedSource
+                viewModel.onSelectedSourceConfirmed()
             }
 
             // Buffering watchdog - detect long buffering but do not force a source error popup.

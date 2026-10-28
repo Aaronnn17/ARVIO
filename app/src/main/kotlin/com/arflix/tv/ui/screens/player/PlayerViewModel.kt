@@ -382,6 +382,7 @@ class PlayerViewModel @Inject constructor(
     // The selected source as the addon listed it. Torrentio, Comet … links are swapped for the
     // debrid server's own URL before playback; failover checks hosts by the listed URL.
     private var listedSelectedStream: StreamSource? = null
+    private var confirmedStartupMs = 0L
     private var recentSourceClock: () -> Long = { android.os.SystemClock.elapsedRealtime() }
 
     private fun isCurrentAnime(): Boolean =
@@ -2644,9 +2645,7 @@ class PlayerViewModel @Inject constructor(
         val addonId = _uiState.value.selectedStream?.addonId?.trim()
             .takeUnless { it.isNullOrBlank() }
             ?: currentPreferredAddonId.orEmpty()
-        if (addonId.isNotBlank()) {
-            streamRepository.noteAddonPlaybackStarted(addonId, startupMs)
-        }
+        confirmedStartupMs = startupMs
         Log.i(
             TAG,
             "Playback started addonId=${addonId.ifBlank { "unknown" }} " +
@@ -2659,17 +2658,6 @@ class PlayerViewModel @Inject constructor(
             severity = "info"
         )
         viewModelScope.launch {
-            _uiState.value.selectedStream?.let { stream ->
-                streamRepository.notePlaybackHostSuccess(stream)
-                listedSelectedStream?.takeIf { it.url != stream.url }?.let(streamRepository::notePlaybackHostSuccess)
-                streamRepository.saveLastGoodPlaybackPreference(
-                    mediaType = currentMediaType,
-                    tmdbId = currentMediaId,
-                    season = currentSeason,
-                    episode = currentEpisode,
-                    stream = stream
-                )
-            }
             playbackTelemetryRepository.recordStartup(
                 startupMs = startupMs,
                 retries = startupRetries,
@@ -2678,7 +2666,32 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun onSelectedStreamPlaybackFailure() {
+    /**
+     * The started source is the real video, not an addon's placeholder clip (the player checks
+     * that once its length is known, which can be after the first frame). Only now does it count
+     * as a working source for its addon and host.
+     */
+    fun onSelectedSourceConfirmed() {
+        val stream = _uiState.value.selectedStream ?: return
+        val addonId = stream.addonId.trim().ifBlank { currentPreferredAddonId.orEmpty() }
+        if (addonId.isNotBlank()) {
+            streamRepository.noteAddonPlaybackStarted(addonId, confirmedStartupMs)
+        }
+        val listed = listedSelectedStream
+        viewModelScope.launch {
+            streamRepository.notePlaybackHostSuccess(stream)
+            listed?.takeIf { it.url != stream.url }?.let(streamRepository::notePlaybackHostSuccess)
+            streamRepository.saveLastGoodPlaybackPreference(
+                mediaType = currentMediaType,
+                tmdbId = currentMediaId,
+                season = currentSeason,
+                episode = currentEpisode,
+                stream = stream
+            )
+        }
+    }
+
+    fun onSelectedStreamPlaybackFailure(reportError: Boolean = true) {
         val addonId = _uiState.value.selectedStream?.addonId?.trim()
             .takeUnless { it.isNullOrBlank() }
             ?: currentPreferredAddonId.orEmpty()
@@ -2690,7 +2703,7 @@ class PlayerViewModel @Inject constructor(
         listedSelectedStream?.takeIf { it.url != selected?.url }?.let {
             streamRepository.notePlaybackHostFailure(it, "exo_playback_failure_listed")
         }
-        AppLogger.recordException(
+        if (reportError) AppLogger.recordException(
             throwable = IllegalStateException("Selected stream playback failed"),
             context = playbackDiagnosticContext(
                 phase = "selected_stream_playback_failure",
