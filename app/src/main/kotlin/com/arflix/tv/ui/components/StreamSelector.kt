@@ -107,6 +107,7 @@ import androidx.tv.foundation.lazy.list.rememberTvLazyListState
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Text
 import com.arflix.tv.data.model.IptvVodSourceIds
+import com.arflix.tv.data.repository.isAddonNoticeRow
 import com.arflix.tv.data.model.RecentPlayedSource
 import com.arflix.tv.data.model.findRecentSourceMatch
 import com.arflix.tv.data.model.isDirectStreamUrl
@@ -275,6 +276,10 @@ fun StreamSelector(
     streamSearchStartTime: Long = 0L,
     pluginScrapersLoading: Boolean = false,
     loadingPluginNames: Set<String> = emptySet(),
+    // The profile's audio language as a short code ("de"); null falls back to the app language.
+    preferredAudioLanguage: String? = null,
+    // The film or show title; its words never count as a source language ("The Italian Job").
+    mediaTitle: String = title,
     onFocusedStream: (StreamSource) -> Unit = {},
     onSelect: (StreamSource) -> Unit = {},
     onClose: () -> Unit = {}
@@ -443,9 +448,12 @@ fun StreamSelector(
         findRecentSourceMatch(streams, recentSource)
     }
 
+    // Addon message rows are listed but are not sources.
+    val sourceCount = remember(streams) { streams.count { !isAddonNoticeRow(it) } }
     val unknownSourceLabel = stringResource(R.string.stream_unknown_source)
-    val presentations = remember(streams, unknownSourceLabel) {
-        streams.map { presentSource(it, unknownSourceLabel) }
+    val badgeLanguage = preferredAudioLanguage ?: configuration.locales[0]?.language
+    val presentations = remember(streams, unknownSourceLabel, badgeLanguage, mediaTitle) {
+        streams.map { presentSource(it, unknownSourceLabel, badgeLanguage, mediaTitle) }
     }
 
     // Source ordering follows user addon order first. Within each addon, show the
@@ -474,9 +482,10 @@ fun StreamSelector(
             .thenBy { it.value.title.lowercase() }
         val sorted = presentations.withIndex()
             .sortedWith(
-                compareBy<IndexedValue<SourcePresentation>> {
-                    addonOrder[sourceTabId(it.value.stream)] ?: Int.MAX_VALUE
-                }.then { a, b ->
+                // Addon messages ("⚠️ Comet …") go last, so focus never opens on a row that can't play.
+                compareBy<IndexedValue<SourcePresentation>> { isAddonNoticeRow(it.value.stream) }
+                    .thenBy { addonOrder[sourceTabId(it.value.stream)] ?: Int.MAX_VALUE }
+                    .then { a, b ->
                     if (keepsOwnStreamOrder(a.value.stream) && keepsOwnStreamOrder(b.value.stream)) {
                         a.index.compareTo(b.index)
                     } else {
@@ -728,6 +737,7 @@ fun StreamSelector(
                     title = title,
                     subtitle = subtitle,
                     streams = streams,
+                    sourceCount = sourceCount,
                     flatPresentations = flatPresentations,
                     streamKeys = streamKeys,
                     selectedStream = selectedStream,
@@ -794,7 +804,7 @@ fun StreamSelector(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "${streams.size} ${stringResource(R.string.sources_available)}",
+                                text = "$sourceCount ${stringResource(R.string.sources_available)}",
                                 style = ArflixTypography.caption.copy(fontSize = 12.sp),
                                 color = TextSecondary
                             )
@@ -962,6 +972,7 @@ private fun OledSourceSelectorTv(
     title: String,
     subtitle: String,
     streams: List<StreamSource>,
+    sourceCount: Int,
     flatPresentations: List<SourcePresentation>,
     streamKeys: List<String>,
     selectedStream: StreamSource?,
@@ -1034,7 +1045,7 @@ private fun OledSourceSelectorTv(
                         }
                         Text(
                             text = sourceStatusText(
-                                sourceCount = streams.size,
+                                sourceCount = sourceCount,
                                 completedAddons = completedAddons,
                                 totalAddons = totalAddons,
                                 isLoading = isLoading,
@@ -1197,7 +1208,7 @@ private fun OledSourceSelectorTv(
             focusedTabIndex = focusedTabIndex,
             isFocused = addonRailFocused,
             listState = addonListState,
-            totalSources = streams.size,
+            totalSources = sourceCount,
             count4K = count4K,
             count1080 = count1080,
             completedAddons = completedAddons,
@@ -1224,6 +1235,8 @@ private data class SourcePresentation(
     val transportLabel: String?,
     val multiSourceLabel: String?,
     val languageLabel: String?,
+    // Full badge text when the release names its languages ("🇩🇪 DE +2"); else the label is mapped.
+    val languageBadge: String? = null,
     val chips: List<String>,
     val qualityColor: Color,
     val sizeBytes: Long,
@@ -1265,7 +1278,6 @@ private object StreamRegexes {
     val CH71 = Regex("""\b7[ .]?1\b""", RegexOption.IGNORE_CASE)
     val CH51 = Regex("""\b5[ .]?1\b""", RegexOption.IGNORE_CASE)
     val MULTI_AUDIO = Regex("""\b(MULTI|DUAL[ .-]?AUDIO|MULTI[ .-]?AUDIO)\b""", RegexOption.IGNORE_CASE)
-    val LANGUAGE_HINT = Regex("""\b(ENG|ENGLISH|HIN|HINDI|TAM|TAMIL|TEL|TELUGU|JPN|JAPANESE|KOR|KOREAN|SPA|SPANISH|FRE|FRENCH|GER|GERMAN|ITA|ITALIAN)\b""", RegexOption.IGNORE_CASE)
     val DV = Regex("""\b(DV|DoVi|Dolby[\s._-]*Vision)\b""", RegexOption.IGNORE_CASE)
     val HDR10_PLUS = Regex("""\b(HDR10\+|HDR10\s*PLUS|HDR\s*10\s*\+)\b""", RegexOption.IGNORE_CASE)
     val HDR10 = Regex("""\bHDR10\b""", RegexOption.IGNORE_CASE)
@@ -1442,7 +1454,12 @@ private fun cleanSourceDisplayTitle(raw: String, unknownLabel: String): String {
     return compact ?: oneLine.take(92).trimEnd('.', ' ', '-', '_')
 }
 
-private fun presentSource(stream: StreamSource, unknownSourceLabel: String): SourcePresentation {
+private fun presentSource(
+    stream: StreamSource,
+    unknownSourceLabel: String,
+    preferredLanguage: String? = null,
+    mediaTitle: String = ""
+): SourcePresentation {
     val rawTitle = stream.behaviorHints?.filename?.takeIf { it.isNotBlank() } ?: stream.source
     val title = cleanSourceDisplayTitle(rawTitle, unknownSourceLabel)
     val addonLabel = stream.addonName.split(" - ").firstOrNull()?.trim() ?: stream.addonName
@@ -1562,18 +1579,32 @@ private fun presentSource(stream: StreamSource, unknownSourceLabel: String): Sou
         else -> null
     }
 
-    val subtitleLangs = stream.subtitles.mapNotNull { sub ->
-        sub.lang.takeIf { it.isNotBlank() }
-    }.distinct()
     val hintedLanguage = stream.behaviorHints?.language?.trim()
+    val isMultiAudio = StreamRegexes.MULTI_AUDIO.containsMatchIn(searchBlob) ||
+        hintedLanguage?.contains("dual", ignoreCase = true) == true ||
+        hintedLanguage?.contains("multi", ignoreCase = true) == true
+    // Every language the release names, not just the first ("Eng Deu Ita" carries German too).
+    val namedLanguages = detectSourceAudioLanguages(
+        hintedLanguage = hintedLanguage,
+        sourceTexts = listOf(
+            stream.rawLabel,
+            stream.description,
+            stream.behaviorHints?.filename,
+            stream.source,
+            stream.addonTitle
+        ).filterNotNull(),
+        mediaTitle = mediaTitle
+    )
+    val languageBadge = streamLanguageBadge(namedLanguages, isMultiAudio, preferredLanguage)
     val languageLabel = when {
+        // Chip text: the badge without its flag or globe ("DE +2").
+        languageBadge != null -> if (languageBadge.first().isLetter()) languageBadge
+            else languageBadge.substringAfter(' ')
         hintedLanguage?.contains("dual", ignoreCase = true) == true ||
             hintedLanguage?.contains("multi", ignoreCase = true) == true -> "Multi-audio"
         !hintedLanguage.isNullOrBlank() -> hintedLanguage
         StreamRegexes.MULTI_AUDIO.containsMatchIn(searchBlob) -> "Multi-audio"
-        subtitleLangs.size > 1 -> "${subtitleLangs.size} langs"
-        subtitleLangs.size == 1 -> subtitleLangs.first().uppercase()
-        else -> StreamRegexes.LANGUAGE_HINT.find(searchBlob)?.value?.uppercase()
+        else -> null
     }
 
     val chips = buildList {
@@ -1605,6 +1636,7 @@ private fun presentSource(stream: StreamSource, unknownSourceLabel: String): Sou
         transportLabel = transportLabel,
         multiSourceLabel = multiSourceLabel,
         languageLabel = languageLabel,
+        languageBadge = languageBadge,
         chips = chips.distinct(),
         qualityColor = qualityColor,
         sizeBytes = getSizeBytes(stream),
@@ -2287,7 +2319,7 @@ private fun SourceBadgeTray(
         verticalAlignment = Alignment.CenterVertically
     ) {
         OledBadgeRow(presentation = presentation, maxBadges = maxBadges, inverted = inverted)
-        SourceLanguageBadge(language = presentation.languageLabel, compact = compact, inverted = inverted)
+        SourceLanguageBadge(language = presentation.languageBadge ?: presentation.languageLabel, compact = compact, inverted = inverted)
         SourceSizeBadge(size = presentation.stream.size, compact = compact, inverted = inverted)
     }
 }
@@ -2298,7 +2330,8 @@ private fun SourceLanguageBadge(
     compact: Boolean = false,
     inverted: Boolean = false
 ) {
-    val display = languageBadgeText(language) ?: return
+    val display = (if (language != null && !language.first().isLetter()) language else languageBadgeText(language))
+        ?: return
     Box(
         modifier = Modifier
             .background(
@@ -2383,7 +2416,7 @@ private fun OledBadgeFlow(
         verticalArrangement = Arrangement.spacedBy(5.dp)
     ) {
         SourceSizeBadge(size = presentation.stream.size, compact = true, inverted = inverted)
-        SourceLanguageBadge(language = presentation.languageLabel, compact = true, inverted = inverted)
+        SourceLanguageBadge(language = presentation.languageBadge ?: presentation.languageLabel, compact = true, inverted = inverted)
         sourceBadges(presentation).take(maxBadges).forEach { badge ->
             SourceBadgeView(badge, inverted = inverted)
         }
