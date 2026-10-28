@@ -10,13 +10,14 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import androidx.profileinstaller.DeviceProfileWriter
+import androidx.profileinstaller.ProfileInstaller
 import com.arflix.tv.BuildConfig
 import com.arflix.tv.R
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.util.zip.ZipEntry
-import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
 object ApkInstaller {
@@ -131,7 +132,7 @@ object ApkInstaller {
                     }
                     session.fsync(out)
                 }
-                val hasDexMetadata = withDexMetadata && writeDexMetadata(session, apkFile)
+                val hasDexMetadata = withDexMetadata && writeDexMetadata(context, session, apkFile)
 
                 // Use a broadcast PendingIntent instead of activity — works reliably
                 // on Android TV where the Application context isn't an Activity.
@@ -179,25 +180,28 @@ object ApkInstaller {
     /**
      * Adds the APK's own baseline profile to the session as base.dm, so the system compiles
      * the update with it at install time. Without it, a sideloaded update runs uncompiled
-     * (slow Home scrolling) until background dexopt picks up the profile, often a day later.
+     * (slow Home scrolling) until background dexopt picks up the profile, which on TV boxes
+     * that rarely sit idle-but-awake can take days.
      *
-     * The profile in assets/dexopt is in the Android 9 (P) format, which ART reads on
-     * Android 9-11 only; Android 12+ needs a different version, so it is skipped there.
+     * Dex metadata exists from Android 9. The profile is converted to this device's ART
+     * format first (Android 12+ reads only a newer format than the one shipped in the APK).
      * Any failure here just leaves the install without dex metadata.
      *
      * @return true if base.dm was added to the session.
      */
-    private fun writeDexMetadata(session: PackageInstaller.Session, apkFile: File): Boolean {
-        if (Build.VERSION.SDK_INT !in Build.VERSION_CODES.P..Build.VERSION_CODES.R) return false
+    private fun writeDexMetadata(
+        context: Context,
+        session: PackageInstaller.Session,
+        apkFile: File
+    ): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
         try {
+            val profile = deviceProfileOf(context, apkFile) ?: return false
             val dm = ByteArrayOutputStream()
-            ZipFile(apkFile).use { apk ->
-                val prof = apk.getEntry("assets/dexopt/baseline.prof") ?: return false
-                ZipOutputStream(dm).use { zip ->
-                    zip.putNextEntry(ZipEntry("primary.prof"))
-                    apk.getInputStream(prof).use { it.copyTo(zip) }
-                    zip.closeEntry()
-                }
+            ZipOutputStream(dm).use { zip ->
+                zip.putNextEntry(ZipEntry("primary.prof"))
+                zip.write(profile)
+                zip.closeEntry()
             }
             val bytes = dm.toByteArray()
             session.openWrite("base.dm", 0, bytes.size.toLong()).use { out ->
@@ -209,5 +213,36 @@ object ApkInstaller {
             System.err.println("[ApkInstaller] Skipping dex metadata: ${e.message}")
             return false
         }
+    }
+
+    /**
+     * The downloaded APK's assets/dexopt profile, transcoded by ProfileInstaller to the format
+     * this device's ART expects, the same conversion it does for the installed app on first run.
+     * Null when the APK has no profile or the device format isn't supported.
+     */
+    private fun deviceProfileOf(context: Context, apkFile: File): ByteArray? {
+        val pm = context.packageManager
+        @Suppress("DEPRECATION")
+        val appInfo = pm.getPackageArchiveInfo(apkFile.absolutePath, 0)?.applicationInfo ?: return null
+        appInfo.sourceDir = apkFile.absolutePath
+        appInfo.publicSourceDir = apkFile.absolutePath
+        val assets = pm.getResourcesForApplication(appInfo).assets
+        val out = File.createTempFile("update-profile", ".prof", context.cacheDir)
+        try {
+            val writer = DeviceProfileWriter(
+                assets, Runnable::run, NoProfileDiagnostics,
+                "base.apk", "dexopt/baseline.prof", "dexopt/baseline.profm", out
+            )
+            if (!writer.deviceAllowsProfileInstallerAotWrites()) return null
+            if (!writer.read().transcodeIfNeeded().write()) return null
+            return out.readBytes().takeIf { it.isNotEmpty() }
+        } finally {
+            out.delete()
+        }
+    }
+
+    private object NoProfileDiagnostics : ProfileInstaller.DiagnosticsCallback {
+        override fun onDiagnosticReceived(code: Int, data: Any?) = Unit
+        override fun onResultReceived(code: Int, data: Any?) = Unit
     }
 }
