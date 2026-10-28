@@ -70,6 +70,28 @@ class SeekPreviewFrameProviderIntegrationTest {
         }
     }
 
+    @Test fun `verified frames remain reusable across neighboring cache buckets`() = runBlocking {
+        provider(decode = { _, _ -> SeekPreviewImage(bitmap(), actualPositionMs = 36_000) }).use { provider ->
+            provider.configure(source())
+            assertNotNull(provider.frameAt(40_000))
+            // 34 seconds rounds to bucket 30, but the real frame at 36 is valid.
+            assertNotNull(provider.memoryFrameAt(34_000))
+            assertNotNull(provider.cachedFrameAt(34_000))
+            assertNull(provider.memoryFrameAt(30_000))
+        }
+    }
+
+    @Test fun `paused strip loads both forward and backward neighbors after foreground completes`() = runBlocking {
+        val decoded = mutableListOf<Long>()
+        provider(decode = { _, target -> decoded += target; SeekPreviewImage(bitmap(), actualPositionMs = target) }).use { provider ->
+            provider.configure(source())
+            assertNotNull(provider.frameAt(60_000))
+            provider.warmWindow(60_000)
+            assertEquals(listOf(60_000L, 70_000L, 80_000L, 50_000L, 40_000L), decoded)
+            for (target in listOf(40_000L, 50_000L, 60_000L, 70_000L, 80_000L)) assertNotNull(provider.memoryFrameAt(target))
+        }
+    }
+
     private val context: Context get() = RuntimeEnvironment.getApplication()
     private fun source(allowExtraction: Boolean = true) = SeekPreviewSource(
         "https://example.test/video.mp4?version=1", emptyMap(), UUID.randomUUID().toString(), 120_000, false, false,

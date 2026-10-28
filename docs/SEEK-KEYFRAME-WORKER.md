@@ -6,7 +6,9 @@ bounded loopback range proxy. It never seeks the main player, opens an audio
 device, or reserves a hardware video decoder. Only small bitmaps and their
 actual presentation timestamps cross Binder.
 
-One low-priority decoding thread extracts independently decodable frames. A
+One low-priority extraction job uses at most two software slice threads to decode
+an independent keyframe. Full-resolution deblocking is skipped for the 320px
+thumbnail; the main playback decoder is unchanged. A
 frame farther than five seconds from the requested timestamp is rejected.
 Cancellation interrupts network reads; source replacement invalidates cached
 results. Existing preview byte budgets, timeouts, cache limits and playback
@@ -109,3 +111,50 @@ Validation on the physical TCL Smart TV Pro, Android 14, normal signed release:
   These are measured examples, not a guarantee of instant uncached network reads
   or zero dropped frames on every source. Physical playback was observed, not
   instrumented with a baseline dropped-frame comparison.
+
+### Faster five-frame strip
+
+- The HTTP reader fetches 256 KiB chunks and reuses the final redirect request
+  instead of resolving the download URL on every read. It retains the headers
+  actually used on the final hop, and refreshes expired locations once through
+  the original URL. Requests and signed URLs remain private.
+- Memory lookups check neighboring cache buckets while still validating the
+  real frame timestamp, source identity and generation. This prevents a valid
+  frame from being missed solely because it was stored in an adjacent bucket.
+- A neighbor request may queue after the foreground result has been delivered
+  but before its worker cleanup finishes. It cannot preempt an active decode.
+- Both forward slots are filled before the rewind slots. All five positions
+  retain their geometry with subdued empty placeholders while loading, and a
+  delivered center frame remains visible for at least two seconds before auto
+  commit. If neighbors are still missing, auto commit allows up to four extra
+  seconds for the paused window to finish. OK, Back and further seeking remain
+  immediate; failed requests cannot leave browsing waiting indefinitely.
+- Numeric native phase timings distinguish source opening, seeking, reads,
+  decoding and scaling. They contain no source URL, headers or account details.
+- 74 targeted JVM tests pass, including five-frame warming, the completion race,
+  cross-bucket reuse, expired-link refresh and redirect-header preservation.
+  All 20 native libraries retain 16 KiB ELF alignment across four ABIs.
+
+Physical-TV measurements, 28 October 2026, TCL Smart TV Pro, Android 14:
+
+- Normal signed release, 6.29 GB 4K HDR source: three fresh foreground requests
+  took 868, 1,160 and 2,056 ms. Input-to-visible-center times were approximately
+  977, 1,261 and 2,162 ms including debounce and UI delivery. These are examples,
+  not a controlled before/after benchmark or a sub-500-ms guarantee.
+- The slowest of those requests spent 1,455 ms reading source bytes, 347 ms
+  decoding and 10 ms scaling. Smaller output alone cannot remove this latency.
+- Cached target 874229 displayed 30 ms after input. Screenshots show two real
+  frames on either side of the selected frame, with valid timestamps. Empty
+  placeholders are not counted as successful thumbnails.
+- The decoder uses at most two low-priority slice threads and skips full-size
+  deblocking. Background warming remains conditional on healthy playback; no
+  second hardware decoder is opened. A comparative dropped-frame baseline has
+  not been measured, so these checks do not establish zero playback impact.
+- Final installed release (APK SHA-256
+  `d463f80964ef38baf70e8be1f2d01420c85a24d862d6796e98d4c15ef409d3e7`):
+  a cold-worker request at 605461 ms took 2336 ms (2442 ms input to display).
+  The four uncached neighbors completed in 759, 961, 1645 and 706 ms; the
+  bounded timer committed only after the fourth finished, with `resume=false`.
+  A repeat seek visibly showed all five actual frames. The full cold strip
+  needed about 7.3 seconds from the final input, not half a second.
+  Final release build/lint and all 74 targeted tests passed.

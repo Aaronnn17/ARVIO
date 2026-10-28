@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SeekPreviewWindowTest {
+    @Test fun neighborsPrioritizeBothForwardSlotsAndRespectEdges() {
+        assertEquals(listOf(70_000L, 80_000L, 50_000L, 40_000L), seekPreviewNeighborTargets(60_000, 120_000))
+        assertEquals(listOf(10_000L, 20_000L), seekPreviewNeighborTargets(0, 120_000))
+        assertTrue(seekPreviewNeighborTargets(0, 0).isEmpty())
+    }
+
     @Test fun windowsStayBoundedAtBothEndsAndNeverScanTheMovie() {
         assertEquals(listOf(0L, 10_000L, 20_000L), seekPreviewWindow(0, 7_200_000))
         assertEquals(listOf(79_999L, 89_999L, 99_999L), seekPreviewWindow(100_000, 100_000))

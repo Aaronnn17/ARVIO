@@ -49,6 +49,37 @@ class SeekPreviewRangeProviderTest {
         }
     }
 
+    @Test fun `range reads reuse redirected location and refresh expired links`() = runBlocking {
+        val hosts = mutableListOf<String>()
+        val requests = mutableListOf<Request>()
+        var resolutions = 0
+        val chunk = ByteArray(RANGE_CHUNK_BYTES) { 9 }
+        val client = client { request ->
+            hosts += request.url.host
+            requests += request
+            if (request.url.host == "cdn1.test") response(request, 403)
+            else {
+                val finalRequest = if (request.url.host == "media.test") {
+                    resolutions++
+                    request.newBuilder().url("https://cdn$resolutions.test/movie.mkv")
+                        .removeHeader("Authorization").build()
+                } else request
+                val start = request.header("Range")!!.substringAfter("bytes=").substringBefore('-').toLong()
+                response(finalRequest, 206, chunk, "Content-Range" to "bytes $start-${start + chunk.size - 1}/${10L * chunk.size}",
+                    "Content-Length" to chunk.size.toString())
+            }
+        }
+        HttpRangeReader(client, upstream, mapOf("Authorization" to "test-fixture")).use { reader ->
+            reader.read(0, 1)
+            reader.read(RANGE_CHUNK_BYTES.toLong(), 1)
+            reader.read(2L * RANGE_CHUNK_BYTES, 1)
+        }
+        assertEquals(listOf("media.test", "cdn1.test", "media.test", "cdn2.test"), hosts)
+        assertNull(requests[1].header("Authorization"))
+        assertNull(requests[3].header("Authorization"))
+        assertEquals("test-fixture", requests[2].header("Authorization"))
+    }
+
     private val upstream = "https://media.test/large.mkv"
     private fun response(request: Request, code: Int, bytes: ByteArray = ByteArray(0), vararg headers: Pair<String, String>): Response =
         Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(code).message("fixture")
@@ -73,7 +104,7 @@ class SeekPreviewRangeProviderTest {
             assertEquals(4L, reader.size())
             assertArrayEquals(byteArrayOf(2, 3), reader.read(1, 2))
             assertEquals(2, requested.size)
-            assertEquals("bytes=0-1048575", requested.last().header("Range"))
+            assertEquals("bytes=0-${RANGE_CHUNK_BYTES - 1}", requested.last().header("Range"))
         }
     }
 

@@ -2219,7 +2219,21 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         val remaining = pending.autoCommitDelayMs(android.os.SystemClock.elapsedRealtime(), waitingForSeekPreview)
             ?: return@LaunchedEffect
         // Give a newly delivered frame time to be seen before committing.
-        delay(if (!waitingForSeekPreview && previewFrameForTarget != null) remaining.coerceAtLeast(1_200L) else remaining)
+        delay(if (!waitingForSeekPreview && previewFrameForTarget != null) remaining.coerceAtLeast(2_000L) else remaining)
+        // On a cold jump the center arrives first. Let its four neighbors finish
+        // while playback is paused, instead of cancelling the second forward
+        // frame every time the center's display timer expires. Remote input,
+        // OK/Back and lifecycle changes still cancel this bounded wait.
+        if (!waitingForSeekPreview && previewFrameForTarget != null) {
+            withTimeoutOrNull(4_000L) {
+                while (seekInteraction === pending &&
+                    com.arflix.tv.ui.screens.player.preview.seekPreviewNeighborTargets(
+                        pending.targetMs, duration,
+                    ).any { seekPreviewProvider.memoryFrameAt(it) == null }) {
+                    delay(100L)
+                }
+            }
+        }
         if (seekInteraction === pending &&
             lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
             finishSeek(true)

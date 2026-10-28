@@ -66,7 +66,7 @@ internal const val SEEK_PREVIEW_CACHE_EPOCH = 5
 private const val DISK_CACHE_LIMIT_BYTES = 128L * 1024L * 1024L
 private const val MAX_CACHE_ENTRY_BYTES = 2L * 1024L * 1024L
 // Amortize CDN round trips without turning thumbnail generation into a media download.
-internal const val RANGE_CHUNK_BYTES = 1024 * 1024
+internal const val RANGE_CHUNK_BYTES = 256 * 1024
 private const val RANGE_MEMORY_LIMIT_BYTES = 8 * 1024 * 1024
 private const val MAX_EXTRACTION_NETWORK_BYTES = 16L * 1024L * 1024L
 internal const val BACKGROUND_PREVIEW_NETWORK_BYTES = 4L * 1024L * 1024L
@@ -336,8 +336,18 @@ class SeekPreviewFrameProvider internal constructor(
         val source = active ?: return null
         if (source.memoryDisabled) return null
         val target = clamp(positionMs, source)
-        val cached = memoryCache.get(frameKey(source, target)) ?: return null
-        return deliver(source, cached, target, 0, SeekPreviewOrigin.MEMORY)
+        return memoryFrame(source, target, 0)
+    }
+
+    // A keyframe's real timestamp can cross a ten-second cache bucket boundary.
+    // Reuse it only when its verified timestamp/cue also covers this target.
+    private fun memoryFrame(source: ActiveSource, target: Long, requestId: Long): SeekPreviewFrame? {
+        for (position in listOf(target, (target - PREVIEW_INTERVAL_MS).coerceAtLeast(0),
+            (target + PREVIEW_INTERVAL_MS).coerceAtMost(source.source.durationMs))) {
+            val entry = memoryCache.get(frameKey(source, position)) ?: continue
+            deliver(source, entry, target, requestId, SeekPreviewOrigin.MEMORY)?.let { return it }
+        }
+        return null
     }
 
     suspend fun cachedFrameAt(positionMs: Long): SeekPreviewFrame? {
@@ -378,8 +388,7 @@ class SeekPreviewFrameProvider internal constructor(
     suspend fun warmWindow(positionMs: Long) {
         val source = active ?: return
         val foreground = synchronized(lock) { source.foregroundRequest }
-        val targets = seekPreviewWindow(positionMs, source.source.durationMs)
-            .filter { it != positionMs }.sortedBy { kotlin.math.abs(it - positionMs) }
+        val targets = seekPreviewNeighborTargets(positionMs, source.source.durationMs)
         for (target in targets) {
             if (active !== source || source.unavailable ||
                 synchronized(lock) { source.foregroundRequest != foreground }) return
@@ -564,7 +573,7 @@ class SeekPreviewFrameProvider internal constructor(
     private suspend fun cached(source: ActiveSource, target: Long, requestId: Long): SeekPreviewFrame? = withContext(Dispatchers.IO) {
         if (closed || active !== source || source.memoryDisabled) return@withContext null
         val key = frameKey(source, target)
-        memoryCache.get(key)?.let { entry -> deliver(source, entry, target, requestId, SeekPreviewOrigin.MEMORY)?.let { return@withContext it } }
+        memoryFrame(source, target, requestId)?.let { return@withContext it }
         val entry = try {
             disk.read(key, source.identity)
         } catch (_: OutOfMemoryError) {
@@ -882,6 +891,7 @@ internal class HttpRangeReader(
     private var cachedBytes = 0
     private var resolvedSize: Long? = null
     private var headAttempted = false
+    private var resolvedRequest: Request? = null
     private val remainingBytes = AtomicLong(MAX_EXTRACTION_NETWORK_BYTES)
     @Volatile private var activeCall: Call? = null
     @Volatile private var closed = false
@@ -934,66 +944,79 @@ internal class HttpRangeReader(
         if (resolvedSize?.let { start >= it } == true) return ByteArray(0)
         if (start > Long.MAX_VALUE - RANGE_CHUNK_BYTES) throw IOException("Range offset overflow")
         val end = minOf(start + RANGE_CHUNK_BYTES - 1, resolvedSize?.minus(1) ?: Long.MAX_VALUE)
-        return request(builder().header("Range", "bytes=$start-$end").build()) { response ->
-            if (response.code == 416) {
-                val match = Regex("bytes \\*/(\\d+)", RegexOption.IGNORE_CASE).matchEntire(response.header("Content-Range")?.trim().orEmpty())
-                val total = match?.groupValues?.get(1)?.toLongOrNull()
-                    ?: throw UnsupportedPreviewException("Invalid range EOF")
-                if (start < total) throw UnsupportedPreviewException("Premature range EOF")
-                acceptSize(total)
-                return@request ByteArray(0)
-            }
-            if (response.code != 206) throw UnsupportedPreviewException("Server does not supply byte ranges")
-            if (response.header("Content-Encoding").let { it != null && !it.equals("identity", true) }) {
-                throw UnsupportedPreviewException("Encoded byte range")
-            }
-            val range = parsePreviewContentRange(response.header("Content-Range"))
-                ?: throw UnsupportedPreviewException("Invalid Content-Range")
-            if (range.start != start || range.end > end) throw UnsupportedPreviewException("Mismatched byte range")
-            val expected = (range.end - range.start + 1).toInt()
-            if (remainingBytes.addAndGet(-expected.toLong()) < 0) throw UnsupportedPreviewException("Preview network budget exceeded")
-            val lengthHeader = response.header("Content-Length")
-            if (lengthHeader != null && lengthHeader.toLongOrNull() != expected.toLong()) throw UnsupportedPreviewException("Mismatched range length")
-            if (range.end < end && range.total != range.end + 1) throw UnsupportedPreviewException("Incomplete byte range")
-            range.total?.let(::acceptSize)
-            val body = response.body ?: throw IOException("Empty range body")
-            val bytes = ByteArray(expected)
-            body.byteStream().use { input ->
-                var count = 0
-                while (count < bytes.size) {
-                    checkOpen()
-                    val read = input.read(bytes, count, bytes.size - count)
-                    if (read < 0) throw EOFException("Truncated byte range")
-                    count += read
+        val usingResolvedLocation = resolvedRequest != null
+        try {
+            return request(builder().header("Range", "bytes=$start-$end").build()) { response ->
+                if (usingResolvedLocation && response.code in setOf(401, 403, 404, 410)) {
+                    throw ExpiredPreviewLocationException()
                 }
-                if (input.read() != -1) throw UnsupportedPreviewException("Oversized byte range")
-            }
-            synchronized(chunks) {
-                if (!closed) {
-                    chunks.put(start, bytes)?.let { cachedBytes -= it.size }
-                    cachedBytes += bytes.size
-                    val iterator = chunks.entries.iterator()
-                    while (cachedBytes > RANGE_MEMORY_LIMIT_BYTES && iterator.hasNext()) {
-                        cachedBytes -= iterator.next().value.size
-                        iterator.remove()
+                if (response.code == 416) {
+                    val match = Regex("bytes \\*/(\\d+)", RegexOption.IGNORE_CASE).matchEntire(response.header("Content-Range")?.trim().orEmpty())
+                    val total = match?.groupValues?.get(1)?.toLongOrNull()
+                        ?: throw UnsupportedPreviewException("Invalid range EOF")
+                    if (start < total) throw UnsupportedPreviewException("Premature range EOF")
+                    acceptSize(total)
+                    return@request ByteArray(0)
+                }
+                if (response.code != 206) throw UnsupportedPreviewException("Server does not supply byte ranges")
+                if (response.header("Content-Encoding").let { it != null && !it.equals("identity", true) }) {
+                    throw UnsupportedPreviewException("Encoded byte range")
+                }
+                val range = parsePreviewContentRange(response.header("Content-Range"))
+                    ?: throw UnsupportedPreviewException("Invalid Content-Range")
+                if (range.start != start || range.end > end) throw UnsupportedPreviewException("Mismatched byte range")
+                val expected = (range.end - range.start + 1).toInt()
+                if (remainingBytes.addAndGet(-expected.toLong()) < 0) throw UnsupportedPreviewException("Preview network budget exceeded")
+                val lengthHeader = response.header("Content-Length")
+                if (lengthHeader != null && lengthHeader.toLongOrNull() != expected.toLong()) throw UnsupportedPreviewException("Mismatched range length")
+                if (range.end < end && range.total != range.end + 1) throw UnsupportedPreviewException("Incomplete byte range")
+                range.total?.let(::acceptSize)
+                val body = response.body ?: throw IOException("Empty range body")
+                val bytes = ByteArray(expected)
+                body.byteStream().use { input ->
+                    var count = 0
+                    while (count < bytes.size) {
+                        checkOpen()
+                        val read = input.read(bytes, count, bytes.size - count)
+                        if (read < 0) throw EOFException("Truncated byte range")
+                        count += read
+                    }
+                    if (input.read() != -1) throw UnsupportedPreviewException("Oversized byte range")
+                }
+                // Retain the final redirect request, including the headers OkHttp actually
+                // allowed there; never forward origin Authorization to a different host.
+                resolvedRequest = response.request
+                synchronized(chunks) {
+                    if (!closed) {
+                        chunks.put(start, bytes)?.let { cachedBytes -= it.size }
+                        cachedBytes += bytes.size
+                        val iterator = chunks.entries.iterator()
+                        while (cachedBytes > RANGE_MEMORY_LIMIT_BYTES && iterator.hasNext()) {
+                            cachedBytes -= iterator.next().value.size
+                            iterator.remove()
+                        }
                     }
                 }
+                bytes
             }
-            bytes
+        } catch (expired: ExpiredPreviewLocationException) {
+            resolvedRequest = null
+            return fetch(start) // One refresh through the original resolver URL.
         }
     }
+
+    private class ExpiredPreviewLocationException : IOException("Preview location expired")
 
     private fun acceptSize(total: Long) {
         if (resolvedSize != null && resolvedSize != total) throw UnsupportedPreviewException("Media size changed")
         resolvedSize = total
     }
 
-    private fun builder(): Request.Builder = Request.Builder().url(url).apply {
+    private fun builder(): Request.Builder = (resolvedRequest?.newBuilder() ?: Request.Builder().url(url).apply {
         headers.forEach { (name, value) ->
             if (name.isNotBlank() && value.isNotBlank() && name.lowercase() !in setOf("range", "accept-encoding")) header(name, value)
         }
-        header("Accept-Encoding", "identity")
-    }
+    }).get().removeHeader("Range").header("Accept-Encoding", "identity")
 
     private suspend fun <T> request(request: Request, consume: (Response) -> T): T = suspendCancellableCoroutine { continuation ->
         val call = client.newCall(request)

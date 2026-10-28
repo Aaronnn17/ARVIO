@@ -61,6 +61,7 @@ internal fun SeekPreviewFilmstrip(
                     else centerX + selectedWidth + 8.dp + (sideWidth + 8.dp) * (slot - 1)
                 ReadySeekPreview(
                     frame = candidate, positionMs = target, sourceGeneration = sourceGeneration,
+                    placeholder = true,
                     modifier = Modifier.align(Alignment.CenterStart).offset(x = x).width(sideWidth)
                         .graphicsLayer { alpha = 0.62f },
                 )
@@ -68,6 +69,7 @@ internal fun SeekPreviewFilmstrip(
         }
         ReadySeekPreview(
             frame = frame, positionMs = positionMs, sourceGeneration = sourceGeneration,
+            placeholder = true,
             modifier = Modifier.align(Alignment.CenterStart).offset(x = centerX).width(selectedWidth),
         )
     }
@@ -82,9 +84,18 @@ fun ReadySeekPreview(
     visible: Boolean = true,
     sourceGeneration: Long = frame?.sourceGeneration ?: -1L,
     cornerRadius: Dp = 5.dp,
+    placeholder: Boolean = false,
 ) {
-    if (!visible || frame == null || frame.bitmap.isRecycled ||
-        !frame.isValidFor(positionMs, sourceGeneration)) return
+    if (!visible) return
+    if (frame == null || frame.bitmap.isRecycled || !frame.isValidFor(positionMs, sourceGeneration)) {
+        if (placeholder) {
+            val shape = RoundedCornerShape(cornerRadius)
+            Box(modifier.aspectRatio(16f / 9f).background(Color(0xFF171717), shape)
+                .border(1.dp, Color.White.copy(alpha = 0.14f), shape)
+                .testTag("seek_preview_pending"))
+        }
+        return
+    }
 
     // Fade in only. Retaining outgoing content or crossfading would show the previous target.
     val opacity = remember { Animatable(0f) }
