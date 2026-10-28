@@ -1746,6 +1746,20 @@ fun HomeScreen(
         }
 
 
+        // Quiet update notifications: a small notice instead of the update popup.
+        val quietUpdateNotice by viewModel.quietUpdateNotice.collectAsStateWithLifecycle()
+        quietUpdateNotice?.let { message ->
+            Box(modifier = Modifier.fillMaxSize().zIndex(122f)) {
+                Toast(
+                    message = message,
+                    type = ComponentToastType.INFO,
+                    isVisible = true,
+                    durationMs = 8_000L,
+                    onDismiss = { viewModel.dismissQuietUpdateNotice() }
+                )
+            }
+        }
+
         // Toast notification
         uiState.toastMessage?.let { message ->
             // Above the context menu and list picker, whose results it reports.

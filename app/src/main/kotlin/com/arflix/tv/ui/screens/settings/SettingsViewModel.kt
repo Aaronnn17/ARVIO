@@ -350,6 +350,7 @@ data class SettingsUiState(
     val fallbackChannelLogosEnabled: Boolean = false,
     // App updates
     val isSelfUpdateSupported: Boolean = true,
+    val quietUpdateNotifications: Boolean = false,
     val updateStatus: com.arflix.tv.updater.UpdateStatus = com.arflix.tv.updater.UpdateStatus.Idle,
     val showAppUpdateDialog: Boolean = false,
     val showUnknownSourcesDialog: Boolean = false,
@@ -700,6 +701,16 @@ class SettingsViewModel @Inject constructor(
                 )
             }
         }
+
+        viewModelScope.launch {
+            updatePreferences.quietNotifications.collect { quiet ->
+                _uiState.value = _uiState.value.copy(quietUpdateNotifications = quiet)
+            }
+        }
+    }
+
+    fun setQuietUpdateNotifications(enabled: Boolean) {
+        viewModelScope.launch { updatePreferences.setQuietNotifications(enabled) }
     }
 
     fun setDiagnosticsSharingEnabled(enabled: Boolean) {

@@ -770,7 +770,7 @@ fun SettingsScreen(
             "catalogs" -> uiState.catalogs.size + 2 // Add + Import + Built-in collections toggle + catalogs
             "stremio" -> stremioAddons.size + 2 // rows + refresh + community + add button
             "plugins" -> pluginsMaxIndex
-            "accounts" -> 19 // Includes About & Credits and device-local usage opt-in.
+            "accounts" -> 20 // Includes About & Credits and device-local usage opt-in.
             else -> 0
         }
     }
@@ -1841,11 +1841,12 @@ fun SettingsScreen(
                                                         viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true)
                                                     }
                                                 }
-                                                15 -> viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled)
-                                                16 -> openExternalUrl(context, PRIVACY_POLICY_URL)
-                                                17 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
-                                                18 -> showCredits = true
-                                                19 -> viewModel.setUsageStatisticsEnabled(!uiState.usageStatisticsEnabled)
+                                                15 -> viewModel.setQuietUpdateNotifications(!uiState.quietUpdateNotifications)
+                                                16 -> viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled)
+                                                17 -> openExternalUrl(context, PRIVACY_POLICY_URL)
+                                                18 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
+                                                19 -> showCredits = true
+                                                20 -> viewModel.setUsageStatisticsEnabled(!uiState.usageStatisticsEnabled)
                                             }
                                         }
                                         "plugins" -> {
@@ -1961,14 +1962,30 @@ fun SettingsScreen(
                         .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(16.dp))
                         .padding(vertical = 18.dp, horizontal = 10.dp)
                 ) {
+                    val availableUpdate = uiState.updateStatus as? com.arflix.tv.updater.UpdateStatus.UpdateAvailable
                     Text(
                         text = stringResource(R.string.settings),
                         style = ArflixTypography.cardTitle.copy(fontSize = 19.sp),
                         color = TextPrimary,
                         modifier = Modifier
                             .padding(start = 8.dp)
-                            .padding(bottom = 14.dp)
+                            .padding(bottom = if (availableUpdate != null) 4.dp else 14.dp)
                     )
+                    // Visible from every section, so an update isn't missed when the Home
+                    // popup is turned off (quiet update notifications).
+                    if (availableUpdate != null) {
+                        Text(
+                            text = stringResource(
+                                R.string.settings_sidebar_update_available,
+                                availableUpdate.update.tag
+                            ),
+                            style = ArflixTypography.caption,
+                            color = Color(0xFF34D399),
+                            modifier = Modifier
+                                .padding(start = 8.dp, end = 4.dp)
+                                .padding(bottom = 12.dp)
+                        )
+                    }
 
                     Column(
                         modifier = Modifier
@@ -2517,6 +2534,8 @@ fun SettingsScreen(
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
                             onInstallUpdate = { viewModel.installAppUpdateOrRequestPermission() },
+                            quietUpdateNotifications = uiState.quietUpdateNotifications,
+                            onQuietUpdateNotificationsToggle = viewModel::setQuietUpdateNotifications,
                             onDiagnosticsSharingToggle = viewModel::setDiagnosticsSharingEnabled,
                             onUsageStatisticsToggle = viewModel::setUsageStatisticsEnabled,
                             onOpenPrivacy = { openExternalUrl(context, PRIVACY_POLICY_URL) },
@@ -5628,6 +5647,14 @@ private fun MobileSettingsMainPage(
                     value = if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.UpdateAvailable) stringResource(R.string.settings_update_available) else stringResource(R.string.settings_check_updates),
                     isFocused = false,
                     onClick = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) }
+                )
+                MobileSettingsRow(
+                    icon = Icons.Default.SystemUpdate,
+                    title = stringResource(R.string.settings_quiet_update_notifications),
+                    subtitle = stringResource(R.string.settings_quiet_update_notifications_desc),
+                    value = stringResource(if (uiState.quietUpdateNotifications) R.string.on else R.string.off),
+                    isFocused = false,
+                    onClick = { viewModel.setQuietUpdateNotifications(!uiState.quietUpdateNotifications) }
                 )
                 MobileSettingsRow(
                     icon = Icons.Default.Security,
@@ -10657,6 +10684,8 @@ private fun AccountsSettings(
     onSwitchProfile: () -> Unit,
     onCheckUpdates: () -> Unit,
     onInstallUpdate: () -> Unit,
+    quietUpdateNotifications: Boolean = false,
+    onQuietUpdateNotificationsToggle: (Boolean) -> Unit = {},
     onDiagnosticsSharingToggle: (Boolean) -> Unit,
     onUsageStatisticsToggle: (Boolean) -> Unit,
     onOpenPrivacy: () -> Unit,
@@ -10922,12 +10951,23 @@ private fun AccountsSettings(
         Spacer(modifier = Modifier.height(16.dp))
 
         SettingsToggleRow(
+            title = stringResource(R.string.settings_quiet_update_notifications),
+            subtitle = stringResource(R.string.settings_quiet_update_notifications_desc),
+            isEnabled = quietUpdateNotifications,
+            isFocused = focusedIndex == 15,
+            onToggle = onQuietUpdateNotificationsToggle,
+            modifier = Modifier.settingsFocusSlot(15)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SettingsToggleRow(
             title = stringResource(R.string.settings_diagnostics_sharing),
             subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
             isEnabled = diagnosticsSharingEnabled,
-            isFocused = focusedIndex == 15,
+            isFocused = focusedIndex == 16,
             onToggle = onDiagnosticsSharingToggle,
-            modifier = Modifier.settingsFocusSlot(15)
+            modifier = Modifier.settingsFocusSlot(16)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -10936,9 +10976,9 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_privacy_policy),
             description = stringResource(R.string.settings_privacy_policy_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 16,
+            isFocused = focusedIndex == 17,
             onClick = onOpenPrivacy,
-            modifier = Modifier.settingsFocusSlot(16)
+            modifier = Modifier.settingsFocusSlot(17)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -10947,27 +10987,27 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_account_data_deletion),
             description = stringResource(R.string.settings_account_data_deletion_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 17,
+            isFocused = focusedIndex == 18,
             onClick = onOpenDataDeletion,
-            modifier = Modifier.settingsFocusSlot(17)
+            modifier = Modifier.settingsFocusSlot(18)
         )
         Spacer(modifier = Modifier.height(16.dp))
         SettingsActionRow(
             title = stringResource(R.string.about_credits),
             description = stringResource(R.string.about_credits_description),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 18,
+            isFocused = focusedIndex == 19,
             onClick = onOpenCredits,
-            modifier = Modifier.settingsFocusSlot(18)
+            modifier = Modifier.settingsFocusSlot(19)
         )
         Spacer(modifier = Modifier.height(16.dp))
         SettingsToggleRow(
             title = stringResource(R.string.settings_usage_statistics),
             subtitle = stringResource(R.string.settings_usage_statistics_desc),
             isEnabled = usageStatisticsEnabled,
-            isFocused = focusedIndex == 19,
+            isFocused = focusedIndex == 20,
             onToggle = onUsageStatisticsToggle,
-            modifier = Modifier.settingsFocusSlot(19)
+            modifier = Modifier.settingsFocusSlot(20)
         )
     }
 }
