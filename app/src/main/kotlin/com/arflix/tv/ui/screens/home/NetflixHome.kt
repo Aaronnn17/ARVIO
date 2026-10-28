@@ -35,7 +35,13 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListLayoutInfo
+import androidx.compose.foundation.lazy.LazyListPrefetchScope
+import androidx.compose.foundation.lazy.LazyListPrefetchStrategy
+import androidx.compose.foundation.lazy.layout.LazyLayoutPrefetchState
+import androidx.compose.foundation.lazy.layout.NestedPrefetchScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -316,7 +322,8 @@ internal fun NetflixTvHomeRowsLayer(
         // Focused-row card height: room for the row title above, the description
         // below and a peek of the next row.
         val bigCardHeight = (maxHeight * 0.42f).coerceIn(170.dp, 330.dp)
-        val listState = rememberLazyListState()
+        @OptIn(ExperimentalFoundationApi::class)
+        val listState = rememberLazyListState(prefetchStrategy = remember { NetflixNextRowPrefetchStrategy() })
         val targetIndex = if (focusState.isHeroFocused) 0 else focusState.currentRowIndex + 1
         val focusedRowId = if (focusState.isHeroFocused) null else categories.getOrNull(focusState.currentRowIndex)?.id
         var appliedTarget by remember { mutableIntStateOf(-1) }
@@ -799,7 +806,11 @@ private fun NetflixContentRow(
 ) {
     val isContinueWatching = category.id == "continue_watching"
     val isRanked = category.title.contains("Top 10", ignoreCase = true)
-    val rowState = rememberLazyListState()
+    // Prefetching this row from the vertical list also builds its first cards.
+    @OptIn(ExperimentalFoundationApi::class)
+    val rowState = rememberLazyListState(
+        prefetchStrategy = remember { LazyListPrefetchStrategy(nestedPrefetchItemCount = 3) }
+    )
     val items = remember(category.items) {
         if (category.items.isEmpty()) {
             (1..8).map { MediaItem(id = -it, title = "", mediaType = MediaType.MOVIE, isPlaceholder = true) }
@@ -1420,4 +1431,28 @@ internal fun netflixShortOverview(overview: String): String {
         return candidate
     }
     return text
+}
+
+/**
+ * The vertical rails move only through requestScrollToItem / scrollToItem, which never call the
+ * default prefetcher (it reacts to scroll deltas). Without this, each newly revealed row is
+ * composed and measured in one frame in the middle of the morph animation. After every layout,
+ * schedule the row just below the last visible one so it is built ahead of time.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private class NetflixNextRowPrefetchStrategy : LazyListPrefetchStrategy {
+    private var scheduledIndex = -1
+    private var handle: LazyLayoutPrefetchState.PrefetchHandle? = null
+
+    override fun LazyListPrefetchScope.onScroll(delta: Float, layoutInfo: LazyListLayoutInfo) = Unit
+
+    override fun LazyListPrefetchScope.onVisibleItemsUpdated(layoutInfo: LazyListLayoutInfo) {
+        val next = (layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return) + 1
+        if (next == scheduledIndex || next >= layoutInfo.totalItemsCount) return
+        handle?.cancel()
+        scheduledIndex = next
+        handle = schedulePrefetch(next)
+    }
+
+    override fun NestedPrefetchScope.onNestedPrefetch(firstVisibleItemIndex: Int) = Unit
 }
