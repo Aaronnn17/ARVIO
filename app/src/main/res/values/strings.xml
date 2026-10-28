@@ -806,6 +806,10 @@
     <string name="settings_update_ready_install">Latest update downloaded and ready to install</string>
     <string name="settings_update_checking">Checking GitHub Releases for a newer APK</string>
     <string name="settings_update_available_format">Update available: %1$s</string>
+    <string name="settings_quiet_update_notifications">Quiet update notifications</string>
+    <string name="settings_quiet_update_notifications_desc">Show a small notice at startup instead of the update popup. Install from App Update.</string>
+    <string name="settings_sidebar_update_available">Update %1$s available. Install it from Accounts → App Update.</string>
+    <string name="home_update_available_quiet">Update %1$s is available. Install it from Settings → Accounts → App Update.</string>
     <string name="settings_update_latest">You already have the latest ARVIO version</string>
     <string name="settings_update_check_releases">Check GitHub Releases for the latest ARVIO APK</string>
     <string name="settings_badge_play">PLAY</string>
