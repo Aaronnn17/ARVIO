@@ -165,6 +165,8 @@ import com.arflix.tv.data.model.MediaItem
 import com.arflix.tv.data.model.MediaType
 import com.arflix.tv.data.model.Review
 import com.arflix.tv.data.model.StreamSource
+import com.arflix.tv.data.repository.addonNoticeRow
+import com.arflix.tv.data.repository.isAddonNoticeRow
 import com.arflix.tv.data.repository.MdbExternalRating
 import com.arflix.tv.data.repository.YouTubeCollection
 import com.arflix.tv.network.OkHttpProvider
@@ -1044,9 +1046,11 @@ fun DetailsScreen(
             TelegramSearchRow.SEARCHING -> stringResource(R.string.telegram_search_row_searching)
             TelegramSearchRow.NONE -> stringResource(R.string.telegram_search_row_none)
         }
-        val selectorStreams = remember(uiState.streams, telegramRowLabel) {
-            if (telegramRowLabel == null) uiState.streams
-            else uiState.streams + TELEGRAM_SEARCH_ROW.copy(source = telegramRowLabel)
+        // Addon messages (AIOStreams "[❌] Comet …") are display-only rows like the Telegram row.
+        val selectorStreams = remember(uiState.streams, uiState.addonNotices, telegramRowLabel) {
+            val withNotices = uiState.streams + uiState.addonNotices.mapIndexed(::addonNoticeRow)
+            if (telegramRowLabel == null) withNotices
+            else withNotices + TELEGRAM_SEARCH_ROW.copy(source = telegramRowLabel)
         }
         StreamSelector(
             isVisible = showStreamSelector,
@@ -1061,12 +1065,23 @@ fun DetailsScreen(
             streamSearchStartTime = uiState.streamSearchStartTime,
             pluginScrapersLoading = uiState.pluginScrapersLoading,
             loadingPluginNames = uiState.loadingPluginNames,
+            preferredAudioLanguage = uiState.preferredAudioLanguage,
+            mediaTitle = uiState.item?.title.orEmpty(),
             onFocusedStream = { stream ->
-                if (!isTelegramSearchRow(stream)) viewModel.prewarmStreamsAround(stream, uiState.streams)
+                if (!isTelegramSearchRow(stream) && !isAddonNoticeRow(stream)) {
+                    viewModel.prewarmStreamsAround(stream, uiState.streams)
+                }
             },
             onSelect = { stream ->
                 if (isTelegramSearchRow(stream)) {
                     viewModel.searchTelegramNow()
+                    return@StreamSelector
+                }
+                if (isAddonNoticeRow(stream)) {
+                    viewModel.showToast(
+                        listOf(stream.source, stream.description).filterNot { it.isNullOrBlank() }.joinToString(": "),
+                        ToastType.ERROR
+                    )
                     return@StreamSelector
                 }
                 if (isPendingDebridStream(stream)) {
