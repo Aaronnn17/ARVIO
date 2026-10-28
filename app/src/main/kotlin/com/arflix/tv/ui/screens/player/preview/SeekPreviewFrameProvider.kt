@@ -28,6 +28,7 @@ import java.io.InputStream
 import java.security.MessageDigest
 import java.util.LinkedHashMap
 import java.util.UUID
+import java.util.concurrent.ConcurrentSkipListSet
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -84,6 +85,7 @@ data class SeekPreviewSource(
     val maxWidthPx: Int = 480,
     val preview: StreamPreviewMetadata? = null,
     val useNativeKeyframes: Boolean = false,
+    val sizeBytes: Long? = null,
 )
 
 enum class SeekPreviewCapability { AVAILABLE, UNAVAILABLE }
@@ -114,11 +116,20 @@ data class SeekPreviewFrame(
     val sourceIdentity: String = "",
     val origin: SeekPreviewOrigin = SeekPreviewOrigin.DECODER,
     val validity: SeekPreviewValidity = SeekPreviewValidity.TIMESTAMP,
+    /** Display-only nearby sample. Never satisfies an exact extraction/cache lookup. */
+    val approximate: Boolean = false,
 ) {
     fun isValidFor(positionMs: Long, generation: Long = sourceGeneration): Boolean =
-        generation == sourceGeneration && seekPreviewTimeMatches(
+        !approximate && generation == sourceGeneration && seekPreviewTimeMatches(
             positionMs, actualPositionMs, cueStartMs, cueEndMs, validity,
         )
+
+    fun isDisplayableFor(positionMs: Long, generation: Long = sourceGeneration): Boolean =
+        if (!approximate) isValidFor(positionMs, generation) else
+            generation == sourceGeneration && requestedPositionMs == positionMs &&
+                validity == SeekPreviewValidity.TIMESTAMP && actualPositionMs != null &&
+                positionMs >= 0 && actualPositionMs >= 0 &&
+                kotlin.math.abs(positionMs - actualPositionMs) <= PREVIEW_APPROXIMATION_MS
 }
 
 internal fun seekPreviewTimeMatches(
@@ -221,9 +232,12 @@ class SeekPreviewFrameProvider internal constructor(
     private val imageLoaderFactory: ((SeekPreviewSource) -> SeekPreviewImageLoader?)?,
     private val decoderOverride: (suspend (SeekPreviewSource, Long) -> SeekPreviewImage)?,
     cacheLimitBytes: Long,
+    private val playbackBytes: SeekPreviewPlaybackBytes? = null,
 ) : Closeable {
-    constructor(context: Context, playbackClient: OkHttpClient, memoryClassMb: Int) :
-        this(context, playbackClient, memoryClassMb, null, null, DISK_CACHE_LIMIT_BYTES)
+    constructor(context: Context, playbackClient: OkHttpClient, memoryClassMb: Int,
+        playbackCache: androidx.media3.datasource.cache.Cache? = null) :
+        this(context, playbackClient, memoryClassMb, null, null, DISK_CACHE_LIMIT_BYTES,
+            playbackCache?.let { Media3SeekPreviewPlaybackBytes(it) })
 
     private val appContext = context.applicationContext
     private val previewClient = playbackClient.newBuilder()
@@ -281,6 +295,10 @@ class SeekPreviewFrameProvider internal constructor(
         var proxy: SeekPreviewRangeProxy? = null
         var extractionBudgetBytes = MAX_EXTRACTION_NETWORK_BYTES
         var warmRetryAtMs = 0L
+        val coverage = SeekPreviewCoverage()
+        val cachedTargets = ConcurrentSkipListSet<Long>()
+        val networkBytes = AtomicLong()
+        val speculativeBytes = AtomicLong()
         fun close() {
             images?.close()
             proxy?.close()
@@ -324,6 +342,11 @@ class SeekPreviewFrameProvider internal constructor(
             )
         }
         old?.close()
+        val configured = active
+        if (configured != null) withContext(Dispatchers.IO) {
+            val targets = disk.targets(configured.identity)
+            if (active === configured) configured.cachedTargets.addAll(targets)
+        }
     }
 
     fun matchesTarget(frame: SeekPreviewFrame?, positionMs: Long): Boolean {
@@ -332,12 +355,60 @@ class SeekPreviewFrameProvider internal constructor(
             frame.isValidFor(clamp(positionMs, source), source.generation)
     }
 
+    fun matchesDisplayTarget(frame: SeekPreviewFrame?, positionMs: Long): Boolean {
+        val source = active ?: return false
+        return !closed && frame != null && frame.sourceIdentity == source.identity &&
+            frame.isDisplayableFor(clamp(positionMs, source), source.generation)
+    }
+
+    /** Independent of the extraction queue; disk hits can appear while a decoder is busy. */
+    suspend fun cachedDisplayFrameAt(positionMs: Long): SeekPreviewFrame? = withContext(Dispatchers.IO) {
+        val source = active ?: return@withContext null
+        val target = clamp(positionMs, source)
+        cached(source, target, 0)?.let { return@withContext it }
+        if (source.memoryDisabled) return@withContext null
+        val lower = (target - PREVIEW_APPROXIMATION_MS - PREVIEW_INTERVAL_MS).coerceAtLeast(0)
+        val upper = (target + PREVIEW_APPROXIMATION_MS + PREVIEW_INTERVAL_MS).coerceAtMost(source.source.durationMs)
+        val candidates = source.cachedTargets.subSet(lower, true, upper, true).toList()
+            .sortedBy { kotlin.math.abs(it - target) }.take(8)
+        var best: SeekPreviewFrame? = null
+        for (at in candidates) {
+            currentCoroutineContext().ensureActive()
+            if (closed || active !== source) return@withContext null
+            val key = frameKey(source, at)
+            val inMemory = memoryCache.get(key)
+            val entry = inMemory ?: try { disk.read(key, source.identity) } catch (_: OutOfMemoryError) {
+                disableForMemoryPressure(source); return@withContext null
+            } ?: continue
+            val actual = entry.metadata.actualMs ?: continue
+            if (entry.metadata.validity != SeekPreviewValidity.TIMESTAMP ||
+                kotlin.math.abs(actual - target) > PREVIEW_APPROXIMATION_MS) continue
+            val frame = deliver(source, entry, entry.metadata.extractedForMs, 0,
+                if (inMemory != null) SeekPreviewOrigin.MEMORY else SeekPreviewOrigin.DISK) ?: continue
+            if (best == null || kotlin.math.abs(actual - target) < kotlin.math.abs(best.positionMs - target)) {
+                best = frame.copy(requestedPositionMs = target, approximate = !frame.isValidFor(target))
+                memoryCache.put(key, entry)
+            }
+        }
+        best
+    }
+
     fun memoryFrameAt(positionMs: Long): SeekPreviewFrame? {
         val source = active ?: return null
         if (source.memoryDisabled) return null
         val target = clamp(positionMs, source)
-        val cached = memoryCache.get(frameKey(source, target)) ?: return null
-        return deliver(source, cached, target, 0, SeekPreviewOrigin.MEMORY)
+        return memoryFrame(source, target, 0)
+    }
+
+    // A keyframe's real timestamp can cross a ten-second cache bucket boundary.
+    // Reuse it only when its verified timestamp/cue also covers this target.
+    private fun memoryFrame(source: ActiveSource, target: Long, requestId: Long): SeekPreviewFrame? {
+        for (position in listOf(target, (target - PREVIEW_INTERVAL_MS).coerceAtLeast(0),
+            (target + PREVIEW_INTERVAL_MS).coerceAtMost(source.source.durationMs))) {
+            val entry = memoryCache.get(frameKey(source, position)) ?: continue
+            deliver(source, entry, target, requestId, SeekPreviewOrigin.MEMORY)?.let { return it }
+        }
+        return null
     }
 
     suspend fun cachedFrameAt(positionMs: Long): SeekPreviewFrame? {
@@ -366,20 +437,24 @@ class SeekPreviewFrameProvider internal constructor(
     suspend fun warmNext(positionMs: Long) {
         val source = active ?: return
         if (SystemClock.elapsedRealtime() < source.warmRetryAtMs) return
-        for (target in seekPreviewWarmTargets(positionMs, source.source.durationMs)) {
-            if (active !== source || source.unavailable) return
-            if (cached(source, target, 0) != null) continue
-            requestFrame(target, cacheOnly = false, background = true)
-            return
-        }
+        if (source.unavailable) return
+        val target = withContext(Dispatchers.IO) {
+            source.coverage.next(positionMs, source.source.durationMs, source.source.sizeBytes,
+                SystemClock.elapsedRealtime(), source.speculativeBytes.get()) { at ->
+                val key = frameKey(source, at)
+                memoryFrame(source, at, 0) != null ||
+                    (quantizeSeekPreviewPosition(at, source.source.durationMs) in source.cachedTargets && disk.contains(key))
+            }
+        } ?: return
+        if (active === source) requestFrame(target, cacheOnly = false, background = true,
+            wideCoverage = kotlin.math.abs(target - positionMs) > 40_000L)
     }
 
     /** Called only during paused browsing, after the selected frame has been delivered. */
     suspend fun warmWindow(positionMs: Long) {
         val source = active ?: return
         val foreground = synchronized(lock) { source.foregroundRequest }
-        val targets = seekPreviewWindow(positionMs, source.source.durationMs)
-            .filter { it != positionMs }.sortedBy { kotlin.math.abs(it - positionMs) }
+        val targets = seekPreviewNeighborTargets(positionMs, source.source.durationMs)
         for (target in targets) {
             if (active !== source || source.unavailable ||
                 synchronized(lock) { source.foregroundRequest != foreground }) return
@@ -402,7 +477,7 @@ class SeekPreviewFrameProvider internal constructor(
     }
 
     private suspend fun requestFrame(positionMs: Long, cacheOnly: Boolean, background: Boolean,
-        playbackPaused: Boolean = false): SeekPreviewFrame? {
+        playbackPaused: Boolean = false, wideCoverage: Boolean = false): SeekPreviewFrame? {
         val source = active ?: return null
         val target = clamp(positionMs, source)
         val requestId = requests.incrementAndGet()
@@ -421,6 +496,7 @@ class SeekPreviewFrameProvider internal constructor(
         return scheduler.submit(background) {
             if (active !== source || (!background && source.foregroundRequest != requestId)) return@submit null
             val startedAt = SystemClock.elapsedRealtime()
+            val networkAtStart = source.networkBytes.get()
             if (!background) updateStatus(source, SeekPreviewState.LOADING, requestId = requestId)
             try {
                 val result = withTimeout(SEEK_PREVIEW_REQUEST_TIMEOUT_MS) {
@@ -430,7 +506,11 @@ class SeekPreviewFrameProvider internal constructor(
                     // never escalate into a decoder while constrained/heavy playback is active.
                     if (image == null && background && source.images != null) return@withTimeout null
                     if (image == null && source.source.allowExtraction && !source.source.isAdaptive && !source.decoderDisabled) {
-                        source.extractionBudgetBytes = if (background && !playbackPaused) BACKGROUND_PREVIEW_NETWORK_BYTES else MAX_EXTRACTION_NETWORK_BYTES
+                        source.extractionBudgetBytes = if (wideCoverage)
+                            minOf(BACKGROUND_PREVIEW_NETWORK_BYTES,
+                                (PREVIEW_SPECULATIVE_BYTES - source.speculativeBytes.get()).coerceAtLeast(0))
+                        else if (background && !playbackPaused) BACKGROUND_PREVIEW_NETWORK_BYTES
+                        else MAX_EXTRACTION_NETWORK_BYTES
                         origin = SeekPreviewOrigin.DECODER
                         image = decoderOverride?.invoke(source.source, decodePosition(source, target))
                             ?: if (source.source.useNativeKeyframes) extractNativeKeyframe(source, target)
@@ -453,6 +533,7 @@ class SeekPreviewFrameProvider internal constructor(
                     val frame = deliver(source, cached, target, requestId, origin) ?: return@withTimeout null
                     val key = frameKey(source, target)
                     memoryCache.put(key, cached)
+                    source.cachedTargets.add(quantizeSeekPreviewPosition(target, source.source.durationMs))
                     mutableCacheRevision.value++
                     // Display is not held behind JPEG compression or disk pruning.
                     diskWriter.offer(key to cached)
@@ -461,7 +542,7 @@ class SeekPreviewFrameProvider internal constructor(
                 if (result != null) {
                     source.failures = 0
                     if (!background) updateStatus(source, SeekPreviewState.READY, requestId = requestId)
-                    Log.i("SeekPreview", "origin=${result.origin} targetMs=$target actualMs=${result.actualPositionMs} cue=${result.cueStartMs}..${result.cueEndMs} elapsedMs=${SystemClock.elapsedRealtime() - startedAt} status=READY generation=${source.generation}")
+                    Log.println(Log.INFO, "SeekPreview", "mode=${if (background) "background" else "foreground"} origin=${result.origin} targetMs=$target actualMs=${result.actualPositionMs} cue=${result.cueStartMs}..${result.cueEndMs} elapsedMs=${SystemClock.elapsedRealtime() - startedAt} networkBytes=${source.networkBytes.get() - networkAtStart} status=READY generation=${source.generation}")
                 }
                 result
             } catch (timeout: TimeoutCancellationException) {
@@ -488,6 +569,8 @@ class SeekPreviewFrameProvider internal constructor(
                 logFailure(source, target, startedAt, if (failure is UnsupportedPreviewException) "unsupported" else "extraction")
                 null
             } finally {
+                if (wideCoverage) source.speculativeBytes.addAndGet(
+                    (source.networkBytes.get() - networkAtStart).coerceAtLeast(0))
                 if (!background && status.value.state == SeekPreviewState.LOADING) {
                     updateStatus(source, SeekPreviewState.IDLE, requestId = requestId)
                 }
@@ -564,17 +647,18 @@ class SeekPreviewFrameProvider internal constructor(
     private suspend fun cached(source: ActiveSource, target: Long, requestId: Long): SeekPreviewFrame? = withContext(Dispatchers.IO) {
         if (closed || active !== source || source.memoryDisabled) return@withContext null
         val key = frameKey(source, target)
-        memoryCache.get(key)?.let { entry -> deliver(source, entry, target, requestId, SeekPreviewOrigin.MEMORY)?.let { return@withContext it } }
+        memoryFrame(source, target, requestId)?.let { return@withContext it }
         val entry = try {
             disk.read(key, source.identity)
         } catch (_: OutOfMemoryError) {
             disableForMemoryPressure(source)
-            Log.i("SeekPreview", "origin=DISK targetMs=$target status=UNAVAILABLE reason=memory generation=${source.generation}")
+            Log.println(Log.INFO, "SeekPreview", "origin=DISK targetMs=$target status=UNAVAILABLE reason=memory generation=${source.generation}")
             return@withContext null
         } ?: return@withContext null
         currentCoroutineContext().ensureActive()
         deliver(source, entry, target, requestId, SeekPreviewOrigin.DISK)?.also {
             memoryCache.put(key, entry)
+            source.cachedTargets.add(quantizeSeekPreviewPosition(target, source.source.durationMs))
             mutableCacheRevision.value++
         }
     }
@@ -605,6 +689,7 @@ class SeekPreviewFrameProvider internal constructor(
         return deliver(source, entry, positionMs, 0, SeekPreviewOrigin.RENDERED)?.also {
             val key = frameKey(source, positionMs)
             memoryCache.put(key, entry)
+            source.cachedTargets.add(quantizeSeekPreviewPosition(positionMs, source.source.durationMs))
             mutableCacheRevision.value++
             diskWriter.offer(key to entry)
             if (active === source && source.unavailable && !source.memoryDisabled) {
@@ -674,6 +759,7 @@ class SeekPreviewFrameProvider internal constructor(
         if (!metadata.matches(target)) return
         try {
             memoryCache.put(frameKey(source, target), CachedPreview(normalizeFrame(frame.bitmap, source.source.maxWidthPx), metadata))
+            source.cachedTargets.add(quantizeSeekPreviewPosition(target, source.source.durationMs))
             mutableCacheRevision.value++
             // A correct late result ends the cooldown; the UI can reuse it immediately.
             if (source.unavailable && !source.decoderDisabled) {
@@ -692,7 +778,8 @@ class SeekPreviewFrameProvider internal constructor(
         source.proxy?.let { return Uri.parse(it.url) }
         // A loopback-only byte bridge keeps Media3 maintained and playback HTTP identity intact.
         // Only the ranges actually consumed by the extractor are fetched, never the whole remux.
-        val proxy = SeekPreviewRangeProxy(HttpRangeReader(previewClient, source.source.url, source.source.headers))
+        val proxy = SeekPreviewRangeProxy(HttpRangeReader(previewClient, source.source.url, source.source.headers,
+            playbackBytes) { bytes -> source.networkBytes.addAndGet(bytes) })
         try {
             proxy.prepare()
             currentCoroutineContext().ensureActive()
@@ -799,6 +886,12 @@ internal data class CachedPreview(val bitmap: Bitmap, val metadata: PreviewMetad
 internal class SeekPreviewDiskCache(private val root: File, private val limitBytes: Long) {
     init { root.mkdirs() }
 
+    fun targets(identity: String): List<Long> = root.listFiles { file ->
+        file.isFile && file.name.startsWith("${identity}_") && file.extension == "preview"
+    }.orEmpty().mapNotNull { it.nameWithoutExtension.substringAfterLast('_').toLongOrNull() }
+
+    fun contains(key: String): Boolean = File(root, "$key.preview").isFile
+
     @Synchronized fun read(key: String, identity: String): CachedPreview? {
         val file = File(root, "$key.preview")
         if (!file.isFile || file.length() !in 1..MAX_CACHE_ENTRY_BYTES) return null
@@ -877,11 +970,14 @@ internal class HttpRangeReader(
     private val client: OkHttpClient,
     private val url: String,
     private val headers: Map<String, String>,
+    private val playbackBytes: SeekPreviewPlaybackBytes? = null,
+    private val onNetworkBytes: (Long) -> Unit = {},
 ) : Closeable {
     private val chunks = LinkedHashMap<Long, ByteArray>(16, 0.75f, true)
     private var cachedBytes = 0
     private var resolvedSize: Long? = null
     private var headAttempted = false
+    private var resolvedRequest: Request? = null
     private val remainingBytes = AtomicLong(MAX_EXTRACTION_NETWORK_BYTES)
     @Volatile private var activeCall: Call? = null
     @Volatile private var closed = false
@@ -889,6 +985,7 @@ internal class HttpRangeReader(
     suspend fun size(): Long {
         checkOpen()
         resolvedSize?.let { return it }
+        playbackBytes?.size(url)?.takeIf { it > 0 }?.let { resolvedSize = it; return it }
         if (!headAttempted) {
             headAttempted = true
             val length = try {
@@ -934,52 +1031,78 @@ internal class HttpRangeReader(
         if (resolvedSize?.let { start >= it } == true) return ByteArray(0)
         if (start > Long.MAX_VALUE - RANGE_CHUNK_BYTES) throw IOException("Range offset overflow")
         val end = minOf(start + RANGE_CHUNK_BYTES - 1, resolvedSize?.minus(1) ?: Long.MAX_VALUE)
-        return request(builder().header("Range", "bytes=$start-$end").build()) { response ->
-            if (response.code == 416) {
-                val match = Regex("bytes \\*/(\\d+)", RegexOption.IGNORE_CASE).matchEntire(response.header("Content-Range")?.trim().orEmpty())
-                val total = match?.groupValues?.get(1)?.toLongOrNull()
-                    ?: throw UnsupportedPreviewException("Invalid range EOF")
-                if (start < total) throw UnsupportedPreviewException("Premature range EOF")
-                acceptSize(total)
-                return@request ByteArray(0)
+        // Only validated playback-cache bytes are shared; no locks or network reads
+        // are delegated to the main player's DataSource.
+        if (resolvedSize != null) {
+            val length = (end - start + 1).toInt()
+            playbackBytes?.read(url, start, length)?.takeIf { it.size == length }?.let {
+                rememberChunk(start, it)
+                return it
             }
-            if (response.code != 206) throw UnsupportedPreviewException("Server does not supply byte ranges")
-            if (response.header("Content-Encoding").let { it != null && !it.equals("identity", true) }) {
-                throw UnsupportedPreviewException("Encoded byte range")
-            }
-            val range = parsePreviewContentRange(response.header("Content-Range"))
-                ?: throw UnsupportedPreviewException("Invalid Content-Range")
-            if (range.start != start || range.end > end) throw UnsupportedPreviewException("Mismatched byte range")
-            val expected = (range.end - range.start + 1).toInt()
-            if (remainingBytes.addAndGet(-expected.toLong()) < 0) throw UnsupportedPreviewException("Preview network budget exceeded")
-            val lengthHeader = response.header("Content-Length")
-            if (lengthHeader != null && lengthHeader.toLongOrNull() != expected.toLong()) throw UnsupportedPreviewException("Mismatched range length")
-            if (range.end < end && range.total != range.end + 1) throw UnsupportedPreviewException("Incomplete byte range")
-            range.total?.let(::acceptSize)
-            val body = response.body ?: throw IOException("Empty range body")
-            val bytes = ByteArray(expected)
-            body.byteStream().use { input ->
-                var count = 0
-                while (count < bytes.size) {
-                    checkOpen()
-                    val read = input.read(bytes, count, bytes.size - count)
-                    if (read < 0) throw EOFException("Truncated byte range")
-                    count += read
+        }
+        val usingResolvedLocation = resolvedRequest != null
+        try {
+            return request(builder().header("Range", "bytes=$start-$end").build()) { response ->
+                if (usingResolvedLocation && response.code in setOf(401, 403, 404, 410)) {
+                    throw ExpiredPreviewLocationException()
                 }
-                if (input.read() != -1) throw UnsupportedPreviewException("Oversized byte range")
-            }
-            synchronized(chunks) {
-                if (!closed) {
-                    chunks.put(start, bytes)?.let { cachedBytes -= it.size }
-                    cachedBytes += bytes.size
-                    val iterator = chunks.entries.iterator()
-                    while (cachedBytes > RANGE_MEMORY_LIMIT_BYTES && iterator.hasNext()) {
-                        cachedBytes -= iterator.next().value.size
-                        iterator.remove()
+                if (response.code == 416) {
+                    val match = Regex("bytes \\*/(\\d+)", RegexOption.IGNORE_CASE).matchEntire(response.header("Content-Range")?.trim().orEmpty())
+                    val total = match?.groupValues?.get(1)?.toLongOrNull()
+                        ?: throw UnsupportedPreviewException("Invalid range EOF")
+                    if (start < total) throw UnsupportedPreviewException("Premature range EOF")
+                    acceptSize(total)
+                    return@request ByteArray(0)
+                }
+                if (response.code != 206) throw UnsupportedPreviewException("Server does not supply byte ranges")
+                if (response.header("Content-Encoding").let { it != null && !it.equals("identity", true) }) {
+                    throw UnsupportedPreviewException("Encoded byte range")
+                }
+                val range = parsePreviewContentRange(response.header("Content-Range"))
+                    ?: throw UnsupportedPreviewException("Invalid Content-Range")
+                if (range.start != start || range.end > end) throw UnsupportedPreviewException("Mismatched byte range")
+                val expected = (range.end - range.start + 1).toInt()
+                if (remainingBytes.addAndGet(-expected.toLong()) < 0) throw UnsupportedPreviewException("Preview network budget exceeded")
+                onNetworkBytes(expected.toLong())
+                val lengthHeader = response.header("Content-Length")
+                if (lengthHeader != null && lengthHeader.toLongOrNull() != expected.toLong()) throw UnsupportedPreviewException("Mismatched range length")
+                if (range.end < end && range.total != range.end + 1) throw UnsupportedPreviewException("Incomplete byte range")
+                range.total?.let(::acceptSize)
+                val body = response.body ?: throw IOException("Empty range body")
+                val bytes = ByteArray(expected)
+                body.byteStream().use { input ->
+                    var count = 0
+                    while (count < bytes.size) {
+                        checkOpen()
+                        val read = input.read(bytes, count, bytes.size - count)
+                        if (read < 0) throw EOFException("Truncated byte range")
+                        count += read
                     }
+                    if (input.read() != -1) throw UnsupportedPreviewException("Oversized byte range")
                 }
+                // Retain the final redirect request, including the headers OkHttp actually
+                // allowed there; never forward origin Authorization to a different host.
+                resolvedRequest = response.request
+                rememberChunk(start, bytes)
+                bytes
             }
-            bytes
+        } catch (expired: ExpiredPreviewLocationException) {
+            resolvedRequest = null
+            return fetch(start) // One refresh through the original resolver URL.
+        }
+    }
+
+    private class ExpiredPreviewLocationException : IOException("Preview location expired")
+
+    private fun rememberChunk(start: Long, bytes: ByteArray) = synchronized(chunks) {
+        if (!closed) {
+            chunks.put(start, bytes)?.let { cachedBytes -= it.size }
+            cachedBytes += bytes.size
+            val iterator = chunks.entries.iterator()
+            while (cachedBytes > RANGE_MEMORY_LIMIT_BYTES && iterator.hasNext()) {
+                cachedBytes -= iterator.next().value.size
+                iterator.remove()
+            }
         }
     }
 
@@ -988,12 +1111,11 @@ internal class HttpRangeReader(
         resolvedSize = total
     }
 
-    private fun builder(): Request.Builder = Request.Builder().url(url).apply {
+    private fun builder(): Request.Builder = (resolvedRequest?.newBuilder() ?: Request.Builder().url(url).apply {
         headers.forEach { (name, value) ->
             if (name.isNotBlank() && value.isNotBlank() && name.lowercase() !in setOf("range", "accept-encoding")) header(name, value)
         }
-        header("Accept-Encoding", "identity")
-    }
+    }).get().removeHeader("Range").header("Accept-Encoding", "identity")
 
     private suspend fun <T> request(request: Request, consume: (Response) -> T): T = suspendCancellableCoroutine { continuation ->
         val call = client.newCall(request)

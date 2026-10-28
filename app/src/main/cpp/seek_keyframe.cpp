@@ -1,6 +1,7 @@
 // ARVIO's independent, software-only keyframe worker. FFmpeg is dynamically linked.
 #include <jni.h>
 #include <android/bitmap.h>
+#include <android/log.h>
 #include <atomic>
 #include <chrono>
 #include <string>
@@ -122,9 +123,11 @@ bool openSource(const std::string& url) {
     if (!codec) return false;
     session.codec = avcodec_alloc_context3(codec);
     if (!session.codec || avcodec_parameters_to_context(session.codec, parameters) < 0) return false;
-    session.codec->thread_count = 1;
+    session.codec->thread_count = 2;
     session.codec->max_pixels = 3840LL * 2160LL;
-    session.codec->thread_type = 0;
+    session.codec->thread_type = FF_THREAD_SLICE;
+    // At 320px, deblocking the full 4K image adds latency without useful detail.
+    session.codec->skip_loop_filter = AVDISCARD_ALL;
     session.codec->skip_frame = AVDISCARD_NONKEY;
     if (avcodec_open2(session.codec, codec, nullptr) < 0) return false;
     for (unsigned i = 0; i < session.format->nb_streams; ++i)
@@ -156,26 +159,35 @@ Java_com_arflix_tv_ui_screens_player_preview_KeyframeNative_frame(
     std::string url(chars);
     env->ReleaseStringUTFChars(address, chars);
     if (url.rfind("http://127.0.0.1:", 0) != 0 || position < 0) return nullptr;
+    const auto started = nowMs();
+    int64_t openMs = 0, seekMs = 0, readMs = 0, decodeMs = 0, scaleMs = 0;
     session.request = id;
     session.deadline = nowMs() + 8000;
     if (interrupted(&session)) return nullptr;
     if (!openSource(url)) { session.reset(); return nullptr; }
+    openMs = nowMs() - started;
+    auto phaseStarted = nowMs();
     auto* stream = session.format->streams[session.stream];
     int64_t target = av_rescale_q(position, AVRational{1, 1000}, stream->time_base) + session.origin;
     // Start at the preceding independently decodable frame; never decode a full GOP.
     if (av_seek_frame(session.format, session.stream, target, AVSEEK_FLAG_BACKWARD) < 0) {
         session.reset(); return nullptr;
     }
+    seekMs = nowMs() - phaseStarted;
     avcodec_flush_buffers(session.codec);
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
     jobject output = nullptr;
     if (!packet || !frame) { av_packet_free(&packet); av_frame_free(&frame); return nullptr; }
     for (int packets = 0; packets < 4096 && !interrupted(&session); ++packets) {
-        if (av_read_frame(session.format, packet) < 0) break;
+        phaseStarted = nowMs();
+        int readResult = av_read_frame(session.format, packet);
+        readMs += nowMs() - phaseStarted;
+        if (readResult < 0) break;
         if (packet->stream_index != session.stream || !(packet->flags & AV_PKT_FLAG_KEY)) {
             av_packet_unref(packet); continue;
         }
+        phaseStarted = nowMs();
         int sent = avcodec_send_packet(session.codec, packet);
         av_packet_unref(packet);
         if (sent < 0) break;
@@ -185,6 +197,8 @@ Java_com_arflix_tv_ui_screens_player_preview_KeyframeNative_frame(
             avcodec_send_packet(session.codec, nullptr);
             received = avcodec_receive_frame(session.codec, frame);
         }
+        decodeMs += nowMs() - phaseStarted;
+        phaseStarted = nowMs();
         if (received < 0 || frame->best_effort_timestamp == AV_NOPTS_VALUE ||
             frame->width <= 0 || frame->height <= 0 ||
             int64_t(frame->width) * frame->height > 3840LL * 2160LL) break;
@@ -223,8 +237,13 @@ Java_com_arflix_tv_ui_screens_player_preview_KeyframeNative_frame(
             output = env->NewObject(resultClass, env->GetMethodID(resultClass, "<init>",
                 "(Landroid/graphics/Bitmap;J)V"), bitmap, actual);
         }
+        scaleMs += nowMs() - phaseStarted;
         break;
     }
+    if (!interrupted(&session)) __android_log_print(ANDROID_LOG_INFO, "SeekPreviewNative",
+        "targetMs=%lld ready=%d openMs=%lld seekMs=%lld readMs=%lld decodeMs=%lld scaleMs=%lld",
+        (long long)position, output != nullptr, (long long)openMs, (long long)seekMs,
+        (long long)readMs, (long long)decodeMs, (long long)scaleMs);
     av_packet_free(&packet);
     av_frame_free(&frame);
     if (!output) session.reset(); // Interrupted AVIO must not poison the next request.
