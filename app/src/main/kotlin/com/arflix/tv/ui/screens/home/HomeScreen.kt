@@ -1763,6 +1763,15 @@ fun HomeScreen(
             }
         }
 
+        // Not compiled with the baseline profile yet: warn that scrolling may be slow.
+        Box(modifier = Modifier.fillMaxSize().zIndex(122f)) {
+            HomeOptimizingNotice(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = com.arflix.tv.ui.components.AppTopBarHeight + 4.dp, end = 48.dp)
+            )
+        }
+
         // App Update Modal
         if (uiState.showAppUpdateDialog) {
             com.arflix.tv.ui.components.AppUpdateModal(

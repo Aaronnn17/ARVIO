@@ -1961,14 +1961,26 @@ fun SettingsScreen(
                         .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(16.dp))
                         .padding(vertical = 18.dp, horizontal = 10.dp)
                 ) {
+                    val awaitingCompilation = com.arflix.tv.ui.components.rememberAwaitingProfileCompilation()
                     Text(
                         text = stringResource(R.string.settings),
                         style = ArflixTypography.cardTitle.copy(fontSize = 19.sp),
                         color = TextPrimary,
                         modifier = Modifier
                             .padding(start = 8.dp)
-                            .padding(bottom = 14.dp)
+                            .padding(bottom = if (awaitingCompilation) 4.dp else 14.dp)
                     )
+                    // Same condition as Home's notice, kept on screen here so it isn't missed.
+                    if (awaitingCompilation) {
+                        Text(
+                            text = stringResource(R.string.settings_optimizing_notice),
+                            style = ArflixTypography.caption,
+                            color = com.arflix.tv.ui.screens.home.NoticeYellow,
+                            modifier = Modifier
+                                .padding(start = 8.dp, end = 4.dp)
+                                .padding(bottom = 12.dp)
+                        )
+                    }
 
                     Column(
                         modifier = Modifier
