@@ -5,7 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class PlaybackHostHealthTest {
+class PlaybackHostRulesTest {
     @Test
     fun `resolver urls are recognised by host and by playback path`() {
         assertTrue(isPerFileResolverUrl("https://aiostreams.elfhosted.com/api/v1/debrid/playback/eyJ/file.mkv"))

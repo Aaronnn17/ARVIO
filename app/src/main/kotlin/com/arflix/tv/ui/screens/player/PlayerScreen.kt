@@ -803,6 +803,17 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     // The source found to be such a placeholder. Its clip saves no progress and never counts as
     // finishing the title: a two-minute "downloading" video must not mark an episode watched.
     var placeholderSource by remember { mutableStateOf<String?>(null) }
+    // The source the player has actually been handed. Until the switch effect prepares a new
+    // selection, ExoPlayer still reports the previous video's state and length.
+    var loadedSource by remember { mutableStateOf<String?>(null) }
+    fun selectedSourceKey(): String? =
+        latestUiState.selectedStreamUrl?.let { "${latestUiState.streamSelectionNonce}|$it" }
+    // Position, progress and "finished" belong to the selected source only once the player has
+    // loaded it and it passed the placeholder check.
+    fun playingCheckedRealSource(): Boolean {
+        val key = selectedSourceKey() ?: return false
+        return key == loadedSource && key == placeholderCheckedSource && key != placeholderSource
+    }
     val heavyStartupMaxRetries = 1
     var rebufferRecoverAttempted by remember { mutableStateOf(false) }
     var longRebufferCount by remember { mutableIntStateOf(0) }
@@ -2112,7 +2123,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         enabled = hasPlaybackStarted && !args.isLiveStream && !isCasting,
         blocked = exitTransition.isExiting || nextEpisodeTransitionInProgress ||
             showNextEpisodePrompt || showSourceMenu || showSubtitleMenu || showSubtitleSettings || uiState.error != null ||
-            placeholderSource == "${uiState.streamSelectionNonce}|${uiState.selectedStreamUrl}",
+            !playingCheckedRealSource(),
         waitingForNextEpisode = uiState.autoPlayNext && playbackEpisodeKey != null &&
             (nextEpisodeAirDateSource != playbackEpisodeKey || nextEpisodeAirDateResolution == NextEpisodeAirDateResolution.Pending),
         offerNextEpisode = uiState.autoPlayNext && playbackEpisodeKey != null && nextEpisodeIdentity != null &&
@@ -2630,6 +2641,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             // Let ExoPlayer's RAM-aware LoadControl handle startup buffering.
             // No manual startup gate - trust the CDN/debrid while keeping enough safety margin.
             exoPlayer.playWhenReady = true
+            loadedSource = "${uiState.streamSelectionNonce}|$url"
             exoPlayer.prepare()
             startupPhase = R.string.player_phase_starting_playback
             playbackStartupDiag(
@@ -2981,7 +2993,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             if (playerReleasedAtomic.get()) break
             if (isCasting) { delay(500); continue }
             currentPosition = runCatching { exoPlayer.currentPosition }.getOrDefault(currentPosition)
-            viewModel.onPlaybackPosition(currentPosition)
+            if (playingCheckedRealSource()) viewModel.onPlaybackPosition(currentPosition)
             val rawDuration = exoPlayer.duration
             duration = if (rawDuration > 0L && rawDuration != C.TIME_UNSET) rawDuration else 0L
             progress = if (duration > 0L) {
@@ -3026,19 +3038,18 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             // An addon's stand-in video ("downloading", "not cached yet") plays like the real file.
             // Checked once per source as soon as its length is known; ENDED counts too, because a
             // resume position past the clip's end jumps straight there.
-            val checkedUrl = latestUiState.selectedStreamUrl
-            val checkedSource = checkedUrl?.let { "${latestUiState.streamSelectionNonce}|$it" }
+            val checkedSource = selectedSourceKey()
             if (checkedSource != null &&
+                checkedSource == loadedSource &&
                 checkedSource != placeholderCheckedSource &&
-                !args.isLiveStream &&
-                duration > 0L &&
                 (exoPlayer.playbackState == Player.STATE_READY || exoPlayer.playbackState == Player.STATE_ENDED)
             ) {
                 placeholderCheckedSource = checkedSource
                 val promisedBytes = latestUiState.selectedStream?.let { stream ->
                     maxOf(parseSizeToBytes(stream.size), stream.sizeBytes ?: 0L, stream.behaviorHints?.videoSize ?: 0L)
                 } ?: 0L
-                if (isLikelyPlaceholderVideo(duration, promisedBytes)) {
+                val canBePlaceholder = !args.isLiveStream && !exoPlayer.isCurrentMediaItemLive
+                if (canBePlaceholder && isLikelyPlaceholderVideo(duration, promisedBytes)) {
                     placeholderSource = checkedSource
                     playbackStartupDiag(
                         "placeholder video durationMs=$duration promisedBytes=$promisedBytes " +
@@ -3054,6 +3065,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                     }
                     // Picked by hand, or nothing left to switch to: the clip itself says what is
                     // going on (often "downloading"), so it keeps playing with the reason on top.
+                    viewModel.onSelectedStreamPlaybackFailure()
                     android.widget.Toast.makeText(
                         context, R.string.player_toast_placeholder_video, android.widget.Toast.LENGTH_LONG
                     ).show()
@@ -3258,8 +3270,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             // Checked before any progress is saved: a live stream's window looks like a duration.
             if (exoPlayer.isCurrentMediaItemLive) viewModel.onLivePlaybackDetected()
 
-            val playingPlaceholder = checkedSource != null && checkedSource == placeholderSource
-            if (currentPosition > 0 && duration > 0 && !playingPlaceholder) {
+            if (currentPosition > 0 && duration > 0 && playingCheckedRealSource()) {
                 val currentSecond = (currentPosition / 1000L).coerceAtLeast(0L)
                 val shouldReport =
                     (!exoPlayer.isPlaying && currentSecond != lastProgressReportSecond) ||
@@ -3291,9 +3302,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         onDispose {
             playerReleasedAtomic.set(true)
             playerReleased = true
-            val playingPlaceholder =
-                placeholderSource == "${latestUiState.streamSelectionNonce}|${latestUiState.selectedStreamUrl}"
-            if (!nextEpisodeTransitionInProgress && !playingPlaceholder) {
+            if (!nextEpisodeTransitionInProgress && playingCheckedRealSource()) {
                 runCatching {
                     if (exoPlayer.isCurrentMediaItemLive) viewModel.onLivePlaybackDetected()
                     val safeDuration = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
@@ -5034,7 +5043,8 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                     startupUrlLock = null
                     rebufferRecoverAttempted = false
                     longRebufferCount = 0
-                    viewModel.selectStream(stream, exoPlayer.currentPosition)
+                    // A placeholder's clip position is not a place in the film: keep the saved one.
+                    viewModel.selectStream(stream, exoPlayer.currentPosition.takeIf { playingCheckedRealSource() })
                     showSourceMenu = false
                     showControls = true
                     coroutineScope.launch {

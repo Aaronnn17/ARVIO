@@ -379,6 +379,9 @@ class PlayerViewModel @Inject constructor(
     // The source whose URL the player has loaded. selectStream() names its pick in selectedStream
     // at once, but the old video keeps playing until the new URL is resolved and applied.
     private var preparedStream: StreamSource? = null
+    // The selected source as the addon listed it. Torrentio, Comet … links are swapped for the
+    // debrid server's own URL before playback; failover checks hosts by the listed URL.
+    private var listedSelectedStream: StreamSource? = null
     private var recentSourceClock: () -> Long = { android.os.SystemClock.elapsedRealtime() }
 
     private fun isCurrentAnime(): Boolean =
@@ -1048,6 +1051,7 @@ class PlayerViewModel @Inject constructor(
                     savedPosition = resumeData.positionMs
                 )
                 preparedStream = resolvedProvidedStream
+                listedSelectedStream = null
                 prefetchSubtitleIndex(onlyForAutoScan = true)
                 audioSyncOnStream()
                 // NOTE: these background children share the load job — an uncaught exception in
@@ -2657,6 +2661,7 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.value.selectedStream?.let { stream ->
                 streamRepository.notePlaybackHostSuccess(stream)
+                listedSelectedStream?.takeIf { it.url != stream.url }?.let(streamRepository::notePlaybackHostSuccess)
                 streamRepository.saveLastGoodPlaybackPreference(
                     mediaType = currentMediaType,
                     tmdbId = currentMediaId,
@@ -2680,7 +2685,11 @@ class PlayerViewModel @Inject constructor(
         if (addonId.isNotBlank()) {
             streamRepository.noteAddonPlaybackFailure(addonId)
         }
-        streamRepository.notePlaybackHostFailure(_uiState.value.selectedStream, "exo_playback_failure")
+        val selected = _uiState.value.selectedStream
+        streamRepository.notePlaybackHostFailure(selected, "exo_playback_failure")
+        listedSelectedStream?.takeIf { it.url != selected?.url }?.let {
+            streamRepository.notePlaybackHostFailure(it, "exo_playback_failure_listed")
+        }
         AppLogger.recordException(
             throwable = IllegalStateException("Selected stream playback failed"),
             context = playbackDiagnosticContext(
@@ -3080,6 +3089,7 @@ class PlayerViewModel @Inject constructor(
         subtitleMenuCandidates.entries.removeAll { it.value.isEmbedded }
         streamSelectionJob?.cancel()
         playbackErrorReportJob?.cancel()
+        listedSelectedStream = stream
         streamSelectionJob = viewModelScope.launch {
             val selectionStartMs = System.currentTimeMillis()
             val requestedResumePosition = resumePositionMs?.coerceAtLeast(0L)
@@ -7717,6 +7727,7 @@ class PlayerViewModel @Inject constructor(
         recentSourcePlayTracker.reset()
         recentSourceGate.disarm()
         preparedStream = null
+        listedSelectedStream = null
         recentSourceLoad = viewModelScope.async {
             val recent = recentPlayedSourceRepository.get(mediaType, mediaId, season, episode)
             val stillCurrent = currentMediaType == mediaType && currentMediaId == mediaId &&
