@@ -8,13 +8,14 @@ import com.arflix.tv.util.normalizeLanguageCode
  * Aggregators list every language of a release ("Eng Deu Ita", "🇬🇧 / 🇩🇪", "German DL"), so the
  * source badge must not stop at the first hit. Only whole words and flag emoji count: two-letter
  * codes ("IT", "DE") are ordinary words in titles and are deliberately not matched. Words of
- * [ignoreWordsOf] (the film's own title, "The Italian Job") and languages named next to a subtitle
- * word ("GERMAN.SUBBED") are not audio languages.
+ * [ignoreWordsOf] (the film's own title, "The Italian Job"), subtitle sections, and languages named
+ * next to an inline subtitle qualifier ("GERMAN.SUBBED") are not audio languages.
  */
 internal fun detectStreamLanguages(text: String, ignoreWordsOf: String = ""): List<String> {
     if (text.isBlank()) return emptyList()
     val titleWords = StreamLanguageRegexes.WORD.findAll(ignoreWordsOf).map { it.value.lowercase() }.toSet()
-    val words = StreamLanguageRegexes.WORD.findAll(text).toList()
+    val audioText = withoutSubtitleSections(text)
+    val words = StreamLanguageRegexes.WORD.findAll(audioText).toList()
     val found = sortedMapOf<Int, String>()
     words.forEachIndexed { index, match ->
         val word = match.value.lowercase()
@@ -28,14 +29,14 @@ internal fun detectStreamLanguages(text: String, ignoreWordsOf: String = ""): Li
     // A flag is a pair of regional-indicator characters. Back-to-back flags ("🇬🇧🇷🇺") are read two
     // at a time from the start of the run, so no flag is seen across a pair boundary ("🇧🇷").
     var offset = 0
-    while (offset < text.length) {
-        val first = text.codePointAt(offset)
+    while (offset < audioText.length) {
+        val first = audioText.codePointAt(offset)
         val afterFirst = offset + Character.charCount(first)
-        if (isRegionalIndicator(first) && afterFirst < text.length) {
-            val second = text.codePointAt(afterFirst)
+        if (isRegionalIndicator(first) && afterFirst < audioText.length) {
+            val second = audioText.codePointAt(afterFirst)
             if (isRegionalIndicator(second)) {
                 val afterSecond = afterFirst + Character.charCount(second)
-                FLAG_CODES[text.substring(offset, afterSecond)]?.let { found.putIfAbsent(offset, it) }
+                FLAG_CODES[audioText.substring(offset, afterSecond)]?.let { found.putIfAbsent(offset, it) }
                 offset = afterSecond
                 continue
             }
@@ -43,6 +44,38 @@ internal fun detectStreamLanguages(text: String, ignoreWordsOf: String = ""): Li
         offset = afterFirst
     }
     return found.values.distinct()
+}
+
+/** Structured audio hints are authoritative; free-text fields have separate section boundaries. */
+internal fun detectSourceAudioLanguages(
+    hintedLanguage: String?,
+    sourceTexts: List<String>,
+    mediaTitle: String
+): List<String> {
+    val hint = hintedLanguage?.trim().orEmpty()
+    val normalizedHint = normalizeLanguageCode(hint).substringBefore('-')
+    val hintedCodes = detectStreamLanguages(hint).ifEmpty {
+        if (StreamLanguageRegexes.LANGUAGE_CODE.matches(hint) && normalizedHint.length == 2) {
+            listOf(normalizedHint)
+        } else emptyList()
+    }
+    return (hintedCodes + sourceTexts.flatMap { detectStreamLanguages(it, mediaTitle) }).distinct()
+}
+
+private fun withoutSubtitleSections(text: String): String = buildString {
+    var start = 0
+    var subtitles = false
+    // Subtitle lists can contain many words or flags. Resume only at an explicit audio heading,
+    // not after skipping just the first language next to "Subtitles".
+    StreamLanguageRegexes.SECTION.findAll(text).forEach { marker ->
+        if (!subtitles) append(text, start, marker.range.first)
+        append(' ')
+        val label = marker.value.trimStart()
+        subtitles = label.startsWith("sub", ignoreCase = true) ||
+            label.startsWith("untertitel", ignoreCase = true) || label == "💬"
+        start = marker.range.last + 1
+    }
+    if (!subtitles) append(text, start, text.length)
 }
 
 private fun isRegionalIndicator(codePoint: Int): Boolean = codePoint in 0x1F1E6..0x1F1FF
@@ -76,6 +109,11 @@ private fun languageFlag(code: String): String =
 private object StreamLanguageRegexes {
     // Letters only, so "Eng.Deu" and "ENG|GER" split into words the same way spaces do.
     val WORD = Regex("""\p{L}+""")
+    val LANGUAGE_CODE = Regex("""[a-zA-Z]{2,3}(?:[-_][a-zA-Z]{2,3})?""")
+    val SECTION = Regex(
+        """\b(?:audio|subs?|subtitles?|untertitel)(?:[ \t]+languages?)?[ \t]*[:=]|(?:^|[\r\n])[ \t]*(?:audio|subs?|subtitles?|untertitel)\b[ \t]*[:=]?|🎧|🔊|💬""",
+        RegexOption.IGNORE_CASE
+    )
 }
 
 private val SUBTITLE_WORDS = setOf("sub", "subs", "subbed", "subtitle", "subtitles", "subtitled", "untertitel")
@@ -143,4 +181,6 @@ private val FLAG_LANGUAGES: List<Pair<String, String>> = listOf(
     "🇻🇳" to "vi",
 )
 
-private val FLAG_CODES: Map<String, String> = FLAG_LANGUAGES.toMap()
+// AIOStreams shares India's flag between Hindi, Tamil, Telugu and others. Keep it for displaying
+// an explicitly named Hindi track, but never infer an audio language from this flag alone.
+private val FLAG_CODES: Map<String, String> = FLAG_LANGUAGES.filterNot { it.first == "🇮🇳" }.toMap()

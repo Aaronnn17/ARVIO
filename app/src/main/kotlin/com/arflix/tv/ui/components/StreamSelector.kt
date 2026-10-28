@@ -1278,7 +1278,6 @@ private object StreamRegexes {
     val CH71 = Regex("""\b7[ .]?1\b""", RegexOption.IGNORE_CASE)
     val CH51 = Regex("""\b5[ .]?1\b""", RegexOption.IGNORE_CASE)
     val MULTI_AUDIO = Regex("""\b(MULTI|DUAL[ .-]?AUDIO|MULTI[ .-]?AUDIO)\b""", RegexOption.IGNORE_CASE)
-    val LANGUAGE_HINT = Regex("""\b(ENG|ENGLISH|HIN|HINDI|TAM|TAMIL|TEL|TELUGU|JPN|JAPANESE|KOR|KOREAN|SPA|SPANISH|FRE|FRENCH|GER|GERMAN|ITA|ITALIAN)\b""", RegexOption.IGNORE_CASE)
     val DV = Regex("""\b(DV|DoVi|Dolby[\s._-]*Vision)\b""", RegexOption.IGNORE_CASE)
     val HDR10_PLUS = Regex("""\b(HDR10\+|HDR10\s*PLUS|HDR\s*10\s*\+)\b""", RegexOption.IGNORE_CASE)
     val HDR10 = Regex("""\bHDR10\b""", RegexOption.IGNORE_CASE)
@@ -1580,24 +1579,21 @@ private fun presentSource(
         else -> null
     }
 
-    val subtitleLangs = stream.subtitles.mapNotNull { sub ->
-        sub.lang.takeIf { it.isNotBlank() }
-    }.distinct()
     val hintedLanguage = stream.behaviorHints?.language?.trim()
     val isMultiAudio = StreamRegexes.MULTI_AUDIO.containsMatchIn(searchBlob) ||
         hintedLanguage?.contains("dual", ignoreCase = true) == true ||
         hintedLanguage?.contains("multi", ignoreCase = true) == true
     // Every language the release names, not just the first ("Eng Deu Ita" carries German too).
-    val namedLanguages = detectStreamLanguages(
-        listOf(
-            hintedLanguage,
+    val namedLanguages = detectSourceAudioLanguages(
+        hintedLanguage = hintedLanguage,
+        sourceTexts = listOf(
             stream.rawLabel,
             stream.description,
             stream.behaviorHints?.filename,
             stream.source,
             stream.addonTitle
-        ).filterNot { it.isNullOrBlank() }.joinToString(" "),
-        ignoreWordsOf = mediaTitle
+        ).filterNotNull(),
+        mediaTitle = mediaTitle
     )
     val languageBadge = streamLanguageBadge(namedLanguages, isMultiAudio, preferredLanguage)
     val languageLabel = when {
@@ -1608,9 +1604,7 @@ private fun presentSource(
             hintedLanguage?.contains("multi", ignoreCase = true) == true -> "Multi-audio"
         !hintedLanguage.isNullOrBlank() -> hintedLanguage
         StreamRegexes.MULTI_AUDIO.containsMatchIn(searchBlob) -> "Multi-audio"
-        subtitleLangs.size > 1 -> "${subtitleLangs.size} langs"
-        subtitleLangs.size == 1 -> subtitleLangs.first().uppercase()
-        else -> StreamRegexes.LANGUAGE_HINT.find(searchBlob)?.value?.uppercase()
+        else -> null
     }
 
     val chips = buildList {
