@@ -158,3 +158,84 @@ Physical-TV measurements, 28 October 2026, TCL Smart TV Pro, Android 14:
   A repeat seek visibly showed all five actual frames. The full cold strip
   needed about 7.3 seconds from the final input, not half a second.
   Final release build/lint and all 74 targeted tests passed.
+
+### Progressive coverage and playback-byte reuse
+
+The next coverage scheduler alternates local detail with wider samples. It
+first covers minute marks in the next five minutes, then their half-minute
+gaps. Known files below 20 GiB also receive a two-minute whole-title pass,
+followed by one-minute and thirty-second passes. Unknown sizes and large
+remuxes remain within a ten-minute forward window. Each turn still starts at
+most one frame; the three-second pacing and playback health guard are retained.
+Speculative extraction stops on metered networks. Distant preparation has a
+per-source 128 MiB range-byte budget and 512-attempt limit; the usual nearby
+window continues after that budget is exhausted. Initial probing is additional.
+Failed points are temporarily skipped rather than trapping subsequent passes.
+
+An indexed disk lookup can return a nearby real sample within twenty seconds
+of the requested position. Such samples retain their actual PTS, show an
+approximation/time label, and cannot satisfy a precise extraction request.
+The seek destination is unchanged. Precise extraction replaces the sample;
+source changes invalidate both. No arbitrary poster or unrelated frame is used.
+
+The range reader can read already committed Media3 playback-cache spans and
+known content length. This path has no upstream factory or write sink, never
+waits for a cache hole, and treats eviction races as misses. It does not change
+the main player's data source or enlarge its cache. Shared bytes join the
+existing small preview byte cache, avoiding repeated disk reads. Missing
+ranges still use the existing authenticated, bounded preview HTTP path.
+
+Coverage remains progressive, not instant whole-title generation. Measurements
+must distinguish the first precise frame, a nearby approximate sample, a
+prepared exact frame, and completion of all five strip frames. A source that
+has not been decoded or prepared still requires network access and decoding.
+
+Physical-TV coverage checks, 28 October 2026, same TCL device and a fresh
+8.12 GB 4K HDR episode, normal signed release:
+
+- Preparation reached the two-minute sample about fifteen seconds after playback
+  started and the four-minute sample after about thirty seconds. Sparse samples
+  reached twelve minutes during the first roughly ninety seconds of playback.
+  This is progressive coverage, not a complete cache of every second.
+- Seeking to 4:03.947 showed a prepared sample at 3:58.822 in 44 ms, with its
+  approximate timestamp visible. The precise replacement appeared after 1,409 ms.
+  Another prepared exact-enough frame appeared in 30 ms.
+- With 256 KiB range reads, untouched targets at 24:03.947, 27:03.947 and
+  30:03.947 needed 2,891, 1,595 and 2,342 ms from input to precise center frame.
+  Extraction itself took 2,787, 1,492 and 2,226 ms. The first two full strips
+  took about 7.7 and 6.0 seconds; the third still lacked one neighbor at the
+  bounded auto-commit deadline. Nearby placeholders are not counted as previews.
+- Four dropped video frames were reported over an initial 44-second interval;
+  no audio-underrun event was observed. This includes startup and lacks a
+  controlled playback-only baseline, so it cannot establish zero playback cost.
+  The playback-health, memory, metered-network and byte-budget guards remain.
+
+These are device observations, not a guarantee for every provider, codec, file
+or network. Private numeric logs and screenshots are kept in the local
+`artifacts` directory; source URLs and credentials are excluded from reports.
+
+The final candidate uses 1 MiB range reads to reduce serial HTTP round trips,
+retaining the 8 MiB range cache and existing extraction-byte budgets. On the
+same 8.12 GB source, three previously unprepared targets at 25:23.120,
+28:23.120 and 34:23.120 produced these results:
+
+| Measurement | 25:23 | 28:23 | 34:23 |
+| --- | ---: | ---: | ---: |
+| Input to visible precise center | 1,266 ms | 1,304 ms | 1,026 ms |
+| Extraction | 1,172 ms | 1,192 ms | 930 ms |
+| Native range-read phase | 593 ms | 358 ms | 356 ms |
+| Input to final neighbor ready | 5,365 ms | 6,103 ms | 5,606 ms |
+
+Each center came from fresh decoding, with no prepared approximate center at
+the final destination. These targets differ from the 256 KiB run, so this is
+directional evidence rather than a controlled same-frame benchmark. All five
+frames completed before auto-commit. Repeating the final target displayed its
+memory-cached center in 18 ms; a TV screenshot confirms two frames on each side.
+The normal release build, release lint, signature/alignment verification and
+all 84 targeted JVM tests passed. Sub-500-ms uncached extraction is not achieved.
+After the final seek, playback advanced another thirty seconds while warming
+continued; no additional dropped-frame or audio-underrun event was logged.
+One dropped frame was reported during the initial 21-second startup interval.
+This short smoke check is not a controlled performance guarantee. The TV was
+left paused. Installed APK SHA-256:
+`36ad1e57cb0b15f98f70ab960d7e0631f4b695659d40286c2b27bcbd45db5a15`.

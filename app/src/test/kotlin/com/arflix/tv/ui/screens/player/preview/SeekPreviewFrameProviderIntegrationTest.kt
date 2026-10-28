@@ -52,8 +52,69 @@ class SeekPreviewFrameProviderIntegrationTest {
             assertNotNull(provider.memoryFrameAt(10_000))
             val revision = provider.cacheRevision.value
             provider.warmNext(1_000)
-            assertEquals(listOf(10_000L, 20_000L), decoded)
+            assertEquals(listOf(10_000L, 60_000L), decoded)
             assertTrue(provider.cacheRevision.value > revision)
+        }
+    }
+
+    @Test fun `nearby display sample is labelled and cannot satisfy precise request`() = runBlocking {
+        val decoded = mutableListOf<Long>()
+        provider(decode = { _, target -> decoded += target; SeekPreviewImage(bitmap(), actualPositionMs = target) }).use { provider ->
+            provider.configure(source())
+            provider.frameAt(60_000)
+            val nearby = provider.cachedDisplayFrameAt(75_000)!!
+            assertTrue(nearby.approximate)
+            assertTrue(provider.matchesDisplayTarget(nearby, 75_000))
+            assertFalse(provider.matchesTarget(nearby, 75_000))
+            assertFalse(provider.matchesDisplayTarget(nearby, 85_000))
+            assertNull(provider.cachedDisplayFrameAt(90_000))
+            assertEquals(60_000L, nearby.actualPositionMs)
+            assertNotNull(provider.frameAt(75_000))
+            assertEquals(listOf(60_000L, 75_000L), decoded)
+            provider.configure(source())
+            assertFalse(provider.matchesDisplayTarget(nearby, 75_000))
+            assertNull(provider.cachedDisplayFrameAt(75_000))
+        }
+    }
+
+    @Test fun `disk index restores nearby preview without decoder or network`() = runBlocking {
+        val source = source()
+        provider(decode = { _, at -> SeekPreviewImage(bitmap(), actualPositionMs = at) }).use { writer ->
+            writer.configure(source)
+            writer.frameAt(60_000)
+            withTimeout(3_000) {
+                while (true) {
+                    val found = provider().use { reader ->
+                        reader.configure(source)
+                        reader.cachedDisplayFrameAt(75_000)
+                    }
+                    if (found != null) {
+                        assertTrue(found.approximate)
+                        assertEquals(SeekPreviewOrigin.DISK, found.origin)
+                        break
+                    }
+                    delay(20)
+                }
+            }
+        }
+    }
+
+    @Test fun `cached display never waits behind an active decoder`() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        provider(decode = { _, target ->
+            if (target == 90_000L) { started.complete(Unit); awaitCancellation() }
+            SeekPreviewImage(bitmap(), actualPositionMs = target)
+        }).use { provider ->
+            provider.configure(source())
+            provider.frameAt(60_000)
+            val pending = async { provider.frameAt(90_000) }
+            started.await()
+            try {
+                val cached = withTimeout(1_000) { provider.cachedDisplayFrameAt(75_000) }
+                assertNotNull(cached)
+                assertTrue(cached!!.approximate)
+                assertFalse(pending.isCompleted)
+            } finally { pending.cancel(); pending.join() }
         }
     }
 

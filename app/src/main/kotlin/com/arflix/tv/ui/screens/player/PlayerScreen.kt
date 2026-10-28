@@ -1087,11 +1087,13 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             .cookieJar(playbackCookieJar)
             .build()
     }
-    val seekPreviewProvider = remember(playbackHttpClient, playbackMemoryClassMb) {
+    val mediaCache = remember(context) { PlaybackCacheSingleton.getInstance(context) }
+    val seekPreviewProvider = remember(playbackHttpClient, playbackMemoryClassMb, mediaCache) {
         SeekPreviewFrameProvider(
             context = context,
             playbackClient = playbackHttpClient,
             memoryClassMb = playbackMemoryClassMb,
+            playbackCache = mediaCache,
         )
     }
     DisposableEffect(seekPreviewProvider) {
@@ -1102,7 +1104,6 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             .setUserAgent(OkHttpProvider.userAgent)
             .setDefaultRequestProperties(baseRequestHeaders)
     }
-    val mediaCache = remember(context) { PlaybackCacheSingleton.getInstance(context) }
     // Wrap the OkHttp factory so file:// URIs also work — matched subtitles are served from a
     // local cache file (already downloaded by the scan) instead of re-fetching addon servers.
     // http/https still routes through the same OkHttp client as before.
@@ -1797,6 +1798,9 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                     maxWidthPx = if (isConstrainedPlaybackDevice) 480 else 640,
                     preview = selected?.preview,
                     useNativeKeyframes = useNativeSeekKeyframes,
+                    sizeBytes = selected?.let {
+                        (it.sizeBytes ?: it.behaviorHints?.videoSize ?: parseSizeToBytes(it.size)).takeIf { size -> size > 0 }
+                    },
                 )
             }
         )
@@ -1809,7 +1813,10 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     val previewFrameForTarget = seekPreviewFrame?.takeIf {
         seekPreviewProvider.matchesTarget(it, previewTarget)
     }
-    val previewAvailable = previewFrameForTarget != null || (previewStatus.capability != SeekPreviewCapability.UNAVAILABLE &&
+    val displayPreviewFrame = seekPreviewFrame?.takeIf {
+        seekPreviewProvider.matchesDisplayTarget(it, previewTarget)
+    }
+    val previewAvailable = displayPreviewFrame != null || (previewStatus.capability != SeekPreviewCapability.UNAVAILABLE &&
         unavailablePreviewTarget != (previewStatus.sourceGeneration to previewTarget))
     val showQuickSeekPreview = seekInteraction.previewSession &&
         seekInteraction.surface == SeekSurface.Quick && previewAvailable
@@ -1820,6 +1827,12 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     LaunchedEffect(previewRequested, previewTarget, previewFrameForTarget) {
         if (previewRequested && previewFrameForTarget != null) {
             android.util.Log.println(android.util.Log.INFO, "SeekPreviewUi", "display target=$previewTarget actual=${previewFrameForTarget.positionMs} origin=${previewFrameForTarget.origin}")
+        }
+    }
+    LaunchedEffect(previewRequested, previewTarget, displayPreviewFrame) {
+        if (previewRequested && displayPreviewFrame?.approximate == true) {
+            android.util.Log.println(android.util.Log.INFO, "SeekPreviewUi",
+                "approximate target=$previewTarget actual=${displayPreviewFrame.positionMs} origin=${displayPreviewFrame.origin}")
         }
     }
 
@@ -1837,6 +1850,9 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         if (seekPreviewProvider.matchesTarget(seekPreviewFrame, previewTarget)) {
             seekPreviewProvider.warmWindow(previewTarget)
             return@LaunchedEffect
+        }
+        seekPreviewProvider.cachedDisplayFrameAt(previewTarget)?.let { nearby ->
+            if (seekPreviewProvider.matchesDisplayTarget(nearby, previewTarget)) seekPreviewFrame = nearby
         }
         if (previewStatus.capability == SeekPreviewCapability.UNAVAILABLE) return@LaunchedEffect
         delay(SEEK_PREVIEW_DEBOUNCE_MS)
@@ -1898,13 +1914,16 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         if (!hasPlaybackStarted || isBuffering || !isPlaying || seekInteraction.browsing ||
             args.isLiveStream || isCasting) return@LaunchedEffect
         val guard = SeekPreviewPlaybackGuard()
+        val connectivity = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
         val previewPlaybackListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
             override fun onDroppedVideoFrames(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
                 droppedFrames: Int, elapsedMs: Long) {
+                android.util.Log.println(android.util.Log.INFO, "SeekPreviewPlayback", "dropped=$droppedFrames intervalMs=$elapsedMs")
                 if (droppedFrames >= 3) guard.onPlaybackStrain(android.os.SystemClock.elapsedRealtime())
             }
             override fun onAudioUnderrun(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
                 bufferSize: Int, bufferSizeMs: Long, elapsedSinceLastFeedMs: Long) {
+                android.util.Log.println(android.util.Log.INFO, "SeekPreviewPlayback", "audioUnderrun=true")
                 guard.onPlaybackStrain(android.os.SystemClock.elapsedRealtime())
             }
         }
@@ -1924,7 +1943,8 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                 val safe = guard.mayWarm(now, exoPlayer.isPlaying,
                     exoPlayer.playbackState == Player.STATE_READY && exoPlayer.playerError == null,
                     exoPlayer.totalBufferedDuration, latestSeekBrowsing,
-                    lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED), resourceSafe)
+                    lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED),
+                    resourceSafe && !connectivity.isActiveNetworkMetered)
                 if (!safe && warming?.isActive == true) {
                     warming?.cancel()
                     seekPreviewProvider.cancelPending()
@@ -4103,7 +4123,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                 isCasting = isCasting,
                 showCastButton = castAvailable && !streamNeedsHeaders,
                 showPipButton = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O,
-                seekPreviewFrame = previewFrameForTarget,
+                seekPreviewFrame = displayPreviewFrame,
                 onScrubPreviewPosition = { position ->
                     if (position != null) dragSeek(position) else finishSeek(false)
                 },
@@ -4705,11 +4725,11 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                                 val offset = (maxWidth * progress - previewWidth / 2f)
                                     .coerceIn(0.dp, (maxWidth - previewWidth).coerceAtLeast(0.dp))
                                 if (!isTouchDevice) SeekPreviewFilmstrip(
-                                    frame = previewFrameForTarget, neighbors = previewNeighbors,
+                                    frame = displayPreviewFrame, neighbors = previewNeighbors,
                                     positionMs = controlsPreviewPosition,
                                     sourceGeneration = previewStatus.sourceGeneration,
                                 ) else com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
-                                    frame = previewFrameForTarget,
+                                    frame = displayPreviewFrame,
                                     positionMs = controlsPreviewPosition,
                                     sourceGeneration = previewStatus.sourceGeneration,
                                     modifier = Modifier.offset(x = offset).size(previewWidth, previewHeight),
@@ -5084,11 +5104,11 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                             modifier = Modifier.fillMaxWidth().seekPreviewOverlay().height(previewHeight + 2.dp),
                           ) {
                             if (!isTouchDevice) SeekPreviewFilmstrip(
-                                frame = previewFrameForTarget, neighbors = previewNeighbors,
+                                frame = displayPreviewFrame, neighbors = previewNeighbors,
                                 positionMs = previewPosition,
                                 sourceGeneration = previewStatus.sourceGeneration,
                             ) else com.arflix.tv.ui.screens.player.preview.ReadySeekPreview(
-                                frame = previewFrameForTarget,
+                                frame = displayPreviewFrame,
                                 positionMs = previewPosition,
                                 sourceGeneration = previewStatus.sourceGeneration,
                                 modifier = Modifier.offset(x = previewOffset).size(previewWidth, previewHeight),

@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -30,6 +32,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /** Draw above the seek bar without contributing height or intercepting focus. */
 internal fun Modifier.seekPreviewOverlay(): Modifier = zIndex(1f).layout { measurable, constraints ->
@@ -87,7 +90,7 @@ fun ReadySeekPreview(
     placeholder: Boolean = false,
 ) {
     if (!visible) return
-    if (frame == null || frame.bitmap.isRecycled || !frame.isValidFor(positionMs, sourceGeneration)) {
+    if (frame == null || frame.bitmap.isRecycled || !frame.isDisplayableFor(positionMs, sourceGeneration)) {
         if (placeholder) {
             val shape = RoundedCornerShape(cornerRadius)
             Box(modifier.aspectRatio(16f / 9f).background(Color(0xFF171717), shape)
@@ -117,5 +120,12 @@ fun ReadySeekPreview(
             contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxSize(),
         )
+        if (frame.approximate) {
+            // The seek cursor stays exact. Label the actual nearby sample explicitly.
+            Text("≈ ${android.text.format.DateUtils.formatElapsedTime(frame.positionMs / 1_000)}",
+                color = Color.White, fontSize = 11.sp,
+                modifier = Modifier.align(Alignment.BottomEnd).background(Color.Black.copy(alpha = 0.8f))
+                    .padding(horizontal = 5.dp, vertical = 2.dp).testTag("seek_preview_approximate"))
+        }
     }
 }
