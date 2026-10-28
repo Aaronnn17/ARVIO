@@ -33,7 +33,7 @@ internal class SeekPreviewPlaybackGuard {
         foreground: Boolean,
         resourceSafe: Boolean,
     ): Boolean {
-        if (!playing || !ready || bufferedMs < 25_000L || browsing || !foreground || !resourceSafe || nowMs < strainedUntilMs) {
+        if (!playing || !ready || bufferedMs < 8_000L || browsing || !foreground || !resourceSafe || nowMs < strainedUntilMs) {
             healthySinceMs = null
             return false
         }

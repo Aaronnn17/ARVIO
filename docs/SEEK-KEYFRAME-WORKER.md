@@ -79,3 +79,33 @@ counted as a successful audio-only playback benchmark.
   rejected it. An earlier 1080p contention run had one rebuffer in both windows
   and failed the strict zero-rebuffer assertion; it is not counted as a pass.
   These results do not guarantee zero impact on every physical device/network.
+
+### Physical TV follow-up, 28 October 2026
+
+The remote previously committed a seek after two seconds regardless of whether
+its preview had finished. On the TCL ARMv7 TV a first native request took 3.36
+seconds, so the UI could cancel a working decoder before displaying anything.
+The commit timer now permits a bounded ten-second pending request and leaves a
+newly delivered frame visible for at least 1.2 seconds. OK/Back remain immediate.
+
+Background warming now requires eight seconds of buffered media (instead of 25)
+and eight seconds of stable playback. The old threshold could exceed what the
+80 MiB buffer holds for high-bitrate files. One frame may start every three
+seconds; buffer, dropped-frame, foreground and memory protections remain active.
+Only numeric preview timing/state diagnostics survive release log stripping.
+
+Validation on the physical TCL Smart TV Pro, Android 14, normal signed release:
+
+- 69 targeted JVM seek/preview tests passed, including pending-preview timeout
+  and healthy-buffer regression coverage; release lint/build passed.
+- Two 4K HDR episodes (6.29 GB and 7.60 GB) played with ahead warming enabled.
+  Background frame requests succeeded during playback; playback resumed after
+  quick seeking, and deliberately paused playback remained paused after scrubbing.
+- Uncached foreground requests completed in 1,731, 1,505 and 1,338 ms. The cold
+  worker's first background request completed in 3,357 ms including binding.
+- A cached remote target displayed 60 ms after its input event. A physical-TV
+  screenshot shows the selected frame and three cached neighbors together.
+- The 7.60 GB stream subsequently produced ahead frames in 796–1,651 ms.
+  These are measured examples, not a guarantee of instant uncached network reads
+  or zero dropped frames on every source. Physical playback was observed, not
+  instrumented with a baseline dropped-frame comparison.

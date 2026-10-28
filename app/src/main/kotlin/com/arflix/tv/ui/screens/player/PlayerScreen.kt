@@ -1819,7 +1819,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     }
     LaunchedEffect(previewRequested, previewTarget, previewFrameForTarget) {
         if (previewRequested && previewFrameForTarget != null) {
-            android.util.Log.i("SeekPreviewUi", "display target=$previewTarget actual=${previewFrameForTarget.positionMs} origin=${previewFrameForTarget.origin}")
+            android.util.Log.println(android.util.Log.INFO, "SeekPreviewUi", "display target=$previewTarget actual=${previewFrameForTarget.positionMs} origin=${previewFrameForTarget.origin}")
         }
     }
 
@@ -1929,7 +1929,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                     warming?.cancel()
                     seekPreviewProvider.cancelPending()
                 } else if (safe && warming?.isActive != true && now >= nextWarmAt) {
-                    nextWarmAt = now + 8_000L
+                    nextWarmAt = now + 3_000L
                     warming = launch { seekPreviewProvider.warmNext(exoPlayer.currentPosition) }
                 }
                 delay(250L)
@@ -2155,7 +2155,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                     currentPosition = interaction.targetMs
                 }
                 exoPlayer.playWhenReady = interaction.resumeAfterBrowse
-                android.util.Log.i("SeekPreviewUi", "finish commit=$commit target=${interaction.targetMs} resume=${interaction.resumeAfterBrowse}")
+                android.util.Log.println(android.util.Log.INFO, "SeekPreviewUi", "finish commit=$commit target=${interaction.targetMs} resume=${interaction.resumeAfterBrowse}")
             }
         }
         seekInteraction = interaction.finish()
@@ -2181,7 +2181,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         if (next.browsing && !previous.browsing && surface == SeekSurface.Quick) {
             runCatching { containerFocusRequester.requestFocus() }
         }
-        android.util.Log.i("SeekPreviewUi", "input phase=${next.phase} target=${next.targetMs} surface=$surface")
+        android.util.Log.println(android.util.Log.INFO, "SeekPreviewUi", "input phase=${next.phase} target=${next.targetMs} surface=$surface")
         seekPreviewProvider.memoryFrameAt(next.targetMs)?.let { frame ->
             if (seekPreviewProvider.matchesTarget(frame, next.targetMs)) seekPreviewFrame = frame
         }
@@ -2213,11 +2213,13 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     val latestFinishSeek by rememberUpdatedState(finishSeek)
     val latestQuickSeek by rememberUpdatedState(queueQuickSeek)
 
-    LaunchedEffect(seekInteraction.phase, seekInteraction.lastInputMs, seekInteraction.surface) {
+    val waitingForSeekPreview = previewRequested && previewFrameForTarget == null && previewAvailable
+    LaunchedEffect(seekInteraction.phase, seekInteraction.lastInputMs, seekInteraction.surface, waitingForSeekPreview) {
         val pending = seekInteraction
-        val remaining = pending.autoCommitDelayMs(android.os.SystemClock.elapsedRealtime())
+        val remaining = pending.autoCommitDelayMs(android.os.SystemClock.elapsedRealtime(), waitingForSeekPreview)
             ?: return@LaunchedEffect
-        delay(remaining)
+        // Give a newly delivered frame time to be seen before committing.
+        delay(if (!waitingForSeekPreview && previewFrameForTarget != null) remaining.coerceAtLeast(1_200L) else remaining)
         if (seekInteraction === pending &&
             lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
             finishSeek(true)

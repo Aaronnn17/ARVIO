@@ -461,7 +461,7 @@ class SeekPreviewFrameProvider internal constructor(
                 if (result != null) {
                     source.failures = 0
                     if (!background) updateStatus(source, SeekPreviewState.READY, requestId = requestId)
-                    Log.i("SeekPreview", "origin=${result.origin} targetMs=$target actualMs=${result.actualPositionMs} cue=${result.cueStartMs}..${result.cueEndMs} elapsedMs=${SystemClock.elapsedRealtime() - startedAt} status=READY generation=${source.generation}")
+                    Log.println(Log.INFO, "SeekPreview", "origin=${result.origin} targetMs=$target actualMs=${result.actualPositionMs} cue=${result.cueStartMs}..${result.cueEndMs} elapsedMs=${SystemClock.elapsedRealtime() - startedAt} status=READY generation=${source.generation}")
                 }
                 result
             } catch (timeout: TimeoutCancellationException) {
@@ -569,7 +569,7 @@ class SeekPreviewFrameProvider internal constructor(
             disk.read(key, source.identity)
         } catch (_: OutOfMemoryError) {
             disableForMemoryPressure(source)
-            Log.i("SeekPreview", "origin=DISK targetMs=$target status=UNAVAILABLE reason=memory generation=${source.generation}")
+            Log.println(Log.INFO, "SeekPreview", "origin=DISK targetMs=$target status=UNAVAILABLE reason=memory generation=${source.generation}")
             return@withContext null
         } ?: return@withContext null
         currentCoroutineContext().ensureActive()

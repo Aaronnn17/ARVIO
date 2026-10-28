@@ -14,13 +14,13 @@ class SeekPreviewWindowTest {
 
     @Test fun warmingRequiresEightSecondsOfHealthyPlaybackAndResetsWhenBufferFalls() {
         val guard = SeekPreviewPlaybackGuard()
-        fun sample(time: Long, buffered: Long = 30_000, browsing: Boolean = false,
+        fun sample(time: Long, buffered: Long = 9_000, browsing: Boolean = false,
             foreground: Boolean = true, safe: Boolean = true, ready: Boolean = true, playing: Boolean = true) =
             guard.mayWarm(time, playing, ready, buffered, browsing, foreground, safe)
         assertFalse(sample(0))
         assertFalse(sample(7_999))
         assertTrue(sample(8_000))
-        assertFalse(sample(8_250, buffered = 24_999))
+        assertFalse(sample(8_250, buffered = 7_999))
         assertFalse(sample(9_000))
         assertTrue(sample(17_000))
         assertFalse(sample(17_250, browsing = true))
