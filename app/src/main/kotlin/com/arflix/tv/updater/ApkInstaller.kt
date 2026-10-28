@@ -12,10 +12,18 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.arflix.tv.BuildConfig
 import com.arflix.tv.R
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 object ApkInstaller {
+    /** Set on the status intent when the session included base.dm, with [EXTRA_APK_PATH]. */
+    const val EXTRA_WITH_DEX_METADATA = "com.arflix.tv.updater.WITH_DEX_METADATA"
+    const val EXTRA_APK_PATH = "com.arflix.tv.updater.APK_PATH"
+
     fun canRequestPackageInstalls(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.packageManager.canRequestPackageInstalls()
@@ -100,7 +108,11 @@ object ApkInstaller {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
-    fun launchInstall(context: Context, apkFile: File) {
+    /**
+     * @param withDexMetadata false skips base.dm; used by [ApkInstallReceiver] to retry once
+     * when an install that included it fails.
+     */
+    fun launchInstall(context: Context, apkFile: File, withDexMetadata: Boolean = true) {
         // Try session-based installer first (smoother UX on Android 5+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try {
@@ -112,12 +124,14 @@ object ApkInstaller {
                 val sessionId = installer.createSession(params)
                 val session = installer.openSession(sessionId)
 
-                session.openWrite("app_update", 0, apkFile.length()).use { out ->
+                // Named base.apk so the dex metadata can pair with it as base.dm.
+                session.openWrite("base.apk", 0, apkFile.length()).use { out ->
                     FileInputStream(apkFile).use { input ->
                         input.copyTo(out)
                     }
                     session.fsync(out)
                 }
+                val hasDexMetadata = withDexMetadata && writeDexMetadata(session, apkFile)
 
                 // Use a broadcast PendingIntent instead of activity — works reliably
                 // on Android TV where the Application context isn't an Activity.
@@ -127,6 +141,10 @@ object ApkInstaller {
                 // without which the session commit succeeds silently but no install ever happens.
                 val intent = Intent(ApkInstallReceiver.actionFor(context))
                     .setPackage(context.packageName)
+                if (hasDexMetadata) {
+                    intent.putExtra(EXTRA_WITH_DEX_METADATA, true)
+                        .putExtra(EXTRA_APK_PATH, apkFile.absolutePath)
+                }
                 val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
                 } else {
@@ -155,6 +173,41 @@ object ApkInstaller {
             context.startActivity(intent)
         } catch (e: Exception) {
             System.err.println("[ApkInstaller] Fallback ACTION_VIEW install failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Adds the APK's own baseline profile to the session as base.dm, so the system compiles
+     * the update with it at install time. Without it, a sideloaded update runs uncompiled
+     * (slow Home scrolling) until background dexopt picks up the profile, often a day later.
+     *
+     * The profile in assets/dexopt is in the Android 9 (P) format, which ART reads on
+     * Android 9-11 only; Android 12+ needs a different version, so it is skipped there.
+     * Any failure here just leaves the install without dex metadata.
+     *
+     * @return true if base.dm was added to the session.
+     */
+    private fun writeDexMetadata(session: PackageInstaller.Session, apkFile: File): Boolean {
+        if (Build.VERSION.SDK_INT !in Build.VERSION_CODES.P..Build.VERSION_CODES.R) return false
+        try {
+            val dm = ByteArrayOutputStream()
+            ZipFile(apkFile).use { apk ->
+                val prof = apk.getEntry("assets/dexopt/baseline.prof") ?: return false
+                ZipOutputStream(dm).use { zip ->
+                    zip.putNextEntry(ZipEntry("primary.prof"))
+                    apk.getInputStream(prof).use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
+            }
+            val bytes = dm.toByteArray()
+            session.openWrite("base.dm", 0, bytes.size.toLong()).use { out ->
+                out.write(bytes)
+                session.fsync(out)
+            }
+            return true
+        } catch (e: Exception) {
+            System.err.println("[ApkInstaller] Skipping dex metadata: ${e.message}")
+            return false
         }
     }
 }
