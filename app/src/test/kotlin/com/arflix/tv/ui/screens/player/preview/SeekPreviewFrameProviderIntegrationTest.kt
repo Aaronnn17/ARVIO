@@ -27,6 +27,57 @@ import java.util.UUID
 // Sideload's Android Conscrypt JNI is unavailable on the host JVM.
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class SeekPreviewFrameProviderIntegrationTest {
+    @Test fun `rendered rewind frames remain available without secondary extraction`() = runBlocking {
+        provider().use { provider ->
+            provider.configure(source(allowExtraction = false))
+            assertEquals(SeekPreviewCapability.UNAVAILABLE, provider.status.value.capability)
+            assertNull(provider.rememberRenderedFrame(10_000, bitmap(), provider.sourceGeneration - 1))
+            assertNotNull(provider.rememberRenderedFrame(10_000, bitmap(), provider.sourceGeneration))
+            assertEquals(SeekPreviewCapability.AVAILABLE, provider.status.value.capability)
+            assertNotNull(provider.memoryFrameAt(12_000))
+            assertNull(provider.memoryFrameAt(30_000))
+            assertTrue(provider.cacheRevision.value > 0)
+        }
+    }
+
+    @Test fun `bounded warming caches one new frame per turn and notifies the strip`() = runBlocking {
+        val decoded = mutableListOf<Long>()
+        provider(decode = { _, target ->
+            decoded += target
+            SeekPreviewImage(bitmap(), actualPositionMs = target)
+        }).use { provider ->
+            provider.configure(source())
+            provider.warmNext(1_000)
+            assertEquals(listOf(10_000L), decoded)
+            assertNotNull(provider.memoryFrameAt(10_000))
+            val revision = provider.cacheRevision.value
+            // The scheduler marks itself idle just after the caller has the first frame, and a
+            // background warm skips while it's still busy. Retry until it takes the next target,
+            // so a slow CI runner doesn't turn that hand-off into a failure.
+            withTimeout(10_000) {
+                while (decoded.size < 2) {
+                    provider.warmNext(1_000)
+                    if (decoded.size < 2) delay(10)
+                }
+            }
+            assertEquals(listOf(10_000L, 20_000L), decoded)
+            assertTrue(provider.cacheRevision.value > revision)
+        }
+    }
+
+    @Test fun `speculative failure does not block a subsequent foreground preview`() = runBlocking {
+        var first = true
+        provider(decode = { _, target ->
+            if (first) { first = false; throw UnsupportedPreviewException("Preview network budget exceeded") }
+            SeekPreviewImage(bitmap(), actualPositionMs = target)
+        }).use { provider ->
+            provider.configure(source())
+            provider.warmNext(0)
+            assertEquals(SeekPreviewCapability.AVAILABLE, provider.status.value.capability)
+            assertNotNull(provider.frameAt(30_000))
+        }
+    }
+
     private val context: Context get() = RuntimeEnvironment.getApplication()
     private fun source(allowExtraction: Boolean = true) = SeekPreviewSource(
         "https://example.test/video.mp4?version=1", emptyMap(), UUID.randomUUID().toString(), 120_000, false, false,

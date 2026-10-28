@@ -14,7 +14,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.effect.Presentation
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
-import androidx.media3.inspector.FrameExtractor
+import com.arflix.tv.player.previewmedia3.FrameExtractor
 import com.arflix.tv.data.model.StreamPreviewMetadata
 import com.google.common.util.concurrent.ListenableFuture
 import fi.iki.elonen.NanoHTTPD
@@ -65,9 +65,11 @@ private const val FRAME_TOLERANCE_MS = 5_000L
 internal const val SEEK_PREVIEW_CACHE_EPOCH = 5
 private const val DISK_CACHE_LIMIT_BYTES = 128L * 1024L * 1024L
 private const val MAX_CACHE_ENTRY_BYTES = 2L * 1024L * 1024L
-internal const val RANGE_CHUNK_BYTES = 512 * 1024
-private const val RANGE_MEMORY_LIMIT_BYTES = 4 * 1024 * 1024
+// Amortize CDN round trips without turning thumbnail generation into a media download.
+internal const val RANGE_CHUNK_BYTES = 1024 * 1024
+private const val RANGE_MEMORY_LIMIT_BYTES = 8 * 1024 * 1024
 private const val MAX_EXTRACTION_NETWORK_BYTES = 16L * 1024L * 1024L
+internal const val BACKGROUND_PREVIEW_NETWORK_BYTES = 4L * 1024L * 1024L
 internal const val SEEK_PREVIEW_REQUEST_TIMEOUT_MS = 10_000L
 private const val MEDIA3_FRAME_TIMEOUT_MS = 6_000L
 
@@ -81,6 +83,7 @@ data class SeekPreviewSource(
     val allowExtraction: Boolean = true,
     val maxWidthPx: Int = 480,
     val preview: StreamPreviewMetadata? = null,
+    val useNativeKeyframes: Boolean = false,
 )
 
 enum class SeekPreviewCapability { AVAILABLE, UNAVAILABLE }
@@ -241,11 +244,15 @@ class SeekPreviewFrameProvider internal constructor(
     }
     private val mutableStatus = MutableStateFlow(SeekPreviewStatus())
     val status: StateFlow<SeekPreviewStatus> = mutableStatus.asStateFlow()
+    private val mutableCacheRevision = MutableStateFlow(0L)
+    val cacheRevision: StateFlow<Long> = mutableCacheRevision.asStateFlow()
     val sourceGeneration: Long get() = status.value.sourceGeneration
     @Volatile private var active: ActiveSource? = null
     @Volatile private var closed = false
     private var generation = 0L
     private val decoderHandler = Handler(Looper.getMainLooper())
+    private val keyframeWorkerDelegate = lazy { KeyframeWorkerClient(appContext) }
+    private val keyframeWorker by keyframeWorkerDelegate
     private val decoderSession = SeekPreviewDecoderSession<FrameExtractor.Frame>(
         CoroutineScope(scope.coroutineContext + Dispatchers.Main.immediate),
         Executor { command -> decoderHandler.post(command) },
@@ -272,6 +279,8 @@ class SeekPreviewFrameProvider internal constructor(
         @Volatile var memoryDisabled = false
         var foregroundRequest = 0L
         var proxy: SeekPreviewRangeProxy? = null
+        var extractionBudgetBytes = MAX_EXTRACTION_NETWORK_BYTES
+        var warmRetryAtMs = 0L
         fun close() {
             images?.close()
             proxy?.close()
@@ -353,11 +362,38 @@ class SeekPreviewFrameProvider internal constructor(
         }
     }
 
+    /** One missing frame per turn; the caller controls playback health and pacing. */
+    suspend fun warmNext(positionMs: Long) {
+        val source = active ?: return
+        if (SystemClock.elapsedRealtime() < source.warmRetryAtMs) return
+        for (target in seekPreviewWarmTargets(positionMs, source.source.durationMs)) {
+            if (active !== source || source.unavailable) return
+            if (cached(source, target, 0) != null) continue
+            requestFrame(target, cacheOnly = false, background = true)
+            return
+        }
+    }
+
+    /** Called only during paused browsing, after the selected frame has been delivered. */
+    suspend fun warmWindow(positionMs: Long) {
+        val source = active ?: return
+        val foreground = synchronized(lock) { source.foregroundRequest }
+        val targets = seekPreviewWindow(positionMs, source.source.durationMs)
+            .filter { it != positionMs }.sortedBy { kotlin.math.abs(it - positionMs) }
+        for (target in targets) {
+            if (active !== source || source.unavailable ||
+                synchronized(lock) { source.foregroundRequest != foreground }) return
+            requestFrame(target, cacheOnly = false, background = true, playbackPaused = true)
+        }
+    }
+
     /** Cancels outstanding target/network work without disposing the configured source. */
     fun cancelPending() {
         synchronized(lock) {
             scheduler.cancel()
             active?.let { source ->
+                // Stop socket reads immediately, even if Media3 is still completing a frame.
+                source.proxy?.endRequest()
                 source.foregroundRequest = requests.incrementAndGet()
                 if (!source.unavailable) updateStatus(source, SeekPreviewState.IDLE)
             }
@@ -365,7 +401,8 @@ class SeekPreviewFrameProvider internal constructor(
         scope.launch(Dispatchers.Main.immediate) { decoderSession.release() }
     }
 
-    private suspend fun requestFrame(positionMs: Long, cacheOnly: Boolean, background: Boolean): SeekPreviewFrame? {
+    private suspend fun requestFrame(positionMs: Long, cacheOnly: Boolean, background: Boolean,
+        playbackPaused: Boolean = false): SeekPreviewFrame? {
         val source = active ?: return null
         val target = clamp(positionMs, source)
         val requestId = requests.incrementAndGet()
@@ -393,9 +430,11 @@ class SeekPreviewFrameProvider internal constructor(
                     // never escalate into a decoder while constrained/heavy playback is active.
                     if (image == null && background && source.images != null) return@withTimeout null
                     if (image == null && source.source.allowExtraction && !source.source.isAdaptive && !source.decoderDisabled) {
+                        source.extractionBudgetBytes = if (background && !playbackPaused) BACKGROUND_PREVIEW_NETWORK_BYTES else MAX_EXTRACTION_NETWORK_BYTES
                         origin = SeekPreviewOrigin.DECODER
                         image = decoderOverride?.invoke(source.source, decodePosition(source, target))
-                            ?: extractWithMedia3(source, target)
+                            ?: if (source.source.useNativeKeyframes) extractNativeKeyframe(source, target)
+                            else extractWithMedia3(source, target)
                     }
                     currentCoroutineContext().ensureActive()
                     if (image == null && source.images != null) {
@@ -414,6 +453,7 @@ class SeekPreviewFrameProvider internal constructor(
                     val frame = deliver(source, cached, target, requestId, origin) ?: return@withTimeout null
                     val key = frameKey(source, target)
                     memoryCache.put(key, cached)
+                    mutableCacheRevision.value++
                     // Display is not held behind JPEG compression or disk pruning.
                     diskWriter.offer(key to cached)
                     frame
@@ -425,7 +465,8 @@ class SeekPreviewFrameProvider internal constructor(
                 }
                 result
             } catch (timeout: TimeoutCancellationException) {
-                fail(source, "Preview deadline exceeded", permanent = false, requestId = requestId, background = background)
+                if (!background) fail(source, "Preview deadline exceeded", permanent = false, requestId = requestId, background = false)
+                else suspendWarming(source)
                 logFailure(source, target, startedAt, "deadline")
                 null
             } catch (cancelled: CancellationException) {
@@ -436,8 +477,14 @@ class SeekPreviewFrameProvider internal constructor(
                 null
             } catch (failure: Exception) {
                 currentCoroutineContext().ensureActive()
+                if (com.arflix.tv.BuildConfig.DEBUG) {
+                    val site = failure.stackTrace.firstOrNull { it.className.startsWith("com.arflix") }
+                    Log.d("SeekPreview", "failureType=${failure.javaClass.simpleName} at=$site")
+                }
                 val reason = if (failure is UnsupportedPreviewException) "Unsupported preview path" else "Preview extraction failed"
-                fail(source, reason, failure is UnsupportedPreviewException, requestId, background)
+                // Speculative work has a smaller budget; failing it must not disable a user request.
+                if (!background) fail(source, reason, failure is UnsupportedPreviewException, requestId, false)
+                else suspendWarming(source)
                 logFailure(source, target, startedAt, if (failure is UnsupportedPreviewException) "unsupported" else "extraction")
                 null
             } finally {
@@ -452,6 +499,14 @@ class SeekPreviewFrameProvider internal constructor(
         // Never print exception messages: network/decoder exceptions can embed signed URLs.
         if (source.failures <= 3) {
             Log.w("SeekPreview", "targetMs=$target elapsedMs=${SystemClock.elapsedRealtime() - startedAt} status=UNAVAILABLE reason=$reason generation=${source.generation}")
+        }
+    }
+
+    private fun suspendWarming(source: ActiveSource) {
+        source.warmRetryAtMs = SystemClock.elapsedRealtime() + 30_000L
+        source.proxy?.endRequest()
+        scope.launch(Dispatchers.Main.immediate) {
+            if (active === source) decoderSession.release()
         }
     }
 
@@ -518,7 +573,10 @@ class SeekPreviewFrameProvider internal constructor(
             return@withContext null
         } ?: return@withContext null
         currentCoroutineContext().ensureActive()
-        deliver(source, entry, target, requestId, SeekPreviewOrigin.DISK)?.also { memoryCache.put(key, entry) }
+        deliver(source, entry, target, requestId, SeekPreviewOrigin.DISK)?.also {
+            memoryCache.put(key, entry)
+            mutableCacheRevision.value++
+        }
     }
 
     private fun deliver(source: ActiveSource, cached: CachedPreview, target: Long, requestId: Long, origin: SeekPreviewOrigin): SeekPreviewFrame? {
@@ -545,8 +603,25 @@ class SeekPreviewFrameProvider internal constructor(
             return null
         }
         return deliver(source, entry, positionMs, 0, SeekPreviewOrigin.RENDERED)?.also {
-            memoryCache.put(frameKey(source, positionMs), entry)
+            val key = frameKey(source, positionMs)
+            memoryCache.put(key, entry)
+            mutableCacheRevision.value++
+            diskWriter.offer(key to entry)
+            if (active === source && source.unavailable && !source.memoryDisabled) {
+                source.unavailable = false
+                updateStatus(source, SeekPreviewState.IDLE)
+            }
         }
+    }
+
+    private suspend fun extractNativeKeyframe(source: ActiveSource, target: Long): SeekPreviewImage {
+        val uri = localDecoderUri(source)
+        source.proxy?.beginRequest(source.extractionBudgetBytes)
+        return try {
+            keyframeWorker.frameAt(uri.toString(), decodePosition(source, target))?.let {
+                SeekPreviewImage(it.bitmap, actualPositionMs = it.positionMs)
+            } ?: throw IOException("Native preview unavailable")
+        } finally { source.proxy?.endRequest() }
     }
 
     private suspend fun extractWithMedia3(source: ActiveSource, target: Long): SeekPreviewImage {
@@ -567,7 +642,7 @@ class SeekPreviewFrameProvider internal constructor(
                         val proxy = source.proxy
                         object : SeekPreviewDecoder<FrameExtractor.Frame> {
                             override fun frameAt(positionMs: Long): ListenableFuture<FrameExtractor.Frame> {
-                                proxy?.beginRequest()
+                                proxy?.beginRequest(source.extractionBudgetBytes)
                                 return extractor.getFrame(positionMs)
                             }
                             override fun close() {
@@ -580,6 +655,13 @@ class SeekPreviewFrameProvider internal constructor(
                 SeekPreviewImage(frame.bitmap, actualPositionMs = frame.presentationTimeMs)
             } catch (failure: Exception) {
                 if (source.proxy?.memoryFailed == true) throw OutOfMemoryError("Preview range allocation failed")
+                val unsupported = generateSequence<Throwable>(failure) { it.cause }
+                    .filterIsInstance<androidx.media3.common.PlaybackException>()
+                    .any { it.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED }
+                if (unsupported) {
+                    source.decoderDisabled = true
+                    throw UnsupportedPreviewException("Unsupported preview codec")
+                }
                 throw failure
             }
         }
@@ -592,6 +674,7 @@ class SeekPreviewFrameProvider internal constructor(
         if (!metadata.matches(target)) return
         try {
             memoryCache.put(frameKey(source, target), CachedPreview(normalizeFrame(frame.bitmap, source.source.maxWidthPx), metadata))
+            mutableCacheRevision.value++
             // A correct late result ends the cooldown; the UI can reuse it immediately.
             if (source.unavailable && !source.decoderDisabled) {
                 source.failures = 0
@@ -656,6 +739,7 @@ class SeekPreviewFrameProvider internal constructor(
         // close queues release behind existing Media3 work, without submitting another decode.
         CoroutineScope(Dispatchers.Main.immediate).launch {
             decoderSession.close()
+            if (keyframeWorkerDelegate.isInitialized()) keyframeWorker.close()
         }
     }
 }
@@ -937,7 +1021,7 @@ internal class HttpRangeReader(
     }
 
     private fun checkOpen() { if (closed) throw IOException("Range source closed") }
-    fun beginBudget() { remainingBytes.set(MAX_EXTRACTION_NETWORK_BYTES) }
+    fun beginBudget(bytes: Long = MAX_EXTRACTION_NETWORK_BYTES) { remainingBytes.set(bytes) }
     fun cancelPending() { activeCall?.cancel() }
     override fun close() {
         closed = true
@@ -969,13 +1053,13 @@ internal class SeekPreviewRangeProxy(private val reader: HttpRangeReader) : Nano
         start(2_000, true)
     }
 
-    fun beginRequest() {
+    fun beginRequest(bytes: Long = MAX_EXTRACTION_NETWORK_BYTES) {
         if (!closed) {
-            reader.beginBudget()
+            reader.beginBudget(bytes)
             // Keep an existing decoder connection valid between nearby seeks.
             // Reset limits only for an actual new target, never for background reads.
             val current = lease ?: Lease().also { lease = it }
-            current.remaining.set(MAX_EXTRACTION_NETWORK_BYTES)
+            current.remaining.set(bytes)
             current.deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SEEK_PREVIEW_REQUEST_TIMEOUT_MS)
         }
     }

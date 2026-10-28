@@ -168,8 +168,6 @@ import com.arflix.tv.ui.components.ListPickerMenu
 import com.arflix.tv.ui.components.MediaContextMenu
 import com.arflix.tv.ui.components.rememberCardLayoutMode
 import com.arflix.tv.ui.components.rememberCatalogueRowLayoutMode
-import com.arflix.tv.ui.components.Toast
-import com.arflix.tv.ui.components.ToastType as ComponentToastType
 import com.arflix.tv.ui.components.SidebarItem
 import com.arflix.tv.ui.components.topBarFocusedItem
 import com.arflix.tv.ui.components.topBarMaxIndex
@@ -1746,21 +1744,22 @@ fun HomeScreen(
         }
 
 
-        // Toast notification
-        uiState.toastMessage?.let { message ->
-            // Above the context menu and list picker, whose results it reports.
-            Box(modifier = Modifier.fillMaxSize().zIndex(122f)) {
-                Toast(
-                    message = message,
-                    type = when (uiState.toastType) {
-                        ToastType.SUCCESS -> ComponentToastType.SUCCESS
-                        ToastType.ERROR -> ComponentToastType.ERROR
-                        ToastType.INFO -> ComponentToastType.INFO
-                    },
-                    isVisible = true,
-                    onDismiss = { viewModel.dismissToast() }
-                )
-            }
+        val quietUpdateNotice by viewModel.quietUpdateNotice.collectAsStateWithLifecycle()
+        HomeToastNotifications(
+            toastMessage = uiState.toastMessage,
+            toastType = uiState.toastType,
+            quietUpdateNotice = quietUpdateNotice,
+            onToastDismiss = viewModel::dismissToast,
+            onQuietUpdateDismiss = viewModel::dismissQuietUpdateNotice
+        )
+
+        // Not compiled with the baseline profile yet: warn that scrolling may be slow.
+        Box(modifier = Modifier.fillMaxSize().zIndex(122f)) {
+            HomeOptimizingNotice(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = com.arflix.tv.ui.components.AppTopBarHeight + 4.dp, end = 48.dp)
+            )
         }
 
         // App Update Modal

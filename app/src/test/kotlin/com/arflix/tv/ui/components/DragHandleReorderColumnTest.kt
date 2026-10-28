@@ -115,4 +115,62 @@ class DragHandleReorderColumnTest {
         assertEquals(listOf("b", "a", "c"), state.localOrder)
         assertEquals(-20f, state.translationFor("a"), 0.001f)
     }
+
+    @Test
+    fun aSourceReorderWhileHeldCancelsTheStaleMove() {
+        assertChangedSourceCancels(listOf("c", "a", "b"))
+    }
+
+    @Test
+    fun anInsertedSourceWhileHeldCancelsTheStaleMove() {
+        assertChangedSourceCancels(listOf("a", "new", "b", "c"))
+    }
+
+    @Test
+    fun aRemovedSourceWhileHeldCancelsTheStaleMove() {
+        assertChangedSourceCancels(listOf("a", "c"))
+    }
+
+    @Test
+    fun unchangedSourceKeysDoNotCancelAnActiveDrag() {
+        val drops = mutableListOf<Triple<Any, Int, Int>>()
+        val state = stateWith(listOf("a" to 60, "b" to 60, "c" to 60), drops)
+        state.onDragStart("a")
+        state.onDrag(70f)
+        state.forgetLocalOrderIfStale(listOf("a", "b", "c"))
+        assertEquals("a", state.draggedKey)
+        state.onDragStop()
+        assertEquals(listOf(Triple<Any, Int, Int>("a", 0, 1)), drops)
+    }
+
+    @Test
+    fun aFreshDragUsesTheNewSourcePositionsAfterCancellation() {
+        val drops = mutableListOf<Triple<Any, Int, Int>>()
+        val state = stateWith(listOf("a" to 60, "b" to 60, "c" to 60), drops)
+        state.onDragStart("a")
+        state.onDrag(70f)
+        state.forgetLocalOrderIfStale(listOf("c", "a", "b"))
+        state.shownKeys = listOf("c", "a", "b")
+        state.tops["c"] = 0
+        state.tops["a"] = 60
+        state.tops["b"] = 120
+        state.onDragStart("a")
+        state.onDrag(70f)
+        state.onDragStop()
+        assertEquals(listOf(Triple<Any, Int, Int>("a", 1, 2)), drops)
+    }
+
+    private fun assertChangedSourceCancels(keys: List<String>) {
+        val drops = mutableListOf<Triple<Any, Int, Int>>()
+        val state = stateWith(listOf("a" to 60, "b" to 60, "c" to 60), drops)
+        state.onDragStart("a")
+        state.onDrag(70f)
+        state.forgetLocalOrderIfStale(keys)
+        assertNull(state.draggedKey)
+        assertNull(state.localOrder)
+        // Late pointer events from the canceled gesture must not write anything.
+        state.onDrag(70f)
+        state.onDragStop()
+        assertEquals(emptyList<Triple<Any, Int, Int>>(), drops)
+    }
 }

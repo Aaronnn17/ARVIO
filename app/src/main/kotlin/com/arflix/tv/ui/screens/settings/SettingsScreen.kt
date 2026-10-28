@@ -772,7 +772,7 @@ fun SettingsScreen(
             "catalogs" -> uiState.catalogs.size + 2 // Add + Import + Built-in collections toggle + catalogs
             "stremio" -> stremioAddons.size + 2 // rows + refresh + community + add button
             "plugins" -> pluginsMaxIndex
-            "accounts" -> 19 // Includes About & Credits and device-local usage opt-in.
+            "accounts" -> 20 // Includes About & Credits and device-local usage opt-in.
             else -> 0
         }
     }
@@ -1843,11 +1843,12 @@ fun SettingsScreen(
                                                         viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true)
                                                     }
                                                 }
-                                                15 -> viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled)
-                                                16 -> openExternalUrl(context, PRIVACY_POLICY_URL)
-                                                17 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
-                                                18 -> showCredits = true
-                                                19 -> viewModel.setUsageStatisticsEnabled(!uiState.usageStatisticsEnabled)
+                                                15 -> viewModel.setQuietUpdateNotifications(!uiState.quietUpdateNotifications)
+                                                16 -> viewModel.setDiagnosticsSharingEnabled(!uiState.diagnosticsSharingEnabled)
+                                                17 -> openExternalUrl(context, PRIVACY_POLICY_URL)
+                                                18 -> openExternalUrl(context, ACCOUNT_DELETION_URL)
+                                                19 -> showCredits = true
+                                                20 -> viewModel.setUsageStatisticsEnabled(!uiState.usageStatisticsEnabled)
                                             }
                                         }
                                         "plugins" -> {
@@ -1963,14 +1964,9 @@ fun SettingsScreen(
                         .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(16.dp))
                         .padding(vertical = 18.dp, horizontal = 10.dp)
                 ) {
-                    Text(
-                        text = stringResource(R.string.settings),
-                        style = ArflixTypography.cardTitle.copy(fontSize = 19.sp),
-                        color = TextPrimary,
-                        modifier = Modifier
-                            .padding(start = 8.dp)
-                            .padding(bottom = 14.dp)
-                    )
+                    val availableUpdate = uiState.updateStatus as? com.arflix.tv.updater.UpdateStatus.UpdateAvailable
+                    val awaitingCompilation = com.arflix.tv.ui.components.rememberAwaitingProfileCompilation()
+                    SettingsSidebarHeader(availableUpdate?.update?.tag, awaitingCompilation)
 
                     Column(
                         modifier = Modifier
@@ -2279,6 +2275,8 @@ fun SettingsScreen(
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             focusedActionIndex = iptvActionIndex,
                             onConfigure = { editingIptvIndex = -1; showIptvInput = true },
+                            onDeleteSelectedPlaylists = viewModel::removeIptvPlaylists,
+                            onDeleteSelectedPortals = viewModel::removeStalkerPortals,
                             stalkerPortals = uiState.iptvStalkerPortals,
                             onAddStalkerPortal = { stalkerEditId = null; stalkerEditPortal = ""; stalkerEditMac = ""; stalkerEditName = ""; showStalkerInput = true },
                             onEditStalkerPortal = { portal -> stalkerEditId = portal.id; stalkerEditPortal = portal.portalUrl; stalkerEditMac = portal.macAddress; stalkerEditName = portal.name; showStalkerInput = true },
@@ -2343,6 +2341,8 @@ fun SettingsScreen(
                             focusedIndex = if (activeZone == Zone.CONTENT) contentFocusIndex else -1,
                             focusedActionIndex = iptvActionIndex,
                             onConfigure = { editingIptvIndex = -1; showIptvInput = true },
+                            onDeleteSelectedPlaylists = viewModel::removeIptvPlaylists,
+                            onDeleteSelectedPortals = viewModel::removeStalkerPortals,
                             stalkerPortals = uiState.iptvStalkerPortals,
                             onAddStalkerPortal = { stalkerEditId = null; stalkerEditPortal = ""; stalkerEditMac = ""; stalkerEditName = ""; showStalkerInput = true },
                             onEditStalkerPortal = { portal -> stalkerEditId = portal.id; stalkerEditPortal = portal.portalUrl; stalkerEditMac = portal.macAddress; stalkerEditName = portal.name; showStalkerInput = true },
@@ -2519,6 +2519,8 @@ fun SettingsScreen(
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
                             onInstallUpdate = { viewModel.installAppUpdateOrRequestPermission() },
+                            quietUpdateNotifications = uiState.quietUpdateNotifications,
+                            onQuietUpdateNotificationsToggle = viewModel::setQuietUpdateNotifications,
                             onDiagnosticsSharingToggle = viewModel::setDiagnosticsSharingEnabled,
                             onUsageStatisticsToggle = viewModel::setUsageStatisticsEnabled,
                             onOpenPrivacy = { openExternalUrl(context, PRIVACY_POLICY_URL) },
@@ -5632,6 +5634,14 @@ private fun MobileSettingsMainPage(
                     onClick = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) }
                 )
                 MobileSettingsRow(
+                    icon = Icons.Default.SystemUpdate,
+                    title = stringResource(R.string.settings_quiet_update_notifications),
+                    subtitle = stringResource(R.string.settings_quiet_update_notifications_desc),
+                    value = stringResource(if (uiState.quietUpdateNotifications) R.string.on else R.string.off),
+                    isFocused = false,
+                    onClick = { viewModel.setQuietUpdateNotifications(!uiState.quietUpdateNotifications) }
+                )
+                MobileSettingsRow(
                     icon = Icons.Default.Security,
                     title = stringResource(R.string.settings_privacy_data_title),
                     subtitle = stringResource(R.string.settings_privacy_data_sub_desc),
@@ -6233,6 +6243,8 @@ private fun MobileSettingsSubPage(
                     focusedIndex = -1,
                     focusedActionIndex = 0,
                     onConfigure = onAddIptvClick,
+                    onDeleteSelectedPlaylists = viewModel::removeIptvPlaylists,
+                    onDeleteSelectedPortals = viewModel::removeStalkerPortals,
                     stalkerPortals = uiState.iptvStalkerPortals,
                     onAddStalkerPortal = onAddStalkerPortal,
                     onEditStalkerPortal = onEditStalkerPortal,
@@ -8550,7 +8562,7 @@ private fun homeServerKindLabel(kind: HomeServerKind): String {
 
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-private fun IptvSettings(
+internal fun IptvSettings(
     playlists: List<com.arflix.tv.data.repository.IptvPlaylistEntry>,
     channelCount: Int,
     isLoading: Boolean,
@@ -8568,6 +8580,8 @@ private fun IptvSettings(
     onMovePlaylistUp: (Int) -> Unit,
     onMovePlaylistDown: (Int) -> Unit,
     onDeletePlaylist: (Int) -> Unit,
+    onDeleteSelectedPlaylists: (Set<String>) -> Unit,
+    onDeleteSelectedPortals: (Set<String>) -> Unit,
     onRefresh: () -> Unit,
     onDelete: () -> Unit,
     onManageCategories: (String) -> Unit = {},
@@ -8597,10 +8611,8 @@ private fun IptvSettings(
     pageScrollState: ScrollState? = null,
 ) {
     val isMobile = LocalDeviceType.current.isTouchDevice()
-    var selectionMode by remember { mutableStateOf(false) }
-    var selectedIndices by remember { mutableStateOf(setOf<Int>()) }
-    // Tracks which section the current mobile selection belongs to ("m3u" or "stalker")
-    var selectionSection by remember { mutableStateOf("m3u") }
+    var selection by remember { mutableStateOf(IptvSourceSelection()) }
+    val selectionMode = selection.isActive
 
     if (!isMobile) {
         LaunchedEffect(focusedIndex) {
@@ -8612,6 +8624,13 @@ private fun IptvSettings(
 
     if (isMobile) {
         val heldAccent = resolveAccentColor(fallback = Pink)
+        val currentPlaylists by rememberUpdatedState(playlists)
+        val currentPortals by rememberUpdatedState(stalkerPortals)
+        val playlistIds = playlists.map { it.id }.toSet()
+        val portalIds = stalkerPortals.map { it.id }.toSet()
+        LaunchedEffect(playlistIds, portalIds) {
+            selection = selection.retain(playlistIds, portalIds)
+        }
         // A tap on a playlist or portal opens its menu; these name the one whose menu is open.
         var menuPlaylistId by remember { mutableStateOf<String?>(null) }
         var menuPortalId by remember { mutableStateOf<String?>(null) }
@@ -8620,8 +8639,8 @@ private fun IptvSettings(
                 title = playlist.name,
                 onDismiss = { menuPlaylistId = null },
                 onCategories = { onManageCategories(playlist.id) },
-                onEdit = { playlists.indexOf(playlist).takeIf { it >= 0 }?.let(onEditPlaylist) },
-                onDelete = { playlists.indexOf(playlist).takeIf { it >= 0 }?.let(onDeletePlaylist) }
+                onEdit = { currentPlaylists.indexOfFirst { it.id == playlist.id }.takeIf { it >= 0 }?.let(onEditPlaylist) },
+                onDelete = { onDeleteSelectedPlaylists(setOf(playlist.id)) }
             )
         }
         stalkerPortals.firstOrNull { it.id == menuPortalId }?.let { portal ->
@@ -8629,8 +8648,8 @@ private fun IptvSettings(
                 title = portal.name,
                 onDismiss = { menuPortalId = null },
                 onCategories = { onManageStalkerCategories(portal.id) },
-                onEdit = { onEditStalkerPortal(portal) },
-                onDelete = { onRemoveStalkerPortal(portal.id) }
+                onEdit = { currentPortals.firstOrNull { it.id == portal.id }?.let(onEditStalkerPortal) },
+                onDelete = { onDeleteSelectedPortals(setOf(portal.id)) }
             )
         }
         Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -8639,24 +8658,23 @@ private fun IptvSettings(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(stringResource(R.string.settings_n_selected, selectedIndices.size), style = ArflixTypography.sectionTitle, color = TextPrimary)
+                    Text(stringResource(R.string.settings_n_selected, selection.ids.size), style = ArflixTypography.sectionTitle, color = TextPrimary)
                     Spacer(modifier = Modifier.weight(1f))
-                    if (selectedIndices.isNotEmpty()) {
+                    if (selection.ids.isNotEmpty()) {
                         Box(modifier = Modifier.size(36.dp).clickable {
-                            selectedIndices.sortedDescending().forEach { i ->
-                                if (selectionSection == "stalker") {
-                                    stalkerPortals.getOrNull(i)?.let { onRemoveStalkerPortal(it.id) }
-                                } else {
-                                    onDeletePlaylist(i)
-                                }
+                            val selected = selection.retain(playlistIds, portalIds)
+                            if (selected.ids.isNotEmpty()) {
+                                if (selected.section == IptvSourceSection.PORTALS) {
+                                    onDeleteSelectedPortals(selected.ids)
+                                } else onDeleteSelectedPlaylists(selected.ids)
                             }
-                            selectionMode = false; selectedIndices = emptySet()
+                            selection = IptvSourceSelection()
                         }.background(Color(0xFFDC2626), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete), tint = Color.White, modifier = Modifier.size(20.dp))
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                     }
-                    Box(modifier = Modifier.size(36.dp).clickable { selectionMode = false; selectedIndices = emptySet() }.background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.size(36.dp).clickable { selection = IptvSourceSelection() }.background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
                         Icon(Icons.Default.Close, contentDescription = stringResource(R.string.close), tint = Color.White, modifier = Modifier.size(20.dp))
                     }
                 }
@@ -8675,7 +8693,7 @@ private fun IptvSettings(
                     // The callbacks below address playlists by their place in the stored list; while
                     // a dropped row waits for the stored order the shown place can differ from it.
                     val index = playlists.indexOf(playlist)
-                    val isSelected = selectedIndices.contains(index)
+                    val isSelected = selection.contains(IptvSourceSection.PLAYLISTS, playlist.id)
                     val epgSourceCount = playlist.settingsEpgInput().lineSequence().count { it.isNotBlank() }
                     Column {
                         Row(
@@ -8684,8 +8702,8 @@ private fun IptvSettings(
                                 .then(Modifier.combinedClickable(
                                     onClickLabel = stringResource(R.string.settings_source_menu_open),
                                     onLongClickLabel = stringResource(R.string.settings_source_menu_select),
-                                    onClick = { if (selectionMode) { selectedIndices = if (isSelected) selectedIndices - index else selectedIndices + index; if (selectedIndices.isEmpty()) selectionMode = false } else menuPlaylistId = playlist.id },
-                                    onLongClick = { if (!selectionMode) { selectionSection = "m3u"; selectionMode = true; selectedIndices = setOf(index) } }
+                                    onClick = { if (selectionMode) selection = selection.toggle(IptvSourceSection.PLAYLISTS, playlist.id) else menuPlaylistId = playlist.id },
+                                    onLongClick = { if (!selectionMode) selection = selection.toggle(IptvSourceSection.PLAYLISTS, playlist.id) }
                                 ))
                                 .padding(horizontal = 16.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -8734,8 +8752,7 @@ private fun IptvSettings(
                         pageScrollState = pageScrollState,
                         enabled = !selectionMode && stalkerPortals.size > 1
                     ) { portal, shownIndex, _, handle, isHeld ->
-                    val index = stalkerPortals.indexOf(portal)
-                    val isSelected = selectedIndices.contains(index)
+                    val isSelected = selection.contains(IptvSourceSection.PORTALS, portal.id)
                     Column {
                         Row(
                             modifier = Modifier.fillMaxWidth()
@@ -8743,8 +8760,8 @@ private fun IptvSettings(
                                 .then(Modifier.combinedClickable(
                                     onClickLabel = stringResource(R.string.settings_source_menu_open),
                                     onLongClickLabel = stringResource(R.string.settings_source_menu_select),
-                                    onClick = { if (selectionMode) { selectedIndices = if (isSelected) selectedIndices - index else selectedIndices + index; if (selectedIndices.isEmpty()) selectionMode = false } else menuPortalId = portal.id },
-                                    onLongClick = { if (!selectionMode) { selectionSection = "stalker"; selectionMode = true; selectedIndices = setOf(index) } }
+                                    onClick = { if (selectionMode) selection = selection.toggle(IptvSourceSection.PORTALS, portal.id) else menuPortalId = portal.id },
+                                    onLongClick = { if (!selectionMode) selection = selection.toggle(IptvSourceSection.PORTALS, portal.id) }
                                 ))
                                 .padding(horizontal = 16.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -10711,6 +10728,8 @@ private fun AccountsSettings(
     onSwitchProfile: () -> Unit,
     onCheckUpdates: () -> Unit,
     onInstallUpdate: () -> Unit,
+    quietUpdateNotifications: Boolean = false,
+    onQuietUpdateNotificationsToggle: (Boolean) -> Unit = {},
     onDiagnosticsSharingToggle: (Boolean) -> Unit,
     onUsageStatisticsToggle: (Boolean) -> Unit,
     onOpenPrivacy: () -> Unit,
@@ -10976,12 +10995,23 @@ private fun AccountsSettings(
         Spacer(modifier = Modifier.height(16.dp))
 
         SettingsToggleRow(
+            title = stringResource(R.string.settings_quiet_update_notifications),
+            subtitle = stringResource(R.string.settings_quiet_update_notifications_desc),
+            isEnabled = quietUpdateNotifications,
+            isFocused = focusedIndex == 15,
+            onToggle = onQuietUpdateNotificationsToggle,
+            modifier = Modifier.settingsFocusSlot(15)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        SettingsToggleRow(
             title = stringResource(R.string.settings_diagnostics_sharing),
             subtitle = stringResource(R.string.settings_diagnostics_sharing_desc),
             isEnabled = diagnosticsSharingEnabled,
-            isFocused = focusedIndex == 15,
+            isFocused = focusedIndex == 16,
             onToggle = onDiagnosticsSharingToggle,
-            modifier = Modifier.settingsFocusSlot(15)
+            modifier = Modifier.settingsFocusSlot(16)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -10990,9 +11020,9 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_privacy_policy),
             description = stringResource(R.string.settings_privacy_policy_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 16,
+            isFocused = focusedIndex == 17,
             onClick = onOpenPrivacy,
-            modifier = Modifier.settingsFocusSlot(16)
+            modifier = Modifier.settingsFocusSlot(17)
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -11001,27 +11031,27 @@ private fun AccountsSettings(
             title = stringResource(R.string.settings_account_data_deletion),
             description = stringResource(R.string.settings_account_data_deletion_desc),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 17,
+            isFocused = focusedIndex == 18,
             onClick = onOpenDataDeletion,
-            modifier = Modifier.settingsFocusSlot(17)
+            modifier = Modifier.settingsFocusSlot(18)
         )
         Spacer(modifier = Modifier.height(16.dp))
         SettingsActionRow(
             title = stringResource(R.string.about_credits),
             description = stringResource(R.string.about_credits_description),
             actionLabel = stringResource(R.string.settings_badge_open),
-            isFocused = focusedIndex == 18,
+            isFocused = focusedIndex == 19,
             onClick = onOpenCredits,
-            modifier = Modifier.settingsFocusSlot(18)
+            modifier = Modifier.settingsFocusSlot(19)
         )
         Spacer(modifier = Modifier.height(16.dp))
         SettingsToggleRow(
             title = stringResource(R.string.settings_usage_statistics),
             subtitle = stringResource(R.string.settings_usage_statistics_desc),
             isEnabled = usageStatisticsEnabled,
-            isFocused = focusedIndex == 19,
+            isFocused = focusedIndex == 20,
             onToggle = onUsageStatisticsToggle,
-            modifier = Modifier.settingsFocusSlot(19)
+            modifier = Modifier.settingsFocusSlot(20)
         )
     }
 }
@@ -13729,7 +13759,13 @@ private fun MobileSourceMenuSheet(
     val scope = rememberCoroutineScope()
     // Slides the sheet down before acting, as a swipe or a tap beside it does.
     fun closeThen(action: () -> Unit) {
-        scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss(); action() }
+        scope.launch {
+            sheetState.hide()
+            if (!sheetState.isVisible) {
+                onDismiss()
+                action()
+            }
+        }
     }
     androidx.compose.material3.ModalBottomSheet(
         onDismissRequest = onDismiss,

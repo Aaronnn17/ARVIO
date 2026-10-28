@@ -197,16 +197,14 @@ class DragHandleReorderState internal constructor(
     }
 
     /**
-     * Called whenever the list is handed a new order. Once that order differs from the one the row
-     * was picked up from, the store has answered - with the move, or with something else that
-     * happened meanwhile - and from then on the list shows what it is given again.
+     * Source positions must stay fixed throughout a gesture. A changed order or membership
+     * cancels a held row rather than applying its old movement to a different list. After a
+     * drop, a changed source order acknowledges the save and releases the optimistic order.
      */
     internal fun forgetLocalOrderIfStale(keys: List<Any>) {
-        if (draggedKey != null || localOrder == null) return
-        if (keys != orderAtPickUp) {
-            localOrder = null
-            orderAtPickUp = null
-        }
+        if (localOrder == null || keys == orderAtPickUp) return
+        val heldKey = draggedKey
+        if (heldKey != null) cancelDrag(heldKey) else forgetLocalOrder()
     }
 
     /** Gives up on an answer that never came, so the list cannot be stuck showing its own order. */
@@ -317,11 +315,12 @@ fun <T> DragHandleReorderColumn(
     }
 
     SideEffect {
-        state.shownKeys = shownKeys
+        // Validate before another pointer event can commit a drop against new source positions.
+        state.forgetLocalOrderIfStale(sourceKeys)
+        state.shownKeys = state.localOrder ?: sourceKeys
         state.scrollState = pageScrollState
         state.onDrop = { k, from, to -> itemsByKey[k]?.let { currentOnDrop(it, from, to) } }
     }
-    LaunchedEffect(sourceKeys) { state.forgetLocalOrderIfStale(sourceKeys) }
     LaunchedEffect(state.draggedKey, local) {
         if (state.draggedKey == null) {
             if (local != null) {
@@ -364,7 +363,7 @@ fun <T> DragHandleReorderColumn(
                                 detectDragGesturesAfterLongPress(
                                     onDragStart = { state.onDragStart(itemKey) },
                                     onDragEnd = { state.onDragStop() },
-                                    onDragCancel = { state.onDragStop() },
+                                    onDragCancel = { state.cancelDrag(itemKey) },
                                     onDrag = { change, amount ->
                                         change.consume()
                                         state.onDrag(amount.y)

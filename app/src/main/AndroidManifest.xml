@@ -217,6 +217,11 @@
             </intent-filter>
         </receiver>
 
+        <service
+            android:name=".ui.screens.player.preview.KeyframeWorkerService"
+            android:process=":seek_preview"
+            android:exported="false"
+            android:stopWithTask="true" />
     </application>
 
 </manifest>

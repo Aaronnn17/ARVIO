@@ -8,6 +8,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,6 +36,40 @@ internal fun Modifier.seekPreviewOverlay(): Modifier = zIndex(1f).layout { measu
     val preview = measurable.measure(constraints.copy(minHeight = 0))
     layout(preview.width, 0) {
         preview.placeRelative(0, -preview.height)
+    }
+}
+
+/** Non-focusable filmstrip. Missing frames stay empty; every shown image retains its own time. */
+@Composable
+internal fun SeekPreviewFilmstrip(
+    frame: SeekPreviewFrame?,
+    neighbors: List<SeekPreviewFrame>,
+    positionMs: Long,
+    sourceGeneration: Long,
+    modifier: Modifier = Modifier,
+) {
+    BoxWithConstraints(modifier.fillMaxWidth().height(126.dp).testTag("seek_preview_filmstrip")) {
+        val selectedWidth = 224.dp.coerceAtMost(maxWidth)
+        val sideWidth = ((maxWidth - selectedWidth - 32.dp) / 4).coerceIn(0.dp, 136.dp)
+        val centerX = (maxWidth - selectedWidth) / 2
+        // Fixed geometry while frames arrive avoids any jump in the timeline or selected card.
+        if (sideWidth >= 60.dp) {
+            for (slot in listOf(-2, -1, 1, 2)) {
+                val target = positionMs + slot * 10_000L
+                val candidate = neighbors.firstOrNull { it.isValidFor(target, sourceGeneration) }
+                val x = if (slot < 0) centerX + (sideWidth + 8.dp) * slot
+                    else centerX + selectedWidth + 8.dp + (sideWidth + 8.dp) * (slot - 1)
+                ReadySeekPreview(
+                    frame = candidate, positionMs = target, sourceGeneration = sourceGeneration,
+                    modifier = Modifier.align(Alignment.CenterStart).offset(x = x).width(sideWidth)
+                        .graphicsLayer { alpha = 0.62f },
+                )
+            }
+        }
+        ReadySeekPreview(
+            frame = frame, positionMs = positionMs, sourceGeneration = sourceGeneration,
+            modifier = Modifier.align(Alignment.CenterStart).offset(x = centerX).width(selectedWidth),
+        )
     }
 }
 
