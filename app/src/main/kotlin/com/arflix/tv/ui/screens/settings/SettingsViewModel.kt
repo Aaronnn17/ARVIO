@@ -95,6 +95,7 @@ import com.arflix.tv.util.IPTV_EPG_VOD_ACTIONS_ENABLED_KEY
 import com.arflix.tv.util.IPTV_VOD_SEARCH_ENABLED_KEY
 import com.arflix.tv.util.IPTV_FALLBACK_LOGOS_ENABLED_KEY
 import com.arflix.tv.util.settingsDataStore
+import com.arflix.tv.util.withItemMoved
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -350,6 +351,7 @@ data class SettingsUiState(
     val fallbackChannelLogosEnabled: Boolean = false,
     // App updates
     val isSelfUpdateSupported: Boolean = true,
+    val quietUpdateNotifications: Boolean = false,
     val updateStatus: com.arflix.tv.updater.UpdateStatus = com.arflix.tv.updater.UpdateStatus.Idle,
     val showAppUpdateDialog: Boolean = false,
     val showUnknownSourcesDialog: Boolean = false,
@@ -700,6 +702,16 @@ class SettingsViewModel @Inject constructor(
                 )
             }
         }
+
+        viewModelScope.launch {
+            updatePreferences.quietNotifications.collect { quiet ->
+                _uiState.value = _uiState.value.copy(quietUpdateNotifications = quiet)
+            }
+        }
+    }
+
+    fun setQuietUpdateNotifications(enabled: Boolean) {
+        viewModelScope.launch { updatePreferences.setQuietNotifications(enabled) }
     }
 
     fun setDiagnosticsSharingEnabled(enabled: Boolean) {
@@ -2373,6 +2385,14 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun moveStreamProviderBy(id: String, steps: Int) {
+        viewModelScope.launch {
+            if (streamIntegrationRepository.moveProviderItemBy(id, steps)) {
+                syncLocalStateToCloud(silent = true)
+            }
+        }
+    }
+
     fun toggleStreamProvider(id: String) {
         viewModelScope.launch {
             streamIntegrationRepository.toggleProviderItem(id)
@@ -3176,6 +3196,14 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun moveCatalogBy(catalogId: String, steps: Int) {
+        viewModelScope.launch {
+            if (catalogRepository.moveCatalogBy(catalogId, steps)) {
+                syncLocalStateToCloud(silent = true)
+            }
+        }
+    }
+
     fun saveIptvConfig(m3uUrl: String, epgUrl: String) {
         viewModelScope.launch {
             val trimmedM3u = m3uUrl.trim()
@@ -3329,6 +3357,25 @@ class SettingsViewModel @Inject constructor(
         persistStalkerPortals(current)
     }
 
+    fun onMoveStalkerPortalBy(portalId: String, steps: Int) {
+        val current = _uiState.value.iptvStalkerPortals
+        val idx = current.indexOfFirst { it.id == portalId }
+        if (idx < 0) return
+        val updated = current.withItemMoved(idx, (idx + steps).coerceIn(0, current.lastIndex))
+        if (updated == current) return
+        persistStalkerPortals(updated)
+    }
+
+    /** Moves a playlist several places at once - one save, so one reload, for a row dragged on the phone. */
+    fun moveIptvPlaylistBy(playlistId: String, steps: Int) {
+        val current = _uiState.value.iptvPlaylists
+        val idx = current.indexOfFirst { it.id == playlistId }
+        if (idx < 0) return
+        val updated = current.withItemMoved(idx, (idx + steps).coerceIn(0, current.lastIndex))
+        if (updated == current) return
+        saveIptvPlaylists(updated)
+    }
+
     fun onRemoveStalkerPortal(portalId: String) {
         val updated = _uiState.value.iptvStalkerPortals.filterNot { it.id == portalId }
         if (updated == _uiState.value.iptvStalkerPortals) return
@@ -3339,6 +3386,18 @@ class SettingsViewModel @Inject constructor(
                 toastType = ToastType.SUCCESS
             )
         }
+    }
+
+    fun removeStalkerPortals(portalIds: Set<String>) {
+        val current = _uiState.value.iptvStalkerPortals
+        val updated = current.filterNot { it.id in portalIds }
+        if (updated != current) persistStalkerPortals(updated)
+    }
+
+    fun removeIptvPlaylists(playlistIds: Set<String>) {
+        val current = _uiState.value.iptvPlaylists
+        val updated = current.filterNot { it.id in playlistIds }
+        if (updated != current) saveIptvPlaylists(updated)
     }
 
     /**

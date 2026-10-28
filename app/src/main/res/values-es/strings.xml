@@ -615,7 +615,6 @@
     <string name="settings_test">Probar</string>
     <string name="settings_cd_qr_code">Código QR</string>
     <string name="settings_cd_drag_reorder">Arrastra para reordenar</string>
-    <string name="settings_cd_manage_categories">Gestionar Categorías</string>
     <string name="settings_progress_format">%1$s (%2$d%%)</string>
     <string name="settings_refreshing_channels_epg">Actualizando canales y EPG...</string>
     <string name="settings_reload_playlists_now">Recargar listas ahora</string>
@@ -812,7 +811,6 @@
     <string name="settings_stalker_configured">Configurado</string>
     <string name="settings_stalker_not_configured">No configurado</string>
     <string name="settings_stalker_remove">Eliminar portal</string>
-    <string name="settings_cd_manage_stalker_categories">Gestionar categorías Stalker</string>
     <string name="settings_cd_edit_stalker_config">Editar portal Stalker</string>
     <string name="settings_section_stalker_portals">PORTALES STALKER</string>
     <string name="settings_add_stalker_portal_button">Añadir portal Stalker</string>

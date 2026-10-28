@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SeekPreviewWindowTest {
+    @Test fun neighborsPrioritizeBothForwardSlotsAndRespectEdges() {
+        assertEquals(listOf(70_000L, 80_000L, 50_000L, 40_000L), seekPreviewNeighborTargets(60_000, 120_000))
+        assertEquals(listOf(10_000L, 20_000L), seekPreviewNeighborTargets(0, 120_000))
+        assertTrue(seekPreviewNeighborTargets(0, 0).isEmpty())
+    }
+
     @Test fun windowsStayBoundedAtBothEndsAndNeverScanTheMovie() {
         assertEquals(listOf(0L, 10_000L, 20_000L), seekPreviewWindow(0, 7_200_000))
         assertEquals(listOf(79_999L, 89_999L, 99_999L), seekPreviewWindow(100_000, 100_000))
@@ -14,13 +20,13 @@ class SeekPreviewWindowTest {
 
     @Test fun warmingRequiresEightSecondsOfHealthyPlaybackAndResetsWhenBufferFalls() {
         val guard = SeekPreviewPlaybackGuard()
-        fun sample(time: Long, buffered: Long = 30_000, browsing: Boolean = false,
+        fun sample(time: Long, buffered: Long = 9_000, browsing: Boolean = false,
             foreground: Boolean = true, safe: Boolean = true, ready: Boolean = true, playing: Boolean = true) =
             guard.mayWarm(time, playing, ready, buffered, browsing, foreground, safe)
         assertFalse(sample(0))
         assertFalse(sample(7_999))
         assertTrue(sample(8_000))
-        assertFalse(sample(8_250, buffered = 24_999))
+        assertFalse(sample(8_250, buffered = 7_999))
         assertFalse(sample(9_000))
         assertTrue(sample(17_000))
         assertFalse(sample(17_250, browsing = true))

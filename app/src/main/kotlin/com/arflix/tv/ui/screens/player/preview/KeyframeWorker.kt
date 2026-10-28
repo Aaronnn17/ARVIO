@@ -51,10 +51,12 @@ class KeyframeWorkerService : Service() {
                         Process.setThreadPriority(Process.THREAD_PRIORITY_LOWEST)
                         val memory = ActivityManager.MemoryInfo()
                         (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
+                        val started = SystemClock.elapsedRealtime()
                         val result = if (!memory.lowMemory && memory.availMem >= 256L * 1024 * 1024 &&
                             url.startsWith("http://127.0.0.1:") && position >= 0) {
                             runCatching { KeyframeNative.frame(url, position, id) }.getOrNull()
                         } else null
+                        android.util.Log.println(android.util.Log.INFO, "SeekPreviewWorker", "targetMs=$position elapsedMs=${SystemClock.elapsedRealtime() - started} ready=${result != null} lowMemory=${memory.lowMemory} freeMiB=${memory.availMem / (1024 * 1024)}")
                         sendResult(reply, id, result)
                     }
                 } catch (_: LinkageError) { sendResult(reply, id, null) }
