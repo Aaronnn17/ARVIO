@@ -970,6 +970,35 @@ fun HomeScreen(
         billboardItem = selected
         billboardKey = selected?.let(::homeRowItemKey)
     }
+    // Home finished loading and no row offers a billboard title: collapse the billboard
+    // and move focus off it, or Home opens on an empty black box that Up can't return to.
+    // Addon rows (the last billboard fallback) can land after Home reports loaded, so
+    // give them a grace period, and hand focus back if a title arrives before any input.
+    val billboardMissing = netflixHome && billboardItem == null && !uiState.isLoading && !uiState.isInitialLoad
+    var billboardHidden by remember(currentProfile?.id) { mutableStateOf(false) }
+    LaunchedEffect(billboardMissing) {
+        if (!billboardMissing) {
+            if (billboardHidden && !focusState.userHasNavigated && !focusState.isSidebarFocused) {
+                focusState.isHeroFocused = true
+                focusState.heroButtonIndex = 0
+            }
+            billboardHidden = false
+            return@LaunchedEffect
+        }
+        delay(3_000)
+        billboardHidden = true
+        if (!focusState.isHeroFocused) return@LaunchedEffect
+        focusState.isHeroFocused = false
+        if (!focusState.isSidebarFocused) {
+            displayCategories.firstOrNull()?.let { firstRow ->
+                focusState.currentRowIndex = 0
+                focusState.currentItemIndex = focusState.restoredItemIndex(
+                    firstRow,
+                    focusState.rowItemIndicesByCategoryId[firstRow.id] ?: 0
+                )
+            }
+        }
+    }
     // While the billboard is focused it is the ViewModel's hero, which loads its
     // details, logo and trailer exactly as for a focused card.
     val vmHeroKey = uiState.heroItem?.let { homeRowItemKey(it) }
@@ -1601,7 +1630,8 @@ fun HomeScreen(
                     trailerVolume = if (uiState.trailerSoundEnabled) 1f else 0f,
                     featuredOverview = displayHeroOverview,
                     channelPreviewPlayer = heroExoPlayer?.takeIf { isHeroIptv },
-                    channelPreviewItem = displayHeroItem?.takeIf { isHeroIptv }
+                    channelPreviewItem = displayHeroItem?.takeIf { isHeroIptv },
+                    billboardHidden = billboardHidden
                 )
             } else null,
             onBillboardOpen = { item, play ->
@@ -2856,7 +2886,8 @@ internal fun HomeInputLayer(
     LaunchedEffect(categories, categoryHasMoreMap) {
         if (categories.isEmpty()) return@LaunchedEffect
 
-        if (!focusState.userHasNavigated && !focusState.isSidebarFocused) {
+        // The Netflix billboard is itself the start position; the rows below it start at the top.
+        if (!focusState.userHasNavigated && !focusState.isSidebarFocused && !focusState.isHeroFocused) {
             val preferredStartRow = preferredHomeStartRowIndex(categories)
             if (focusState.currentRowIndex != preferredStartRow) {
                 focusState.currentRowIndex = preferredStartRow
