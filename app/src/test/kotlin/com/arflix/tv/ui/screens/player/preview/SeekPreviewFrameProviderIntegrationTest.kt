@@ -51,7 +51,15 @@ class SeekPreviewFrameProviderIntegrationTest {
             assertEquals(listOf(10_000L), decoded)
             assertNotNull(provider.memoryFrameAt(10_000))
             val revision = provider.cacheRevision.value
-            provider.warmNext(1_000)
+            // The scheduler marks itself idle just after the caller has the first frame, and a
+            // background warm skips while it's still busy. Retry until it takes the next target,
+            // so a slow CI runner doesn't turn that hand-off into a failure.
+            withTimeout(10_000) {
+                while (decoded.size < 2) {
+                    provider.warmNext(1_000)
+                    if (decoded.size < 2) delay(10)
+                }
+            }
             assertEquals(listOf(10_000L, 60_000L), decoded)
             assertTrue(provider.cacheRevision.value > revision)
         }
