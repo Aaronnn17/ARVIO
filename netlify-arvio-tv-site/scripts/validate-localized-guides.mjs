@@ -58,7 +58,7 @@ for (const file of pages) {
 
 const sitemap = fs.readFileSync(path.join(siteRoot, "sitemap.xml"), "utf8");
 const sitemapUrls = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/gu)].map((match) => match[1]);
-const expectedSitemapCount = 33 + 2 + standaloneGuideRoutes.length;
+const expectedSitemapCount = 33 + 3 + standaloneGuideRoutes.length;
 if (sitemapUrls.length !== expectedSitemapCount) errors.push(`sitemap: expected ${expectedSitemapCount} URLs, got ${sitemapUrls.length}`);
 if (new Set(sitemapUrls).size !== sitemapUrls.length) errors.push("sitemap: duplicate URLs");
 for (const { route } of standaloneGuideRoutes) {
