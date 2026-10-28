@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.annotation.WorkerThread
 import androidx.core.content.FileProvider
 import androidx.profileinstaller.DeviceProfileWriter
 import androidx.profileinstaller.ProfileInstaller
@@ -114,50 +115,23 @@ object ApkInstaller {
      * when an install that included it fails.
      */
     fun launchInstall(context: Context, apkFile: File, withDexMetadata: Boolean = true) {
+        ApkInstallWorker.enqueue(context, apkFile, withDexMetadata)
+    }
+
+    @WorkerThread
+    internal fun installNow(context: Context, apkFile: File, withDexMetadata: Boolean): Boolean {
         // Try session-based installer first (smoother UX on Android 5+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try {
-                val pm = context.packageManager
-                val installer = pm.packageInstaller
-                val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-                params.setSize(apkFile.length())
-
-                val sessionId = installer.createSession(params)
-                val session = installer.openSession(sessionId)
-
-                // Named base.apk so the dex metadata can pair with it as base.dm.
-                session.openWrite("base.apk", 0, apkFile.length()).use { out ->
-                    FileInputStream(apkFile).use { input ->
-                        input.copyTo(out)
-                    }
-                    session.fsync(out)
+                val metadata = if (withDexMetadata) createDexMetadata(context, apkFile) else null
+                try {
+                    commitSession(context, apkFile, metadata)
+                } catch (e: DexMetadataWriteException) {
+                    // The failed session may contain a partial base.dm. Never commit it.
+                    System.err.println("[ApkInstaller] Retrying a clean APK-only session: ${e.cause?.message}")
+                    commitSession(context, apkFile, null)
                 }
-                val hasDexMetadata = withDexMetadata && writeDexMetadata(context, session, apkFile)
-
-                // Use a broadcast PendingIntent instead of activity — works reliably
-                // on Android TV where the Application context isn't an Activity.
-                // The action is per-applicationId so it's unique per flavor / install.
-                // ApkInstallReceiver (registered in the manifest) picks up the callback and
-                // launches the system install-confirmation Activity on STATUS_PENDING_USER_ACTION,
-                // without which the session commit succeeds silently but no install ever happens.
-                val intent = Intent(ApkInstallReceiver.actionFor(context))
-                    .setPackage(context.packageName)
-                if (hasDexMetadata) {
-                    intent.putExtra(EXTRA_WITH_DEX_METADATA, true)
-                        .putExtra(EXTRA_APK_PATH, apkFile.absolutePath)
-                }
-                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-                } else {
-                    PendingIntent.FLAG_UPDATE_CURRENT
-                }
-                val pendingIntent = PendingIntent.getBroadcast(
-                    context.applicationContext, sessionId, intent, flags
-                )
-
-                session.commit(pendingIntent.intentSender)
-                session.close()
-                return
+                return true
             } catch (e: Exception) {
                 System.err.println("[ApkInstaller] Session install failed, falling back to ACTION_VIEW: ${e.message}")
             }
@@ -172,10 +146,61 @@ object ApkInstaller {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
             context.startActivity(intent)
+            return true
         } catch (e: Exception) {
             System.err.println("[ApkInstaller] Fallback ACTION_VIEW install failed: ${e.message}")
+            return false
         }
     }
+
+    private fun commitSession(context: Context, apkFile: File, metadata: ByteArray?) {
+        val installer = context.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setSize(apkFile.length() + (metadata?.size ?: 0))
+        val sessionId = installer.createSession(params)
+        var committed = false
+        try {
+            installer.openSession(sessionId).use { session ->
+                // Named base.apk so the dex metadata can pair with it as base.dm.
+                session.openWrite("base.apk", 0, apkFile.length()).use { out ->
+                    FileInputStream(apkFile).use { input -> input.copyTo(out) }
+                    session.fsync(out)
+                }
+                if (metadata != null) {
+                    try {
+                        session.openWrite("base.dm", 0, metadata.size.toLong()).use { out ->
+                            out.write(metadata)
+                            session.fsync(out)
+                        }
+                    } catch (e: Exception) {
+                        throw DexMetadataWriteException(e)
+                    }
+                }
+
+                // The receiver opens the system confirmation UI when user action is needed.
+                val intent = Intent(ApkInstallReceiver.actionFor(context))
+                    .setPackage(context.packageName)
+                if (metadata != null) {
+                    intent.putExtra(EXTRA_WITH_DEX_METADATA, true)
+                        .putExtra(EXTRA_APK_PATH, apkFile.absolutePath)
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                } else {
+                    PendingIntent.FLAG_UPDATE_CURRENT
+                }
+                val pendingIntent = PendingIntent.getBroadcast(
+                    context.applicationContext, sessionId, intent, flags
+                )
+                session.commit(pendingIntent.intentSender)
+                committed = true
+            }
+        } finally {
+            if (!committed) runCatching { installer.abandonSession(sessionId) }
+        }
+    }
+
+    private class DexMetadataWriteException(cause: Exception) : Exception(cause)
 
     /**
      * Adds the APK's own baseline profile to the session as base.dm, so the system compiles
@@ -187,31 +212,22 @@ object ApkInstaller {
      * format first (Android 12+ reads only a newer format than the one shipped in the APK).
      * Any failure here just leaves the install without dex metadata.
      *
-     * @return true if base.dm was added to the session.
+     * Prepared before opening a session, so failures here cannot leave a partial base.dm.
      */
-    private fun writeDexMetadata(
-        context: Context,
-        session: PackageInstaller.Session,
-        apkFile: File
-    ): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
+    internal fun createDexMetadata(context: Context, apkFile: File): ByteArray? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return null
         try {
-            val profile = deviceProfileOf(context, apkFile) ?: return false
+            val profile = deviceProfileOf(context, apkFile) ?: return null
             val dm = ByteArrayOutputStream()
             ZipOutputStream(dm).use { zip ->
                 zip.putNextEntry(ZipEntry("primary.prof"))
                 zip.write(profile)
                 zip.closeEntry()
             }
-            val bytes = dm.toByteArray()
-            session.openWrite("base.dm", 0, bytes.size.toLong()).use { out ->
-                out.write(bytes)
-                session.fsync(out)
-            }
-            return true
+            return dm.toByteArray()
         } catch (e: Exception) {
             System.err.println("[ApkInstaller] Skipping dex metadata: ${e.message}")
-            return false
+            return null
         }
     }
 

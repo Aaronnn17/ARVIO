@@ -82,7 +82,7 @@ class ApkInstallReceiver : BroadcastReceiver() {
             PackageInstaller.STATUS_FAILURE_INVALID,
             PackageInstaller.STATUS_FAILURE_STORAGE -> {
                 Log.e(TAG, "Update install failed: status=$status message=$message")
-                if (status != PackageInstaller.STATUS_FAILURE_ABORTED && retryWithoutDexMetadata(context, intent)) {
+                if (retryWithoutDexMetadata(context, intent)) {
                     return
                 }
                 val userMessage = when (status) {
@@ -109,7 +109,8 @@ class ApkInstallReceiver : BroadcastReceiver() {
      * INSTALL_FAILED_BAD_DEX_METADATA on some Android 10/11 devices). Retry the same APK once
      * without it; the retry carries no dex-metadata extra, so it can't loop.
      */
-    private fun retryWithoutDexMetadata(context: Context, intent: Intent): Boolean {
+    internal fun retryWithoutDexMetadata(context: Context, intent: Intent): Boolean {
+        if (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -999) == PackageInstaller.STATUS_FAILURE_ABORTED) return false
         if (!intent.getBooleanExtra(ApkInstaller.EXTRA_WITH_DEX_METADATA, false)) return false
         val apkFile = intent.getStringExtra(ApkInstaller.EXTRA_APK_PATH)?.let(::File) ?: return false
         if (!apkFile.exists()) return false
