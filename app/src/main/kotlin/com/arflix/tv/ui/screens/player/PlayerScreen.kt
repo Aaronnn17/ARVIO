@@ -169,6 +169,8 @@ import com.arflix.tv.ui.components.Toast
 import com.arflix.tv.ui.components.ToastType
 import com.arflix.tv.ui.components.NextEpisodeOverlay
 import com.arflix.tv.ui.components.StreamSelector
+import com.arflix.tv.data.repository.addonNoticeRow
+import com.arflix.tv.data.repository.isAddonNoticeRow
 import com.arflix.tv.ui.components.WaveLoadingDots
 import com.arflix.tv.ui.components.PlaybackQualityBadgeRow
 import com.arflix.tv.ui.components.buildPlaybackBadges
@@ -796,6 +798,11 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     var blackVideoRecoveryStage by remember { mutableIntStateOf(0) } // 0=none, 1=HEVC forced, 2=AVC forced
     var blackVideoReadySinceMs by remember { mutableStateOf<Long?>(null) }
     var readyPlayingSinceMs by remember { mutableStateOf<Long?>(null) }
+    // The source (selection nonce + url) already checked for being an addon's placeholder video.
+    var placeholderCheckedSource by remember { mutableStateOf<String?>(null) }
+    // The source found to be such a placeholder. Its clip saves no progress and never counts as
+    // finishing the title: a two-minute "downloading" video must not mark an episode watched.
+    var placeholderSource by remember { mutableStateOf<String?>(null) }
     val heavyStartupMaxRetries = 1
     var rebufferRecoverAttempted by remember { mutableStateOf(false) }
     var longRebufferCount by remember { mutableIntStateOf(0) }
@@ -2104,7 +2111,8 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         ended = currentPlaybackState == Player.STATE_ENDED,
         enabled = hasPlaybackStarted && !args.isLiveStream && !isCasting,
         blocked = exitTransition.isExiting || nextEpisodeTransitionInProgress ||
-            showNextEpisodePrompt || showSourceMenu || showSubtitleMenu || showSubtitleSettings || uiState.error != null,
+            showNextEpisodePrompt || showSourceMenu || showSubtitleMenu || showSubtitleSettings || uiState.error != null ||
+            placeholderSource == "${uiState.streamSelectionNonce}|${uiState.selectedStreamUrl}",
         waitingForNextEpisode = uiState.autoPlayNext && playbackEpisodeKey != null &&
             (nextEpisodeAirDateSource != playbackEpisodeKey || nextEpisodeAirDateResolution == NextEpisodeAirDateResolution.Pending),
         offerNextEpisode = uiState.autoPlayNext && playbackEpisodeKey != null && nextEpisodeIdentity != null &&
@@ -3015,6 +3023,43 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                 readyPlayingSinceMs = null
             }
 
+            // An addon's stand-in video ("downloading", "not cached yet") plays like the real file.
+            // Checked once per source as soon as its length is known; ENDED counts too, because a
+            // resume position past the clip's end jumps straight there.
+            val checkedUrl = latestUiState.selectedStreamUrl
+            val checkedSource = checkedUrl?.let { "${latestUiState.streamSelectionNonce}|$it" }
+            if (checkedSource != null &&
+                checkedSource != placeholderCheckedSource &&
+                !args.isLiveStream &&
+                duration > 0L &&
+                (exoPlayer.playbackState == Player.STATE_READY || exoPlayer.playbackState == Player.STATE_ENDED)
+            ) {
+                placeholderCheckedSource = checkedSource
+                val promisedBytes = latestUiState.selectedStream?.let { stream ->
+                    maxOf(parseSizeToBytes(stream.size), stream.sizeBytes ?: 0L, stream.behaviorHints?.videoSize ?: 0L)
+                } ?: 0L
+                if (isLikelyPlaceholderVideo(duration, promisedBytes)) {
+                    placeholderSource = checkedSource
+                    playbackStartupDiag(
+                        "placeholder video durationMs=$duration promisedBytes=$promisedBytes " +
+                            "manual=$userSelectedSourceManually"
+                    )
+                    if (!userSelectedSourceManually &&
+                        allowStartupSourceFallback &&
+                        tryAdvanceToNextStream(reason = context.getString(R.string.player_fail_source_not_ready))
+                    ) {
+                        streamSelectedTime = System.currentTimeMillis()
+                        startupRecoverAttempted = false
+                        continue
+                    }
+                    // Picked by hand, or nothing left to switch to: the clip itself says what is
+                    // going on (often "downloading"), so it keeps playing with the reason on top.
+                    android.widget.Toast.makeText(
+                        context, R.string.player_toast_placeholder_video, android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+
             // Buffering watchdog - detect long buffering but do not force a source error popup.
             if (isBuffering && hasPlaybackStarted && exoPlayer.playWhenReady && !seekInteraction.browsing) {
                 if (bufferingStartTime == null) {
@@ -3213,7 +3258,8 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             // Checked before any progress is saved: a live stream's window looks like a duration.
             if (exoPlayer.isCurrentMediaItemLive) viewModel.onLivePlaybackDetected()
 
-            if (currentPosition > 0 && duration > 0) {
+            val playingPlaceholder = checkedSource != null && checkedSource == placeholderSource
+            if (currentPosition > 0 && duration > 0 && !playingPlaceholder) {
                 val currentSecond = (currentPosition / 1000L).coerceAtLeast(0L)
                 val shouldReport =
                     (!exoPlayer.isPlaying && currentSecond != lastProgressReportSecond) ||
@@ -3245,7 +3291,9 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         onDispose {
             playerReleasedAtomic.set(true)
             playerReleased = true
-            if (!nextEpisodeTransitionInProgress) {
+            val playingPlaceholder =
+                placeholderSource == "${latestUiState.streamSelectionNonce}|${latestUiState.selectedStreamUrl}"
+            if (!nextEpisodeTransitionInProgress && !playingPlaceholder) {
                 runCatching {
                     if (exoPlayer.isCurrentMediaItemLive) viewModel.onLivePlaybackDetected()
                     val safeDuration = exoPlayer.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
@@ -4951,7 +4999,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
 
             StreamSelector(
                 isVisible = showSourceMenu,
-                streams = uiState.streams,
+                streams = uiState.streams + uiState.addonNotices.mapIndexed(::addonNoticeRow),
                 selectedStream = uiState.selectedStream,
                 recentSource = uiState.recentSource,
                 isLoading = uiState.isLoadingStreams,
@@ -4963,10 +5011,20 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                 } else {
                     ""
                 },
+                preferredAudioLanguage = uiState.sourceBadgeLanguage,
+                mediaTitle = uiState.title,
                 onFocusedStream = { stream ->
-                    viewModel.prewarmStreamsAround(stream, uiState.streams)
+                    if (!isAddonNoticeRow(stream)) viewModel.prewarmStreamsAround(stream, uiState.streams)
                 },
                 onSelect = { stream: StreamSource ->
+                    if (isAddonNoticeRow(stream)) {
+                        android.widget.Toast.makeText(
+                            context,
+                            listOf(stream.source, stream.description).filterNot { it.isNullOrBlank() }.joinToString(": "),
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        return@StreamSelector
+                    }
                     userSelectedSourceManually = true
                     playbackIssueReported = false
                     startupRecoverAttempted = false

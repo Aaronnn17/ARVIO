@@ -23,6 +23,7 @@ import com.arflix.tv.data.model.IptvVodSourceIds
 import com.arflix.tv.data.model.isDirectStreamUrl
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
+import com.arflix.tv.data.repository.AddonNotice
 import com.arflix.tv.data.repository.YouTubeCollection
 import com.arflix.tv.data.repository.KidsContentFilter
 import com.arflix.tv.data.repository.MediaRepository
@@ -200,6 +201,11 @@ data class PlayerUiState(
     val autoSyncSubtitleKey: String? = null,
     val savedPosition: Long = 0,
     val preferredAudioLanguage: String = "en",
+    // The language a source's badge puts first: the chosen audio language, or null (the device
+    // language) under "Auto"/"None", the same as the details screen's source list.
+    val sourceBadgeLanguage: String? = null,
+    // Addon messages ("[❌] Comet — invalid API key") listed under the sources in the source menu.
+    val addonNotices: List<AddonNotice> = emptyList(),
     val preferredSubtitleLang: String = "",
     val secondarySubtitleLang: String = "",
     val frameRateMatchingMode: String = "Off",
@@ -918,6 +924,7 @@ class PlayerViewModel @Inject constructor(
                 logoUrl = cachedLogoUrl,
                 addonOrderedIds = orderedAddonIds,
                 preferredAudioLanguage = preferredAudioLanguage,
+                sourceBadgeLanguage = resolveSourceBadgeLanguage(),
                 preferredSubtitleLang = preferredSub,
                 secondarySubtitleLang = secondarySub,
                 frameRateMatchingMode = frameRateMatchingMode,
@@ -1493,6 +1500,7 @@ class PlayerViewModel @Inject constructor(
                             isLoadingSubtitles = false,
                             sourceSearchActive = false,
                             streams = emptyList(),
+                            addonNotices = emptyList(),
                             streamProgress = null,
                             streamLoadPhase = null,
                             error = PlayerMessage.Res(R.string.player_error_no_streams_from_addons)
@@ -1647,6 +1655,7 @@ class PlayerViewModel @Inject constructor(
                         isLoadingStreams = availability == PlayerAutoplayAvailability.SEARCHING,
                         sourceSearchActive = !progressive.isFinal || supplementalSourcesStillLoading,
                         streams = mergedStreams,
+                        addonNotices = progressive.notices,
                         subtitles = filteredSubtitles,
                         error = errorMessage,
                         isSetupError = availability == PlayerAutoplayAvailability.NO_SOURCES &&
@@ -2699,6 +2708,13 @@ class PlayerViewModel @Inject constructor(
             playbackTelemetryRepository.recordLongRebuffer()
         }
     }
+
+    private suspend fun resolveSourceBadgeLanguage(): String? = runCatching {
+        context.settingsDataStore.data.first()[defaultAudioLanguageKey()]
+    }.getOrNull()
+        ?.trim()
+        ?.takeUnless { it.isBlank() || it.startsWith("Auto", ignoreCase = true) || it.equals("None", ignoreCase = true) }
+        ?.let(::normalizeLanguageCode)
 
     private suspend fun resolvePreferredAudioLanguage(): String {
         val setting = runCatching {
@@ -7465,6 +7481,7 @@ class PlayerViewModel @Inject constructor(
             isLoadingStreams = true,
             sourceSearchActive = true,
             streams = emptyList(),
+            addonNotices = emptyList(),
             selectedStream = null,
             selectedStreamUrl = null,
             streamProgress = 0f,
