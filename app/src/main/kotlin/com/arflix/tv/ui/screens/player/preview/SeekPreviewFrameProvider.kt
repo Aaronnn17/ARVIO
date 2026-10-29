@@ -445,13 +445,36 @@ class SeekPreviewFrameProvider internal constructor(
     }
 
     /** One missing frame per turn; the caller controls playback health and pacing. */
-    suspend fun warmNext(positionMs: Long) {
+    fun noteSeekTarget(positionMs: Long, originMs: Long? = null) {
+        active?.let { it.coverage.noteSeek(clamp(positionMs, it), SystemClock.elapsedRealtime(), originMs) }
+    }
+
+    fun endSeekGesture() { active?.coverage?.endGesture() }
+
+    /** Cooperatively cancelled by the player's buffer/strain monitor; never parallel decoders. */
+    suspend fun warmPlayback(positionMs: Long, bufferedMs: Long) {
+        if (bufferedMs < 8_000) return
+        val source = active ?: return
+        val foreground = synchronized(lock) { source.foregroundRequest }
+        val imageOnly = source.images != null
+        val count = if (imageOnly) 5 else if (bufferedMs >= 30_000) 2 else 1
+        val deadline = SystemClock.elapsedRealtime() + if (imageOnly) 750 else 1_200
+        repeat(count) {
+            currentCoroutineContext().ensureActive()
+            if (active !== source || synchronized(lock) { source.foregroundRequest != foreground } || source.unavailable ||
+                SystemClock.elapsedRealtime() >= deadline) return
+            warmNext(positionMs, preferWindow = true)
+            kotlinx.coroutines.yield()
+        }
+    }
+
+    suspend fun warmNext(positionMs: Long, preferWindow: Boolean = false) {
         val source = active ?: return
         if (SystemClock.elapsedRealtime() < source.warmRetryAtMs) return
         if (source.unavailable) return
         val target = withContext(Dispatchers.IO) {
             source.coverage.next(positionMs, source.source.durationMs, source.source.sizeBytes,
-                SystemClock.elapsedRealtime(), source.speculativeBytes.get()) { at ->
+                SystemClock.elapsedRealtime(), source.speculativeBytes.get(), preferWindow) { at ->
                 val key = frameKey(source, at)
                 memoryFrame(source, at, 0) != null ||
                     (quantizeSeekPreviewPosition(at, source.source.durationMs) in source.cachedTargets && disk.contains(key))
@@ -465,7 +488,8 @@ class SeekPreviewFrameProvider internal constructor(
     suspend fun warmWindow(positionMs: Long) {
         val source = active ?: return
         val foreground = synchronized(lock) { source.foregroundRequest }
-        val targets = seekPreviewNeighborTargets(positionMs, source.source.durationMs)
+        val targets = seekPreviewNeighborTargets(positionMs, source.source.durationMs,
+            source.coverage.direction(SystemClock.elapsedRealtime()))
         for (target in targets) {
             if (active !== source || source.unavailable ||
                 synchronized(lock) { source.foregroundRequest != foreground }) return

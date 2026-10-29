@@ -27,6 +27,59 @@ import java.util.UUID
 // Sideload's Android Conscrypt JNI is unavailable on the host JVM.
 @ConscryptMode(ConscryptMode.Mode.OFF)
 class SeekPreviewFrameProviderIntegrationTest {
+    @Test fun `healthy buffering prepares two sequential frames and follows rewind intent`() = runBlocking {
+        val targets = mutableListOf<Long>()
+        var running = 0
+        provider(decode = { _, target ->
+            assertEquals(0, running++)
+            targets += target
+            delay(5)
+            running--
+            SeekPreviewImage(bitmap(), actualPositionMs = target)
+        }).use { provider ->
+            provider.configure(source())
+            provider.noteSeekTarget(90_000)
+            provider.noteSeekTarget(60_000)
+            provider.warmPlayback(60_000, 30_000)
+            assertEquals(listOf(50_000L, 40_000L), targets)
+            provider.warmPlayback(60_000, 9_000)
+            assertEquals(3, targets.size)
+        }
+    }
+
+    @Test fun `provider images prepare a complete cached window without a video decoder`() = runBlocking {
+        val images = object : SeekPreviewImageLoader {
+            override suspend fun load(positionMs: Long) = SeekPreviewImage(bitmap(),
+                cueStartMs = positionMs, cueEndMs = positionMs + 10_000)
+        }
+        provider(images).use { provider ->
+            provider.configure(source(false))
+            provider.warmPlayback(60_000, 9_000)
+            val frames = provider.cachedWindowAt(60_000)
+            assertEquals(5, frames.size)
+            assertTrue(frames.all { it.validity == SeekPreviewValidity.CUE })
+        }
+    }
+
+    @Test fun `cancelling a preparation batch leaves foreground seeking responsive`() = runBlocking {
+        val began = CompletableDeferred<Unit>()
+        val targets = mutableListOf<Long>()
+        provider(decode = { _, target ->
+            targets += target
+            if (target == 70_000L) { began.complete(Unit); awaitCancellation() }
+            SeekPreviewImage(bitmap(), actualPositionMs = target)
+        }).use { provider ->
+            provider.configure(source())
+            val preparing = async { provider.warmPlayback(60_000, 30_000) }
+            began.await()
+            preparing.cancel()
+            preparing.join()
+            provider.cancelPending()
+            assertEquals(listOf(70_000L), targets)
+            assertNotNull(withTimeout(3_000) { provider.frameAt(90_000) })
+        }
+    }
+
     @Test fun `rendered rewind frames remain available without secondary extraction`() = runBlocking {
         provider().use { provider ->
             provider.configure(source(allowExtraction = false))

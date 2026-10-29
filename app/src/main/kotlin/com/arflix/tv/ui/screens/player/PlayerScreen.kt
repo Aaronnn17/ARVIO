@@ -1876,7 +1876,11 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         previewRequested, previewTarget, previewStatus.sourceGeneration, previewStatus.capability,
         uiState.selectedStreamUrl, uiState.streamSelectionNonce,
     ) {
-        if (!previewRequested) return@LaunchedEffect
+        if (!previewRequested) {
+            seekPreviewProvider.endSeekGesture()
+            return@LaunchedEffect
+        }
+        seekPreviewProvider.noteSeekTarget(previewTarget, seekInteraction.originMs)
         unavailablePreviewTarget = null
         seekPreviewProvider.memoryFrameAt(previewTarget)?.let { frame ->
             if (seekPreviewProvider.matchesTarget(frame, previewTarget)) seekPreviewFrame = frame
@@ -1983,8 +1987,9 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                     warming?.cancel()
                     seekPreviewProvider.cancelPending()
                 } else if (safe && warming?.isActive != true && now >= nextWarmAt) {
-                    nextWarmAt = now + 3_000L
-                    warming = launch { seekPreviewProvider.warmNext(exoPlayer.currentPosition) }
+                    val buffered = exoPlayer.totalBufferedDuration
+                    nextWarmAt = now + if (imageOnly) 1_000L else if (buffered >= 30_000L) 2_000L else 3_000L
+                    warming = launch { seekPreviewProvider.warmPlayback(exoPlayer.currentPosition, buffered) }
                 }
                 delay(250L)
             }

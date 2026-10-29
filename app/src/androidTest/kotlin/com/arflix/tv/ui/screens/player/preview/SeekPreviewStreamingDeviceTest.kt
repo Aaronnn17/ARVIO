@@ -267,12 +267,13 @@ class SeekPreviewStreamingDeviceTest {
                     if (!safe && job?.isActive == true) { job?.cancel(); provider.cancelPending() }
                     if (safe && job?.isActive != true && now >= nextAt) {
                         val position = main { player!!.currentPosition }
-                        nextAt = now + 8_000
+                        val buffered = main { player!!.totalBufferedDuration }
+                        nextAt = now + if (buffered >= 30_000) 2_000 else 3_000
                         turns++
                         job = launch {
                             val targets = seekPreviewWarmTargets(position, duration)
                             val missing = targets.filter { provider.memoryFrameAt(it) == null }
-                            provider.warmNext(position)
+                            provider.warmPlayback(position, buffered)
                             if (missing.any { provider.memoryFrameAt(it) != null }) warmed++
                         }
                     }
@@ -286,6 +287,13 @@ class SeekPreviewStreamingDeviceTest {
             main { measuring = false; player!!.pause() }
             val target = if (controlled) 30_000L else if (nativeKeyframes) 600_000L else
                 (main { player!!.currentPosition } / 10_000L * 10_000L - 20_000L).coerceAtLeast(0)
+            if (controlled) {
+                val lookupStarted = SystemClock.elapsedRealtime()
+                val prepared = provider.cachedWindowAt(target)
+                report.put("preparedWindowFramesBeforeBrowsing", prepared.size)
+                    .put("preparedWindowLookupMs", SystemClock.elapsedRealtime() - lookupStarted)
+                assertEquals("Healthy playback must prepare the full window before browsing starts", 5, prepared.size)
+            }
             selectedPosition.value = target
             val coldStart = SystemClock.elapsedRealtime()
             val frame = if (nativeKeyframes) provider.frameAt(target) else provider.memoryFrameAt(target)

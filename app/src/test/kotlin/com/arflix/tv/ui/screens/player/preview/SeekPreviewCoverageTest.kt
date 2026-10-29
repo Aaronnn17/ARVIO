@@ -4,6 +4,33 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SeekPreviewCoverageTest {
+    @Test fun `adaptive preparation finishes a nearby window before sparse coverage`() {
+        val planner = SeekPreviewCoverage()
+        val cached = mutableSetOf<Long>()
+        repeat(5) { tick ->
+            planner.next(60_000, 7_200_000, 6_000_000_000, tick.toLong(), 0, true) { it in cached }
+                ?.let { cached += it }
+        }
+        assertEquals(setOf(40_000L, 50_000L, 60_000L, 70_000L, 80_000L), cached)
+        val broad = planner.next(60_000, 7_200_000, 6_000_000_000, 6, 0, true) { it in cached }
+        assertNotNull(broad)
+        assertTrue(broad!! >= 120_000)
+    }
+
+    @Test fun `rewind intent changes priorities and expires instead of following old gestures forever`() {
+        val planner = SeekPreviewCoverage()
+        planner.noteSeek(90_000, 0)
+        planner.noteSeek(60_000, 1)
+        assertEquals(-1, planner.direction(2))
+        assertEquals(50_000L, planner.next(60_000, 120_000, 1000, 2, 0, true) { false })
+        assertEquals(1, planner.direction(60_001))
+        planner.noteSeek(80_000, 60_002)
+        assertEquals(1, planner.direction(60_003))
+        planner.endGesture()
+        planner.noteSeek(100_000, 60_004, originMs = 120_000)
+        assertEquals(-1, planner.direction(60_005))
+    }
+
     @Test fun `moving playback does not starve wider coverage`() {
         val planner = SeekPreviewCoverage()
         val cached = mutableSetOf<Long>()

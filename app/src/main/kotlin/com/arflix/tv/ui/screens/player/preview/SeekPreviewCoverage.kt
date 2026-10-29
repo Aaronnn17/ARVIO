@@ -8,9 +8,25 @@ internal class SeekPreviewCoverage {
     private var turn = 0
     private var attempts = 0
     private val retryAfter = mutableMapOf<Long, Long>()
+    private var lastSeek: Long? = null
+    private var seekDirection = 1
+    private var intentUntilMs = 0L
 
-    fun next(positionMs: Long, durationMs: Long, sizeBytes: Long?, nowMs: Long,
-        networkBytes: Long, cached: (Long) -> Boolean): Long? {
+    @Synchronized fun noteSeek(positionMs: Long, nowMs: Long, originMs: Long? = null) {
+        (lastSeek ?: originMs)?.let { previous ->
+            if (positionMs != previous) seekDirection = if (positionMs < previous) -1 else 1
+        }
+        if (lastSeek != positionMs) turn = 0
+        lastSeek = positionMs
+        intentUntilMs = nowMs + 60_000L
+    }
+
+    @Synchronized fun endGesture() { lastSeek = null }
+
+    @Synchronized fun direction(nowMs: Long): Int = if (nowMs < intentUntilMs) seekDirection else 1
+
+    @Synchronized fun next(positionMs: Long, durationMs: Long, sizeBytes: Long?, nowMs: Long,
+        networkBytes: Long, preferWindow: Boolean = false, cached: (Long) -> Boolean): Long? {
         if (durationMs <= 0) return null
         val wideBudgetAvailable = networkBytes < PREVIEW_SPECULATIVE_BYTES && attempts < 512
         val anchor = positionMs.coerceIn(0, durationMs - 1) / 10_000 * 10_000
@@ -33,12 +49,17 @@ internal class SeekPreviewCoverage {
             }
         }
         // Local work cannot starve distant coverage as the playback clock advances.
-        val phase = turn++ % 4
-        val ordered = if (!wideBudgetAvailable) local.asSequence() else when (phase) {
+        val cycle = turn++
+        val phase = cycle % 4
+        val broad = if (!wideBudgetAvailable) local.asSequence() else when (phase) {
             1 -> ahead + local.asSequence() + whole
             3 -> whole + ahead + local.asSequence()
             else -> local.asSequence() + ahead + whole
         }
+        // Five local turns fill a strip before one broad turn. As playback moves,
+        // keep following recent rewind/forward intent without starving distant samples.
+        val window = seekPreviewNeighborTargets(anchor, durationMs, direction(nowMs)) + anchor + local
+        val ordered = if (preferWindow && cycle % 6 != 5) window.asSequence() + broad else broad
         val target = ordered.filter { it in 0 until durationMs }
             .firstOrNull { (retryAfter[it] ?: 0) <= nowMs && !cached(it) } ?: return null
         if (kotlin.math.abs(target - positionMs) > 40_000L) attempts++
