@@ -1671,7 +1671,7 @@ class PlayerViewModel @Inject constructor(
                         error = errorMessage,
                         isSetupError = availability == PlayerAutoplayAvailability.NO_SOURCES &&
                             streamingAddonCount == 0 && !pluginSearchStarted &&
-                            !hasHomeServerConnections &&
+                            !hasHomeServerConnections && !hasIptvVodProviders &&
                             !supplementalSourcesStillLoading,
                         streamProgress = if (progressive.isFinal) null else progressFraction,
                         streamLoadPhase = phaseLabel
