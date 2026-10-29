@@ -159,7 +159,9 @@ internal data class NetflixHomeContent(
      * decoder to a new surface would leave the video black under playing audio.
      */
     val channelPreviewPlayer: androidx.media3.exoplayer.ExoPlayer? = null,
-    val channelPreviewItem: MediaItem? = null
+    val channelPreviewItem: MediaItem? = null,
+    /** Home finished loading with no billboard candidate: collapse the slot instead of a black box. */
+    val billboardHidden: Boolean = false
 )
 
 private val NETFLIX_BILLBOARD_TOP10_IDS = setOf("top10_movies_today", "top10_shows_today")
@@ -173,7 +175,9 @@ private val NETFLIX_BILLBOARD_KIDS_IDS = setOf(
  * Billboard candidates: today's Top 10 movies and series. When those rows are hidden,
  * any other Top 10 row, then the trending rows, then the kids starter rows. Those exist
  * on a kids profile, where the age filter can empty every Top 10 and trending row and an
- * empty candidate list left a black billboard.
+ * empty candidate list left a black billboard. Last, any other row except Continue
+ * Watching, for profiles whose Home has none of those rows (only collections and addon
+ * catalogs); special items (channels, collections, sports) are filtered out per item.
  */
 internal fun netflixBillboardCandidates(
     categories: List<Category>,
@@ -193,7 +197,8 @@ internal fun netflixBillboardCandidates(
         { it.id in NETFLIX_BILLBOARD_TOP10_IDS },
         isOtherTop10,
         { it.id in NETFLIX_BILLBOARD_TRENDING_IDS },
-        { it.id in NETFLIX_BILLBOARD_KIDS_IDS }
+        { it.id in NETFLIX_BILLBOARD_KIDS_IDS },
+        { it.id != "continue_watching" }
     )
         .map { matches -> itemsOf(categories.filter(matches)) }
         .firstOrNull { it.isNotEmpty() }
@@ -245,6 +250,8 @@ internal fun handleNetflixHomeKey(
                 focusState.userHasNavigated = true
                 focusState.isHeroFocused = false
                 focusState.currentRowIndex = 0
+                // Catalog refreshes reconcile focus to the preferred row: make it this one.
+                focusState.preferredCategoryId = firstRow.id
                 focusState.currentItemIndex = focusState.restoredItemIndex(
                     firstRow,
                     focusState.rowItemIndicesByCategoryId[firstRow.id] ?: 0
@@ -398,7 +405,9 @@ internal fun NetflixTvHomeRowsLayer(
                 contentPadding = PaddingValues(bottom = screenHeight),
                 modifier = Modifier.fillMaxSize().testTag("netflix_vertical_rails")
             ) {
+                // Stays item 0 even when hidden, so row N remains list index N + 1.
                 item(key = "netflix_billboard", contentType = "netflix_billboard") {
+                    if (netflix.billboardHidden) return@item
                     NetflixBillboard(
                         item = netflix.billboardItem,
                         logoUrl = netflix.billboardLogoUrl,
