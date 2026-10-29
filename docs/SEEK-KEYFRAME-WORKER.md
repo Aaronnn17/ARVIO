@@ -338,3 +338,48 @@ rebuffers and dropped frames, five ready cards, and successful seek/resume.
 Final source verification evidence is `artifacts/preview-cache-preserved-*.json`,
 `artifacts/preview-cache-preserved-device-tests.txt` and
 `artifacts/preview-cache-preserved-five.png`.
+
+### Adaptive window preparation (29 October 2026)
+
+Healthy playback now prioritizes a complete five-frame window and follows recent
+forward/rewind intent. Five local turns are interleaved with one broader coverage
+turn; existing speculative-read limits still apply. The player checks buffer,
+playback strain, lifecycle and metered-network status every 250 ms and cancels
+preparation when those conditions cease to be safe. With at least 30 seconds
+buffered, a batch can prepare two video frames sequentially; a smaller healthy
+buffer allows one. Batches have a 1.2-second soft scheduling deadline, retain
+the existing per-frame read budget and never run parallel preview decoders.
+The deadline prevents starting another frame; cancellation and the decoder's
+own deadline bound a frame already in progress.
+
+Image-only sources can prepare five cues per batch with a 750-ms soft scheduling
+deadline. Their adapter retains up to 8 MiB of compressed sheets/ranges in a
+source-scoped LRU cache, avoiding repeated downloads when crossing a sheet
+boundary and rewinding. Authentication/source isolation and existing image
+validation remain in place. This uses existing provider thumbnails; it does not
+add a hosted thumbnail-generation service or promise sheets for every addon.
+
+Prepared frames still use the existing memory/disk cache and visible timestamp
+validation. Arbitrary, previously uncached 4K seeks still require network reads
+and decoding; they are not guaranteed to complete in 500 ms.
+
+Final verification after rebasing onto main f1228e394: 155 selected JVM tests
+passed (123 preview tests plus 32 playback/planner/host-rule tests), and all nine
+selected Android TV emulator tests passed. The five-frame window was present
+before browsing began, with a 1-ms provider lookup. The controlled playback test
+reported zero dropped frames, rebuffers and player errors, and successful resume.
+It renders 1080p AVC while decoding a separate 4K HEVC fixture, so it does not
+establish shared-bandwidth or physical-TV performance.
+
+The image-sheet fixture adds 100 ms per HTTP request. Five previews were prepared
+in 338 ms; the cached window lookup took 4.50 ms. Revisiting a new cue in a previous
+sheet took 11 ms without another download. Two distinct sheets were fetched once
+each, with one manifest request and no video requests or video decoding.
+
+Final cold-center times were 773 / 761 / 770 ms; complete windows took
+1,639 / 3,668 / 3,527 ms under the existing controlled network benchmark.
+These are small synthetic samples, not a sub-500-ms guarantee for debrid files.
+Raw local evidence: `artifacts/preview-adaptive-{sheet,playback,cold}.json`,
+`artifacts/preview-adaptive-device-tests.txt`,
+`artifacts/preview-adaptive-rebased-build.log`, and
+`artifacts/preview-adaptive-five.png` (actual five-card emulator rendering).
