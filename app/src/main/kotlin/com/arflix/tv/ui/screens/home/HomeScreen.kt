@@ -974,30 +974,18 @@ fun HomeScreen(
     // and move focus off it, or Home opens on an empty black box that Up can't return to.
     // Addon rows (the last billboard fallback) can land after Home reports loaded, so
     // give them a grace period, and hand focus back if a title arrives before any input.
-    val billboardMissing = netflixHome && billboardItem == null && !uiState.isLoading && !uiState.isInitialLoad
     var billboardHidden by remember(currentProfile?.id) { mutableStateOf(false) }
-    LaunchedEffect(billboardMissing) {
-        if (!billboardMissing) {
-            if (billboardHidden && !focusState.userHasNavigated && !focusState.isSidebarFocused) {
-                focusState.isHeroFocused = true
-                focusState.heroButtonIndex = 0
-            }
-            billboardHidden = false
-            return@LaunchedEffect
-        }
-        delay(3_000)
-        billboardHidden = true
-        if (!focusState.isHeroFocused) return@LaunchedEffect
-        focusState.isHeroFocused = false
-        if (!focusState.isSidebarFocused) {
-            displayCategories.firstOrNull()?.let { firstRow ->
-                focusState.currentRowIndex = 0
-                focusState.currentItemIndex = focusState.restoredItemIndex(
-                    firstRow,
-                    focusState.rowItemIndicesByCategoryId[firstRow.id] ?: 0
-                )
-            }
-        }
+    val billboardLoading = uiState.isLoading || uiState.isInitialLoad
+    LaunchedEffect(focusState, netflixHome, billboardItem != null, billboardLoading) {
+        updateNetflixBillboardVisibility(
+            enabled = netflixHome,
+            hasCandidate = billboardItem != null,
+            isLoading = billboardLoading,
+            wasHidden = billboardHidden,
+            focusState = focusState,
+            categories = { latestDisplayCategories },
+            onHiddenChanged = { billboardHidden = it }
+        )
     }
     // While the billboard is focused it is the ViewModel's hero, which loads its
     // details, logo and trailer exactly as for a focused card.
