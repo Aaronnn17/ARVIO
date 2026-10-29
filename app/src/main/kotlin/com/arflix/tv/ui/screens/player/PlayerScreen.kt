@@ -509,6 +509,23 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     var currentPlaybackState by remember { mutableIntStateOf(Player.STATE_IDLE) }
     var currentPlaybackSpeed by remember { mutableFloatStateOf(1.0f) }
     var nextEpisodeTransitionInProgress by remember { mutableStateOf(false) }
+    var placeholderCheckedSource by remember { mutableStateOf<String?>(null) }
+    var placeholderHandledSource by remember { mutableStateOf<String?>(null) }
+    var loadedSource by remember { mutableStateOf<String?>(null) }
+    var currentSourceIsLive by remember { mutableStateOf(args.isLiveStream) }
+    var confirmedSource by remember { mutableStateOf<String?>(null) }
+    fun selectedSourceKey(): String? =
+        latestUiState.selectedStreamUrl?.let { "${latestUiState.streamSelectionNonce}|$it" }
+    fun playbackVideoStatus(): PlaybackVideoStatus = classifyPlaybackVideo(
+        durationMs = duration,
+        expectedDurationMs = latestUiState.expectedDurationMs,
+        playbackUrl = latestUiState.selectedStreamUrl,
+        metadataPending = latestUiState.isLoadingPlaybackMetadata,
+        isLive = args.isLiveStream || currentSourceIsLive
+    )
+    fun playingCheckedRealSource(): Boolean = canPersistPlaybackSource(
+        selectedSourceKey(), loadedSource, placeholderCheckedSource, playbackVideoStatus()
+    )
 
     // Direct D-pad seek state, separate from the full controls overlay.
     var seekInteraction by remember { mutableStateOf(SeekInteraction()) }
@@ -631,6 +648,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     val playNextEpisode: (EpisodeIdentity, String?, String?, String?) -> Unit =
         { nextIdentity, nextAddonId, nextSourceName, nextBingeGroup ->
             if (!nextEpisodeTransitionInProgress) {
+                val shouldSaveProgress = playingCheckedRealSource()
                 nextEpisodeTransitionInProgress = true
 
                 val positionSnapshot = currentPosition
@@ -646,14 +664,16 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
 
                 coroutineScope.launch {
                     try {
-                        withTimeoutOrNull(2_000L) {
-                            viewModel.saveProgressAndWait(
-                                position = positionSnapshot,
-                                duration = durationSnapshot,
-                                progressPercent = progressPercentSnapshot,
-                                isPlaying = false,
-                                playbackState = playbackStateSnapshot
-                            )
+                        if (shouldSaveProgress) {
+                            withTimeoutOrNull(2_000L) {
+                                viewModel.saveProgressAndWait(
+                                    position = positionSnapshot,
+                                    duration = durationSnapshot,
+                                    progressPercent = progressPercentSnapshot,
+                                    isPlaying = false,
+                                    playbackState = playbackStateSnapshot
+                                )
+                            }
                         }
                     } catch (cancellation: kotlinx.coroutines.CancellationException) {
                         throw cancellation
@@ -798,24 +818,6 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
     var blackVideoRecoveryStage by remember { mutableIntStateOf(0) } // 0=none, 1=HEVC forced, 2=AVC forced
     var blackVideoReadySinceMs by remember { mutableStateOf<Long?>(null) }
     var readyPlayingSinceMs by remember { mutableStateOf<Long?>(null) }
-    // The source (selection nonce + url) already checked for being an addon's placeholder video.
-    var placeholderCheckedSource by remember { mutableStateOf<String?>(null) }
-    // The source found to be such a placeholder. Its clip saves no progress and never counts as
-    // finishing the title: a two-minute "downloading" video must not mark an episode watched.
-    var placeholderSource by remember { mutableStateOf<String?>(null) }
-    // The source the player has actually been handed. Until the switch effect prepares a new
-    // selection, ExoPlayer still reports the previous video's state and length.
-    var loadedSource by remember { mutableStateOf<String?>(null) }
-    // The source already reported as a real, working video (after it started and passed the check).
-    var confirmedSource by remember { mutableStateOf<String?>(null) }
-    fun selectedSourceKey(): String? =
-        latestUiState.selectedStreamUrl?.let { "${latestUiState.streamSelectionNonce}|$it" }
-    // Position, progress and "finished" belong to the selected source only once the player has
-    // loaded it and it passed the placeholder check.
-    fun playingCheckedRealSource(): Boolean {
-        val key = selectedSourceKey() ?: return false
-        return key == loadedSource && key == placeholderCheckedSource && key != placeholderSource
-    }
     val heavyStartupMaxRetries = 1
     var rebufferRecoverAttempted by remember { mutableStateOf(false) }
     var longRebufferCount by remember { mutableIntStateOf(0) }
@@ -1343,6 +1345,10 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         currentPlaybackState = playbackState
+                        if (playbackState == Player.STATE_READY || playbackState == Player.STATE_ENDED) {
+                            duration = this@apply.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
+                            currentSourceIsLive = this@apply.isCurrentMediaItemLive
+                        }
                         if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
                             hasActiveSubtitleCues = false
                         }
@@ -2101,7 +2107,8 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             args.tmdbSeasonNumber ?: args.seasonNumber, args.tmdbEpisodeNumber ?: args.episodeNumber,
             args.kitsuId, args.kitsuEpisodeNumber)
     } else null
-    val finishPlayback: () -> Unit = {
+    val finishPlayback: () -> Unit = finishPlayback@{
+        if (!playingCheckedRealSource()) return@finishPlayback
         // Preserve the final watched/progress write, but a slow tracking server must not hold
         // navigation hostage. The save job belongs to the ViewModel, not this waiting coroutine.
         showControls = true
@@ -2635,6 +2642,8 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             }
 
             val resumePosition = uiState.savedPosition
+            placeholderCheckedSource = null
+            currentSourceIsLive = args.isLiveStream
             if (resumePosition > 0L) {
                 exoPlayer.setMediaSource(mediaSource, resumePosition)
             } else {
@@ -2989,15 +2998,42 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         showVolumeIndicator = true
     }
 
+    fun selectSourceManually(stream: StreamSource): Boolean {
+        if (isAddonNoticeRow(stream)) {
+            android.widget.Toast.makeText(
+                context,
+                listOf(stream.source, stream.description).filterNot { it.isNullOrBlank() }.joinToString(": "),
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            return false
+        }
+        // Both touch and TV keep the title's saved position when leaving an unverified/stand-in clip.
+        val resumePosition = exoPlayer.currentPosition.takeIf { playingCheckedRealSource() }
+        userSelectedSourceManually = true
+        playbackIssueReported = false
+        startupRecoverAttempted = false
+        startupHardFailureReported = false
+        startupSameSourceRetryCount = 0
+        startupSameSourceRefreshAttempted = false
+        startupUrlLock = null
+        pendingStartupFailover = false
+        pendingStartupFailoverMessage = null
+        pendingStartupFailureRecorded = false
+        rebufferRecoverAttempted = false
+        longRebufferCount = 0
+        viewModel.selectStream(stream, resumePosition)
+        return true
+    }
+
     // Update progress periodically
     LaunchedEffect(exoPlayer, isCasting) {
         while (!playerReleasedAtomic.get()) {
             if (playerReleasedAtomic.get()) break
             if (isCasting) { delay(500); continue }
             currentPosition = runCatching { exoPlayer.currentPosition }.getOrDefault(currentPosition)
-            if (playingCheckedRealSource()) viewModel.onPlaybackPosition(currentPosition)
             val rawDuration = exoPlayer.duration
             duration = if (rawDuration > 0L && rawDuration != C.TIME_UNSET) rawDuration else 0L
+            currentSourceIsLive = exoPlayer.isCurrentMediaItemLive
             progress = if (duration > 0L) {
                 (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
             } else {
@@ -3038,23 +3074,20 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
             }
 
             // An addon's stand-in video ("downloading", "not cached yet") plays like the real file.
-            // Checked once per source as soon as its length is known; ENDED counts too, because a
-            // resume position past the clip's end jumps straight there.
+            // Recheck as duration/title metadata arrives; READY alone does not mean it is known.
+            // ENDED counts too: resuming past a stand-in clip can jump straight to its end.
             val checkedSource = selectedSourceKey()
             if (checkedSource != null &&
                 checkedSource == loadedSource &&
-                checkedSource != placeholderCheckedSource &&
                 (exoPlayer.playbackState == Player.STATE_READY || exoPlayer.playbackState == Player.STATE_ENDED)
             ) {
                 placeholderCheckedSource = checkedSource
-                val promisedBytes = latestUiState.selectedStream?.let { stream ->
-                    maxOf(parseSizeToBytes(stream.size), stream.sizeBytes ?: 0L, stream.behaviorHints?.videoSize ?: 0L)
-                } ?: 0L
-                val canBePlaceholder = !args.isLiveStream && !exoPlayer.isCurrentMediaItemLive
-                if (canBePlaceholder && isLikelyPlaceholderVideo(duration, promisedBytes)) {
-                    placeholderSource = checkedSource
+                if (playbackVideoStatus() == PlaybackVideoStatus.PLACEHOLDER &&
+                    checkedSource != placeholderHandledSource
+                ) {
+                    placeholderHandledSource = checkedSource
                     playbackStartupDiag(
-                        "placeholder video durationMs=$duration promisedBytes=$promisedBytes " +
+                        "placeholder video durationMs=$duration expectedDurationMs=${latestUiState.expectedDurationMs} " +
                             "manual=$userSelectedSourceManually"
                     )
                     if (!userSelectedSourceManually &&
@@ -3074,6 +3107,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                 }
             }
 
+            if (playingCheckedRealSource()) viewModel.onPlaybackPosition(currentPosition)
             if (hasPlaybackStarted && playingCheckedRealSource() && confirmedSource != checkedSource) {
                 confirmedSource = checkedSource
                 viewModel.onSelectedSourceConfirmed()
@@ -4226,7 +4260,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                     )
                 },
                 onSelectSource = { stream ->
-                    viewModel.selectStream(stream, exoPlayer.currentPosition)
+                    selectSourceManually(stream)
                 },
                 onSelectAudioTrack = { track ->
                     userPickedAudioForStream = true
@@ -5033,25 +5067,7 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
                     if (!isAddonNoticeRow(stream)) viewModel.prewarmStreamsAround(stream, uiState.streams)
                 },
                 onSelect = { stream: StreamSource ->
-                    if (isAddonNoticeRow(stream)) {
-                        android.widget.Toast.makeText(
-                            context,
-                            listOf(stream.source, stream.description).filterNot { it.isNullOrBlank() }.joinToString(": "),
-                            android.widget.Toast.LENGTH_LONG
-                        ).show()
-                        return@StreamSelector
-                    }
-                    userSelectedSourceManually = true
-                    playbackIssueReported = false
-                    startupRecoverAttempted = false
-                    startupHardFailureReported = false
-                    startupSameSourceRetryCount = 0
-                    startupSameSourceRefreshAttempted = false
-                    startupUrlLock = null
-                    rebufferRecoverAttempted = false
-                    longRebufferCount = 0
-                    // A placeholder's clip position is not a place in the film: keep the saved one.
-                    viewModel.selectStream(stream, exoPlayer.currentPosition.takeIf { playingCheckedRealSource() })
+                    if (!selectSourceManually(stream)) return@StreamSelector
                     showSourceMenu = false
                     showControls = true
                     coroutineScope.launch {

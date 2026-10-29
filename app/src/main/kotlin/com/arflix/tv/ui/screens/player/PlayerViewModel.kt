@@ -200,6 +200,8 @@ data class PlayerUiState(
     val autoSync: SubtitleAutoSync? = null,
     val autoSyncSubtitleKey: String? = null,
     val savedPosition: Long = 0,
+    val expectedDurationMs: Long = 0,
+    val isLoadingPlaybackMetadata: Boolean = false,
     val preferredAudioLanguage: String = "en",
     // The language a source's badge puts first: the chosen audio language, or null (the device
     // language) under "Auto"/"None", the same as the details screen's source list.
@@ -817,6 +819,8 @@ class PlayerViewModel @Inject constructor(
             episodeTitle = currentEpisodeTitle,
             overview = cachedOverview,
             seasonEpisodes = cachedSeasonEpisodes,
+            expectedDurationMs = (cachedEpisode?.runtime ?: 0).coerceAtLeast(0) * 60_000L,
+            isLoadingPlaybackMetadata = mediaId > 0 && !isLiveStreamPlayback,
             streamProgress = null,
             streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) null else PlayerMessage.Res(R.string.player_phase_preparing_stream),
             sourceSearchActive = false,
@@ -918,6 +922,8 @@ class PlayerViewModel @Inject constructor(
                 episodeTitle = currentEpisodeTitle,
                 overview = cachedOverview,
                 seasonEpisodes = cachedSeasonEpisodes,
+                expectedDurationMs = (cachedEpisode?.runtime ?: 0).coerceAtLeast(0) * 60_000L,
+                isLoadingPlaybackMetadata = mediaId > 0 && !isLiveStreamPlayback,
                 isLoading = true,
                 isLoadingStreams = true,
                 sourceSearchActive = true,
@@ -1887,6 +1893,7 @@ class PlayerViewModel @Inject constructor(
             var overview: String? = null
             var releaseYear: String? = null
             var fetchedSeasonEpisodes = emptyList<com.arflix.tv.data.model.Episode>()
+            var runtimeMinutes = 0
 
             if (mediaType == MediaType.TV) {
                 val tvDetails = details as com.arflix.tv.data.api.TmdbTvDetails
@@ -1907,6 +1914,7 @@ class PlayerViewModel @Inject constructor(
                         emptyList()
                     }
                     val matchingEpisode = currentPlayerEpisode(fetchedSeasonEpisodes, season, episode)
+                    runtimeMinutes = matchingEpisode?.runtime ?: 0
                     var episodeTitle = matchingEpisode?.name?.takeIf { it.isNotBlank() }
                     var episodeOverview = matchingEpisode?.overview?.takeIf { it.isNotBlank() }
                     if (episodeOverview == null || episodeTitle == null) {
@@ -1920,6 +1928,7 @@ class PlayerViewModel @Inject constructor(
                         }
                         episodeTitle = episodeTitle ?: episodeDetails?.name?.takeIf { it.isNotBlank() }
                         episodeOverview = episodeOverview ?: episodeDetails?.overview?.takeIf { it.isNotBlank() }
+                        if (runtimeMinutes <= 0) runtimeMinutes = episodeDetails?.runtime ?: 0
                     }
                     if (playbackSessionStartTime != sessionStart) return
                     currentEpisodeTitle = episodeTitle
@@ -1933,6 +1942,7 @@ class PlayerViewModel @Inject constructor(
                 currentOriginalLanguage = movieDetails.originalLanguage ?: currentOriginalLanguage
                 overview = movieDetails.overview
                 releaseYear = movieDetails.releaseDate?.take(4)
+                runtimeMinutes = movieDetails.runtime ?: 0
             }
 
             // A late response must never replace the next video's episode metadata.
@@ -1957,6 +1967,7 @@ class PlayerViewModel @Inject constructor(
                 episodeTitle = currentEpisodeTitle,
                 overview = overview,
                 releaseYear = releaseYear,
+                expectedDurationMs = runtimeMinutes.coerceAtLeast(0) * 60_000L,
                 seasonEpisodes = if (mediaType == MediaType.TV && fetchedSeasonEpisodes.isNotEmpty()) fetchedSeasonEpisodes else _uiState.value.seasonEpisodes,
                 preferredAudioLanguage = resolvePreferredAudioLanguage()
             )
@@ -1964,6 +1975,12 @@ class PlayerViewModel @Inject constructor(
             if (e is kotlinx.coroutines.CancellationException) throw e
 
             // Failed to fetch metadata
+        } finally {
+            if (playbackSessionStartTime == sessionStart && currentMediaType == mediaType &&
+                currentMediaId == mediaId && currentSeason == season && currentEpisode == episode
+            ) {
+                _uiState.value = _uiState.value.copy(isLoadingPlaybackMetadata = false)
+            }
         }
     }
 
