@@ -236,6 +236,8 @@
     <string name="player_fail_startup_generic">Quelle ist beim Start fehlgeschlagen. Probiere eine andere Quelle.</string>
     <string name="player_fail_buffering_slow">Puffern dauert zu lange</string>
     <string name="player_fail_device_cannot_play">Video kann auf diesem Gerät nicht abgespielt werden</string>
+    <string name="player_fail_source_not_ready">Quelle noch nicht bereit</string>
+    <string name="player_toast_placeholder_video">Diese Quelle ist noch nicht bereit: Das Addon zeigt nur ein Platzhalter-Video. Probiere eine andere Quelle oder versuche es später noch einmal.</string>
     <string name="player_fail_source_too_slow">Quelle lädt zu langsam</string>
     <string name="player_fail_no_start_after_retries">Quelle ist auch nach mehreren Versuchen nicht gestartet. Probiere eine andere Quelle.</string>
     <string name="player_fail_no_start_in_time">Quelle ist nicht rechtzeitig gestartet. Probiere eine andere Quelle.</string>
