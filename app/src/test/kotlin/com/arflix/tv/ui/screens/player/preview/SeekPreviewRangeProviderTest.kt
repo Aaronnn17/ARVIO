@@ -260,6 +260,21 @@ class SeekPreviewRangeProviderTest {
     }
 
     @Test
+    fun `proxy discovers length with one validated range even when HEAD is unsupported`() = runBlocking {
+        val methods = mutableListOf<String>()
+        val upstreamClient = client { request ->
+            methods.add(request.method)
+            if (request.method == "HEAD") response(request, 405, ByteArray(0))
+            else response(request, 206, ByteArray(32), "Content-Range" to "bytes 0-31/32", "Content-Length" to "32")
+        }
+        SeekPreviewRangeProxy(HttpRangeReader(upstreamClient, upstream, emptyMap())).use { proxy ->
+            proxy.prepare()
+            assertEquals(32L, proxy.contentLength)
+            assertEquals(listOf("GET"), methods)
+        }
+    }
+
+    @Test
     fun `nearby decode keeps existing byte connection valid and explicit release ends it`() = runBlocking {
         val bytes = ByteArray(32) { it.toByte() }
         val upstreamClient = client { request ->

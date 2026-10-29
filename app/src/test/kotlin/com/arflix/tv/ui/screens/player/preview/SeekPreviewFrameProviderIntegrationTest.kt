@@ -107,6 +107,28 @@ class SeekPreviewFrameProviderIntegrationTest {
         }
     }
 
+    @Test fun `saved strip restores all five frames without extraction`() = runBlocking {
+        val source = source()
+        provider(decode = { _, at -> SeekPreviewImage(bitmap(), actualPositionMs = at) }).use { writer ->
+            writer.configure(source)
+            for (at in listOf(40_000L, 50_000L, 60_000L, 70_000L, 80_000L)) writer.frameAt(at)
+            withTimeout(3_000) {
+                while (true) {
+                    val frames = provider(decode = { _, _ -> error("Saved frames must not decode") }).use { reader ->
+                        reader.configure(source)
+                        reader.cachedWindowAt(60_000)
+                    }
+                    if (frames.size == 5) {
+                        assertEquals(setOf(40_000L, 50_000L, 60_000L, 70_000L, 80_000L), frames.map { it.positionMs }.toSet())
+                        assertTrue(frames.all { it.origin == SeekPreviewOrigin.DISK })
+                        break
+                    }
+                    delay(20)
+                }
+            }
+        }
+    }
+
     @Test fun `cached display never waits behind an active decoder`() = runBlocking {
         val started = CompletableDeferred<Unit>()
         provider(decode = { _, target ->

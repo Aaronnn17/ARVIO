@@ -1846,9 +1846,17 @@ private fun PlayerScreenContent(args: PlayerScreenArgs, viewModel: PlayerViewMod
         unavailablePreviewTarget != (previewStatus.sourceGeneration to previewTarget))
     val showQuickSeekPreview = seekInteraction.previewSession &&
         seekInteraction.surface == SeekSurface.Quick && previewAvailable
-    val previewNeighbors = remember(previewTarget, previewCacheRevision, previewStatus.sourceGeneration, previewRequested) {
+    var restoredPreviewWindow by remember { mutableStateOf<List<SeekPreviewFrame>>(emptyList()) }
+    // Disk restoration increments cacheRevision itself. Do not cancel this batch
+    // after each restored neighbor; live memory arrivals are observed below.
+    LaunchedEffect(previewRequested, previewTarget, previewStatus.sourceGeneration) {
+        restoredPreviewWindow = if (previewRequested) seekPreviewProvider.cachedWindowAt(previewTarget) else emptyList()
+    }
+    val previewNeighbors = remember(previewTarget, previewCacheRevision, previewStatus.sourceGeneration, previewRequested, restoredPreviewWindow) {
         if (!previewRequested) emptyList() else seekPreviewWindow(previewTarget, duration)
-            .mapNotNull { seekPreviewProvider.memoryFrameAt(it) }
+            .mapNotNull { at -> seekPreviewProvider.memoryFrameAt(at) ?: restoredPreviewWindow.firstOrNull {
+                seekPreviewProvider.matchesTarget(it, at)
+            } }
     }
     LaunchedEffect(previewRequested, previewTarget, previewFrameForTarget) {
         if (previewRequested && previewFrameForTarget != null) {

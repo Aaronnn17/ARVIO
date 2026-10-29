@@ -416,6 +416,17 @@ class SeekPreviewFrameProvider internal constructor(
         return cached(source, clamp(positionMs, source), 0)
     }
 
+    /** Restore a saved strip without queuing any extraction or remote work. */
+    suspend fun cachedWindowAt(positionMs: Long): List<SeekPreviewFrame> = withContext(Dispatchers.IO) {
+        val source = active ?: return@withContext emptyList()
+        val frames = seekPreviewWindow(clamp(positionMs, source), source.source.durationMs).mapNotNull { at ->
+            currentCoroutineContext().ensureActive()
+            if (closed || active !== source) return@withContext emptyList()
+            cached(source, at, 0)
+        }
+        if (closed || active !== source) emptyList() else frames
+    }
+
     suspend fun frameAt(positionMs: Long, cacheOnly: Boolean = false): SeekPreviewFrame? =
         requestFrame(positionMs, cacheOnly, background = false)
 
@@ -703,7 +714,7 @@ class SeekPreviewFrameProvider internal constructor(
         val uri = localDecoderUri(source)
         source.proxy?.beginRequest(source.extractionBudgetBytes)
         return try {
-            keyframeWorker.frameAt(uri.toString(), decodePosition(source, target))?.let {
+            keyframeWorker.frameAt(uri.toString(), decodePosition(source, target), source.proxy?.contentLength ?: -1)?.let {
                 SeekPreviewImage(it.bitmap, actualPositionMs = it.positionMs)
             } ?: throw IOException("Native preview unavailable")
         } finally { source.proxy?.endRequest() }
@@ -1166,12 +1177,14 @@ internal class SeekPreviewRangeProxy(private val reader: HttpRangeReader) : Nano
     @Volatile var memoryFailed = false
         private set
     val url: String get() = "http://127.0.0.1:$listeningPort$path"
+    val contentLength: Long get() = mediaSize
 
     suspend fun prepare() {
+        // A validated 206 supplies both total length and the required range probe.
+        // Fetch it first so cold previews do not wait for a redundant HEAD round trip.
+        reader.read(0, 1)
         mediaSize = reader.size()
         if (mediaSize <= 0) throw UnsupportedPreviewException("No seekable media length")
-        // Probe even after a successful HEAD so a 200-only server is rejected before decode.
-        reader.read(0, 1)
         start(2_000, true)
     }
 
