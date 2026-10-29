@@ -327,3 +327,14 @@ reports are `artifacts/preview-pull-benchmark-final*.json`,
 `artifacts/preview-pull-final-playback.json`, and the actual emulator screenshot
 `artifacts/preview-pull-final-five.png`. Uncached sub-500-ms previews have not
 been achieved; no physical-TV or real-debrid result is claimed for this change.
+
+After the playback-cache preservation correction, all 116 JVM tests and all
+eight device tests passed again. That additional cold run measured
+1,106 / 900 / 863 ms for centers and 2,111 / 4,432 / 3,988 ms for whole windows;
+cached lookup remained below 1 ms. Include this variance when describing results:
+the candidate's observed cold range across nine samples is 736–1,106 ms, not
+consistently sub-second. The repeated playback check again reported zero errors,
+rebuffers and dropped frames, five ready cards, and successful seek/resume.
+Final source verification evidence is `artifacts/preview-cache-preserved-*.json`,
+`artifacts/preview-cache-preserved-device-tests.txt` and
+`artifacts/preview-cache-preserved-five.png`.
