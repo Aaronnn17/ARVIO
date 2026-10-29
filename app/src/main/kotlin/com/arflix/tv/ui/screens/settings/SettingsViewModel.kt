@@ -1468,6 +1468,9 @@ class SettingsViewModel @Inject constructor(
                     }
                     traktRepository.invalidateWatchedCache()
                     traktRepository.initializeWatchedCache()
+                    traktRepository.clearContinueWatchingCache()
+                    runCatching { traktRepository.getContinueWatching(forceRefresh = true) }
+                    runCatching { launcherContinueWatchingRepository.refreshForCurrentProfile() }
                 } else if (!silent && connectedProviders.isEmpty()) {
                     withContext(Dispatchers.Main) {
                         _uiState.value = _uiState.value.copy(

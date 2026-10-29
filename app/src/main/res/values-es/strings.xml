@@ -404,6 +404,9 @@
     <string name="settings_section_languages">IDIOMAS</string>
     <string name="settings_section_user_account">INFO DE USUARIO Y CUENTA</string>
     <string name="settings_force_sync">Forzar sincronización</string>
+    <string name="settings_force_trakt_sync">Forzar sincronización de Trakt</string>
+    <string name="settings_force_trakt_sync_desc">Descarga el historial de visionado, progreso de reproducción y continuar viendo desde Trakt.tv</string>
+    <string name="settings_syncing_trakt_now">Sincronizando datos de Trakt ahora…</string>
     <string name="settings_disconnect">Desconectar</string>
     <string name="settings_cloud_disconnect_confirm_title">¿Desconectar ARVIO Cloud?</string>
     <string name="settings_cloud_disconnect_confirm_desc">Tendrás que volver a iniciar sesión para sincronizar tus ajustes.</string>
