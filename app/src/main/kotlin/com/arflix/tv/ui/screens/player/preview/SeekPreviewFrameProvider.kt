@@ -1018,6 +1018,9 @@ internal class HttpRangeReader(
     suspend fun read(position: Long, size: Int): ByteArray {
         require(position >= 0 && size in 0..RANGE_CHUNK_BYTES)
         checkOpen()
+        if (resolvedSize == null) {
+            playbackBytes?.size(url)?.takeIf { it > 0 }?.let { resolvedSize = it }
+        }
         if (size == 0 || resolvedSize?.let { position >= it } == true) return ByteArray(0)
         val output = ByteArray(size)
         var copied = 0

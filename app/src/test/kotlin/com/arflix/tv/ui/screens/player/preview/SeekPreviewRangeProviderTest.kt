@@ -86,6 +86,18 @@ class SeekPreviewRangeProviderTest {
         }
     }
 
+    @Test fun `range first proxy preparation preserves zero network playback cache hits`() = runBlocking {
+        val playback = object : SeekPreviewPlaybackBytes {
+            override fun size(url: String) = 100L
+            override fun read(url: String, position: Long, length: Int) = ByteArray(length) { 5 }
+        }
+        SeekPreviewRangeProxy(HttpRangeReader(client { error("Cached preparation must not open network") },
+            upstream, emptyMap(), playback)).use { proxy ->
+            proxy.prepare()
+            assertEquals(100L, proxy.contentLength)
+        }
+    }
+
     @Test fun `range reads reuse redirected location and refresh expired links`() = runBlocking {
         val hosts = mutableListOf<String>()
         val requests = mutableListOf<Request>()

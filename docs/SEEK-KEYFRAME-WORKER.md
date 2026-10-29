@@ -256,7 +256,9 @@ Changes:
   authentication, the 1 MiB upstream cache blocks, memory and network budgets.
   The demuxer and decoder survive successive seeks.
 - Source preparation gets length from the validated range response, eliminating
-  a redundant HEAD request. Unsupported range responses still fail closed.
+  a redundant HEAD request. Known playback-cache length is consulted before
+  that probe, preserving zero-network cache hits. Unsupported range responses
+  still fail closed.
 - Opening the filmstrip restores all saved neighbors directly from disk without
   waiting for decoding. This batch is not restarted by its own cache updates.
   Cached frames skip the decorative 80 ms entrance fade.
@@ -317,7 +319,7 @@ both windows. Five cards were visible and playback resumed after seeking.
 The short, separate-source test cannot establish zero playback impact for all
 devices or shared-bandwidth debrid streams.
 
-Validation: all 115 preview JVM tests and eight selected emulator tests passed.
+Validation: all 116 preview JVM tests and eight selected emulator tests passed.
 The latter cover native bounded reads/session reuse, 4K timestamps, cancellation,
 memory-pressure recovery, the cold benchmark, four TV/mobile Compose checks and
 the playback comparison. The final benchmark was repeated separately. Raw local
