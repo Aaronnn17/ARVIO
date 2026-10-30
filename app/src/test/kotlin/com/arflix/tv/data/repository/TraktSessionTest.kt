@@ -8,6 +8,7 @@ import com.arflix.tv.data.api.TraktApi
 import com.arflix.tv.data.api.TraktToken
 import com.arflix.tv.data.api.TraktUserProfile
 import com.arflix.tv.util.traktDataStore
+import com.arflix.tv.util.Constants
 import io.mockk.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,6 +58,9 @@ class TraktSessionTest {
         mockk(relaxed = true), mockk(relaxed = true), ContinueWatchingUpdates(), traktSession = session)
 
     @Before fun setup() = runBlocking {
+        mockkObject(Constants)
+        every { Constants.TRAKT_CLIENT_ID } returns "test-client-id"
+        every { Constants.TRAKT_CLIENT_SECRET } returns "test-client-secret"
         mockkStatic("com.arflix.tv.util.DataStoresKt")
         every { any<Context>().traktDataStore } returns store
         profiles = mockk<ProfileManager> {
@@ -73,7 +77,10 @@ class TraktSessionTest {
         session.save(token(), "a")
     }
 
-    @After fun cleanup() { unmockkStatic("com.arflix.tv.util.DataStoresKt") }
+    @After fun cleanup() {
+        unmockkStatic("com.arflix.tv.util.DataStoresKt")
+        unmockkObject(Constants)
+    }
 
     @Test fun invalidGrantRequiresReconnectAndUpdatesObservedConnection() = runBlocking {
         coEvery { api.refreshToken(any()) } throws http(400, """{"error":"invalid_grant","error_description":"session not found"}""")
@@ -117,7 +124,7 @@ class TraktSessionTest {
             token("new", "rotated", 86_400)
         }
         val first = async { session.accessToken() }
-        entered.await()
+        withTimeout(5_000) { entered.await() }
         val second = async(start = CoroutineStart.UNDISPATCHED) { session.accessToken() }
         finish.complete(Unit)
         assertEquals(listOf("new", "new"), awaitAll(first, second))
@@ -142,7 +149,7 @@ class TraktSessionTest {
             token("new", "rotated", 86_400)
         }
         val foreground = async { repository.refreshTokenIfNeeded() }
-        entered.await()
+        withTimeout(5_000) { entered.await() }
         val background = async { service.performFullSync() }
         finish.complete(Unit)
         assertEquals("new", foreground.await())
@@ -198,7 +205,7 @@ class TraktSessionTest {
             throw http(400, """{"error":"invalid_grant"}""")
         }
         val pending = async { session.accessToken() }
-        entered.await()
+        withTimeout(5_000) { entered.await() }
         session.save(token("login", "login-refresh", 86_400), "a")
         finish.complete(Unit)
         assertEquals("login", pending.await())
@@ -214,7 +221,7 @@ class TraktSessionTest {
             token("new", "rotated", 86_400)
         }
         val pending = async { session.accessToken() }
-        entered.await()
+        withTimeout(5_000) { entered.await() }
         session.disconnect()
         finish.complete(Unit)
         assertNull(pending.await())
@@ -319,7 +326,7 @@ class TraktSessionTest {
             token("new", "rotated", 86_400)
         }
         val pending = async { session.accessToken() }
-        entered.await()
+        withTimeout(5_000) { entered.await() }
         pending.cancel()
         finish.complete(Unit)
         pending.join()
