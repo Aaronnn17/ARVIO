@@ -1836,7 +1836,7 @@ fun SettingsScreen(
                                                     }
                                                 }
                                                 13 -> viewModel.forceCloudSyncNow()
-                                                14 -> viewModel.performFullSync()
+                                                14 -> viewModel.forceTraktSync()
                                                 15 -> {
                                                     if (uiState.updateStatus is com.arflix.tv.updater.UpdateStatus.ReadyToInstall) {
                                                         viewModel.installAppUpdateOrRequestPermission()
@@ -2517,7 +2517,7 @@ fun SettingsScreen(
                             onTrackingReadMode = viewModel::setTrackingReadMode,
                             onTrackingWriteTarget = viewModel::setTrackingWriteTarget,
                             onForceCloudSync = { viewModel.forceCloudSyncNow() },
-                            onForceTraktSync = { viewModel.performFullSync() },
+                            onForceTraktSync = { viewModel.forceTraktSync() },
                             onSwitchProfile = onSwitchProfile,
                             onCheckUpdates = { viewModel.checkForAppUpdates(force = true, showNoUpdateFeedback = true) },
                             onInstallUpdate = { viewModel.installAppUpdateOrRequestPermission() },
@@ -6338,7 +6338,7 @@ private fun MobileSettingsSubPage(
                     onWriteTarget = { provider, enabled ->
                         viewModel.setTrackingWriteTarget(provider, enabled)
                     },
-                    onForceSync = { viewModel.performFullSync() }
+                    onForceSync = { viewModel.forceTraktSync() }
                 )
             }
             "Privacy & Data" -> {
@@ -10773,7 +10773,7 @@ private fun AccountsSettings(
         // Trakt.tv
         AccountRow(
             name = "Trakt.tv",
-            description = stringResource(R.string.settings_trakt_desc),
+            description = stringResource(if (trackingUiState.traktReconnectRequired) R.string.trakt_reconnect_required else R.string.settings_trakt_desc),
             isConnected = isTraktAuthenticated,
             isWorking = trackingUiState.isTraktAuthStarting || trackingUiState.isTraktPolling,
             authCode = trackingUiState.traktCode?.userCode,
@@ -11413,7 +11413,7 @@ private fun TrackingIntegrationsPage(
             TrackingServiceRow(
                 iconRes = R.drawable.ic_trakt,
                 title = "Trakt",
-                tagline = stringResource(R.string.settings_trakt_tagline),
+                tagline = stringResource(if (uiState.traktReconnectRequired) R.string.trakt_reconnect_required else R.string.settings_trakt_tagline),
                 isConnected = uiState.isTraktAuthenticated,
                 isWorking = uiState.isTraktPolling || uiState.isTraktAuthStarting,
                 connectedAs = uiState.traktUsername,
