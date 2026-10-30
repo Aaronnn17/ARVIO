@@ -127,6 +127,12 @@ class TraktSyncService @Inject constructor(
         }
 
         _isSyncing.value = true
+        val syncProfileId = activeProfileId()
+        fun checkProfile() {
+            if (activeProfileId() != syncProfileId) {
+                throw kotlinx.coroutines.CancellationException("Profile changed during Trakt sync")
+            }
+        }
         _syncProgress.value = SyncProgress(status = SyncStatus.STARTING, message = "Starting full sync...")
 
         val completionThreshold = Constants.WATCHED_THRESHOLD / 100f
@@ -156,6 +162,7 @@ class TraktSyncService @Inject constructor(
             )
 
             val watchedMovies = fetchAllWatchedMovies()
+            checkProfile()
             val (movieRecords, filteredMovies) = buildWatchedMoviesFromWatchedList(localUserId, watchedMovies)
 
             // Update cache
@@ -191,6 +198,7 @@ class TraktSyncService @Inject constructor(
             )
 
             val watchedShows = fetchAllWatchedShows()
+            checkProfile()
             val totalEpisodeItems = watchedShows.sumOf { show ->
                 show.seasons?.sumOf { it.episodes.size } ?: 0
             }
@@ -243,6 +251,7 @@ class TraktSyncService @Inject constructor(
             )
 
             val playbackItems = fetchAllPlaybackProgress()
+            checkProfile()
             val progressRecords = buildWatchHistoryFromPlayback(
                 localUserId,
                 playbackItems,
@@ -299,6 +308,7 @@ class TraktSyncService @Inject constructor(
             }
 
             val nowIso = Instant.now().toString()
+            checkProfile()
             saveLocalSyncSummary(
                 lastSyncAt = nowIso,
                 moviesSynced = totalMovies,

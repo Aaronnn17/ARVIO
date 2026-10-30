@@ -6,6 +6,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import com.arflix.tv.data.api.TraktApi
 import com.arflix.tv.data.api.TraktToken
+import com.arflix.tv.data.api.TraktUserProfile
 import com.arflix.tv.util.traktDataStore
 import io.mockk.*
 import kotlinx.coroutines.*
@@ -152,6 +153,26 @@ class TraktSessionTest {
         assertEquals("ok", result)
         assertEquals(listOf("Bearer old", "Bearer new"), headers)
         coVerify(exactly = 1) { api.refreshToken(any()) }
+    }
+
+    @Test fun credentialsPersistAcrossAnAppRestartOrUpdate() = runBlocking {
+        val restarted = TraktSession(RuntimeEnvironment.getApplication(), profiles, api)
+        coEvery { api.refreshToken(any()) } returns token("renewed", "rotated", 86_400)
+        assertEquals("renewed", restarted.accessToken())
+        assertTrue(restarted.connection.first().connected)
+        coVerify(exactly = 1) { api.refreshToken(match { it.refreshToken == "refresh" }) }
+    }
+
+    @Test fun settingsUsernameCheckRecoversARejectedAccessToken() = runBlocking {
+        session.save(token(expires = 86_400), "a")
+        coEvery { api.getMe("Bearer old", any(), any()) } throws http(401)
+        coEvery { api.getMe("Bearer new", any(), any()) } returns TraktUserProfile("tester")
+        coEvery { api.refreshToken(any()) } returns token("new", "rotated", 86_400)
+        val repository = TraktRepository(RuntimeEnvironment.getApplication(), api, mockk(), OkHttpClient(),
+            Provider { mockk(relaxed = true) }, profiles, mockk(relaxed = true), mockk(relaxed = true),
+            mockk(relaxed = true), mockk(relaxed = true), ContinueWatchingUpdates(), traktSession = session)
+        assertEquals("tester", repository.fetchUsername())
+        assertEquals(TraktConnection("a", true, false), repository.connection.first())
     }
 
     @Test fun late401UsesAlreadyRotatedTokenInsteadOfRefreshingAgain() = runBlocking {

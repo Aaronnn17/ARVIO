@@ -514,8 +514,7 @@ class TraktRepository @Inject constructor(
      */
     suspend fun fetchUsername(): String? = withContext(Dispatchers.IO) {
         try {
-            val auth = getAuthHeader() ?: return@withContext null
-            traktApi.getMe(auth = auth, clientId = clientId).username
+            traktSession.authorized { auth -> traktApi.getMe(auth = auth, clientId = clientId).username }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (_: Exception) {
