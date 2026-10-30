@@ -105,6 +105,47 @@ class SeekPreviewStreamingDeviceTest {
         val input = File(context.getExternalFilesDir(null), "seek-stream-private.json")
         assumeTrue("Supply a private live-stream fixture on the emulator", input.exists())
         val config = JSONObject(input.readText())
+        playbackComparison(config)
+    }
+
+    /** Reproducible CPU/UI regression check; this is not a debrid throughput benchmark. */
+    @Test fun controlledPlaybackWhileDecoding4kPreviews() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = context.getExternalFilesDir(null)!!
+        val playback = File(directory, "preview-playback-1080.mp4")
+        val preview = File(directory, "preview-ui-4k-main10.mkv")
+        assumeTrue("Supply generated playback and 4K preview fixtures", playback.exists() && preview.exists())
+        val server = object : fi.iki.elonen.NanoHTTPD("127.0.0.1", 0) {
+            override fun serve(session: IHTTPSession): Response {
+                val file = if (session.uri == "/preview.mkv") preview else playback
+                val size = file.length()
+                if (session.method == Method.HEAD) return newFixedLengthResponse(Response.Status.OK, "application/octet-stream", "").apply {
+                    addHeader("Content-Length", size.toString())
+                    addHeader("Accept-Ranges", "bytes")
+                }
+                val range = Regex("bytes=(\\d+)-(\\d*)").matchEntire(session.headers["range"].orEmpty())
+                val start = range?.groupValues?.get(1)?.toLong() ?: 0
+                val end = (range?.groupValues?.get(2)?.toLongOrNull() ?: size - 1).coerceAtMost(size - 1)
+                if (start >= size || end < start) return newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, "text/plain", "")
+                val input = file.inputStream().apply { channel.position(start) }
+                return newFixedLengthResponse(if (range == null) Response.Status.OK else Response.Status.PARTIAL_CONTENT,
+                    if (file == preview) "video/x-matroska" else "video/mp4", input, end - start + 1).apply {
+                    addHeader("Accept-Ranges", "bytes")
+                    if (range != null) addHeader("Content-Range", "bytes $start-$end/$size")
+                }
+            }
+        }.apply { start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
+        try {
+            playbackComparison(JSONObject().put("url", "http://127.0.0.1:${server.listeningPort}/playback.mp4")
+                .put("previewUrl", "http://127.0.0.1:${server.listeningPort}/preview.mkv")
+                .put("nativeKeyframes", true).put("controlledFixture", true))
+        } finally { server.stop() }
+    }
+
+    private suspend fun playbackComparison(config: JSONObject) = coroutineScope {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val controlled = config.optBoolean("controlledFixture", false)
         val url = config.getString("url")
         val previewUrl = config.optString("previewUrl", url)
         val separatePreviewSource = previewUrl != url
@@ -123,6 +164,7 @@ class SeekPreviewStreamingDeviceTest {
         val selectedPosition = mutableStateOf(120_000L)
         val provider = SeekPreviewFrameProvider(context, OkHttpClient(), 256)
         val report = JSONObject()
+        report.put("controlledFixture", controlled)
         report.put("previewStreamSeparateFromPlayback", separatePreviewSource)
         File(context.getExternalFilesDir(null), "seek-stream-report.json").delete()
         suspend fun <T> main(block: () -> T): T = withContext(Dispatchers.Main) { block() }
@@ -168,13 +210,14 @@ class SeekPreviewStreamingDeviceTest {
             report.put("videoMime", main { player!!.videoFormat?.sampleMimeType })
             assertTrue("Playback comparison requires actual rendered video, not an audio-only clock", renderedPts.get() >= 0)
             val duration = main { player!!.duration }
-            assertTrue("The live file must have a seekable duration", duration > 180_000)
-            provider.configure(SeekPreviewSource(previewUrl, headers, "live-test-${SystemClock.elapsedRealtime()}", duration, false, false,
+            assertTrue("The file must have a seekable duration", duration > if (controlled) 30_000 else 180_000)
+            val previewDuration = if (controlled) 64_000L else duration
+            provider.configure(SeekPreviewSource(previewUrl, headers, "live-test-${SystemClock.elapsedRealtime()}", previewDuration, false, false,
                 useNativeKeyframes = nativeKeyframes))
             main { measuring = true }
             val baselineStart = main { player!!.currentPosition }
             val dropsStart = main { dropped }
-            delay(30_000)
+            delay(if (controlled) 10_000 else 30_000)
             report.put("baseline", JSONObject().put("positionAdvancedMs", main { player!!.currentPosition } - baselineStart)
                 .put("rebuffers", main { rebuffers }).put("droppedFrames", main { dropped } - dropsStart))
             main { rebuffers = 0 }
@@ -192,7 +235,7 @@ class SeekPreviewStreamingDeviceTest {
                 (activityManager.memoryClass >= 256 && !(isTv && activityManager.memoryClass <= 384)))
             report.put("memoryClassMb", activityManager.memoryClass).put("backgroundDecodeAllowed", resourceSafe)
             var nextAt = 0L
-            val end = SystemClock.elapsedRealtime() + 45_000
+            val end = SystemClock.elapsedRealtime() + if (controlled) 15_000 else 45_000
             try {
                 while (SystemClock.elapsedRealtime() < end) {
                     val now = SystemClock.elapsedRealtime()
@@ -224,12 +267,13 @@ class SeekPreviewStreamingDeviceTest {
                     if (!safe && job?.isActive == true) { job?.cancel(); provider.cancelPending() }
                     if (safe && job?.isActive != true && now >= nextAt) {
                         val position = main { player!!.currentPosition }
-                        nextAt = now + 8_000
+                        val buffered = main { player!!.totalBufferedDuration }
+                        nextAt = now + if (buffered >= 30_000) 2_000 else 3_000
                         turns++
                         job = launch {
                             val targets = seekPreviewWarmTargets(position, duration)
                             val missing = targets.filter { provider.memoryFrameAt(it) == null }
-                            provider.warmNext(position)
+                            provider.warmPlayback(position, buffered)
                             if (missing.any { provider.memoryFrameAt(it) != null }) warmed++
                         }
                     }
@@ -241,18 +285,26 @@ class SeekPreviewStreamingDeviceTest {
                 .put("warmTurns", turns).put("warmFramesProduced", warmed).put("renderedFramesCaptured", captured))
             if (nativeKeyframes) assertTrue("Comparison must actually decode previews during playback", warmed > 0)
             main { measuring = false; player!!.pause() }
-            val target = if (nativeKeyframes) 600_000L else
+            val target = if (controlled) 30_000L else if (nativeKeyframes) 600_000L else
                 (main { player!!.currentPosition } / 10_000L * 10_000L - 20_000L).coerceAtLeast(0)
+            if (controlled) {
+                val lookupStarted = SystemClock.elapsedRealtime()
+                val prepared = provider.cachedWindowAt(target)
+                report.put("preparedWindowFramesBeforeBrowsing", prepared.size)
+                    .put("preparedWindowLookupMs", SystemClock.elapsedRealtime() - lookupStarted)
+                assertEquals("Healthy playback must prepare the full window before browsing starts", 5, prepared.size)
+            }
             selectedPosition.value = target
             val coldStart = SystemClock.elapsedRealtime()
             val frame = if (nativeKeyframes) provider.frameAt(target) else provider.memoryFrameAt(target)
             report.put("renderedPreviewMs", SystemClock.elapsedRealtime() - coldStart).put("previewAvailable", frame != null)
-            assertNotNull("Debrid video must yield a validated preview", frame)
+            assertNotNull("Video must yield a validated preview", frame)
             assertTrue(provider.matchesTarget(frame, target))
             selected.value = frame
             if (nativeKeyframes) provider.warmWindow(target)
-            neighbors.value = seekPreviewWindow(target, duration).mapNotNull { provider.memoryFrameAt(it) }
+            neighbors.value = provider.cachedWindowAt(target)
             report.put("readyWindowFrames", neighbors.value.size)
+            if (controlled) assertEquals("Center plus two previews on each side", 5, neighbors.value.size)
             if (nativeKeyframes) assertTrue("Paused browsing should fill neighboring thumbnails", neighbors.value.size >= 3)
             val times = (0 until 100).map {
                 val start = System.nanoTime()
@@ -264,13 +316,14 @@ class SeekPreviewStreamingDeviceTest {
             delay(500)
             val evidence = File(context.getExternalFilesDir(null), "preview-evidence").apply { mkdirs() }
             instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
-                File(evidence, "live-debrid-window.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                File(evidence, if (controlled) "controlled-4k-window.png" else "live-debrid-window.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 bitmap.recycle()
             }
             provider.cancelPending()
             selected.value = null
-            main { player!!.seekTo(120_000); player!!.play() }
-            withTimeout(15_000) { while (!main { player!!.isPlaying && player!!.currentPosition >= 121_000 }) delay(250) }
+            val resumeAt = if (controlled) 5_000L else 120_000L
+            main { player!!.seekTo(resumeAt); player!!.play() }
+            withTimeout(15_000) { while (!main { player!!.isPlaying && player!!.currentPosition >= resumeAt + 1_000 }) delay(250) }
             report.put("resumeAfterSeek", true).put("playerErrors", main { errors })
             assertEquals(0, main { errors })
             assertEquals("No new rebuffer during preview window", 0, report.getJSONObject("previewsEnabled").getInt("rebuffers"))

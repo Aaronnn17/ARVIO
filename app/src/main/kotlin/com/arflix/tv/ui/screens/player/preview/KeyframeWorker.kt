@@ -21,7 +21,7 @@ internal class KeyframeResult(val bitmap: Bitmap, val positionMs: Long)
 @Keep
 internal object KeyframeNative {
     init { System.loadLibrary("arvio_seek") }
-    external fun frame(url: String, positionMs: Long, request: Long): KeyframeResult?
+    external fun frame(url: String, positionMs: Long, request: Long, size: Long): KeyframeResult?
     external fun interrupt(request: Long)
     external fun close()
 }
@@ -43,6 +43,7 @@ class KeyframeWorkerService : Service() {
                 val reply = message.replyTo
                 val url = message.data.getString("url").orEmpty()
                 val position = message.data.getLong("position", -1)
+                val size = message.data.getLong("size", -1)
                 current = id
                 try {
                     KeyframeNative.interrupt(id)
@@ -53,8 +54,8 @@ class KeyframeWorkerService : Service() {
                         (getSystemService(ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(memory)
                         val started = SystemClock.elapsedRealtime()
                         val result = if (!memory.lowMemory && memory.availMem >= 256L * 1024 * 1024 &&
-                            url.startsWith("http://127.0.0.1:") && position >= 0) {
-                            runCatching { KeyframeNative.frame(url, position, id) }.getOrNull()
+                            url.startsWith("http://127.0.0.1:") && position >= 0 && size > 0) {
+                            runCatching { KeyframeNative.frame(url, position, id, size) }.getOrNull()
                         } else null
                         android.util.Log.println(android.util.Log.INFO, "SeekPreviewWorker", "targetMs=$position elapsedMs=${SystemClock.elapsedRealtime() - started} ready=${result != null} lowMemory=${memory.lowMemory} freeMiB=${memory.availMem / (1024 * 1024)}")
                         sendResult(reply, id, result)
@@ -143,7 +144,7 @@ internal class KeyframeWorkerClient(context: Context) : Closeable {
         }
     }
 
-    suspend fun frameAt(url: String, positionMs: Long): KeyframeResult? = withContext(Dispatchers.Main.immediate) {
+    suspend fun frameAt(url: String, positionMs: Long, size: Long): KeyframeResult? = withContext(Dispatchers.Main.immediate) {
         if (closed) return@withContext null
         if (!bound) {
             connected = CompletableDeferred()
@@ -158,7 +159,7 @@ internal class KeyframeWorkerClient(context: Context) : Closeable {
         try {
             server.send(Message.obtain(null, FRAME).apply {
                 replyTo = inbox
-                data = Bundle().apply { putLong("id", id); putString("url", url); putLong("position", positionMs) }
+                data = Bundle().apply { putLong("id", id); putString("url", url); putLong("position", positionMs); putLong("size", size) }
             })
             result.await()
         } catch (_: RemoteException) { null }

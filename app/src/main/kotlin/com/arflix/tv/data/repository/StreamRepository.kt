@@ -428,7 +428,9 @@ class StreamRepository @Inject constructor(
     private data class PlaybackHostHealth(
         var failures: Int = 0,
         var successes: Int = 0,
-        var lastFailureAtMs: Long = 0L
+        var lastFailureAtMs: Long = 0L,
+        val failedSources: MutableSet<String> = ConcurrentHashMap.newKeySet(),
+        var perFileResolver: Boolean = false
     )
     private val playbackHostHealth = ConcurrentHashMap<String, PlaybackHostHealth>()
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -4008,7 +4010,12 @@ class StreamRepository @Inject constructor(
             playbackHostHealth.remove(host)
             return false
         }
-        return health.failures >= 2 && health.failures > health.successes
+        return isPlaybackHostBad(
+            failedSources = health.failedSources.size,
+            failures = health.failures,
+            successes = health.successes,
+            perFileResolver = health.perFileResolver
+        )
     }
 
     fun getPlaybackHostHealthPenalty(stream: StreamSource): Int {
@@ -4021,7 +4028,13 @@ class StreamRepository @Inject constructor(
         val health = playbackHostHealth.getOrPut(host) { PlaybackHostHealth() }
         health.failures += 1
         health.lastFailureAtMs = System.currentTimeMillis()
-        Log.w(TAG, "Playback host failure host=$host failures=${health.failures} reason=$reason")
+        health.failedSources.add(playbackSourceKey(stream?.url))
+        if (isPerFileResolverUrl(stream?.url)) health.perFileResolver = true
+        Log.w(
+            TAG,
+            "Playback host failure host=$host failures=${health.failures} " +
+                "sources=${health.failedSources.size} resolver=${health.perFileResolver} reason=$reason"
+        )
     }
 
     fun notePlaybackHostSuccess(stream: StreamSource?) {

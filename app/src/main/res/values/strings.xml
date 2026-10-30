@@ -1257,6 +1257,8 @@
     <string name="player_fail_startup_generic">Source failed during startup. Try another source.</string>
     <string name="player_fail_buffering_slow">Buffering too slow</string>
     <string name="player_fail_device_cannot_play">Video can\'t play on this device</string>
+    <string name="player_fail_source_not_ready">Source not ready yet</string>
+    <string name="player_toast_placeholder_video">This source isn\'t ready yet: the addon is only showing a placeholder video. Try another source or try again later.</string>
     <string name="player_fail_source_too_slow">Source too slow to load</string>
     <string name="player_fail_no_start_after_retries">Source did not start after retries. Try another source.</string>
     <string name="player_fail_no_start_in_time">Source did not start in time. Try another source.</string>
