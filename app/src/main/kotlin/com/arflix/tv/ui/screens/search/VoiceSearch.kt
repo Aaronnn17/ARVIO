@@ -55,9 +55,17 @@ class VoiceSearch internal constructor(
     }
 
     fun cancel() {
-        recognizer?.destroy()
+        val previous = recognizer
+        // Invalidate callbacks before Android asynchronously tears down the recognizer.
         recognizer = null
         isListening = false
+        previous?.destroy()
+    }
+
+    internal fun cancelIfListening(): Boolean {
+        if (!isListening) return false
+        cancel()
+        return true
     }
 
     internal fun hasPermission() =
@@ -69,9 +77,11 @@ class VoiceSearch internal constructor(
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
             override fun onPartialResults(partialResults: Bundle?) {
+                if (recognizer !== r) return
                 partialResults.firstText()?.let { onPartial(it) }
             }
             override fun onResults(results: Bundle?) {
+                if (recognizer !== r) return
                 val spoken = results.firstText()
                 cancel()
                 if (spoken != null) onResult(spoken) else toast(R.string.search_voice_no_match)

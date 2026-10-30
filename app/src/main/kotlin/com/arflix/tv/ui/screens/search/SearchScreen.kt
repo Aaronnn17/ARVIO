@@ -500,7 +500,9 @@ fun SearchScreen(
     }
 
     BackHandler {
-        if (isSearchEditing) {
+        if (voiceSearch.cancelIfListening()) {
+            Unit
+        } else if (isSearchEditing) {
             isSearchEditing = false
             keyboardController?.hide()
             try { searchFocusRequester.requestFocus() } catch (_: Exception) {}
@@ -548,15 +550,14 @@ fun SearchScreen(
                 return@onPreviewKeyEvent true
             }
             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            if ((event.key == Key.Back || event.key == Key.Escape) && voiceSearch.cancelIfListening()) {
+                consumedDpadKey = event.key
+                return@onPreviewKeyEvent true
+            }
             if (isSearchEditing && (event.key == Key.Back || event.key == Key.Escape)) {
                 isSearchEditing = false
                 keyboardController?.hide()
                 try { searchFocusRequester.requestFocus() } catch (_: Exception) {}
-                consumedDpadKey = event.key
-                return@onPreviewKeyEvent true
-            }
-            if (voiceSearch.isListening && (event.key == Key.Back || event.key == Key.Escape)) {
-                voiceSearch.cancel()
                 consumedDpadKey = event.key
                 return@onPreviewKeyEvent true
             }
