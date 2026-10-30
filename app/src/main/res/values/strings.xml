@@ -1122,6 +1122,11 @@
     <string name="search_recent">Recent</string>
     <string name="search_recent_clear">Clear</string>
     <string name="search_clear_query">Clear search</string>
+    <string name="search_voice">Search by voice</string>
+    <string name="search_voice_listening">Listening…</string>
+    <string name="search_voice_no_match">Didn\'t catch that. Try again.</string>
+    <string name="search_voice_network">Voice search needs an internet connection.</string>
+    <string name="search_voice_permission">Allow the microphone to search by voice.</string>
     <string name="search_filter_panel_hint">The grid updates as you tick · BACK closes the panel</string>
     <string name="search_filter_age_movies_only">Movies only — TMDB has no age filter for series</string>
     <string name="search_filter_language_hint">The language a title was made in — not the language of the app</string>
