@@ -86,6 +86,18 @@ class SeekPreviewRangeProviderTest {
         }
     }
 
+    @Test fun `range first proxy preparation preserves zero network playback cache hits`() = runBlocking {
+        val playback = object : SeekPreviewPlaybackBytes {
+            override fun size(url: String) = 100L
+            override fun read(url: String, position: Long, length: Int) = ByteArray(length) { 5 }
+        }
+        SeekPreviewRangeProxy(HttpRangeReader(client { error("Cached preparation must not open network") },
+            upstream, emptyMap(), playback)).use { proxy ->
+            proxy.prepare()
+            assertEquals(100L, proxy.contentLength)
+        }
+    }
+
     @Test fun `range reads reuse redirected location and refresh expired links`() = runBlocking {
         val hosts = mutableListOf<String>()
         val requests = mutableListOf<Request>()
@@ -257,6 +269,21 @@ class SeekPreviewRangeProviderTest {
             assertTrue(cookie.get())
             assertTrue(encoding.get())
         } finally { server.stop() }
+    }
+
+    @Test
+    fun `proxy discovers length with one validated range even when HEAD is unsupported`() = runBlocking {
+        val methods = mutableListOf<String>()
+        val upstreamClient = client { request ->
+            methods.add(request.method)
+            if (request.method == "HEAD") response(request, 405, ByteArray(0))
+            else response(request, 206, ByteArray(32), "Content-Range" to "bytes 0-31/32", "Content-Length" to "32")
+        }
+        SeekPreviewRangeProxy(HttpRangeReader(upstreamClient, upstream, emptyMap())).use { proxy ->
+            proxy.prepare()
+            assertEquals(32L, proxy.contentLength)
+            assertEquals(listOf("GET"), methods)
+        }
     }
 
     @Test

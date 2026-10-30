@@ -7,6 +7,7 @@ class SeekPreviewWindowTest {
     @Test fun neighborsPrioritizeBothForwardSlotsAndRespectEdges() {
         assertEquals(listOf(70_000L, 80_000L, 50_000L, 40_000L), seekPreviewNeighborTargets(60_000, 120_000))
         assertEquals(listOf(10_000L, 20_000L), seekPreviewNeighborTargets(0, 120_000))
+        assertEquals(listOf(50_000L, 40_000L, 70_000L, 80_000L), seekPreviewNeighborTargets(60_000, 120_000, -1))
         assertTrue(seekPreviewNeighborTargets(0, 0).isEmpty())
     }
 

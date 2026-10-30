@@ -21,6 +21,7 @@ namespace {
 std::atomic<int64_t> requested{0};
 struct Session {
     AVFormatContext* format = nullptr;
+    AVIOContext* input = nullptr;
     AVCodecContext* codec = nullptr;
     SwsContext* scaler = nullptr;
     std::string url;
@@ -28,12 +29,17 @@ struct Session {
     int64_t request = 0;
     int64_t deadline = 0;
     int64_t origin = 0;
+    int64_t position = 0;
+    int64_t size = 0;
     ~Session() { reset(); }
     void reset() {
         sws_freeContext(scaler); scaler = nullptr;
         avcodec_free_context(&codec);
         avformat_close_input(&format);
+        if (input) av_freep(&input->buffer);
+        avio_context_free(&input);
         stream = -1; url.clear(); origin = 0;
+        position = 0; size = 0;
     }
 };
 // Only the service's single worker thread owns this context.
@@ -45,6 +51,41 @@ int64_t nowMs() {
 int interrupted(void* opaque) {
     auto* s = static_cast<Session*>(opaque);
     return requested.load() != s->request || nowMs() >= s->deadline;
+}
+
+// Pull only the bytes requested by the demuxer. An open-ended HTTP response lets
+// the loopback server race ahead, fetching megabytes after the keyframe is ready.
+// Bounded local requests leave remote authentication and caching in Kotlin.
+int readRange(void* opaque, uint8_t* buffer, int length) {
+    auto* s = static_cast<Session*>(opaque);
+    if (interrupted(s)) return AVERROR_EXIT;
+    if (s->position >= s->size) return AVERROR_EOF;
+    length = int(std::min<int64_t>(std::min(length, 256 * 1024), s->size - s->position));
+    AVIOContext* range = nullptr;
+    AVDictionary* options = nullptr;
+    av_dict_set(&options, "protocol_whitelist", "http,tcp", 0);
+    av_dict_set(&options, "rw_timeout", "2500000", 0);
+    av_dict_set_int(&options, "offset", s->position, 0);
+    av_dict_set_int(&options, "end_offset", s->position + length, 0);
+    AVIOInterruptCB interrupt = {interrupted, s};
+    int result = avio_open2(&range, s->url.c_str(), AVIO_FLAG_READ, &interrupt, &options);
+    av_dict_free(&options);
+    if (result < 0) return result;
+    result = avio_read(range, buffer, length);
+    avio_closep(&range);
+    if (result > 0) s->position += result;
+    return result;
+}
+
+int64_t seekRange(void* opaque, int64_t offset, int whence) {
+    auto* s = static_cast<Session*>(opaque);
+    if (whence == AVSEEK_SIZE) return s->size;
+    whence &= ~AVSEEK_FORCE;
+    int64_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ? s->position :
+        whence == SEEK_END ? s->size : -1;
+    if (base < 0 || offset < -base || offset > s->size - base) return AVERROR(EINVAL);
+    s->position = base + offset;
+    return s->position;
 }
 
 // Tone-map only the small output, not full-resolution video. PQ/HLG screenshots
@@ -84,12 +125,24 @@ void toneMap(uint8_t* pixels, int width, int height, int stride, AVColorTransfer
         p[2] = srgb[int(std::clamp(blue*scale, 0.f, 1.f) * 4095)];
     }
 }
-bool openSource(const std::string& url) {
-    if (session.format && session.url == url) return true;
+bool openSource(const std::string& url, int64_t size) {
+    if (session.format && session.url == url && session.size == size) return true;
     session.reset();
+    session.url = url;
+    session.size = size;
     session.format = avformat_alloc_context();
     if (!session.format) return false;
     session.format->interrupt_callback = {interrupted, &session};
+    // Reuse a bounded block across small demux reads, rather than opening a
+    // loopback request for each 64 KiB. The upstream cache already uses 1 MiB.
+    constexpr int bufferSize = 256 * 1024;
+    auto* buffer = static_cast<uint8_t*>(av_malloc(bufferSize));
+    if (!buffer) return false;
+    session.input = avio_alloc_context(buffer, bufferSize, 0, &session, readRange, nullptr, seekRange);
+    if (!session.input) { av_free(buffer); return false; }
+    session.input->seekable = AVIO_SEEKABLE_NORMAL;
+    session.format->pb = session.input;
+    session.format->flags |= AVFMT_FLAG_CUSTOM_IO;
     AVDictionary* options = nullptr;
     // Credentials and remote network access stay in ARVIO's bounded range proxy.
     av_dict_set(&options, "protocol_whitelist", "http,tcp", 0);
@@ -150,7 +203,7 @@ Java_com_arflix_tv_ui_screens_player_preview_KeyframeNative_close(JNIEnv*, jobje
 
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_arflix_tv_ui_screens_player_preview_KeyframeNative_frame(
-    JNIEnv* env, jobject, jstring address, jlong position, jlong id) {
+    JNIEnv* env, jobject, jstring address, jlong position, jlong id, jlong size) {
     setpriority(PRIO_PROCESS, 0, 19);
     av_max_alloc(32 * 1024 * 1024);
     av_log_set_level(AV_LOG_QUIET); // FFmpeg errors can include signed resource addresses.
@@ -158,13 +211,13 @@ Java_com_arflix_tv_ui_screens_player_preview_KeyframeNative_frame(
     if (!chars) return nullptr;
     std::string url(chars);
     env->ReleaseStringUTFChars(address, chars);
-    if (url.rfind("http://127.0.0.1:", 0) != 0 || position < 0) return nullptr;
+    if (url.rfind("http://127.0.0.1:", 0) != 0 || position < 0 || size <= 0) return nullptr;
     const auto started = nowMs();
     int64_t openMs = 0, seekMs = 0, readMs = 0, decodeMs = 0, scaleMs = 0;
     session.request = id;
     session.deadline = nowMs() + 8000;
     if (interrupted(&session)) return nullptr;
-    if (!openSource(url)) { session.reset(); return nullptr; }
+    if (!openSource(url, size)) { session.reset(); return nullptr; }
     openMs = nowMs() - started;
     auto phaseStarted = nowMs();
     auto* stream = session.format->streams[session.stream];

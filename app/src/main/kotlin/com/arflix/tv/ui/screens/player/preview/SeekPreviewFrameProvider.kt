@@ -416,6 +416,17 @@ class SeekPreviewFrameProvider internal constructor(
         return cached(source, clamp(positionMs, source), 0)
     }
 
+    /** Restore a saved strip without queuing any extraction or remote work. */
+    suspend fun cachedWindowAt(positionMs: Long): List<SeekPreviewFrame> = withContext(Dispatchers.IO) {
+        val source = active ?: return@withContext emptyList()
+        val frames = seekPreviewWindow(clamp(positionMs, source), source.source.durationMs).mapNotNull { at ->
+            currentCoroutineContext().ensureActive()
+            if (closed || active !== source) return@withContext emptyList()
+            cached(source, at, 0)
+        }
+        if (closed || active !== source) emptyList() else frames
+    }
+
     suspend fun frameAt(positionMs: Long, cacheOnly: Boolean = false): SeekPreviewFrame? =
         requestFrame(positionMs, cacheOnly, background = false)
 
@@ -434,13 +445,36 @@ class SeekPreviewFrameProvider internal constructor(
     }
 
     /** One missing frame per turn; the caller controls playback health and pacing. */
-    suspend fun warmNext(positionMs: Long) {
+    fun noteSeekTarget(positionMs: Long, originMs: Long? = null) {
+        active?.let { it.coverage.noteSeek(clamp(positionMs, it), SystemClock.elapsedRealtime(), originMs) }
+    }
+
+    fun endSeekGesture() { active?.coverage?.endGesture() }
+
+    /** Cooperatively cancelled by the player's buffer/strain monitor; never parallel decoders. */
+    suspend fun warmPlayback(positionMs: Long, bufferedMs: Long) {
+        if (bufferedMs < 8_000) return
+        val source = active ?: return
+        val foreground = synchronized(lock) { source.foregroundRequest }
+        val imageOnly = source.images != null
+        val count = if (imageOnly) 5 else if (bufferedMs >= 30_000) 2 else 1
+        val deadline = SystemClock.elapsedRealtime() + if (imageOnly) 750 else 1_200
+        repeat(count) {
+            currentCoroutineContext().ensureActive()
+            if (active !== source || synchronized(lock) { source.foregroundRequest != foreground } || source.unavailable ||
+                SystemClock.elapsedRealtime() >= deadline) return
+            warmNext(positionMs, preferWindow = true)
+            kotlinx.coroutines.yield()
+        }
+    }
+
+    suspend fun warmNext(positionMs: Long, preferWindow: Boolean = false) {
         val source = active ?: return
         if (SystemClock.elapsedRealtime() < source.warmRetryAtMs) return
         if (source.unavailable) return
         val target = withContext(Dispatchers.IO) {
             source.coverage.next(positionMs, source.source.durationMs, source.source.sizeBytes,
-                SystemClock.elapsedRealtime(), source.speculativeBytes.get()) { at ->
+                SystemClock.elapsedRealtime(), source.speculativeBytes.get(), preferWindow) { at ->
                 val key = frameKey(source, at)
                 memoryFrame(source, at, 0) != null ||
                     (quantizeSeekPreviewPosition(at, source.source.durationMs) in source.cachedTargets && disk.contains(key))
@@ -454,7 +488,8 @@ class SeekPreviewFrameProvider internal constructor(
     suspend fun warmWindow(positionMs: Long) {
         val source = active ?: return
         val foreground = synchronized(lock) { source.foregroundRequest }
-        val targets = seekPreviewNeighborTargets(positionMs, source.source.durationMs)
+        val targets = seekPreviewNeighborTargets(positionMs, source.source.durationMs,
+            source.coverage.direction(SystemClock.elapsedRealtime()))
         for (target in targets) {
             if (active !== source || source.unavailable ||
                 synchronized(lock) { source.foregroundRequest != foreground }) return
@@ -703,7 +738,7 @@ class SeekPreviewFrameProvider internal constructor(
         val uri = localDecoderUri(source)
         source.proxy?.beginRequest(source.extractionBudgetBytes)
         return try {
-            keyframeWorker.frameAt(uri.toString(), decodePosition(source, target))?.let {
+            keyframeWorker.frameAt(uri.toString(), decodePosition(source, target), source.proxy?.contentLength ?: -1)?.let {
                 SeekPreviewImage(it.bitmap, actualPositionMs = it.positionMs)
             } ?: throw IOException("Native preview unavailable")
         } finally { source.proxy?.endRequest() }
@@ -1007,6 +1042,9 @@ internal class HttpRangeReader(
     suspend fun read(position: Long, size: Int): ByteArray {
         require(position >= 0 && size in 0..RANGE_CHUNK_BYTES)
         checkOpen()
+        if (resolvedSize == null) {
+            playbackBytes?.size(url)?.takeIf { it > 0 }?.let { resolvedSize = it }
+        }
         if (size == 0 || resolvedSize?.let { position >= it } == true) return ByteArray(0)
         val output = ByteArray(size)
         var copied = 0
@@ -1166,12 +1204,14 @@ internal class SeekPreviewRangeProxy(private val reader: HttpRangeReader) : Nano
     @Volatile var memoryFailed = false
         private set
     val url: String get() = "http://127.0.0.1:$listeningPort$path"
+    val contentLength: Long get() = mediaSize
 
     suspend fun prepare() {
+        // A validated 206 supplies both total length and the required range probe.
+        // Fetch it first so cold previews do not wait for a redundant HEAD round trip.
+        reader.read(0, 1)
         mediaSize = reader.size()
         if (mediaSize <= 0) throw UnsupportedPreviewException("No seekable media length")
-        // Probe even after a successful HEAD so a 200-only server is rejected before decode.
-        reader.read(0, 1)
         start(2_000, true)
     }
 

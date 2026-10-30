@@ -17,6 +17,139 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class KeyframeWorkerDeviceTest {
+    @Test fun controlledColdRangeBenchmark() = runBlocking<Unit> {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val input = File(context.getExternalFilesDir(null), "preview-stress-4k-main10.mkv")
+        org.junit.Assume.assumeTrue("Supply the generated 32-second 4K Main10 fixture", input.exists())
+        val transferred = java.util.concurrent.atomic.AtomicLong()
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val server = object : NanoHTTPD("127.0.0.1", 0) {
+            override fun serve(session: IHTTPSession): Response {
+                Thread.sleep(100) // Identical upstream latency for both readers.
+                requests.incrementAndGet()
+                val size = input.length()
+                if (session.method == Method.HEAD) return newFixedLengthResponse(Response.Status.OK, "video/x-matroska", "").apply {
+                    addHeader("Content-Length", size.toString())
+                    addHeader("Accept-Ranges", "bytes")
+                }
+                val range = Regex("bytes=(\\d+)-(\\d*)").matchEntire(session.headers["range"].orEmpty())
+                val start = range?.groupValues?.get(1)?.toLong() ?: 0
+                val end = (range?.groupValues?.get(2)?.toLongOrNull() ?: size - 1).coerceAtMost(size - 1)
+                if (start >= size || end < start) return newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, "text/plain", "")
+                val file = java.io.RandomAccessFile(input, "r").apply { seek(start) }
+                val body = object : java.io.InputStream() {
+                    var remaining = end - start + 1
+                    var sent = 0L
+                    val began = System.nanoTime()
+                    override fun read(): Int = if (remaining-- > 0) file.read() else -1
+                    override fun read(bytes: ByteArray, offset: Int, length: Int): Int {
+                        if (remaining <= 0) return -1
+                        val count = file.read(bytes, offset, minOf(length.toLong(), remaining).toInt())
+                        if (count > 0) {
+                            remaining -= count
+                            transferred.addAndGet(count.toLong())
+                            // Pace cumulative bytes so scheduler rounding on small writes
+                            // does not accidentally throttle this to a much lower rate.
+                            sent += count
+                            val nanos = sent * 1_000_000_000L / (10 * 1024 * 1024) - (System.nanoTime() - began)
+                            if (nanos > 0) Thread.sleep(nanos / 1_000_000, (nanos % 1_000_000).toInt())
+                        }
+                        return count
+                    }
+                    override fun close() = file.close()
+                }
+                return newFixedLengthResponse(if (range == null) Response.Status.OK else Response.Status.PARTIAL_CONTENT,
+                    "video/x-matroska", body, end - start + 1).apply {
+                    addHeader("Accept-Ranges", "bytes")
+                    if (range != null) addHeader("Content-Range", "bytes $start-$end/$size")
+                }
+            }
+        }.apply { start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
+        val results = org.json.JSONArray()
+        try {
+            for (round in 0..2) {
+                // A new provider, source identity and worker for each sample: no preview
+                // image, range-byte or native demux cache can leak between cold samples.
+                SeekPreviewFrameProvider(context, OkHttpClient(), 192).use { provider ->
+                    val target = listOf(8_000L, 23_000L, 15_000L)[round]
+                    val bytesBefore = transferred.get()
+                    val requestsBefore = requests.get()
+                    provider.configure(SeekPreviewSource("http://127.0.0.1:${server.listeningPort}/video.mkv", emptyMap(),
+                        "cold-range-${SystemClock.elapsedRealtime()}-$round", 32_000,
+                        false, false, useNativeKeyframes = true))
+                    val start = SystemClock.elapsedRealtime()
+                    val frame = provider.frameAt(target)
+                    val centerMs = SystemClock.elapsedRealtime() - start
+                    val centerBytes = transferred.get() - bytesBefore
+                    assertNotNull("Uncached 4K target must decode", frame)
+                    assertTrue(provider.matchesTarget(frame, target))
+                    val center = provider.memoryFrameAt(target)
+                    assertNotNull(center)
+                    provider.warmWindow(target)
+                    val window = provider.cachedWindowAt(target)
+                    assertEquals(seekPreviewWindow(target, 32_000).size, window.size)
+                    val windowMs = SystemClock.elapsedRealtime() - start
+                    val cacheStart = System.nanoTime()
+                    assertNotNull(provider.memoryFrameAt(target))
+                    results.put(JSONObject().put("targetMs", target).put("centerMs", centerMs)
+                        .put("actualMs", frame!!.actualPositionMs).put("windowMs", windowMs)
+                        .put("centerBytes", centerBytes).put("windowBytes", transferred.get() - bytesBefore)
+                        .put("requests", requests.get() - requestsBefore)
+                        .put("frames", window.size).put("cachedMs", (System.nanoTime() - cacheStart) / 1_000_000.0))
+                }
+                delay(500)
+            }
+        } finally {
+            server.stop()
+            File(context.getExternalFilesDir(null), "seek-preview-benchmark-report.json")
+                .writeText(JSONObject().put("samples", results).toString(2))
+        }
+    }
+
+    @Test fun nativeReaderUsesBoundedPullsAndReusesSession() = runBlocking<Unit> {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val bytes = instrumentation.context.assets.open("seek_preview_4k_main10.mp4").use { it.readBytes() }
+        val ranges = java.util.Collections.synchronizedList(mutableListOf<Pair<Int, Int>>())
+        val invalid = java.util.concurrent.atomic.AtomicInteger()
+        val server = object : NanoHTTPD("127.0.0.1", 0) {
+            override fun serve(session: IHTTPSession): Response {
+                val match = Regex("bytes=(\\d+)-(\\d+)").matchEntire(session.headers["range"].orEmpty())
+                if (match == null) {
+                    invalid.incrementAndGet()
+                    return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "")
+                }
+                val start = match.groupValues[1].toInt()
+                val end = match.groupValues[2].toInt().coerceAtMost(bytes.lastIndex)
+                if (start !in bytes.indices || end < start)
+                    return newFixedLengthResponse(Response.Status.RANGE_NOT_SATISFIABLE, "text/plain", "")
+                ranges.add(start to end)
+                return newFixedLengthResponse(Response.Status.PARTIAL_CONTENT, "video/mp4",
+                    ByteArrayInputStream(bytes, start, end - start + 1), (end - start + 1).toLong()).apply {
+                    addHeader("Content-Range", "bytes $start-$end/${bytes.size}")
+                    addHeader("Accept-Ranges", "bytes")
+                }
+            }
+        }.apply { start(NanoHTTPD.SOCKET_READ_TIMEOUT, false) }
+        try {
+            KeyframeWorkerClient(instrumentation.targetContext).use { worker ->
+                val url = "http://127.0.0.1:${server.listeningPort}/bounded.mp4"
+                val first = worker.frameAt(url, 12_000, bytes.size.toLong())
+                assertNotNull(first)
+                val headersBefore = ranges.count { it.first == 0 }
+                val second = worker.frameAt(url, 20_000, bytes.size.toLong())
+                assertNotNull(second)
+                assertEquals("A second seek must retain the demuxer", headersBefore, ranges.count { it.first == 0 })
+                assertTrue(kotlin.math.abs(second!!.positionMs - 20_000) <= 5_000)
+                first!!.bitmap.recycle()
+                second.bitmap.recycle()
+            }
+            assertEquals("No open-ended reads", 0, invalid.get())
+            assertTrue(ranges.isNotEmpty())
+            assertTrue(ranges.all { it.second - it.first + 1 <= 256 * 1024 })
+        } finally { server.stop() }
+    }
+
     @Test fun unwatched4kMain10FramesUseIndependentWorkerAndActualTimestamps() = runBlocking<Unit> {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

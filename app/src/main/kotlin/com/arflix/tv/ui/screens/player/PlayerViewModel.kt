@@ -23,6 +23,7 @@ import com.arflix.tv.data.model.IptvVodSourceIds
 import com.arflix.tv.data.model.isDirectStreamUrl
 import com.arflix.tv.data.model.StreamSource
 import com.arflix.tv.data.model.Subtitle
+import com.arflix.tv.data.repository.AddonNotice
 import com.arflix.tv.data.repository.YouTubeCollection
 import com.arflix.tv.data.repository.KidsContentFilter
 import com.arflix.tv.data.repository.MediaRepository
@@ -199,7 +200,14 @@ data class PlayerUiState(
     val autoSync: SubtitleAutoSync? = null,
     val autoSyncSubtitleKey: String? = null,
     val savedPosition: Long = 0,
+    val expectedDurationMs: Long = 0,
+    val isLoadingPlaybackMetadata: Boolean = false,
     val preferredAudioLanguage: String = "en",
+    // The language a source's badge puts first: the chosen audio language, or null (the device
+    // language) under "Auto"/"None", the same as the details screen's source list.
+    val sourceBadgeLanguage: String? = null,
+    // Addon messages ("[❌] Comet — invalid API key") listed under the sources in the source menu.
+    val addonNotices: List<AddonNotice> = emptyList(),
     val preferredSubtitleLang: String = "",
     val secondarySubtitleLang: String = "",
     val frameRateMatchingMode: String = "Off",
@@ -373,6 +381,10 @@ class PlayerViewModel @Inject constructor(
     // The source whose URL the player has loaded. selectStream() names its pick in selectedStream
     // at once, but the old video keeps playing until the new URL is resolved and applied.
     private var preparedStream: StreamSource? = null
+    // The selected source as the addon listed it. Torrentio, Comet … links are swapped for the
+    // debrid server's own URL before playback; failover checks hosts by the listed URL.
+    private var listedSelectedStream: StreamSource? = null
+    private var confirmedStartupMs = 0L
     private var recentSourceClock: () -> Long = { android.os.SystemClock.elapsedRealtime() }
 
     private fun isCurrentAnime(): Boolean =
@@ -807,6 +819,8 @@ class PlayerViewModel @Inject constructor(
             episodeTitle = currentEpisodeTitle,
             overview = cachedOverview,
             seasonEpisodes = cachedSeasonEpisodes,
+            expectedDurationMs = (cachedEpisode?.runtime ?: 0).coerceAtLeast(0) * 60_000L,
+            isLoadingPlaybackMetadata = mediaId > 0 && !isLiveStreamPlayback,
             streamProgress = null,
             streamLoadPhase = if (providedStreamUrl.isNullOrBlank()) null else PlayerMessage.Res(R.string.player_phase_preparing_stream),
             sourceSearchActive = false,
@@ -908,6 +922,8 @@ class PlayerViewModel @Inject constructor(
                 episodeTitle = currentEpisodeTitle,
                 overview = cachedOverview,
                 seasonEpisodes = cachedSeasonEpisodes,
+                expectedDurationMs = (cachedEpisode?.runtime ?: 0).coerceAtLeast(0) * 60_000L,
+                isLoadingPlaybackMetadata = mediaId > 0 && !isLiveStreamPlayback,
                 isLoading = true,
                 isLoadingStreams = true,
                 sourceSearchActive = true,
@@ -918,6 +934,7 @@ class PlayerViewModel @Inject constructor(
                 logoUrl = cachedLogoUrl,
                 addonOrderedIds = orderedAddonIds,
                 preferredAudioLanguage = preferredAudioLanguage,
+                sourceBadgeLanguage = resolveSourceBadgeLanguage(),
                 preferredSubtitleLang = preferredSub,
                 secondarySubtitleLang = secondarySub,
                 frameRateMatchingMode = frameRateMatchingMode,
@@ -1041,6 +1058,7 @@ class PlayerViewModel @Inject constructor(
                     savedPosition = resumeData.positionMs
                 )
                 preparedStream = resolvedProvidedStream
+                listedSelectedStream = null
                 prefetchSubtitleIndex(onlyForAutoScan = true)
                 audioSyncOnStream()
                 // NOTE: these background children share the load job — an uncaught exception in
@@ -1493,6 +1511,7 @@ class PlayerViewModel @Inject constructor(
                             isLoadingSubtitles = false,
                             sourceSearchActive = false,
                             streams = emptyList(),
+                            addonNotices = emptyList(),
                             streamProgress = null,
                             streamLoadPhase = null,
                             error = PlayerMessage.Res(R.string.player_error_no_streams_from_addons)
@@ -1647,11 +1666,12 @@ class PlayerViewModel @Inject constructor(
                         isLoadingStreams = availability == PlayerAutoplayAvailability.SEARCHING,
                         sourceSearchActive = !progressive.isFinal || supplementalSourcesStillLoading,
                         streams = mergedStreams,
+                        addonNotices = progressive.notices,
                         subtitles = filteredSubtitles,
                         error = errorMessage,
                         isSetupError = availability == PlayerAutoplayAvailability.NO_SOURCES &&
                             streamingAddonCount == 0 && !pluginSearchStarted &&
-                            !hasHomeServerConnections &&
+                            !hasHomeServerConnections && !hasIptvVodProviders &&
                             !supplementalSourcesStillLoading,
                         streamProgress = if (progressive.isFinal) null else progressFraction,
                         streamLoadPhase = phaseLabel
@@ -1873,6 +1893,7 @@ class PlayerViewModel @Inject constructor(
             var overview: String? = null
             var releaseYear: String? = null
             var fetchedSeasonEpisodes = emptyList<com.arflix.tv.data.model.Episode>()
+            var runtimeMinutes = 0
 
             if (mediaType == MediaType.TV) {
                 val tvDetails = details as com.arflix.tv.data.api.TmdbTvDetails
@@ -1893,6 +1914,7 @@ class PlayerViewModel @Inject constructor(
                         emptyList()
                     }
                     val matchingEpisode = currentPlayerEpisode(fetchedSeasonEpisodes, season, episode)
+                    runtimeMinutes = matchingEpisode?.runtime ?: 0
                     var episodeTitle = matchingEpisode?.name?.takeIf { it.isNotBlank() }
                     var episodeOverview = matchingEpisode?.overview?.takeIf { it.isNotBlank() }
                     if (episodeOverview == null || episodeTitle == null) {
@@ -1906,6 +1928,7 @@ class PlayerViewModel @Inject constructor(
                         }
                         episodeTitle = episodeTitle ?: episodeDetails?.name?.takeIf { it.isNotBlank() }
                         episodeOverview = episodeOverview ?: episodeDetails?.overview?.takeIf { it.isNotBlank() }
+                        if (runtimeMinutes <= 0) runtimeMinutes = episodeDetails?.runtime ?: 0
                     }
                     if (playbackSessionStartTime != sessionStart) return
                     currentEpisodeTitle = episodeTitle
@@ -1919,6 +1942,7 @@ class PlayerViewModel @Inject constructor(
                 currentOriginalLanguage = movieDetails.originalLanguage ?: currentOriginalLanguage
                 overview = movieDetails.overview
                 releaseYear = movieDetails.releaseDate?.take(4)
+                runtimeMinutes = movieDetails.runtime ?: 0
             }
 
             // A late response must never replace the next video's episode metadata.
@@ -1943,6 +1967,7 @@ class PlayerViewModel @Inject constructor(
                 episodeTitle = currentEpisodeTitle,
                 overview = overview,
                 releaseYear = releaseYear,
+                expectedDurationMs = runtimeMinutes.coerceAtLeast(0) * 60_000L,
                 seasonEpisodes = if (mediaType == MediaType.TV && fetchedSeasonEpisodes.isNotEmpty()) fetchedSeasonEpisodes else _uiState.value.seasonEpisodes,
                 preferredAudioLanguage = resolvePreferredAudioLanguage()
             )
@@ -1950,6 +1975,12 @@ class PlayerViewModel @Inject constructor(
             if (e is kotlinx.coroutines.CancellationException) throw e
 
             // Failed to fetch metadata
+        } finally {
+            if (playbackSessionStartTime == sessionStart && currentMediaType == mediaType &&
+                currentMediaId == mediaId && currentSeason == season && currentEpisode == episode
+            ) {
+                _uiState.value = _uiState.value.copy(isLoadingPlaybackMetadata = false)
+            }
         }
     }
 
@@ -2631,9 +2662,7 @@ class PlayerViewModel @Inject constructor(
         val addonId = _uiState.value.selectedStream?.addonId?.trim()
             .takeUnless { it.isNullOrBlank() }
             ?: currentPreferredAddonId.orEmpty()
-        if (addonId.isNotBlank()) {
-            streamRepository.noteAddonPlaybackStarted(addonId, startupMs)
-        }
+        confirmedStartupMs = startupMs
         Log.i(
             TAG,
             "Playback started addonId=${addonId.ifBlank { "unknown" }} " +
@@ -2646,16 +2675,6 @@ class PlayerViewModel @Inject constructor(
             severity = "info"
         )
         viewModelScope.launch {
-            _uiState.value.selectedStream?.let { stream ->
-                streamRepository.notePlaybackHostSuccess(stream)
-                streamRepository.saveLastGoodPlaybackPreference(
-                    mediaType = currentMediaType,
-                    tmdbId = currentMediaId,
-                    season = currentSeason,
-                    episode = currentEpisode,
-                    stream = stream
-                )
-            }
             playbackTelemetryRepository.recordStartup(
                 startupMs = startupMs,
                 retries = startupRetries,
@@ -2664,15 +2683,44 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    fun onSelectedStreamPlaybackFailure() {
+    /**
+     * The started source is the real video, not an addon's placeholder clip (the player checks
+     * that once its length is known, which can be after the first frame). Only now does it count
+     * as a working source for its addon and host.
+     */
+    fun onSelectedSourceConfirmed() {
+        val stream = _uiState.value.selectedStream ?: return
+        val addonId = stream.addonId.trim().ifBlank { currentPreferredAddonId.orEmpty() }
+        if (addonId.isNotBlank()) {
+            streamRepository.noteAddonPlaybackStarted(addonId, confirmedStartupMs)
+        }
+        val listed = listedSelectedStream
+        viewModelScope.launch {
+            streamRepository.notePlaybackHostSuccess(stream)
+            listed?.takeIf { it.url != stream.url }?.let(streamRepository::notePlaybackHostSuccess)
+            streamRepository.saveLastGoodPlaybackPreference(
+                mediaType = currentMediaType,
+                tmdbId = currentMediaId,
+                season = currentSeason,
+                episode = currentEpisode,
+                stream = stream
+            )
+        }
+    }
+
+    fun onSelectedStreamPlaybackFailure(reportError: Boolean = true) {
         val addonId = _uiState.value.selectedStream?.addonId?.trim()
             .takeUnless { it.isNullOrBlank() }
             ?: currentPreferredAddonId.orEmpty()
         if (addonId.isNotBlank()) {
             streamRepository.noteAddonPlaybackFailure(addonId)
         }
-        streamRepository.notePlaybackHostFailure(_uiState.value.selectedStream, "exo_playback_failure")
-        AppLogger.recordException(
+        val selected = _uiState.value.selectedStream
+        streamRepository.notePlaybackHostFailure(selected, "exo_playback_failure")
+        listedSelectedStream?.takeIf { it.url != selected?.url }?.let {
+            streamRepository.notePlaybackHostFailure(it, "exo_playback_failure_listed")
+        }
+        if (reportError) AppLogger.recordException(
             throwable = IllegalStateException("Selected stream playback failed"),
             context = playbackDiagnosticContext(
                 phase = "selected_stream_playback_failure",
@@ -2699,6 +2747,13 @@ class PlayerViewModel @Inject constructor(
             playbackTelemetryRepository.recordLongRebuffer()
         }
     }
+
+    private suspend fun resolveSourceBadgeLanguage(): String? = runCatching {
+        context.settingsDataStore.data.first()[defaultAudioLanguageKey()]
+    }.getOrNull()
+        ?.trim()
+        ?.takeUnless { it.isBlank() || it.startsWith("Auto", ignoreCase = true) || it.equals("None", ignoreCase = true) }
+        ?.let(::normalizeLanguageCode)
 
     private suspend fun resolvePreferredAudioLanguage(): String {
         val setting = runCatching {
@@ -3064,6 +3119,7 @@ class PlayerViewModel @Inject constructor(
         subtitleMenuCandidates.entries.removeAll { it.value.isEmbedded }
         streamSelectionJob?.cancel()
         playbackErrorReportJob?.cancel()
+        listedSelectedStream = stream
         streamSelectionJob = viewModelScope.launch {
             val selectionStartMs = System.currentTimeMillis()
             val requestedResumePosition = resumePositionMs?.coerceAtLeast(0L)
@@ -7465,6 +7521,7 @@ class PlayerViewModel @Inject constructor(
             isLoadingStreams = true,
             sourceSearchActive = true,
             streams = emptyList(),
+            addonNotices = emptyList(),
             selectedStream = null,
             selectedStreamUrl = null,
             streamProgress = 0f,
@@ -7700,6 +7757,7 @@ class PlayerViewModel @Inject constructor(
         recentSourcePlayTracker.reset()
         recentSourceGate.disarm()
         preparedStream = null
+        listedSelectedStream = null
         recentSourceLoad = viewModelScope.async {
             val recent = recentPlayedSourceRepository.get(mediaType, mediaId, season, episode)
             val stillCurrent = currentMediaType == mediaType && currentMediaId == mediaId &&

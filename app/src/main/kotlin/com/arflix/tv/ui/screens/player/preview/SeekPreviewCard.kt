@@ -101,7 +101,8 @@ fun ReadySeekPreview(
     }
 
     // Fade in only. Retaining outgoing content or crossfading would show the previous target.
-    val opacity = remember { Animatable(0f) }
+    val cached = frame.origin == SeekPreviewOrigin.MEMORY || frame.origin == SeekPreviewOrigin.DISK
+    val opacity = remember { Animatable(if (cached) 1f else 0f) }
     LaunchedEffect(Unit) { opacity.animateTo(1f, tween(80)) }
     val shape = RoundedCornerShape(cornerRadius)
     Box(

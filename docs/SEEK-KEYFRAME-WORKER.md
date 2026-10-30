@@ -239,3 +239,147 @@ One dropped frame was reported during the initial 21-second startup interval.
 This short smoke check is not a controlled performance guarantee. The TV was
 left paused. Installed APK SHA-256:
 `36ad1e57cb0b15f98f70ab960d7e0631f4b695659d40286c2b27bcbd45db5a15`.
+
+## Repeatable emulator checks, 29 October 2026
+
+The TV was left untouched at the user's request. Tests use the Android 12 TV
+x86 emulator with 3 GiB guest RAM and a 192 MiB app memory class. This is not
+a substitute for measuring the physical TV's CPU or a real debrid connection.
+The initial 1.5 GiB emulator stalled system-wide and was excluded. Android's
+package compiler was run with `cmd package compile -m speed -f com.arvio.tv`
+for both comparison APKs to avoid debug class-verification timing differences.
+
+Changes:
+
+- Native custom AVIO pulls closed loopback ranges of at most 256 KiB, rather
+  than leaving an open-ended response streaming ahead. Kotlin still owns remote
+  authentication, the 1 MiB upstream cache blocks, memory and network budgets.
+  The demuxer and decoder survive successive seeks.
+- Source preparation gets length from the validated range response, eliminating
+  a redundant HEAD request. Known playback-cache length is consulted before
+  that probe, preserving zero-network cache hits. Unsupported range responses
+  still fail closed.
+- Opening the filmstrip restores all saved neighbors directly from disk without
+  waiting for decoding. This batch is not restarted by its own cache updates.
+  Cached frames skip the decorative 80 ms entrance fade.
+
+Reproducible device checks live in `KeyframeWorkerDeviceTest` and
+`SeekPreviewStreamingDeviceTest`. The cold benchmark uses three new providers
+and source identities, at 8, 23 and 15 seconds, with 100 ms latency per HTTP
+request and a cumulatively paced 10 MiB/s response. Each sample starts without
+image, byte-range or demuxer cache. It records center latency, whole-window
+latency, bytes, requests and actual decoded timestamps, including near-EOF
+neighbors. The upstream HTTP fixture runs inside instrumentation, not on the TV.
+
+Generate its synthetic fixture with FFmpeg (do not commit generated media):
+
+```sh
+ffmpeg -f lavfi -i 'testsrc2=size=3840x2160:rate=24' -t 32 -c:v libx265 -preset ultrafast -x265-params 'pools=2:frame-threads=1:keyint=48:min-keyint=48:scenecut=0:bframes=0' -filter_threads 1 -pix_fmt yuv420p10le -crf 25 preview-stress-4k-main10.mkv
+ffmpeg -stream_loop 1 -i preview-stress-4k-main10.mkv -c copy preview-ui-4k-main10.mkv
+ffmpeg -f lavfi -i 'testsrc2=size=1920x1080:rate=24' -t 40 -c:v libx264 -preset ultrafast -threads 2 -crf 30 -movflags +faststart preview-playback-1080.mp4
+```
+
+Push those files to `/sdcard/Android/data/com.arvio.tv/files/` on the emulator.
+The 32-second fixture is HEVC Main10, 3840×2160, approximately 29.7 Mb/s and
+118,937,858 bytes. It is generated test content, not an actual debrid movie.
+The playback check renders the separate 1080p AVC file while decoding 4K
+previews, records dropped frames/rebuffers/errors, verifies five ready cards,
+captures the actual Compose filmstrip and checks playback resumes after seeking.
+This isolates CPU/UI interference; it does not test shared upstream bandwidth
+contention or 4K hardware playback on a physical TV.
+
+Before eliminating HEAD, the bounded reader's three cold centers took
+1,176 / 898 / 935 ms, versus 1,135 / 1,051 / 923 ms with the previous native
+reader under the same controlled pacing. Whole-window times were
+2,155 / 4,229 / 3,878 ms versus 2,081 / 4,182 / 3,702 ms. These small samples
+do not establish a substantial speed improvement from bounded reads alone.
+They did remove two redundant upstream requests per window. An earlier
+per-write sleep limiter unintentionally reduced bandwidth and was discarded;
+it exposed near-EOF scanning taking about eight seconds in both implementations,
+with the new reader exceeding its deadline in one run. Do not generalize the
+faster controlled-network results to slow connections.
+
+The final candidate also uses a 256 KiB local AVIO buffer, reducing loopback
+connection churn while preserving the bounded-read limit. With the redundant
+HEAD removed, the two final cold runs produced:
+
+| Target | Previous reader | Final run 1 | Final run 2 | Final full-window run 1 / 2 |
+| --- | ---: | ---: | ---: | ---: |
+| 8 seconds | 1,135 ms | 957 ms | 736 ms | 1,795 / 1,680 ms |
+| 23 seconds | 1,051 ms | 779 ms | 851 ms | 3,838 / 3,873 ms |
+| 15 seconds | 923 ms | 744 ms | 788 ms | 3,603 / 3,589 ms |
+
+The new windows made 6 / 14 / 13 upstream requests, versus 9 / 17 / 16 for
+the previous reader. Each cold center transferred 2,545,922 bytes in both
+versions. Cache lookup was 0.08–0.21 ms; this is provider lookup time, not
+remote-input-to-visible latency. Final playback verification rendered 1080p
+AVC for ten seconds without previews, then fifteen seconds while independently
+decoding 4K HEVC previews: zero dropped frames, rebuffers or player errors in
+both windows. Five cards were visible and playback resumed after seeking.
+The short, separate-source test cannot establish zero playback impact for all
+devices or shared-bandwidth debrid streams.
+
+Validation: all 116 preview JVM tests and eight selected emulator tests passed.
+The latter cover native bounded reads/session reuse, 4K timestamps, cancellation,
+memory-pressure recovery, the cold benchmark, four TV/mobile Compose checks and
+the playback comparison. The final benchmark was repeated separately. Raw local
+reports are `artifacts/preview-pull-benchmark-final*.json`,
+`artifacts/preview-pull-final-playback.json`, and the actual emulator screenshot
+`artifacts/preview-pull-final-five.png`. Uncached sub-500-ms previews have not
+been achieved; no physical-TV or real-debrid result is claimed for this change.
+
+After the playback-cache preservation correction, all 116 JVM tests and all
+eight device tests passed again. That additional cold run measured
+1,106 / 900 / 863 ms for centers and 2,111 / 4,432 / 3,988 ms for whole windows;
+cached lookup remained below 1 ms. Include this variance when describing results:
+the candidate's observed cold range across nine samples is 736–1,106 ms, not
+consistently sub-second. The repeated playback check again reported zero errors,
+rebuffers and dropped frames, five ready cards, and successful seek/resume.
+Final source verification evidence is `artifacts/preview-cache-preserved-*.json`,
+`artifacts/preview-cache-preserved-device-tests.txt` and
+`artifacts/preview-cache-preserved-five.png`.
+
+### Adaptive window preparation (29 October 2026)
+
+Healthy playback now prioritizes a complete five-frame window and follows recent
+forward/rewind intent. Five local turns are interleaved with one broader coverage
+turn; existing speculative-read limits still apply. The player checks buffer,
+playback strain, lifecycle and metered-network status every 250 ms and cancels
+preparation when those conditions cease to be safe. With at least 30 seconds
+buffered, a batch can prepare two video frames sequentially; a smaller healthy
+buffer allows one. Batches have a 1.2-second soft scheduling deadline, retain
+the existing per-frame read budget and never run parallel preview decoders.
+The deadline prevents starting another frame; cancellation and the decoder's
+own deadline bound a frame already in progress.
+
+Image-only sources can prepare five cues per batch with a 750-ms soft scheduling
+deadline. Their adapter retains up to 8 MiB of compressed sheets/ranges in a
+source-scoped LRU cache, avoiding repeated downloads when crossing a sheet
+boundary and rewinding. Authentication/source isolation and existing image
+validation remain in place. This uses existing provider thumbnails; it does not
+add a hosted thumbnail-generation service or promise sheets for every addon.
+
+Prepared frames still use the existing memory/disk cache and visible timestamp
+validation. Arbitrary, previously uncached 4K seeks still require network reads
+and decoding; they are not guaranteed to complete in 500 ms.
+
+Final verification after rebasing onto main f1228e394: 155 selected JVM tests
+passed (123 preview tests plus 32 playback/planner/host-rule tests), and all nine
+selected Android TV emulator tests passed. The five-frame window was present
+before browsing began, with a 1-ms provider lookup. The controlled playback test
+reported zero dropped frames, rebuffers and player errors, and successful resume.
+It renders 1080p AVC while decoding a separate 4K HEVC fixture, so it does not
+establish shared-bandwidth or physical-TV performance.
+
+The image-sheet fixture adds 100 ms per HTTP request. Five previews were prepared
+in 338 ms; the cached window lookup took 4.50 ms. Revisiting a new cue in a previous
+sheet took 11 ms without another download. Two distinct sheets were fetched once
+each, with one manifest request and no video requests or video decoding.
+
+Final cold-center times were 773 / 761 / 770 ms; complete windows took
+1,639 / 3,668 / 3,527 ms under the existing controlled network benchmark.
+These are small synthetic samples, not a sub-500-ms guarantee for debrid files.
+Raw local evidence: `artifacts/preview-adaptive-{sheet,playback,cold}.json`,
+`artifacts/preview-adaptive-device-tests.txt`,
+`artifacts/preview-adaptive-rebased-build.log`, and
+`artifacts/preview-adaptive-five.png` (actual five-card emulator rendering).

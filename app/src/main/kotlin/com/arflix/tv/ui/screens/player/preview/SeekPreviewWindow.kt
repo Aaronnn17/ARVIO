@@ -15,9 +15,9 @@ internal fun seekPreviewWarmTargets(positionMs: Long, durationMs: Long): List<Lo
 }
 
 /** Fill the two forward slots first; rewind often already has rendered frames. */
-internal fun seekPreviewNeighborTargets(positionMs: Long, durationMs: Long): List<Long> =
+internal fun seekPreviewNeighborTargets(positionMs: Long, durationMs: Long, direction: Int = 1): List<Long> =
     if (durationMs <= 0) emptyList() else listOf(10_000L, 20_000L, -10_000L, -20_000L)
-        .map { (positionMs + it).coerceIn(0, durationMs - 1) }.distinct().filter { it != positionMs }
+        .map { (positionMs + it * if (direction < 0) -1 else 1).coerceIn(0, durationMs - 1) }.distinct().filter { it != positionMs }
 
 /** Re-evaluated while a job is running, not just before starting it. */
 internal class SeekPreviewPlaybackGuard {
