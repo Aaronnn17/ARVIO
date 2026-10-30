@@ -280,6 +280,8 @@ class TraktRepository @Inject constructor(
         val migratedProfiles = mutableListOf<String>()
         val migrationUpdatedAt = System.currentTimeMillis()
         profileIds.forEach { profileId ->
+            // Do not broadcast local OAuth rejection as a disconnect on other devices.
+            if (prefs[profileManager.profileBooleanKeyFor(profileId, "trakt_reconnect_required")] == true) return@forEach
             val access = prefs[profileManager.profileStringKeyFor(profileId, "trakt_access_token")]
             val refresh = prefs[profileManager.profileStringKeyFor(profileId, "trakt_refresh_token")]
             val expiresAt = prefs[profileManager.profileLongKeyFor(profileId, "trakt_expires_at")]
@@ -333,13 +335,13 @@ class TraktRepository @Inject constructor(
                 val expiresKey = profileManager.profileLongKeyFor(profileId, "trakt_expires_at")
                 val updatedAtKey = profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")
                 val accessToken = token.accessToken?.trim().orEmpty()
+                prefs.remove(profileManager.profileBooleanKeyFor(profileId, "trakt_reconnect_required"))
                 if (accessToken.isEmpty()) {
                     prefs.remove(accessKey)
                     prefs.remove(refreshKey)
                     prefs.remove(expiresKey)
                 } else {
                     prefs[accessKey] = accessToken
-                    prefs.remove(profileManager.profileBooleanKeyFor(profileId, "trakt_reconnect_required"))
                     token.refreshToken?.let { prefs[refreshKey] = it } ?: prefs.remove(refreshKey)
                     token.expiresAt?.let { prefs[expiresKey] = it } ?: prefs.remove(expiresKey)
                 }

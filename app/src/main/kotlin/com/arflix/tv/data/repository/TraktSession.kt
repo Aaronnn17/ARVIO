@@ -145,7 +145,9 @@ class TraktSession @Inject constructor(
                 prefs.remove(accessKey(profileId))
                 prefs.remove(refreshKey(profileId))
                 prefs.remove(expiresKey(profileId))
-                prefs[updatedKey(profileId)] = System.currentTimeMillis()
+                // A rejected local session is not a user-requested cloud logout.
+                // Keep its generation so a newer rotated cloud credential can recover it.
+                if (prefs[updatedKey(profileId)] == null) prefs[updatedKey(profileId)] = 1L
                 prefs[reconnectKey(profileId)] = true
             }
         }

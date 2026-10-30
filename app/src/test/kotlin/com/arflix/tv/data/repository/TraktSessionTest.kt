@@ -48,6 +48,9 @@ class TraktSessionTest {
     private fun token(access: String = "old", refresh: String = "refresh", expires: Int = -1) =
         TraktToken(access, refresh, expires, System.currentTimeMillis() / 1000, "bearer")
     private fun http(code: Int, body: String = "{}") = HttpException(Response.error<Any>(code, body.toResponseBody()))
+    private fun repository() = TraktRepository(RuntimeEnvironment.getApplication(), api, mockk(), OkHttpClient(),
+        Provider { mockk(relaxed = true) }, profiles, mockk(relaxed = true), mockk(relaxed = true),
+        mockk(relaxed = true), mockk(relaxed = true), ContinueWatchingUpdates(), traktSession = session)
 
     @Before fun setup() = runBlocking {
         mockkStatic("com.arflix.tv.util.DataStoresKt")
@@ -55,6 +58,9 @@ class TraktSessionTest {
         profiles = mockk<ProfileManager> {
             every { getProfileIdSync() } answers { profile.value }
             every { activeProfileId } returns profile
+            every { profileStringKey(any()) } answers { stringPreferencesKey("${profile.value}_${firstArg<String>()}") }
+            every { profileLongKey(any()) } answers { longPreferencesKey("${profile.value}_${firstArg<String>()}") }
+            every { profileBooleanKey(any()) } answers { booleanPreferencesKey("${profile.value}_${firstArg<String>()}") }
             every { profileStringKeyFor(any(), any()) } answers { stringPreferencesKey("${firstArg<String>()}_${secondArg<String>()}") }
             every { profileLongKeyFor(any(), any()) } answers { longPreferencesKey("${firstArg<String>()}_${secondArg<String>()}") }
             every { profileBooleanKeyFor(any(), any()) } answers { booleanPreferencesKey("${firstArg<String>()}_${secondArg<String>()}") }
@@ -168,9 +174,7 @@ class TraktSessionTest {
         coEvery { api.getMe("Bearer old", any(), any()) } throws http(401)
         coEvery { api.getMe("Bearer new", any(), any()) } returns TraktUserProfile("tester")
         coEvery { api.refreshToken(any()) } returns token("new", "rotated", 86_400)
-        val repository = TraktRepository(RuntimeEnvironment.getApplication(), api, mockk(), OkHttpClient(),
-            Provider { mockk(relaxed = true) }, profiles, mockk(relaxed = true), mockk(relaxed = true),
-            mockk(relaxed = true), mockk(relaxed = true), ContinueWatchingUpdates(), traktSession = session)
+        val repository = repository()
         assertEquals("tester", repository.fetchUsername())
         assertEquals(TraktConnection("a", true, false), repository.connection.first())
     }
@@ -263,5 +267,28 @@ class TraktSessionTest {
         assertFalse(session.connection.first().reconnectRequired)
         session.disconnect()
         assertEquals(TraktConnection("a", false, false), session.connection.first())
+    }
+
+    @Test fun localRejectionDoesNotExportACloudLogoutAndNewerCloudTokensRecover() = runBlocking {
+        val repository = repository()
+        val updated = store.data.value[longPreferencesKey("a_trakt_token_updated_at_v3")]!!
+        coEvery { api.refreshToken(any()) } throws http(400, """{"error":"invalid_grant"}""")
+        session.accessToken()
+        assertTrue(repository.exportTokensForProfiles(listOf("a")).isEmpty())
+        val expiredCloudCopy = TraktRepository.CloudTraktToken("old", "refresh", 1L, updated)
+        repository.importTokensForProfiles(mapOf("a" to expiredCloudCopy))
+        assertTrue(session.connection.first().reconnectRequired)
+        repository.importTokensForProfiles(mapOf("a" to TraktRepository.CloudTraktToken(
+            "cloud-rotated", "cloud-refresh", System.currentTimeMillis() / 1000 + 86_400, updated + 1
+        )))
+        assertEquals("cloud-rotated", session.accessToken())
+        assertEquals(TraktConnection("a", true, false), session.connection.first())
+    }
+
+    @Test fun explicitDisconnectStillExportsAnIntentionalCloudLogout() = runBlocking {
+        session.disconnect()
+        val exported = repository().exportTokensForProfiles(listOf("a")).getValue("a")
+        assertNull(exported.accessToken)
+        assertNotNull(exported.updatedAt)
     }
 }
