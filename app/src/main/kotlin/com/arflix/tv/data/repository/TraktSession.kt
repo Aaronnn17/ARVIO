@@ -11,6 +11,10 @@ import com.arflix.tv.util.traktDataStore
 import com.google.gson.JsonParser
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -101,22 +105,27 @@ class TraktSession @Inject constructor(
             if (held?.first == current && now < held.second) return@withLock usable()
             try {
                 check(Constants.TRAKT_CLIENT_SECRET.isNotBlank()) { "Trakt credentials missing in this APK" }
-                val token = api.refreshToken(RefreshTokenRequest(
-                    refreshToken = current.refresh,
-                    clientId = Constants.TRAKT_CLIENT_ID,
-                    clientSecret = Constants.TRAKT_CLIENT_SECRET
-                ))
-                // Do not overwrite a login, logout or cloud restore that happened during the request.
-                context.traktDataStore.edit { prefs ->
-                    if (credential(prefs, profileId) == current) {
-                        prefs[accessKey(profileId)] = token.accessToken
-                        prefs[refreshKey(profileId)] = token.refreshToken
-                        prefs[expiresKey(profileId)] = token.createdAt + token.expiresIn
-                        prefs[updatedKey(profileId)] = System.currentTimeMillis()
-                        prefs.remove(reconnectKey(profileId))
+                // Finish the bounded auth request and persist its single-use replacement even
+                // if the UI's short username timeout or a screen exit cancels the caller.
+                withContext(NonCancellable) {
+                    val token = api.refreshToken(RefreshTokenRequest(
+                        refreshToken = current.refresh,
+                        clientId = Constants.TRAKT_CLIENT_ID,
+                        clientSecret = Constants.TRAKT_CLIENT_SECRET
+                    ))
+                    // Do not overwrite a login, logout or cloud restore during the request.
+                    context.traktDataStore.edit { prefs ->
+                        if (credential(prefs, profileId) == current) {
+                            prefs[accessKey(profileId)] = token.accessToken
+                            prefs[refreshKey(profileId)] = token.refreshToken
+                            prefs[expiresKey(profileId)] = token.createdAt + token.expiresIn
+                            prefs[updatedKey(profileId)] = System.currentTimeMillis()
+                            prefs.remove(reconnectKey(profileId))
+                        }
                     }
                 }
                 backoff.remove(profileId)
+                currentCoroutineContext().ensureActive()
                 credential(context.traktDataStore.data.first(), profileId).access
             } catch (error: Exception) {
                 if (error is CancellationException) throw error

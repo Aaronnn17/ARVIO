@@ -316,24 +316,17 @@ class TraktRepository @Inject constructor(
      */
     suspend fun importTokensForProfiles(tokens: Map<String, CloudTraktToken>) {
         if (tokens.isEmpty()) return
-        val local = context.traktDataStore.data.first()
-        val tokensToApply = tokens.filter { (profileId, token) ->
-            shouldApplyCloudCredential(
-                incomingUpdatedAt = token.updatedAt,
-                localUpdatedAt = local[profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")],
-                incomingHasCredential = !token.accessToken.isNullOrBlank(),
-                localHasCredential = !local[
-                    profileManager.profileStringKeyFor(profileId, "trakt_access_token")
-                ].isNullOrBlank()
-            )
-        }
-        if (tokensToApply.isEmpty()) return
+        var changed = false
         context.traktDataStore.edit { prefs ->
-            tokensToApply.forEach { (profileId, token) ->
+            tokens.forEach { (profileId, token) ->
                 val accessKey = profileManager.profileStringKeyFor(profileId, "trakt_access_token")
                 val refreshKey = profileManager.profileStringKeyFor(profileId, "trakt_refresh_token")
                 val expiresKey = profileManager.profileLongKeyFor(profileId, "trakt_expires_at")
                 val updatedAtKey = profileManager.profileLongKeyFor(profileId, "trakt_token_updated_at_v3")
+                // Compare inside the transaction, after any queued refresh/login has saved.
+                if (!shouldApplyCloudCredential(token.updatedAt, prefs[updatedAtKey],
+                        !token.accessToken.isNullOrBlank(), !prefs[accessKey].isNullOrBlank())) return@forEach
+                changed = true
                 val accessToken = token.accessToken?.trim().orEmpty()
                 prefs.remove(profileManager.profileBooleanKeyFor(profileId, "trakt_reconnect_required"))
                 if (accessToken.isEmpty()) {
@@ -348,7 +341,7 @@ class TraktRepository @Inject constructor(
                 token.updatedAt?.takeIf { it > 0L }?.let { prefs[updatedAtKey] = it }
             }
         }
-        clearProfileScopedMemoryCaches(clearPreloaded = false)
+        if (changed) clearProfileScopedMemoryCaches(clearPreloaded = false)
     }
 
     suspend fun exportDismissedContinueWatchingForProfiles(profileIds: List<String>): Map<String, String> {

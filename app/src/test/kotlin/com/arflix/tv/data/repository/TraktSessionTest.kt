@@ -36,8 +36,12 @@ class TraktSessionTest {
     private class MemoryStore : DataStore<Preferences> {
         override val data = MutableStateFlow<Preferences>(emptyPreferences())
         private val lock = Mutex()
-        override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = lock.withLock {
-            transform(data.value).also { data.value = it }
+        var beforeNextUpdate: (suspend () -> Unit)? = null
+        override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences {
+            val before = beforeNextUpdate
+            beforeNextUpdate = null
+            before?.invoke()
+            return lock.withLock { transform(data.value).also { data.value = it } }
         }
     }
     private val api = mockk<TraktApi>(relaxed = true)
@@ -290,5 +294,37 @@ class TraktSessionTest {
         val exported = repository().exportTokensForProfiles(listOf("a")).getValue("a")
         assertNull(exported.accessToken)
         assertNotNull(exported.updatedAt)
+    }
+
+    @Test fun aQueuedCloudRestoreCannotOverwriteATokenRenewedBeforeItsTransaction() = runBlocking {
+        val updated = store.data.value[longPreferencesKey("a_trakt_token_updated_at_v3")]!!
+        store.beforeNextUpdate = {
+            store.edit { prefs ->
+                prefs[stringPreferencesKey("a_trakt_access_token")] = "just-renewed"
+                prefs[longPreferencesKey("a_trakt_token_updated_at_v3")] = updated + 2
+            }
+        }
+        repository().importTokensForProfiles(mapOf("a" to TraktRepository.CloudTraktToken(
+            "stale-cloud", "stale-refresh", 1L, updated + 1
+        )))
+        assertEquals("just-renewed", store.data.value[stringPreferencesKey("a_trakt_access_token")])
+    }
+
+    @Test fun cancellingTheCallerDoesNotLoseARotatedRefreshToken() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        coEvery { api.refreshToken(any()) } coAnswers {
+            entered.complete(Unit)
+            finish.await()
+            token("new", "rotated", 86_400)
+        }
+        val pending = async { session.accessToken() }
+        entered.await()
+        pending.cancel()
+        finish.complete(Unit)
+        pending.join()
+        assertEquals("new", session.accessToken())
+        assertEquals("rotated", store.data.value[stringPreferencesKey("a_trakt_refresh_token")])
+        coVerify(exactly = 1) { api.refreshToken(any()) }
     }
 }
